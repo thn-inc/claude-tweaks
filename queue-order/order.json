@@ -1,8 +1,23 @@
 {
-  "computedAt": "2026-10-31T13:30:27.113Z",
+  "computedAt": "2026-10-31T14:33:24.974Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
+      {
+        "number": 4729,
+        "updatedAt": "2026-10-31T14:22:55Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4728,
+        "updatedAt": "2026-10-31T14:22:50Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4727,
+        "updatedAt": "2026-10-31T14:22:46Z",
+        "state": "OPEN"
+      },
       {
         "number": 4673,
         "updatedAt": "2026-10-31T09:57:01Z",
@@ -45,12 +60,12 @@
       },
       {
         "number": 4645,
-        "updatedAt": "2026-10-31T06:34:08Z",
+        "updatedAt": "2026-10-31T14:02:37Z",
         "state": "OPEN"
       },
       {
         "number": 4640,
-        "updatedAt": "2026-10-31T06:34:12Z",
+        "updatedAt": "2026-10-31T14:18:22Z",
         "state": "OPEN"
       },
       {
@@ -76,11 +91,6 @@
       {
         "number": 4634,
         "updatedAt": "2026-10-31T13:08:50Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4631,
-        "updatedAt": "2026-10-31T11:35:41Z",
         "state": "OPEN"
       },
       {
@@ -144,23 +154,18 @@
         "state": "OPEN"
       },
       {
-        "number": 4602,
-        "updatedAt": "2026-10-31T08:56:22Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4600,
         "updatedAt": "2026-10-31T13:08:43Z",
         "state": "OPEN"
       },
       {
         "number": 4599,
-        "updatedAt": "2026-10-31T13:08:41Z",
+        "updatedAt": "2026-10-31T13:59:30Z",
         "state": "OPEN"
       },
       {
         "number": 4594,
-        "updatedAt": "2026-10-31T06:34:16Z",
+        "updatedAt": "2026-10-31T14:20:44Z",
         "state": "OPEN"
       },
       {
@@ -175,12 +180,7 @@
       },
       {
         "number": 4589,
-        "updatedAt": "2026-10-30T11:45:15Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4588,
-        "updatedAt": "2026-10-31T12:47:17Z",
+        "updatedAt": "2026-10-31T14:24:25Z",
         "state": "OPEN"
       },
       {
@@ -225,7 +225,7 @@
       },
       {
         "number": 4565,
-        "updatedAt": "2026-10-31T09:45:28Z",
+        "updatedAt": "2026-10-31T14:24:41Z",
         "state": "OPEN"
       },
       {
@@ -235,7 +235,7 @@
       },
       {
         "number": 4561,
-        "updatedAt": "2026-10-31T12:33:24Z",
+        "updatedAt": "2026-10-31T13:57:34Z",
         "state": "OPEN"
       },
       {
@@ -265,7 +265,7 @@
       },
       {
         "number": 4553,
-        "updatedAt": "2026-10-31T13:24:40Z",
+        "updatedAt": "2026-10-31T13:38:23Z",
         "state": "OPEN"
       },
       {
@@ -275,12 +275,12 @@
       },
       {
         "number": 4551,
-        "updatedAt": "2026-10-31T06:34:55Z",
+        "updatedAt": "2026-10-31T13:52:55Z",
         "state": "OPEN"
       },
       {
         "number": 4548,
-        "updatedAt": "2026-10-31T06:34:59Z",
+        "updatedAt": "2026-10-31T14:09:52Z",
         "state": "OPEN"
       },
       {
@@ -345,7 +345,7 @@
       },
       {
         "number": 4495,
-        "updatedAt": "2026-10-31T13:21:06Z",
+        "updatedAt": "2026-10-31T13:43:08Z",
         "state": "OPEN"
       },
       {
@@ -636,11 +636,6 @@
       {
         "number": 4344,
         "updatedAt": "2026-10-31T09:58:05Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4343,
-        "updatedAt": "2026-10-31T11:51:06Z",
         "state": "OPEN"
       },
       {
@@ -980,12 +975,311 @@
       },
       {
         "number": 4609,
-        "updatedAt": "2026-10-31T13:15:21Z",
+        "updatedAt": "2026-10-31T14:02:09Z",
+        "state": "CLOSED"
+      },
+      {
+        "number": 4588,
+        "updatedAt": "2026-10-31T14:17:15Z",
         "state": "CLOSED"
       }
     ]
   },
   "groups": [
+    [
+      {
+        "body": "Verified-as-of: 67d25419ec91f5d8909650c8bdbfb85c0d1db928\n\nOrigin: SDD ruling reversed at Review Console\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nSDD ruling 14 on record #4588 (staged `sdd-ruling-14.md`, build ledger row 17) deferred a residual from the targeted fix's re-review with no Defer-reason, and it was reversed at the Review Console.\n\nThe residual: `plugin/bin/dispatch-resume.js`'s bound-run scan (the loop over `listRunDirsWithState`, around line 342) treats a conflicting bound run whose `owner.sessionId` equals the current `CLAUDE_CODE_SESSION_ID` as never proven dead (`ownSession`, line 350). That is correct, because a second resume can share the session id (#965). But the scan then falls through to the generic `concurrent-resume` line: \"another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #N once that run ends\". The scenario: a resume crashes between Step 6's bind (`record-worktree --dispatch`) and Step 6a's `close-run` in `plugin/skills/dispatch/resume.md`, and is retried in the same session. In that case no other run is live, so \"once that run ends\" never comes true, and the only way out is a hand-run `node {plugin-root}/bin/hooks.js close-run --run {dir}`, which the line does not name.\n\nAn owner probe cannot tell a same-session leftover from a live same-session sibling, so the line cannot pick a verdict. It can name both readings and the remedy for each, as the `unknown-owner` branch beside it already does.\n\n## Deliverables\n\n1. In `plugin/bin/dispatch-resume.js`'s bound-run scan, give an own-session conflicting bound run its own `concurrent-resume` line that names both readings: another resume in this session may still be running (stop it, then re-run), or a crashed earlier resume left the run open (close it with `node \"{HOOKS_JS}\" close-run --run \"{dir}\"`, then re-run `/claude-tweaks:dispatch resume #N`). Keep the reason `concurrent-resume` and never prove the run dead.\n\n2. Add a `tests/bin-lib/dispatch/dispatch-resume-cli.test.js` case: an own-session non-terminal run bound to the worktree yields that line with the `close-run --run` command for its dir.\n\n3. If `docs/journeys/resume-a-stalled-dispatched-build-4588.md` or `plugin/skills/dispatch/resume.md` quote the concurrent-resume line, update them.\n\n## Acceptance Criteria\n\n- With a non-terminal run dir whose `owner.sessionId` equals the CLI's session id and whose `worktree` is the stalled worktree, `dispatch-resume.js --issue N` refuses `concurrent-resume` with a line containing `close-run --run \"{that dir}\"`.\n\n- A conflicting run owned by a different, provably live session still gets today's generic line, unchanged.\n\n- `npm test` passes.\n\n## Release Note\n\nRetrying dispatch resume in the same session after a crash mid-resume now names the close-run command that clears the leftover run, instead of telling you to wait for a run that will never end.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/dispatch-resume.js` — own-session conflicting bound run gets a line naming close-run\n- `tests/bin-lib/dispatch/dispatch-resume-cli.test.js` — own-session bound-run case\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-10-31T13:53:23Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4729,
+        "state": "OPEN",
+        "title": "dispatch resume: name close-run when the conflicting bound run belongs to this session",
+        "updatedAt": "2026-10-31T14:22:55Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: f9dfd856f61b51abc268bd06e61113de6a29245c\n\nOrigin: reflect full from #4588\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/flow/context-handoff.md`'s continuation template (the Agent prompt a /flow run dispatches once its context crosses the cap) tells the child that it inherits the run's worktree, and gives it the plugin root and the async-wait discipline. It says nothing about the harness's worktree shell constraint. `plugin/skills/dispatch/task-prompt.md` item 6 does carry it for dispatch's own first and second calls, and `_shared/subagent-dispatch-core.md`'s \"One plain command per Bash call\" paragraph requires every worktree-isolated dispatch prompt to state it.\n\nRun `2026-10-30T200217-spec-4588` handed off twice (`decisions.md` AUTO 21:07:12 and 13:46:23), and the continuation children ran the SDD controller, test, review and polish inside the isolated worktree. `friction-events.js` returned 40 `wd-guard-refusal` events (reason `harness-worktree-isolation`) for a five-task build: `cd …;` chains, shell variables reused in the same call, heredocs, `for` loops and `$(…)` substitutions. Several came from controller-shaped commands (`for n in 3 4 5; do bash …/task-brief …`, `cd \"{worktree}\"; node -e …`), not only from SDD implementers. #4243 covers the SDD implementer and reviewer dispatches, but not this continuation template.\n\nProbe: `git grep -n -i -F -e 'shell constraint' origin/main -- plugin/skills/flow/context-handoff.md` and `git grep -n -F -e 'scratch-worktree.md' origin/main -- plugin/skills/flow/context-handoff.md` both exit 1, so neither appears in the file.\n\n## Deliverables\n\n1. Add the worktree shell-constraint item to `context-handoff.md`'s continuation template. Cite `_shared/scratch-worktree.md` §7 and `subagent-dispatch-core.md`'s \"One plain command per Bash call\" rather than restating the refusal table, as `dispatch/task-prompt.md` item 6 does, and tell the child to forward it to any agent it dispatches.\n\n2. Extend `tests/flow-context-handoff-conformance.test.js` so it fails when the item is removed.\n\n## Acceptance Criteria\n\n- `plugin/skills/flow/context-handoff.md`'s continuation template contains a worktree shell-constraint item that cites `_shared/scratch-worktree.md` §7.\n\n- `tests/flow-context-handoff-conformance.test.js` fails when that item is deleted from the template.\n\n- `npm test` passes.\n\n## Release Note\n\nFewer refused Bash calls after a /flow context handoff: the continuation agent is now told the worktree shell constraint up front.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/flow/context-handoff.md` — add the shell-constraint item to the continuation template\n- `tests/flow-context-handoff-conformance.test.js` — pin the new item\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-10-31T13:53:20Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4728,
+        "state": "OPEN",
+        "title": "flow: carry the worktree shell constraint into the context-handoff continuation template",
+        "updatedAt": "2026-10-31T14:22:50Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Verified-as-of: f9dfd856f61b51abc268bd06e61113de6a29245c\n\nOrigin: reflect full from #4588\n\nDefer-reason: tangential\n\n## Current State\n\nRecord #4588 (dispatch resume) specified an eligibility verdict: a list of claim, label, worktree, PR and run-directory states that make a stalled build resumable. The spec listed the eligible states but said nothing about states it did not list.\n\nPlan review (`plugin/skills/build/plan-review.md`, lines 53-54) classifies a gap as `needs-human` whenever settling it would alter an observable contract or has two defensible readings. Every unlisted state qualified, so each review pass found new ones and stopped the build on the `plan-review-needs-human` HARD-GATE. Run `2026-10-30T200217-spec-4588` logged four such stops (`decisions.md` KEPT-PROMPT 21:17:29, 22:15:34, 07:25:48, 10:49:23), with 3, 2, 4 and 2 needs-human gaps. Each stop meant a question set on the record, a human answer, a spec re-materialization, a plan amendment and a fresh review.\n\nThe fourth answer set added a **Closed rule** to the spec: the eligible states are exhaustive, any unlisted state is refused with one line naming the state and the remedy, and a plan review that finds another unlisted state applies the rule as a plan amendment, never as a `needs-human` gap. The fifth review pass applied it to a new state finding and the build proceeded with no further stop (`decisions.md` AUTO 11:12:40).\n\nProbe: `git grep -n -i -e 'exhaustive' -e 'closed rule' origin/main -- plugin/skills/specify plugin/skills/build/plan-review.md` matched only two unrelated lines (`specify/mechanical-handoff.md:16`, `specify/red-team.md:81`). Neither /specify's spec template nor plan review names a closed rule for a state-classification deliverable.\n\n## Deliverables\n\n1. In `/claude-tweaks:specify`, when a spec's deliverable classifies inputs into named states (an eligibility verdict, a refusal ladder, a status classifier), require a Closed-rule bullet beside the state list. It says the listed states are exhaustive, that an unlisted state is refused with a line naming it and its remedy, and that plan review applies the rule as an amendment rather than escalating. Put the guidance in the spec template or in a sibling deliverable-guidance file, the way `gate-authoring-deliverables.md` and `empirical-premise-check-deliverables.md` already handle their deliverable types.\n\n2. Add a conformance test that fails when that guidance is removed.\n\n## Acceptance Criteria\n\n- /specify's spec-shaping guidance names the Closed rule for state-classification deliverables, with its three parts: exhaustive, refused with a named remedy, and amendment rather than escalation in plan review.\n\n- A conformance test fails when the guidance is deleted.\n\n- `npm test` passes.\n\n## Release Note\n\nSpecs for state-classifying features now state up front that unlisted states are refused, so plan review stops escalating each newly found state to a human.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/specify/spec-template.md` — add the Closed-rule guidance, or cite a new sibling guidance file\n- `plugin/skills/build/plan-review.md` — reference only: the needs-human classification the rule pre-empts\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-10-31T13:53:16Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 4727,
+        "state": "OPEN",
+        "title": "specify: require a Closed rule for specs whose deliverable classifies states",
+        "updatedAt": "2026-10-31T14:22:46Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #4588\n\nOrigin: flow run 2026-10-30T200217-spec-4588 (#4588 plan review, issuecomment-6540061358 question 2)\n\nDefer-reason: tangential\n\n## Current State\n\n`tidy/scan-procedures.md`'s stale-claim scan recommends \"Resume open PR #{number} ({url}) — {resume}\" when a stale claim's run marker sits on an open PR, where `{resume}` is the PR body's own `### Resume` line (`PIPELINE_RUN_DIR=\"{old run dir}\" /claude-tweaks:flow ...`). When that run directory has already been archived or reaped, the pasted line points at a directory `/flow` cannot adopt. #4588 adds `/claude-tweaks:dispatch resume #N` for exactly that stalled-build case, but scoped its remedy wording to `plugin/skills/dispatch/` and left `/tidy` unchanged (issuecomment-6540061358, question 2).\n\n## Deliverables\n\nWhen the stale claim's `runId` names a run directory that is absent or archived under `.claude-tweaks/pipelines/`, `/tidy`'s Yours row recommends `/claude-tweaks:dispatch resume #N` instead of the PR body's resume line.\n\nWhen the run directory still exists, the row keeps today's PR-body resume line.\n\n## Acceptance Criteria\n\nA stale claim on an open PR whose run directory is archived renders \"Resume open PR #{number} ({url}) — `/claude-tweaks:dispatch resume #N`\".\n\nA stale claim whose run directory still exists renders the PR body's resume line, unchanged.\n\nA test pins both branches.\n\n## Release Note\n\nTidy now suggests the one-command dispatch resume for a stalled build whose run directory is already gone.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/scan-procedures.md` — modify (Resume open PR row)\n- `plugin/skills/tidy/step-6-auto.md` — modify (Unsettled run row, if it restates the line)\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-10-31T09:34:41Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4673,
+        "state": "OPEN",
+        "title": "Point /tidy's Resume open PR offer at dispatch resume when the stalled run dir is gone",
+        "updatedAt": "2026-10-31T09:57:01Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
     [
       {
         "body": "Origin: reflect full from #4602\n\nDefer-reason: tangential\n\n## Current State\n\nA review tiebreak agent on #4602 (run `2026-10-31T075610-record-4602`) was refused when it ran `git -C \".../review-ctx/agent-scratch/tb-2/src\" init -q -b main` to build a git fixture at its sanctioned `SCRATCH:` path. The run recorded a `gate-denial` event for that path (`friction-events.js`, ts 2026-10-31T09:06:10Z), immediately after a `wd-guard-refusal` for the same command at 09:06:09Z.\n\n`plugin/skills/review/step3-tiebreak.md`, `step3-debate-and-refutation.md` and `step3-lens-dispatch.md` give every dispatched review agent a `SCRATCH: {ctx-dir}/agent-scratch/{agent-id}` path under the run directory, which is anchored to the main checkout, and tell it to create probe fixtures there with plain `mkdir`/`printf`/`node -e` calls. None of them mentions that a fixture needing a git repository cannot be created at that path from a `worktree-always` session: the gate refuses `git init` there.\n\nIntegration-branch probe (#3987): `git fetch origin main`, then `git grep -n -F -e \"agent-scratch\" origin/main -- plugin/bin` and `git grep -n -i -F -e \"git init\" origin/main -- plugin/skills/review` both matched nothing (exit 1), so main carries neither a gate exemption for the scratch path nor skill text for git fixtures.\n\n## Deliverables\n\nAdd one clause to the `SCRATCH:` instruction in each of `step3-tiebreak.md`, `step3-debate-and-refutation.md` (both its dispatch templates) and `step3-lens-dispatch.md`: a probe that needs a git repository creates it under the session scratchpad directory (`_shared/session-tmp-root.md`) instead of `{ctx-dir}/agent-scratch/`, because `git init` at the run-dir path is refused from a worktree session.\n\nKeep the three copies word-identical so one test pin covers all of them.\n\n## Acceptance Criteria\n\nEach of the three files names the git-fixture exception inside its `SCRATCH:` instruction: `grep -c -F \"git init\" plugin/skills/review/step3-tiebreak.md plugin/skills/review/step3-debate-and-refutation.md plugin/skills/review/step3-lens-dispatch.md` prints a count of at least 1 for every file.\n\nA conformance test pins the clause in all three files and goes red when it is removed from any one of them.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md` — add the git-fixture clause to the SCRATCH line\n- `plugin/skills/review/step3-debate-and-refutation.md` — add the git-fixture clause to both SCRATCH lines\n- `plugin/skills/review/step3-lens-dispatch.md` — add the git-fixture clause to the SCRATCH line\n\n_Filed by `reflect` via specShapedBody._\n",
@@ -1325,7 +1619,7 @@
         "number": 4645,
         "state": "OPEN",
         "title": "Settle 5 below-floor digest findings in issues",
-        "updatedAt": "2026-10-31T06:34:08Z",
+        "updatedAt": "2026-10-31T14:02:37Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1415,7 +1709,7 @@
         "number": 4640,
         "state": "OPEN",
         "title": "plan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently",
-        "updatedAt": "2026-10-31T06:34:12Z",
+        "updatedAt": "2026-10-31T14:18:22Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2116,162 +2410,6 @@
     ],
     [
       {
-        "body": "Origin: spec #4466 build (final whole-branch review)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`_shared/pr-first-merge-post-merge.md`'s Step 4.0b (#4466) closes a below-floor decomposition parent once its last sub-issue's merge lands. It runs only when a session sees the merge happen: pr-first outcome `merged`, or a successful local-merge push. When the session arms an auto-merge (`armed`) and GitHub merges the PR later, typically on a repo with required checks, no session reaches Step 4.0b. Step 4.0 (closing-links) has the same gap and states \"the reconciler does not run the CLI\". Recovery is `/claude-tweaks:tidy`'s `parent-gate` backstop row, which stays staged at every autonomy tier. So on required-checks repos, closing a parent below the floor in practice needs a human click.\n\n## Deliverables\n\n- [ ] Run Step 4.0b (and Step 4.0) for a PR the run armed and GitHub merged later. The likely home is the reconciler (`bin/hooks.js reconcile`) or the next session's run-dir sweep, keyed on the run's recorded PR, and it must run exactly once.\n- [ ] Keep tidy's backstop as the last resort.\n\n## Acceptance Criteria\n\n- [ ] A below-floor parent whose last sub-issue merges through an armed auto-merge is closed with the `## Closed below the oversight floor` comment, without a human approving a tidy row.\n- [ ] The close stays idempotent with a later tidy approval: one comment, one close.\n\n## Release Note\n\nDecomposed work below the review floor now closes its parent even when the last piece merges through auto-merge after the session ends.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — Step 4.0b's entry conditions\n- `plugin/bin/hooks.js` — reconcile command (candidate home)\n\n_Filed by `build` via specShapedBody._\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Which runs the post-merge reconcile acts on: Reading B.** Act on every run whose recorded PR is `MERGED` and whose `decisions.md` carries no Step 4.0b marker line, keyed on the run's recorded PR, exactly once. Document in `docs/reconcile-checks.md` the one-time catch-up of legacy and older-build runs on the first reconcile after deploy, bounded by Step 4.0's 10-minute reopen window and Step 4.0b's idempotence checks. Do not add a separate canonical `armed` marker for this record.\n",
-        "createdAt": "2026-10-30T10:13:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4599,
-        "state": "OPEN",
-        "title": "Close below-floor parents when an armed PR merges after its session ended",
-        "updatedAt": "2026-10-31T13:08:41Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nOrigin: reflect hindsight from #4465\n\nDefer-reason: genuinely-larger\n\n**Related:** #4596, #2713, #4442, #4492, #4505, #4549, #4554, #4559\n\n## Current State\n\ntidy Step 4's Plan retention (`plugin/skills/tidy/scan-procedures.md`, #4465, closed) asks the model to compute, by hand, per plan: a first-add commit date (`git log --diff-filter=A --format=%cs -1 -- {plan}`, `scan-procedures.md:57` on `origin/main`), a 7-day cutoff comparison, a pre-check count against 30, a citation check only once that count reaches 30, an uncited recount, and a decline lookup — across what is by construction 30+ plans (`scan-procedures.md:50-63`).\n\nNo `plugin/bin` code computes any of it (probe: `git grep -n -i -e \"plans-retention\\|plan-retention\\|superpowers/plans\" origin/main -- plugin/bin` matches only console prefixes (`plugin/bin/lib/console/resolve.js:88`), policy-schema (`plugin/bin/lib/policy-schema.js:200`), and unrelated comments; `plugin/bin/plan-retention.js` does not exist). #4465's review returned 22 findings, 12 of them on that one paragraph (density, unstated edges, failure paths, coverage), and its conformance suite (`tests/tidy-plan-retention-conformance.test.js`) can only pin wording, not the arithmetic.\n\nTidy's Step 4.5 already delegates the comparable worktree/residue arithmetic to `bin/residue.js` (`scan-procedures.md:97`).\n\n## Deliverables\n\n- A `plugin/bin/plan-retention.js` CLI (lib under `plugin/bin/lib/plan-retention/`) that, given the resolved `superpowers-plans-retention` value and the Step 4 table's would-be-Delete list, prints JSON: each plan's route (`delete` / `keep` / `prune-ask` / `prune-archive`), its first-add date or `uncommitted`, and whether the citation check must run.\n- `scan-procedures.md` Step 4's Plan retention list cites the CLI for the cutoff/threshold arithmetic and keeps only the policy meaning in prose.\n- Unit tests covering the 7-day boundary, the 30 threshold, the uncommitted fail-closed path, and `ask`'s no-cutoff routing.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-retention.js` on a fixture repo with 30 past-cutoff and 1 within-cutoff plan under `keep-forever` routes exactly the 30 to `prune-archive` and the 1 to `keep`.\n- With 29 past-cutoff plans it routes all 29 to `keep` and reports `citationCheck: false`.\n- An uncommitted plan routes to `keep` under both `keep-forever` and `ask`.\n- `scan-procedures.md` Step 4 no longer spells out the `git log --diff-filter=A` date command; it cites the CLI.\n- `tests/tidy-plan-retention-conformance.test.js` pins the CLI citation in place of its current `--diff-filter=A` command pin, and `npm test` passes.\n\n## Release Note\n\n/claude-tweaks:tidy computes plan-retention routing with a deterministic helper instead of per-plan prose arithmetic, so large plan archives route consistently.\n\n## Technical Approach\n\nModel the CLI on `plugin/bin/residue.js`: a `run(argv, deps)` seam with an injectable `git` runner, exit `0` on any successful (including degraded) render and `2` only on a malformed invocation. Keep the routing decision a pure function in `plugin/bin/lib/plan-retention/` (inputs: retention value, per-plan first-add date or `uncommitted`, today's date, cited set, decline state) so the 7-day boundary, the 30 threshold, and `ask`'s no-cutoff routing unit-test without a repo; the CLI wrapper does the git probing. Route semantics are the ones `scan-procedures.md:53-56` already states — `prune-after-wrapup` → `delete` unchanged, `ask` → `prune-ask` regardless of age (an uncommitted plan stays `keep`), `keep-forever` → `keep` unless 30 or more uncited past-cutoff plans and no live decline, then `prune-archive` for all of them. AC 1's fixture repo backdates commits via `GIT_COMMITTER_DATE`/`GIT_AUTHOR_DATE` in a temp repo.\n\n### Key Files\n\n- `plugin/bin/plan-retention.js` — new CLI\n- `plugin/bin/lib/plan-retention/` — new lib: pure routing function plus the first-add-date probe\n- `tests/bin-lib/plan-retention/` — new unit and fixture-repo tests\n- `plugin/skills/tidy/scan-procedures.md` — Plan retention cites the CLI\n- `tests/tidy-plan-retention-conformance.test.js` — pins the citation; drops the `--diff-filter=A` command pin\n- `docs/plugin-structure.md` — list the new CLI and its lib directory\n\n## Gotchas\n\n- `tests/tidy-plan-retention-conformance.test.js:116` byte-pins the `git -C \"{REPO_ROOT}\" log --diff-filter=A --format=%cs -1 -- {plan}` command and `:117` the 7-day sentence; AC 4 removes the command from prose, so update the test in the same change or the suite goes red.\n- The citation check (`plan-citation-check.md`) is a model-judged step the CLI cannot perform. The \"30 uncited\" recount needs the citation results, so the CLI needs either a two-pass shape (first call reports `citationCheck: true` plus the past-cutoff candidates; a second call takes the cited set and recounts) or a cited-set input. Pick one at build and state it in the prose citation.\n- Decline memory: today a non-null `decline` or a lookup that exits non-zero routes to `keep` (fail closed). Whether the CLI calls `bin/declined-learning.js lookup` itself or takes the decline state as input, preserve that fail-closed direction.\n- The 7-day boundary's exact edge (a plan exactly 7 days old: within or past?) is not stated in today's prose; the unit test fixes it — pick one and state it in the prose so the two cannot drift.\n- `%cs` is the committer date in the commit's own timezone; compare dates, not timestamps, or pin the timezone in tests so the boundary test is not flaky across CI's Node 20 runners and local machines.\n- A new `plugin/bin/*.js` CLI falls under the repo's bin source-scan conformance suites (spawn options, `--no-optional-locks` on git reads, exit-code conformance) — follow the house CLI wrapper contract from the start.\n- #4596 (`ready`, `auto:build`) also edits `plugin/skills/tidy/scan-procedures.md` (a different section — stale-claim checks); expect a rebase if both are in flight.\n\n## Original request\n\ntidy: compute Step 4 plan-retention routing with a deterministic helper\n\nOrigin: reflect hindsight from #4465\n\nDefer-reason: genuinely-larger\n\n## Current State\n\ntidy Step 4's Plan retention (`plugin/skills/tidy/scan-procedures.md`, #4465) asks the model to compute, by hand, per plan: a first-add commit date (`git log --diff-filter=A --format=%cs -1 -- {plan}`), a 7-day cutoff comparison, a pre-check count against 30, a citation check only once that count reaches 30, an uncited recount, and a decline lookup — across what is by construction 30+ plans.\n\nNo `plugin/bin` code computes any of it (probe: `git grep -n -i -e \"plans-retention\\|plan-retention\\|superpowers/plans\" origin/main -- plugin/bin` matches only console prefixes, policy-schema, and unrelated comments). #4465's review returned 22 findings, 12 of them on that one paragraph (density, unstated edges, failure paths, coverage), and its conformance suite can only pin wording, not the arithmetic.\n\nTidy's Step 4.5 already delegates the comparable worktree/residue arithmetic to `bin/residue.js`.\n\n## Deliverables\n\n- A `plugin/bin/plan-retention.js` CLI (lib under `plugin/bin/lib/plan-retention/`) that, given the resolved `superpowers-plans-retention` value and the Step 4 table's would-be-Delete list, prints JSON: each plan's route (`delete` / `keep` / `prune-ask` / `prune-archive`), its first-add date or `uncommitted`, and whether the citation check must run.\n- `scan-procedures.md` Step 4's Plan retention list cites the CLI for the cutoff/threshold arithmetic and keeps only the policy meaning in prose.\n- Unit tests covering the 7-day boundary, the 30 threshold, the uncommitted fail-closed path, and `ask`'s no-cutoff routing.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-retention.js` on a fixture repo with 30 past-cutoff and 1 within-cutoff plan under `keep-forever` routes exactly the 30 to `prune-archive` and the 1 to `keep`.\n- With 29 past-cutoff plans it routes all 29 to `keep` and reports `citationCheck: false`.\n- An uncommitted plan routes to `keep` under both `keep-forever` and `ask`.\n- `scan-procedures.md` Step 4 no longer spells out the `git log --diff-filter=A` date command; it cites the CLI.\n\n## Release Note\n\n/claude-tweaks:tidy computes plan-retention routing with a deterministic helper instead of per-plan prose arithmetic, so large plan archives route consistently.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/scan-procedures.md` — Plan retention cites the CLI\n- `tests/tidy-plan-retention-conformance.test.js` — pins the citation\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T09:51:44Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4594,
-        "state": "OPEN",
-        "title": "tidy: compute Step 4 plan-retention routing with a deterministic helper",
-        "updatedAt": "2026-10-31T06:34:16Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: backend\n\n## Current State\n\nThe multi-spec artifact-overwrite completion check (`plugin/skills/flow/multispec-artifact-namespacing.md`, run before the Consolidated Review Console) calls `plugin/bin/check-artifact-overwrite.js`. It finds every `docs/journeys/` or `stories/` path that one commit in the run added and a later commit modified. A hunk with deletions passes only if one of three extension tests in `plugin/bin/lib/flow/artifact-overwrite-check.js` accepts it: same-spec self-edit, list reflow, or step-markup reformat. Anything else is reported as an overwrite (exit 1), which HARD-GATEs the run.\n\nThe same-spec self-edit test (`artifact-overwrite-check.js:310`, `const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs)`) attributes commits only through a `refs #N` trailer on the commit message (`extractRefs`, `:85`). Most of the pipeline's commit sites (stories, review fix waves, wrap-up) write no such trailer; only `plugin/skills/build/micro-plan.md:66` asks for `refs #{n}`. In a run where neither commit has a trailer, the test can never match. A spec's own review fix to a story or journey file it added earlier in the same run then trips the HARD-GATE as a false positive, and the run stops for a manual ruling. This is the most common legitimate edit of that kind.\n\nThe run already records which spec was running when. Every `spec-status` call appends `{ phase, status, at }` to `specs[].phases[]` in the multi-spec run's `manifest.yml` (`plugin/bin/lib/flow/manifest.js`'s `transitionSpec`, `spec.phases.push({ phase, status, at: nowIso })`), and `startedAt` is set on a spec's first `running` transition. `readManifest(runDir)` is exported from the same module. The check does not read the manifest today.\n\n## Deliverables\n\n- **Manifest-window attribution fallback.** `checkArtifactOverwrite` accepts an optional `manifest` (or `runDir`) input. A commit is attributed to spec ids in this order:\n  1. its own `refs #N` trailer, when present (unchanged);\n  2. otherwise, the single spec whose manifest window contains the commit's author date. A spec's window runs from its first recorded transition (`startedAt`, else its earliest `phases[].at`) up to the next spec's first recorded transition. The last spec's window is open-ended.\n  3. otherwise the commit is unattributed (an empty set, as today).\n\n  The same-spec self-edit test then compares these attributions for the deleting commit and every blamed commit. A commit whose author date falls inside no window, or inside more than one, stays unattributed. The fallback never guesses.\n- **CLI flag.** `plugin/bin/check-artifact-overwrite.js` gains an optional `--run <dir>` flag that reads `manifest.yml` from that directory and passes it through. Without the flag, or with no readable manifest there, behavior stays as it is today, refs-only. An unreadable or unparseable manifest named by `--run` is the walk's own failure (exit 3), never a silent fall back to refs-only.\n- **Distinct unattributable reason.** When a self-edit judgment fails because the deleting commit or a blamed commit has no attribution from either source, the `overwrites[]` entry's `reason` says so explicitly (\"unattributable — no refs trailer and no manifest window\"). It must not reuse the \"refs trailer does not match\" wording, so whoever makes the manual ruling can tell a missing attribution from a confirmed cross-spec deletion. The entry still fails closed: it stays in `overwrites[]`, and the exit code is still 1.\n- **Procedure update.** `plugin/skills/flow/multispec-artifact-namespacing.md`'s invocation passes `--run \"{parent}\"`, the multi-spec parent run directory that holds `manifest.yml`. Its test-1 description names both attribution sources and their order.\n- The module header comment's description of test 1 is updated to match.\n\n## Acceptance Criteria\n\n- [ ] Fixture: spec A adds `stories/x-A.yaml`, and a later commit inside spec A's manifest window changes one of its lines. Neither commit carries a `refs` trailer. With the manifest supplied, the result is `clean: true`.\n- [ ] Fixture: same history, but the modifying commit's author date falls inside spec B's window. The result is still an overwrite: one entry for that path and commit.\n- [ ] Fixture: the same untrailered self-edit with no manifest supplied still reports an overwrite. Its `reason` contains `unattributable`, not `refs trailer does not match`.\n- [ ] Fixture: a commit with a `refs #N` trailer is attributed by the trailer even when its author date falls in a different spec's manifest window (the trailer takes precedence).\n- [ ] Fixture: an author date that falls before every spec's first transition leaves the commit unattributed.\n- [ ] `check-artifact-overwrite.js --run <dir>` with no `manifest.yml` in `<dir>` exits 3, and stderr names the missing manifest.\n- [ ] Each new attribution test goes red when the manifest fallback is removed.\n- [ ] Every existing test in `tests/bin-lib/flow/artifact-overwrite-check.test.js` and `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` still passes unchanged.\n- [ ] `multispec-artifact-namespacing.md`'s command block includes `--run \"{parent}\"`, and `tests/multispec-artifact-namespacing-conformance.test.js` passes.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.\n\n## Technical Approach\n\nAttribution becomes a per-commit function that the existing `getRefs` cache wraps. It tries the trailer first, then the manifest window looked up by the commit's author date (`git log -1 --format=%aI {sha}`, fetched alongside `%B` in the same call so the walk does not add a git call per commit). `selfEdit` keeps its current shape over the attribution sets. Parse the manifest with `manifest.js`'s `parseManifestYaml`/`readManifest` rather than adding a second YAML reader. Window computation is a small pure function over `multispec.specs` (ordered by first transition) so it can be unit-tested without git.\n\nAlternatives the record offered, and why they lose:\n- **Namespace-suffix attribution** (`-{N}` in the filename): this names the file's owner, not the author of the deleting commit. Spec B editing spec A's `-A` file is exactly the overwrite the check exists to catch, so the suffix cannot separate the self-edit from the real overwrite.\n- **Writing `refs #{N}` trailers at every commit site**: the check's stated design (`multispec-artifact-namespacing.md`) is to verify the outcome from git history \"rather than trusting that every present-and-future write path\" follows a convention. A trailer convention spread across build, stories, review, and wrap-up commit sites, including subagent-authored commits, is that kind of trust. It is also incomplete for commits made before the convention lands.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — manifest-window attribution fallback, the unattributable reason string, and the header comment\n- `plugin/bin/check-artifact-overwrite.js` — `--run <dir>` flag, manifest read, and exit 3 on an unreadable manifest\n- `plugin/bin/lib/flow/manifest.js` — read only; reuse `readManifest`/`parseManifestYaml` (no change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — pass `--run \"{parent}\"` and describe the two attribution sources\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — untrailered self-edit, cross-window, trailer-precedence, and out-of-window fixtures\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — `--run` flag and missing-manifest exit 3\n- `tests/multispec-artifact-namespacing-conformance.test.js` — keep passing against the updated command block\n\n## Gotchas\n\n- Use the commit's **author** date, not the committer date. A rebase or cherry-pick rewrites the committer date to the time of the rewrite, which would move a commit out of its spec's window. The author date is preserved.\n- Fixture commits must pin `GIT_AUTHOR_DATE` (and `GIT_COMMITTER_DATE`) explicitly. Commits made seconds apart in a test otherwise all land in one window, and the cross-window fixture would pass for the wrong reason.\n- Manifest windows apply only to a shared-worktree (sequential) multi-spec run. Parallel-wave members build in their own worktrees, so their windows can overlap. The \"more than one window, unattributed\" rule is what keeps an overlap from being read as a self-edit.\n- `#4590` adds two more extension tests (step renumber, reference-preserving `Origin:` line) to the same module and the same procedure doc. It is a sibling change, not a dependency. Whichever lands second rebases its header-comment and doc edits onto the other's.\n\n**Related:** #4590, #3831, #3974, #4353, #4429\n\n## Original request\n\nflow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer\n\n**Summary:** The multi-spec artifact-overwrite completion check reports a spec's own review-fix edit to its own namespaced artifact as a cross-spec overwrite (a HARD-GATE) whenever the run's commits carry no `refs #N` trailer — which the pipeline's own commit sites never write.\n\n**Kind:** Defect\n\n**Affected component:** /claude-tweaks:flow — multi-spec artifact-overwrite completion check (`skills/flow/multispec-artifact-namespacing.md`, `bin/check-artifact-overwrite.js`, `bin/lib/flow/artifact-overwrite-check.js`)\n\n**Repro steps:**\n1. Run a two-spec `/flow` in one shared worktree (specs A then B).\n2. Spec A's `/stories` commit adds a namespaced story file, e.g. `stories/x-A.yaml`.\n3. Spec A's own review fix wave changes one line in that file (two locator strings updated to match a copy change made in the same commit).\n4. None of the run's commits (build, stories, review fix waves) carry a `refs #A` trailer.\n5. At end of run, `check-artifact-overwrite.js --base {EXPECTED_BASE} --path docs/journeys/ --path stories/` runs over the run's range.\n\n**Expected vs. actual:**\nExpected: the edit is recognised as a same-spec self-correction (both commits are spec A's; the manifest phase timestamps put both inside spec A's test/review window, spec B started hours later; the file carries spec A's `-A` namespace suffix), so the check passes.\nActual: exit 1 with one overwrite reported. The \"same-spec self-edit\" test requires the deleting commit and the blamed commit to share the same `refs #{N}` trailer, so it can never match in a run whose commit sites don't write that trailer. The procedure treats this as a HARD-GATE before the consolidated console, so the run stops for a manual ruling on a false positive — the most common legitimate edit shape (a spec correcting its own artifact during review).\n\nSuggested fixes (any of):\n1. When neither commit has a `refs #N` trailer, fall back to spec attribution from the run's `manifest.yml` phase windows (`specs[].phases[].at`), or from the artifact's own `-{N}` namespace suffix (a file namespaced to spec A, modified while spec A is the running spec, is a self-edit).\n2. Have the pipeline's commit sites (build, stories, review fix waves, wrap-up) write a `refs #{N}` trailer in multi-spec runs, so the existing test works.\n3. At minimum, report \"unattributable (no refs trailer)\" as its own verdict instead of an overwrite.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\nRelated (different false-positive shape in the same check): #4590.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-58618f68 -->\n",
         "createdAt": "2026-10-30T09:13:20Z",
         "labels": [
@@ -2362,7 +2500,7 @@
     ],
     [
       {
-        "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md` is about 48 KB. Its Step 5 instructions require the dispatching session to copy each fenced template verbatim and substitute `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}` (eight items, three resolved by CLIs) and `[Use: …]` by hand. One #3903 resume needed three such prompts of about 10 KB each (first call, second call, handoff continuation). Hand substitution let small drift in: context-pack items were condensed rather than copied, and `Selected at:` was written as free text. Nothing checks a dispatched prompt against the template.\n\n## Deliverables\n\n1. A `plugin/bin/` CLI (e.g. `dispatch-prompt.js --call first|second|continuation --run {run-dir} --issues N[,M] [--next-steps …] [--headless]`) that resolves the context pack (plugin root, policy values, profile, Selected-at), fills the template from `task-prompt.md`'s fenced blocks, and prints the finished prompt or writes it to a file.\n2. `task-prompt.md`/`SKILL.md` Step 5 point the dispatching session at the CLI; the fenced blocks stay the single source the CLI reads.\n3. A test that the rendered prompt contains every fixed sentence of its template and no unsubstituted `{…}` placeholder.\n\n## Acceptance Criteria\n\n- [ ] A dispatch firing builds each Task prompt with one CLI call and no manual placeholder substitution.\n- [ ] Editing a sentence in a `task-prompt.md` fenced block changes the CLI's output with no code change.\n- [ ] The test fails when a placeholder is left unsubstituted.\n\n## Release Note\n\nNo user-visible change: dispatched build agents receive prompts generated from the template rather than hand-copied.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/task-prompt.md` — modify\n- `plugin/skills/dispatch/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md` is about 48 KB. Its Step 5 instructions require the dispatching session to copy each fenced template verbatim and substitute `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}` (eight items, three resolved by CLIs) and `[Use: …]` by hand. One #3903 resume needed three such prompts of about 10 KB each (first call, second call, handoff continuation). Hand substitution let small drift in: context-pack items were condensed rather than copied, and `Selected at:` was written as free text. Nothing checks a dispatched prompt against the template.\n\n## Deliverables\n\n1. A `plugin/bin/` CLI (e.g. `dispatch-prompt.js --call first|second|continuation --run {run-dir} --issues N[,M] [--next-steps …] [--headless]`) that resolves the context pack (plugin root, policy values, profile, Selected-at), fills the template from `task-prompt.md`'s fenced blocks, and prints the finished prompt or writes it to a file.\n2. `task-prompt.md`/`SKILL.md` Step 5 point the dispatching session at the CLI; the fenced blocks stay the single source the CLI reads.\n3. A test that the rendered prompt contains every fixed sentence of its template and no unsubstituted `{…}` placeholder.\n\n## Acceptance Criteria\n\n- [ ] A dispatch firing builds each of `task-prompt.md`'s first, second and continuation prompts with one CLI call and no manual placeholder substitution. The express-lane prompt is out of scope (#4735).\n- [ ] A non-zero `dispatch-prompt.js` exit blocks the group: it takes `two-call-gate.md`'s terminal path, and the prompt is never filled by hand.\n- [ ] Editing a sentence in a `task-prompt.md` fenced block changes the CLI's output with no code change.\n- [ ] The test fails when a placeholder is left unsubstituted.\n\n## Decisions\n\nDecided 2026-10-31 on the plan-review questions (issuecomment-6521814313):\n\n1. **CLI failure:** reading A. A non-zero `dispatch-prompt.js` exit blocks the group through `two-call-gate.md`'s terminal path; there is no hand-substitution fallback, since that would reintroduce what AC1 removes.\n2. **Express-lane prompt:** reading B. AC1 covers `task-prompt.md`'s first, second and continuation prompts only; `express-prompt.md` is a follow-up (#4735), since `express-lane` resolves `false` in this repo.\n\n## Release Note\n\nNo user-visible change: dispatched build agents receive prompts generated from the template rather than hand-copied.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/task-prompt.md` — modify\n- `plugin/skills/dispatch/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-10-30T08:37:07Z",
         "labels": [
           {
@@ -2411,7 +2549,7 @@
         "number": 4589,
         "state": "OPEN",
         "title": "Render dispatch Task prompts from a CLI instead of hand-substituting task-prompt.md",
-        "updatedAt": "2026-10-30T11:45:15Z",
+        "updatedAt": "2026-10-31T14:24:25Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -2608,7 +2746,7 @@
     ],
     [
       {
-        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item still actionable (neither applied nor declined) is still listed by both readers.\n- A staged item excluded at the approval prompt, or skipped as `stale — skipped` by re-verify, moves to `staged/declined/` with one `decisions.md` line; neither reader counts it, and `archive-run --local-trail` treats it as resolved.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Staged items `--approve` does not apply: Reading B.** An excluded or stale item is resolved but not applied: it moves to `staged/declined/` and is logged in `decisions.md`. Both readers skip it, and `--local-trail` can archive the run. The listing criterion narrows to items that are still actionable.\n",
+        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item still actionable (neither applied nor declined) is still listed by both readers.\n- A staged item excluded at the approval prompt, or skipped as `stale — skipped` by re-verify, moves to `staged/declined/` with one `decisions.md` line; neither reader counts it, and `archive-run --local-trail` treats it as resolved.\n- A staged item whose Approve rows split resolves per row outcome: at least one row applied and none failed resolves it `applied`, with its excluded or stale rows named on the same `decisions.md` line; every row excluded or stale, in any mix, moves it to `staged/declined/`; any failed row leaves it actionable in `staged/`.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Staged items `--approve` does not apply: Reading B.** An excluded or stale item is resolved but not applied: it moves to `staged/declined/` and is logged in `decisions.md`. Both readers skip it, and `--local-trail` can archive the run. The listing criterion narrows to items that are still actionable.\n- **Staged item whose Approve rows end differently: Reading A.** One landed row with no failed row resolves the item `applied`, naming its excluded or stale rows on the same `decisions.md` line. All rows excluded or stale, in any mix, declines it. A failed row keeps it actionable for a retry. Reading B was rejected because a mixed item would return at every `--approve` with its excluded rows excluded again, the stuck-item problem this record fixes.\n",
         "createdAt": "2026-10-30T05:17:39Z",
         "labels": [
           {
@@ -2657,7 +2795,7 @@
         "number": 4565,
         "state": "OPEN",
         "title": "tidy --approve leaves a forge-only approval run unarchivable, so its applied staged/ keeps raising the unapproved-proposals notice",
-        "updatedAt": "2026-10-31T09:45:28Z",
+        "updatedAt": "2026-10-31T14:24:41Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -2745,6 +2883,84 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: #4367 review/wrap-up (PR #4509), ledger items 7-9; refs #4367\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n#4367 (PR #4509) made `findSection` in `plugin/bin/lib/issues/record-payload.js` match a record section heading only when it starts its own line, with fence tracking (`fencedLineRanges`, column-0 fences). Three other modules still keep their own heading or fence rules:\n\n- `plugin/bin/lib/release-note-repair/apply.js:25`: `FENCE_OPEN` accepts an indented fence opener, while `findSection`'s `fencedLineRanges` is column-0 only. The repair writer and the shape gate can disagree on which lines are fenced. Every observed disagreement ends in a refused repair, not a bad write (tiebreak-confirmed, low).\n- `plugin/bin/lib/issues/near-duplicate.js:121`: `extractCurrentStateAnchors` uses `CURRENT_STATE_HEADING_RE` (h2-h4) with no fence tracking, so a fenced quoted template can supply the anchors (tiebreak-confirmed, info).\n- `plugin/bin/lib/compose-record/compose.js:22`: `splitSections` keeps a third line-anchored `## ` heading rule with no fence tracking.\n\nThe section-heading rule is now defined in four places.\n\n## Deliverables\n\n1. Route all three modules through `findSection`/`extractSection` (or one shared heading-and-fence helper exported beside it), so one rule decides what counts as a heading line and which lines are fenced.\n2. Settle the fence-opener question once (column-0 only, or indented openers too) and apply it in the shared helper, so the repair writer and the shape gate agree.\n3. Add tests showing each of the three callers ignores a heading inside a fenced block and agrees with `findSection` on the same body.\n\n## Acceptance Criteria\n\n- [ ] `release-note-repair/apply.js`, `near-duplicate.js` and `compose-record/compose.js` keep no heading or fence regex of their own; each calls the shared rule.\n- [ ] For a body whose `## Release Note` / `## Current State` heading appears only inside a fenced block, every caller treats it as absent, matching `findSection`.\n- [ ] `apply.js` finds the `## Original request` boundary as the first unfenced line the shared heading reader reads as `Original request`; `materialize-format.js`'s `ORIGINAL_REQUEST_RE` and the shape gate's placeholder boundary (`shapeGate`) go through the same shared rule, so no caller keeps a fence-blind heading regex.\n- [ ] The existing release-note-repair, near-duplicate and compose-record suites pass unchanged, or with a documented expectation change.\n\n## Release Note\n\nNo user-visible change: record section headings are recognized the same way everywhere.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-payload.js` — reference rule (`findSection` / `fencedLineRanges`); export a shared helper if needed\n- `plugin/bin/lib/release-note-repair/apply.js` — modify (`FENCE_OPEN`)\n- `plugin/bin/lib/issues/near-duplicate.js` — modify (`extractCurrentStateAnchors`)\n- `plugin/bin/lib/compose-record/compose.js` — modify (`splitSections`)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **`## Original request` boundary: Reading B.** Deliverable 1 covers it. `apply.js`, `ORIGINAL_REQUEST_RE` and `shapeGate` all move to the shared heading/fence rule in this record, not a follow-up. The resulting change to the materialization shape gate is intended; document it in the PR and pin it with a test for a fenced `## Original request`.\n",
+        "createdAt": "2026-10-30T04:22:57Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4561,
+        "state": "OPEN",
+        "title": "Unify the line-anchored section-heading rule across release-note-repair, near-duplicate and compose-record",
+        "updatedAt": "2026-10-31T13:57:34Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -3028,6 +3244,96 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n**Related:** #3721, #3822, #3873, #3878, #3974, #3975, #3976, #3977, #3982, #4038, #4108, #4118, #4191, #4217, #4289, #4292, #4344, #4353, #4366, #4471, #4531, #4551, #4603, #4610\n\n## Current State\n\nA record's `blocked-by` prerequisite counts as satisfied as soon as the blocking issue is closed. Nothing checks that the blocker's code ever reached the integration branch the dependent run builds from.\n\n- **Multi-spec out-of-run check.** `plugin/skills/flow/multispec-dependency-ordering.md`, section \"Targets with a dependency on a target NOT in the run\", reads: status `complete` → \"fine, dependency satisfied\"; `pending`/`in-progress` → hard fail. A closed issue is `complete`.\n- **`preflight-records.js` data.** `plugin/bin/lib/preflight-records/preflight-records.js` `buildRecords` (lines ~127-147) emits `blockedBy` plus `openBlocker`. Under `work-links: native`, `openBlocker` is `hasOpenNativeBlocker(node)` (`plugin/bin/lib/issues/record-dependencies.js:108`): only `state === 'OPEN'` counts, so a closed blocker reads `false`. Under `work-links: body-text`, `openBlocker` is `null` (\"undetermined by this driver\"), and nothing downstream resolves blocker state mechanically. The query builder `buildNativeDependencyQuery` (`record-dependencies.js:64`) asks only for `number state` per blocker, with no closing-PR or commit data.\n- **Single-record `/flow #N`.** It runs no `blocked-by` check at all. `flow/SKILL.md` Step 2 (2.5-2.9) and `flow/validation.md` hold no prerequisite substep, and `materialize.md`'s reader table lists the `blocked-by` header field only for multi-spec ordering. Dispatched runs are filtered upstream by `dispatch/queue-pull-script.md`'s open-blocker exclusion (`openBlockerIds`, OPEN-state only), which also treats a closed blocker as satisfied.\n- **Merge-state gate.** `plugin/bin/lib/preflight-records/merge-gate.js` is a different check. It covers only *in-run* blockers whose own text demands \"merged to the integration branch\". It does not look at out-of-run blockers or at git reachability.\n\n**Incident (reported against 6.156.1):** a blocker issue was closed by a PR merged into the production branch instead of the configured integration branch. The dependent record's pre-flight reported `openBlocker: null`, and the run built on an integration-branch base without the blocker's code. The gap surfaced only mid-build, when the implementer found the pre-blocker version of a file the spec assumed was already changed.\n\n**Prior art for the reachability primitive:** `plugin/bin/lib/reconcile/archive-merged.js` `localHasMerge` (~line 737) and `plugin/bin/lib/docs-health/commit-ref.js` (~line 148) both classify a commit against the integration ref with `git merge-base --is-ancestor`.\n\n**Probed API surface (2026-10-30, live against this repo):** the GraphQL `Issue` exposes `stateReason`, `timelineItems(itemTypes:[CLOSED_EVENT], last:1)` → `ClosedEvent.closer` (`PullRequest { number merged baseRefName mergeCommit{oid} }` | `Commit { oid }`), and `closedByPullRequestsReferences(first:N, includeClosedPrs:true)`. REST `repos/{o}/{r}/compare/{base}...{sha}` returns `status` (`identical`/`behind` = the sha is an ancestor of base).\n\n## Deliverables\n\n1. **Blocker-landing module.** New `plugin/bin/lib/preflight-records/blocker-landing.js`. It has three parts:\n   - A pure batched, aliased GraphQL query builder. For each blocker number it requests `state`, `stateReason`, the last `ClosedEvent.closer`, and merged `closedByPullRequestsReferences` with `mergeCommit{oid}`.\n   - A pure classifier mapping one blocker node plus a reachability answer to `{ blocker, verdict, commit, via }`. The verdict is one of:\n     - `open`: the blocker is still OPEN.\n     - `landed`: at least one candidate closing commit is reachable from `origin/{integration-branch}`.\n     - `unlanded`: there are candidate commits, but none is reachable.\n     - `not-applicable`: closed with `stateReason` `NOT_PLANNED` or `DUPLICATE`, which carries no code.\n     - `undetermined`: closed `COMPLETED` with no closing PR or commit found, or a reachability probe failed.\n   - An injectable-runner fetch function (`gh-api-module-pattern` seam). It resolves reachability per candidate commit through the REST compare API (`identical`/`behind` → reachable; `ahead`/`diverged` → not; any error → undetermined for that candidate). This means no local `git fetch` and no dependence on the caller's checkout.\n\n   Candidate commits are taken from the `ClosedEvent.closer`: a merged PR's `mergeCommit.oid`, or a `Commit`'s `oid`. When the closer is null (a manual close), they fall back to every merged `closedByPullRequestsReferences` PR's `mergeCommit.oid`.\n2. **`preflight-records.js --blocker-landing`.** A new additive flag on `plugin/bin/preflight-records.js`, paired with the existing `--integration-branch` (default `main`). It runs the module over every record's **out-of-run** blockers: blockers not among the positional numbers, since in-run blockers are built inside the same run. Each record in the envelope gains `blockerLanding: [{blocker, verdict, commit, via}]`. Without the flag, the output is byte-identical to today's. The flag is documented in `--help` and the header comment. Under `--records-json` (no `gh`), every out-of-run closed blocker reads `undetermined`, and one stderr line names why.\n3. **Multi-spec rule.** Update `plugin/skills/flow/multispec-dependency-ordering.md`'s out-of-run section and `plugin/skills/flow/multi-spec.md` Validation step 3's call so that `/flow` passes `--blocker-landing` and applies these rules per out-of-run blocker:\n   - `open` → hard fail (today's `pending` rule, now mechanical).\n   - `unlanded` → hard fail, stopping before Step 2.8 claims anything. The message names the blocker, its closing commit, and `origin/{integration-branch}`. It gives two paste-ready escapes: merge that commit into the integration branch, or remove the `blocked-by` edge.\n   - `landed` / `not-applicable` → satisfied.\n   - `undetermined` → proceed, and write one `SKIP` line per blocker to the run's decision log (`log-decision.js`), naming the reason.\n4. **Single-record pre-flight substep.** Add a new substep to `/flow` Step 2 (`plugin/skills/flow/SKILL.md`'s Step 2 list plus its procedure in `plugin/skills/flow/validation.md`). For one record target, it runs `preflight-records.js {n} --blocker-landing --integration-branch \"$INTEGRATION_BRANCH\"` (`$INTEGRATION_BRANCH` per `_shared/integration-branch.md`) and applies the same per-verdict rules as Deliverable 3. Every blocker of a single-record run is out-of-run, so this is the identical rule. It returns BLOCKED on `open`/`unlanded`, before Step 2.8 claims. For a record with no `blocked-by` edges it makes no extra call. Multi-spec runs keep using Validation step 3's single call and never run this substep a second time.\n5. **`gh`-absent path.** `plugin/skills/flow/multispec-preflight-failure.md` states that under the `--records-json` path, blocker landing is `undetermined`, with the logged `SKIP` that implies.\n6. **Tests** under `tests/bin-lib/preflight-records/`:\n   - Classifier cases for all five verdicts, including:\n     - a closer PR merged into a non-integration base, the incident shape (`unlanded`);\n     - a null closer with a merged `closedByPullRequestsReferences` fallback;\n     - mixed candidates where one is reachable (`landed`);\n     - a compare-API error (`undetermined`).\n   - A CLI test that `--blocker-landing` excludes in-run blockers, and that output without the flag is unchanged.\n\n## Acceptance Criteria\n\n- A fixture reproducing the incident (out-of-run blocker CLOSED/COMPLETED, closer PR merged with base `production`, compare API reporting `diverged` against the integration branch) yields `verdict: 'unlanded'` with that PR's merge commit in `commit`.\n- A closed blocker whose closer PR's merge commit compares `behind` or `identical` against `origin/{integration-branch}` yields `landed`. A blocker closed `NOT_PLANNED` or `DUPLICATE` yields `not-applicable`. A `COMPLETED` blocker with a null closer and no merged closing PR yields `undetermined`.\n- `preflight-records.js 10 11 --blocker-landing --integration-branch dev`, where #11 is blocked by #10 and by out-of-run #5, reports landing for #5 only. #10 is in-run and never appears in `blockerLanding`.\n- `preflight-records.js` output without `--blocker-landing` is byte-identical to the pre-change output on the existing CLI fixtures.\n- `multispec-dependency-ordering.md` names all five verdicts and their outcomes. An `unlanded` out-of-run blocker stops the run before claiming, with a message carrying the blocker number, the commit sha, the integration branch, and both escapes as paste-ready commands.\n- A single-record `/flow #N` whose out-of-run blocker is `unlanded` or `open` stops at the new Step 2 substep, before Step 2.8's claim. A record with no `blocked-by` edges runs the substep as a no-op, with no `preflight-records.js` call.\n- An `undetermined` verdict never stops a run. It writes one `SKIP` decision-log line per blocker.\n- `npm test` passes, including the existing preflight-records and `multispec-preflight-failure-conformance` suites.\n\n## Release Note\n\nStop `/flow` before it builds when a closed blocker's merge never reached the integration branch.\n\n## Technical Approach\n\nKeep the reachability judgment in one pure module beside `merge-gate.js` and `waves.js`, wired through the existing `preflight-records.js` call. That way multi-spec gets it in the call it already makes, and single-record gets it from one new call. The new GraphQL builder is separate from `buildNativeDependencyQuery`, which stays unchanged for its dispatch and wrap-up consumers. It queries the *blockers* (not the dependents), so it works identically under `work-links: native` and `body-text`: blocker numbers come from the existing `blockedBy` field either way.\n\nReachability goes through the REST compare API rather than local `git merge-base --is-ancestor`. The pre-flight runs before any worktree exists and may run from a stale or shallow checkout. Compare answers against the remote integration branch with no fetch and no local state. The archive-merged and commit-ref modules remain the house examples for the three-way reachable / unreachable / unverifiable split, and the classifier mirrors that split (`undetermined` = unverifiable).\n\n\"Landed if any candidate commit is reachable\" is deliberate. A blocker closed by a production hotfix PR and separately merged into `dev` by a second PR must pass. Requiring every candidate to land would block real work.\n\n`unlanded` stops before claiming, because the pre-flight already returns BLOCKED for hard fails and the auto-mode contract permits pre-Manifesto pre-flight stops. A warning-and-continue would reproduce the incident: a full build on a base missing the prerequisite.\n\n### Key Files\n\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — new: query builder, classifier, injectable fetch with compare-API reachability\n- `plugin/bin/lib/preflight-records/preflight-records.js` — out-of-run blocker set; `blockerLanding` per record\n- `plugin/bin/preflight-records.js` — `--blocker-landing` flag, usage, `--help`, header comment, `--records-json` degrade line\n- `plugin/skills/flow/multispec-dependency-ordering.md` — out-of-run rule over the five verdicts\n- `plugin/skills/flow/multi-spec.md` — Validation step 3 call adds `--blocker-landing`\n- `plugin/skills/flow/validation.md` — new single-record blocker-landing substep\n- `plugin/skills/flow/SKILL.md` — Step 2 list names the new substep\n- `plugin/skills/flow/multispec-preflight-failure.md` — `gh`-absent path: landing undetermined\n- `tests/bin-lib/preflight-records/blocker-landing.test.js` — new: classifier and fetch tests\n- `tests/bin-lib/preflight-records/` — CLI flag test (existing suite file for `preflight-records.js`)\n\n## Gotchas\n\n- **Single-record behavior change.** Today `/flow #N` ignores `blocked-by` entirely, so after this change a human-invoked run with an *open* out-of-run blocker stops where it used to build. This matches `flow/SKILL.md`'s own anti-pattern row (\"Running flow on specs with unmet prerequisites\") and multispec-dependency-ordering's \"the dependency check is the same regardless\" rule. Dispatched runs are unaffected, because dispatch's queue already excludes open blockers.\n- **Cherry-picks read `unlanded`.** A blocker fix cherry-picked onto the integration branch has a different sha from the closer PR's merge commit, so it stops the run. The stop message names the commit so a human can confirm, and the remove-the-edge escape covers it.\n- **Manual closes are common here.** Under `pr-first` with an integration branch that differs from GitHub's default, GitHub does not auto-close the issue on merge. A manually closed issue has a null `closer`, and resolves only through a `closedByPullRequestsReferences` link from a closing keyword in the PR body. Without that link the verdict is `undetermined` (proceed + `SKIP`), never a stop.\n- **Compare-API cost.** There is one REST call per candidate commit, and only for closed out-of-run blockers. Records without `blocked-by` edges pay nothing.\n- **Dispatch's queue-pull scope.** Dispatch's queue-pull open-blocker exclusion still treats a closed blocker as satisfied when *selecting* a record. The `/flow` pre-flight is where the landing check binds. A dispatched record with an unlanded blocker is still selected by dispatch, then stopped by `/flow`'s Step 2 substep.\n\n## Original request\n\nflow: a closed blocker is treated as satisfied even when its merge never reached the integration branch\n\n**Summary:** `/claude-tweaks:flow`'s pre-flight treats a `blocked-by` prerequisite as satisfied when the blocking issue is closed, without checking that the blocker's merge commit is reachable from the integration branch.\n\n**Kind:** Gap\n\n**Affected component:** flow — multi-spec pre-flight (`bin/preflight-records.js` `blockedBy` / `openBlocker`) and the single-record blocked-by check\n\n**Use case:** A blocker issue was closed by a PR that (by mistake) merged into the production branch instead of the configured integration branch. The dependent record's pre-flight reported `openBlocker: null` and the run built on an integration-branch base that did not contain the blocker's code. The gap surfaced only mid-build, when the implementer found the pre-blocker version of a file the dependent spec assumed was already changed. A check that the blocker's closing PR's merge commit (or the closing commit) is an ancestor of `origin/{integration-branch}` — and a warning or stop when it is not — would have caught it before claiming.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-3f379c65 -->\n",
+        "createdAt": "2026-10-29T10:42:31Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
+            "name": "enhancement",
+            "description": "New feature or request",
+            "color": "a2eeef"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 4553,
+        "state": "OPEN",
+        "title": "flow: a closed blocker is treated as satisfied even when its merge never reached the integration branch",
+        "updatedAt": "2026-10-31T13:38:23Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: backend\n\nOrigin: /claude-tweaks:feedback (fingerprint feedback-4b5a475f)\n\nDefer-reason: tangential\n\n**Related:** #2251, #3706, #3878, #3963, #4108, #4252, #4467\n\n## Current State\n\nFor a bundle, `plugin/bin/lib/compose-subject.js` titles the squash commit after the lowest-numbered record only (`subjectRecord = records[0]`, passed as `title` to `composeSubject`). A six-record bundle squash was titled after one record's change, so `git log --oneline` on the integration branch gave a misleading account of the merge. The composer has no flag for supplying a subject, so the reporter hand-wrote both the subject and the body, losing the composer's `Fixes` and Release-Note handling.\n\n`plugin/bin/lib/release/subject.js`'s `composeSubject` builds `{type}[(scope)][!]: {title} (#{n})` within a 72-character budget. It truncates the title and never cuts the suffix.\n\n**Decision (human-approved 2026-10-30):** a caller-supplied theme, plus an honest fallback.\n\n- The composer cannot derive a theme: finding what six records have in common needs judgement. The agent running the merge has just built them, so it can supply one.\n- A bundle with no theme still says it covers more than its title, so a missed flag cannot silently mislead.\n- The subject does **not** list every record number, as the record's use case suggested. Six numbers take about 45 of the 72 characters, and every number is already in the `Fixes` footer. The `(#N)` suffix stays one record number, keeping the shape that `plugin/skills/release/console.md:20` and release-please read.\n\n## Deliverables\n\n1. `compose-subject.js` accepts `--subject \"<theme>\"`, which replaces only the title text. The type prefix, scope, breaking marker, 72-character budget, `(#N)` suffix and the whole body are composed as today.\n2. `--subject` with a single-record call, or with an empty value or a value containing a newline, is a usage error: non-zero exit and nothing printed to the title or body. The flag means \"this is a bundle's theme\".\n3. A bundle with no `--subject` gets the lowest record's title plus ` (+{k} more)`, where `k` is the other records in the bundle. The marker sits inside the budget and is never truncated away: the title is cut before it.\n4. A single-record merge with no flag composes a byte-identical title and body to today.\n5. The bundle merge sites pass `--subject`, with a one-line theme the running agent composes: `plugin/skills/_shared/pr-first-merge.md` (both fences), `plugin/skills/flow/worktree-merge.md` and `plugin/skills/dispatch/settle-and-merge.md`. A site whose list holds one record omits the flag.\n6. Update the usage text and header comment in `compose-subject.js`.\n\n## Acceptance Criteria\n\n1. `compose-subject.js 10,11,12 --subject \"Harden the bundle path\"` titles `{type}: Harden the bundle path (#10)`, and its body carries `Fixes #10`, `Fixes #11` and `Fixes #12` plus the Release-Note paragraph.\n2. A theme longer than the budget truncates by the existing rule and keeps the `(#10)` suffix.\n3. `compose-subject.js 10,11,12` with no flag titles `{type}: {lowest title} (+2 more) (#10)`. With a title long enough to truncate, the result is at most 72 characters and still contains `(+2 more) (#10)`.\n4. `compose-subject.js 10` output equals today's for the same fixture, compared byte for byte in a test.\n5. `compose-subject.js 10 --subject \"x\"`, `--subject \"\"` and a value with a newline each exit non-zero and compose nothing.\n6. A prose test pins that the listed merge fences pass `--subject` for a bundle. `tests/merge-subject-composer-conformance.test.js` passes, updated where it pins these fences.\n7. Revert the `--subject` branch and the fallback in turn, and show which new test fails for each.\n8. `npm test` passes.\n\n## Release Note\n\nA merge that ships several records now gets a commit subject describing the whole bundle, not just its lowest-numbered record.\n\n## Technical Approach\n\nAdd a `subject` option in `compose-subject.js`'s argument parsing and pass the theme as `title`. For the fallback, add a marker parameter to `composeSubject` that `truncateHead` treats as part of the protected suffix length, so it cannot be cut. `composeSubject` stays pure.\n\n### Key Files\n\n- `plugin/bin/lib/compose-subject.js` — the flag, its validation, usage text and title choice\n- `plugin/bin/lib/release/subject.js` — the protected `(+k more)` marker\n- `plugin/skills/_shared/pr-first-merge.md` — both compose fences\n- `plugin/skills/flow/worktree-merge.md` — the compose fence\n- `plugin/skills/dispatch/settle-and-merge.md` — the compose fence\n- `tests/bin-lib/compose-subject.test.js` — flag, fallback and byte-identical cases\n- `tests/merge-subject-composer-conformance.test.js` — fence pins\n\n## Gotchas\n\n- The summary paragraph and Release Note still come from the lowest record. Bundle reporting in the release console and changelog is a separate record, filed alongside this one.\n- `_shared/pr-first-merge.md`'s fences are also reached from `tidy`'s Step 7.5, whose list may hold one record or several. Pass `--subject` only for several.\n- `--keep-open` numbers still count as bundle members for `k`.\n\n## Original request\n\n**Summary:** For a bundle, `compose-subject.js` titles the squash commit after the lowest-numbered record only (\"the subject record is the lowest number\"). A six-record bundle squash was titled after one record's change, so `git log --oneline` on the integration branch gave a misleading account of the merge.\n\n**Kind:** Gap\n\n**Affected component:** `bin/compose-subject.js` / `bin/lib/compose-subject.js` (bundle subject)\n\n**Use case:** A multi-spec `/claude-tweaks:flow` run ships six related records in one PR. I wanted the squash subject to describe the bundle, e.g. one short theme plus every record number. The composer names one record, and has no flag for supplying a bundle subject while keeping its `Fixes`/Release-Note body, so I hand-wrote both the subject and the body.\n\n**Definition:** Needed — open choice between composing an aggregate subject automatically (theme plus all numbers) and accepting a caller-supplied `--subject` while the composer still writes the body.\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-4b5a475f -->\n",
         "createdAt": "2026-10-29T10:22:09Z",
         "labels": [
@@ -3179,7 +3485,7 @@
         "number": 4551,
         "state": "OPEN",
         "title": "wrap-up engine-verify: acceptance-labeling finds parents only through native sub-issue links, ignoring work-links: body-text Parent lines",
-        "updatedAt": "2026-10-31T06:34:55Z",
+        "updatedAt": "2026-10-31T13:52:55Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3269,7 +3575,7 @@
         "number": 4548,
         "state": "OPEN",
         "title": "build: dispatch rules forbid git stash but not image-name process kills — a subagent killed every node process on the machine",
-        "updatedAt": "2026-10-31T06:34:59Z",
+        "updatedAt": "2026-10-31T14:09:52Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -4143,96 +4449,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #4265, #4269, #4423\n\n## Current State\n\nClaims live as `claims/issue-<n>.json` blobs on the `claims-registry` branch (`plugin/bin/lib/issues/claims.js:13`, `_shared/issue-claims.md`). Nothing creates that branch. A repository whose remote never had it fails its first claim.\n\nObserved on 6.156.1: the first `/claude-tweaks:flow #N` on a repository with no `claims-registry` branch on origin had `claim-targets.js` (flow Step 2.8) exit 3, \"contested\", with `holder: null`. No other run held the record, so the operator went looking for a competing run that did not exist. The workaround was creating `claims-registry` on the remote by hand from the default branch, after which the claim succeeded (exit 0). Every repository hits this on its first flow run.\n\nWhat the code does with a missing branch:\n\n- The git transport's read (`plugin/bin/lib/issues/claims-git-cas.js:120-131`) runs `git fetch -q origin claims-registry:<scratch>`. For a missing remote ref that fails, and the catch maps it to `failure: 'transport-failure'`. `classifyGitError` (`:72-84`) has no \"couldn't find remote ref\" case.\n- The contents-API path (`plugin/bin/lib/issues/claim-store.js`) treats a 404 as \"absent\" (`:141`, `:261`). On a missing branch, a read of `claims/issue-<n>.json?ref=claims-registry` therefore reads as \"no claim yet\", and the write that follows is refused.\n- How that refused write becomes exit 3 with `holder: null` still needs tracing through `claim-targets.js`'s outcome mapping. Most likely a failed write with no readable holder is reported as contested.\n\n## Deliverables\n\n1. Detect \"the `claims-registry` branch does not exist on the remote\" as its own outcome on both transports. Git: `git ls-remote --heads origin claims-registry` is empty, or the fetch error names a missing remote ref. Contents API: `GET repos/{owner}/{repo}/branches/claims-registry` returns 404. Never fold it into `contested` or a generic transport failure.\n2. On that outcome, bootstrap the branch once, then retry the claim. Create `claims-registry` from the default branch's tip (the same base the manual workaround used), CAS-guarded: a create that loses to a concurrent bootstrap (ref already exists) is treated as success and the claim proceeds against the now-existing branch.\n3. If the bootstrap itself fails (permissions, protected-ref rule), exit with a dedicated code and message, not 3: `claims-registry branch missing on origin and could not be created: {reason} — create it from the default branch`. Document the new exit code in `claim-targets.js`'s header and in `_shared/issue-claims.md`.\n\n## Acceptance Criteria\n\n- Against a fixture remote with no `claims-registry` branch, `claim-targets.js --targets N` creates the branch and exits 0 with the claim recorded, on both transports.\n- Two concurrent first claims (different records) against a branchless remote both succeed. Exactly one branch creation wins and neither run reports contested.\n- When branch creation is refused (simulated permission error), the CLI exits with the new dedicated code and the message names the missing branch. It never exits 3.\n- A genuinely contested claim (a live holder) still exits 3 with that holder named.\n- Tests cover all four cases with fake runners for `claims-git-cas.js`/`claim-store.js`. `release-claim.js` against a branchless remote reports \"nothing to release\", not an error.\n\n## Release Note\n\nThe first pipeline run in a new repository no longer reports a false \"someone else is building this\" claim conflict. The claim branch is now created automatically.\n\n## Technical Approach\n\nThe reporter offered two fixes: auto-create the branch, or exit with a dedicated code. Both are kept, as a ladder. Bootstrapping removes the first-run friction for every repository, and the dedicated code covers the case where creation is not permitted. An orphan branch was considered and rejected: the manual workaround and any existing tooling expect a default-branch-based ref, and an orphan root commit would surprise `git log` readers. Keep the bootstrap in one shared helper both transports call, next to the existing CAS core.\n\n### Key Files\n\n- `plugin/bin/lib/issues/claims-git-cas.js` — missing-ref classification and git bootstrap\n- `plugin/bin/lib/issues/claim-store.js` — contents-API missing-branch detection and bootstrap\n- `plugin/bin/claim-targets.js` — outcome mapping and the new exit code\n- `plugin/bin/release-claim.js` — branchless remote reads as nothing to release\n- `plugin/skills/_shared/issue-claims.md` — document bootstrap and the new exit code\n\n## Gotchas\n\n- Callers interpret `claim-targets.js` exit codes (3 and 5 at least: flow Step 2.8, dispatch, specify's drain). Pick an unused code and grep every caller's exit-code handling before adding it.\n- A branch-protection ruleset on `claims-registry`'s name pattern could block creation but allow later pushes. Surface the reason verbatim rather than retrying.\n\n## Original request\n\nclaim-targets: a missing claims-registry branch is reported as a contested claim (holder null)\n\n**Summary:** On a repo that never used the git claim transport, the first claim exits 3 (contested, holder null) because the `claims-registry` branch does not exist yet.\n\n**Kind:** Defect\n\n**Affected component:** `bin/claim-targets.js` (flow Step 2.8, git claim transport)\n\n**Repro steps:**\n1. In a repository whose remote has no `claims-registry` branch, run `/claude-tweaks:flow #N`.\n2. Step 2.8 runs `claim-targets.js`.\n\n**Expected vs. actual:**\nExpected: the first claim bootstraps the `claims-registry` branch, or the script reports a distinct, actionable error (\"claims-registry branch missing on origin; create it from the default branch\").\nActual: `claim-targets.js` exits 3 (\"contested\") with `holder: null`. No other run holds the record, so the operator goes looking for a competing run that doesn't exist.\n\n**Workaround used:** creating `claims-registry` on the remote by hand from the default branch, then re-running the claim (exit 0).\n\n**Why it matters:** every repo hits this on its first flow run, so the plugin's first impression is a false \"someone else is building this\".\n\n**Suggested fix:** in the git transport, distinguish \"ref not found\" from \"ref exists and holds a live claim\". On the former, either create the branch (an orphan or default-branch-based ref, CAS-guarded like other claim writes) or exit with a dedicated code and message.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-1a0df6a4 -->\n\n## Decisions\n\n- **`claim-targets.js` exit 6 is a pre-flight stop** (plan-review Reading A, decided 2026-10-31). Exit 6 means the `claims-registry` branch is missing on origin and could not be created. Add it to Settle's claim-contest special case in `plugin/skills/dispatch/settle-and-merge.md`, next to \"Claim contested\" and \"Claim in-flight\", with its own failing-check name (e.g. `flow-step-2.8-claims-branch-missing`). It counts no attempt against `dispatch-retry-ceiling` and posts no failure comment. Under `DISPATCH_HEADLESS=1` the headless self-report dedups repeat firings.\n",
-        "createdAt": "2026-10-28T06:59:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4495,
-        "state": "OPEN",
-        "title": "claim-targets: a missing claims-registry branch is reported as a contested claim (holder null)",
-        "updatedAt": "2026-10-31T13:21:06Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -13396,12 +13612,6 @@
       "number": 4494,
       "blockedBy": [
         4492
-      ]
-    },
-    {
-      "number": 4673,
-      "blockedBy": [
-        4588
       ]
     },
     {
