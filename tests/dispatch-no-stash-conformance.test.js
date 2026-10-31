@@ -521,7 +521,7 @@ test('AC8: docs/hooks.md names drop and clear as warned stash subcommands and ne
 
 test('AC8: reverting the stash-gate bullet to the old read-only wording goes red', () => {
   const reverted = STASH_GATE_BULLET.replace(
-    /\(`list`, `show`, `apply`\)/,
+    /\(`list`, `show`, `apply`(?:, `create`, `export`)?\)/,
     '(`list`, `show`, `apply`, `drop` and `clear` are read-only)',
   );
   assert.notStrictEqual(reverted, STASH_GATE_BULLET, 'the revert anchor matched nothing');
