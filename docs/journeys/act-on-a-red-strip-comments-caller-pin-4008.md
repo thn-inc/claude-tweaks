@@ -53,4 +53,5 @@ files:
 ## Origin
 - Created during build of #4008. That build added `tests/strip-comments-callers-twin.test.js` and rewrote both caller lists from the eight scans the record named to the eleven callers the tree actually had: the eight plus `raw-markdown-read`, `hooks-harness-refusal` and `backfill-cli`.
 - Updated during build of #3903. The stripper's code moved to `plugin/bin/lib/strip-comments.js`, and `tests/helpers/strip-comments.js` became a re-export that still holds the caller list. Step 1 now warns that a scan requiring the code directly is invisible to this pin.
+- Updated during build of #4648. `stripperVerdict` and `STRIPPER_VERDICT_MESSAGES` moved out of the shipped `plugin/bin/lib/strip-comments.js` into `tests/helpers/strip-comments.js`, so a scan that requires the lib directly also gets no compile oracle. Step 1's import advice now names both roles of the helper.
 - Related: `act-on-a-red-path-guard-lint-3417.md`, `act-on-a-red-path-containment-scan-3498.md` and `act-on-a-red-wall-clock-budget-scan-3491.md` (scans that call the stripper).
