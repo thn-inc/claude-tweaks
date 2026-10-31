@@ -195,5 +195,60 @@ const SITES = [
     'integration-branch binding': '`{base-branch}` = `{integration-branch}`',
     're-stamp output logged': 'log its output line to `decisions.md`',
   } },
+  { label: 'settle-and-merge.md', file: 'plugin/skills/dispatch/settle-and-merge.md', deltas: {
+    'two-issue composer call': '`{issues}` = `{issue} {second-issue}`',
+    'tag auto-merge': '`{tag}` = `auto-merge`',
+    'integration-branch resolution': 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch',
+    'remote-show fallback': "git remote show origin | sed -n '/HEAD branch/s/.*: //p'",
+    'group worktree': '`{worktree-path}` = `{group-worktree}`',
+    're-stamp output logged': 'log any other line it prints to `{run-dir}/decisions.md`',
+  } },
+  { label: 'worktree-merge.md', file: 'plugin/skills/flow/worktree-merge.md', deltas: {
+    'no tag': '`{tag}` — none: drop `--tag {tag}`',
+    'two-issue composer call': '`{issues}` = `{issue} {second-issue}`',
+    'no-record branch': "A branch with no record drops the sequence's composer line",
+    'push once': '6. **Push the base branch once',
+    'owner-preserving re-protect': 'env -u CLAUDE_CODE_SESSION_ID node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree-path}"',
+  } },
 ];
 for (const site of SITES) siteTests(site);
+
+test("worktree-merge.md: a composer failure skips the branch and continues (AC3)", () => {
+  const SKIP = 'skip this branch, and continue with the next one';
+  const bullet = (t) => t.split('\n').find((l) => l.trimStart().startsWith('- **The composer failed**'));
+  const live = read('plugin/skills/flow/worktree-merge.md');
+  assert.ok(bullet(live), 'composer-failed bullet missing');
+  assert.ok(bullet(live).includes(SKIP));
+  const doctored = live.replace(SKIP, 'stop the reconciliation');
+  assert.notEqual(doctored, live);
+  assert.ok(!bullet(doctored).includes(SKIP), 'go-red: an aborting composer bullet must fail');
+});
+
+// Roster, both directions: every plugin/skills file citing the sequence is a SITES entry or a MENTIONS
+// entry (a file that names the sequence without running it), and every entry still cites it.
+// Task 4 adds the two mention-only files its sweep creates; an entry that stops citing fails with "shrink the list".
+const MENTIONS = new Map();
+function citers(root) {
+  const out = [];
+  const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+    const p = path.join(d, e.name);
+    if (e.isDirectory()) walk(p); else if (e.name.endsWith('.md') && collapse(readText(p)).includes(CITATION)) out.push(path.relative(ROOT, p).split(path.sep).join('/'));
+  } };
+  walk(root);
+  return out.sort();
+}
+test('the SITES roster is exactly the files citing the sequence', () => {
+  assert.equal(SITES.length, 4);
+  assert.deepEqual(citers(path.join(ROOT, 'plugin/skills')).filter((f) => f !== SEQUENCE && !MENTIONS.has(f)), SITES.map((s) => s.file).sort());
+  for (const m of MENTIONS.keys()) assert.ok(collapse(read(m)).includes(CITATION), `stale MENTIONS entry ${m}: shrink the list`);
+  // go-red: a stray citing file under a scratch tree is found by the walk.
+  const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'lms-roster-'));
+  try {
+    fs.mkdirSync(path.join(tmp, 'sub'));
+    fs.writeFileSync(path.join(tmp, 'sub', 'stray.md'), `cites ${CITATION}\n`);
+    fs.writeFileSync(path.join(tmp, 'sub', 'other.md'), 'cites nothing\n');
+    const found = citers(tmp);
+    assert.equal(found.length, 1, 'go-red: the walk must find exactly the one stray citer');
+    assert.ok(found[0].endsWith('stray.md'));
+  } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});

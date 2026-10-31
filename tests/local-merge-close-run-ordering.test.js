@@ -7,7 +7,7 @@
 // #3809 extends this to the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's
 // run closes only after that branch's own pre-merge checks.
 //
-// One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
+// SITES holds the one procedure, _shared/local-merge-sequence.md (#4073); CITING_SITES holds its callers' read-order anchors. Live-corpus read (skill-prose-conformance-tests:
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
 // behavior matters. Go-red proof [IL-105]: the ordering check also runs against a frozen pre-change
 // excerpt. Whitespace collapsed on haystack and needle [IL-66].
@@ -42,37 +42,6 @@ fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 // `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps. `preservesOwner`:
 // the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
 const SITES = [
-  {
-    label: 'settle-and-merge.md',
-    file: 'plugin/skills/dispatch/settle-and-merge.md',
-    readsWorktree: false,
-    logNeedle: 'log any other line',
-    worktreeVar: 'group-worktree',
-    vars: {
-      'integration-branch': 'main',
-      branch: 'feat',
-      issue: '1',
-      'second-issue': '2',
-      'subject-dir': posix(SUBJECT_DIR),
-      'group-worktree': posix(WORKTREE),
-    },
-  },
-  {
-    label: 'worktree-merge.md',
-    file: 'plugin/skills/flow/worktree-merge.md',
-    readsWorktree: true,
-    preservesOwner: true,
-    logNeedle: 'log any other line',
-    worktreeVar: 'worktree-path',
-    vars: {
-      'base-branch': 'main',
-      branch: 'feat',
-      issue: '1',
-      'second-issue': '2',
-      'subject-dir': posix(SUBJECT_DIR),
-      'worktree-path': posix(WORKTREE),
-    },
-  },
   {
     label: 'local-merge-sequence.md',
     file: 'plugin/skills/_shared/local-merge-sequence.md',
@@ -273,6 +242,28 @@ function assertKeepsOwner(fence, site) {
   assert.strictEqual(ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
 }
 
+// Run the re-protect fence against a closed run and assert it restores the worktree assignment and `active`.
+function assertReprotectRestores(fence, vars, worktreeVar) {
+  const { dir, run } = tmpProject();
+  const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
+    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+  });
+  const wt = vars[worktreeVar];
+  assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
+  hook('record-worktree', '--run', run, wt);
+  hook('close-run', '--run', run);
+  let state = readRunState(run);
+  assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
+  assert.strictEqual(state.status, 'clean');
+
+  const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars: { ...vars, 'run-dir': posix(run) } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /worktree recorded for/);
+  state = readRunState(run);
+  assert.strictEqual(state.worktree, path.resolve(wt));
+  assert.strictEqual(state.status, 'active');
+}
+
 for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
   const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
@@ -352,24 +343,7 @@ for (const site of SITES) {
 
   test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
     const fence = extractFence(raw, REPROTECT_NEEDLE);
-    const { dir, run } = tmpProject();
-    const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
-      cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
-    });
-    const wt = vars[worktreeVar];
-    assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
-    hook('record-worktree', '--run', run, wt);
-    hook('close-run', '--run', run);
-    let state = readRunState(run);
-    assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
-    assert.strictEqual(state.status, 'clean');
-
-    const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars: { ...vars, 'run-dir': posix(run) } });
-    assert.strictEqual(r.code, 0, r.stderr);
-    assert.match(r.stdout, /worktree recorded for/);
-    state = readRunState(run);
-    assert.strictEqual(state.worktree, path.resolve(wt));
-    assert.strictEqual(state.status, 'active');
+    assertReprotectRestores(fence, vars, worktreeVar);
 
     if (site.preservesOwner) {
       assertKeepsOwner(fence, site);
@@ -394,6 +368,8 @@ for (const site of SITES) {
 const CITING_SITES = [
   { label: 'local-merge-auto-finish.md', file: 'plugin/skills/_shared/local-merge-auto-finish.md', readsWorktree: true, closeAnchor: '4. **Close the run**' },
   { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', readsWorktree: true, closeAnchor: "Run the sequence's Steps 1-4 in order" },
+  { label: 'settle-and-merge.md', file: 'plugin/skills/dispatch/settle-and-merge.md', readsWorktree: false, closeAnchor: "Run the sequence's Steps 1-4 in order" },
+  { label: 'worktree-merge.md', file: 'plugin/skills/flow/worktree-merge.md', readsWorktree: true, closeAnchor: "3. **Close this branch's run" },
 ];
 function siteReadOrder(text, { readsWorktree, closeAnchor }) {
   const flat = collapse(text);
@@ -419,6 +395,18 @@ for (const site of CITING_SITES) {
     }
   });
 }
+
+test("worktree-merge.md: its owner-preserving re-protect fence restores the run and keeps its owner", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  const fence = extractFence(live, REPROTECT_NEEDLE);
+  const site = { vars: { 'worktree-path': posix(WORKTREE) }, worktreeVar: 'worktree-path' };
+  assertReprotectRestores(fence, site.vars, site.worktreeVar);
+  assertKeepsOwner(fence, site);
+  assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
+  const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
+  assert.notStrictEqual(mutated, fence);
+  assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
+});
 
 const KEEPS_RUN = 'keeps its worktree assignment and `active` status';
 function skipAbortKeepsRun(text) {
@@ -497,8 +485,9 @@ test("AC2.1: worktree-merge.md's Skip bullet says a predicted conflict never clo
 // AC3's log call takes its text from a file: the branch name and the hook's output never pass through shell quoting.
 function logFenceErrors(text) {
   const flat = collapse(text);
-  const at = fenceIndex(text, REPROTECT_NEEDLE, fenceIndex(text, MERGE_NEEDLE));
-  const fence = fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
+  const at = fenceIndex(text, REPROTECT_NEEDLE);
+  if (at < 0) return ['no re-protect fence'];
+  const fence =fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
   if (!fence) return ['no log-decision.js fence after the re-protect fence'];
   const errors = [];
   if (!fence.includes('--text-file "{text-file}"')) errors.push('the log fence does not read its text from {text-file}');
