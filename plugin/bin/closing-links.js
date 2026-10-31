@@ -33,11 +33,25 @@
 // messageUnread: true when the merge message could not be read; closingSet is
 // the same-repo closing records minus reopened, failed and pendingClose --
 // Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
-// with the worst outcome as the action: reopen-failed > close-pending >
-// reopened > nothing-closed; or not-merged (carries state) | no-fixes-span |
-// no-pr | gh-absent. Callers report failed[] and pendingClose[] whatever the
-// action. A `logFailed: true` key means a decisions.md line could not be
-// appended; the PR/issue work still landed.
+// with the worst outcome as the action: reopen-failed > close-failed >
+// base-unchecked > close-pending > reopened > closed > nothing-closed; or
+// not-merged (carries state) | no-fixes-span | no-pr | gh-absent. Callers
+// report failed[], closeFailed[] and pendingClose[] whatever the action. A
+// `logFailed: true` key means a decisions.md line could not be appended; the
+// PR/issue work still landed.
+//
+// GitHub acts on closing keywords only for a merge into the repo's default
+// branch (#4549). The PR's baseRefName is compared with the default branch
+// (`gh repo view {host}/{owner}/{repo}`, the PR's own host). On a different
+// base nothing the merge carries can close, so there is no will-close polling
+// and no pendingClose, and the CLI closes each still-open `Fixes` record itself
+// (`issue close --reason completed`, logged AUTO): the envelope adds
+// nonDefaultBase: true, closed[] and closeFailed[] ({issue, error, stage?};
+// stage 'read' for a failed state read), and closingSet is closed[] plus the
+// Fixes records read already CLOSED, never a closeFailed one. A base or default
+// branch that cannot be read closes nothing: the envelope adds
+// baseUnchecked: true and omits closingSet. The default base keeps the
+// envelope above unchanged.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
@@ -70,10 +84,10 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
-  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
+  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read); on a base other than the default branch, closes each still-open Fixes record itself\n'
   + '  prints one JSON line; action:\n'
   + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
-  + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
+  + '    post-merge (worst wins): reopen-failed > close-failed > base-unchecked > close-pending > reopened > closed > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
   + '  exit 0 done or status-as-data\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
@@ -228,7 +242,7 @@ function run(argv, overrides = {}) {
   // array, is a read failure -- never an empty answer that licenses a write.
   const fields = o.mode === 'pre-merge'
     ? 'body,closingIssuesReferences,url'
-    : 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit';
+    : 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName';
   let pr;
   try {
     pr = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', fields]));
@@ -320,7 +334,28 @@ function run(argv, overrides = {}) {
   const messageCloses = findClosingRefs(message, scope).map((r) => r.number);
   const candidates = uniqueSorted([...linked, ...keepOpen].filter((x) => !expected.includes(x)));
   const closers = new Set([...linked, ...messageCloses]);
-  const willClose = messageUnread ? candidates : candidates.filter((x) => closers.has(x));
+
+  // 7b'. GitHub acts on closing keywords only for a merge into the repo's
+  // default branch (#4549). Which branch this one landed on is read before the
+  // reopen loop, because a merge elsewhere closes nothing: no will-close
+  // polling, no pendingClose. The default branch comes from `gh repo view` for
+  // the PR's own host (a GitHub Enterprise Cloud PR must not resolve against
+  // github.com). A base or default branch that cannot be read is unchecked,
+  // never assumed non-default.
+  const base = typeof pr.baseRefName === 'string' && pr.baseRefName.trim() ? pr.baseRefName.trim() : null;
+  let defaultBranch = null;
+  let uncheckedReason = 'the PR view carried no base branch';
+  if (base) {
+    try {
+      defaultBranch = String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
+      if (!defaultBranch) uncheckedReason = 'the repository returned no default branch';
+    } catch (e) {
+      uncheckedReason = `the default branch could not be read: ${errText(e)}`;
+    }
+  }
+  const baseUnchecked = !base || !defaultBranch;
+  const nonDefaultBase = !baseUnchecked && base !== defaultBranch;
+  const willClose = nonDefaultBase ? [] : (messageUnread ? candidates : candidates.filter((x) => closers.has(x)));
 
   // 8b. Per candidate: read, re-read while a will-close one still reads OPEN
   // (bounded by re-read count, never by the clock), reopen what closed at or
@@ -369,21 +404,67 @@ function run(argv, overrides = {}) {
   for (const issue of pendingClose) {
     degraded(`#${issue} still open ${windowSeconds}s after PR #${n} merged though the merge may close it`, 're-run --mode post-merge, or reopen it by hand if it closes');
   }
+  // 9b. The merge landed outside the default branch: its Fixes records stay
+  // open, so close each one still open (#4549). Records already CLOSED are left
+  // alone and count as closed; a failed read or close is reported, never
+  // counted. An unchecked base closes nothing.
+  const closed = []; const closeFailed = []; const alreadyClosed = [];
+  if (nonDefaultBase) {
+    for (const issue of uniqueSorted(expected)) {
+      let state;
+      try {
+        state = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
+        if (!state || typeof state.state !== 'string') throw new Error('no state field');
+      } catch (e) {
+        closeFailed.push({ issue, error: errText(e), stage: 'read' });
+        continue;
+      }
+      if (state.state !== 'OPEN') { alreadyClosed.push(issue); continue; }
+      try {
+        deps.gh(['issue', 'close', String(issue), '--reason', 'completed', '--comment',
+          `Closed by claude-tweaks: PR #${n} merged into ${base}, which is not the default branch, so GitHub does not act on its closing keywords.`]);
+        closed.push(issue);
+      } catch (e) {
+        closeFailed.push({ issue, error: errText(e) });
+      }
+    }
+    for (const issue of closed) {
+      log(`closed #${issue} after PR #${n} merged into ${base} (not the default branch ${defaultBranch}; GitHub does not act on closing keywords there)`, 'high (gh issue reopen)');
+    }
+    for (const f of closeFailed) {
+      if (f.stage === 'read') degraded(`could not read #${f.issue} after PR #${n} merged into ${base} (${f.error})`, 'check it and close it by hand if it is still open');
+      else degraded(`could not close #${f.issue} after PR #${n} merged into ${base} (${f.error})`, 'close it by hand');
+    }
+  } else if (baseUnchecked) {
+    degraded(`could not tell whether PR #${n} merged into the default branch (${uncheckedReason})`,
+      expected.length
+        ? `Fixes records #${uniqueSorted(expected).join(', #')} not checked — close any still open by hand if the base is not the default branch`
+        : 'the PR names no Fixes records, so there is nothing to close by hand');
+  }
+
   // Worst outcome wins: a reopen never hides a failure or a pending close.
   let action = 'nothing-closed';
   if (failed.length) action = 'reopen-failed';
+  else if (closeFailed.length) action = 'close-failed';
+  else if (baseUnchecked) action = 'base-unchecked';
   else if (pendingClose.length) action = 'close-pending';
   else if (reopened.length) action = 'reopened';
+  else if (closed.length) action = 'closed';
 
   // The same-repo records the merge closing links name: `linked` minus whatever the
   // guard reopened, could not settle, or has yet to see close. A Fixes-block record
   // is never read, and a record closed before the merge stays in -- both count as closed.
+  // On a non-default base the merge closes nothing itself: the set is what this pass
+  // closed plus the Fixes records it found already closed. Unchecked, there is no set.
   const unsettled = new Set([...reopened, ...pendingClose, ...failed.map((f) => f.issue)]);
-  const closingSet = linked.filter((x) => !unsettled.has(x));
+  const closingSet = nonDefaultBase ? uniqueSorted([...closed, ...alreadyClosed]) : linked.filter((x) => !unsettled.has(x));
 
   return done({
-    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore, closingSet,
+    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore,
+    ...(baseUnchecked ? {} : { closingSet }),
     ...(messageUnread ? { messageUnread: true } : {}),
+    ...(nonDefaultBase ? { nonDefaultBase: true, closed, closeFailed } : {}),
+    ...(baseUnchecked ? { baseUnchecked: true } : {}),
   });
 }
 
