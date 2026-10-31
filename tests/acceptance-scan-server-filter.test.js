@@ -561,8 +561,7 @@ test('the acceptance-queue lists records carrying either pending spelling', () =
   const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
   const query = 'gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200';
   assert.ok(QUEUE.includes(query), 'the queue query must read both pending spellings in one search');
-  // Control: the single-spelling form it replaced is gone and does not satisfy the check.
+  // The single-spelling form it replaced is gone.
   assert.ok(!QUEUE.includes('gh issue list --label demo:pending'));
-  assert.ok(!'gh issue list --label demo:pending --state all --json number,title --limit 200'.includes(query));
 });
 

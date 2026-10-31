@@ -61,7 +61,9 @@ rejected with a reason, never half-read.
 - **Shape.** One single-line HTML comment, alone on its own line, at column 0, so it must come
   before any code block in the comment: a run of 3 or more backticks or tildes before the
   marker is a rejection. This is deliberate; a marker shown as code must never count, and the
-  parser does not model Markdown to tell. One block per comment.
+  parser does not model Markdown to tell. One block per comment. A marker that follows an
+  unclosed `<!--` comment earlier in the same comment is also rejected (`verdict marker inside
+  another HTML comment`): close any earlier HTML comment with `-->` before the marker line.
 - **Fields.** `v` is `1`. `verdict` is `approved` or `changes-requested`. `choice` is
   `fix-forward` or `revert-now`, required with `changes-requested` and rejected with
   `approved`. `note` is optional, a string of at most 2000 UTF-16 code units (`String.length`).

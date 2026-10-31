@@ -490,6 +490,8 @@ test('the accept-verdict section states every rule the parser enforces, so a wri
   assert.match(collapsed, /2000 UTF-16 code units/);
   assert.match(collapsed, /[Uu]nknown fields and repeated keys are rejected/);
   assert.match(collapsed, /[Oo]ne block per comment/);
+  assert.match(collapsed, /follows an unclosed `<!--` comment earlier in the same comment is also rejected/);
+  assert.match(collapsed, /verdict marker inside another HTML comment/);
   // The escapes carry their backslash (they lose it when copied through the Write tool).
   assert.ok(s.includes('\\u003c') && s.includes('\\u003e'), 'the escapes must keep their backslash');
   assert.match(collapsed, /raw `<` or `>` anywhere in the JSON is rejected/);
