@@ -163,6 +163,7 @@ const SELF_LOGGING_SOURCES = {
   'express-lane.js check': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'pre-review-catchup.js': ['plugin/bin/pre-review-catchup.js'],
+  'stash-guard.js compare': ['plugin/bin/stash-guard.js'],
 };
 
 function listedSelfLoggers(text) {
