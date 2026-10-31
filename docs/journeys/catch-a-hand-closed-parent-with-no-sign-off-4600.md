@@ -32,9 +32,11 @@ files:
 - **Should understand:**
   - The marker, not today's floor, is what proves #4466 closed a parent.
   - A marker comment from anyone else counts as no marker, so a forged comment can never hide a gap.
+  - On GitHub, if `gh api user` returns no login, the fetch block throws and the whole scope stops. It reports no rows and quotes the error, rather than reading a marker the current `gh` identity posted as missing.
 - **Red flags:**
   - A parent closed more than 30 days ago that reappears.
   - A parent listed twice because it carries both labels.
+  - `[parent-gate]` or `[acceptance-gap]` rows reported after the empty-login guard threw.
 
 ### 2. Each closed parent gets one verdict
 - **URL:** `plugin/bin/lib/issues/acceptance.js`, `closedParentGap`
