@@ -709,13 +709,11 @@ test('#4602: the transport mapping carries every row the parent close needs', ()
   const t = read('_shared/github-write-transport.md');
   const row = (op) => t.split('\n').find((l) => l.startsWith(`| ${op} |`)) || '';
   const close = row('Close');
-  assert.match(close, /`issue_write`/);
-  for (const lit of ['state_reason', '`completed`', '`not_planned`']) assert.ok(close.includes(lit), `Close row: ${lit}`);
+  for (const lit of ['`issue_write`', 'state_reason', '`completed`', '`not_planned`']) assert.ok(close.includes(lit), `Close row: ${lit}`);
   const get = row('Get a single issue by number');
   for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(get.includes(lit), `Get row: ${lit}`);
   const subIssues = row("List an issue's native sub-issues");
-  assert.ok(subIssues.includes('`get_sub_issues`'));
-  assert.ok(subIssues.includes('perPage: 100'));
+  for (const lit of ['`get_sub_issues`', 'perPage: 100']) assert.ok(subIssues.includes(lit), `Sub-issues row: ${lit}`);
   assert.ok(row("List an issue's comments").includes('perPage: 100'), 'comment reads are paged');
   assert.ok(row("Get an issue's native parent").includes('`get_parent`'));
   const login = row("Read the current identity's login");
@@ -772,14 +770,14 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   assert.ok(transport.includes('`_shared/github-write-transport.md`'));
   assert.ok(transport.includes('`get_parent`'), 'native parent resolution');
   assert.ok(transport.includes('`_shared/label-bootstrap.md`'), 'the label bootstrap states its MCP-path behavior');
-  assert.ok(transport.includes('`get_comments` for comments, paged per its row'), 'comment reads are paged per the comments row');
-  assert.ok(transport.includes('every `gh issue view` read'), 'explicit pairing: every gh issue view read is issue_read');
-  assert.ok(transport.includes('`gh api user` is `get_me`'), 'explicit pairing: gh api user is get_me');
-  assert.ok(transport.includes('`gh issue comment` is `add_issue_comment`'), 'explicit pairing: gh issue comment is add_issue_comment');
-  assert.ok(
-    transport.includes('`gh issue close` and `gh issue edit --add-label` are `issue_write`'),
-    'explicit pairing: gh issue close and gh issue edit --add-label are issue_write',
-  );
+  const pairings = [
+    '`get_comments` for comments, paged per its row',
+    'every `gh issue view` read',
+    '`gh api user` is `get_me`',
+    '`gh issue comment` is `add_issue_comment`',
+    '`gh issue close` and `gh issue edit --add-label` are `issue_write`',
+  ];
+  for (const lit of pairings) assert.ok(transport.includes(lit), `Transport paragraph states the pairing: ${lit}`);
   for (const lit of ['uppercase', '`CLOSED`', '`COMPLETED`', '`REOPENED`', 'label names', 'the last of the references']) assert.ok(transport.includes(lit), `Transport paragraph normalizes the MCP shape: ${lit}`);
   const failOpen = collapse(paragraph(gate, '**Fail open on every `gh` call'));
   assert.ok(failOpen.includes('neither `gh` nor the GitHub MCP server is available'), 'fail open only when neither transport is available');

@@ -24,3 +24,4 @@
 | 20 | review/test | AC2.1 ratchet had no explicit gh issue view to issue_read pairing (tiebreak-confirmed) | fixed | Added the pin; going red proven by removing the clause |
 | 21 | review/test | A new gh issue edit flag would pass the ratchet (tiebreak-confirmed, drop-recommended) | fixed | The edit entry now requires --add-label; a new flag fails as unmapped (proven red) |
 | 22 | review/test | settle-and-merge test never compared its list to the gate calls (tiebreak-confirmed) | fixed | The test derives each name from the gate file calls and checks the Parent-Gate sentence (proven red on two mutations) |
+| 23 | review/hindsight | Hindsight skill-worthy pattern: command-shape ratchet with an unmapped-subcommand failure and a wrapped-span guard [skill: skill-prose-conformance-tests] (staged/reflect-1.md) | open | — |
