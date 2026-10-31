@@ -1628,6 +1628,52 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
   assert.strictEqual(row.result, 'fail');
 });
 
+test('AC1.1: accept:pending satisfies the pending-label check', () => {
+  const row = acceptanceLabelingRow(['accept:pending'], 'verify-acceptance-accept-pass-');
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+// AC3.1: the check judges the record's resolved acceptance state (acceptanceOf's
+// precedence), not the mere presence of one pending label.
+function acceptanceLabelingRow(labelNames, dirPrefix) {
+  const runDir = makeTmpDir(dirPrefix);
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) {
+      return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
+    }
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('AC3.1: engine-verify agrees on mixed labels', () => {
+  // A pending label that wins the precedence passes, whichever spelling carries it.
+  assert.strictEqual(acceptanceLabelingRow(['accept:approved', 'demo:pending'], 'verify-acceptance-mixed-pass-').result, 'pass');
+  assert.strictEqual(acceptanceLabelingRow(['demo:approved', 'accept:pending'], 'verify-acceptance-mixed-pass2-').result, 'pass');
+  assert.strictEqual(acceptanceLabelingRow(['accept:pending', 'accept:approved'], 'verify-acceptance-mixed-pass3-').result, 'pass');
+  assert.strictEqual(acceptanceLabelingRow(['accept:approved', 'accept:pending'], 'verify-acceptance-mixed-pass4-').result, 'pass');
+
+  // A pending label outranked by a verdict fails with its own line, not the missing line.
+  for (const labels of [['demo:pending', 'demo:changes-requested'], ['accept:pending', 'demo:changes-requested'], ['demo:pending', 'accept:changes-requested']]) {
+    const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
+    assert.strictEqual(row.result, 'fail', labels.join('+'));
+    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
+    assert.doesNotMatch(row.detail, /missing demo:pending label/, labels.join('+'));
+  }
+
+  // No pending label at all keeps the existing missing line, even beside a verdict.
+  for (const labels of [[], ['accept:approved'], ['demo:changes-requested'], ['accept:approved', 'demo:approved'], ['demo:approved', 'accept:approved']]) {
+    const row = acceptanceLabelingRow(labels, 'verify-acceptance-nopending-');
+    assert.strictEqual(row.result, 'fail', labels.join('+') || '(none)');
+    assert.match(row.detail, /#900: missing demo:pending label/, labels.join('+') || '(none)');
+    assert.doesNotMatch(row.detail, /outranked/, labels.join('+') || '(none)');
+  }
+});
+
 // #2383: verification-brief.md's Oversight-floor gate legitimately skips
 // demo:pending bootstrap for a non-parent record whose risk/size facets
 // don't clear the configured floor -- it records that outcome into

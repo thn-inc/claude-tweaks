@@ -118,7 +118,10 @@ own config overlay:
 
 ```bash
 MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-verification)
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification
 ```
+
+The project-level read (no `--run`; run it only when the first prints `off`) tells a **derived** `off` from an explicit one: explicit only when its `merge-verification` entry shows `source: policy`, or a run-level `off` over another project value; derived otherwise — `{"value":"off","source":"default"}`, or the read fails or is unparseable — a wait, never a blind merge.
 
 When one session merges several runs sequentially (`flow/worktree-merge.md`'s reconciliation),
 resolve the lever **per merged run** from that run's own directory (`--run "{that run's dir}"`) —
@@ -172,8 +175,7 @@ Classify from both reads, in this order:
 - Any `statusCheckRollup[]` entry with `conclusion` in `FAILURE`, `TIMED_OUT`, `ERROR`, or `STARTUP_FAILURE`
   — or any head run whose `status` is `completed` and whose `conclusion`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
   reconcile's concern). Take the **Red path** below now, before anything else. Under `off` this
-  read still runs — `off` skips the *wait*, not the read — but the value `off` merges anyway
-  (today's behavior); the red classification is logged and shown, not acted on.
+  read still runs — an explicit `off` skips only the *wait* — but an explicit `off` merges anyway; a derived `off` takes the **Red path**. An explicit `off`'s red read is logged, not acted on.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
@@ -185,7 +187,7 @@ Classify from both reads, in this order:
   `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
   expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
   seconds after a push, not instantly — and reads as **pending**, never green; under `off` it is
-  simply "no CI" and proceeds as green.
+  simply "no CI" and proceeds as green — derived `off` too, so a PR with no checks never waits.
 - Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`, and every head run `completed` without a failing conclusion) → **green**.
 
 Then, per resolved value:
@@ -204,9 +206,9 @@ must not lean on it. That is why the pending column below keys on `mergeStateSta
 |---|---|---|---|
 | `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
 | `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) | **Bounded watch** below | Red path |
-| `off` | Step 3 as written (today's behavior, unchanged) | Step 3 as written (today's behavior — this is the #540-shaped race the lever exists to close; a repo derives `off` only when it has no PR CI or a non-default integration branch, `_shared/policy-schema-coverage.md`'s coverage block) | Step 3 as written; the red read is logged for the summary |
+| `off` | Step 3 as written (today's behavior, unchanged) | Derived `off` → **Bounded watch** below, logged `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): derived off with pending checks on PR #{n} — bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]` Explicit `off` → Step 3 as written | Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |
 
-**Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**
+**Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
 Not a policy key: `merge-when-green` (arming) is the no-wait path, `wait` is its fallback, and a
 repo where 15 minutes is chronically wrong should enable required checks/auto-merge rather than
 tune a knob (parent #558's one-lever decision; this paragraph is the timeout's own rationale). Poll
@@ -218,6 +220,7 @@ immediately:
 DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
+  grep -qx "no checks reported on the '.*' branch" "{pr-checks-path}" && RC=8  # none registered yet
   case "$RC" in
     0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
        PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
@@ -266,7 +269,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
    (`$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
-   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string.)
+   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
@@ -327,18 +330,19 @@ the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
 omit `--keep-open {keep-open}` when none. So the message's `Fixes` lines are the PR body's
-(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because the merge commit's own message is what GitHub scans for
-closing keywords on a non-default integration branch, where the PR body's keywords don't
-fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
-*default* branch — an explicit merge commit message is what makes closing work on any
-integration branch). `--squash` keeps one conventional commit per PR.
+(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because GitHub closes records
+from them only when the merge lands on the repo's default branch, and the lines travel with the
+commit when it is later promoted; on a non-default integration branch they close nothing, and, on
+a `merged` outcome, `pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself (after an
+`armed` merge, the reconciler's Step 4.0 does — #4599).
+`--squash` keeps one conventional commit per PR.
 
 When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
 
 Run each fence as its own Bash call, never chained; if the composer exits non-zero, stop before any
 merge (its stderr names the reason). `{subject-dir}` is a literal path — resolve it once with
 `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" SUBJECT_DIR=merge-subject-{key}`
-(`{key}` is `{pr-number}` at a pr-first fence, the subject `{issue}` at a local-merge fence; session-scoped,
+(`{key}` is `{pr-number}` at a pr-first fence, the first number of `{issues}` at a local-merge fence; session-scoped,
 `_shared/session-tmp-root.md`) and paste the path inside the printed `SUBJECT_DIR="…"` quotes. `{title-arg}` is the
 composer's one stdout line pasted verbatim — already POSIX single-quoted, so a `$(…)`, backtick, or
 `'` in the title stays inert. Why: the worktree Bash guard refuses `eval` and a `gh` argument computed

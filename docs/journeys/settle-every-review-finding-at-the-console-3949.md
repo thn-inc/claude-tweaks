@@ -119,12 +119,15 @@ files:
   - The severity shown is the staged file's own `Severity:` field. When the file states none, the record shows no severity rather than a defaulted `medium`.
   - A finding with no line number cites the path alone. It never cites `path:unknown`.
   - The fingerprint is unchanged, so a finding already filed under the old shape (#4048, for example) is still recognized and not filed again.
+  - A finding the backfill splits out of a legacy decisions.md line names its whole path, even one holding `[id]`, `@scope`, `(group)`, `~`, `+`, `%` or `$` (`app/[id]/page.tsx`, never `/page.tsx`). Its item id is unchanged, so a record an interrupted earlier backfill pass filed under the truncated path is reused rather than filed again.
+  - A path the old class could not read at all, such as `app/[id].tsx:3`, was never a finding of its own before: a line naming only that path went to the digest as `no-path`. It now becomes a finding with a new item id. Nothing was filed under it before, so nothing is filed twice.
 - **Red flags:**
   - the title is cut mid-word
   - `## Current State` holds only the `Finding:` location string
   - `:unknown` appears as a line reference
   - a `(severity medium)` appears for a staged file that states no severity
   - a re-run of the backfill files a second record for an already-filed finding
+  - a backfilled record names `/page.tsx` or `scope/x.ts` for a finding at `app/[id]/page.tsx` or `packages/@scope/x.ts`
 
 ## Origin
 - Created during the build of #3949, the third step of the unconfirmed-findings tiebreak project. #3945 built the resolver and the archive coverage check; #3947 built the tiebreak step itself.
@@ -134,6 +137,7 @@ files:
 - Updated during the build of #4563: step 1's "Should understand" list gained the two new ways a finding leaves the console, a confirmed cross-lens debate and a settled contested pair's partner.
 - Updated during the build of #4582: a finding at a path holding `@`, `+`, `~`, `%`, `$`, `[id]` or `(group)` now settles by its whole path. Before this, `app/[id]/page.tsx:9` and `blog/[id]/page.tsx:9` shared a truncated key, so a verdict on one settled the other.
 - Updated during the build of #4583: a contested pair's verdict now settles a partner re-staged after its own earlier verdict. A can't-tell verdict that re-stage outdated files nothing once the pair's verdict replaces it.
+- Updated during the build of #4631: the console backfill (`bin/console-backfill.js`) now records a split finding's whole path under the same widened class, while keeping each item's id on its old location key so a re-run never files a second record (step 6).
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.
