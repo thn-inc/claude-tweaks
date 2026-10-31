@@ -71,3 +71,4 @@ files:
 - Related:
   - `docs/journeys/stop-a-run-on-its-own-red-pr-check-3013.md`: the CI-checks read at the test and review gates.
   - `docs/journeys/finish-a-local-merge-run-without-a-human.md`.
+- Updated after #4343 (2026-10-31): a `pr-first` `/claude-tweaks:build` outside a multi-spec run now merges a moved integration branch in before its final verification run (`_shared/pre-verification-catchup.md`), so at the build phase exit this check normally reads `no-conflict`, and a conflict reported there is a base that moved during that verification. See `docs/journeys/verify-a-build-once-after-the-base-moved-4343.md`.

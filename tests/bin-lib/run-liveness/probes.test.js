@@ -179,6 +179,29 @@ test('ownEventAt over an empty events.jsonl is all null', () => {
   assert.deepStrictEqual(DEFAULT_PROBES.ownEventAt(runDirWith([])), { lastOwnMs: null, lastSessionEndMs: null });
 });
 
+test('ownEventAt reads events.jsonl exactly once per call', () => {
+  const dir = runDirWith([
+    JSON.stringify({ type: 'skill_invoked', ts: T2, attribution: 'owner' }),
+    JSON.stringify({ type: 'session-end', ts: T1, sessionId: 'A', attribution: 'owner' }),
+  ]);
+  const realRead = fs.readFileSync;
+  let reads = 0;
+  fs.readFileSync = function (file, ...rest) {
+    if (path.basename(String(file)) === 'events.jsonl') reads += 1;
+    return realRead.call(this, file, ...rest);
+  };
+  let result;
+  try { result = DEFAULT_PROBES.ownEventAt(dir, 'A'); } finally { fs.readFileSync = realRead; }
+  assert.deepStrictEqual(result, { lastOwnMs: Date.parse(T2), lastSessionEndMs: Date.parse(T1) });
+  assert.strictEqual(reads, 1);
+});
+
+test('ownEventAt throws when events.jsonl is unreadable (a directory)', () => {
+  const dir = runDirWith(null);
+  fs.mkdirSync(path.join(dir, 'events.jsonl'));
+  assert.throws(() => DEFAULT_PROBES.ownEventAt(dir), /could not read events\.jsonl/);
+});
+
 test('DEFAULT_PROBES has exactly the six keys and delegates the simple ones', () => {
   assert.deepStrictEqual(Object.keys(DEFAULT_PROBES).sort(),
     ['hostname', 'lastCommitAt', 'lockInUse', 'ownEventAt', 'pidAlive', 'pidStartTime']);

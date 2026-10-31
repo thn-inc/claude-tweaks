@@ -14,6 +14,7 @@ Render the markdown below, substituting placeholders. Generate field values from
 - Type check: {pass/fail}
 - Lint: {pass/fail}
 - Tests: {pass/fail}
+- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | aborted on a conflict — verified the un-merged tree | skipped — {condition}}
 
 ### What was built
 - {summary of implemented features}
