@@ -176,3 +176,7 @@ test('dropEmptyOpenQuestions ignores an Open Questions heading inside a fence; a
   const crlf = 'A\r\n\r\n## Open Questions\r\n\r\n| Q | A |\r\n|---|---|\r\n';
   assert.equal(dropEmptyOpenQuestions(crlf).removed, true);
 });
+
+test('hasOpenQuestionsSection: a lone-CR body with an Open Questions heading is still detected, fail-closed (#4561)', () => {
+  assert.equal(hasOpenQuestionsSection('A\r\r## Open Questions\r\r| Q | A |\r|---|---|\r| q | a |\r'), true);
+});

@@ -35,10 +35,9 @@ function countAmbiguityMarkers(body) {
   return matches ? matches.length : 0;
 }
 
-// lines -> index of the first unfenced level 2-4 heading line named Open Questions, or -1.
-// A trailing \r is dropped first: headingLine's text trim is [ \t] only.
-function findOpenQuestionsStart(lines) {
-  const fenced = fencedLineMask(lines);
+// lines (+ their fence mask) -> index of the first unfenced level 2-4 heading line named
+// Open Questions, or -1. A trailing \r is dropped first: headingLine's text trim is [ \t] only.
+function findOpenQuestionsStart(lines, fenced = fencedLineMask(lines)) {
   return lines.findIndex((l, i) => {
     if (fenced[i]) return false;
     const h = headingLine(l.replace(/\r$/, ''));
@@ -48,7 +47,7 @@ function findOpenQuestionsStart(lines) {
 
 function hasOpenQuestionsSection(body) {
   if (typeof body !== 'string') return false;
-  return findOpenQuestionsStart(authoredText(body).split('\n')) !== -1;
+  return findOpenQuestionsStart(authoredText(body).split(/\r\n|\r|\n/)) !== -1;
 }
 
 // `ready` is restorable when the body passes the spec-shaped gate `ready`
@@ -67,9 +66,9 @@ function readyRestorable(body) {
 // content is left alone.
 function dropEmptyOpenQuestions(body) {
   const lines = body.split('\n');
-  const start = findOpenQuestionsStart(lines);
-  if (start === -1) return { body, removed: false };
   const fenced = fencedLineMask(lines);
+  const start = findOpenQuestionsStart(lines, fenced);
+  if (start === -1) return { body, removed: false };
   const level = headingLine(lines[start].replace(/\r$/, '')).level;
   let end = start + 1;
   while (end < lines.length) {

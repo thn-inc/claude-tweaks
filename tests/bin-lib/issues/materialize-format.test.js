@@ -675,5 +675,6 @@ test('AC3.2: authoredRegion stops at the first unfenced ## Original request, CRL
   const lf = 'a\n```\n## Original request\n```\nb\n## Original request\nc';
   assert.equal(authoredRegion(lf), 'a\n```\n## Original request\n```\nb\n');
   assert.equal(authoredRegion(lf.replace(/\n/g, '\r\n')), 'a\r\n```\r\n## Original request\r\n```\r\nb\r\n');
+  assert.equal(authoredRegion('a\r## Original request\rc'), 'a\r');
   assert.equal(authoredRegion('no boundary'), 'no boundary');
 });
