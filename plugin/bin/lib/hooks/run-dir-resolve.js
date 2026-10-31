@@ -179,7 +179,10 @@ function closedPrMatch(pipelinesRoot, specSlug) {
       candidates.push({ name, dir, archived: false, state });
     }
   }
-  candidates.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : Number(a.archived) - Number(b.archived)));
+  candidates.sort((a, b) => {
+    if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+    return Number(a.archived) - Number(b.archived);
+  });
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     const pr = candidates[i].state && candidates[i].state.pr;
     if (pr && typeof pr === 'object' && !Array.isArray(pr)) return candidates[i].dir;
