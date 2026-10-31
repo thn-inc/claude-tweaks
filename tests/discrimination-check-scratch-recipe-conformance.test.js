@@ -1,0 +1,123 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert');
+const path = require('path');
+
+const { readText } = require('./helpers/read-skill');
+// #4556: a reviewer proving a test discriminates (build's SDD task reviewers,
+// review's lens 3f Vacuity-evidence diagnostic) needs a place to mutate that is
+// not the shared worktree. subagent-dispatch-core.md carries the one guard-safe
+// scratch-checkout recipe; scratch-worktree.md section 7 records the shapes it
+// uses as live-verified. This suite pins both.
+
+const ROOT = path.join(__dirname, '..');
+const CORE = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'));
+const SCRATCH = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'scratch-worktree.md'));
+
+const HEADING = '## Discrimination checks in a scratch checkout';
+
+// Slices md from `heading` to the next `## ` heading (or the end).
+function sectionOf(md, heading) {
+  const start = md.indexOf(heading);
+  assert.notStrictEqual(start, -1, `${heading} missing`);
+  const next = md.indexOf('\n## ', start + heading.length);
+  return next === -1 ? md.slice(start) : md.slice(start, next);
+}
+
+const RECIPE_LITERALS = [
+  'session-tmp-resolve.js',
+  'worktree add --detach',
+  'checkout {base-sha} -- {path}',
+  'NODE_PATH="{worktree}/node_modules"',
+  'never a link',
+  'worktree remove --force',
+  'before the status word',
+  'worktree list',
+  'No-git fallback',
+  '#4556',
+  'rev-parse HEAD',
+  '{reviewed-sha}',
+  'no evidence',
+  'CommonJS',
+  'show {base-sha}:{path}',
+  'repo-relative path',
+  'DONE_WITH_CONCERNS',
+  'substitutes',
+  'its own',
+  'never under the run directory',
+];
+
+function assertRecipe(section) {
+  const flat = section.replace(/\s+/g, ' ');
+  for (const literal of RECIPE_LITERALS) {
+    assert.ok(flat.includes(literal), `recipe lost ${JSON.stringify(literal)}`);
+  }
+  assert.ok(!flat.includes('ln -s "'), 'recipe must not carry an affirmative link command');
+}
+
+test('core carries the scratch-checkout recipe section after Read-only Reviewer Discipline (#4556)', () => {
+  assert.strictEqual(CORE.split(HEADING).length - 1, 1, `${HEADING} must appear exactly once`);
+  const at = CORE.indexOf(HEADING);
+  const after = CORE.indexOf('## Read-only Reviewer Discipline');
+  const before = CORE.indexOf('## Model Selection');
+  assert.ok(after !== -1 && before !== -1, 'neighbouring headings missing');
+  assert.ok(at > after, 'recipe must follow Read-only Reviewer Discipline');
+  assert.ok(at < before, 'recipe must precede Model Selection');
+  assertRecipe(sectionOf(CORE, HEADING));
+});
+
+// Frozen: the Read-only Reviewer Discipline section as it stood before #4556
+// (the text the recipe is inserted after). It must fail the recipe pin.
+const PRE_4556_CORE_TAIL = `## Read-only Reviewer Discipline
+
+Applies only to dispatches whose job is to read and report: \`/claude-tweaks:review\` Step 3's
+lens, debate, refutation, and gap-sweep agents. It never applies to an implementer, test, or QA
+dispatch, whose job is to run things. Inline this line verbatim into every such prompt, outside
+any byte-pinned Calibration/Output block:
+
+\`READ-ONLY REVIEW: never run the project's test suites, builds, dev servers, or e2e runners — read and report only, since mechanical verification belongs to /claude-tweaks:test (a throwaway probe under your SCRATCH: path is fine; sole suite exception: one targeted test case, run in the foreground, when lens 3f's Vacuity-evidence diagnostic needs execution evidence).\`
+
+Reading a test file is always fine; running the suite is not. A reviewer that starts the
+project's suite or server races any server the same review started (\`/visual-review\`'s
+ephemeral dev server), and it reports failures produced by the wrong harness rather than by the
+diff. #3001 observed exactly this: a Fast-profile lens agent ran a full Playwright e2e suite in
+the background on the framework's default ports.
+`;
+
+test('the recipe pin goes red without the section or with a dropped step (go-red)', () => {
+  assert.throws(() => assertRecipe(PRE_4556_CORE_TAIL));
+  const live = sectionOf(CORE, HEADING);
+  assert.ok(live.includes('worktree remove --force'), 'live section must carry the teardown to mutate');
+  assert.throws(() => assertRecipe(live.split('worktree remove --force').join('worktree remove')));
+});
+
+// Section 7 slicing, copied from scratch-worktree-shell-constraint-table.test.js.
+function splitRow(line) {
+  return line.trim().replace(/^\|/, '').replace(/\|$/, '').split(/(?<!\\)\|/).map((c) => c.trim());
+}
+
+function section7Rows() {
+  const start = SCRATCH.indexOf('## 7. Shell constraint');
+  assert.notStrictEqual(start, -1, '## 7. Shell constraint heading missing');
+  const lines = SCRATCH.slice(start).split('\n');
+  const head = lines.findIndex((l) => l.trim().startsWith('| Shape'));
+  assert.notStrictEqual(head, -1, 'no table header in section 7');
+  const rows = [];
+  for (let i = head + 2; i < lines.length && lines[i].startsWith('|'); i++) rows.push(splitRow(lines[i]));
+  return rows;
+}
+
+test('§7 records the scratch-checkout shapes as passes and the node_modules listing as permission-rule (#4556)', () => {
+  const rows = section7Rows();
+
+  const passes = rows.filter((c) => c[0].includes('worktree add --detach') && c[2] === 'passes');
+  assert.strictEqual(passes.length, 1, `expected one passes row for the scratch checkout, found ${passes.length}`);
+  assert.strictEqual(passes[0][3], '—');
+  assert.ok(passes[0][5].startsWith('2026-10-31 (#4556)'), `bad last-verified: ${passes[0][5]}`);
+
+  const listing = rows.filter((c) => c[1].includes('ls "{wt}/node_modules"'));
+  assert.strictEqual(listing.length, 1, `expected one node_modules listing row, found ${listing.length}`);
+  assert.strictEqual(listing[0][2], 'permission-rule');
+  assert.ok(listing[0][3].includes('has been denied'), `bad refusal wording: ${listing[0][3]}`);
+  assert.ok(listing[0][4].includes('NODE_PATH'), `workaround must name NODE_PATH: ${listing[0][4]}`);
+});

@@ -142,6 +142,41 @@ ephemeral dev server), and it reports failures produced by the wrong harness rat
 diff. #3001 observed exactly this: a Fast-profile lens agent ran a full Playwright e2e suite in
 the background on the framework's default ports.
 
+## Discrimination checks in a scratch checkout
+
+Applies to any dispatch that proves a test discriminates against reverted or edited code:
+`/claude-tweaks:build`'s SDD task reviewers (`build/dispatch.md`, #2740) and `/claude-tweaks:review`'s
+lens 3f Vacuity-evidence diagnostic. The dispatcher pastes these steps into the prompt — the agent
+never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{reviewed-sha}` and
+`{base-sha}` literally; each agent builds `{id}` from its own distinct token (lens and pair member,
+or task and reviewer role). Never mutate the shared worktree in place: a sibling agent's in-flight
+edit there would be lost. One plain command per Bash call, literal absolute paths:
+
+1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
+   (`_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under the run
+   directory or inside the shared worktree.
+2. **Create.** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`, then
+   `git -C "{disc-path}" rev-parse HEAD` must print `{reviewed-sha}`; otherwise tear down (step 6):
+   the check has no evidence.
+3. **Mutate only there.** `git -C "{disc-path}" checkout {base-sha} -- {path}`, or Edit the file
+   under `{disc-path}`.
+4. **Run the one targeted test there**, reaching dependencies through the language's search-path
+   variable, never a link (`ln -s`, `mklink /J`) — for Node (CommonJS `require` only):
+   `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`.
+5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
+   never fall back to the shared tree.
+6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
+   `git -C "{worktree}" worktree list` then shows no `disc-` entry. A failed teardown reports
+   `DONE_WITH_CONCERNS` naming the leftover path.
+
+**No-git fallback** — when step 2's create is refused: write each file the test loads at its
+repo-relative path under `{disc-path}` (Read for unchanged files; for base content, the read-only
+`git -C "{worktree}" show {base-sha}:{path}`, written with Write), run the test there, and delete
+the copies before the status word.
+
+Every shape above passed the worktree guard from a worktree-isolated dispatched agent (#4556,
+2026-10-31; `_shared/scratch-worktree.md` §7).
+
 ## Model Selection
 
 Match the profile to the work. A **work profile** names the kind of work; this table — the single canonical resolution — says what runs it:
