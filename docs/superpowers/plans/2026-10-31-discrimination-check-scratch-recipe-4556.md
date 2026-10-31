@@ -23,7 +23,7 @@
   It must never mention `ln -s`, `mklink /J`, or the run dir as a place to use.
 - **Byte rails.**
   - `review/step3-lens-dispatch.md` is at 50,801 B of the 52,500 B rail, so its edit must be a net shrink.
-  - The review-dispatch bundle (`subagent-dispatch-core.md` + `run-dir-resolution.md`) is at 46,311 B, so the new core section stays ≤ 2,000 B.
+  - The review-dispatch bundle (`subagent-dispatch-core.md` + `run-dir-resolution.md`) is at 46,311 B, so the new core section stays ≤ 2,800 B (raised from 2,000 B by the plan-review amendment's four added rules).
 - **Ban phrase.** `never via \`git checkout --\` or an in-place edit-then-restore in this shared worktree` stays byte-identical in `build/dispatch.md`.
 - **Existing pins.** Every pin in `tests/review-vacuity-evidence-conformance.test.js` and `tests/plan-authoring-inserted-guard-reprove-prose.test.js` keeps passing, except `/\`git worktree remove\`/`, which Task 2 replaces.
 - **Go-red controls.** Each new pin gets a control: `assert.throws` of the pin's predicate against a frozen pre-change text constant held in the test file [IL-105]. Never derive the frozen text from the current file.
@@ -62,6 +62,9 @@ Waived build/SKILL.md: #4442 owns its `cd "$WORKTREE" && …` instruction; not t
 
 ### Task 1: Core recipe section, §7 rows, and their pins
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/skills/_shared/subagent-dispatch-core.md`. Insert a new `## Discrimination checks in a scratch checkout` section between the end of `## Read-only Reviewer Discipline` (ending "…on the framework's default ports.", line ~143) and `## Model Selection`.
 - Modify: `plugin/skills/_shared/scratch-worktree.md`. Add two rows at the end of the §7 table (after the backslash-escaped-space row, line ~280).
@@ -84,6 +87,12 @@ Waived build/SKILL.md: #4442 owns its `cd "$WORKTREE" && …` instruction; not t
   - `worktree list`
   - `No-git fallback`
   - `#4556`
+  - `rev-parse HEAD` and `{reviewed-sha}` (the commit check — plan review, Reading A)
+  - `no evidence` (a SHA mismatch or a dependency-resolution failure)
+  - `CommonJS` (NODE_PATH's reach)
+  - `show {base-sha}:{path}` and `repo-relative path` (the fallback's base content and layout)
+  - `DONE_WITH_CONCERNS` (a failed teardown)
+  - `substitutes` (the dispatcher fills `{plugin-root}`, `{worktree}`, `{reviewed-sha}`, `{base-sha}`) and `its own` (each agent builds `{id}`)
 
   It also asserts the section includes `never under the run directory` and does NOT include `ln -s "` (an affirmative link command).
 
@@ -105,7 +114,7 @@ Waived build/SKILL.md: #4442 owns its `cd "$WORKTREE" && …` instruction; not t
 Run: `node --test "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-4549-4550-4556/tests/discrimination-check-scratch-recipe-conformance.test.js"`
 Expected: FAIL — the two content tests fail (heading missing, rows missing); the go-red test passes.
 
-- [ ] **Step 3: Write the core section.** Keep it at ≤ 2,000 B and wrapped at ~100 columns like its neighbours. Wording may tighten, but every pinned literal must stay:
+- [ ] **Step 3: Write the core section.** Keep it at ≤ 2,800 B and wrapped at ~100 columns like its neighbours. Wording may tighten, but every pinned literal must stay:
 
 ```markdown
 ## Discrimination checks in a scratch checkout
@@ -113,23 +122,32 @@ Expected: FAIL — the two content tests fail (heading missing, rows missing); t
 Applies to any dispatch that proves a test discriminates against reverted or edited code:
 `/claude-tweaks:build`'s SDD task reviewers (`build/dispatch.md`, #2740) and `/claude-tweaks:review`'s
 lens 3f Vacuity-evidence diagnostic. The dispatcher pastes these steps into the prompt — the agent
-never reads this file. Never mutate the shared worktree in place: a sibling agent's in-flight edit
-there would be lost. One plain command per Bash call, literal absolute paths:
+never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{reviewed-sha}` and
+`{base-sha}` literally; each agent builds `{id}` from its own distinct token (lens and pair member,
+or task and reviewer role). Never mutate the shared worktree in place: a sibling agent's in-flight
+edit there would be lost. One plain command per Bash call, literal absolute paths:
 
-1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}` (unique `{id}`
-   per agent, `_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under
-   the run directory or inside the shared worktree.
-2. **Create.** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`
+1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
+   (`_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under the run
+   directory or inside the shared worktree.
+2. **Create.** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`, then
+   `git -C "{disc-path}" rev-parse HEAD` must print `{reviewed-sha}`; otherwise tear down (step 6):
+   the check has no evidence.
 3. **Mutate only there.** `git -C "{disc-path}" checkout {base-sha} -- {path}`, or Edit the file
    under `{disc-path}`.
 4. **Run the one targeted test there**, reaching dependencies through the language's search-path
-   variable, never a link (`ln -s`, `mklink /J`) — for Node:
+   variable, never a link (`ln -s`, `mklink /J`) — for Node (CommonJS `require` only):
    `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`.
-5. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
-   `git -C "{worktree}" worktree list` then shows no `disc-` entry.
+5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
+   never fall back to the shared tree.
+6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
+   `git -C "{worktree}" worktree list` then shows no `disc-` entry. A failed teardown reports
+   `DONE_WITH_CONCERNS` naming the leftover path.
 
-**No-git fallback** — when step 2 is refused: Read the touched files and the test, Write copies
-under `{disc-path}`, run the test there, and delete them before the status word.
+**No-git fallback** — when step 2's create is refused: write each file the test loads at its
+repo-relative path under `{disc-path}` (Read for unchanged files; for base content, the read-only
+`git -C "{worktree}" show {base-sha}:{path}`, written with Write), run the test there, and delete
+the copies before the status word.
 
 Every shape above passed the worktree guard from a worktree-isolated dispatched agent (#4556,
 2026-10-31; `_shared/scratch-worktree.md` §7).
@@ -174,6 +192,9 @@ git -C "{wt}" commit -m "Add the scratch-checkout discrimination recipe — core
 ---
 
 ### Task 2: Both rules cite the recipe, the skill-graph edges, and their pins
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/dispatch.md:14`, the #2740 sentence and the #3988 phrase.
