@@ -257,7 +257,7 @@ number. It is never staged, so it gets no needs-decision comment, and the claim 
 A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only
 when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may
 have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked
-Release; so does any other non-zero exit (1 or 3, or 2 again after `--listing` was added).
+Release; so does any other non-zero exit (1 or 3).
 
 → Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`
 

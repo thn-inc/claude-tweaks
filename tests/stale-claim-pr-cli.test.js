@@ -155,6 +155,22 @@ test('a marked MCP entry with no head is a failure, never a no-match', () => {
   assert.match(v.failure, /entry 0 is not a PR/);
 });
 
+test('a null-body same-repo PR ahead of the marked one is skipped on both transports (REST returns null for an empty body)', () => {
+  const nullBodyUrl = 'https://github.com/acme/w/pull/6';
+  const r = runBoth(
+    [ghEntry({ url: nullBodyUrl, body: null }), ghEntry({ body: MARKED })],
+    [mcpEntry({ url: nullBodyUrl, body: null }), mcpEntry({ body: MARKED })],
+  );
+  for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, failure: null });
+});
+
+test('a marked non-cross-repo entry whose url is another repo is a clean no-match (the same-repo url guard alone)', () => {
+  const evil = 'https://github.com/evil/x/pull/1';
+  const r = runBoth([ghEntry({ url: evil, body: MARKED })], [mcpEntry({ url: evil, body: MARKED, fullName: 'acme/w' })]);
+  assert.deepEqual(r.gh, NO_MATCH);
+  assert.deepEqual(r.mcp, NO_MATCH);
+});
+
 test('each failure source is a failure verdict at exit 0, never a throw or a no-match', () => {
   const garbage = '{not json';
   const cases = [

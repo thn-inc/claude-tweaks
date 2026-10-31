@@ -1006,3 +1006,15 @@ test('staleClaimInFlightPr runs the shared normalizer: a malformed gh listing re
   const mcpShaped = [{ html_url: SC_URL, body: `claude-tweaks-run: ${SC_RUN}`, head: { repo: { full_name: 'acme/w' } } }];
   assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(mcpShaped), 'acme', 'w'), { link: SC_URL });
 });
+
+test('staleClaimInFlightPr: a null-body same-repo PR before the marked one is skipped, not a failed check (the matcher body guard alone)', () => {
+  const { staleClaimInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const claim = JSON.stringify({ runId: SC_RUN });
+  const errors = [];
+  const listing = [
+    { url: 'https://github.com/acme/w/pull/6', body: null, isCrossRepository: false },
+    scListed(),
+  ];
+  assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(listing), 'acme', 'w', (e) => errors.push(e)), { link: SC_URL });
+  assert.deepEqual(errors, []);
+});
