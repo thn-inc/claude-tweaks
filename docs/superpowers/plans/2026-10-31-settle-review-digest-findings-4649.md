@@ -55,7 +55,7 @@ Replace `assert.ok(['merged', 'conflict'].includes(r.json.outcome), ...)` with:
 
 (The existing `overlapFiles` assertion stays, and appears once.)
 
-- [ ] **Step 2: Run the suite**
+- [ ] **Step 2: Run the suite to verify the tightened test (AC1.1, Deliverable 1 fixed)**
 
 Run: `node --test tests/bin-lib/pre-review-catchup/cli.test.js`
 Expected: PASS (all tests; the tightened case passes because a 10-run probe returned `merged` each time)
@@ -114,7 +114,7 @@ test('refused-proposals.md Ledger origin reopens review-followup rows too (#4649
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `node --test --test-name-pattern="Ledger origin reopens" tests/deferral-gate-conformance.test.js`
-Expected: FAIL on `review-followup origin`
+Expected: FAIL after Step 1 on `review-followup origin missing` (before Step 1 the pattern matches no test)
 
 - [ ] **Step 3: Extend the Ledger origin paragraph**
 
@@ -124,7 +124,7 @@ In `plugin/skills/wrap-up/refused-proposals.md`, change the opening of `## Ledge
 
 Leave the rest of the paragraph unchanged. That covers the `proposal refused — no defer reason` note, the staged-file delete, the no-ledger-origin sentence, and the `--dry-run` paragraph.
 
-- [ ] **Step 4: Run it to verify it passes**
+- [ ] **Step 4: Run the test to verify it passes (AC1.1, Deliverable 2 fixed on the refusal path; the filing path is closed out below)**
 
 Run: `node --test tests/deferral-gate-conformance.test.js`
 Expected: PASS (all tests)
@@ -140,3 +140,5 @@ git commit -m "Reopen a refused review-followup proposal's ledger row — Ledger
 
 - The successful-filing path gets no write-back. A filed `review-followup-` (or `ledger-record-`) row is already a complete `deferred` naming its `staged/…` path (`_shared/ledger-format.md`'s Resolution-text requirements). `review-console.md` "On approval" step 13 deletes the ledger right after step 7, before the merge, so a `#N` write-back would have no reader.
 - AC 2 needs no change: both promoted digest lines on #1426 (materiality-a741e6c1, materiality-067f68fa) already end `→ #4649`.
+
+Waived AC2.1: already satisfied on the live artifact. `gh api repos/thn-inc/claude-tweaks/issues/comments/6476790372` and `.../6518866799` both print the promoted line ending `→ #4649` (checked 2026-10-31). No repository change is involved.
