@@ -234,12 +234,21 @@ function readOpenBlockers(ctx, body) {
   return [...open].sort((a, b) => a - b);
 }
 
+// One direct read, never an existence check first ([IL-146]): a missing file (ENOENT/ENOTDIR) is
+// `absent: true`; any other read failure, or content that is not a JSON object, is `ok: false`.
 function readJsonFile(deps, file) {
+  let text;
   try {
-    const parsed = JSON.parse(deps.readFile(file));
-    return isObject(parsed) ? { ok: true, value: parsed } : { ok: false };
+    text = deps.readFile(file);
+  } catch (e) {
+    const absent = Boolean(e) && (e.code === 'ENOENT' || e.code === 'ENOTDIR');
+    return { ok: false, absent };
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return isObject(parsed) ? { ok: true, value: parsed, absent: false } : { ok: false, absent: false };
   } catch {
-    return { ok: false };
+    return { ok: false, absent: false };
   }
 }
 
@@ -263,11 +272,13 @@ function classifyPriorRun(ctx, runId) {
     priorRunPath, priorRunOpen: false, priorRunOwnerHost: null, state: null, readsDir: rootPresent ? rootDir : null,
   };
 
+  const statePath = path.join(rootDir, 'run-state.json');
+  const rootState = rootPresent ? readJsonFile(deps, statePath) : { ok: false, absent: true };
+
   if (deps.exists(archiveDir)) {
-    const archiveStatePath = path.join(archiveDir, 'run-state.json');
-    const archived = deps.exists(archiveStatePath) ? readJsonFile(deps, archiveStatePath) : { ok: false };
+    const archived = readJsonFile(deps, path.join(archiveDir, 'run-state.json'));
     const realArchive = archived.ok && archived.value.status !== 'archiving';
-    const rootHasState = rootPresent && deps.exists(path.join(rootDir, 'run-state.json'));
+    const rootHasState = !rootState.absent;
     if (realArchive || !rootHasState) {
       return {
         ...base, priorRunDir: 'archived', state: archived.ok ? archived.value : null, readsDir: archiveDir,
@@ -280,12 +291,10 @@ function classifyPriorRun(ctx, runId) {
   try { entries = deps.readdir(rootDir); } catch { return { ...base, priorRunDir: 'unknown-owner' }; }
   if (Array.isArray(entries) && entries.length === 1 && entries[0] === 'work') return { ...base, priorRunDir: 'residue' };
 
-  const statePath = path.join(rootDir, 'run-state.json');
-  if (!deps.exists(statePath)) return { ...base, priorRunDir: 'stateless' };
-  const parsed = readJsonFile(deps, statePath);
-  if (!parsed.ok) return { ...base, priorRunDir: 'unknown-owner' };
+  if (rootState.absent) return { ...base, priorRunDir: 'stateless' };
+  if (!rootState.ok) return { ...base, priorRunDir: 'unknown-owner' };
 
-  const state = parsed.value;
+  const state = rootState.value;
   const priorRunDir = ownerClass(deps, state);
   return {
     ...base,
@@ -450,8 +459,8 @@ function readContext(ctx, prior) {
   if (prior.readsDir !== null) {
     const file = path.join(prior.readsDir, 'decisions.md');
     try {
-      if (deps.exists(file)) return resumeContext(deps.readFile(file));
-    } catch { /* unreadable decisions.md: the context is advisory, fall through to the empty one */ }
+      return resumeContext(deps.readFile(file));
+    } catch { /* missing or unreadable decisions.md: the context is advisory, fall through to the empty one */ }
   }
   return { lastPhase: null, openDefects: [] };
 }

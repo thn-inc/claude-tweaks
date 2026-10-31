@@ -134,7 +134,7 @@ function makeEnv(over = {}) {
     },
     readFile: (p) => {
       calls.fs.push(['readFile', p]);
-      if (!Object.hasOwn(cfg.files, p)) throw new Error(`ENOENT ${p}`);
+      if (!Object.hasOwn(cfg.files, p)) throw Object.assign(new Error(`ENOENT ${p}`), { code: 'ENOENT' });
       return cfg.files[p];
     },
     findSibling: (ref, opts) => {
@@ -656,6 +656,20 @@ test('a root dir without run-state.json -> stateless, eligible, never archived',
   assert.equal(r.json.priorRunDir, 'stateless');
   assert.equal(r.json.archivePriorRun, false);
   assert.equal(r.json.closePriorRun, false);
+});
+
+test('run-state.json reported present but gone by the read (ENOENT) -> stateless, not unknown-owner ([IL-146])', () => {
+  const env = makeEnv();
+  setRunState(env, { status: 'active' });
+  const readFile = env.deps.readFile;
+  env.deps.readFile = (p) => {
+    if (p === `${RUNDIR}/run-state.json`) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    return readFile(p);
+  };
+  const r = exec(env);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.priorRunDir, 'stateless');
+  assert.equal(r.json.archivePriorRun, false);
 });
 
 test('run-state.json with no owner block -> dead-owner (archive, close when non-terminal)', () => {
