@@ -17,14 +17,20 @@ Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
-every other count in this file, since `demo:pending` persists independent of open/closed state
+every other count in this file, since a pending acceptance persists independent of open/closed state
 (an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
 no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
 explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
 
 ```bash
-gh issue list --label demo:pending --state all --json number,title --limit 200
+gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
 ```
+
+The comma is an OR across the two pending spellings (`_shared/work-record.md`, Acceptance axis).
+A record carrying a pending label is listed regardless of any resolution label it also carries;
+this scope enumerates pending labels and does not apply the precedence rule. The query is a search,
+so a record labelled seconds before the run can be missing while the search index lags — unwarned,
+and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
 ({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
@@ -33,8 +39,8 @@ when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 
 Finds closed records that carry no acceptance label at all — the case `acceptance-queue` above
-cannot see, since that scope only lists records already flagged `demo:pending`. A record closed
-without ever receiving a `demo:*` label is invisible to `acceptance-queue` and would otherwise
+cannot see, since that scope only lists records already flagged pending. A record closed
+without ever receiving an acceptance label is invisible to `acceptance-queue` and would otherwise
 disappear from the backlog with no disposition on record. A record closed with GitHub's own
 `stateReason` of `NOT_PLANNED` or `DUPLICATE` is excluded from this scope entirely — a not-planned
 or duplicate closure has nothing to accept, so it is never a gap. Classification is entirely
@@ -70,7 +76,7 @@ LIMIT="{resolved-limit}"
 SINCE="{since-date}"
 export SINCE
 gh issue list --state closed --limit "$LIMIT" \
-  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
+  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending" \
   --json number,title,state,labels,closedAt,stateReason \
   > "$RAW"
 node -e "
@@ -698,8 +704,8 @@ this write, however mechanical or precondition-only it is; `/claude-tweaks:wrap-
 identical write with zero staging is not a counter-example, since that write is an unconditional
 step of a pipeline a human already launched against one named record and sits in no tier table at
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
-scope and the `Open parent gate` action it feeds never write `demo:approved` or
-`demo:changes-requested` under any circumstance — that disposition stays exclusively
+scope and the `Open parent gate` action it feeds never write an approved or changes-requested
+Acceptance label (`_shared/work-record.md`) under any circumstance — that disposition stays exclusively
 `/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
 ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
 closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the
