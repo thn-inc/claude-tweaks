@@ -482,7 +482,7 @@ test('F2: a multi-byte added file over the cap in bytes (under it in characters)
   const repo = initRepo('review-ctx-multibyte-');
   fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
   startFeatureBranch(repo);
-  // U+00E9 is 2 bytes in UTF-8: PER_FILE_CAP_BYTES / 2 + 1 of them is cap + 2 bytes, but only about cap / 2 characters.
+  // U+00E9 is 2 bytes in UTF-8: PER_FILE_CAP_BYTES / 2 + 1 of them plus the newline is cap + 3 bytes, but only cap / 2 + 2 characters.
   const content = `${'é'.repeat(PER_FILE_CAP_BYTES / 2 + 1)}\n`;
   fs.writeFileSync(path.join(repo, 'big-multibyte.txt'), content);
   commitAll(repo, 'feature work');
