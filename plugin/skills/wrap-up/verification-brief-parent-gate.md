@@ -64,7 +64,7 @@ absent, each call runs through the GitHub MCP tool its `_shared/github-write-tra
 sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row), and every
 `gh issue view` read (the parent body, each sub-issue, the parent's labels, and the comment reads in
 **Close the parent below the floor** and **Apply the gate**) is `issue_read` (`get`, plus
-`get_comments` for comments). `gh api user` is `get_me`; `gh issue comment` is `add_issue_comment`;
+`get_comments` for comments, paged per its row). `gh api user` is `get_me`; `gh issue comment` is `add_issue_comment`;
 `gh issue close` and `gh issue edit --add-label` are `issue_write` (update mode), the latter under the
 Full-replace hazard's read-merge-write. `_shared/label-bootstrap.md`'s check-then-create loop has no
 MCP row: on the MCP path skip it, and a label write that then fails is a failing call under the
@@ -79,8 +79,8 @@ tool its row names. The default-branch read in Step 4.0b is `git remote show ori
 paragraph below, which skips the whole of Step 4.0b.
 
 **Fail open on every `gh` call in this section.** If neither `gh` nor the GitHub MCP server is
-available, `gh` is unauthenticated, the repo has no GitHub remote, or any parent-gate `gh` call below fails: a **sub-issue-side** entry
-skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
+available, `gh` is unauthenticated, the repo has no GitHub remote, or any parent-gate `gh` call
+below fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`verification-brief.md`'s
 Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
 auto-merge short-circuit, or the dispatched group's merge gate. The post-merge
 `_shared/pr-first-merge-post-merge.md` Step 4.0b entry is the sub-issue-side exception: on any
@@ -340,7 +340,7 @@ gh issue view $PARENT_NUM --json state,stateReason,comments
 gh api user --jq .login
 ```
 
-With `gh` absent these are `issue_read` (`get`, then `get_comments`) and `get_me`, per
+With `gh` absent these are `issue_read` (`get`, then `get_comments`, paged per its row) and `get_me`, per
 `_shared/github-write-transport.md`; the **Transport (#4602).** paragraph's uppercase normalization
 applies (`reopened` → `REOPENED`), and the Trusted-authors test reads `author_association` on that
 shape.

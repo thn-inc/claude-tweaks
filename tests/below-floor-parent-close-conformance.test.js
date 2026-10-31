@@ -713,6 +713,7 @@ test('#4602: the transport mapping carries every row the parent close needs', ()
   for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(row('Get a single issue by number').includes(lit), `Get row: ${lit}`);
   assert.ok(row("List an issue's native sub-issues").includes('`get_sub_issues`'));
   assert.ok(row("List an issue's native sub-issues").includes('perPage: 100'));
+  assert.ok(row("List an issue's comments").includes('perPage: 100'), 'comment reads are paged');
   assert.ok(row("Get an issue's native parent").includes('`get_parent`'));
   assert.ok(row("Read the current identity's login").includes('gh api user') && row("Read the current identity's login").includes('`get_me`'));
   const db = row("Read the repo's default branch");
@@ -747,6 +748,13 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   assert.ok(transport.includes('`_shared/github-write-transport.md`'));
   assert.ok(transport.includes('`get_parent`'), 'native parent resolution');
   assert.ok(transport.includes('`_shared/label-bootstrap.md`'), 'the label bootstrap states its MCP-path behavior');
+  assert.ok(transport.includes('`get_comments`') && transport.includes('paged'), 'comment reads are paged per the comments row');
+  assert.ok(transport.includes('`gh api user` is `get_me`'), 'explicit pairing: gh api user is get_me');
+  assert.ok(transport.includes('`gh issue comment` is `add_issue_comment`'), 'explicit pairing: gh issue comment is add_issue_comment');
+  assert.ok(
+    transport.includes('`gh issue close` and `gh issue edit --add-label` are `issue_write`'),
+    'explicit pairing: gh issue close and gh issue edit --add-label are issue_write',
+  );
   for (const lit of ['uppercase', '`CLOSED`', '`COMPLETED`', 'label names', 'the last of the references']) assert.ok(transport.includes(lit), `Transport paragraph normalizes the MCP shape: ${lit}`);
   const failOpen = collapse(paragraph(gate, '**Fail open on every `gh` call'));
   assert.ok(failOpen.includes('neither `gh` nor the GitHub MCP server is available'), 'fail open only when neither transport is available');
