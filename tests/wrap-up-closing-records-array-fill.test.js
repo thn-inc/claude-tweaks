@@ -92,9 +92,10 @@ function runBlock(shell, block, records) {
 // #4740 — fallback mode: no wrap-up-pack.json, and the block's MIRROR literal points at a
 // temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
 // no work/ directory at all. Returns status, stderr and the probe's output without asserting,
-// so the go-red control can read a failure.
+// so the go-red control can read a failure. `workMode` chmods the mirror's work/ after
+// its files are written; it is restored in the finally so the temp dir can be removed.
 const MIRROR_LITERAL = '{worktree}/.claude-tweaks/pipelines/{run-id}';
-function runFallback(shell, block, specs) {
+function runFallback(shell, block, specs, { workMode } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4740-'));
   try {
     const mirror = path.join(dir, 'mirror');
@@ -102,6 +103,7 @@ function runFallback(shell, block, specs) {
       fs.mkdirSync(path.join(mirror, 'work'), { recursive: true });
       for (const [name, body] of Object.entries(specs)) fs.writeFileSync(path.join(mirror, 'work', name), body);
     }
+    if (workMode !== undefined) fs.chmodSync(path.join(mirror, 'work'), workMode);
     // Forward slashes: Git Bash on a Windows runner reads C:/… but not C:\….
     const posix = (p) => p.split(path.sep).join('/');
     assert.ok(block.includes(MIRROR_LITERAL), 'the MIRROR literal vanished — the substitution would be vacuous');
@@ -117,6 +119,7 @@ function runFallback(shell, block, specs) {
       els: [...r.stdout.matchAll(/^el=(.*)$/gm)].map((m) => m[1]),
     };
   } finally {
+    if (workMode !== undefined) fs.chmodSync(path.join(dir, 'mirror', 'work'), 0o755);
     fs.rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -201,5 +204,18 @@ for (const shell of SHELLS) {
       assert.strictEqual(r.status, 0, r.stderr);
       assert.strictEqual(r.count, 0);
     }
+  });
+}
+
+// chmod 000 cannot deny access on win32, nor to root: skip visibly there.
+const denyUnsupported = process.platform === 'win32' ? 'win32: chmod cannot deny access'
+  : process.getuid && process.getuid() === 0 ? 'running as root: chmod cannot deny access' : false;
+for (const shell of SHELLS) {
+  const skip = denyUnsupported || skipFor(shell);
+  test(`${shell.name}: live block with no pack and an unreadable mirror work/ fails loud — non-zero exit, EACCES, no count line (#4740)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101) }, { workMode: 0o000 });
+    assert.notStrictEqual(r.status, 0, 'an unreadable work/ must fail the block, not yield zero records');
+    assert.match(r.stderr, /EACCES/);
+    assert.strictEqual(r.count, null, 'the block must not reach the probe');
   });
 }
