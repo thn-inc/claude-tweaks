@@ -336,7 +336,7 @@ function run(argv, overrides = {}) {
 
   // 8b. Per candidate: read, re-read while a will-close one still reads OPEN
   // (bounded by re-read count, never by the clock), reopen what closed at or
-  // after the merge.
+  // after the merge -- and, with --close-window-ms, no later than mergedAt + n.
   const maxRereads = Math.floor(o.settleMs / POLL_STEP_MS);
   const mergedAt = Date.parse(pr.mergedAt);
   const reopened = []; const failed = []; const stillOpen = []; const closedBefore = []; const closedAfterWindow = [];
