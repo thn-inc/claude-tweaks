@@ -111,7 +111,7 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
 `isParent` field excludes every parent — its acceptance is the parent gate's: the below-floor close
-(#4466) or `/claude-tweaks:demo` above it (a hand-closed one: `parent-gate` below, #4600). Resolving
+(#4466) or `/claude-tweaks:demo` above it (a hand-closed one: `parent-gate` below). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
@@ -484,7 +484,6 @@ node -e "
   const { isCloseMarkerComment } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/below-floor-parent-close.js');
   const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
   const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
-  // Dedup by number.
   const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
@@ -727,7 +726,7 @@ node -e "
 ```
 
 A `CLOSED` gate's row is `closedParentGap`'s verdict: a `gap` prints `acceptance-gap`'s row, severity and
-routing (`/claude-tweaks:demo #{n}`), mutating nothing. Its two `WARNING:` lines print verbatim.
+routing (`/claude-tweaks:demo #{n}`), mutating nothing. Report its two `WARNING:` lines verbatim beside the rows; never suppress them.
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,
 executed for this scope's rows via `tidy/actions-github-issues.md`'s `## Open parent gate`) — never applied without
