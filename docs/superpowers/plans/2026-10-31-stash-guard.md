@@ -15,7 +15,7 @@
 - Commit messages: `{Verb} {what} — {detail}`, ending `refs #4559` (never `closes`/`fixes`), plus the trailer line `Claude-Session: https://claude.ai/code/session_01Ngy9oYqyy55AY9hCig2pZz`.
 - Plan-review Decision (spec, verbatim): "The stash guard wraps every dispatch that can run git: each per-task implementer dispatch and its review fix rounds and NEEDS_CONTEXT/BLOCKED re-dispatches, fix-wave and whole-branch-fix implementers, and SDD reviewers. `stash-guard.js` gains a dispatch identifier beside `--task <k>` (for example `--label fix-wave`), used in the snapshot file name, so a whole-branch fix wave has a valid snapshot key." The forwarded no-stash rule in `build/dispatch.md` reaches the same dispatch set (the plan-review question covered both "the stash guard and the no-stash rule").
 - Second plan-review Decision (spec, verbatim): "A reviewer dispatch whose stash guard reports a stash change has its verdict voided. The controller restores the stash, confirms `git status` is clean, and dispatches the review again; the restore is logged and listed in the handoff." (AC12; Task 5.)
-- Third plan-review Decision (spec, verbatim): "When the tree is not clean after a reviewer's stash restore, or the retried review changes the stash again, there is no stop. Log it, list it in the handoff, and dispatch the review once more with the dirty paths named; that verdict stands. At most one retry per review." (AC13; Task 5.) Chosen behaviour for the two triggers, per the fourth Decision's closing rule: a dirty tree after the first restore → the one retry is dispatched with the dirty paths named in its prompt, and its verdict stands; the retry itself changing the stash again → the CLI has already restored it, the controller logs it and lists it in the handoff, and the retry's verdict stands — no third dispatch. Either way the controller never discards worktree changes and never stops.
+- Third plan-review Decision (spec, verbatim): "When the tree is not clean after a reviewer's stash restore, or the retried review changes the stash again, there is no stop. Log it, list it in the handoff, and dispatch the review once more with the dirty paths named; that verdict stands. At most one retry per review." (AC13.1–AC13.4; Task 5.) Chosen behaviour for the two triggers, per the fourth Decision's closing rule: a dirty tree after the first restore → the one retry is dispatched with the dirty paths named in its prompt, and its verdict stands; the retry itself changing the stash again → the CLI has already restored it, the controller logs it and lists it in the handoff, and the retry's verdict stands — no third dispatch. Either way the controller never discards worktree changes and never stops.
 - Fourth plan-review Decision (closing rule): further edge cases in these areas are the implementer's judgment, recorded in this plan and checked at review — never a needs-human gap unless they contradict an Acceptance Criterion or a Decision above.
 - Never run `git stash` in any form yourself while implementing (tests use their own temp repos via `git -C <tmpdir>`); never `git reset`/`git checkout .`; stage named files only.
 - Every commit from `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-4559`, with `pwd` and `git rev-parse --show-toplevel` checked first.
@@ -37,8 +37,10 @@ Waived AC8.1: proven by Task 3 Step 5's behavior-change prose sweep (a grep with
 Waived AC10.1: `npm test` is `/build`'s Common Step 5 full run and `/claude-tweaks:test`'s gate, not a plan task.
 Waived AC11.3: names which plan-review reading was chosen; AC11.1 and AC11.2 carry its behavior.
 Waived AC12.4: names which plan-review reading was chosen; AC12.1–AC12.3 carry its behavior.
-Waived AC13.4: names which plan-review reading was chosen; AC13.1–AC13.3 carry its behavior.
-Waived AC14: a closing rule for plan review (which gaps count as needs-human), not a behavior of the built code; recorded under Global Constraints.
+Waived AC13.5: names which plan-review reading was chosen; AC13.1–AC13.4 carry its behavior.
+Waived AC14.1: a closing rule for plan review (which gaps count as needs-human), not a behavior of the built code; recorded under Global Constraints.
+Waived AC14.2: the same closing rule — this plan records the chosen behaviour (Global Constraints, third Decision) and review checks it; no code behavior to test.
+Waived AC14.3: the same closing rule — governs when plan review stops the build, not a behavior of the built code.
 Waived plugin/skills/_shared/subagent-dispatch-core.md: read-only reference — the copies cite its "in any form" rule and the new wording needs no new citation anchor there (spec Key Files: "edit only if the copies' new wording needs a citation anchor").
 
 ## Review Focus
@@ -263,8 +265,9 @@ Expected: PASS
   - `AC12.2`: matches `/git status --porcelain/` and `/dispatch(es)? the (same )?review again/`;
   - `AC12.3`: the reviewer-restore sentence names the log and the handoff (`/reviewer's restore is logged like any other and listed in the handoff/`), and `handoff-template.md`'s Stash guard section matches `/verdict voided/`;
   - `AC13.1`: matches `/no stop/` in the reviewer-restore branch and does **not** match `` /report the task `BLOCKED`/ `` (the superseded behaviour);
-  - `AC13.2`: matches `/with the dirty paths named/`, `/verdict stands/` and `/Stash guard: \{role\} for task \{k\} \{left the tree dirty after restore/`; `handoff-template.md`'s Stash guard section matches `/tree dirty after restore/` and `/retry verdict stands/`;
-  - `AC13.3`: matches `/at most one retry per review/` and `/never a third/`;
+  - `AC13.2`: matches `/with the dirty paths named/` and `/Stash guard: \{role\} for task \{k\} \{left the tree dirty after restore/`, and `handoff-template.md`'s Stash guard section matches `/tree dirty after restore/`;
+  - `AC13.3`: matches `/verdict stands/`, and `handoff-template.md`'s Stash guard section matches `/retry verdict stands/`;
+  - `AC13.4`: matches `/at most one retry per review/` and `/never a third/`;
   - `AC6.3`: go-red controls — the paragraph with the `snapshot` command deleted, separately with `whole-branch-fix` deleted, separately with the `verdict is void` sentence deleted, and separately with `verdict stands` deleted, each make `assertStashGuardInstruction` throw; and the paragraph with the old ``report the task `BLOCKED` naming the stash change`` sentence re-inserted makes it throw.
   - The paragraph sits in the same paragraph as the forbid sentence (same line of `build/dispatch.md`).
 
