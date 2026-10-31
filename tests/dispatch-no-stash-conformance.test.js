@@ -225,3 +225,204 @@ test('AC9.1/AC9.2: build/dispatch.md keeps low → Fast and records the no-profi
     assert.doesNotMatch(stripped, pattern, `${ac}: the pattern still matches after the claim is removed`);
   }
 });
+
+// ---- #4559: the controller brackets every git-capable dispatch with the stash guard ----
+//
+// build/dispatch.md's forbid sentence is advisory; the stash-guard paragraph that follows it on the
+// same line is what makes /build detect and undo a stash change a dispatched agent made anyway.
+// The paragraph runs from its bold label to the next `**` bold label, exactly like the forbid one.
+const GUARD_LABEL = '**Stash guard around every dispatch that can run git (#4559):**';
+const HANDOFF_TEMPLATE = read('plugin', 'skills', 'build', 'handoff-template.md');
+const SESSION_TMP_ROOT = read('plugin', 'skills', '_shared', 'session-tmp-root.md');
+
+function stashGuardParagraph(text) {
+  const start = text.indexOf(GUARD_LABEL);
+  assert.notStrictEqual(start, -1, `the "${GUARD_LABEL}" label is gone — this guard has lost its anchor`);
+  assert.strictEqual(text.indexOf(GUARD_LABEL, start + 1), -1, 'the stash-guard label occurs twice — this guard cannot tell which paragraph is shipped');
+  const end = text.indexOf('**', start + GUARD_LABEL.length);
+  assert.notStrictEqual(end, -1, 'the stash-guard paragraph is no longer followed by another bold label — this guard has lost its anchor');
+  return text.slice(start, end);
+}
+
+// The reviewer-restore branch: from the reviewer clause to the next clause (the handoff carry-over).
+const REVIEWER_BRANCH_START = 'a reviewer dispatch (task reviewer';
+const REVIEWER_BRANCH_END = 'every `restoreFailed` command';
+function reviewerBranch(paragraph) {
+  const start = paragraph.indexOf(REVIEWER_BRANCH_START);
+  if (start === -1) return '';
+  const end = paragraph.indexOf(REVIEWER_BRANCH_END, start);
+  return end === -1 ? '' : paragraph.slice(start, end);
+}
+
+const globalOf = (pattern) => new RegExp(pattern.source, 'g');
+// A fact over the whole paragraph; `strip` removes every occurrence so the go-red control is real.
+const paragraphFact = (label, pattern) => ({
+  label,
+  test: (p) => pattern.test(p),
+  strip: (p) => p.replace(globalOf(pattern), ''),
+});
+// A fact that must hold inside the reviewer-restore branch, not merely somewhere in the paragraph.
+const branchFact = (label, pattern) => ({
+  label,
+  test: (p) => pattern.test(reviewerBranch(p)),
+  strip: (p) => p.replace(reviewerBranch(p), reviewerBranch(p).replace(globalOf(pattern), '')),
+});
+
+const STASH_GUARD_FACTS = [
+  paragraphFact('AC6.1 snapshot command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" snapshot --repo/),
+  paragraphFact('AC6.1 compare --restore command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" compare --repo .* --restore/),
+  paragraphFact('AC6.1 snapshot immediately before the dispatch', /immediately before (the|each) dispatch/),
+  paragraphFact("AC6.1 compare before the task's review", /before (that|the) task's review/),
+  paragraphFact('AC11.1 per-task implementer dispatch', /per-task implementer dispatch/),
+  paragraphFact('AC11.1 fix round', /fix round/),
+  paragraphFact('AC11.1 NEEDS_CONTEXT/BLOCKED re-dispatch', /NEEDS_CONTEXT\/BLOCKED re-dispatch/),
+  paragraphFact('AC11.1 fix-wave', /fix-wave/),
+  paragraphFact('AC11.1 whole-branch-fix', /whole-branch-fix/),
+  paragraphFact('AC11.1 task reviewer', /task reviewer/),
+  paragraphFact('AC11.1 scoped re-review', /scoped re-review/),
+  paragraphFact('AC11.1 final code reviewer', /final code reviewer/),
+  paragraphFact('AC11.2 --task {k} --label', /--task \{k\} --label/),
+  paragraphFact('AC11.2 --label fix-wave', /--label fix-wave/),
+  paragraphFact('AC11.2 stash-guard-{id}.json', /stash-guard-\{id\}\.json/),
+  paragraphFact('AC6.2 AUTO line', /AUTO \{time\} — Stash guard: \{who\} removed stash entr/),
+  paragraphFact('AC6.2 FAILED line', /FAILED/),
+  paragraphFact('AC6.2 handoff', /handoff/),
+  paragraphFact('AC6.2 DONE becomes DONE_WITH_CONCERNS', /a `DONE` result becomes `DONE_WITH_CONCERNS`/),
+  paragraphFact('AC6.2 NEEDS_CONTEXT or BLOCKED keeps its status', /a `NEEDS_CONTEXT` or `BLOCKED` result keeps its status/),
+  paragraphFact('AC6.2 never popped', /never popped/),
+  paragraphFact('AC12.1 verdict is void', /verdict is void/),
+  paragraphFact('AC12.2 git status --porcelain', /git status --porcelain/),
+  paragraphFact('AC12.2 dispatch the same review again', /dispatch(es)? the (same )?review again/),
+  paragraphFact('AC12.3 restore logged and in the handoff', /reviewer's restore is logged like any other and listed in the handoff/),
+  branchFact('AC13.1 no stop (reviewer-restore branch)', /no stop/),
+  paragraphFact('AC13.2 dirty paths named', /with the dirty paths named/),
+  paragraphFact('AC13.2 dirty-tree log line', /Stash guard: \{role\} for task \{k\} \{left the tree dirty after restore/),
+  paragraphFact('AC13.2 --step "Stash guard" --text-file', /--step "Stash guard" --text-file/),
+  paragraphFact('AC13.3 verdict stands', /verdict stands/),
+  paragraphFact('AC13.4 at most one retry per review', /at most one retry per review/),
+  paragraphFact('AC13.4 never a third', /never a third/),
+];
+
+// The superseded behaviour: a reviewer-side stash change used to BLOCK the task. It must stay gone.
+const STASH_GUARD_FORBIDDEN = [
+  ['AC13.1 report the task BLOCKED', /report the task `BLOCKED`/],
+];
+
+function missingStashGuardFacts(paragraph) {
+  const missing = STASH_GUARD_FACTS.filter((fact) => !fact.test(paragraph)).map((fact) => fact.label);
+  const present = STASH_GUARD_FORBIDDEN.filter(([, pattern]) => pattern.test(paragraph)).map(([label]) => `forbidden: ${label}`);
+  return [...missing, ...present];
+}
+
+function assertStashGuardInstruction(paragraph) {
+  const problems = missingStashGuardFacts(paragraph);
+  assert.deepStrictEqual(
+    problems,
+    [],
+    `build/dispatch.md's stash-guard paragraph must bracket every git-capable dispatch (#4559) — missing: ${problems.join(', ')}`,
+  );
+}
+
+// The handoff's Stash guard section: a renderer slot for every shape the paragraph can produce.
+function handoffStashGuardSection(text) {
+  const start = text.indexOf('### Stash guard (if any)');
+  assert.notStrictEqual(start, -1, 'handoff-template.md lost its "### Stash guard (if any)" section');
+  const end = text.indexOf('\n### ', start + 1);
+  assert.notStrictEqual(end, -1, 'the Stash guard section is no longer followed by another section — this guard has lost its anchor');
+  return text.slice(start, end);
+}
+
+const HANDOFF_FACTS = [
+  ['AC12.3 verdict voided', /verdict voided/],
+  ['AC13.2 tree dirty after restore', /tree dirty after restore/],
+  ['AC13.3 retry verdict stands', /retry verdict stands/],
+];
+
+function missingHandoffFacts(section) {
+  return HANDOFF_FACTS.filter(([, pattern]) => !pattern.test(section)).map(([label]) => label);
+}
+
+const FORBID_PARAGRAPH_OLD_BLOCKED_SENTENCE = 'a stash change on a reviewer dispatch means report the task `BLOCKED` naming the stash change; ';
+
+test('AC6.1/AC11/AC12/AC13: the stash-guard paragraph carries every pinned instruction', () => {
+  assertStashGuardInstruction(stashGuardParagraph(BUILD_DISPATCH));
+});
+
+test('AC6.3: stripping any one pinned fact reports that fact (no pattern is vacuous)', () => {
+  const paragraph = stashGuardParagraph(BUILD_DISPATCH);
+  for (const fact of STASH_GUARD_FACTS) {
+    const doctored = fact.strip(paragraph);
+    assert.notStrictEqual(doctored, paragraph, `${fact.label}: the strip matched nothing`);
+    assert.ok(
+      missingStashGuardFacts(doctored).includes(fact.label),
+      `${fact.label}: stripping it must report it missing`,
+    );
+  }
+});
+
+test('AC6.3: each named go-red control makes assertStashGuardInstruction throw with its own fact', () => {
+  const paragraph = stashGuardParagraph(BUILD_DISPATCH);
+  const controls = [
+    ['the snapshot command deleted', 'AC6.1 snapshot command', (p) => p.replace(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" snapshot --repo/g, '')],
+    ['whole-branch-fix deleted', 'AC11.1 whole-branch-fix', (p) => p.split('whole-branch-fix').join('')],
+    ['the verdict-is-void sentence deleted', 'AC12.1 verdict is void', (p) => p.split('verdict is void').join('')],
+    ['verdict stands deleted', 'AC13.3 verdict stands', (p) => p.split('verdict stands').join('')],
+  ];
+  for (const [what, label, doctor] of controls) {
+    const doctored = doctor(paragraph);
+    assert.notStrictEqual(doctored, paragraph, `${what}: the control changed nothing`);
+    assert.deepStrictEqual(missingStashGuardFacts(doctored), [label], `${what}: must report exactly ${label}`);
+    assert.throws(() => assertStashGuardInstruction(doctored), (err) => err.message.includes(`missing: ${label}`), `${what}: must throw`);
+  }
+});
+
+test('AC13.1: the superseded report-the-task-BLOCKED behaviour is absent and re-inserting it goes red', () => {
+  const paragraph = stashGuardParagraph(BUILD_DISPATCH);
+  assert.doesNotMatch(paragraph, /report the task `BLOCKED`/, 'a reviewer-side stash change no longer blocks the task');
+  const reinserted = paragraph.replace('the CLI has already restored the removed entries;', `${FORBID_PARAGRAPH_OLD_BLOCKED_SENTENCE}the CLI has already restored the removed entries;`);
+  assert.notStrictEqual(reinserted, paragraph, 'the re-insertion anchor matched nothing');
+  assert.throws(() => assertStashGuardInstruction(reinserted), (err) => err.message.includes('forbidden: AC13.1 report the task BLOCKED'));
+});
+
+test('AC13.1: "no stop" is pinned inside the reviewer-restore branch, not elsewhere in the paragraph', () => {
+  const paragraph = stashGuardParagraph(BUILD_DISPATCH);
+  const branch = reviewerBranch(paragraph);
+  assert.ok(branch.length > 0, 'the reviewer-restore branch anchors are gone');
+  assert.match(branch, /no stop/);
+  // The same words elsewhere in the paragraph must not satisfy the pin once the branch loses them.
+  const doctored = paragraph.replace(branch, branch.replace(/no stop/g, 'a halt'));
+  assert.notStrictEqual(doctored, paragraph);
+  assert.match(doctored, /no new stop/, 'the paragraph keeps its closing "no new stop" sentence outside the branch');
+  assert.deepStrictEqual(missingStashGuardFacts(doctored), ['AC13.1 no stop (reviewer-restore branch)']);
+});
+
+test("AC12.3/AC13.2/AC13.3: handoff-template.md's Stash guard section has a slot for each reviewer-restore shape", () => {
+  const section = handoffStashGuardSection(HANDOFF_TEMPLATE);
+  assert.deepStrictEqual(missingHandoffFacts(section), []);
+  for (const [label, pattern] of HANDOFF_FACTS) {
+    const doctored = section.replace(pattern, '');
+    assert.notStrictEqual(doctored, section, `${label}: the strip matched nothing`);
+    assert.deepStrictEqual(missingHandoffFacts(doctored), [label], `${label}: stripping it must report exactly it`);
+  }
+});
+
+test('session-tmp-root.md lists the stash guard as a consumer', () => {
+  assert.match(SESSION_TMP_ROOT, /\*\*Extended \(#4559\):\*\* `skills\/build\/dispatch\.md`'s stash guard \(`stash-guard-\{id\}\.json`, the standalone \/build snapshot path\)\./);
+});
+
+test("the stash-guard paragraph starts exactly where the forbid paragraph ends, on the same line of build/dispatch.md", () => {
+  const forbid = noStashParagraph(BUILD_DISPATCH);
+  const guard = stashGuardParagraph(BUILD_DISPATCH);
+  const forbidStart = BUILD_DISPATCH.indexOf(forbid);
+  assert.notStrictEqual(forbidStart, -1);
+  assert.strictEqual(
+    BUILD_DISPATCH.indexOf(guard),
+    forbidStart + forbid.length,
+    'the stash-guard label must begin where the forbid paragraph ends (the next bold label after the forbid sentence)',
+  );
+  assert.ok(!forbid.includes('\n') && !guard.includes('\n'), 'the forbid and stash-guard paragraphs must share one line of build/dispatch.md');
+  // Control: a newline between them puts the newline inside the forbid paragraph, which the claim rejects.
+  const split = BUILD_DISPATCH.replace(GUARD_LABEL, '\n' + GUARD_LABEL);
+  assert.notStrictEqual(split, BUILD_DISPATCH);
+  assert.ok(noStashParagraph(split).includes('\n'), 'a line break before the stash-guard label must show up in the forbid paragraph');
+});

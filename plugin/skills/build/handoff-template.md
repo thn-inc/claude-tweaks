@@ -34,6 +34,13 @@ Render the markdown below, substituting placeholders. Generate field values from
 ### Blocked items (if any)
 - {item} — blocked by {reason}
 
+### Stash guard (if any)
+- {sha} {subject} — restore failed; recover with:
+  git stash store -m "{subject}" {sha}
+- {sha} {subject} — left on the stack
+- {role} for task {k}: verdict voided, {sha} {subject} restored, review dispatched again[; tree dirty after restore: {paths}][; retry changed the stash again — retry verdict stands]
+(or omit this section: every stash-guard compare exited 0.)
+
 ### SDD rulings (standalone build, if any)
 - {one-liner} — ledger #{item} (open; `Accept` = ratify, `Keep`/`Defer` = reverse at a standalone `/claude-tweaks:wrap-up`)
 (or omit this section: no `Ruling:` line survived SDD's Finish, or a run directory exists — the Review Console carries them as `staged/sdd-ruling-{N}.md` instead.)
