@@ -61,8 +61,8 @@ const PARTS = [
 
 test('go-red: each Closed-rule part is pinned by its own bullet line', () => {
   const section = closedRuleSection(TEMPLATE);
+  const lines = section.split('\n');
   for (const { bullet, pattern } of PARTS) {
-    const lines = section.split('\n');
     assert.equal(lines.filter((line) => line.startsWith(bullet)).length, 1, `exactly one line starts with ${bullet}`);
     const withoutBullet = lines.filter((line) => !line.startsWith(bullet)).join('\n');
     assert.match(section, pattern);
