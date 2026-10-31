@@ -307,7 +307,7 @@ When mechanizing a prose heuristic into a deterministic check:
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
-    `stripperVerdict` (#3573) checks the transform with an oracle the raw input already passes: it
+    `stripperVerdict` (#3573, defined in `tests/helpers/strip-comments.js`, so a plugin caller of the stripper gets no verdict) checks the transform with an oracle the raw input already passes: it
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
     stripped does not" is `misparsed`, and a raw file that does not compile at all (an ESM file) is
