@@ -1849,20 +1849,24 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const postMergeEntries = r.postMerge || [];
+    const parentsClosedBy = (counts) => postMergeEntries
+      .filter(counts)
+      .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
     summary = {
       released: (r.claims || []).filter((c) => c.action === 'released').length,
       // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
-      postMergeRan: (r.postMerge || []).filter((e) => e.action === 'ran' && !e.step40Failed).length,
+      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
       // Runs whose Step 4.0 itself failed (non-zero exit, unreadable envelope): a SKIP marker was written,
       // Step 4.0b never ran, and the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: (r.postMerge || []).filter((e) => e.action === 'ran' && e.step40Failed).length,
+      postMergeFailed: postMergeEntries.filter((e) => e.action === 'ran' && e.step40Failed).length,
       // A `marker-write-failed` entry counts too: its parents are closed on GitHub, only the marker is missing.
-      postMergeParentsClosed: (r.postMerge || []).reduce((n, e) => n + ((e.action === 'ran' || e.reason === 'marker-write-failed') && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
+      postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran' || e.reason === 'marker-write-failed'),
       // The part of postMergeParentsClosed that marker-write-failed runs closed, so SessionStart credits
       // each close to the right kind of run rather than to the runs counted in postMergeRan.
-      postMergeUnmarkedParentsClosed: (r.postMerge || []).reduce((n, e) => n + (e.reason === 'marker-write-failed' && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
+      postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

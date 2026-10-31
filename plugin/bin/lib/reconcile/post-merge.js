@@ -97,6 +97,13 @@ function composeSkipText(returned) {
   return oneLine(`condition: Step 4.0 returned ${returned}, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them`);
 }
 
+// Pure: what a skipped entry names — its parent, a bare record, or the whole step.
+function skipTarget(skip) {
+  if (skip.parent !== undefined && skip.parent !== null) return `#${skip.parent}`;
+  if (skip.issue !== undefined && skip.issue !== null) return `record #${skip.issue}`;
+  return 'step';
+}
+
 // Pure: the summary marker's text. Names every closed parent's untrusted-comment
 // notes, every skip (parent, bare record, or step-wide) and its detail, on one line.
 function composeSummaryText({ pr, action, closed, skipped }) {
@@ -105,10 +112,7 @@ function composeSummaryText({ pr, action, closed, skipped }) {
     if (Array.isArray(c.notes) && c.notes.length) text += `; notes on #${c.parent}: ${c.notes.join(' / ')}`;
   }
   for (const s of skipped) {
-    const target = s.parent !== undefined && s.parent !== null ? `#${s.parent}`
-      : s.issue !== undefined && s.issue !== null ? `record #${s.issue}`
-        : 'step';
-    text += `; skipped ${target} (${s.reason}${s.detail ? `: ${s.detail}` : ''})`;
+    text += `; skipped ${skipTarget(s)} (${s.reason}${s.detail ? `: ${s.detail}` : ''})`;
   }
   return oneLine(text);
 }
@@ -348,7 +352,10 @@ function processRun({
 
   if (!envelope || !Array.isArray(envelope.closingSet)) {
     const unreadable = code === 0 && !(envelope && envelope.action);
-    const returned = code !== 0 ? `exit ${code}` : unreadable ? 'an unreadable envelope' : envelope.action;
+    let returned;
+    if (code !== 0) returned = `exit ${code}`;
+    else if (unreadable) returned = 'an unreadable envelope';
+    else returned = envelope.action;
     if (code === TRANSIENT_CLOSING_LINKS_EXIT) {
       const retried = retry(`Step 4.0 returned exit ${code} (a gh failure)`);
       if (retried) return retried;
