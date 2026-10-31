@@ -55,7 +55,7 @@ Populated as each pr-first sub-issue lands; a consumer citing this file *and* ro
 | `/claude-tweaks:wrap-up` (`review-console-interactive.md`'s Console-on-PR section), `/claude-tweaks:flow` (`multispec-review-console.md`'s Console-on-PR section) | Routing the top-level Review Console gate to `_shared/console-on-pr.md`'s PR-checkbox render (`pr-first`) vs. the unchanged blocking `AskUserQuestion` (`local-merge`) |
 | `plugin/bin/lib/hooks/pre-tool-use.js` (`checkBookkeepingStampsGate`) | Deciding whether the missing-`record-pr` half of the bookkeeping-stamps gate applies at all — only a run resolving `pr-first` is denied for having no recorded PR. Reads the run's own pin via `policy-schema.js`'s `resolvePolicyConfig({ runDir })`, never a fresh detection |
 | `/claude-tweaks:release` (`release/execute.md`) | Routing Step 5 to `gh pr merge` (pr-first) or `bin/release-local.js` (local-merge) |
-| `/claude-tweaks:build` (Common Step 5, `_shared/git-discipline.md`'s Pre-verification catch-up) | Routing whether build merges a moved integration branch in before its verification run (`pr-first`) or logs one `SKIP` naming the model (`local-merge`) |
+| `/claude-tweaks:build` (Common Step 5, `_shared/pre-verification-catchup.md`) | Routing whether build merges a moved integration branch in before its verification run (`pr-first`) or logs one `SKIP` naming the model (`local-merge`) |
 
 ## Anti-Patterns
 

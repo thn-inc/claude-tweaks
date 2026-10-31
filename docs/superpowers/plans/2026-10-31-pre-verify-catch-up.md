@@ -33,7 +33,7 @@
 - **Why not reuse `bin/pre-review-catchup.js`:** that CLI (#4304) is overlap-gated because, before SDD's review, a merge forces an extra suite run. At Common Step 5 the full suite runs anyway, so an unconditional merge when behind costs no run — and AC1 requires merging whenever the branch is behind.
 - **Once per build:** the catch-up runs before the first verification run only; a verification re-run after a fix does not repeat it. A base that moves after it is the residual case the Post-push merge-state check catches (the prior plan review's open point).
 - **No PR conflict line at Common Step 5:** Catch-up step 1's "Surface the conflict line" has nothing to surface here — the subsection says so (the prior plan review's open point).
-- **`MULTISPEC_PARALLEL_WAVE=1`:** a wave member is a `pr-first` worktree run, so AC1 as written covers it (plan review, 2026-10-31: Reading A kept AC1 unchanged; no exemption). It catches up in its own worktree, as the Pre-review catch-up already does for wave members (`_shared/pre-review-catchup.md`'s Scope).
+- **`MULTISPEC_PARALLEL_WAVE=1`:** a wave member is a `pr-first` worktree run, so AC1 as written covers it (plan review, 2026-10-31: Reading A kept AC1 unchanged; no exemption). It catches up in its own worktree, as the Pre-review catch-up already does for wave members (`_shared/pre-review-catchup.md`'s Scope). **Reversed by the final review (F1, contract-beats-spec):** a multi-spec run (`MULTISPEC_SHARED_WORKTREE=1` or `MULTISPEC_PARALLEL_WAVE=1`) logs a `SKIP` instead, so `flow/multispec-freshness.md`'s registered boundary-freshness HARD-GATE still sees the drift.
 - **Every exit before the comparison skips it:** the dirty-tree and failed-fetch `SKIP`s, an aborted conflict, and a merge that fails without a conflict (git refusing to overwrite untracked files — the realistic failure `_shared/pre-review-catchup.md` names) all leave HEAD unchanged, so the before/after comparison never runs after them (else it would log a false "already contains" `SKIP` beside the real line).
 - **Resolving the model (verbatim-command probe, run 2026-10-31 in this worktree):** `node plugin/bin/resolve-policy.js --values integration-model --run "{this run dir}"` printed `pr-first`; without `--run` it printed `pr-first`.
 
@@ -318,3 +318,11 @@ git commit -m "Run the pre-verification catch-up in build Common Step 5 — the 
 | AC4.1 | Task 1 `already current is a SKIP` |
 | AC5.1 | Task 1 `abort verifies un-merged`; Task 2 `abort verifies un-merged` |
 | AC6.1 | Task 2 go-red controls and the Step 2 red run recorded as AC evidence |
+
+## Final-review amendments
+
+- F1: a multi-spec run (`MULTISPEC_SHARED_WORKTREE=1` or `MULTISPEC_PARALLEL_WAVE=1`) merges nothing and logs a `SKIP`, so `flow/multispec-freshness.md`'s boundary-freshness HARD-GATE still sees the drift (contract-beats-spec; reverses the Design notes' wave-member bullet).
+- F2: an unresolved integration model (`resolve-policy.js` non-zero or empty) logs a `SKIP` and merges nothing.
+- F3: a failed Catch-up step 3 `rev-parse` takes difference 5's rev-parse `SKIP`; the merge is not attempted.
+- F4: the procedure moved out of `_shared/git-discipline.md` into its own `_shared/pre-verification-catchup.md`, loaded only at build Common Step 5; every citation repointed, and `tests/git-discipline-merge-state-conformance.test.js` restored to its base version.
+- F5: the Post-push residual paragraph says the build phase exit's read normally prints `no-conflict`.
