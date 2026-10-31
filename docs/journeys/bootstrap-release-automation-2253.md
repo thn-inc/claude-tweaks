@@ -3,6 +3,7 @@ files:
   - plugin/skills/init/bootstrap/step-21-release.md
   - plugin/bin/release-bootstrap.js
   - plugin/bin/lib/init/release-bootstrap.js
+  - plugin/bin/lib/branch-name.js
   - plugin/skills/init/worktree-policy-finalization.md
   - plugin/skills/init/claude-md-template.md
   - plugin/skills/init/input-grammar.md
@@ -63,4 +64,5 @@ files:
 - Created during build of #2253 (Init bootstrap, detection, and the two policy keys)
 - Steps 1-5 built in this session; Step 3.5 (the `--release-type`/`--extra-file` override) added during build of #2324
 - Step 3's symlinked-`.github` red flag added during build of #4282 (the write guard now lstats every intermediate directory on Windows)
+- Updated during build of #4648. The `--branch` validator (`isValidBranchName`) moved from `lib/init/release-bootstrap.js` to the shared `plugin/bin/lib/branch-name.js`. It behaves the same.
 - Related specs: #2250 (parent design), #2251 (merge-time conventional subject), #2252 (reconcile under squash), #2324 (the override); units 4, 6 of #2250 consume what this journey leaves behind, and unit 9 (#2259, this repo's own migration) is the override's first consumer
