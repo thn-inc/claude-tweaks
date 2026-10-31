@@ -26,7 +26,8 @@ const SHAPE = {
 //   parentOf {sub: parent}, parentNoRepo, bodies {n: text}, probeFields [names],
 //   subs {parent: [n]}, hasNextPage {parent: bool}, rest {parent: [n]},
 //   issues {n: {state, stateReason, labels, title, refs}}, garbled {n: text},
-//   parentLabels {parent: [names]}, parentLive {parent: {...}}, login, throwWhen(key).
+//   parentLabels {parent: [names]}, parentLive {parent: {...}}, liveRaw {parent: text},
+//   login, throwWhen(key).
 function makeGh(world) {
   const calls = [];
   const same = (args, want) => args.length === want.length && args.every((a, i) => a === want[i]);
@@ -69,6 +70,7 @@ function makeGh(world) {
     m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
     m = /^issue view (\d+) --json state,stateReason,comments$/.exec(key);
+    if (m && world.liveRaw && m[1] in world.liveRaw) return world.liveRaw[m[1]];
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
     if (key === 'api user --jq .login') return `${world.login || 'bot'}\n`;
     throw new Error(`unexpected gh call: ${key}`);
@@ -377,6 +379,31 @@ test('a failing fetcher read is a GhFailure naming the fetcher', () => {
   });
 });
 
+test('an exit-0 fetcher answer that is unparseable or lacks the parent key is a GhFailure', () => {
+  const { calls, caller } = makeGh({});
+  const fetcherPrinting = (text) => (argv, deps) => { deps.stdout(text); return 0; };
+  assert.throws(
+    () => enumerateSubIssues({ parent: 10, ...NATIVE, caller, fetcher: fetcherPrinting('<html>502</html>') }),
+    ghFailure(/^fetch-sub-issues\.js: unparseable output/),
+  );
+  for (const text of [`${JSON.stringify({ byParent: { 11: [12] }, retry: [] })}\n`, `${JSON.stringify({ retry: [10] })}\n`, 'null\n']) {
+    assert.throws(
+      () => enumerateSubIssues({ parent: 10, ...NATIVE, caller, fetcher: fetcherPrinting(text) }),
+      ghFailure('fetch-sub-issues.js: no sub-issue list for #10'),
+      text,
+    );
+  }
+  assert.equal(calls.length, 0, 'the injected fetcher made every read');
+});
+
+test('the fetcher is given the parent, --repo and --resolve-retries, and its byParent list is read', () => {
+  const seen = [];
+  const { caller } = makeGh({});
+  const fetcher = (argv, deps) => { seen.push(argv); deps.stdout(`${JSON.stringify({ byParent: { 10: [12, 11] }, retry: [] })}\n`); return 0; };
+  assert.deepEqual(enumerateSubIssues({ parent: 10, ...NATIVE, caller, fetcher }), [11, 12]);
+  assert.deepEqual(seen, [['10', '--repo', 'o/r', '--resolve-retries']]);
+});
+
 test('EXIT_SUBISSUES_UNAVAILABLE is 4 and is the code fetch-sub-issues returns for an unavailable field', () => {
   assert.equal(EXIT_SUBISSUES_UNAVAILABLE, 4);
   const { gh } = makeGh({ probeFields: ['title'] });
@@ -407,6 +434,23 @@ test('gatherGateFacts from a parent skips resolution', () => {
   assert.deepEqual(calls[0].args, SHAPE.probe());
   assert.equal(got.parent, 10);
   assert.deepEqual(got.subIssues.map((s) => s.number), [11, 12]);
+});
+
+test('gatherGateFacts takes exactly one of subIssue and parent', () => {
+  for (const args of [{ subIssue: 11, parent: 10 }, {}, { subIssue: null, parent: undefined }]) {
+    const { calls, caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11] } });
+    assert.throws(() => gatherGateFacts({ ...args, ...NATIVE, caller }), TypeError, JSON.stringify(args));
+    assert.equal(calls.length, 0, `no gh call: ${JSON.stringify(args)}`);
+  }
+});
+
+test('a JSON answer that is not an object is a GhFailure (shapes 5 and 7)', () => {
+  for (const text of ['null', '42', '"text"']) {
+    let { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
+    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(not a JSON object/), `shape 5: ${text}`);
+    ({ caller } = makeGh({ liveRaw: { 10: text } }));
+    assert.throws(() => gatherIdempotenceFacts({ parent: 10, caller }), ghFailure(/^gh issue view 10: unexpected output \(not a JSON object/), `shape 7: ${text}`);
+  }
 });
 
 test('a failing or unparseable read throws GhFailure', () => {

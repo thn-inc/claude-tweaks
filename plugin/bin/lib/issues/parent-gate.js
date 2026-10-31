@@ -55,6 +55,8 @@ class GhFailure extends Error {}
 
 // gh(args, input?) -> stdout, throwing on failure  ->  { call, callJson }, each
 // turning a failure into a GhFailure that names the call's first three args.
+// callJson also rejects JSON that is not an object or array (`null`, a number, a
+// string), which every reader here would otherwise dereference into a TypeError.
 function ghCaller(gh) {
   const call = (args, input) => {
     try {
@@ -65,11 +67,16 @@ function ghCaller(gh) {
   };
   const callJson = (args) => {
     const out = call(args);
+    let parsed;
     try {
-      return JSON.parse(out);
+      parsed = JSON.parse(out);
     } catch (err) {
       throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: unparseable output (${err.message})`);
     }
+    if (parsed === null || typeof parsed !== 'object') {
+      throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: unexpected output (not a JSON object: ${JSON.stringify(parsed)})`);
+    }
+    return parsed;
   };
   return { call, callJson };
 }
@@ -95,15 +102,18 @@ function resolveParent({ subIssue, owner, repo, workLinks, caller }) {
 
 // Shape 3 (body-text: the parent's task list) or shape 4 (native: fetch-sub-issues.js's
 // `run` in-process, or the one REST read 4d when it reports the field unavailable).
-// -> the parent's sub-issue numbers, ascending.
-function enumerateSubIssues({ parent, owner, repo, workLinks, caller }) {
+// -> the parent's sub-issue numbers, ascending. `fetcher` is that `run`; tests inject
+// one to reach the exit-0 branches the real CLI never takes (unparseable stdout, no key).
+function enumerateSubIssues({
+  parent, owner, repo, workLinks, caller, fetcher = runFetchSubIssues,
+}) {
   if (workLinks === 'body-text') {
     return distinctAscending(parseSubIssues(String(caller.call(['issue', 'view', String(parent), '--json', 'body', '-q', '.body']))));
   }
   const restArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parent}/sub_issues`, '--jq', '.[].number'];
   let out = '';
   let err = '';
-  const code = runFetchSubIssues([String(parent), '--repo', `${owner}/${repo}`, '--resolve-retries'], {
+  const code = fetcher([String(parent), '--repo', `${owner}/${repo}`, '--resolve-retries'], {
     ghAvailable: () => true,
     remoteUrl: () => null,
     runner: (args) => caller.call(args),
@@ -128,6 +138,10 @@ function enumerateSubIssues({ parent, owner, repo, workLinks, caller }) {
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
 // With no resolvable parent it stops after resolution.
 function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
+  const given = (v) => v !== null && v !== undefined;
+  if (given(subIssue) === given(parent)) {
+    throw new TypeError('gatherGateFacts takes exactly one of subIssue and parent');
+  }
   let resolved = parent;
   if (resolved === null || resolved === undefined) {
     resolved = resolveParent({ subIssue, owner, repo, workLinks, caller });
