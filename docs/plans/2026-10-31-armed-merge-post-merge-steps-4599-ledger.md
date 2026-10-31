@@ -11,3 +11,4 @@
 | 7 | build | SDD ruling — R6: marker-write failure documented as nothing re-closes: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 8 | build | SDD ruling — R7: below-floor close comment copy classified copy-only in the accept-label guard: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 9 | build | SDD ruling — R8: Step 4.0b summary line only when the closing set was evaluated: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
+| 10 | build/skill | prose-code-twin-pin covers closed vocabularies only; this build added a behavior twin, below-floor-parent-close.js mirroring prose Step 4.0b, pinned by below-floor-parent-close-conformance.test.js (comment template + entry conditions), an enrichment the skill could name | observation | — |
