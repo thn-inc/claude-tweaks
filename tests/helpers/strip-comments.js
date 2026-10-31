@@ -1,7 +1,7 @@
 'use strict';
 // Shared literal-aware comment stripper for the source-scan conformance tests
 // (#3536, #3585). The tests that call it per file, by test-file stem: `accept-label-reader`, `backfill-cli`,
-// `cli`, `exit-code`, `git-status-optional-locks`, `hooks-harness-refusal`, `owner-pid-probe`,
+// `cli`, `exit-code`, `git-status-optional-locks`, `hooks-harness-refusal`, `markdown-blocks`, `owner-pid-probe`,
 // `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`,
 // `subprocess-timing`, `wall-clock-budget` and `windows-hide-spawn`. tests/strip-comments-callers-twin.test.js
 // pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491) also
