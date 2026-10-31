@@ -1555,6 +1555,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     release: releaseMod.releaseMerged,
     reap: reapMod.reapMerged,
     postMerge: postMergeMod.postMerge,
+    prefetchPostMerge: postMergeMod.prefetchPostMergePrStates,
   };
   // order: which stubbed checks ran, in call order (#4599); postMergeOpts: what post-merge was handed.
   const out = {
@@ -1563,6 +1564,8 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
   const health = extra.health || { ok: true, reason: null };
   preflight.ghHealthCheck = () => health;
   preflight.ghHealthCheckAsync = async () => health;
+  // The PR-state warm-up (#4032) is its own step: record it, with the resolver it was handed.
+  postMergeMod.prefetchPostMergePrStates = async (root, prStates) => { out.order.push('prefetch'); out.prefetchArgs = { root, prStates }; };
   postMergeMod.postMerge = async (opts) => {
     out.order.push('post-merge');
     out.postMergeOpts = opts;
@@ -1583,6 +1586,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     out.reapCalled = true;
     return { reaped: [], skipped: [], portsRelease: [] };
   };
+  if (extra.afterStubs) extra.afterStubs(); // lets a test replace one of the stubs above
   const indexPath = require.resolve('../plugin/bin/lib/reconcile/index');
   try {
     delete require.cache[indexPath];
@@ -1595,6 +1599,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     releaseMod.releaseMerged = original.release;
     reapMod.reapMerged = original.reap;
     postMergeMod.postMerge = original.postMerge;
+    postMergeMod.prefetchPostMergePrStates = original.prefetchPostMerge;
     delete require.cache[indexPath];
   }
   return out;
@@ -1602,7 +1607,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
 
 test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between mirror and archive, handing it integration, prStates and dryRun', async () => {
   const { r, order, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['archive']);
-  assert.deepEqual(order, ['post-merge', 'archive']);
+  assert.deepEqual(order, ['prefetch', 'post-merge', 'archive']);
   assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', 'mirror still runs ahead of both');
   assert.equal(postMergeOpts.integration, 'main');
   assert.equal(postMergeOpts.dryRun, false);
@@ -1612,9 +1617,24 @@ test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between 
   assert.deepEqual(archiveOpts.postMergeDeferred, []);
 });
 
+test('AC1 (#4599): the pass-shared PR-state resolver is warmed with the main checkout before post-merge runs, and a throwing warm-up never breaks the pass', async () => {
+  const { prefetchArgs, postMergeOpts, mainDir } = await reconcileWithAsyncMerge(['post-merge']);
+  assert.equal(prefetchArgs.root, fs.realpathSync(mainDir));
+  assert.equal(prefetchArgs.prStates, postMergeOpts.prStates, 'the warm-up and the check share one resolver');
+
+  const postMergeMod = require('../plugin/bin/lib/reconcile/post-merge');
+  const original = postMergeMod.prefetchPostMergePrStates;
+  const { r, order } = await reconcileWithAsyncMerge(['post-merge'], {
+    afterStubs: () => { postMergeMod.prefetchPostMergePrStates = async () => { throw new Error('graphql down'); }; },
+  });
+  postMergeMod.prefetchPostMergePrStates = original;
+  assert.deepEqual(order, ['post-merge'], 'post-merge still ran after the failed warm-up');
+  assert.deepEqual(r.postMerge, [{ runDir: '/x', pr: 1, action: 'ran' }]);
+});
+
 test('AC1 (#4599): the dispatch order is release, post-merge, archive when all three are requested', async () => {
   const { order } = await reconcileWithAsyncMerge(['reap', 'archive', 'post-merge', 'release']);
-  assert.deepEqual(order, ['release', 'post-merge', 'archive']);
+  assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
   const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
   const at = (needle) => src.indexOf(needle);
   assert.ok(at("checks.includes('release')") < at("checks.includes('post-merge')"), 'post-merge dispatches after release');

@@ -16,7 +16,7 @@ const { mirrorFastForward } = require('./mirror-ff');
 const { redTipCheck } = require('./red-tip');
 const { reapMerged, prefetchReapPrStates } = require('./reap-merged');
 const { releaseMerged } = require('./release-merged');
-const { postMerge } = require('./post-merge');
+const { postMerge, prefetchPostMergePrStates } = require('./post-merge');
 const { archiveMerged, prefetchArchivePrStates } = require('./archive-merged');
 const { archiveBranches } = require('./archive-branches');
 const { pruneRemote } = require('./prune-remote');
@@ -541,7 +541,10 @@ async function reconcileInner(opts, state) {
   if (overBudget(DISPATCH_ORDER.slice(4))) return result;
   let postMergeDeferred = [];
   if (checks.includes('post-merge')) {
-    const r = await timePhase('post-merge', () => postMerge({ cwd: root, integration, prStates, dryRun }));
+    const r = await timePhase('post-merge', async () => {
+      await warm(prefetchPostMergePrStates);
+      return postMerge({ cwd: root, integration, prStates, dryRun });
+    });
     if (r.failure) {
       result.skipped.push({ check: 'post-merge', reason: r.failure });
     } else {

@@ -29,7 +29,7 @@ function advisoryBanner(header, lines, trailer) {
 }
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
-// write-only and janitorial (release/archive/archive-branches/remote-prune/
+// write-only and janitorial (release/post-merge/archive/archive-branches/remote-prune/
 // ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
@@ -228,7 +228,7 @@ async function run(ctx) {
     // anti-pattern for why a linked worktree's own HEAD must never stand in
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
-    // write-only janitorial checks (release/archive/archive-branches/
+    // write-only janitorial checks (release/post-merge/archive/archive-branches/
     // remote-prune/ledger-residue/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
@@ -331,6 +331,12 @@ async function run(ctx) {
         if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
+        // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); absent in
+        // an older status file, zero renders nothing.
+        if (s.postMergeRan) {
+          const closed = s.postMergeParentsClosed;
+          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${closed ? `, closing ${closed} parent record(s) below the oversight floor` : ''}`);
+        }
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

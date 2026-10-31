@@ -1733,7 +1733,7 @@ async function runReconcile(argv) {
 async function runReconcileSummary(argv) {
   // #644 Deliverable 3 — the plain one-line residue summary
   // `/claude-tweaks:flow`'s closing report shells out for. Composed
-  // without re-running the background checks (release/archive/
+  // without re-running the background checks (release/post-merge/archive/
   // archive-branches/remote-prune/ledger-residue/reap already ran off the hot path via
   // `reconcile-background`, most recently under `session-start.js`) —
   // this reads that persisted `summary.archived` count plus the residue
@@ -1813,7 +1813,7 @@ async function runReconcileBackground(argv) {
   // also stamps it moments before this process starts — reusing it here
   // would make this process (and the spawn-gate that decided to launch it)
   // see a false "fresh" from a pass that never touched
-  // release/archive/archive-branches/remote-prune/ledger-residue/reap, and the
+  // release/post-merge/archive/archive-branches/remote-prune/ledger-residue/reap, and the
   // background checks would never run. Caught by task review against a
   // real pr-first remote (#820 Task 10 fix-up); reconcile()'s own
   // lastRunAt/cache.js contract is untouched by this fix.
@@ -1851,6 +1851,11 @@ async function runReconcileBackground(argv) {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
     summary = {
       released: (r.claims || []).filter((c) => c.action === 'released').length,
+      // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
+      // the oversight floor: the background pass is the only place those closes happen unattended,
+      // so without a count the next SessionStart would never mention one.
+      postMergeRan: (r.postMerge || []).filter((e) => e.action === 'ran').length,
+      postMergeParentsClosed: (r.postMerge || []).reduce((n, e) => n + (e.action === 'ran' && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

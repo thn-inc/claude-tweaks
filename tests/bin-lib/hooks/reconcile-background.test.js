@@ -241,6 +241,24 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
+test('reconcile-background summary: counts post-merge runs and the parents they closed, skipped entries excluded (#4599)', async () => {
+  const summary = await backgroundSummaryFor({
+    postMerge: [
+      { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 2 },
+      { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'reopened', parentsClosed: 0 },
+      { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
+      { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
+    ],
+  });
+  assert.equal(summary.postMergeRan, 2);
+  assert.equal(summary.postMergeParentsClosed, 2);
+  for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
+    const none = await backgroundSummaryFor(result);
+    assert.equal(none.postMergeRan, 0);
+    assert.equal(none.postMergeParentsClosed, 0);
+  }
+});
+
 test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
   const summary = await backgroundSummaryFor({
     ledgerResidue: [

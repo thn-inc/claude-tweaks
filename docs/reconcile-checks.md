@@ -629,7 +629,11 @@ the source of truth; the module only decides when the steps run and records that
 - **Why the guard is bounded.** Exactly four reasons defer a run: `merge-grace`, `in-flight`,
   `claim-failed` and `network-failure` (the transient PR-state failure). Each is cleared by a later
   pass: a run leaves the set once `post-merge` acts on it, which for `merge-grace` is within one
-  grace window. Nothing else defers, so the guard cannot hold a run indefinitely:
+  grace window. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
+  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
+  deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
+  every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
+  because the alternative is archiving a run the reconciler still owes its steps:
 
   | Skip reason | Deferred | Why |
   |---|---|---|
@@ -663,6 +667,12 @@ the source of truth; the module only decides when the steps run and records that
   duplicate comment on an already-closing parent, and the parent still ends `CLOSED` once. It is
   accepted rather than closed by a cross-writer lock.
 
+- **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `postMergeRan` (runs whose
+  steps this pass ran, `action: 'ran'`) and `postMergeParentsClosed` (the parents those runs closed
+  below the floor). The next SessionStart renders both in its prior-pass line (`post-merge steps ran
+  for N merged run(s), closing M parent record(s) below the oversight floor`); without them a
+  background parent close would never be visible outside GitHub and `decisions.md`.
+
 ## Timing contract (#4032)
 
 An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is what brings it under
@@ -683,7 +693,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   through them; `subprocess-timing-conformance.test.js` fails on a direct `child_process` call in
   that directory (exempt: `timing.js` itself and `background-spawn.js`, whose detached child has no
   duration to attribute). An unmeasured spawn would make the report quietly under-count.
-- **PR-state cache (`pr-state-cache.js`).** `archive`, `reap` and `release` share one per-pass
+- **PR-state cache (`pr-state-cache.js`).** `archive`, `reap`, `release` and `post-merge` share one per-pass
   resolver in front of `pr-state.js`: in-pass memo, then a persisted entry still inside its TTL,
   then a live call. Only terminal answers persist (`persistableTtl`, in `reconcile-cache.json`'s
   `prStates` key as `{ v, at }`, keyed `n:{number}` / `b:{branch}`); anything else has TTL 0:
@@ -714,7 +724,7 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
   resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
   when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
-  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path. `post-merge` dispatches ahead of `archive`'s warm-up, so it prefetches the recorded PR number of every unmarked run itself (`prefetchPostMergePrStates`, clean runs included) before its per-run lookups; otherwise each active run would cost one live `gh pr view` per pass.
 - **Claim blobs are reused by blob sha** (`release-merged.js`, `claimBlobs` key). An active claim's
   contents are cached by git blob sha and rewritten each pass to that pass's active claims, so it
   stays bounded. The reuse skips only the contents read — classification and the PR/issue join

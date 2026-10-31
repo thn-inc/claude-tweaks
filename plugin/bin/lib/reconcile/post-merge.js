@@ -163,6 +163,25 @@ function candidateRuns(root) {
   return [...listRunDirsWithState(root), ...listRunDirsWithState(root, { status: 'clean' })];
 }
 
+// #4032's batched lookup, for this check: warm the pass's PR-state resolver with the PR number of
+// every run postMerge will probe (a recorded PR, no marker yet), so its per-run `byNumberAsync`
+// calls hit the memo instead of each paying a live `gh pr view`. Without it the check, which
+// dispatches ahead of archive's own warm-up, would make one cold call per active run on every pass
+// (OPEN answers are never persisted). Same run selection as postMerge's loop, clean runs included.
+// Best-effort: the caller swallows a throw, and a number left unwarmed just costs the live call.
+async function prefetchPostMergePrStates(root, prStates) {
+  if (!prStates || typeof prStates.prefetch !== 'function') return;
+  if (readWorkBackend(root) !== 'github-issues') return; // postMerge skips such a project before any lookup
+  const wanted = new Set();
+  for (const { dir, state } of candidateRuns(root)) {
+    const pr = state && state.pr && state.pr.number;
+    if (!Number.isInteger(pr) || pr <= 0) continue;
+    if (hasPostMergeMarker(readDecisions(dir))) continue;
+    wanted.add(pr);
+  }
+  await prStates.prefetch({ numbers: [...wanted] });
+}
+
 async function postMerge({
   cwd, integration, prStates, dryRun = false, now = Date.now, deps = {},
 } = {}) {
@@ -301,6 +320,6 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText,
+  postMerge, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText,
   MARKER_STEP, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };

@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  postMerge, hasPostMergeMarker, takeClaim, MARKER_STEP, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  postMerge, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 
@@ -571,4 +571,32 @@ test('takeClaim: a non-EEXIST create error is claim-failed', () => {
   const root = mainCheckout();
   const missing = path.join(root, 'no-such-run-dir');
   assert.deepEqual(takeClaim(missing, NOW), { ok: false, reason: 'claim-failed' });
+});
+
+// #4032's batched lookup: postMerge dispatches ahead of archive's own warm-up, so without this
+// prefetch every active run would cost one live `gh pr view` per pass.
+test('prefetchPostMergePrStates: warms exactly the PR numbers postMerge would probe — unmarked, clean included, deduplicated', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090001-spec-1', { pr: 11 });
+  addRun(root, '2026-10-30T090002-spec-2', { pr: 12, status: 'clean' });
+  addRun(root, '2026-10-30T090003-spec-3', { pr: 13, decisions: `${formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'done', reversibility: 'n/a' })}\n` });
+  addRun(root, '2026-10-30T090004-spec-4', { pr: null });
+  addRun(root, '2026-10-30T090005-spec-5', { pr: 11 });
+  const calls = [];
+  await prefetchPostMergePrStates(root, { prefetch: async (arg) => { calls.push(arg); } });
+  assert.equal(calls.length, 1, 'one batched prefetch call');
+  assert.deepEqual([...calls[0].numbers].sort(), [11, 12]);
+});
+
+test('prefetchPostMergePrStates: nothing is looked up for a project postMerge would skip, and a resolver without prefetch is tolerated', async () => {
+  const other = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local-files\n' });
+  addRun(other, '2026-10-30T090001-spec-1', { pr: 11 });
+  const calls = [];
+  await prefetchPostMergePrStates(other, { prefetch: async (arg) => { calls.push(arg); } });
+  assert.deepEqual(calls, []);
+
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090001-spec-1', { pr: 11 });
+  await assert.doesNotReject(prefetchPostMergePrStates(root, {}));
+  await assert.doesNotReject(prefetchPostMergePrStates(root, null));
 });

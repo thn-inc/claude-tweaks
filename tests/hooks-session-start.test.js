@@ -699,6 +699,28 @@ test('SessionStart surfaces a prior background pass\'s residue errors with the l
   );
 });
 
+test('SessionStart renders a prior background pass\'s post-merge runs and parent closes (#4599)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+
+  seed({ released: 1, postMergeRan: 2, postMergeParentsClosed: 1 });
+  const closing = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    closing.json.hookSpecificOutput.additionalContext,
+    /1 issue claim\(s\) released; post-merge steps ran for 2 merged run\(s\), closing 1 parent record\(s\) below the oversight floor\./,
+  );
+
+  seed({ postMergeRan: 1, postMergeParentsClosed: 0 });
+  const noClose = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(noClose.json.hookSpecificOutput.additionalContext, /background reconcile \(from a prior session\) — post-merge steps ran for 1 merged run\(s\)\./);
+
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
+  const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
