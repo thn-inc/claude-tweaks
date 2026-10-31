@@ -6,6 +6,7 @@ files:
   - plugin/bin/lib/claim-targets/claim-targets.js
   - plugin/skills/dispatch/open-pr-exclusion-report.md
   - plugin/skills/flow/SKILL.md
+  - plugin/skills/dispatch/task-prompt.md
 ---
 
 # Resume a Stalled Dispatched Build
