@@ -256,11 +256,14 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
   assert.equal(summary.postMergeFailed, 2);
   // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted.
   assert.equal(summary.postMergeParentsClosed, 7);
+  // ...of which /r/d's 5 came from the run whose marker write failed, so SessionStart can credit them apart.
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 5);
   for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
     const none = await backgroundSummaryFor(result);
     assert.equal(none.postMergeRan, 0);
     assert.equal(none.postMergeFailed, 0);
     assert.equal(none.postMergeParentsClosed, 0);
+    assert.equal(none.postMergeUnmarkedParentsClosed, 0);
   }
 });
 

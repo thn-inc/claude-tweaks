@@ -333,13 +333,16 @@ async function run(ctx) {
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
         // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); absent in
         // an older status file, zero renders nothing.
-        const closedParents = s.postMergeParentsClosed;
+        // postMergeParentsClosed is the total; postMergeUnmarkedParentsClosed (absent in an older status
+        // file) is the part closed by runs whose marker write failed. Each close is credited to its own kind of run.
+        const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
+        const ranClosed = Math.max(0, (Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0) - unmarkedClosed);
         if (s.postMergeRan) {
-          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${closedParents ? `, closing ${closedParents} parent record(s) below the oversight floor` : ''}`);
-        } else if (closedParents) {
-          // Every close came from a run whose marker write failed: the parents are still closed on GitHub.
-          lines.push(`post-merge steps closed ${closedParents} parent record(s) below the oversight floor`);
+          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${ranClosed ? `, closing ${ranClosed} parent record(s) below the oversight floor` : ''}`);
         }
+        // The parents are closed on GitHub; only the run's decisions.md marker is missing.
+        if (unmarkedClosed) lines.push(`post-merge steps closed ${unmarkedClosed} parent record(s) below the oversight floor in run(s) whose decisions.md marker could not be written`);
+        else if (!s.postMergeRan && ranClosed) lines.push(`post-merge steps closed ${ranClosed} parent record(s) below the oversight floor`);
         // Step 4.0 failed for these (counted apart from `postMergeRan`): no parent was closed, so tidy's
         // parent-gate backstop is the recovery.
         if (s.postMergeFailed) lines.push(`post-merge Step 4.0 failed for ${s.postMergeFailed} merged run(s) (tidy's parent-gate backstop recovers them)`);

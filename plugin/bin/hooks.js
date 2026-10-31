@@ -1860,6 +1860,9 @@ async function runReconcileBackground(argv) {
       postMergeFailed: (r.postMerge || []).filter((e) => e.action === 'ran' && e.step40Failed).length,
       // A `marker-write-failed` entry counts too: its parents are closed on GitHub, only the marker is missing.
       postMergeParentsClosed: (r.postMerge || []).reduce((n, e) => n + ((e.action === 'ran' || e.reason === 'marker-write-failed') && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
+      // The part of postMergeParentsClosed that marker-write-failed runs closed, so SessionStart credits
+      // each close to the right kind of run rather than to the runs counted in postMergeRan.
+      postMergeUnmarkedParentsClosed: (r.postMerge || []).reduce((n, e) => n + (e.reason === 'marker-write-failed' && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

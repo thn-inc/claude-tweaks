@@ -728,10 +728,23 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge Step 4\.0 failed for 1 merged run\(s\)/);
 
   // Closes from runs whose marker write failed alone: no run counted as ran, the closes still render.
-  seed({ postMergeRan: 0, postMergeParentsClosed: 3 });
+  seed({ postMergeRan: 0, postMergeParentsClosed: 3, postMergeUnmarkedParentsClosed: 3 });
   const closedOnly = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(closedOnly.json.hookSpecificOutput.additionalContext, /steps ran for/);
-  assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor/);
+  assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+
+  // Both kinds in one pass: each close is credited to its own kind of run, never all to the runs that ran.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 3, postMergeUnmarkedParentsClosed: 1 });
+  const mixed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    mixed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
+  );
+
+  // A status file written before the split carries the total only: it is credited as before.
+  seed({ postMergeRan: 0, postMergeParentsClosed: 4 });
+  const legacy = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(legacy.json.hookSpecificOutput.additionalContext, /post-merge steps closed 4 parent record\(s\) below the oversight floor\./);
 
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });

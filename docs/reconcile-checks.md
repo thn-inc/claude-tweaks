@@ -618,9 +618,11 @@ the source of truth; the module only decides when the steps run and records that
   means close only, never a second comment.
 - **Two concurrency guards.**
   - *Merge grace* (`MERGE_GRACE_MS`, 10 minutes). The merging session runs both steps within seconds
-    of `mergedAt` and then writes its marker, so a run whose PR merged less than the grace ago is
+    of `mergedAt` and then writes its marker, so a run whose PR merged no more than the grace ago is
     skipped `merge-grace` with nothing written. A missing or unparseable `mergedAt` counts as inside
-    the window, never as old.
+    the window, never as old. Because the grace is inclusive and no shorter than `CLOSE_WINDOW_MS`, a
+    processed run is always strictly past the close window, which is where `closing-links` settles
+    a still-open record (`settledOpen`) instead of logging it pending.
   - *Per-run claim file* (`{runDir}/.post-merge.lock`, created `wx`). Background passes serialize on
     `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's
     explicit list) do not. A live claim (under `CLAIM_STALE_MS`, 10 minutes) skips `in-flight`; a stale
@@ -696,16 +698,18 @@ the source of truth; the module only decides when the steps run and records that
   accepted rather than closed by a cross-writer lock.
 
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `postMergeRan` (runs whose
-  steps this pass ran, `action: 'ran'` without `step40Failed`), `postMergeParentsClosed` (the parents
-  closed below the floor, by those runs and by `marker-write-failed` ones) and `postMergeFailed` (runs
-  whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero `closing-links`
-  exit, exit 5 only once its retries are spent, or an unreadable envelope, a SKIP marker is written,
-  Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope that merely carries no
-  closing set, such as `not-merged`, is not a failure). A failure is never counted in `postMergeRan`,
-  and a `transient-failure` retry is in none of the three. The next SessionStart renders them in its
-  prior-pass line (`post-merge steps ran for N merged run(s), closing M parent record(s) below the
-  oversight floor`, or `post-merge steps closed M parent record(s) below the oversight floor` when
-  only marker-write-failed runs closed any; `post-merge Step 4.0 failed for N merged run(s) (tidy's
+  steps this pass ran, `action: 'ran'` without `step40Failed`), `postMergeParentsClosed` (the
+  parents closed below the floor, by those runs and by `marker-write-failed` ones;
+  `postMergeUnmarkedParentsClosed` is the `marker-write-failed` part) and `postMergeFailed` (runs
+  whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero
+  `closing-links` exit, exit 5 only once its retries are spent, or an unreadable envelope, a SKIP
+  marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
+  that merely carries no closing set, such as `not-merged`, is not a failure). A failure is never
+  counted in `postMergeRan`, and a `transient-failure` retry is in none of them. The next
+  SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
+  closing M parent record(s) below the oversight floor`, counting only those runs' closes, then
+  `post-merge steps closed M parent record(s) below the oversight floor in run(s) whose decisions.md
+  marker could not be written` for the rest; `post-merge Step 4.0 failed for N merged run(s) (tidy's
   parent-gate backstop recovers them)`); without them a background parent close, or a failed
   attempt, would never be visible outside GitHub and `decisions.md`.
 
