@@ -38,5 +38,5 @@ Two flags mirror each other. Pick by which source must never set the key:
 
 ## Evidence
 
-- #4609: `0127c84e8` (control-mode keys), `8ddb2805c` (`risk-path-globs`), `1a8005e4c`, `c3cff4b18` and `cd548acff` (fix rounds), `docs/plans/2026-10-30-spec-4609-4610-ledger.md` rows 6-19.
+- #4609: `0127c84e8` (control-mode keys), `8ddb2805c` (`risk-path-globs`), `1a8005e4c`, `c3cff4b18` and `cd548acff` (fix rounds), and rows 6-19 of the run's open-items ledger (deleted at close-out; last version in PR #4633).
 - `merge-authorization` and `policySourceExcluded`: #715, generalized in #839.
