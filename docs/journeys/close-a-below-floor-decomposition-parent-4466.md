@@ -61,9 +61,9 @@ files:
   - A failed `gh` call that falls back to labeling the sub-issue as if it had no parent.
   - On the MCP path, a due parent left open because the lowercase `closed` state was compared against `CLOSED` without normalizing it. Another MCP-path red flag is a close call that passes `labels` and wipes the parent's labels.
 
-### 3. A merge no session saw land is closed by the next reconcile pass
+### 3. A merge no session saw land is closed by the reconciler's post-merge check
 - **URL:** `docs/reconcile-checks.md`'s `## Post-merge closes (#4599)`, the `post-merge` check in `bin/hooks.js`'s detached `reconcile-background` pass
-- **Action:** the run armed an auto-merge and the session ended. GitHub merged the PR later. A later session starts, and its background reconcile pass finds the run: its recorded PR is `MERGED` and its `decisions.md` has no Step 4.0b or `reconcile post-merge` marker. The pass runs Step 4.0 and Step 4.0b once for that PR, then logs `reconcile post-merge` as the run's marker.
+- **Action:** the run armed an auto-merge and the session ended. GitHub merged the PR later. A later session starts. The first reconcile pass at least 10 minutes after the merge finds the run: a SessionStart's background pass, or any `hooks.js reconcile` call that runs `post-merge`. The run qualifies because its recorded PR is `MERGED` and its `decisions.md` has no Step 4.0b or `reconcile post-merge` marker. The pass runs Step 4.0 and Step 4.0b once for that PR, then logs `reconcile post-merge` as the run's marker.
 - **Should feel:** invisible until it is reported. The parent is closed without anyone approving a tidy row, and the session after that pass says so.
 - **Should understand:**
   - The SessionStart prior-pass line reads `post-merge steps ran for N merged run(s), closing M parent record(s) below the oversight floor`. A Step 4.0 failure reads `post-merge Step 4.0 failed for N merged run(s) (tidy's parent-gate backstop recovers them)`.
