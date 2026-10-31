@@ -220,6 +220,9 @@ function writeClaimBlobGit({
 // create is a lost race only when `ls-remote` shows the branch now exists
 // (`created: false`, still ok); otherwise, and for every other error, the git
 // text is surfaced verbatim in `reason` — the caller never retries a refusal.
+// `created: true` means the push succeeded, not that this call made the branch:
+// a push of the sha the branch already points at is git's "up to date" no-op and
+// never meets the lease (a real-git probe, #4495). No caller branches on it.
 function bootstrapClaimsBranchGit({ remote = 'origin', branch = CLAIMS_BRANCH, runner = defaultRunner } = {}) {
   const scratchRef = `refs/claims-cas-bootstrap/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   try {
