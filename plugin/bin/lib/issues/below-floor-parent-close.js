@@ -19,7 +19,9 @@
 // Every gh call goes through the injected `gh(args, input?)`, which returns
 // stdout and throws on failure. A failing call skips that one parent (named in
 // `skipped`, reason `gh-failed`) and the next closing record is still
-// processed; a failing default-branch read skips the whole step. Never throws.
+// processed; a failing default-branch read skips the whole step, and so does a
+// `riskFloor` outside low/medium/high/always (`invalid-risk-floor`, no gh call).
+// Never throws.
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
@@ -31,6 +33,10 @@ const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
 
 const CLOSE_HEADING = '## Closed below the oversight floor';
 const NOT_PLANNED_LINE = 'No sub-issue closed as completed, so this parent closes as not planned.';
+// The floor values `exceedsOversightFloor` evaluates. `null` (and undefined) must not
+// reach it: a null floor switches the unscored check off too, which would close a
+// parent whose sub-issues carry no risk label.
+const VALID_RISK_FLOORS = ['low', 'medium', 'high', 'always'];
 const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
 const PARENT_LINE_RE = /^Parent: #(\d+)/m;
 
@@ -44,7 +50,7 @@ function composeCloseComment({ maxTier, riskFloor, notPlanned, lines } = {}) {
   const intro = `Every sub-issue of this decomposition is closed, and the highest sub-issue risk, \`risk:${maxTier}\`, does not exceed the resolved \`risk-floor\` (\`${riskFloor}\`), so no Verification Brief or \`demo:pending\` sign-off is owed.`;
   const parts = [CLOSE_HEADING, intro];
   if (notPlanned) parts.push(NOT_PLANNED_LINE);
-  parts.push((lines || []).join('\n'));
+  if (lines && lines.length) parts.push(lines.join('\n'));
   return `${parts.join('\n\n')}\n`;
 }
 
@@ -58,6 +64,10 @@ function closeBelowFloorParents({
 } = {}) {
   const closed = [];
   const skipped = [];
+  if (!VALID_RISK_FLOORS.includes(riskFloor)) {
+    skipped.push({ reason: 'invalid-risk-floor' });
+    return { closed, skipped };
+  }
   try {
     const call = (args, input) => {
       try {
@@ -139,7 +149,7 @@ function closeBelowFloorParents({
             // GitHub yet, so each closing-set member counts CLOSED/COMPLETED.
             state: inClosingSet ? 'CLOSED' : String(live.state || '').toUpperCase(),
             stateReason: inClosingSet ? 'COMPLETED' : String(live.stateReason || '').toUpperCase(),
-            title: live.title,
+            title: String(live.title || '').trim(),
             facets: parseRecordFacets(live.labels),
             pr: inClosingSet && mergingPr ? mergingPr : (lastRef && lastRef.number) || null,
           };
@@ -161,7 +171,7 @@ function closeBelowFloorParents({
 
         const gate = parentGateState({ subIssues, parentLabels });
         if (gate !== 'due') {
-          skipped.push({ parent, reason: gate === 'incomplete' ? 'incomplete' : gate });
+          skipped.push({ parent, reason: gate });
           continue;
         }
         const maxTier = maxRiskTier(subIssues.map((s) => s.facets));
@@ -193,7 +203,7 @@ function closeBelowFloorParents({
 
         const notPlanned = !subIssues.some((s) => s.stateReason === 'COMPLETED');
         if (!alreadyCommented) {
-          const lines = subIssues.map((s) => `- #${s.number} ${s.title}${s.pr ? ` — closed by PR #${s.pr}` : ''}`);
+          const lines = subIssues.map((s) => `- #${s.number}${s.title ? ` ${s.title}` : ''}${s.pr ? ` — closed by PR #${s.pr}` : ''}`);
           call(['issue', 'comment', String(parent), '--body-file', '-'], composeCloseComment({ maxTier, riskFloor, notPlanned, lines }));
         }
         call(['issue', 'close', String(parent), '--reason', notPlanned ? 'not planned' : 'completed']);

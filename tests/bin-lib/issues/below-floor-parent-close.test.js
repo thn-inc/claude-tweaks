@@ -15,8 +15,8 @@ function proseTemplate() {
   const text = fs.readFileSync(GATE_PROSE, 'utf8');
   const after = text.slice(text.indexOf('**2. Compose the closing comment:**'));
   const block = /```markdown\n([\s\S]*?)\n```/.exec(after)[1];
-  const [heading, intro] = block.split('\n\n');
-  return { heading, intro };
+  const [heading, intro, listing] = block.split('\n\n');
+  return { heading, intro, listing };
 }
 
 function proseNotPlannedLine() {
@@ -30,6 +30,23 @@ test('composeCloseComment equals the prose template, substituted (prose-code twi
   const expectedIntro = intro.replace('{maxTier}', 'low').replace('{riskFloor}', 'high');
   const out = composeCloseComment({ maxTier: 'low', riskFloor: 'high', notPlanned: false, lines: ['- #11 Alpha — closed by PR #7', '- #12 Beta'] });
   assert.equal(out, `${heading}\n\n${expectedIntro}\n\n- #11 Alpha — closed by PR #7\n- #12 Beta\n`);
+});
+
+test('the listing-line template in the prose is what the module writes (prose-code twin)', () => {
+  const { listing } = proseTemplate();
+  // `- #{n} {title} — closed by PR #{pr}`: the module renders this line for a sub-issue with a PR.
+  const render = (n, title, pr) => listing.replace('{n}', n).replace('{title}', title).replace('{pr}', pr);
+  const { gh, calls } = makeGh(happyWorld());
+  closeBelowFloorParents(base({ gh }));
+  const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
+  assert.deepEqual(lines, [render(11, 'Eleven', 77), render(12, 'Twelve', 9)]);
+});
+
+test('composeCloseComment with no listing lines is well-formed (no stray blank lines)', () => {
+  const { heading, intro } = proseTemplate();
+  const expectedIntro = intro.replace('{maxTier}', 'low').replace('{riskFloor}', 'high');
+  assert.equal(composeCloseComment({ maxTier: 'low', riskFloor: 'high', notPlanned: false, lines: [] }), `${heading}\n\n${expectedIntro}\n`);
+  assert.equal(composeCloseComment({ maxTier: 'low', riskFloor: 'high', notPlanned: true }), `${heading}\n\n${expectedIntro}\n\n${proseNotPlannedLine()}\n`);
 });
 
 test('composeCloseComment adds the not-planned line after the first paragraph', () => {
@@ -64,7 +81,7 @@ function makeGh(world) {
     if (m) {
       const i = world.issues[m[1]];
       return JSON.stringify({
-        state: i.state, stateReason: i.stateReason || '', title: i.title || `Title ${m[1]}`,
+        state: i.state, stateReason: i.stateReason || '', title: 'title' in i ? i.title : `Title ${m[1]}`,
         labels: (i.labels || ['risk:low']).map((name) => ({ name })),
         closedByPullRequestsReferences: (i.refs || []).map((number) => ({ number })),
       });
@@ -324,4 +341,43 @@ test('nothing completed: the comment carries the not-planned line and the close 
   const w = writes(calls);
   assert.deepEqual(w.map((c) => c.args), [['issue', 'comment', '10', '--body-file', '-'], ['issue', 'close', '10', '--reason', 'not planned']]);
   assert.ok(w[0].input.includes(proseNotPlannedLine()));
+});
+
+test('an invalid risk floor skips the whole call fail-closed with no gh call', () => {
+  for (const riskFloor of [null, undefined, '', 'critical']) {
+    const { gh, calls } = makeGh(happyWorld());
+    const out = closeBelowFloorParents(base({ riskFloor, gh }));
+    assert.deepEqual(out, { closed: [], skipped: [{ reason: 'invalid-risk-floor' }] }, String(riskFloor));
+    assert.equal(calls.length, 0);
+  }
+});
+
+test('every valid risk floor is accepted', () => {
+  for (const riskFloor of ['low', 'medium', 'high', 'always']) {
+    const { gh, calls } = makeGh(happyWorld());
+    const out = closeBelowFloorParents(base({ riskFloor, gh }));
+    assert.ok(!out.skipped.some((s) => s.reason === 'invalid-risk-floor'), riskFloor);
+    assert.ok(calls.length > 0);
+  }
+});
+
+test('a sub-issue with no title renders without "undefined" or a trailing space', () => {
+  const world = happyWorld();
+  world.issues[11].title = null;
+  const { gh, calls } = makeGh(world);
+  closeBelowFloorParents(base({ gh }));
+  const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
+  assert.equal(lines[0], '- #11 — closed by PR #77');
+  assert.ok(!writes(calls)[0].input.includes('undefined'));
+});
+
+test('a whitespace-only or missing title renders as no title', () => {
+  for (const title of ['   ', undefined]) {
+    const world = happyWorld();
+    world.issues[11].title = title;
+    const { gh, calls } = makeGh(world);
+    closeBelowFloorParents(base({ gh }));
+    const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
+    assert.equal(lines[0], '- #11 — closed by PR #77', JSON.stringify(title));
+  }
 });
