@@ -46,6 +46,22 @@ test('normalizePrListing detects an MCP entry by html_url alone (no head -> cros
   assert.deepEqual(normalizePrListing([{ html_url: U, body: B }], 'acme', 'w'), [{ url: U, body: B, isCrossRepository: true }]);
 });
 
+test('normalizePrListing detects an MCP entry by head alone (a head key with no html_url is not a PR)', () => {
+  const entry = { head: { repo: { full_name: 'acme/w' } }, url: U, body: B, isCrossRepository: false };
+  assert.throws(() => normalizePrListing([entry], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing throws on a gh-shaped entry with no url (the gh url guard alone)', () => {
+  assert.throws(() => normalizePrListing([{ body: B, isCrossRepository: false }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing keeps a gh-shaped fork flag on passthrough', () => {
+  assert.deepEqual(
+    normalizePrListing([{ url: U, body: B, isCrossRepository: true }], 'acme', 'w'),
+    [{ url: U, body: B, isCrossRepository: true }],
+  );
+});
+
 test('normalizePrListing never mutates its input', () => {
   const input = [mcp('acme/w'), { url: U, body: B, isCrossRepository: false }];
   const snapshot = JSON.parse(JSON.stringify(input));
