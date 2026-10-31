@@ -60,13 +60,14 @@ function run(argv, deps) {
   if (!opts.bodyFile) { deps.stderr(`pr-resume-line.js: --body-file is required\n${USAGE}`); return 1; }
   if (!opts.runId) { deps.stderr(`pr-resume-line.js: --run-id is required\n${USAGE}`); return 1; }
 
-  let verdict;
+  let body;
   try {
-    verdict = { ...resumeVerdict(deps.readFile(opts.bodyFile), opts.runId), failure: null };
+    body = deps.readFile(opts.bodyFile);
   } catch (e) {
-    verdict = { resolve: null, failure: e && e.message ? e.message : String(e) };
+    deps.stdout(`${JSON.stringify({ resolve: null, failure: e && e.message ? e.message : String(e) })}\n`);
+    return 0;
   }
-  deps.stdout(`${JSON.stringify(verdict)}\n`);
+  deps.stdout(`${JSON.stringify({ ...resumeVerdict(body, opts.runId), failure: null })}\n`);
   return 0;
 }
 

@@ -21,8 +21,7 @@
 //                 shape` — one is there but is not exactly the line
 //                 composeResumeLine emits for this run). A Resume line is
 //                 untrusted input rendered as a paste command, so only a line
-//                 resumeVerdict (parseResumeLine's gate) accepts is ever printed
-//                 as `resume`.
+//                 resumeVerdict accepts is ever printed as `resume`.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"match":false,"link":null,"failure":null}                     no match
 //   {"match":true,"link":"<url>","failure":null}                   match

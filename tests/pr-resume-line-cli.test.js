@@ -7,6 +7,10 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { run } = require('../plugin/bin/pr-resume-line');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
@@ -85,6 +89,25 @@ test('malformed invocations exit 1 with usage on stderr and nothing on stdout', 
     assert.equal(run(argv, deps), 1, JSON.stringify(argv));
     assert.match(deps.calls.stderr.join(''), /usage: pr-resume-line\.js/, JSON.stringify(argv));
     assert.equal(out(deps), '', JSON.stringify(argv));
+  }
+});
+
+test('the real process reads a real body file, and a missing one is a failure verdict', () => {
+  const cli = path.join(__dirname, '..', 'plugin', 'bin', 'pr-resume-line.js');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-resume-line-'));
+  try {
+    const file = path.join(dir, 'body.md');
+    fs.writeFileSync(file, composed());
+    const ok = spawnSync(process.execPath, [cli, '--body-file', file, '--run-id', RUN], { encoding: 'utf8' });
+    assert.equal(ok.status, 0);
+    assert.equal(JSON.parse(ok.stdout).resume, composeResumeLine({ runDir: DIR, target: '#4659', nextStep: 'review,polish,wrap-up' }));
+    const missing = spawnSync(process.execPath, [cli, '--body-file', path.join(dir, 'missing.md'), '--run-id', RUN], { encoding: 'utf8' });
+    assert.equal(missing.status, 0);
+    const v = JSON.parse(missing.stdout);
+    assert.equal(v.resolve, null);
+    assert.match(v.failure, /ENOENT/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
   }
 });
 
