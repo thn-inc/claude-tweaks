@@ -478,6 +478,23 @@ test('F2: a non-ASCII added over-cap name is elided, stubbed, listed once under 
   assert.deepStrictEqual(result.emptySections, []);
 });
 
+test('F2: a multi-byte added file over the cap in bytes (under it in characters) is elided and stubbed — the cap counts bytes, not characters', () => {
+  const repo = initRepo('review-ctx-multibyte-');
+  fs.writeFileSync(path.join(repo, 'seed.txt'), 'seed\n');
+  startFeatureBranch(repo);
+  // U+00E9 is 2 bytes in UTF-8: PER_FILE_CAP_BYTES / 2 + 1 of them plus the newline is cap + 3 bytes, but only cap / 2 + 2 characters.
+  const content = `${'é'.repeat(PER_FILE_CAP_BYTES / 2 + 1)}\n`;
+  fs.writeFileSync(path.join(repo, 'big-multibyte.txt'), content);
+  commitAll(repo, 'feature work');
+  const { result, bundle, diffPart } = buildFrom(repo);
+  assert.ok(content.length < PER_FILE_CAP_BYTES, 'fixture is under the cap in characters');
+  assert.ok(Buffer.byteLength(content) > PER_FILE_CAP_BYTES, 'fixture is over the cap in bytes');
+  assert.match(diffPart, /^\[\d+ bytes of diff elided for big-multibyte\.txt — see oversizeSections\]$/m);
+  assert.ok(!diffPart.includes('é'.repeat(1000)), 'diff part holds no added content');
+  assert.match(sectionOf(bundle, 'big-multibyte.txt'), /^\[section omitted: big-multibyte\.txt is \d+ bytes, over the \d+-byte per-file cap/);
+  assert.strictEqual(result.oversizeSections.filter((p) => p === 'big-multibyte.txt').length, 1);
+});
+
 test('F2: the git calls carry core.quotePath=false and explicit diff prefixes', () => {
   const calls = [];
   const result = buildContext({

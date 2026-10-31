@@ -392,24 +392,34 @@ test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', 
 // Each local-merge push site runs Step 4.1 against its pushed merge commit; Step 4.0b runs first.
 const LOCAL_MERGE_SITES = [
   ['dispatch/settle-and-merge.md', 'After a successful push, run `_shared/pr-first-merge-post-merge.md`'],
-  ['wrap-up/auto-merge-short-circuit.md', 'The explicit `--no-ff` guarantees a real merge commit exists even when the'],
+  ['wrap-up/auto-merge-short-circuit.md', 'After a successful push, run `_shared/pr-first-merge-post-merge.md`'],
   ['flow/worktree-merge.md', '6. **Push the base branch once'],
 ];
 
+function assertLocalPushSite(text, rel, opener) {
+  const para = paragraph(text, opener);
+  assert.ok(para.includes('--ref {integration-branch}'), `${rel}: the Step 4.1 invocation paragraph`);
+  const a = para.indexOf('Step 4.0b');
+  const b = para.indexOf('Step 4.1');
+  assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
+}
+
 test('AC2.1: every local-merge push site runs Step 4.0b before its Step 4.1', () => {
-  for (const [rel, opener] of LOCAL_MERGE_SITES) {
-    const para = paragraph(read(rel), opener);
-    assert.ok(para.includes('--ref {integration-branch}'), `${rel}: the Step 4.1 invocation paragraph`);
-    const a = para.indexOf('Step 4.0b');
-    const b = para.indexOf('Step 4.1');
-    assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
-  }
+  for (const [rel, opener] of LOCAL_MERGE_SITES) assertLocalPushSite(read(rel), rel, opener);
   // local-merge-auto-finish runs no Step 4.1; its push step runs Step 4.0b alone.
   const autoFinish = paragraph(
     read('_shared/local-merge-auto-finish.md'),
     'After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b',
   );
   assert.ok(collapse(autoFinish).includes('against the pushed merge commit (no PR, so `$MERGING_PR` is empty)'), 'local-merge-auto-finish step 7');
+});
+
+test('go-red: the retargeted short-circuit push-site paragraph fails without Step 4.0b', () => {
+  const rel = 'wrap-up/auto-merge-short-circuit.md';
+  const live = read(rel);
+  const doctored = live.replace('Step 4.0b against the pushed merge commit', 'against the pushed merge commit');
+  assert.notStrictEqual(doctored, live);
+  assert.throws(() => assertLocalPushSite(doctored, rel, LOCAL_MERGE_SITES.find(([r]) => r === rel)[1]), /Step 4\.0b \(-1\)/);
 });
 
 const preChangePostMerge = preChangeSkillFile(POST_MERGE_REL);
