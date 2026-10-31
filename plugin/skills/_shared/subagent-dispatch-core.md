@@ -150,8 +150,9 @@ lens 3f Vacuity-evidence diagnostic. The dispatcher pastes these steps into the 
 never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{reviewed-sha}` and
 `{base-sha}` literally (a caller that pastes before the commit under review exists substitutes
 the first two and leaves the rest to the per-dispatch composer); each agent builds `{id}` from its
-own distinct token (lens and pair member, or task, reviewer role and round). Never mutate the shared worktree in place: a sibling agent's in-flight
-edit there would be lost. One plain command per Bash call, literal absolute paths:
+own distinct token (lens and pair member, or task, reviewer role and round). Never mutate the
+shared worktree in place: a sibling agent's in-flight edit there would be lost. One plain command
+per Bash call, literal absolute paths:
 
 1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
    (`_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under the run
@@ -166,7 +167,8 @@ edit there would be lost. One plain command per Bash call, literal absolute path
    `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`. A green run counts
    as evidence only after a control has gone red in this same checkout (an Edit under `{disc-path}`
    making the mutated file throw at load); a control that stays green means the run did not load the
-   scratch copy (the code ran from the shared tree, or the test never loads the mutated file): no evidence, tear down.
+   scratch copy (the code ran from the shared tree, or the test never loads the mutated file):
+   no evidence, tear down.
 5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
    never fall back to the shared tree.
 6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
