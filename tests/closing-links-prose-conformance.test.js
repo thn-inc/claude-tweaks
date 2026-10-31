@@ -145,7 +145,7 @@ function assertStep3DefaultOnly(step3) {
   assert.ok(step3.includes("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself"), 'Step 3 points at Step 4.0');
 }
 function assertNoOldClaimAnywhere(files) {
-  const offenders = Object.entries(files).filter(([, t]) => /closing\s+work\s+on\s+any\s+integration\s+branch/.test(t)).map(([f]) => f);
+  const offenders = Object.entries(files).filter(([, t]) => /any\s+integration\s+branch/.test(t)).map(([f]) => f);
   assert.deepStrictEqual(offenders, [], `files still carrying the any-integration-branch claim: ${offenders.join(', ')}`);
 }
 function assertStep40ReportsCloseFailed(step40) {
@@ -202,6 +202,11 @@ test('#4549 AC1.3: no plugin file still carries the any-integration-branch claim
     /pr-first-merge\.md/,
     'go-red: the pre-change sentence is found',
   );
+  assert.throws(
+    () => assertNoOldClaimAnywhere({ 'skills/x.md': collapse('a keyword that works on any\nintegration branch') }),
+    /skills\/x\.md/,
+    'go-red: the broader any-integration-branch wording across a line wrap is found',
+  );
 });
 
 test('#4549 AC7.1: Step 4.0 tells the caller to report closeFailed[] for a hand close', () => {
@@ -224,6 +229,8 @@ test('#4549 AC7.2: Step 4.0b lists close-failed and closed and uses closingSet[]
     /close-failed/,
     'go-red: the pre-change paragraph and action list fail the check',
   );
+  const withOldNoOp = `${step40b} ${PRE_CHANGE_STEP40B_GATE}`;
+  assert.throws(() => assertStep40bUsesClosingSet(withOldNoOp), /PR-merge non-default no-op is gone/, 'go-red: reintroducing the PR-merge no-op sentence fails the check');
   const noGate = step40b.replace('After a PR merge there is no such gate', 'After a PR merge');
   assert.notEqual(noGate, step40b, 'go-red: the doctored text differs');
   assert.throws(() => assertStep40bUsesClosingSet(noGate), /uses closingSet/, 'go-red: dropping the no-gate sentence fails the check');

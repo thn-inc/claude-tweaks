@@ -66,14 +66,15 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   name that parent in the closing summary: it waits on the hand reopen. A `closeFailed[]` record
   holds its parent the same way — its live state is `OPEN`, or unknown after a failed read — so
   skip any parent whose enumerated sub-issues include one and name that parent in the closing
-  summary: it waits on the hand close. After a PR merge, the set
-  is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action other than `base-unchecked`
-  carries (`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`): the PR's same-repo
+  summary: it waits on the hand close. After a PR merge, the set is Step 4.0's `closingSet[]`, which
+  only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`,
+  `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`): the PR's same-repo
   closing records (`sameRepoNumbers`, `bin/lib/flow/closing-links.js`, which drops a
   `Fixes other/repo#N` that would otherwise read as this repo's #N) minus those three lists, already
   subtracted; on a non-default base it is instead the `Fixes` records Step 4.0 confirmed `CLOSED`
-  (closed by it, or already closed), never a `closeFailed[]` one. After a PR merge, when `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`,
-  `no-pr`, `gh-absent`, `base-unchecked`, or no parseable output — skip this step entirely, never subtracting nothing,
+  (closed by it, or already closed), never a `closeFailed[]` one. After a PR merge, when
+  `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`,
+  `base-unchecked`, or no parseable output — skip this step entirely, never subtracting nothing,
   and log it (after exit 3, name it in the closing summary instead); tidy's `parent-gate` backstop
   recovers those parents:
 
