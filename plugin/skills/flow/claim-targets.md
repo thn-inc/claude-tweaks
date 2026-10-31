@@ -315,12 +315,24 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
+- **6** (#4495) — the `claims-registry` branch was missing on origin and could not be created
+  (also under `--keep-going`): stdout carries `{branchMissing: {branch, reason}, released,
+  releaseFailed}`, stderr carries the remedy. Render:
+
+  ```markdown
+  ## Flow: Claims branch missing
+
+  The `claims-registry` branch is missing on origin and could not be created: {reason}.
+  Next: create `claims-registry` on origin from the default branch, then re-run.
+  ```
+
+  No `AskUserQuestion` — nothing to choose between.
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
   timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
   a hard stop.
 
-**On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
+**On exit 3, 4, 5, or 6** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
 simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
@@ -388,7 +400,7 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 `never-started: file-overlap group partial claim` internally, per `_shared/issue-claims.md`'s
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
-**`--keep-going`** — the CLI never exits 3, 4, or 5; a per-target contest, transient failure, or
+**`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable claims branch fails every target alike); a per-target contest, transient failure, or
 unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
