@@ -1215,20 +1215,36 @@ test('--bound-run: a leftover run bound there whose owner is provably dead -> ex
   }
 });
 
-test('--bound-run: a bound run whose owner is live, unknown or on another host keeps the concurrent-resume line', () => {
-  for (const [label, owner, over] of [
-    ['live', OWNER, {}],
-    ['alive, no start time', { ...OWNER, pidStartedAt: null }, {}],
-    ['pidAlive throws', OWNER, { alive: () => { throw new Error('probe'); } }],
-    ['host-less with a valid pid', { sessionId: 'rival', pid: 4242 }, {}],
-    ['another host', { ...OWNER, host: 'elsewhere' }, {}],
+const unknownLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)}, whose owner cannot be proven alive or dead — confirm that run is no longer running, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
+const otherHostLine = (dir, host) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)}, owned by a session on another host (${host}) — resume or close that run from ${host}, then run /claude-tweaks:dispatch resume #${N}`;
+
+test('--bound-run: a bound run whose owner is live, unknown or on another host is concurrent-resume, each with its own line', () => {
+  for (const [label, owner, over, line] of [
+    ['live', OWNER, {}, concurrentLine(LEFTOVER)],
+    ['alive, no start time', { ...OWNER, pidStartedAt: null }, {}, concurrentLine(LEFTOVER)],
+    ['pidAlive throws', OWNER, { alive: () => { throw new Error('probe'); } }, unknownLine(LEFTOVER)],
+    ['host-less with a valid pid', { sessionId: 'rival', pid: 4242 }, {}, unknownLine(LEFTOVER)],
+    ['another host', { ...OWNER, host: 'elsewhere' }, {}, otherHostLine(LEFTOVER, 'elsewhere')],
   ]) {
     const env = makeEnv(over);
     env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner } }];
     const r = exec(env, BOUND);
     assert.equal(r.code, 3, label);
-    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) }, label);
+    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'concurrent-resume', line }, label);
   }
+});
+
+test('a bound run owned by this same session id is never proven dead: concurrent-resume with the live line, in both modes (#965)', () => {
+  // Its pid is gone and its block names this session: the prior-run ladder would read it as dead.
+  const state = { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } };
+  const bound = makeEnv({ alive: () => false });
+  bound.cfg.runDirs = [{ dir: LEFTOVER, state }];
+  assert.deepStrictEqual(exec(bound, BOUND).json, { concurrent: true, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
+  const verdict = makeEnv({ alive: () => false });
+  verdict.cfg.runDirs = [{ dir: LEFTOVER, state }];
+  const r = exec(verdict);
+  assert.equal(r.code, 3);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
 });
 
 // ---- the same run-dir scan in verdict mode (Step 2, before Step 3 archives anything) ----
