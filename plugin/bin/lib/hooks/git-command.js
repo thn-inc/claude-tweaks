@@ -2243,11 +2243,7 @@ function groupEventsWith(seg, g, spans, undo) {
     const pc = patternCase();
     if (pc && plain) {
       if (!pc.inSeen) { if (w === 'in') setField(pc, 'inSeen', true); }
-      else if (/^\*+$/.test(w)) {
-        let k = i;
-        while (k < seg.length && /[ \t]/.test(seg[k])) k += 1;
-        if (k >= seg.length || seg[k] === ')') setField(pc, 'catchAll', true);
-      }
+      else if (/^\*+$/.test(w) && /^[ \t]*(\)|$)/.test(seg.slice(i))) setField(pc, 'catchAll', true);
     }
     if (fnName) { fnName = false; atCmd = true; continue; }
     // A case with no arm (`case x in esac`) ends at the `esac` right after its `in`, which is no command
