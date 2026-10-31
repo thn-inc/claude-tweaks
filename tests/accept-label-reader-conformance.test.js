@@ -373,7 +373,7 @@ test('/demo Step 3: each verdict command names no literal removal and cites the 
   ];
   for (const [name, command] of commands) {
     // A literal label here would run unconditionally, whichever position it holds.
-    assert.doesNotMatch(command, /--remove-label\s+\S*(?:demo|accept):/, name);
+    assert.doesNotMatch(command, /--remove-label[\s=]+\S*(?:demo|accept):/, name);
     assert.ok(command.includes(`plus the \`--remove-label\` flags the replacement rule above selects for ${name}`), `${name} must cite the rule`);
   }
   assert.match(commands[0][1], /for a batch-sourced verdict .{0,60}add `--add-label demo:approved-batch`/);
