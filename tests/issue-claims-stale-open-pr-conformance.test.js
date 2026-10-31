@@ -105,6 +105,10 @@ test('AC1.1, AC1.2: claim-targets.md no longer spells out the Resume line shape;
 test('AC2.1: only a resume verdict routes into resume-confirmation.md; resolve or failure is the terminal card (#4659)', () => {
   const section = inFlightSection().replace(/\s+/g, ' ');
   assert.match(section, /pr-resume-line\.js" --body-file "\{body-file\}" --run-id "\{run-id\}"/);
-  assert.match(section, /`resolve`[^.]*card above is the terminal output/);
+  // two clauses end in the terminal card (the DISPATCH_HEADLESS skip and the verdict list); the verdict one is ours
+  const terminal = section.split(/\. |; /)
+    .filter((s) => s.includes('card above is the terminal output') && s.includes('`resolve`'));
+  assert.equal(terminal.length, 1, 'exactly one terminal-card clause names the resolve verdict');
+  assert.ok(terminal[0].includes('`failure`'), 'that clause also lists the CLI failure');
   assert.match(section, /`resume` verdict's own `target`/);
 });

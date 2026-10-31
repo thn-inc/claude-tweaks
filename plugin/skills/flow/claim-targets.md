@@ -281,22 +281,23 @@ stays best-effort and the claim read stays the authoritative hold check:
   "{body-file}" --run-id "{run-id}"`. It parses the line under the PR body's last `### Resume`
   heading with `pr-body.js`'s `parseResumeLine`, the parser twin of the composer
   `_shared/pr-early-run-lifecycle.md` Step 3 uses, so this file states no grammar of its own, and
-  prints one JSON line: a `resume` verdict, a `resolve` of `no-resume-line` or `resume-line-shape`,
-  or a `failure`. No marker found, the marker fails that validation, `gh` unavailable, the
-  resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a foreign PR, or one
-  whose run dir was already reaped), or a `resolve` verdict or a `failure` from the CLI — the card
-  above is the terminal output; there is nothing safe to route into. Otherwise: follow `dispatch/resume-confirmation.md`'s full
-  "Confirm before resuming" procedure now, passing the `resume` verdict's own `target` (the found
-  run's actual record composition, single- or multi-spec, `flow/multi-spec.md`'s "Multi-spec runs
-  share one PR" — never substitute this claim loop's own single stopped target for it; the two
-  coincide only in the common single-record case) and the validated `{run-id}`'s resolved
-  directory as `{run-dir}`. That file's own freshness probe
-  (`check-resume-freshness`) is what tells a genuinely still-running build (`BLOCKED` — report the
-  line verbatim and stay stopped, exactly as an unresolved run-id would) apart from one that only
-  looks in-flight because its tombstone hasn't caught up yet (`OK` — its own `AskUserQuestion`
-  offers Resume); this call site makes no freshness judgment of its own, and asks nothing directly
-  — either the headless skip above or `resume-confirmation.md`'s own gate owns every user-facing
-  decision here.
+  prints one JSON line: a `resume` verdict, a `resolve` of `no-resume-line` or
+  `resume-line-shape`, or a `failure`. No marker found, the marker fails that validation, `gh`
+  unavailable, the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
+  foreign PR, or one whose run dir was already reaped), or a `resolve` verdict or a `failure` from
+  the CLI — the card above is the terminal output; there is nothing safe to route into.
+  Otherwise: follow
+  `dispatch/resume-confirmation.md`'s full "Confirm before resuming" procedure now, passing the
+  `resume` verdict's own `target` (the found run's actual record composition, single- or
+  multi-spec, `flow/multi-spec.md`'s "Multi-spec runs share one PR" — never substitute this claim
+  loop's own single stopped target for it; the two coincide only in the common single-record
+  case) and the validated `{run-id}`'s resolved directory as `{run-dir}`. That file's own
+  freshness probe (`check-resume-freshness`) is what tells a genuinely still-running build
+  (`BLOCKED` — report the line verbatim and stay stopped, exactly as an unresolved run-id would)
+  apart from one that only looks in-flight because its tombstone hasn't caught up yet (`OK` — its
+  own `AskUserQuestion` offers Resume); this call site makes no freshness judgment of its own, and
+  asks nothing directly — either the headless skip above or `resume-confirmation.md`'s own gate
+  owns every user-facing decision here.
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
   transient-failure card below. Also covers a pre-claim repo-slug resolution timeout (#3065) — a
