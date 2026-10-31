@@ -22,6 +22,12 @@ function plansAged(n, days, prefix) {
 }
 
 const noLookup = () => { throw new Error('lookupDecline must not be called'); };
+// A call-counting stand-in: a throw-if-called helper can be swallowed by a try around the lookup.
+function spyLookup() {
+  const spy = () => { spy.calls += 1; return null; };
+  spy.calls = 0;
+  return spy;
+}
 const routes = (result) => result.plans.map((p) => p.route);
 
 test('constants carry the documented values', () => {
@@ -46,9 +52,11 @@ test('a first-add date after today is within the cutoff', () => {
 });
 
 test('AC2.1 (unit): 29 past-cutoff plans all keep, citationCheck false, no decline lookup', () => {
+  const lookup = spyLookup();
   const result = routePlans({
-    retention: 'keep-forever', plans: plansAged(29, 30, 'old'), today: TODAY, cited: null, lookupDecline: noLookup,
+    retention: 'keep-forever', plans: plansAged(29, 30, 'old'), today: TODAY, cited: null, lookupDecline: lookup,
   });
+  assert.equal(lookup.calls, 0);
   assert.ok(routes(result).every((r) => r === 'keep'));
   assert.equal(result.plans.length, 29);
   assert.equal(result.citationCheck, false);
@@ -75,9 +83,11 @@ test('AC1.1 (unit): 30 past-cutoff plans route prune-archive and a 1-day-old pla
 test('the second pass recounts uncited plans', () => {
   const thirtyOne = plansAged(31, 30, 'old');
   const citedSet = new Set([thirtyOne[0].plan, thirtyOne[1].plan]);
+  const lookup = spyLookup();
   const below = routePlans({
-    retention: 'keep-forever', plans: thirtyOne, today: TODAY, cited: citedSet, lookupDecline: noLookup,
+    retention: 'keep-forever', plans: thirtyOne, today: TODAY, cited: citedSet, lookupDecline: lookup,
   });
+  assert.equal(lookup.calls, 0);
   assert.ok(routes(below).every((r) => r === 'keep'));
   assert.equal(below.citationCheck, false);
   assert.equal(below.decline, null);
@@ -90,6 +100,8 @@ test('the second pass recounts uncited plans', () => {
   assert.equal(at.plans[0].route, 'keep');
   assert.equal(at.plans[1].route, 'keep');
   assert.equal(at.plans[0].cited, true);
+  assert.equal(at.plans[1].cited, true);
+  assert.deepEqual(at.decline, { live: false, error: null });
   assert.ok(at.plans.slice(2).every((p) => p.route === 'prune-archive' && p.cited === false));
   assert.equal(at.citationCheck, false);
   assert.deepEqual(at.citationCandidates, []);
@@ -120,6 +132,18 @@ test('a live decline or a failed lookup keeps every plan, and the first pass sti
   });
   assert.ok(routes(second).every((r) => r === 'keep'));
   assert.equal(second.citationCheck, false);
+});
+
+test('a lookup that throws a non-Error still keeps every plan and reports the thrown value', () => {
+  const thirty = plansAged(30, 30, 'old');
+  for (const [thrown, error] of [[null, 'null'], ['str', 'str']]) {
+    const result = routePlans({
+      retention: 'keep-forever', plans: thirty, today: TODAY, cited: null,
+      lookupDecline: () => { throw thrown; },
+    });
+    assert.ok(routes(result).every((r) => r === 'keep'), String(thrown));
+    assert.deepEqual(result.decline, { live: false, error }, String(thrown));
+  }
 });
 
 test('AC3.1 (unit): an uncommitted plan keeps under keep-forever and ask; ask has no cutoff', () => {

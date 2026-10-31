@@ -71,10 +71,10 @@ function routePlans({ retention, plans, today, cited, lookupDecline }) {
   try {
     decline = { live: lookupDecline() != null, error: null };
   } catch (err) {
-    decline = { live: false, error: err.message };
+    decline = { live: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  // Fail closed: a live decline or a failed lookup keeps every plan.
+  // Fail closed: a live decline or a lookup that throws keeps every plan.
   if (!decline.live && decline.error === null) {
     uncited.forEach((row) => { row.route = 'prune-archive'; });
   }

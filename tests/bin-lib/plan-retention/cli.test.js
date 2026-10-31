@@ -54,6 +54,12 @@ test('malformed invocations exit 2 with usage on stderr and no stdout', () => {
     ['--retention', 'keep-forever', P, '--cited'],
     ['--retention', 'keep-forever', P, '--cited', ''],
     ['--retention', 'ask', '--cited', P, P],
+    ['--retention', 'ask', '--retention', 'ask'],
+    ['--retention', 'ask', '--retention', 'keep-forever'],
+    ['--retention', 'ask', `${PLANS_DIR}../../../etc/passwd`],
+    ['--retention', 'ask', `${PLANS_DIR}sub/../../x.md`],
+    ['--retention', 'ask', PLANS_DIR],
+    ['--retention', 'ask', `${PLANS_DIR}sub/`],
   ];
   for (const argv of cases) {
     const r = invoke(argv);
@@ -171,7 +177,9 @@ test('the decline fingerprint is the one declined-learning.js lookup computes', 
 
 // A fixture repo: `old` plans committed 30 days ago in one commit, `recent` plans
 // in a second commit dated now, `untracked` plans left uncommitted.
-function planRepo({ old = 0, recent = 0, untracked = 0 }) {
+// `modifyOld` edits the first old plan in the recent commit, so its latest-touching commit is new
+// while its first-add commit is 30 days ago.
+function planRepo({ old = 0, recent = 0, untracked = 0, modifyOld = false }) {
   const repo = gitRepo();
   const env = {
     ...process.env,
@@ -195,7 +203,8 @@ function planRepo({ old = 0, recent = 0, untracked = 0 }) {
     git(['commit', '-q', '-m', 'old plans'], { GIT_AUTHOR_DATE: thirtyDaysAgo, GIT_COMMITTER_DATE: thirtyDaysAgo });
   }
   const recentPlans = write('recent', recent);
-  if (recent > 0) {
+  if (modifyOld) fs.appendFileSync(path.join(repo, oldPlans[0]), 'edited after the first add\n');
+  if (recent > 0 || modifyOld) {
     git(['add', '--', PLANS_DIR]);
     git(['commit', '-q', '-m', 'recent plans']);
   }
@@ -226,8 +235,22 @@ test('AC2.1: 29 past-cutoff plans all keep and report citationCheck false', () =
   try {
     const parsed = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
     assert.equal(parsed.plans.length, 29);
+    assert.ok(parsed.plans.every((row) => row.pastCutoff === true && row.firstAdded !== 'uncommitted'));
     assert.ok(parsed.plans.every((row) => row.route === 'keep'));
     assert.equal(parsed.citationCheck, false);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('a plan modified after it was added still reads its first-add date (--diff-filter=A)', () => {
+  const { repo, oldPlans, recentPlans } = planRepo({ old: 30, recent: 1, modifyOld: true });
+  try {
+    const parsed = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans, ...recentPlans]);
+    const modified = parsed.plans.find((row) => row.plan === oldPlans[0]);
+    assert.equal(modified.firstAdded, new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10));
+    assert.equal(modified.pastCutoff, true);
+    assert.equal(parsed.plans.filter((row) => row.route === 'prune-archive').length, 30);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

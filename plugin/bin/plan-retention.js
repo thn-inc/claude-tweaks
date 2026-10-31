@@ -22,7 +22,7 @@
 // `plans` carries `{plan, firstAdded, pastCutoff, cited, route}` per plan.
 // Exit codes (the residue.js vocabulary): 0 for any successful render,
 // including a degraded one — a git probe that fails reads as `uncommitted` and
-// keeps, a failed decline lookup is `decline.error` and keeps every plan, never
+// keeps, a decline lookup that throws is `decline.error` and keeps every plan, never
 // a non-zero exit; 2 only for a malformed invocation (usage on stderr, nothing
 // on stdout). `--help` prints usage and exits 0 before anything else is read.
 //
@@ -52,12 +52,18 @@ function parseArgs(argv) {
     if (a === '--retention' || a === '--cited') {
       const v = argv[++i];
       if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} requires a value` };
-      if (a === '--retention') o.retention = v;
-      else o.cited.push(v);
+      if (a === '--retention') {
+        if (o.retention !== null) return { error: '--retention given twice' };
+        o.retention = v;
+      } else {
+        o.cited.push(v);
+      }
     } else if (a.startsWith('--')) {
       return { error: `unknown argument: ${a}` };
     } else {
       if (!a.startsWith(PLANS_PREFIX)) return { error: `plan is not under ${PLANS_PREFIX}: ${a}` };
+      if (a.split(/[\\/]/).includes('..')) return { error: `plan has a .. segment: ${a}` };
+      if (a.endsWith('/')) return { error: `plan has no file name: ${a}` };
       if (o.plans.includes(a)) return { error: `plan given twice: ${a}` };
       o.plans.push(a);
     }
