@@ -950,3 +950,36 @@ test('resolveRepoSlugOrThrow: trims the slug, null on empty/absent output, rethr
   const timeout = Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
   assert.throws(() => resolveRepoSlugOrThrow(() => { throw timeout; }), (e) => e === timeout);
 });
+
+// ---- #4596: the injectable stale-claim matcher, split out of staleClaimInFlightPr ----
+const SC_RUN = '2026-10-31T005940-record-4596';
+const SC_URL = 'https://github.com/acme/w/pull/7';
+const scListed = (over) => ({ url: SC_URL, body: `claude-tweaks-run: ${SC_RUN}`, isCrossRepository: false, ...over });
+const scFiller = (n) => Array.from({ length: n }, (_, i) => ({
+  url: `https://github.com/acme/w/pull/${1000 + i}`, body: 'unrelated', isCrossRepository: false,
+}));
+
+test('openPrListArgs builds the gh pr list argv staleClaimInFlightPr uses', () => {
+  const { openPrListArgs } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.deepEqual(openPrListArgs('acme', 'w'), [
+    'pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
+  ]);
+});
+
+test('staleClaimRunId returns a shaped runId, null for a bad shape, and throws on malformed JSON', () => {
+  const { staleClaimRunId } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(staleClaimRunId(JSON.stringify({ runId: SC_RUN })), SC_RUN);
+  assert.equal(staleClaimRunId(JSON.stringify({ runId: '../x' })), null);
+  assert.equal(staleClaimRunId('{}'), null);
+  assert.throws(() => staleClaimRunId('not json'));
+});
+
+test('matchStaleClaimPr returns the matched entry, null on no match, and throws on a non-array or a capped no-match listing', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed()], 'acme', 'w').url, SC_URL);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ isCrossRepository: true })], 'acme', 'w'), null);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ body: `see claude-tweaks-run: ${SC_RUN} here` })], 'acme', 'w'), null);
+  assert.throws(() => matchStaleClaimPr(SC_RUN, {}, 'acme', 'w'), /open-PR listing is not an array/);
+  assert.throws(() => matchStaleClaimPr(SC_RUN, scFiller(1000), 'acme', 'w'), /1000-entry limit/);
+  assert.equal(matchStaleClaimPr(SC_RUN, scFiller(999), 'acme', 'w'), null);
+});

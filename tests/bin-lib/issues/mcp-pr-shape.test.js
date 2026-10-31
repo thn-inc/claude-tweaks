@@ -1,0 +1,42 @@
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { normalizePrListing } = require('../../../plugin/bin/lib/issues/mcp-pr-shape');
+
+const U = 'https://github.com/acme/w/pull/7';
+const B = 'claude-tweaks-run: 2026-10-31T005940-record-4596';
+const mcp = (fullName) => ({ html_url: U, body: B, head: { repo: { full_name: fullName } } });
+
+test('normalizePrListing maps an MCP entry to the gh shape', () => {
+  assert.deepEqual(normalizePrListing([mcp('acme/w')], 'acme', 'w'), [{ url: U, body: B, isCrossRepository: false }]);
+});
+
+test('normalizePrListing compares full_name exactly, as isSameRepoPrUrl does', () => {
+  assert.equal(normalizePrListing([mcp('Acme/W')], 'acme', 'w')[0].isCrossRepository, true);
+});
+
+test('normalizePrListing marks a fork or a deleted head repo cross-repository', () => {
+  assert.equal(normalizePrListing([mcp('evil/w')], 'acme', 'w')[0].isCrossRepository, true);
+  assert.equal(normalizePrListing([{ html_url: U, body: B, head: { repo: null } }], 'acme', 'w')[0].isCrossRepository, true);
+});
+
+test('normalizePrListing passes a gh-shaped entry through unchanged', () => {
+  const entry = { url: U, body: B, isCrossRepository: false };
+  const out = normalizePrListing([entry], 'acme', 'w');
+  assert.deepEqual(out, [{ url: U, body: B, isCrossRepository: false }]);
+  assert.notEqual(out[0], entry);
+});
+
+test('normalizePrListing throws on a non-array or a non-object element', () => {
+  assert.throws(() => normalizePrListing({}, 'acme', 'w'), /open-PR listing is not an array/);
+  assert.throws(() => normalizePrListing([42], 'acme', 'w'), /open-PR listing entry 0 is not an object/);
+  assert.throws(() => normalizePrListing([null], 'acme', 'w'), /entry 0 is not an object/);
+  assert.throws(() => normalizePrListing([[]], 'acme', 'w'), /entry 0 is not an object/);
+});
+
+test('normalizePrListing never mutates its input', () => {
+  const input = [mcp('acme/w'), { url: U, body: B, isCrossRepository: false }];
+  const snapshot = JSON.parse(JSON.stringify(input));
+  normalizePrListing(input, 'acme', 'w');
+  assert.deepEqual(input, snapshot);
+});

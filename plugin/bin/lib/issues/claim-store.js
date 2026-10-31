@@ -524,12 +524,47 @@ function tombstoneInFlightPr(content, gh, owner, repo) {
 }
 
 // RUN_ID_SHAPE is the canonical run-id shape (`_shared/run-dir-resolution.md`'s
-// ISO-timestamp + kebab spec-slug convention). Agents execute it as prose in
-// `_shared/issue-claims.md`, `tidy/scan-procedures.md` and
-// `flow/claim-targets.md`; tests/issue-claims-stale-open-pr-conformance.test.js
-// pins every copy to this constant's `.source`.
+// ISO-timestamp + kebab spec-slug convention). Agents no longer run it from
+// prose in `_shared/issue-claims.md` or `tidy/scan-procedures.md` — both call
+// `bin/stale-claim-pr.js` (#4596); only `flow/claim-targets.md` still restates
+// it, and tests/issue-claims-stale-open-pr-conformance.test.js pins every
+// remaining copy to this constant's `.source`.
 const RUN_ID_SHAPE = /^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$/;
 const OPEN_PR_LIST_LIMIT = 1000;
+
+// The `gh pr list` argv staleClaimInFlightPr runs — exported so the CLI
+// (`bin/stale-claim-pr.js`, #4596) and the agent's MCP fetch name one listing.
+function openPrListArgs(owner, repo) {
+  return ['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open',
+    '--json', 'url,body,isCrossRepository', '--limit', String(OPEN_PR_LIST_LIMIT)];
+}
+
+// The run id a stale claim blob names, or null when it is absent or not
+// RUN_ID_SHAPE (untrusted — it must never reach a `gh` call). Throws on
+// malformed JSON, like the staleClaimInFlightPr body it was split from.
+function staleClaimRunId(content) {
+  const parsed = JSON.parse(content);
+  const runId = parsed && parsed.runId;
+  return typeof runId === 'string' && RUN_ID_SHAPE.test(runId) ? runId : null;
+}
+
+// The pure matcher over an already-fetched listing (gh- or MCP-sourced, the
+// latter through `normalizePrListing`). Returns the first matching entry, or
+// null for a clean no-match; throws when the listing is not an array or a
+// no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no marked PR").
+function matchStaleClaimPr(runId, prs, owner, repo) {
+  if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
+  const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
+  for (const pr of prs) {
+    if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
+    if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
+    if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return pr;
+  }
+  if (prs.length >= OPEN_PR_LIST_LIMIT) {
+    throw new Error(`open-PR listing hit its ${OPEN_PR_LIST_LIMIT}-entry limit — a marked PR may lie past it`);
+  }
+  return null;
+}
 
 // content: the raw TTL-expired ('stale') claim blob text just read. gh: the
 // generic throwing gh runner. owner/repo: the SAME owner/repo as the issue
@@ -554,22 +589,11 @@ const OPEN_PR_LIST_LIMIT = 1000;
 // on failure.
 function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
-    const parsed = JSON.parse(content);
-    const runId = parsed && parsed.runId;
-    if (typeof runId !== 'string' || !RUN_ID_SHAPE.test(runId)) return null;
-    const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
-    const prs = JSON.parse(gh(['pr', 'list', '--repo', `${owner}/${repo}`, '--state', 'open',
-      '--json', 'url,body,isCrossRepository', '--limit', String(OPEN_PR_LIST_LIMIT)]));
-    if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
-    for (const pr of prs) {
-      if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
-      if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
-      if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { link: pr.url };
-    }
-    if (prs.length >= OPEN_PR_LIST_LIMIT) {
-      throw new Error(`open-PR listing hit its ${OPEN_PR_LIST_LIMIT}-entry limit — a marked PR may lie past it`);
-    }
-    return null;
+    const runId = staleClaimRunId(content);
+    if (runId === null) return null;
+    const prs = JSON.parse(gh(openPrListArgs(owner, repo)));
+    const m = matchStaleClaimPr(runId, prs, owner, repo);
+    return m ? { link: m.url } : null;
   } catch (e) {
     if (typeof onError === 'function') {
       try { onError(e); } catch { /* a failing reporter must not break the fail-open return */ }
@@ -588,6 +612,9 @@ module.exports = {
   classifyGhApiError,
   tombstoneInFlightPr,
   staleClaimInFlightPr,
+  openPrListArgs,
+  staleClaimRunId,
+  matchStaleClaimPr,
   RUN_ID_SHAPE,
   OPEN_PR_LIST_LIMIT,
   isSameRepoPrUrl,
