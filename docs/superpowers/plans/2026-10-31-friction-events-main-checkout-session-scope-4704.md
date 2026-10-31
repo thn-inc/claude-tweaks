@@ -30,6 +30,9 @@
 
 ### Task 1: Scope the main-checkout path union to the current session
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/friction-events.js` (header comment block lines 13-24; `realDeps` ~line 199; `run()` ~lines 220-232)
 - Test: `tests/friction-events-cli.test.js` (`fakeDeps` helper lines 17-31; new tests appended after the #2783 block ending ~line 512)
