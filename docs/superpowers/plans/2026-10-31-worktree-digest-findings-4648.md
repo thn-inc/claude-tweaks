@@ -48,6 +48,7 @@
 ### Task 1: One shared branch-name validator
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/branch-name.js`
@@ -99,7 +100,7 @@ Create `plugin/bin/lib/branch-name.js` with a header naming its three callers: `
 Run: `node --test tests/bin-lib/branch-name.test.js tests/bin-lib/worktree/remote-branch-collision.test.js tests/bin-lib/init/release-bootstrap.test.js tests/bin-lib/pre-review-catchup/cli.test.js tests/pre-review-catchup-conformance.test.js tests/init-release-bootstrap-conformance.test.js tests/bin-lib/init/release-bootstrap-cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
 Expected: PASS, 0 failures.
 
-Run: `git grep -n -e isSafeBranchName -e "isValidBranchName.*init/release-bootstrap" -e "release-bootstrap.js's isValidBranchName" -- plugin tests docs .claude`
+Run: `git grep -n -e isSafeBranchName -e "isValidBranchName.*init/release-bootstrap" -e "release-bootstrap.js's isValidBranchName" -- plugin tests docs .claude ':!docs/superpowers/plans/'`
 Expected: no output (exit 1).
 
 - [ ] **Step 5: Commit**
@@ -117,13 +118,14 @@ git commit -m "Share one branch-name validator across worktree and release code 
 - Modify: `plugin/bin/lib/strip-comments.js:1-37` (header) and `:217-248` (delete `compiles`, `stripperVerdict`, `STRIPPER_VERDICT_MESSAGES` and the `node:vm` require; `module.exports = { stripComments }`)
 - Modify: `tests/helpers/strip-comments.js` (it gains the three moved declarations, byte-for-byte, plus `require('node:vm')`; `stripComments` comes from `../../plugin/bin/lib/strip-comments`; exports `{ stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES }`)
 - Modify: `tests/helpers-strip-comments.test.js:346-356` (the `#3903 AC2.1` test) and add one test
-- Modify: `docs/plugin-structure.md:76` (lib exports `stripComments` only; `stripperVerdict`/`STRIPPER_VERDICT_MESSAGES` are in tests/helpers/strip-comments.js)
+- Modify: `tests/helpers-strip-comments.test.js:325-333` (the `AC4.1: the implementation requires only node: built-ins` test). Its `assert.ok(required.length > 0)` goes red once the lib loses its only require (`node:vm`). Rewrite it so that the lib's requires deepEqual `[]` and every non-relative require of the helper starts with `node:`. Rename it `AC4.1 (#4648): the implementation requires nothing; the helper adds only node: built-ins`
+- Modify: `docs/plugin-structure.md` (anchor on the text `plugin/bin/lib/strip-comments.js     →`, never a line number. Task 1 inserts a line beside it, so Task 2 runs after Task 1. The lib exports `stripComments` only; `stripperVerdict`/`STRIPPER_VERDICT_MESSAGES` are in tests/helpers/strip-comments.js)
 - Modify: `.claude/skills/bin-source-scan-conformance/SKILL.md:30-38` and its lines 107 and 129 (wherever the text says the helper only re-exports, say it re-exports `stripComments` and itself defines `stripperVerdict`/`STRIPPER_VERDICT_MESSAGES`), and `:38` (a plugin caller gets no `stripperVerdict`)
 - Modify: `.claude/skills/parse-signal-discipline/SKILL.md` item 15 (where it introduces `stripperVerdict` (#3573), add that it is defined in `tests/helpers/strip-comments.js`). Do not touch the caller list sentence.
 - No change: `docs/journeys/act-on-a-red-path-guard-lint-3417.md`, `act-on-a-red-strip-comments-caller-pin-4008.md`, `act-on-a-red-wall-clock-budget-scan-3491.md`. Their `files:` already list both paths, and the quoted `STRIPPER_VERDICT_MESSAGES` text, which says "see tests/helpers/strip-comments.js", stays byte-identical and now points at the file that defines it.
 
 **Interfaces:**
-- Consumes: nothing from Task 1.
+- Consumes: nothing from Task 1's code. It runs after Task 1 because both edit `docs/plugin-structure.md`.
 - Produces: `require('plugin/bin/lib/strip-comments')` → `{ stripComments }` only. `require('tests/helpers/strip-comments')` → `{ stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES }`, where `helper.stripComments === lib.stripComments`.
 
 - [ ] **Step 1: Write the failing tests**
@@ -162,7 +164,7 @@ Update the first paragraph's "Callers reach it two ways" sentence the same way.
 Run: `node --test tests/helpers-strip-comments.test.js tests/strip-comments-callers-twin.test.js tests/path-guard-conformance.test.js tests/path-containment-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/git-status-optional-locks.test.js tests/wall-clock-budget-conformance.test.js tests/hooks-harness-refusal.test.js tests/bin-lib/console/backfill-cli.test.js tests/bin-lib/exit-code-conformance.test.js tests/bin-lib/code-health/candidates-experiment-cleanup.test.js tests/bin-lib/code-health/candidates-scale-readiness.test.js`
 Expected: PASS, 0 failures.
 
-Run: `git grep -n -e "No such shape exists in plugin/bin" -e "stripperVerdict\`, \`STRIPPER_VERDICT_MESSAGES\`; builtins-only" -- plugin docs .claude`
+Run: `git grep -n -e "No such shape exists in plugin/bin" -e "stripperVerdict\`, \`STRIPPER_VERDICT_MESSAGES\`; builtins-only" -- plugin docs .claude ':!docs/superpowers/plans/'`
 Expected: no output (exit 1).
 
 - [ ] **Step 5: Commit**
@@ -174,7 +176,7 @@ git commit -m "Keep the stripper's compile oracle out of the payload — strippe
 
 ### Task 3: Close-outs (controller, no dispatch)
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - No repo file. Writes: `$PIPELINE_RUN_DIR/evidence/ac2-digest-pointers.txt`, one `decisions.md` `AC evidence` entry, and the PR #4697 body.
