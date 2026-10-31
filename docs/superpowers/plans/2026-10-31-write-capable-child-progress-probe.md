@@ -24,6 +24,8 @@
 - Governing project skill `.claude/skills/skill-prose-conformance-tests/SKILL.md`, quoted: "Write the assertion as a predicate that returns the facts whose pattern no longer matches (`missingFactsOf(patterns)`), and assert it returns `[]` on the live region. Then, per pattern, strip only that pattern's match from the live text and assert the same predicate returns exactly `[fact]`." and "Keep the patterns non-global: a `/g` regex makes `replace` strip every occurrence, which hides the twice-matched phrase, and its `.test()` carries `lastIndex` from one call to the next."
 - Shape note: the single task touches six files (above flow's 5-file shape signal). Deliberate: the verbatim-copy pins above make the six files one atomic unit — any split leaves an intermediate commit with a red verbatim test.
 
+Waived AC7.5: a provenance note naming the plan-review question the Decision answered — no behavior to assert.
+
 Waived _shared/dispatch-waiting.md: read only — the spec's Gotchas ASSUMPTION was verified at build (the stopping controller was a subagent; a top-level session has no fixed poll budget there), so the file needs no change.
 
 ## Review Focus
@@ -52,7 +54,7 @@ Waived _shared/dispatch-waiting.md: read only — the spec's Gotchas ASSUMPTION 
 - Consumes: existing helpers in `tests/foreground-execution-instruction.test.js` — `fencedBlocks`, `templateBlocks`, `foregroundParagraph`, `coreForegroundSection`, `item7Block`, `missingFactsOf`, `assertEachPatternGoesRed`, `primitiveCopies`, `statesPrimitiveOnce`.
 - Produces: `primitiveCopies()` returning seven named copies; constants `PROGRESS_CHECK`, `STANDING_RULES`.
 
-- [ ] **Step 1: Write the failing tests (AC1.1, AC1.2, AC1.3, AC2.1, AC3.1, AC4.1, AC5.1, AC7.1)**
+- [ ] **Step 1: Write the failing tests (AC1.1, AC1.2, AC1.3, AC2.1, AC3.1, AC4.1, AC5.1, AC7.1, AC7.2, AC7.3, AC7.4)**
 
 **1a — `tests/foreground-execution-instruction.test.js`.** Add `const EXPRESS_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'express-prompt.md');` and `const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');`. Add a helper `handoffWaitParagraph(text)` returning the one blank-line paragraph of `fencedBlocks(text)[0]` that starts `Async-wait discipline (required):` (assert exactly one fenced block and exactly one such paragraph).
 
@@ -92,7 +94,7 @@ const missingStanding = missingFactsOf(STANDING_RULES);
 ```
 
 Tests:
-- `'AC1.1 AC1.2 AC1.3 AC2.1 AC4.1 AC7.1: every copy states the at-bound progress check for write-capable children (#4557)'` — for each `[name, text]` of `primitiveCopies()`: `assert.deepEqual(missingProgress(text), [], name)`.
+- `'AC1.1 AC1.2 AC1.3 AC2.1 AC4.1 AC7.1 AC7.2 AC7.3 AC7.4: every copy states the at-bound progress check for write-capable children (#4557)'` — for each `[name, text]` of `primitiveCopies()`: `assert.deepEqual(missingProgress(text), [], name)`.
 - `'AC5.1: each progress-check assertion goes red when removed from any single copy (discrimination proof)'` — for each copy: `assertEachPatternGoesRed(text, PROGRESS_CHECK, missingProgress)`.
 - `'AC3.1: the never-redone and never-read-output_file rules stand in every copy (#4557)'` — for each copy `assert.deepEqual(missingStanding(text), [], name)`; and its go-red twin with `assertEachPatternGoesRed(text, STANDING_RULES, missingStanding)` per copy.
 - `'AC1.3: the progress check follows the write-capable stop sentence in every copy'` — per copy, `text.indexOf('naming that child and its unit.') < text.search(PROGRESS_CHECK[0][0])`, both indices `!== -1`; go-red by permutation: move the passage's first sentence before the stop sentence in one copy (string splice in memory) and assert the same predicate function reports that copy's name. Factor the check into `misorderedCopies(copies)` returning offending names; live result `[]`, doctored result `[name]`.
