@@ -1,0 +1,285 @@
+# Acceptance Packet Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Replace wrap-up's Verification Brief template with an acceptance packet — one marker-block comment per work record, edited in place, built by a deterministic gather / validated narration / deterministic render pipeline (record #4611).
+
+**Architecture:** Five pure sibling modules under `plugin/bin/lib/wrap-up/` (`packet-contract.js` constants, `packet-links.js` link rules, `packet-validate.js` claim validation, `packet-render.js` renderer, `packet-gather.js` gather + `readPacket`) plus `packet-post.js` (gh-backed publish through an injectable runner) and one CLI `plugin/bin/acceptance-packet.js`. Wrap-up prose (`verification-brief.md` Step 4) runs gather → narrate (LLM, writes a narrative JSON) → render (validates) → post, in that order. `_shared/acceptance-packet.md` is the contract every later record cites. `engine-verify.js`'s acceptance-labeling check learns to accept the packet comment; legacy brief readers stay.
+
+**Tech Stack:** Node 18+ CommonJS, built-ins only, `node --test`.
+
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T100340-record-4611/work/4611-spec.md`
+
+**Scope keywords:** Verification Brief, acceptance-packet, run-comment: brief
+
+## Global Constraints
+
+- Marker: the canonical comment's first line is exactly `<!-- acceptance-packet: v1 -->`; `schemaVersion: 1` is one constant used by facts, narrative and marker.
+- `local-files` delimiters: `<!-- acceptance-packet:start -->` / `<!-- acceptance-packet:end -->`, replaced in place.
+- Fact: `{ id, kind, status, reason?, source }` (+ optional render fields `text`, `url`, `command`, `negative`, `live`); `kind` ∈ `change, check, story, finding, link, recording, flag, decision, deploy`; `status` ∈ `passed, failed, skipped, not-run`.
+- Claim: `{ section, text, refs[] }`; `section` ∈ `what-changed, test-guide, tried-to-break, least-confident, risk-proofs`.
+- Section→kind table: what-changed → `change`; test-guide → `story`, `link`; tried-to-break → `story`, `check`; least-confident → `finding`; risk-proofs → `flag` plus the proof fact (`check`, `story`, `recording`, `link`), at least one `flag`.
+- Section order (rendered headings): What changed, Recording, Test guide, Couldn't test, Tried to break, Least confident, Risk proofs, Decisions left for you, Deploy status.
+- Dropped-claims line, always rendered: `N claims were dropped for missing evidence` (`1 claim was dropped for missing evidence` singular).
+- Size cap 60,000 characters; truncation omits whole items and states `truncated: N items omitted`.
+- Credential keys (one shared constant, case-insensitive after percent-decoding, matched in query, fragment and userinfo): `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`.
+- Links: http(s) only, host must be the local base URL host or the `dev-base-url` host; when deploy is not confirmed live each Test-guide link carries `(link unverified: deploy not confirmed live)`.
+- `Surface: infra`/`backend`: Test guide lists commands, renders no links.
+- Empty section → one line stating why (`not applicable: …`), never an empty heading; "Decisions left for you" is omitted when empty.
+- Every `execFileSync`/`spawnSync` passes `windowsHide: true` (`tests/windows-hide-spawn-conformance.test.js`).
+- Commit style: `{Verb} {what} — {detail} — refs #4611`, never `closes`/`fixes`, ending with the trailer line `Claude-Session: https://claude.ai/code/session_01YPgdwRbmhnsV1HHKVuy4KZ`.
+- Run single test files with `node --test {file}`; the full suite runs centrally at Common Step 5, not inside tasks.
+
+## Premise decisions (logged departures from the spec)
+
+- **Working copy location.** The spec puts the facts/rendered working copy in the run directory. This plan writes them to session-temp paths (`bin/session-tmp-resolve.js`, `_shared/session-tmp-root.md`) passed explicitly to the CLI: the run dir is anchored under the main checkout and refuses Write-tool writes from a worktree session (the narrative is LLM-written), and the copy is never read after the run either way. The contract states it.
+- **`engine-render.js`.** The spec lists it as "render integration"; it renders the curation engine's Phase 2 trace and console sections and has no brief code. The packet gets its own renderer (`packet-render.js`); `engine-render.js` is not modified.
+- **Base URLs.** No `dev-base-url` / local-base-url policy key exists yet (a control-mode record adds policy keys); the CLI takes `--local-base-url` / `--dev-base-url` flags and the prose resolves the local one via `_shared/dev-url-detection.md`.
+
+## Review Focus
+
+1. A credential smuggled by case, percent-encoding (`tok%65n=`), a fragment (`#sig=`) or userinfo (`user:pass@`) is refused; a benign path `/docs/token-guide` is not — Task 1 tests.
+2. Narrative text containing newlines, `## Couldn't test` or `[x](https://evil.example)` renders inert — Task 3 tests.
+3. A work record already carrying an untrusted-author marker comment and/or two trusted packet comments — the earliest trusted one is edited, extras reported, no second packet created — Task 5 tests.
+4. A gather with no verify report / no spec renders a stated `partial` note and every expected check as `not run`, never silence — Task 4 tests.
+5. A claim citing a mix of passed and failed facts lands under Tried to break, not Test guide — Task 2 test.
+
+---
+
+### Task 1: Packet contract constants and link rules
+
+**Files:**
+- Create: `plugin/bin/lib/wrap-up/packet-contract.js`
+- Create: `plugin/bin/lib/wrap-up/packet-links.js`
+- Test: `tests/bin-lib/wrap-up/packet-links.test.js`
+
+**Interfaces:**
+- Produces (`packet-contract.js`, frozen exports): `SCHEMA_VERSION = 1`; `PACKET_MARKER = '<!-- acceptance-packet: v1 -->'`; `PACKET_MARKER_RE = /^<!-- acceptance-packet: v(\d+) -->/`; `LOCAL_START = '<!-- acceptance-packet:start -->'`; `LOCAL_END = '<!-- acceptance-packet:end -->'`; `FACT_KINDS` (array, order above); `FACT_STATUSES`; `CLAIM_SECTIONS`; `SECTION_KINDS` (object section → allowed kinds array); `SECTIONS` (array of `{ key, heading }` in render order, keys `what-changed, recording, test-guide, couldnt-test, tried-to-break, least-confident, risk-proofs, decisions, deploy`, headings exactly the Global Constraints list); `MAX_PACKET_CHARS = 60000`; `CREDENTIAL_KEYS` (array, exact list above); `FACT_ID_RE = /^[a-z][a-z-]*:[A-Za-z0-9._\/#:@-]+$/`.
+- Produces (`packet-links.js`): `normalizeKey(raw: string) → string` (repeat `decodeURIComponent` up to 3 times until stable, catching URIError, then `toLowerCase()`); `checkLink(url: string, { allowedHosts: string[] }) → { ok: true } | { ok: false, reason: string }`. Reasons (exact prefixes): `unparseable url`, `scheme not http(s)`, `host not allowed: {hostname}`, `credential in userinfo`, `credential key in query: {key}`, `credential key in fragment: {key}`. Host comparison is by lowercased `URL.hostname`; `allowedHosts` entries are full base URLs or bare hosts (both accepted — take `new URL(x).hostname` when it parses, else the lowercased string). Fragment keys: split the fragment on `&`, take each part's text before `=`.
+
+- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/wrap-up/packet-links.test.js`, allowed hosts `['http://localhost:3000', 'https://dev.example.com']`:
+  - `checkLink('http://localhost:3000/settings?role=admin', …).ok === true`
+  - `https://dev.example.com/docs/token-guide` → ok (path is never checked)
+  - `https://evil.example/x` → reason `host not allowed: evil.example`
+  - `javascript:alert(1)` and `ftp://localhost:3000/` → `scheme not http(s)`
+  - `http://localhost:3000/?TOKEN=abc` → `credential key in query: token`
+  - `http://localhost:3000/?tok%65n=abc` → `credential key in query: token`
+  - `http://localhost:3000/p#sig=abc` → `credential key in fragment: sig`
+  - `http://user:pass@localhost:3000/` → `credential in userinfo`
+  - `http://localhost:3000/?sessionid=1` → `credential key in query: sessionid`
+  - `http://localhost:3000/?X-Amz-Signature=1` → `credential key in query: x-amz-signature`
+  - `not a url` → `unparseable url`
+  - `CREDENTIAL_KEYS` deep-equals the 14-key list above; `PACKET_MARKER` equals the marker string; `SECTIONS.map(s => s.heading)` equals the nine headings in order.
+
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/packet-links.test.js` — Expected: FAIL (`Cannot find module`).
+
+- [ ] **Step 3: Implement both modules** per the Interfaces block. Use the WHATWG `URL` global; query keys from `url.searchParams.keys()` (already decoded once) passed through `normalizeKey`.
+
+- [ ] **Step 4: Run** `node --test tests/bin-lib/wrap-up/packet-links.test.js` — Expected: PASS.
+
+- [ ] **Step 5: Commit** — `Add acceptance-packet contract constants and link rules — refs #4611`.
+
+### Task 2: Claim validation (`validatePacket`)
+
+**Files:**
+- Create: `plugin/bin/lib/wrap-up/packet-validate.js`
+- Test: `tests/bin-lib/wrap-up/packet-validate.test.js`
+
+**Interfaces:**
+- Consumes: Task 1 constants.
+- Produces: `class SchemaError extends Error { errors: {path, message}[] }`; `validateFactsShape(facts) → { ok, errors }` (requires `schemaVersion === SCHEMA_VERSION`, `facts` array of facts whose `id` matches `FACT_ID_RE` and is unique, `kind` ∈ `FACT_KINDS`, `status` ∈ `FACT_STATUSES`, `source` string; `partial` array of strings; `record` integer); `validateNarrativeShape(narrative) → { ok, errors }` (requires `schemaVersion === SCHEMA_VERSION`, `claims` array of `{ section: string, text: string, refs: string[] }`); `validatePacket(facts, narrative) → { kept: Claim[], moved: { claim, to: 'couldnt-test'|'tried-to-break', because: Fact }[], dropped: { claim, reason }[] }` — throws `SchemaError` when either shape check fails (schema-version mismatch included).
+- Rules, applied per claim in order: section not in `CLAIM_SECTIONS` → dropped `unknown section {s}`; `refs` empty → dropped `no refs`; any ref not a fact id → dropped `absent fact {id}`; any ref whose kind is not in `SECTION_KINDS[section]` → dropped `incompatible fact {id} ({kind}) for {section}`; risk-proofs with no `flag` ref → dropped `risk proof cites no flag`. Then status routing (only `check`/`story` facts route): any cited fact `failed` → `moved` to `tried-to-break` (a claim already in `tried-to-break` stays `kept`); else any cited fact `skipped`/`not-run` → `moved` to `couldnt-test`; otherwise `kept`. `because` is the first fact that triggered the move.
+
+- [ ] **Step 1: Write the failing tests** (facts fixture: `change:src/a.js` passed, `check:unit-tests` passed, `check:lint` failed reason `2 errors`, `story:login` passed, `story:login#negative-2` skipped reason `no dev server`, `link:settings` passed with url, `finding:1` passed, `flag:auth` passed):
+  - `validatePacket drops a claim citing an absent fact` — test-guide claim refs `['link:nope']` → one `dropped`, reason `absent fact link:nope`.
+  - `drops a claim with no refs` — reason `no refs`.
+  - `drops an incompatible kind` — test-guide citing `check:unit-tests` → reason `incompatible fact check:unit-tests (check) for test-guide`.
+  - `a verified claim citing a failed fact moves to tried-to-break` — with `story:login` set to failed, a test-guide claim `Login verified` citing `['story:login', 'link:settings']` → `moved` to `tried-to-break`, `because.id === 'story:login'`; a tried-to-break claim citing `check:lint` (failed) stays `kept`.
+  - `mixed passed and failed refs moves to tried-to-break` (Review Focus 5).
+  - `a claim citing a skipped fact moves to couldnt-test` — refs `['story:login#negative-2']` → `moved.to === 'couldnt-test'`.
+  - `risk-proofs needs a flag` — refs `['check:unit-tests']` → dropped `risk proof cites no flag`; refs `['flag:auth', 'check:unit-tests']` → kept.
+  - `schema mismatch is refused` — `schemaVersion: 2` on facts, then on narrative → `assert.throws(…, SchemaError)`.
+
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/packet-validate.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** per Interfaces.
+- [ ] **Step 4: Run** the same command — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add acceptance-packet claim validation — refs #4611`.
+
+### Task 3: Renderer (`renderPacket`)
+
+**Files:**
+- Create: `plugin/bin/lib/wrap-up/packet-render.js`
+- Test: `tests/bin-lib/wrap-up/packet-render.test.js`
+
+**Interfaces:**
+- Consumes: Tasks 1–2 (`validatePacket`, `checkLink`, constants).
+- Produces: `inline(s: string) → string` (collapse `\s*[\r\n]+\s*` to one space, trim, backslash-escape `[`, `]`, and a leading `#`); `renderPacket(facts, narrative, { observationPlan?: string, poster?: string } = {}) → { markdown: string, dropped: {claim, reason}[], truncated: number, chars: number }`. Throws `SchemaError` (from validation).
+- Layout: line 1 `PACKET_MARKER`; blank; `## Acceptance packet — #{record}`; blank; when `facts.partial.length` a `> partial gather: {inline(note); …}` line; the dropped line; then each `SECTIONS` entry as `### {heading}` + its items. Citations render as code ids after the text: `- {inline(text)} (` + "`id`" + `, …)`. Never render narrative-supplied URLs; links render only from cited `link` facts.
+  - **What changed / Least confident / Risk proofs:** kept claims of that section; empty → `not applicable: no {what-changed: change facts were gathered | least-confident: low-confidence review findings | risk-proofs: kept risk flags}` (Risk proofs reads `no kept risk flags`).
+  - **Recording:** each `recording` fact as `- {inline(text)}: {url}`; none → `not recorded`.
+  - **Test guide:** kept test-guide claims numbered `1.` …; after each claim's text, every cited `link` fact renders as its `url` (re-checked with `checkLink` against `facts.allowedHosts`; a failing recheck renders `(link refused: {reason})` instead) or, when the fact has `command`, as `` `command` ``. When `facts.surface` is `infra` or `backend`, a `url` link never renders (commands only). When the `deploy` fact's `live !== true`, each rendered url is followed by ` (link unverified: deploy not confirmed live)`. When `facts.refused` is non-empty, add `- {n} link(s) refused: {id} ({reason}); …`. Empty → `not applicable: no tested stories or links were gathered`.
+  - **Couldn't test:** one row per `check`/`story` fact with status `skipped` or `not-run`: `` - `id` — skipped: {reason} `` / `` - `id` — not run: {reason} ``; then moved-to-couldnt-test claims as `- {text} (moved: cites `id` — {status}: {reason})`. Empty → `not applicable: every expected check ran`.
+  - **Tried to break:** kept tried-to-break claims and moved-to-tried-to-break claims (`(moved: cites `id` — failed: {reason})`), then one row per `check`/`story` fact with status `passed` or `failed`: `` - `id` — passed `` / `` - `id` — failed: {reason} ``. Empty → `not applicable: no checks or stories ran`.
+  - **Decisions left for you:** `decision` facts as `- {text}`; the whole section (heading included) is omitted when there are none.
+  - **Deploy status:** the `deploy` fact's text; none → `target: local`.
+  - **Observation plan appendix:** when `observationPlan` is a non-empty string, append `### Observation plan` and its lines, each line with a leading `#` escaped (`\#`) — the agent procedure `/claude-tweaks:demo` walks; not a narrated claim.
+  - **Poster line:** when `poster` is set, the final lines are `---` and `_Posted by {inline(poster)}. Resolve with \`/claude-tweaks:demo\`._` (counted in the size cap, never truncated).
+- Dropped line wording: `{n} claim(s) were dropped for missing evidence` with exact singular `1 claim was dropped for missing evidence` and plural `N claims were dropped for missing evidence` (0 included).
+- Truncation: when the joined markdown exceeds `MAX_PACKET_CHARS`, drop whole list items (lines starting `- ` or `{n}. `) from the end of the longest section first, re-measuring, until it fits; then insert `truncated: N items omitted` directly after the dropped line. Headings, marker and notes are never dropped.
+- Every check/story fact renders exactly one row across Couldn't test + Tried to break.
+
+- [ ] **Step 1: Write the failing tests:**
+  - `AC1 skipped check under Couldn't test, failure under Tried to break, row count matches` — facts with `check:unit-tests` failed (`3 failing`) and `check:lint` skipped (`fail-fast`) and `story:login` passed; assert the Couldn't test section contains `` `check:lint` — skipped: fail-fast ``, Tried to break contains `` `check:unit-tests` — failed: 3 failing ``, and the count of check/story rows across both sections equals the number of check/story facts (3).
+  - `AC2 dropped line` — one claim citing an absent fact → markdown contains `1 claim was dropped for missing evidence`; zero dropped → `0 claims were dropped for missing evidence`.
+  - `AC2a not-run renders as not run` — a `not-run` check → `` `check:types` — not run: no result recorded ``.
+  - `AC2d truncation` — 3,000 kept what-changed claims of 40 chars citing one change fact → `chars <= 60000`, `truncated > 0`, markdown contains `truncated: {truncated} items omitted`, and every `### ` heading is still present.
+  - `AC4 narrative is inert` — a what-changed claim text `ok\n## Couldn't test\n[x](https://evil.example)` → the markdown has exactly one line starting `### Couldn't test` and contains `\[x\](https://evil.example)` and no line starting `## Couldn't test`.
+  - `AC5 infra lists commands, no links` — `surface: 'infra'`, link facts one with `command: 'node plugin/bin/acceptance-packet.js --help'` and one with `url: 'http://localhost:3000/x'` both cited → markdown contains the command in backticks and does not contain `http://localhost:3000/x`.
+  - `AC5 one-line reason for empty sections` — facts with only a deploy fact → What changed reads `not applicable: no change facts were gathered`; no heading is followed directly by another heading.
+  - `unverified link suffix` — deploy fact `{ live: false }` → url followed by `(link unverified: deploy not confirmed live)`; `live: true` → no suffix.
+  - `first line is the marker` and `Decisions left for you omitted when empty`.
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/packet-render.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** per Interfaces.
+- [ ] **Step 4: Run** — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add acceptance-packet renderer — refs #4611`.
+
+### Task 4: Deterministic gather and the packet reader
+
+**Files:**
+- Create: `plugin/bin/lib/wrap-up/packet-gather.js`
+- Test: `tests/bin-lib/wrap-up/packet-gather.test.js`
+
+**Interfaces:**
+- Consumes: Task 1 (`checkLink`, constants), `plugin/bin/lib/issues/comment-trust.js` (`isTrustedComment`, `untrustedSkipNote`).
+- Produces:
+  - `parseAcceptanceCriteria(specText: string) → { id: string, text: string }[]` — items under the `## Acceptance Criteria` heading up to the next `## ` heading, lines matching `/^\s*(\d+[a-z]?)\.\s+(.*)$/`.
+  - `parseLowConfidenceFindings(decisionsText: string) → { n: number, text: string }[]` — every line containing `low-confidence`, numbered from 1, `text` = the part after the first ` — `.
+  - `gatherPacketFacts(inputs) → facts` (pure). `inputs = { record: number, surface: string|null, specText: string|null, report: object|null, expectedChecks: string[], plannedStories: {id, negative}[], storyResults: {id, status, reason?}[] | null, acResults: {[id]: 'met'|'partially met'|'not met'} | null, decisionsText: string|null, changes: {status, path}[] | null, commits: {sha, subject}[] | null, links: {id, label, url?, command?}[], localBaseUrl: string|null, devBaseUrl: string|null, deploy: {target, live}|null, recordings: {id, text, url}[], flags: {id, text}[], decisions: {id, text}[] }`. Returns `{ schemaVersion: 1, record, surface, allowedHosts, partial: string[], refused: {id, reason}[], expected: string[], facts: Fact[] }`.
+  - Mapping: `change:{path}` per change and `change:commit-{sha7}` per commit (status `passed`, source `git`); `check:{name}` for every name in `expectedChecks` ∪ `Object.keys(report.checks)` — `exitCode === 0` → passed, `skipped` set → skipped (reason the `skipped` value), other exit code → failed (reason `report.checks[name].summary` or `exit {code}`), absent → not-run reason `no result recorded`; `check:ac-{id}` per parsed AC — `met` → passed, other value → failed (reason the value), missing → not-run reason `no spec-compliance result recorded`; `story:{id}` per planned story ∪ result id (negative flag kept), result status mapped through, missing → not-run `no story result recorded`; `finding:{n}` per low-confidence line (status passed, source `decisions.md`); `link:{id}` per link that passes `checkLink` against `allowedHosts` (= the two base URLs that are set) — a `command` link always passes; a `url` link under surface `infra`/`backend` is refused with reason `infra surface lists commands, not links`; refused links go to `refused`, never `facts`; `deploy:status` from `deploy` (default `{ target: 'local', live: null }`, text `target: {target}` plus `, confirmed live` / `, not confirmed live` for dev); `recording:*`, `flag:*`, `decision:*` pass through with status passed. Non-check/story facts always carry status `passed` (meaning "gathered"). `expected` lists every check/story id derived from inputs other than results (verify names, ACs, planned stories).
+  - Partial notes (exact text): `verify report not found` (report null), `spec not found — acceptance criteria not derived` (specText null), `git changes not gathered` (changes null), `review decisions log not found` (decisionsText null).
+  - `readPacket(comments: object[]) → { status: 'found'|'none'|'unreadable', comment: object|null, version: number|null, extras: string[], skipped: string[] }` — candidates are comments whose `body` matches `PACKET_MARKER_RE` on its first line; untrusted → `skipped` notes; trusted ones ordered by `createdAt` (array order when absent); the earliest is `comment`; the rest go to `extras` as `url || id`; earliest's version ≠ `SCHEMA_VERSION` → `status: 'unreadable'` with `version` set. Never touches the filesystem.
+- [ ] **Step 1: Write the failing tests:**
+  - `AC2a expected AC with no result renders not-run` — specText with ACs `1.`, `2a.`; `acResults: { '1': 'met' }` → fact `check:ac-1` passed, `check:ac-2a` not-run reason `no spec-compliance result recorded`; `expected` includes both.
+  - `verify report maps exit codes` — report `{checks: {tests: {exitCode: 0}, lint: {skipped: 'fail-fast'}, types: {exitCode: 1, summary: '2 errors'}}}` and `expectedChecks: ['tests','lint','types','e2e']` → passed / skipped(fail-fast) / failed(2 errors) / not-run(no result recorded).
+  - `partial gather is stated` (Review Focus 4) — `report: null, specText: null` → `partial` includes `verify report not found` and `spec not found — acceptance criteria not derived`, every `expectedChecks` name is not-run.
+  - `refused links never become facts` — url to `https://evil.example` → in `refused`, absent from `facts`; infra surface url link → refused with the infra reason; command link → fact.
+  - `low-confidence findings` — decisionsText with two `STAGED … Staged to Review Console as low-confidence …` lines → `finding:1`, `finding:2`.
+  - `AC2b readPacket` — comments: untrusted marker (`NONE`, earliest), trusted v1 (`MEMBER`, createdAt T2), trusted v1 (`OWNER`, T3) → `status 'found'`, `comment.id` is the T2 one, `extras` has the T3 url, `skipped` has one note; a lone trusted `<!-- acceptance-packet: v2 -->` → `unreadable`, `version 2`; no marker → `none`.
+  - `AC2b stale run-dir copy is ignored` — write a temp file `packet-4611.md` with body `STALE` under `os.tmpdir()`; `readPacket` of a comment list with body `<!-- acceptance-packet: v1 -->\nLIVE` returns the `LIVE` body (the reader takes no path argument).
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/packet-gather.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** per Interfaces.
+- [ ] **Step 4: Run** — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add acceptance-packet gather and reader — refs #4611`.
+
+### Task 5: Publish (find by marker, edit in place, label after success)
+
+**Files:**
+- Create: `plugin/bin/lib/wrap-up/packet-post.js`
+- Test: `tests/bin-lib/wrap-up/packet-post.test.js`
+
+**Interfaces:**
+- Consumes: Task 4 `readPacket`; Task 1 `LOCAL_START`, `LOCAL_END`.
+- Produces:
+  - `publishPacket({ issue: number, bodyFile: string, repo?: string, prNumber?: number|null, label?: string|null, runner, readFile, writeFile, tmpPath }) → { ok: boolean, action: 'created'|'updated'|null, url: string|null, id: string|null, extras: string[], skipped: string[], labelApplied: boolean, prLink: { ok: boolean, action: 'appended'|'present'|null, error?: string } | null, error?: string }`. `runner(args: string[]) → string` runs `gh` with those args (throws on non-zero). `--repo {repo}` is appended to every gh call when `repo` is set.
+  - Sequence: (1) `['issue','view',String(issue),'--json','comments']` → `readPacket(JSON.parse(out).comments)`; `unreadable` → `ok:false`, error `existing packet comment is unreadable (schemaVersion {v}) — not posting a second packet`. (2) found → `['api','graphql','-f','query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id url}}}','-f',`id=${id}`,'-F',`body=@${bodyFile}`]`, url from the response; a throw → `ok:false`, `action:'updated'`, error `could not edit packet comment {url}: {message}` (nothing posted). none → `['issue','comment',String(issue),'--body-file',bodyFile]`, url = trimmed stdout; a throw → `ok:false`, error `could not post packet comment: {message}`. (3) only when (2) succeeded and `label` is set: `['issue','edit',String(issue),'--add-label',label]` → `labelApplied:true`; a throw → `ok:false`, error names the label failure. (4) only when ok and `prNumber`: `['pr','view',String(prNumber),'--json','body']`; line `Acceptance packet: {url}` already present → `action:'present'`; else write body + `\n\nAcceptance packet: {url}\n` to `tmpPath` and `['pr','edit',String(prNumber),'--body-file',tmpPath]` → `appended`; PR-link failures set `prLink.ok:false` without failing the publish.
+  - `upsertLocalPacket(recordBody: string, packetMarkdown: string) → string` — replace everything between (and including) the delimiters with `LOCAL_START\n{packet}\nLOCAL_END`, or append it after one blank line when absent.
+- [ ] **Step 1: Write the failing tests** with a fake `runner` that holds an in-memory issue (comments with `id`, `url`, `body`, `authorAssociation`, `createdAt`), a PR body, and a label list, and records every call:
+  - `AC3 second run edits the same comment` — publish twice with different body files → after both, exactly one comment carries the marker, its `id` is unchanged, its body is the second body, `action` is `created` then `updated`.
+  - `AC2c post failure applies no label` — runner throws on `issue comment` → `ok:false`, `labelApplied:false`, no `issue edit` call recorded, error starts `could not post packet comment`.
+  - `edit failure posts nothing` — existing trusted packet, runner throws on `api graphql` → `ok:false`, no `issue comment` call, no label.
+  - `duplicates: earliest trusted is edited, extras reported` (Review Focus 3) — untrusted marker + two trusted → the earliest trusted id is the one updated, `extras.length === 1`, `skipped.length === 1`, no new comment.
+  - `unreadable existing packet posts nothing` — trusted v2 marker → `ok:false`, no write calls.
+  - `PR link appended once` — two publishes with `prNumber` → the PR body contains `Acceptance packet: {url}` exactly once; second `prLink.action === 'present'`.
+  - `upsertLocalPacket` — append when absent; replace in place when present (content before and after the delimiters unchanged; exactly one `LOCAL_START`).
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/packet-post.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** per Interfaces (no `fs`/`child_process` in this module — the CLI injects them).
+- [ ] **Step 4: Run** — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add acceptance-packet publish with edit-in-place — refs #4611`.
+
+### Task 6: CLI `plugin/bin/acceptance-packet.js`
+
+**Files:**
+- Create: `plugin/bin/acceptance-packet.js`
+- Test: `tests/acceptance-packet-cli.test.js`
+- Modify: `docs/plugin-structure.md` (one CLI line beside `find-run-comment.js`'s, same shape: synopsis, exit codes, test file)
+
+**Interfaces:**
+- Consumes: Tasks 3–5; `plugin/bin/lib/issues/local-store.js` (`readRecord`, `writeRecord`).
+- Produces: `run(argv, deps) → exitCode` and `module.exports = { run, parseArgs }`; `if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps)`. Follow the `gh-api-module-pattern` skill's `cli-wrapper-contract.md` (read it first): injectable deps, strict flag parsing (unknown flag / repeated flag / missing value → exit 2), `--help` → usage on stdout, exit 0.
+  - `gather --record <n> --out <file> [--spec <file>] [--report <file>] [--expected-checks <csv>] [--stories-dir <dir>] [--story-results <file>] [--ac-results <file>] [--decisions <file>] [--base <ref>] [--links <file>] [--surface <s>] [--local-base-url <u>] [--dev-base-url <u>] [--deploy <file>]` — reads every given file (an unreadable optional file is treated as absent, so it becomes a partial note), derives `plannedStories` from `*.yaml`/`*.yml` basenames in `--stories-dir` (`negative: true` when the basename contains `negative`), runs `git diff --name-status {base}...HEAD` and `git log --format=%H%x09%s {base}..HEAD` through `deps.git` when `--base` is given (a git failure → `changes: null`), calls `gatherPacketFacts`, writes JSON to `--out`. Prints `{"out": "...", "facts": N, "partial": [...]}`. Exit 0.
+  - `render --facts <file> --narrative <file> --out <file> [--dropped-out <file>] [--observation-plan <file>] [--poster <text>]` — writes the markdown to `--out` and `{dropped, truncated, chars}` JSON to `--dropped-out` when given; prints `{"out": "...", "dropped": N, "truncated": N, "chars": N}`. `SchemaError` or an unreadable/unparseable input → stderr names it, exit 1.
+  - `post --record <n> --body-file <file> [--pr <n>] [--label <name>] [--repo <owner/name>]` — `gh` absent (`deps.ghAvailable()` false) → stderr `gh absent — follow _shared/acceptance-packet.md's MCP path`, exit 2. Otherwise `publishPacket` with `tmpPath` from `bin/lib/session-tmp.js` (or `os.tmpdir()` fallback the module already uses); prints the result JSON; exit 0 when `ok`, else 1.
+  - `local --record-file <file> --body-file <file>` — `readRecord`, `body = upsertLocalPacket(body, packet)`, `facets.acceptance = 'pending'`, `writeRecord`; prints `{"recordFile": "..."}`; exit 0, unreadable → 1.
+  - Real deps: `git`/`gh` via `execFileSync` with `windowsHide: true`, `encoding: 'utf8'`, `stdio: ['ignore','pipe','pipe']`.
+- [ ] **Step 1: Write the failing tests** in-process via `run(argv, fakeDeps)`: `--help` exit 0; unknown subcommand and unknown flag exit 2; `gather` with a report + spec fixture in a temp dir writes facts whose `check:tests` is passed; `render` round-trip writes markdown starting with the marker; `render` with `schemaVersion: 2` narrative exits 1; `post` with `ghAvailable: () => false` exits 2; `post` with a fake gh runner whose comment post throws exits 1 and records no `issue edit`; `local` upserts into a temp record file. Plus one real subprocess: `spawnSync(process.execPath, [BIN, '--help'], { windowsHide: true })` exits 0.
+- [ ] **Step 2: Run** `node --test tests/acceptance-packet-cli.test.js` — Expected: FAIL.
+- [ ] **Step 3: Implement** the CLI and add the `docs/plugin-structure.md` line.
+- [ ] **Step 4: Run** `node --test tests/acceptance-packet-cli.test.js tests/windows-hide-spawn-conformance.test.js` — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add acceptance-packet CLI — refs #4611`.
+
+### Task 7: Acceptance-labeling verify accepts the packet
+
+**Files:**
+- Modify: `plugin/bin/lib/wrap-up/engine-verify.js` (the `acceptance-labeling` check, before the `fullBrief` scan)
+- Test: `tests/bin-lib/wrap-up/engine-verify.test.js`
+
+**Interfaces:**
+- Consumes: Task 4 `readPacket`.
+- Behavior: after the `demo:pending` label check, `const packet = readPacket(comments)`; push `packet.skipped` into `ignored`; `found` → pass (with `passedNotes` as today); `unreadable` → `fail('#{target}: acceptance packet comment is unreadable (schemaVersion {v})')`; `none` → fall through to the existing legacy brief / pointer logic unchanged. Update the block comment above the check to name the packet as the current form and the brief forms as legacy readers (kept until `demo/legacy-brief-compatibility.md`'s cleanup record).
+- [ ] **Step 1: Write the failing tests** using the file's existing acceptance-labeling fixture helpers: a target with `demo:pending` and one trusted comment whose body is `<!-- acceptance-packet: v1 -->\n## Acceptance packet — #N` → `result: 'pass'`; the same comment from a `NONE` author → `fail` with the skip note in the detail; a trusted `v2` packet → `fail` naming `unreadable`; an existing legacy `## Verification Brief` + `### Confirmed` fixture still passes.
+- [ ] **Step 2: Run** `node --test tests/bin-lib/wrap-up/engine-verify.test.js` — Expected: the new tests FAIL, existing ones PASS.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the same — Expected: PASS.
+- [ ] **Step 5: Commit** — `Accept the acceptance packet in wrap-up's acceptance-labeling check — refs #4611`.
+
+### Task 8: The packet contract and the marker registration
+
+**Files:**
+- Create: `plugin/skills/_shared/acceptance-packet.md`
+- Modify: `plugin/skills/_shared/pr-run-comments.md` (register the marker; update the `brief` rows)
+- Test: `tests/acceptance-packet-contract-conformance.test.js`
+
+**Interfaces:**
+- Consumes: Task 1 constants (the test pins prose against them — `prose-code-twin-pin` / `skill-prose-conformance-tests` project skills).
+- Contract contents (headings in this order): `## Sections` (the nine, in order, each with its owner: sections 2 Recording → the recording record; 7 Risk proofs → the risk-flag record; 8 Decisions left for you → the control-mode records; 9 Deploy status → the dev-target record; placeholders `not recorded`, `no kept risk flags`, omitted, `target: local`); `## Canonical copy and lookup` (marker on line 1, trusted-author rule citing `bin/lib/issues/comment-trust.js`, earliest trusted edited by comment id, extras reported never edited or deleted, cannot-edit → report and post nothing, PR body line `Acceptance packet: {comment url}` appended idempotently, no PR → no link, `local-files` delimiters, one packet per work item, a legacy brief comment is left untouched and "exactly one" counts packet comments only, decomposed work → the packet lives on the parent and a sub-issue's wrap-up posts none, the parent-gate routing unchanged; MCP transport: no comment edit — with an existing packet, report and post nothing; with none, post via `add_issue_comment`); `## Facts and claims` (the schemas, the section→kind table, ids, `schemaVersion: 1`, later records extend only by adding rows to the table); `## Validation policy` (visible drop, the dropped line wording, routing by status, the dropped list in the working copy); `## The expected check set` (verify check names, ACs, planned stories; `not run`; partial notes); `## Pipeline` (gather → narrate → validate+render → post, the CLI subcommands, working copy in session temp and never read after the run); `## Reader rules` (`readPacket`); `## Untrusted content` (narrative is prose only — newlines collapsed, link brackets escaped, leading `#` escaped; URLs render only from link facts); `## Links and credentials` (host rule, the 14 credential keys verbatim as a backticked comma list, credentials appear only as vault entry names, the unverified-link suffix); `## Facts-poor and infra items`; `## Size` (60,000 cap, `truncated: N items omitted`); `## Old brief section map` (table: The ask → What changed; What shipped → What changed; Confirmed → Test guide and Tried to break; Observation plan → Test guide (rendered as the `### Observation plan` appendix `/claude-tweaks:demo` walks); the Try it block → Test guide); `## Failure contract` (post/edit failure → no pending label, reported).
+- `pr-run-comments.md`: add a `## Work-record markers` section after the Comment kinds table — one row: `acceptance-packet` | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `<!-- acceptance-packet: v1 -->` on the **work record**, not the PR; find/edit rules live in `_shared/acceptance-packet.md`. Change the `brief` Comment-kinds row and Consumer-table row to say new runs post the acceptance packet on the record instead and the `brief` kind is read for legacy runs only (keep every marker string the existing tests pin).
+- [ ] **Step 1: Write the failing conformance test:** reads the contract and asserts — the backticked credential list parsed from the `## Links and credentials` section deep-equals `CREDENTIAL_KEYS`; the file contains `PACKET_MARKER`, `LOCAL_START`, `LOCAL_END`; the `## Sections` list's headings equal `SECTIONS.map(h => h.heading)` in order; it states `vault entry name`; it states `60,000`; every `CLAIM_SECTIONS` key appears in the section→kind table with exactly `SECTION_KINDS`' kinds; `pr-run-comments.md` contains `<!-- acceptance-packet: v1 -->` inside its `## Work-record markers` section. Go-red control: each assertion's message names what drifted; for the credential list, the test also asserts a copy with one key removed does not deep-equal (proves the comparison can fail).
+- [ ] **Step 2: Run** `node --test tests/acceptance-packet-contract-conformance.test.js` — Expected: FAIL (file missing).
+- [ ] **Step 3: Write** the contract and the `pr-run-comments.md` edits.
+- [ ] **Step 4: Run** `node --test tests/acceptance-packet-contract-conformance.test.js tests/pr-run-comments.test.js tests/comment-trust-conformance.test.js` — Expected: PASS.
+- [ ] **Step 5: Commit** — `Add the acceptance-packet contract and register its marker — refs #4611`.
+
+### Task 9: Wrap-up composes and posts the packet
+
+**Files:**
+- Modify: `plugin/skills/wrap-up/verification-brief.md` (title/intro, Step 3, Step 4's template and posting; Routing, Try it block, Oversight-floor gate, Steps 1–2.5 and the screenshot-evidence routing stay)
+- Modify: `plugin/skills/_shared/try-it.md` (consumers + "Where it appears": the Try it block and observation plan feed the packet's Test guide)
+- Modify: pinned tests whose asserted text this task intentionally changes — Step 1's probe finds them (expected: `tests/pr-run-comments.test.js`, `tests/try-it-contract-conformance.test.js`); a pin on unchanged text is never edited.
+- Test: `tests/acceptance-packet-wrap-up-conformance.test.js` (new)
+
+**Interfaces:**
+- Consumes: the Task 6 CLI and the Task 8 contract (cite it; never restate its rules).
+- `verification-brief.md` Step 3 becomes **Gather the packet inputs** (same evidence sources, now feeding gather: the visual-review screenshots become `recording`/`link` inputs, the review's Spec Compliance table becomes the `--ac-results` JSON — a transcription, written with the Write tool to a session-temp path — `decisions.md` becomes `--decisions`, the verify `report.json` path becomes `--report`, the Try it block's Entry point becomes a `link` input, a command for `cli`/`flow` plans). Step 4 keeps its heading `## Step 4: Compose and post the brief` (pinned by `tests/verification-brief-evidence-routing.test.js`) and its whole screenshot-commit routing verbatim, then replaces the `## Verification Brief` template and the issue/PR posting blocks with: resolve session-temp paths (`bin/session-tmp-resolve.js` — `FACTS=packet-facts-{N}.json NARRATIVE=packet-narrative-{N}.json PACKET=packet-{N}.md DROPPED=packet-dropped-{N}.json`, no literal `/tmp/` paths); `acceptance-packet.js gather …`; narrate — write the narrative JSON with the Write tool, every claim citing fact ids from the facts file, never inventing one (the `fact-validated-narration` project skill is the checklist); `acceptance-packet.js render … --poster {poster}` with `--observation-plan` = Step 2's plan; `acceptance-packet.js post --record {N} --body-file {PACKET} --label demo:pending [--pr {pr-number}]` (`--pr` only when `run-state.json` carries a `pr` object) — exit 1 → the label is not applied, report the failure in the summary and log it; exit 2 → the contract's MCP path; `local-files` → `acceptance-packet.js local …`. The packet lives on the record in both the `pr` and no-`pr` cases; the PR gets the body link line instead of a brief comment; the issue pointer line is no longer posted. The `timing` PR run comment stays as it is. The `{poster}` rule keeps its substance, passed as `render --poster`.
+- [ ] **Step 1: Probe the pins.** Run `grep -rln "verification-brief" tests` and, for each hit, read the exact strings it asserts from `verification-brief.md`/`try-it.md`; list which ones this task's edits change. Record the list in the task report.
+- [ ] **Step 2: Write failing tests** in `tests/acceptance-packet-wrap-up-conformance.test.js`: `verification-brief.md`'s Step 4 section names `acceptance-packet.js gather`, `render`, `post` in that order (index comparison); it no longer contains `## Verification Brief\n\n### The ask`; the whole file contains no literal `/tmp/` path; it cites `_shared/acceptance-packet.md`; `post` is named before any sentence applying `demo:pending` and the exit-1 branch says the label is not applied; `try-it.md` names the packet's Test guide. Update the intended pins Step 1 found to the new shape — each changed assertion keeps an equivalent statement of the new behavior, never deleted outright. Run `node --test tests/acceptance-packet-wrap-up-conformance.test.js` — Expected: FAIL.
+- [ ] **Step 3: Edit** `verification-brief.md` and `try-it.md`.
+- [ ] **Step 4: Run** `node --test tests/acceptance-packet-wrap-up-conformance.test.js tests/try-it-contract-conformance.test.js tests/pr-run-comments.test.js tests/verification-brief-evidence-routing.test.js tests/demo-full-verification-pointer.test.js tests/below-floor-parent-close-conformance.test.js tests/session-tmp-root-migration.test.js tests/log-decision-text-file-sites-conformance.test.js tests/skill-fence-guard-shapes.test.js tests/timing-prose-conformance.test.js tests/verify-json-acceptance-guard-conformance.test.js tests/comment-trust-conformance.test.js tests/verify-expectations-writer-conformance.test.js tests/timing-nested-parent-roster.test.js` — Expected: PASS. `wc -c plugin/skills/wrap-up/verification-brief.md` prints under 52500.
+- [ ] **Step 5: Commit** — `Compose and post the acceptance packet from wrap-up — refs #4611`.
+
+### Task 10: Readers find the packet
+
+**Files:**
+- Modify: `plugin/skills/demo/entry-paths.md` (the `#N` label-backed lookup reads the packet first)
+- Modify: `plugin/skills/_shared/acceptance-labeling-landed.md` (Live-state tier: drop the stale "issue pointer comment is a plain post that duplicates" premise; the packet is edited in place on the record; the `demo:pending` check is unchanged)
+- Test: `tests/acceptance-packet-wrap-up-conformance.test.js` (extend)
+
+**Interfaces:**
+- `demo/entry-paths.md`: the label-backed `#N` lookup first takes the earliest trusted issue comment whose first line is `<!-- acceptance-packet: v1 -->` (the acceptance packet, `_shared/acceptance-packet.md`): its Test guide stands in for the Try it block and its `### Observation plan` appendix is the plan Step 2 walks; only when none exists does it fall back to the `## Verification Brief` / pointer forms, unchanged (legacy runs).
+- [ ] **Step 1: Write failing tests:** `demo/entry-paths.md` names `<!-- acceptance-packet: v1 -->` before its first `## Verification Brief` mention and says "earliest trusted"; `acceptance-labeling-landed.md` no longer contains `issue pointer comment is a plain post` and still names `demo:pending`. Run `node --test tests/acceptance-packet-wrap-up-conformance.test.js` — Expected: the new tests FAIL.
+- [ ] **Step 2: Edit** both files.
+- [ ] **Step 3: Run** `node --test tests/acceptance-packet-wrap-up-conformance.test.js tests/pr-run-comments.test.js tests/try-it-contract-conformance.test.js` plus `grep -rln "acceptance-labeling-landed\|entry-paths" tests` hits — Expected: PASS.
+- [ ] **Step 4: Commit** — `Read the acceptance packet in demo and the landed check — refs #4611`.
+
+### Task 11 (folded into Common Step 5): full verification
+
+The full suite runs once centrally through `/claude-tweaks:test` / `verify.js` at Common Step 5 (AC 7) — no separate implementer task.
