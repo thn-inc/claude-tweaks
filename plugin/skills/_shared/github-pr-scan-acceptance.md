@@ -501,8 +501,8 @@ node -e "
 "
 ```
 
-When this block fails — a guard throws (the state-map-search guard, or the empty-login guard above), or
-a failed `gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
+When this block fails — the state-map-search guard throws, the empty-login guard throws, or a failed
+`gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
 `$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
 read every sub-issue as `OPEN`.
 
