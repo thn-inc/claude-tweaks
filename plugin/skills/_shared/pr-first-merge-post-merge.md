@@ -40,8 +40,9 @@ session sees land (an `armed` PR that GitHub merges later) never reaches it eith
 
 It is also a no-op unless the branch the merge landed on — the integration branch
 (`_shared/integration-branch.md`) — is the repo's default branch
-(`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`). GitHub closes `Fixes #N`
-records and a PR's other closing links only on the default branch, so a merge into any other branch
+(`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`). With `gh` absent, that read is
+`git remote show origin`'s `HEAD branch:` line (`_shared/github-write-transport.md`'s default-branch
+row). GitHub closes `Fixes #N` records and a PR's other closing links only on the default branch, so a merge into any other branch
 leaves its sub-issues open: counting them `CLOSED` would close the parent early. Left open, they
 keep both this close and the backstop from firing early.
 
@@ -83,7 +84,9 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   which holds no per-spec pack.
 
 For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
-**Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
+**Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**. With `gh` absent, every call the procedure makes runs through
+`_shared/github-write-transport.md`'s MCP rows (the procedure's **Transport (#4602).** paragraph), so
+a gh-absent run with the GitHub MCP server closes the parent the same way.
 Every other outcome is a no-op; a record with no resolvable parent follows **Resolve the
 parent**'s no-parent branch. A parent whose labels lack `parent-issue` — the label tidy's
 `parent-gate` backstop selects on — is a no-op too, named in the closing summary. Skip a parent carrying
