@@ -53,6 +53,19 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.159.0](https://github.com/thn-inc/claude-tweaks/compare/v6.158.1...v6.159.0) (2026-10-31)
+
+
+### Features
+
+* Close below-floor parents when an armed PR merges after… ([#4599](https://github.com/thn-inc/claude-tweaks/issues/4599)) ([2d33307](https://github.com/thn-inc/claude-tweaks/commit/2d33307ce2d480d0caf40f13820d89acfa918bdc))
+* flow materialize / specify: absence-grep acceptance… ([#4579](https://github.com/thn-inc/claude-tweaks/issues/4579)) ([7c8e2e8](https://github.com/thn-inc/claude-tweaks/commit/7c8e2e8f8f068ab8b800e5dc29a66b7bd51ae3a3))
+
+
+### Bug Fixes
+
+* Backstop hand-closed above-floor parents that carry no… ([#4600](https://github.com/thn-inc/claude-tweaks/issues/4600)) ([0baad51](https://github.com/thn-inc/claude-tweaks/commit/0baad513dff29666441ffe59028a441671179767))
+
 ## [6.158.1](https://github.com/thn-inc/claude-tweaks/compare/v6.158.0...v6.158.1) (2026-10-31)
 
 
