@@ -691,3 +691,43 @@ test('#4677: --archived with no archive/ directory present is unresolved, not a 
   assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'unresolved');
 });
+
+// Discriminates the live-candidate `status === 'clean'` filter: a live run step 2 refused (an
+// `interrupted` stamp, or an `active` run whose recorded worktree is gone) records a `pr` too, but
+// it is not a closed run — `--archived` must never adopt it.
+test('#4677: --archived never adopts a live interrupted run that records a pr', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-08T000000-spec-57');
+  writeRunState(live, { status: 'interrupted', worktree: null, pr: { number: 14, url: 'u' } });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-57', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+test('#4677: --archived never adopts a live active run whose worktree is gone, even with a pr', () => {
+  const main = gitRepo();
+  const live = mkRunDir(main, '2026-01-09T000000-spec-58');
+  writeRunState(live, {
+    status: 'active',
+    worktree: path.join(main, '.claude', 'worktrees', 'gone-spec-58'),
+    pr: { number: 15, url: 'u' },
+  });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-58', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'unresolved');
+});
+
+// Discriminates the `pr` shape guards: only a plain object counts as a recorded PR.
+test('#4677: --archived treats a non-object pr (array, number) as no pr', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-10T000000-spec-59'), { status: 'clean', pr: [] });
+  const asArray = resolve({ cwd: main, env: {}, specSlug: 'spec-59', archived: true });
+  assert.strictEqual(asArray.ok, false);
+  assert.strictEqual(asArray.reason, 'unresolved');
+
+  const main2 = gitRepo();
+  writeRunState(mkArchived(main2, '2026-01-11T000000-spec-60'), { status: 'clean', pr: 7 });
+  const asNumber = resolve({ cwd: main2, env: {}, specSlug: 'spec-60', archived: true });
+  assert.strictEqual(asNumber.ok, false);
+  assert.strictEqual(asNumber.reason, 'unresolved');
+});

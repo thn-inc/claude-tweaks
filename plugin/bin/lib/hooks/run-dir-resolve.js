@@ -120,6 +120,18 @@ function hasSegment(name, slug) {
   return new RegExp(`(^|-)${escapeRegExp(slug)}(?=-|$)`).test(name);
 }
 
+// The canonical run-id directory names directly under `root` that carry `specSlug` as a whole
+// segment, sorted ascending (so the newest is last); `[]` when `root` cannot be listed. The one
+// filter both `newestMatch` and `closedPrMatch` below walk, so their candidate lists cannot drift.
+function matchingRunNames(root, specSlug) {
+  try {
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
+      .map((e) => e.name)
+      .sort();
+  } catch { return []; }
+}
+
 // Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
 // directory under `{pipelinesRoot}` whose name contains `specSlug` as a whole
 // segment (`hasSegment` above, #3865), matching the reference snippet's
@@ -130,12 +142,7 @@ function hasSegment(name, slug) {
 // (`RUN_ID_RE` above) is never a candidate at all, as in the snippet: a plain
 // `sort` lets `20260911T…` outrank every `2026-MM-DDT…` name forever (#2870).
 function newestMatch(pipelinesRoot, specSlug) {
-  let entries;
-  try { entries = fs.readdirSync(pipelinesRoot, { withFileTypes: true }); } catch { return null; }
-  const names = entries
-    .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
-    .map((e) => e.name)
-    .sort();
+  const names = matchingRunNames(pipelinesRoot, specSlug);
   for (let i = names.length - 1; i >= 0; i -= 1) {
     const dir = path.join(pipelinesRoot, names[i]);
     if (adoptionRefusal(dir) === null) return dir;
@@ -150,6 +157,9 @@ function newestMatch(pipelinesRoot, specSlug) {
 // is exactly `clean` and not archived (#208). Walked newest-first, an archived dir winning a name tie;
 // the first whose run-state.json is a plain object recording a `pr` object is returned. A read error
 // on either listing contributes no candidates. Read-only: nothing is created, renamed or written.
+// Newest-with-a-pr is deliberate even when a newer live non-`clean` run (say `interrupted`, PR #2)
+// sits beside an older archived run (PR #1): `--archived` returns the archived one (PR #1), and the
+// caller's `OPEN` precondition on the PR is what makes that safe — a stale PR is refused there.
 function closedPrMatch(pipelinesRoot, specSlug) {
   const readState = (dir) => {
     try {
@@ -157,19 +167,12 @@ function closedPrMatch(pipelinesRoot, specSlug) {
       return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
     } catch { return null; }
   };
-  const runNames = (root) => {
-    try {
-      return fs.readdirSync(root, { withFileTypes: true })
-        .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
-        .map((e) => e.name);
-    } catch { return []; }
-  };
   const archiveRoot = path.join(pipelinesRoot, 'archive');
-  const candidates = runNames(archiveRoot).map((name) => {
+  const candidates = matchingRunNames(archiveRoot, specSlug).map((name) => {
     const dir = path.join(archiveRoot, name);
     return { name, dir, archived: true, state: readState(dir) };
   });
-  for (const name of runNames(pipelinesRoot)) {
+  for (const name of matchingRunNames(pipelinesRoot, specSlug)) {
     const dir = path.join(pipelinesRoot, name);
     const state = readState(dir);
     if (state && state.status === 'clean' && archiveStatus(pipelinesRoot, name) !== 'archived') {
