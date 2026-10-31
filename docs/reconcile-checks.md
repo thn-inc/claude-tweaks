@@ -582,8 +582,9 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 --mode post-merge`) and Step 4.0b (`lib/issues/below-floor-parent-close.js`) once for a PR GitHub
 merged after its session ended: an armed auto-merge, a merge-queue merge, or a human clicking merge
 in the browser. No session saw that merge, so no session ran the steps, and a below-floor parent
-whose last sub-issue merged this way used to wait for a human to approve a tidy row. The prose stays
-the source of truth; the module only decides when the steps run and records that they did. Tidy's
+whose last sub-issue merged this way used to wait for a human to approve a tidy row. Step 4.0b's
+gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js`
+(#4603). The module only decides when the steps run and records that they did. Tidy's
 `parent-gate` backstop is unchanged, and every fail-open path below leaves the parent open for it.
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status

@@ -254,8 +254,11 @@ and name the constant or regex each line must match before you call the pin comp
 table. `plugin/bin/lib/issues/below-floor-parent-close.js` is a Node mirror of
 `_shared/pr-first-merge-post-merge.md` Step 4.0b running `wrap-up/verification-brief-parent-gate.md`
 from **Resolve the parent** through **Close the parent below the floor**, and its header names the
-prose as the source of truth. No vocabulary spans the two, so step 1's grep finds nothing. Split the
-procedure into the parts that can drift, and pin each the way its shape owes:
+prose as the source of truth. No vocabulary spans the two, so step 1's grep finds nothing. Since
+#4603 the gate's evaluation is one shared module, `plugin/bin/lib/issues/parent-gate.js`, that the
+prose's CLI (`bin/parent-gate.js`) and the reconciler both run, so the behavior twin shrinks to the
+close's composer. Split the procedure into the parts that can drift, and pin each the way its shape
+owes:
 
 - *Fixed text* is a composer twin. `tests/bin-lib/issues/below-floor-parent-close.test.js` compares
   `composeCloseComment` with the prose's closing-comment fence, substituted, and does the same for
