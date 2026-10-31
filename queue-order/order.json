@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-10-31T09:36:27.334Z",
+  "computedAt": "2026-10-31T09:49:15.250Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 4659,
-        "updatedAt": "2026-10-31T06:33:36Z",
+        "updatedAt": "2026-10-31T09:41:21Z",
         "state": "OPEN"
       },
       {
@@ -120,7 +120,7 @@
       },
       {
         "number": 4603,
-        "updatedAt": "2026-10-30T16:08:34Z",
+        "updatedAt": "2026-10-31T09:48:02Z",
         "state": "OPEN"
       },
       {
@@ -165,7 +165,7 @@
       },
       {
         "number": 4588,
-        "updatedAt": "2026-10-31T09:34:32Z",
+        "updatedAt": "2026-10-31T09:49:06Z",
         "state": "OPEN"
       },
       {
@@ -175,7 +175,7 @@
       },
       {
         "number": 4578,
-        "updatedAt": "2026-10-31T06:34:27Z",
+        "updatedAt": "2026-10-31T09:40:18Z",
         "state": "OPEN"
       },
       {
@@ -210,7 +210,7 @@
       },
       {
         "number": 4565,
-        "updatedAt": "2026-10-30T21:49:18Z",
+        "updatedAt": "2026-10-31T09:45:28Z",
         "state": "OPEN"
       },
       {
@@ -220,7 +220,7 @@
       },
       {
         "number": 4561,
-        "updatedAt": "2026-10-30T21:32:57Z",
+        "updatedAt": "2026-10-31T09:45:26Z",
         "state": "OPEN"
       },
       {
@@ -330,7 +330,7 @@
       },
       {
         "number": 4495,
-        "updatedAt": "2026-10-31T06:35:07Z",
+        "updatedAt": "2026-10-31T09:40:30Z",
         "state": "OPEN"
       },
       {
@@ -580,7 +580,7 @@
       },
       {
         "number": 4343,
-        "updatedAt": "2026-10-30T21:18:47Z",
+        "updatedAt": "2026-10-31T09:45:24Z",
         "state": "OPEN"
       },
       {
@@ -777,93 +777,10 @@
         "number": 4609,
         "updatedAt": "2026-10-30T16:11:41Z",
         "state": "OPEN"
-      },
-      {
-        "number": 4549,
-        "updatedAt": "2026-10-31T06:36:09Z",
-        "state": "OPEN"
       }
     ]
   },
   "groups": [
-    [
-      {
-        "body": "Origin: reflect full from #4596\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/flow/claim-targets.md` (the tombstone-PR path, lines ~263-294) still carries a prose copy of the PR body's `### Resume` line grammar: it tells the agent to read the `### Resume` section, find the exact command line `PIPELINE_RUN_DIR=\"{run-dir}\" /claude-tweaks:flow ...`, and validate the marker by eye.\n\nRecord #4596 moved the same grammar into code: `plugin/bin/lib/flow/pr-body.js` exports `resumeLineUnder(body)` (last `### Resume` heading) and `parseResumeLine(line, runId)` (allowlisted dir and target classes, a string `runId` guard, no `..` dir segment), and `plugin/bin/stale-claim-pr.js` prints `resume` only for a line `parseResumeLine` accepts. The tombstone path in `claim-targets.md` is the last prose restatement, so the two can drift (the #4596 review found `RESUME_LINE_RE`'s original denylist passing `!` and C0 control characters, which the prose copy would also accept).\n\nFound by the #4596 whole-branch review; out of that record's two named prose files.\n\n## Deliverables\n\nRoute the tombstone-PR `### Resume` read in `plugin/skills/flow/claim-targets.md` through `pr-body.js`'s `resumeLineUnder`/`parseResumeLine` (a small CLI or an existing one such as `stale-claim-pr.js --resume`), so the prose no longer restates the grammar.\n\nExtend the existing conformance test that pins `claim-targets.md` as the only prose copy (`tests/issue-claims-stale-open-pr-conformance.test.js`) so it pins the removal.\n\n## Acceptance Criteria\n\n`grep -F \"### Resume\" plugin/skills/flow/claim-targets.md` no longer shows prose that spells out the Resume line's shape; it names the CLI/function instead (run first against the current tree and seen to match).\n\nA tombstone PR whose `### Resume` line fails `parseResumeLine` (for example one containing `!`) routes to the resolve path, with a test that is red on the old prose.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/flow/claim-targets.md` — replace the prose Resume-line grammar with a call to the shared parser\n- `plugin/bin/lib/flow/pr-body.js` — parser the prose should route through\n- `tests/issue-claims-stale-open-pr-conformance.test.js` — pin the removal\n\n_Filed by `reflect` via specShapedBody._",
-        "createdAt": "2026-10-31T03:00:16Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4659,
-        "state": "OPEN",
-        "title": "Route claim-targets.md tombstone Resume-line parse through the shared parser",
-        "updatedAt": "2026-10-31T06:33:36Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
     [
       {
         "body": "Origin: tidy digest cluster promotion — digest #1426, run 2026-10-30T154127-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n2 below-floor findings in the `review` area sit un-promoted in the rolling digest (#1426). Each was deferred on its own under the materiality floor; together they cross the 3-entry cluster threshold of tidy's digest sweep (Step 5.6), and run `2026-10-30T154127-sweep-standalone` proposed this record, approved via `/claude-tweaks:tidy --approve`.\n\nSource digest entries:\n- materiality-a741e6c1 — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6476790372\n- materiality-067f68fa — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6518866799\n\n## Deliverables\n\n- The rename-old-path test accepts either merged or conflict, so it does not pin the merge decision its name implies (tiebreak evidence unverified) — `tests/bin-lib/pre-review-catchup/cli.test.js:275`\n- a filed review-followup- proposal gets no open-items ledger write-back — `the console queue-write step has none, as for ledger-record-* (#4484 review, lens 3e)`\n\n## Acceptance Criteria\n\n- Each Deliverables bullet is either fixed (with a test where behaviour changes) or closed out with a one-line rationale in the PR body.\n- Every promoted digest line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/pre-review-catchup/cli.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
@@ -1802,78 +1719,6 @@
     ],
     [
       {
-        "body": "Origin: reflect full from #4466 (multi-spec batch with #4469)\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/wrap-up/verification-brief-parent-gate.md` has six callers since #4466. It is still an agent-executed prose procedure. Resolve the parent, Enumerate the parent's sub-issues (`gh api …/sub_issues`), the Self-inclusion rule, Evaluate the gate, the oversight-floor check, and the below-floor close's idempotence check are each spelled out as `gh`/`jq`/`node -e` snippets for an agent to compose. Only the final state function, `parentGateState` (`plugin/bin/lib/issues/acceptance.js`), is code with unit tests.\n\n#4466's review confirmed eight defects in those snippets:\n- no `--paginate` on the sub-issue read;\n- no `stateReason`, so not-planned sub-issues closed the parent `completed`;\n- cross-repo closing references counted;\n- a human reopen re-closed;\n- the plugin's own heading comment read as absent;\n- a free-text section inlined into JS source;\n- a missing `parent-issue` check;\n- no hold when Step 4.0 returned nothing.\n\nAll eight were fixed in prose and pinned by regex conformance tests. Those tests check the wording, not the behavior.\n\nIntegration-branch probe: `git ls-tree --name-only origin/main plugin/bin/` lists no parent-gate CLI. `git grep -n -F -e \"parentGateState\" origin/main -- plugin/bin` matches only `acceptance.js` and `engine-verify.js`. `plugin/bin/fetch-sub-issues.js` (paginated) exists and is not used by the procedure.\n\n## Deliverables\n\n- [ ] A `plugin/bin/parent-gate.js` CLI that takes a sub-issue number or a parent number plus the merge's closing set. It resolves the parent (native link or `Parent: #N`), enumerates sub-issues with state and `stateReason` through the paginated fetcher, applies the self-inclusion rule and the oversight floor, and prints one JSON verdict: `{parent, state, exceeds, closeReason, idempotence}`.\n- [ ] `verification-brief-parent-gate.md` calls that CLI in place of its Resolve, Enumerate, Self-inclusion and Evaluate snippets, keeping prose only for routing the verdict.\n\n## Acceptance Criteria\n\n- [ ] Unit tests cover:\n  - a parent with more than 30 sub-issues;\n  - all sub-issues closed not-planned;\n  - a cross-repo closing reference;\n  - a human-reopened parent;\n  - a parent without `parent-issue`.\n\n  Each case gets the verdict the prose procedure now specifies.\n- [ ] `grep -F \"issues/\\$PARENT_NUM/sub_issues\" plugin/skills/wrap-up/verification-brief-parent-gate.md` returns nothing.\n\n## Release Note\n\nClosing and gating a decomposed feature's parent now runs on tested code instead of instructions an agent re-composes each run, so edge cases like long sub-issue lists and cancelled sub-issues behave the same every time.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/verification-brief-parent-gate.md` — replace the snippet steps with a CLI call\n- `plugin/bin/lib/issues/acceptance.js` — `parentGateState`, reused\n- `plugin/bin/fetch-sub-issues.js` — the paginated enumeration to reuse\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — Step 4.0b, a caller\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T10:13:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4603,
-        "state": "OPEN",
-        "title": "Move the Parent-Gate Procedure's evaluation into a tested CLI",
-        "updatedAt": "2026-10-30T16:08:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: spec #4466 build (Task 1 ruling, final whole-branch review)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4466 gave `needsBackstop` an `isParent` field (`plugin/bin/lib/issues/acceptance.js`), so tidy's `acceptance-gap` scope skips every closed decomposition parent. That scope used to flag an above-floor parent that a human closed by hand with no `demo:*` label (local-files: no `acceptance` facet).\n\nNo scope sees such a parent now. `parent-gate` (GitHub and local-files Shape 7) fetches open parents only, and `acceptance-gap` excludes parents. `_shared/github-pr-scan-acceptance.md` still says such a parent's acceptance is `/claude-tweaks:demo`'s, but nothing routes it there.\n\n## Deliverables\n\n- [ ] Surface a closed above-floor decomposition parent with no acceptance disposition, either as a `parent-gate` row or as a parent-aware `acceptance-gap` row, recommending `/claude-tweaks:demo #{n}`. Keep below-floor parents excluded, since #4466 closes them with a listing comment.\n- [ ] Do this on both drivers.\n\n## Acceptance Criteria\n\n- [ ] An above-floor parent closed by hand with no `demo:*` label (or `acceptance` facet) appears in one tidy scope.\n- [ ] A parent closed by #4466's below-floor close does not.\n\n## Release Note\n\nTidy again flags a decomposed feature whose parent was closed by hand without a demo sign-off.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan-acceptance.md` — parent-gate / acceptance-gap scopes\n- `plugin/skills/tidy/step-1-records.md` — Shapes 7 and 8\n- `plugin/bin/lib/issues/acceptance.js` — `needsBackstop`\n\n_Filed by `build` via specShapedBody._\n",
         "createdAt": "2026-10-30T10:13:07Z",
         "labels": [
@@ -2270,96 +2115,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`integration-model` has no static schema default. When neither the run's `config.yml` pin nor `.claude-tweaks/policy.yml` sets it, `detectIntegrationModel` (`plugin/bin/lib/policy-schema.js:642-659`) computes it from the forge-detection ladder (`plugin/skills/_shared/forge-detection.md`, checks 1 and 3). Verified on `main` at `fed17360e`:\n\n- Line 644 builds one `execOpts` with a hardcoded `timeout: 5000` for both the `git remote get-url origin` probe and the `gh repo view --json owner,name` probe. The project's `gh-timeout-ms` policy key (`policy-schema.js:134`, bounded 1000–60000, default 5000) and the `CLAUDE_TWEAKS_GH_TIMEOUT_MS` env override, which every other direct `gh` call honours through `plugin/bin/lib/shared-primitives.js`'s `GH_TIMEOUT_MS` ladder (env > policy > default), are never read here.\n- Lines 652-656: any throw from the `gh` probe returns `'local-merge'`. A timeout (the child killed after 5 s) cannot be told apart from a definitive \"not authenticated / not a GitHub repo\" exit, and nothing records which one happened.\n- The function is called in three places: `plugin/bin/lib/policy-derived-defaults.js:45` (behind `bin/resolve-policy.js`'s `integration-model` branch), `resolveIntegrationModel` (`policy-schema.js:670-676`, used by `bin/lib/reconcile/index.js`), and `plugin/bin/lib/hooks/pre-tool-use.js:1659` (`resolveRunPinnedIntegrationModel`, the PR-stamp gate's fallback for a run with no pin yet).\n\nObserved effect (reported against plugin 6.156.3): on a GitHub Enterprise host where `gh` calls routinely take 4–14 s, two unpinned reads of `integration-model` during one `/claude-tweaks:flow #A,#B,#C` run returned `local-merge` and then `pr-first`, both `source: default`. `/build` logged a SKIP of the draft-PR bootstrap, and the bookkeeping-stamps gate then denied the next write (`bookkeeping-stamp-deny`, record-pr) until the run was corrected by hand. A contributing factor is that the first read ran without `--run`, so it bypassed the run-scoped pin (`plugin/skills/_shared/integration-model.md`, \"Run-scoped stability\"). That caller-side miss is a separate concern. This record covers the detection function: it fails on a slow forge and leaves no trace.\n\n## Deliverables\n\n1. `detectIntegrationModel` bounds its `gh repo view` probe with the resolved `gh` timeout for the repo it is detecting: `CLAUDE_TWEAKS_GH_TIMEOUT_MS` (when valid within the key's bounds) > `gh-timeout-ms` read from `{repoRoot}/.claude-tweaks/policy.yml` > the 5000 ms schema default. This is the same precedence as `shared-primitives.js`'s ladder, but anchored on `repoRoot` rather than `process.cwd()`. An explicit `opts.timeoutMs` passed by a caller wins over the ladder. The `git remote get-url origin` probe keeps a short local bound; it does not need the `gh` budget.\n2. A `gh` probe that ends by timeout (`ETIMEDOUT` / killed by signal) is retried once with the same timeout before detection gives up. That matches `gh-timeout-ms`'s documented \"killed and retried once\" semantics. A definitive outcome is not retried: a non-zero exit, or `gh` absent (`ENOENT`).\n3. Detection reports *why* it resolved `local-merge`. A timeout that survives the retry is a **degraded** detection, kept distinct from a detected `local-merge` (no remote, `gh` absent, or `gh repo view` exiting non-zero). Whatever form the signal takes, `detectIntegrationModel(repoRoot, opts)` keeps returning a bare enum string for every existing caller (additive only). Callers that want the reason get it through a new opt-in surface, for example an `opts.onDegrade` callback or a sibling export.\n4. `bin/resolve-policy.js`'s `integration-model` resolution (through `policy-derived-defaults.js`) surfaces a degraded detection in two ways: a `degraded — integration-model: forge detection timed out after {ms} ms (x2); resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms` line on stderr, and an additive `degraded: \"<reason>\"` field on that key's JSON entry. `--values` output is unchanged (still the bare value on stdout).\n5. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` passes an explicit `opts.timeoutMs` chosen so that its worst case (probe plus one retry) stays within the hook's spawn budget (the \"I5\" budget its own comment cites). A comment at the call site explains why the hook does not inherit a 60 s `gh-timeout-ms`.\n6. `plugin/skills/_shared/forge-detection.md`'s \"Code twin\" paragraph and `detectIntegrationModel`'s header comment (`policy-schema.js:623-641`, which currently says \"Each check runs under a 5s timeout\") describe the new timeout source, the retry-once rule, and the degraded-vs-detected distinction.\n7. Tests in `tests/integration-model.test.js`, `tests/merge-verification.test.js` (which pins `computeDerivedDefaults` today), and `tests/resolve-policy-cli.test.js` cover the new behaviour. Each one must go red against the current code.\n\n## Acceptance Criteria\n\n- With `gh-timeout-ms: 20000` in a fixture repo's `policy.yml` and a fake `gh` on `PATH` that sleeps 8 s and then prints valid JSON, `detectIntegrationModel(fixture)` returns `pr-first`. Today it returns `local-merge` after 5 s.\n- With `CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000` and no policy key, the same fake resolves `pr-first`. With an explicit `opts.timeoutMs: 1000`, it resolves `local-merge` as a degraded detection.\n- When the fake `gh` times out on its first call and succeeds on its second, the result is `pr-first`, and the fake records exactly two invocations.\n- When the fake `gh` exits non-zero immediately (no timeout), the result is `local-merge`, the fake is invoked exactly once, and no degrade is reported.\n- When `gh` is absent from `PATH` and a remote is present, the result is `local-merge` with no degrade, which is today's behaviour for the MCP-only environment. `mcpReachable: true` still short-circuits to `pr-first`.\n- When the fake `gh` always times out, `node bin/resolve-policy.js integration-model` (JSON mode, no `--run`, no pin) prints `local-merge` with `source: \"default\"` and a `degraded` field, and prints exactly one `degraded — integration-model: …` line on stderr. `--values integration-model` prints only `local-merge` on stdout.\n- With `integration-model: pr-first` pinned in `policy.yml`, or in `--run`'s `config.yml`, none of the above invokes `gh` at all: the pin still wins outright.\n- `resolveRunPinnedIntegrationModel` passes an explicit `timeoutMs`, and a test (or a source-scan assertion) pins that value at or below the hook budget it cites.\n- `forge-detection.md`'s Code-twin paragraph and the `detectIntegrationModel` header comment no longer state a fixed 5 s timeout.\n- `npm test` passes.\n\n## Release Note\n\nForge detection for `integration-model` now honours `gh-timeout-ms`, retries once on a timeout, and reports a degraded detection instead of silently resolving `local-merge` on a slow GitHub host.\n\n## Technical Approach\n\nKeep `detectIntegrationModel`'s string return and add the reason through an opt-in surface, so no existing caller changes shape (expand-contract). Resolve the timeout inside `policy-schema.js` from `repoRoot`. `readFileSafe` and `resolveValue` already live in that module, so the policy read needs no new dependency. Do not top-level require `./policy`, which itself requires `./policy-schema`, or `./shared-primitives`, whose `GH_TIMEOUT_MS` getter reads `process.cwd()` rather than the repo being detected. Classify the `execFileSync` error: `err.code === 'ETIMEDOUT'` or a set `err.signal` means timeout and is eligible for one retry; `ENOENT` means `gh` is absent, a definitive result; anything else is a definitive non-zero exit. Thread the reason through `computeDerivedDefaults` into the result entry, and have `resolve-policy.js` print the stderr degrade line in the existing `degraded —` style (`bin/verify-run-bookends.js:205`). Tests reuse `tests/integration-model.test.js`'s `gitRepo()` / `ghAbsentPath()` fixtures. Add a fake-`gh` shim directory placed first on `PATH`, configurable for sleep duration, exit code and an invocation counter.\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — `detectIntegrationModel`: resolved timeout, retry-once on timeout, degrade reason; header comment updated\n- `plugin/bin/lib/policy-derived-defaults.js` — carry the degrade reason into the `integration-model` result entry\n- `plugin/bin/resolve-policy.js` — emit the stderr `degraded —` line and the additive JSON `degraded` field\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `resolveRunPinnedIntegrationModel` passes an explicit hook-bounded `timeoutMs`\n- `plugin/bin/lib/shared-primitives.js` — read-only reference for the env > policy > default ladder and bounds (`timeoutFromEnv`, `policyKeyBounds`); change only if a repoRoot-anchored helper is extracted here\n- `plugin/skills/_shared/forge-detection.md` — Code-twin paragraph: timeout source, retry, degraded vs detected\n- `tests/integration-model.test.js` — fake-`gh` timeout/retry/degrade cases\n- `tests/merge-verification.test.js` — `computeDerivedDefaults` degrade-field propagation\n- `tests/resolve-policy-cli.test.js` — stderr degrade line and JSON `degraded` field; `--values` unchanged\n\n## Gotchas\n\n- The reporter's `gh-timeout-ms: 90000` is above the key's schema max of 60000 (`policy-schema.js:134`). `resolveValue` silently turns an out-of-range value into the 5000 default, so even after this fix that exact setting still resolves to 5 s. The acceptance tests deliberately use in-range values. Whether an out-of-range timeout should warn is a separate concern and is not changed here.\n- The fallback value stays `local-merge` on a degraded detection. `forge-detection.md` documents the ladder as fail-open, and `pr-first` with an unreachable `gh` would fail at the draft-PR bootstrap instead. Run-to-run stability inside a pipeline comes from the run-scoped pin (`_shared/integration-model.md`), which this record leaves untouched. This record makes a failed detection visible and less likely; it does not invent a cross-call cache.\n- `pre-tool-use.js` runs inside a lifecycle hook. Inheriting a 60 s `gh-timeout-ms` plus one retry there could exceed the hook's own timeout and break the session-safety invariant in `docs/hooks.md`, so that call site must keep an explicit bound.\n- Requiring `./policy` from `policy-schema.js` at module top level creates a require cycle (`policy.js` requires `policy-schema.js`). Read `policy.yml` with `readFileSafe` and `resolveValue` in place, or lazy-require inside the function.\n- The live-repo test (`detectIntegrationModel: this repo … resolves a valid enum value`) asserts shape only, so it must not start depending on network latency. Keep every new case on the fake `gh`.\n\n## Original request\n\npolicy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge\n\n**Summary:** Forge detection for `integration-model` uses a hardcoded 5 s `gh repo view` timeout. It ignores the project's `gh-timeout-ms` and silently returns `local-merge` on any failure, so on a slow GitHub Enterprise host the resolved model flips from run to run.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/policy-schema.js` (`detectIntegrationModel`), used by `resolve-policy.js integration-model`\n\n**Repro steps:**\n1. Use a project with no `integration-model:` key in `.claude-tweaks/policy.yml`. Set `gh-timeout-ms: 90000` because the forge is a GitHub Enterprise host where `gh` calls routinely take 4–14 s.\n2. Run `/claude-tweaks:flow #A,#B,#C` (a multi-record run on the default worktree strategy).\n3. Resolve `integration-model` once before the worktree catch-up and once again inside the worktree minutes later.\n\n**Expected vs. actual:**\nExpected: the same model on every resolution. Detection should honour `gh-timeout-ms`; if it can't decide, it should fall back to a stable value with a logged degrade, not silently switch models.\nActual: one read returned `local-merge` and a later read returned `pr-first`. Both came from detection (`source: default`), because the hardcoded `timeout: 5000` (`bin/lib/policy-schema.js:644,652-654`, still present on main at bcd27902c) sometimes fails and falls back to `local-merge` without a trace. `/build` logged a SKIP of the draft-PR bootstrap. The bookkeeping-stamps gate then denied the next write (`bookkeeping-stamp-deny`, record-pr), and a manual correction was needed before the draft PR opened. Contributing factor: the first read ran without `--run`, so it bypassed the Manifesto's run-scoped pin (`_shared/integration-model.md`, \"Run-scoped stability\").\n\n**Suggested fix:** pass the resolved `gh-timeout-ms` to the detection `gh` call. When detection fails, keep the pinned or default model rather than silently returning `local-merge`, and log a degrade line so that \"detected local-merge\" can be told apart from \"detection failed\". Workaround: pin `integration-model:` explicitly in `.claude-tweaks/policy.yml`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.3\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-deff65bd -->\n",
-        "createdAt": "2026-10-30T07:53:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4578,
-        "state": "OPEN",
-        "title": "policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge",
-        "updatedAt": "2026-10-31T06:34:27Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Defer-reason: tangential\n\n**Related:** #4502\n\n## Current State\n\n`plugin/bin/lib/issues/provenance.js`'s `resolveProvenance` gives a record with no `by:*` label the side-effect class named by its body's `Origin:` line. `plugin/bin/lib/issues/trust.js` counts a record whose `Origin:` line ends `from #N` as a corrective follow-up against #N's class. Neither checks who wrote the issue. `by:*` labels need triage access, but anyone who can open an issue in a public repo can write an `Origin:` line.\n\nSo in a public consumer repo, an outsider can file an issue whose body starts `Origin: demo changes-requested from #7`. It then counts as a corrective follow-up against #7's trust class, which can flip that class from `clean` to `mixed` and withhold autonomy grants (`autonomy.js`'s `permittedGrants`). It can also add samples to any side-effect class. The direction is mostly toward less autonomy, but class membership becomes forgeable. Found during #4502's brainstorm on 2026-10-30.\n\nIn this repo, every one of the 2,847 records was authored by the owner or by an installed app. So there is no observed case, and the exposure is in other public repos that use the plugin.\n\n## Deliverables\n\n1. Decide the rule for issues whose author has no trusted association (`OWNER`, `MEMBER` or `COLLABORATOR`, as `comment-trust.js` defines them) and is not an installed app. Either their `Origin:` line is ignored (the record resolves `human:human`), or they are excluded from trust rows entirely. State which in the PR and why.\n2. Fetch the author association wherever trust rows are built (the session-scoped record snapshot, `_shared/record-queue-fetch.md`), and pass it to `resolveProvenance` and `trustRows`.\n3. Tests for an outsider-authored record with a forged `Origin:` line.\n\n## Acceptance Criteria\n\n- An issue whose author association is `NONE` or `CONTRIBUTOR`, with `Origin: demo changes-requested from #7`, adds no follow-up to #7's class and joins no side-effect class.\n- The same body from an `OWNER`, `MEMBER` or `COLLABORATOR` author, or from an installed app, is unchanged.\n- A record fetched without an author association keeps today's behaviour, documented in the PR as the fail-open direction with its reason.\n- `npm test` passes.\n\n## Release Note\n\nTrust tracking now ignores provenance lines written by people outside the repository.\n\n### Key Files\n\n- `plugin/bin/lib/issues/provenance.js` (modify)\n- `plugin/bin/lib/issues/trust.js` (modify)\n- `plugin/bin/lib/issues/comment-trust.js` (read: the trusted-association set to reuse)\n- `plugin/bin/lib/issues/record-snapshot.js` (modify: carry the author association)\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-30T07:49:28Z",
         "labels": [
@@ -2438,7 +2193,7 @@
     ],
     [
       {
-        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item not yet applied is still listed by both readers.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n",
+        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item still actionable (neither applied nor declined) is still listed by both readers.\n- A staged item excluded at the approval prompt, or skipped as `stale — skipped` by re-verify, moves to `staged/declined/` with one `decisions.md` line; neither reader counts it, and `archive-run --local-trail` treats it as resolved.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Staged items `--approve` does not apply: Reading B.** An excluded or stale item is resolved but not applied: it moves to `staged/declined/` and is logged in `decisions.md`. Both readers skip it, and `--local-trail` can archive the run. The listing criterion narrows to items that are still actionable.\n",
         "createdAt": "2026-10-30T05:17:39Z",
         "labels": [
           {
@@ -2487,7 +2242,7 @@
         "number": 4565,
         "state": "OPEN",
         "title": "tidy --approve leaves a forge-only approval run unarchivable, so its applied staged/ keeps raising the unapproved-proposals notice",
-        "updatedAt": "2026-10-30T21:49:18Z",
+        "updatedAt": "2026-10-31T09:45:28Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -2594,7 +2349,7 @@
     ],
     [
       {
-        "body": "Origin: #4367 review/wrap-up (PR #4509), ledger items 7-9; refs #4367\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n#4367 (PR #4509) made `findSection` in `plugin/bin/lib/issues/record-payload.js` match a record section heading only when it starts its own line, with fence tracking (`fencedLineRanges`, column-0 fences). Three other modules still keep their own heading or fence rules:\n\n- `plugin/bin/lib/release-note-repair/apply.js:25`: `FENCE_OPEN` accepts an indented fence opener, while `findSection`'s `fencedLineRanges` is column-0 only. The repair writer and the shape gate can disagree on which lines are fenced. Every observed disagreement ends in a refused repair, not a bad write (tiebreak-confirmed, low).\n- `plugin/bin/lib/issues/near-duplicate.js:121`: `extractCurrentStateAnchors` uses `CURRENT_STATE_HEADING_RE` (h2-h4) with no fence tracking, so a fenced quoted template can supply the anchors (tiebreak-confirmed, info).\n- `plugin/bin/lib/compose-record/compose.js:22`: `splitSections` keeps a third line-anchored `## ` heading rule with no fence tracking.\n\nThe section-heading rule is now defined in four places.\n\n## Deliverables\n\n1. Route all three modules through `findSection`/`extractSection` (or one shared heading-and-fence helper exported beside it), so one rule decides what counts as a heading line and which lines are fenced.\n2. Settle the fence-opener question once (column-0 only, or indented openers too) and apply it in the shared helper, so the repair writer and the shape gate agree.\n3. Add tests showing each of the three callers ignores a heading inside a fenced block and agrees with `findSection` on the same body.\n\n## Acceptance Criteria\n\n- [ ] `release-note-repair/apply.js`, `near-duplicate.js` and `compose-record/compose.js` keep no heading or fence regex of their own; each calls the shared rule.\n- [ ] For a body whose `## Release Note` / `## Current State` heading appears only inside a fenced block, every caller treats it as absent, matching `findSection`.\n- [ ] The existing release-note-repair, near-duplicate and compose-record suites pass unchanged, or with a documented expectation change.\n\n## Release Note\n\nNo user-visible change: record section headings are recognized the same way everywhere.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-payload.js` — reference rule (`findSection` / `fencedLineRanges`); export a shared helper if needed\n- `plugin/bin/lib/release-note-repair/apply.js` — modify (`FENCE_OPEN`)\n- `plugin/bin/lib/issues/near-duplicate.js` — modify (`extractCurrentStateAnchors`)\n- `plugin/bin/lib/compose-record/compose.js` — modify (`splitSections`)\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Origin: #4367 review/wrap-up (PR #4509), ledger items 7-9; refs #4367\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n#4367 (PR #4509) made `findSection` in `plugin/bin/lib/issues/record-payload.js` match a record section heading only when it starts its own line, with fence tracking (`fencedLineRanges`, column-0 fences). Three other modules still keep their own heading or fence rules:\n\n- `plugin/bin/lib/release-note-repair/apply.js:25`: `FENCE_OPEN` accepts an indented fence opener, while `findSection`'s `fencedLineRanges` is column-0 only. The repair writer and the shape gate can disagree on which lines are fenced. Every observed disagreement ends in a refused repair, not a bad write (tiebreak-confirmed, low).\n- `plugin/bin/lib/issues/near-duplicate.js:121`: `extractCurrentStateAnchors` uses `CURRENT_STATE_HEADING_RE` (h2-h4) with no fence tracking, so a fenced quoted template can supply the anchors (tiebreak-confirmed, info).\n- `plugin/bin/lib/compose-record/compose.js:22`: `splitSections` keeps a third line-anchored `## ` heading rule with no fence tracking.\n\nThe section-heading rule is now defined in four places.\n\n## Deliverables\n\n1. Route all three modules through `findSection`/`extractSection` (or one shared heading-and-fence helper exported beside it), so one rule decides what counts as a heading line and which lines are fenced.\n2. Settle the fence-opener question once (column-0 only, or indented openers too) and apply it in the shared helper, so the repair writer and the shape gate agree.\n3. Add tests showing each of the three callers ignores a heading inside a fenced block and agrees with `findSection` on the same body.\n\n## Acceptance Criteria\n\n- [ ] `release-note-repair/apply.js`, `near-duplicate.js` and `compose-record/compose.js` keep no heading or fence regex of their own; each calls the shared rule.\n- [ ] For a body whose `## Release Note` / `## Current State` heading appears only inside a fenced block, every caller treats it as absent, matching `findSection`.\n- [ ] `apply.js` finds the `## Original request` boundary as the first unfenced line the shared heading reader reads as `Original request`; `materialize-format.js`'s `ORIGINAL_REQUEST_RE` and the shape gate's placeholder boundary (`shapeGate`) go through the same shared rule, so no caller keeps a fence-blind heading regex.\n- [ ] The existing release-note-repair, near-duplicate and compose-record suites pass unchanged, or with a documented expectation change.\n\n## Release Note\n\nNo user-visible change: record section headings are recognized the same way everywhere.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-payload.js` — reference rule (`findSection` / `fencedLineRanges`); export a shared helper if needed\n- `plugin/bin/lib/release-note-repair/apply.js` — modify (`FENCE_OPEN`)\n- `plugin/bin/lib/issues/near-duplicate.js` — modify (`extractCurrentStateAnchors`)\n- `plugin/bin/lib/compose-record/compose.js` — modify (`splitSections`)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **`## Original request` boundary: Reading B.** Deliverable 1 covers it. `apply.js`, `ORIGINAL_REQUEST_RE` and `shapeGate` all move to the shared heading/fence rule in this record, not a follow-up. The resulting change to the materialization shape gate is intended; document it in the PR and pin it with a test for a fenced `## Original request`.\n",
         "createdAt": "2026-10-30T04:22:57Z",
         "labels": [
           {
@@ -2649,7 +2404,7 @@
         "number": 4561,
         "state": "OPEN",
         "title": "Unify the line-anchored section-heading rule across release-note-repair, near-duplicate and compose-record",
-        "updatedAt": "2026-10-30T21:32:57Z",
+        "updatedAt": "2026-10-31T09:45:26Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -4237,96 +3992,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #4265, #4269, #4423\n\n## Current State\n\nClaims live as `claims/issue-<n>.json` blobs on the `claims-registry` branch (`plugin/bin/lib/issues/claims.js:13`, `_shared/issue-claims.md`). Nothing creates that branch. A repository whose remote never had it fails its first claim.\n\nObserved on 6.156.1: the first `/claude-tweaks:flow #N` on a repository with no `claims-registry` branch on origin had `claim-targets.js` (flow Step 2.8) exit 3, \"contested\", with `holder: null`. No other run held the record, so the operator went looking for a competing run that did not exist. The workaround was creating `claims-registry` on the remote by hand from the default branch, after which the claim succeeded (exit 0). Every repository hits this on its first flow run.\n\nWhat the code does with a missing branch:\n\n- The git transport's read (`plugin/bin/lib/issues/claims-git-cas.js:120-131`) runs `git fetch -q origin claims-registry:<scratch>`. For a missing remote ref that fails, and the catch maps it to `failure: 'transport-failure'`. `classifyGitError` (`:72-84`) has no \"couldn't find remote ref\" case.\n- The contents-API path (`plugin/bin/lib/issues/claim-store.js`) treats a 404 as \"absent\" (`:141`, `:261`). On a missing branch, a read of `claims/issue-<n>.json?ref=claims-registry` therefore reads as \"no claim yet\", and the write that follows is refused.\n- How that refused write becomes exit 3 with `holder: null` still needs tracing through `claim-targets.js`'s outcome mapping. Most likely a failed write with no readable holder is reported as contested.\n\n## Deliverables\n\n1. Detect \"the `claims-registry` branch does not exist on the remote\" as its own outcome on both transports. Git: `git ls-remote --heads origin claims-registry` is empty, or the fetch error names a missing remote ref. Contents API: `GET repos/{owner}/{repo}/branches/claims-registry` returns 404. Never fold it into `contested` or a generic transport failure.\n2. On that outcome, bootstrap the branch once, then retry the claim. Create `claims-registry` from the default branch's tip (the same base the manual workaround used), CAS-guarded: a create that loses to a concurrent bootstrap (ref already exists) is treated as success and the claim proceeds against the now-existing branch.\n3. If the bootstrap itself fails (permissions, protected-ref rule), exit with a dedicated code and message, not 3: `claims-registry branch missing on origin and could not be created: {reason} — create it from the default branch`. Document the new exit code in `claim-targets.js`'s header and in `_shared/issue-claims.md`.\n\n## Acceptance Criteria\n\n- Against a fixture remote with no `claims-registry` branch, `claim-targets.js --targets N` creates the branch and exits 0 with the claim recorded, on both transports.\n- Two concurrent first claims (different records) against a branchless remote both succeed. Exactly one branch creation wins and neither run reports contested.\n- When branch creation is refused (simulated permission error), the CLI exits with the new dedicated code and the message names the missing branch. It never exits 3.\n- A genuinely contested claim (a live holder) still exits 3 with that holder named.\n- Tests cover all four cases with fake runners for `claims-git-cas.js`/`claim-store.js`. `release-claim.js` against a branchless remote reports \"nothing to release\", not an error.\n\n## Release Note\n\nThe first pipeline run in a new repository no longer reports a false \"someone else is building this\" claim conflict. The claim branch is now created automatically.\n\n## Technical Approach\n\nThe reporter offered two fixes: auto-create the branch, or exit with a dedicated code. Both are kept, as a ladder. Bootstrapping removes the first-run friction for every repository, and the dedicated code covers the case where creation is not permitted. An orphan branch was considered and rejected: the manual workaround and any existing tooling expect a default-branch-based ref, and an orphan root commit would surprise `git log` readers. Keep the bootstrap in one shared helper both transports call, next to the existing CAS core.\n\n### Key Files\n\n- `plugin/bin/lib/issues/claims-git-cas.js` — missing-ref classification and git bootstrap\n- `plugin/bin/lib/issues/claim-store.js` — contents-API missing-branch detection and bootstrap\n- `plugin/bin/claim-targets.js` — outcome mapping and the new exit code\n- `plugin/bin/release-claim.js` — branchless remote reads as nothing to release\n- `plugin/skills/_shared/issue-claims.md` — document bootstrap and the new exit code\n\n## Gotchas\n\n- Callers interpret `claim-targets.js` exit codes (3 and 5 at least: flow Step 2.8, dispatch, specify's drain). Pick an unused code and grep every caller's exit-code handling before adding it.\n- A branch-protection ruleset on `claims-registry`'s name pattern could block creation but allow later pushes. Surface the reason verbatim rather than retrying.\n\n## Original request\n\nclaim-targets: a missing claims-registry branch is reported as a contested claim (holder null)\n\n**Summary:** On a repo that never used the git claim transport, the first claim exits 3 (contested, holder null) because the `claims-registry` branch does not exist yet.\n\n**Kind:** Defect\n\n**Affected component:** `bin/claim-targets.js` (flow Step 2.8, git claim transport)\n\n**Repro steps:**\n1. In a repository whose remote has no `claims-registry` branch, run `/claude-tweaks:flow #N`.\n2. Step 2.8 runs `claim-targets.js`.\n\n**Expected vs. actual:**\nExpected: the first claim bootstraps the `claims-registry` branch, or the script reports a distinct, actionable error (\"claims-registry branch missing on origin; create it from the default branch\").\nActual: `claim-targets.js` exits 3 (\"contested\") with `holder: null`. No other run holds the record, so the operator goes looking for a competing run that doesn't exist.\n\n**Workaround used:** creating `claims-registry` on the remote by hand from the default branch, then re-running the claim (exit 0).\n\n**Why it matters:** every repo hits this on its first flow run, so the plugin's first impression is a false \"someone else is building this\".\n\n**Suggested fix:** in the git transport, distinguish \"ref not found\" from \"ref exists and holds a live claim\". On the former, either create the branch (an orphan or default-branch-based ref, CAS-guarded like other claim writes) or exit with a dedicated code and message.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-1a0df6a4 -->\n\n",
-        "createdAt": "2026-10-28T06:59:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4495,
-        "state": "OPEN",
-        "title": "claim-targets: a missing claims-registry branch is reported as a contested claim (holder null)",
-        "updatedAt": "2026-10-31T06:35:07Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -7148,7 +6813,7 @@
     ],
     [
       {
-        "body": "Origin: speed analysis of the #4026 dispatch (run 2026-10-25T132807-record-4026)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/build/SKILL.md` Common Step 5 (Final Verification) runs the full suite first. The build phase exit (`phase-exit.js`) then pushes and runs the Post-push merge-state check (`_shared/git-discipline.md`, \"### Post-push merge-state check\"). Only at that point does a DIRTY or BEHIND PR get its catch-up merge of the integration branch.\n\nThat merge changes the tree, so `/test` Step 1 (`plugin/skills/test/verification.md`, Skip-if-recent, Mismatch branch) re-runs verification. A catch-up merge is never a bookkeeping-only delta, so the suite runs a second time.\n\nObserved 2026-10-25 on #4026 (run `2026-10-25T132807-record-4026`, PR #4277): Common Step 5 passed at `d99fc7da2` at 18:20 after 55 min. The merge-state check found PR #4277 DIRTY at 18:21, because origin/main had moved during the 4-hour build. The catch-up merge resolved 3 conflicts (`d99fc7da2` -> `622a5adf8`) at 18:27. `/test` then re-ran the full suite at `622a5adf8` until 20:01 (1h34). One of the two full runs was avoidable.\n\n## Deliverables\n\n- Before Common Step 5 runs its suite, build fetches the integration branch. When the run branch is behind it, build applies the existing Catch-up (`auto`) procedure from `_shared/git-discipline.md` (merge, never rebase, with the same conflict-resolution and `merge --abort` rules), so the verified tree already contains the current base.\n\n- The pre-verification catch-up logs one `decisions.md` line naming the before and after SHAs, or a `SKIP` line when the branch is already current.\n\n- The Post-push merge-state check stays as is. The base can still move during verification, and that residual case keeps today's behavior.\n\n- The prose that describes the ordering (`build/SKILL.md` Common Step 5, `git-discipline.md`'s merge-state section) states the new order.\n\n## Acceptance Criteria\n\n- [ ] A run whose branch is behind the integration branch at Common Step 5 merges it in before the suite runs, and build's `VERIFICATION_SHA` equals the post-merge HEAD.\n\n- [ ] When the base did not move again during verification, `/test` Step 1 takes the Match branch and runs no suite.\n\n- [ ] A branch that is already current logs a `SKIP` and merges nothing.\n\n- [ ] A catch-up conflict that cannot be resolved confidently follows the existing `merge --abort` path, and verification still runs on the un-merged tree.\n\n- [ ] A conformance test pins that Common Step 5's prose places the catch-up before the verification run, and it fails against the current prose.\n\n## Release Note\n\nA pipeline run whose branch fell behind main during the build now merges main in before its final test run, so the full suite runs once instead of twice.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/SKILL.md` — Common Step 5 catches the branch up before running the suite\n- `plugin/skills/_shared/git-discipline.md` — Post-push merge-state check section states the new order\n- `plugin/skills/test/verification.md` — Skip-if-recent Match branch is the expected path after a pre-verify catch-up\n- `plugin/bin/pr-merge-state.js` — reused (or a fetch-and-behind probe) for the pre-verification read\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Origin: speed analysis of the #4026 dispatch (run 2026-10-25T132807-record-4026)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/build/SKILL.md` Common Step 5 (Final Verification) runs the full suite first. The build phase exit (`phase-exit.js`) then pushes and runs the Post-push merge-state check (`_shared/git-discipline.md`, \"### Post-push merge-state check\"). Only at that point does a DIRTY or BEHIND PR get its catch-up merge of the integration branch.\n\nThat merge changes the tree, so `/test` Step 1 (`plugin/skills/test/verification.md`, Skip-if-recent, Mismatch branch) re-runs verification. A catch-up merge is never a bookkeeping-only delta, so the suite runs a second time.\n\nObserved 2026-10-25 on #4026 (run `2026-10-25T132807-record-4026`, PR #4277): Common Step 5 passed at `d99fc7da2` at 18:20 after 55 min. The merge-state check found PR #4277 DIRTY at 18:21, because origin/main had moved during the 4-hour build. The catch-up merge resolved 3 conflicts (`d99fc7da2` -> `622a5adf8`) at 18:27. `/test` then re-ran the full suite at `622a5adf8` until 20:01 (1h34). One of the two full runs was avoidable.\n\n## Deliverables\n\n- Before Common Step 5 runs its suite, build fetches the integration branch. When the run branch is behind it, build applies the existing Catch-up (`auto`) procedure from `_shared/git-discipline.md` (merge, never rebase, with the same conflict-resolution and `merge --abort` rules), so the verified tree already contains the current base.\n\n- The pre-verification catch-up logs one `decisions.md` line naming the before and after SHAs, or a `SKIP` line when the branch is already current.\n\n- The Post-push merge-state check stays as is. The base can still move during verification, and that residual case keeps today's behavior.\n\n- The prose that describes the ordering (`build/SKILL.md` Common Step 5, `git-discipline.md`'s merge-state section) states the new order.\n\n## Acceptance Criteria\n\n- [ ] A `pr-first` worktree run (pipeline in any run mode, or standalone `/claude-tweaks:build`) whose branch is behind the integration branch at Common Step 5 merges it in before the suite runs, and build's `VERIFICATION_SHA` equals the post-merge HEAD.\n\n- [ ] Under `local-merge`, the catch-up logs one `SKIP` naming the integration model and merges nothing.\n\n- [ ] When the base did not move again during verification, `/test` Step 1 runs no suite: via the Match branch, or via the Mismatch branch when the delta since `VERIFICATION_SHA` is bookkeeping-only.\n\n- [ ] A branch that is already current logs a `SKIP` and merges nothing.\n\n- [ ] A catch-up conflict that cannot be resolved confidently follows the existing `merge --abort` path, and verification still runs on the un-merged tree.\n\n- [ ] A conformance test pins that Common Step 5's prose places the catch-up before the verification run, and it fails against the current prose.\n\n## Release Note\n\nA pipeline run whose branch fell behind main during the build now merges main in before its final test run, so the full suite runs once instead of twice.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/SKILL.md` — Common Step 5 catches the branch up before running the suite\n- `plugin/skills/_shared/git-discipline.md` — Post-push merge-state check section states the new order\n- `plugin/skills/test/verification.md` — Skip-if-recent Match branch is the expected path after a pre-verify catch-up\n- `plugin/bin/pr-merge-state.js` — reused (or a fetch-and-behind probe) for the pre-verification read\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Q1 (which run modes merge): Reading A.** Every run mode merges, as `_shared/pre-review-catchup.md` does. No mode branch, no new stop; `interactive`/`hybrid` do not fall back to showing commands.\n- **Q2 (standalone `/claude-tweaks:build`): Reading A.** A standalone worktree build runs the catch-up too, then reports the merge in the Step 7 handoff.\n- **Q3 (integration models): Reading B.** Only `pr-first` worktree runs catch up. `local-merge` logs one `SKIP` naming the model, never a fetch-failed `SKIP`.\n- **Q4 (AC2 scope): Reading B.** AC2 means \"runs no suite\": the Match branch, and the Mismatch branch with a bookkeeping-only delta.\n",
         "createdAt": "2026-10-25T19:52:43Z",
         "labels": [
           {
@@ -7197,7 +6862,7 @@
         "number": 4343,
         "state": "OPEN",
         "title": "Catch the run branch up with the integration branch before build's final verification, not after it",
-        "updatedAt": "2026-10-30T21:18:47Z",
+        "updatedAt": "2026-10-31T09:45:24Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
