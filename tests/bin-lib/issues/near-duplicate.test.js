@@ -15,6 +15,7 @@ const {
   MIN_REFUSAL_SCORE,
   STRONG_NEAR_DUPLICATE_MIN,
   isStrongNearDuplicate,
+  isRelatedCandidate,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 
 function withKeyFiles(files) {
@@ -433,6 +434,25 @@ test('isStrongNearDuplicate: 2+ shared anchors or score >= 2 is strong; one anch
   assert.strictEqual(isStrongNearDuplicate({ score: 1 }), false);
   assert.strictEqual(isStrongNearDuplicate(null), false);
   assert.strictEqual(isStrongNearDuplicate({}), false);
+});
+
+test('AC2.1-AC2.5: isRelatedCandidate keeps strong or title-similar hits, drops one shallow signal', () => {
+  // AC2.1: one shallow anchor (the #4606 `main` shape) is dropped.
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['main'] }), false);
+  // AC2.2: six shared anchors (the #3508 shape) is strong, kept.
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b', 'c', 'd', 'e', 'f'] }), true);
+  // AC2.2 boundary: exactly 2 shared anchors on one signal (the #4229 shape) is kept.
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b'] }), true);
+  // AC2.3: title similarity alone is kept.
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['title-similarity'], sharedAnchors: [] }), true);
+  // AC2.4: score >= 2 is strong, kept.
+  assert.strictEqual(isRelatedCandidate({ score: 2, signals: ['key-files-overlap', 'body-anchor-overlap'], sharedAnchors: ['x'] }), true);
+  // AC2.5: non-objects and hits with no signal fields are dropped.
+  assert.strictEqual(isRelatedCandidate(null), false);
+  assert.strictEqual(isRelatedCandidate('x'), false);
+  assert.strictEqual(isRelatedCandidate({}), false);
+  assert.strictEqual(isRelatedCandidate({ score: 1 }), false);
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: 'title-similarity', sharedAnchors: [] }), false);
 });
 
 test('generic shared anchors never count toward sharedAnchors', () => {

@@ -215,6 +215,15 @@ function isStrongNearDuplicate(hit) {
   return anchors >= STRONG_NEAR_DUPLICATE_MIN || hit.score >= STRONG_NEAR_DUPLICATE_MIN;
 }
 
+// #4702: the Related filter /specify applies before appending a candidate to a
+// record's **Related:** line — that line feeds /backlog refine. One shallow
+// anchor is noise, so a candidate is kept only when strong or title-similar.
+function isRelatedCandidate(hit) {
+  if (!hit || typeof hit !== 'object') return false;
+  if (isStrongNearDuplicate(hit)) return true;
+  return Array.isArray(hit.signals) && hit.signals.includes('title-similarity');
+}
+
 // #3141: the refusal decision /specify shaping applies on top of the
 // finder's screen (shaping-mode.md's Near-duplicate candidate check).
 // stateByNumber[n]: { ready, liveClaim, claimRunId, openLinkedPR } — built
@@ -276,5 +285,6 @@ module.exports = {
   MIN_REFUSAL_SCORE,
   STRONG_NEAR_DUPLICATE_MIN,
   isStrongNearDuplicate,
+  isRelatedCandidate,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 };

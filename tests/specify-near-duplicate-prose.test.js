@@ -127,7 +127,7 @@ test('AC3.1/AC3.2: shaping-mode.md refusal paragraph names the minimum score of 
   assert.match(section, /at least 2 signals/);
   // Anchored to the refusal paragraph itself: other mentions of the floor must not mask its removal.
   assert.match(section, /scoring\s+\*{0,2}at least 2 signals\*{0,2}\s+\(`MIN_REFUSAL_SCORE`/);
-  assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+and\s+the\s+`\*\*Related:\*\*`\s+line\s+only/);
+  assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+\(and\s+on\s+the\s+`\*\*Related:\*\*`\s+line\s+when\s+`isRelatedCandidate`\s+accepts\s+it\)\s+only/);
   assert.doesNotMatch(section, /never blocks shaping on its own signal alone/);
   assert.doesNotMatch(section, /the one automatic\s+refusal the finder's signal authorizes on its own/);
   const mod = require('../plugin/bin/lib/issues/near-duplicate');
@@ -143,15 +143,55 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   assert.match(section, /at least 2 signals/);
 });
 
-function refusalFenceBody(text = SHAPING_MODE) {
+// Close first, then the nearest open before it: the Related-split fence (#4702) and the refusal fence both open with `node -e "`.
+function fenceBefore(text, close, label) {
   const lf = text.replace(/\r\n/g, '\n');
   const open = 'node -e "\n';
-  const close = '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  const start = lf.indexOf(open);
-  const end = lf.indexOf(close, start);
-  assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
+  const end = lf.indexOf(close);
+  const start = end === -1 ? -1 : lf.lastIndexOf(open, end);
+  assert.ok(start !== -1 && end !== -1, `${label} fence anchors must exist`);
   return { fence: lf.slice(start + open.length, end), end };
 }
+
+function refusalFenceBody(text = SHAPING_MODE) {
+  return fenceBefore(text, '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n', 'refusal');
+}
+
+function relatedSplitFenceBody(text = SHAPING_MODE) {
+  return fenceBefore(text, '" -- "$NEAR_DUP_HITS"\n', 'Related-split').fence;
+}
+
+test('the Related-split fence runs isRelatedCandidate over the hits file and splits related from rest (#4702)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const fence = relatedSplitFenceBody();
+  assert.match(fence, /isRelatedCandidate/);
+  assert.doesNotMatch(fence, /"/, 'the fence body sits inside a double-quoted shell string');
+  assert.doesNotMatch(fence.split('${CLAUDE_PLUGIN_ROOT}').join(''), /\$/, 'the fence body must not contain $ beyond ${CLAUDE_PLUGIN_ROOT}');
+  assert.doesNotMatch(fence, /`/, 'the fence body must not contain a backtick');
+  const code = fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-related-'));
+  try {
+    const hits = path.join(dir, 'hits.json');
+    fs.writeFileSync(hits, JSON.stringify([
+      { number: 1, score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['main'] },
+      { number: 2, score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b', 'c', 'd', 'e', 'f'] },
+      { number: 3, score: 1, signals: ['title-similarity'], sharedAnchors: [] },
+    ]));
+    const out = execFileSync(process.execPath, ['-e', code, hits], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { related: [2, 3], rest: [1] });
+    fs.writeFileSync(hits, JSON.stringify([]));
+    const empty = execFileSync(process.execPath, ['-e', code, hits], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(empty.trim()), { related: [], rest: [] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('refusalFenceBody still extracts the refusal fence, not the Related-split fence before it (#4702)', () => {
+  assert.match(refusalFenceBody().fence, /shapingRefusal/);
+  assert.doesNotMatch(refusalFenceBody().fence, /isRelatedCandidate/);
+});
 
 test('refusalFenceBody reads a CRLF shaping-mode.md the same as LF (#3518)', () => {
   assert.strictEqual(refusalFenceBody(SHAPING_MODE.replace(/\n/g, '\r\n')).fence, refusalFenceBody().fence);
@@ -187,4 +227,42 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function nearDupSection(text = SHAPING_MODE) {
+  const start = text.indexOf('Near-duplicate candidate check (#1944)');
+  const end = text.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'Near-duplicate section anchors must exist');
+  return text.slice(start, end);
+}
+
+function assertRelatedFilterProse(section) {
+  assert.doesNotMatch(section, /append every candidate as/, 'old append-every-candidate rule present');
+  assert.match(section, /isRelatedCandidate/);
+  assert.match(section, /overwrite it with this record's finder output — never run against a file an earlier record left/);
+  assert.match(section, /When the call exits non-zero or prints no JSON line, append nothing[^.]*\(split failed: \{stderr\}\)/);
+  assert.match(section, /at least 2 signals or 2 shared(?: Current State)? anchors/);
+  assert.match(section, /title-similarity/);
+  assert.match(section, /Not added to Related \(one signal, under 2 shared anchors\)/);
+  assert.match(section, /Omit that line when `rest` is empty/);
+  assert.match(section, /leave `\*\*Related:\*\*` untouched[^.]*when `related` is empty/);
+  assert.match(section, /\|\s*Record\s*\|\s*Score\s*\|\s*Signals\s*\|/);
+  assert.match(section, /render every candidate|every candidate in the table|lists every (?:finder )?hit/);
+}
+
+test('AC1.1/AC1.2/AC4.1: shaping-mode.md filters the Related append through isRelatedCandidate (#4702)', () => {
+  assertRelatedFilterProse(nearDupSection());
+  assert.strictEqual(typeof require('../plugin/bin/lib/issues/near-duplicate').isRelatedCandidate, 'function');
+});
+
+test('AC3.1: the Related-filter pin fails against the old append-every-candidate sentence (#4702)', () => {
+  const live = nearDupSection();
+  // Swap only the append clause back to the old rule, keeping every other pinned phrase, so the
+  // old-rule guard is the one assertion that can fail — its own message is the matcher.
+  const mutated = live.replace(
+    'Append only `related` to the composed body\'s `**Related:**` line',
+    'and append every candidate as `#{n}` to the composed body\'s `**Related:**` line',
+  );
+  assert.notStrictEqual(mutated, live, 'the mutation must replace the new append clause');
+  assert.throws(() => assertRelatedFilterProse(mutated), /old append-every-candidate rule present/);
 });

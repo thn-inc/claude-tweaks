@@ -96,8 +96,18 @@ more, render a three-column table in the shaping output before proceeding —
 |--------|-------|---------|
 | #{n} | {score} | {signals, comma-joined} |
 
-— and append every candidate as `#{n}` to the composed body's `**Related:**` line (creating the
-line if the record doesn't already carry one). A candidate surfaced here is worth a human's
+— render every candidate in the table, then split the hits mechanically — the table omits anchor counts, so never filter by eye. Resolve `$NEAR_DUP_HITS` first (`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json` prints it), overwrite it with this record's finder output — never run against a file an earlier record left — then run the call below (its first line re-resolves the same path; the refusal step reuses the file):
+
+```bash
+NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
+node -e "
+const { isRelatedCandidate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const hits = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+console.log(JSON.stringify({ related: hits.filter(isRelatedCandidate).map((h) => h.number), rest: hits.filter((h) => !isRelatedCandidate(h)).map((h) => h.number) }));
+" -- "$NEAR_DUP_HITS"
+```
+
+Append only `related` to the composed body's `**Related:**` line (creating the line if the record doesn't already carry one) — the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit. Name `rest` on one line under the table, `Not added to Related (one signal, under 2 shared anchors): #a, #b`, so a human can still add one by hand. Omit that line when `rest` is empty, and leave `**Related:**` untouched (create no line) when `related` is empty. When the call exits non-zero or prints no JSON line, append nothing and name every hit on the `Not added to Related` line followed by `(split failed: {stderr})` — never fall back to appending every candidate or to filtering by eye. A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
@@ -105,7 +115,7 @@ only on a hit scoring **at least 2 signals** (`MIN_REFUSAL_SCORE`, #3366), `titl
 them, whose candidate is `ready` **and** in flight: a live claim (`classifyClaimBlob` reads its `claims/issue-{n}.json` blob as `live`) or an
 open linked PR (the same `closedByPullRequestsReferences` connection dispatch's open-PR exclusion
 reads — `record.js`'s `buildLinkedPRQuery` / `partitionByOpenLinkedPR`). A score-1 candidate is
-surfaced in the table and the `**Related:**` line only; file and anchor overlap alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
+surfaced in the table (and on the `**Related:**` line when `isRelatedCandidate` accepts it) only; file and anchor overlap alone never refuse, and `bot:in-progress` is not evidence: it is a projection that outlives the
 build. Build the state and decide in one call. First resolve this run's two session-scoped paths
 (`_shared/session-tmp-root.md` — `NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"` and `NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"`
 prints them) and write the finder's output and the candidates' snapshot entries there as JSON —
@@ -180,7 +190,7 @@ Report this record's Actions Performed row as `refused — proposed Absorb into 
 rather than `shaped` — the same per-record failure-isolation posture a write/read-back failure
 already uses on a batch (below): the rest of the batch keeps shaping. This is the one automatic
 refusal the finder's signals authorize — and only in combination, never a single signal; every other candidate (no title-similar, `ready`,
-in-flight match scoring at least 2 signals per `shapingRefusal`) is surfaced via the table and `**Related:**` append only, mirroring the
+in-flight match scoring at least 2 signals per `shapingRefusal`) is surfaced via the table and, when `isRelatedCandidate` accepts it, the `**Related:**` append only, mirroring the
 refusal grounds an earlier sweep applied by hand for the same reason (#1944).
 
 ### Dependency-narration check
