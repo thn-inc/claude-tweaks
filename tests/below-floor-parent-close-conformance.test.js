@@ -714,3 +714,106 @@ test('AC5.2: a sub-issue-side local-files close logs its auto-resolution through
   assert.match(step5, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status AUTO --step "Parent-Gate local-files close"/);
   assert.match(step5, /--reversibility "high \(clear the parent record's closed facets\)"/);
 });
+
+test('#4602: the transport mapping carries every row the parent close needs', () => {
+  const t = read('_shared/github-write-transport.md');
+  const row = (op) => t.split('\n').find((l) => l.startsWith(`| ${op} |`)) || '';
+  const close = row('Close');
+  for (const lit of ['`issue_write`', 'state_reason', '`completed`', '`not_planned`']) assert.ok(close.includes(lit), `Close row: ${lit}`);
+  const get = row('Get a single issue by number');
+  for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(get.includes(lit), `Get row: ${lit}`);
+  const subIssues = row("List an issue's native sub-issues");
+  for (const lit of ['`get_sub_issues`', 'perPage: 100']) assert.ok(subIssues.includes(lit), `Sub-issues row: ${lit}`);
+  assert.ok(row("List an issue's comments").includes('perPage: 100'), 'comment reads are paged');
+  assert.ok(row("Get an issue's native parent").includes('`get_parent`'));
+  const login = row("Read the current identity's login");
+  assert.ok(login.includes('gh api user') && login.includes('`get_me`'));
+  const db = row("Read the repo's default branch");
+  assert.ok(db.includes('defaultBranchRef') && db.includes('git remote show origin') && db.includes('_shared/integration-branch.md'));
+});
+
+// Every `gh` call shape the gate file and Step 4.0b issue, keyed to the MCP tool (or git read)
+// its github-write-transport.md row names. A new gh call with no entry here fails the ratchet.
+const GH_TO_MCP = [
+  [/^gh api user\b/, '`get_me`'],
+  [/^gh api\b.*sub_issues/, '`get_sub_issues`'],
+  [/^gh issue view\b/, '`issue_read`'],
+  [/^gh issue comment\b/, '`add_issue_comment`'],
+  [/^gh issue close\b/, '`issue_write`'],
+  [/^gh issue edit\b.*--add-label/, '`issue_write`'], // the only edit shape the gate issues; another flag fails as unmapped
+  [/^gh issue reopen\b/, '`issue_write`'], // Step 4.0b's restore hint in its log-decision reversibility text
+  [/^gh repo view\b/, 'git remote show origin'],
+];
+// Any `gh <subcommand>` — not a fixed list — so a new subcommand (`gh release`, `gh run`, …) with
+// no GH_TO_MCP entry fails as "unmapped". Run over the gate file and Step 4.0b, the hits are all
+// real calls (fenced command lines and inline code spans); no prose false positive needs excluding.
+const ghCalls = (text) => [...text.matchAll(/\bgh [a-z][a-z-]*\b[^`\n]*/g)].map((m) => m[0]);
+
+// The extractor above and `integration-branch-conformance`'s `/remote show origin/` read one line
+// at a time, so a code span (or a `gh`/subcommand pair) wrapped across a newline slips past both.
+// Returns the offending lines of `text`, ignoring fenced blocks: any non-fenced line with an odd
+// backtick count (a span opened and not closed on that line), and any `gh` ending a line.
+function brokenSpanLines(text) {
+  const bad = [];
+  let fenced = false;
+  for (const line of text.split('\n')) {
+    if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
+    if (fenced) continue;
+    if ((line.match(/`/g) || []).length % 2 === 1 || /\bgh$/.test(line)) bad.push(line);
+  }
+  return bad;
+}
+
+test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has a mapping the Transport paragraph names', () => {
+  const gate = read(GATE_REL);
+  const transport = collapse(paragraph(gate, '**Transport (#4602).**'));
+  const step40b = section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+  const calls = [...ghCalls(gate), ...ghCalls(step40b)];
+  assert.deepEqual(brokenSpanLines(gate), [], 'no inline code span in the gate file wraps across a line');
+  assert.deepEqual(brokenSpanLines(step40b), [], 'no inline code span in Step 4.0b wraps across a line');
+  assert.ok(calls.length >= 10, `found ${calls.length} gh calls — the extractor still sees the file`);
+  for (const call of calls) {
+    const hit = GH_TO_MCP.find(([re]) => re.test(call));
+    assert.ok(hit, `unmapped gh call: ${call}`);
+    if (!/^gh repo view/.test(call)) assert.ok(transport.includes(hit[1]), `Transport paragraph names ${hit[1]} for: ${call}`);
+  }
+  assert.ok(transport.includes('`_shared/github-write-transport.md`'));
+  assert.ok(transport.includes('`get_parent`'), 'native parent resolution');
+  assert.ok(transport.includes('`_shared/label-bootstrap.md`'), 'the label bootstrap states its MCP-path behavior');
+  const pairings = [
+    '`get_comments` for comments, paged per its row',
+    'every `gh issue view` read',
+    '`gh api user` is `get_me`',
+    '`gh issue comment` is `add_issue_comment`',
+    '`gh issue close` and `gh issue edit --add-label` are `issue_write`',
+  ];
+  for (const lit of pairings) assert.ok(transport.includes(lit), `Transport paragraph states the pairing: ${lit}`);
+  for (const lit of ['uppercase', '`CLOSED`', '`COMPLETED`', '`REOPENED`', 'label names', 'the last of the references']) assert.ok(transport.includes(lit), `Transport paragraph normalizes the MCP shape: ${lit}`);
+  const failOpen = collapse(paragraph(gate, '**Fail open on every `gh` call'));
+  assert.ok(failOpen.includes('neither `gh` nor the GitHub MCP server is available'), 'fail open only when neither transport is available');
+  assert.ok(!failOpen.includes('If `gh` is unavailable'), 'a gh-absent run with MCP no longer skips');
+});
+
+test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
+  const close = section(read(GATE_REL), '## Close the parent below the floor', '## Compose the parent brief');
+  for (const lit of ['`_shared/github-write-transport.md`', '`get_me`', '`get_comments`', '`state_reason`', '`not_planned`', '`reopened` → `REOPENED`', '`user.login`', 'never pass `labels`']) {
+    assert.ok(close.includes(lit), `close section names ${lit}`);
+  }
+  const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
+  assert.ok(step40b.includes('`_shared/github-write-transport.md`'), 'Step 4.0b cites the mapping');
+  assert.ok(step40b.includes('git remote show origin'), 'Step 4.0b default-branch read on a gh-absent run');
+});
+
+test('#4602: settle-and-merge\'s #205 paragraph lists the calls the Parent-Gate Procedure makes', () => {
+  const p = collapse(paragraph(read('dispatch/settle-and-merge.md'), 'This blanket mapping also covers'));
+  for (const lit of ['`gh issue close`', 'sub_issues', '`gh api user`', 'verification-brief-parent-gate.md', 'Transport (#4602)']) assert.ok(p.includes(lit), `names ${lit}`);
+  // Derived from the gate file's own calls, so a call shape added there without a mention in the
+  // Parent-Gate sentence (the earlier sentence names verification-brief.md's own calls) fails.
+  const parentGateAt = p.indexOf('The Parent-Gate Procedure makes');
+  assert.ok(parentGateAt !== -1, 'the Parent-Gate sentence is present');
+  const parentGate = p.slice(parentGateAt);
+  const named = (call) => (/sub_issues/.test(call) ? 'sub_issues' : call.split(' ').slice(0, 3).join(' '));
+  for (const call of ghCalls(read(GATE_REL))) assert.ok(parentGate.includes(named(call)), `names ${named(call)} (gate call: ${call})`);
+  assert.ok(!p.includes('No separate mapping table entry is needed'), 'the stale no-row claim is gone');
+  assert.ok(!p.includes('is one of the three standard shapes'), 'the stale three-shapes claim is gone');
+});
