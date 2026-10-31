@@ -33,6 +33,8 @@
 
 ### Task 1: git transport — classify a missing branch and bootstrap it
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/claims-git-cas.js` (`classifyGitError` :72-84, `readClaimBlobGit` :120-146, new `bootstrapClaimsBranchGit`, `module.exports`)
 - Test: `tests/bin-lib/issues/claims-git-cas.test.js`
@@ -130,6 +132,8 @@ git commit -m "Classify a missing claims-registry branch on the git transport �
 
 ### Task 2: claim store — contents-API detection and the shared bootstrap helper
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/claim-store.js` (`defaultGhApi` :149-160, `readClaimBlob` :241-252, `writeClaimBlob` :482-491, new `claimsBranchExists`, new `ensureClaimsBranch`, `module.exports`)
 - Test: `tests/bin-lib/issues/claim-store.test.js`
@@ -184,7 +188,16 @@ test('ensureClaimsBranch: git leg fails → contents-API leg reads default_branc
      assert result deepEqual {ok:true, created:true, via:'contents-api'} */
 });
 
-test('ensureClaimsBranch: POST git/refs 422 (Reference already exists) is a lost race → ok, created:false', () => { /* assert {ok:true, created:false, via:'contents-api'} */ });
+test('ensureClaimsBranch: POST git/refs 422 whose branches/claims-registry read now succeeds is a lost race → ok, created:false', () => { /* POST → {stdout:null, failure:null, status:422, error:'HTTP 422: Reference already exists'}; ['repos/acme/w/branches/claims-registry','-q','.name'] → {stdout:'claims-registry\n', failure:null, status:null}; assert {ok:true, created:false, via:'contents-api'} */ });
+
+test('ensureClaimsBranch: POST git/refs 422 from a ruleset while the branch is still absent is a refusal, reason verbatim', () => { /* POST → {stdout:null, failure:null, status:422, error:'HTTP 422: Repository rule violations found\n\nCannot create ref due to creations being restricted.'}; branches GET → {stdout:null, failure:null, status:404}; assert r.ok === false; assert.match(r.reason, /Repository rule violations found/); assert.match(r.reason, /Cannot create ref/) */ });
+
+test('ensureClaimsBranch: POST git/refs 404 (no access) is a refusal, never success', () => { /* POST → {stdout:null, failure:null, status:404, error:'gh: Not Found (HTTP 404)'}; assert r.ok === false; assert.match(r.reason, /HTTP 404/) */ });
+
+test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read fails (cannot tell) → network-failure, never conflict', () => {
+  /* PUT → status 404; contents re-read → status 404 (absent); ['repos/acme/w/branches/claims-registry','-q','.name'] → {stdout:null, failure:'network-failure', status:null};
+     assert deepEqual {ok:false, failure:'network-failure'} — the transient path (claim-targets exit 4), not the false-contest exit 3 this record removes */
+});
 
 test('ensureClaimsBranch: both legs refused → ok:false with both reasons verbatim', () => {
   /* git push stderr 'remote: Permission to acme/w.git denied'; POST → {failure:'network-failure', status:null, error:'HTTP 403: Resource not accessible by integration'}
@@ -192,7 +205,7 @@ test('ensureClaimsBranch: both legs refused → ok:false with both reasons verba
 });
 ```
 
-(The three `/* … */` bodies are fully specified by their comments: the fake's argv-keyed responses and the exact assertion.)
+(The `/* … */` bodies are fully specified by their comments: the fake's argv-keyed responses and the exact assertion.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -204,8 +217,8 @@ Expected: FAIL (`ensureClaimsBranch is not a function`; the branchMissing write 
 - `defaultGhApi` catch: also return `error` = the joined message/stderr/stdout text (same join `classifyGhApiError` builds).
 - `readClaimBlob`: when `gitResult.branchMissing`, add `branchMissing: true` to the returned object.
 - `claimsBranchExists`: `ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name'])` — `status === 404` → `false`; any `failure` → `null`; otherwise `true`.
-- `writeClaimBlob`'s 422/409/404 block: after the existing self-write check, when the fresh re-read succeeded and is `absent` and `claimsBranchExists(deps.ghApi, repoSlug) === false`, return `{ ok: false, branchMissing: true, failure: null }`; otherwise keep the existing `conflict: true` return.
-- `ensureClaimsBranch`: git leg via `bootstrapClaimsBranchGit({ runner: deps.gitRunner })` when `deps.gitRunner` is set; its `ok` → `{ ok: true, created, via: 'git' }`. Otherwise the contents-API leg — the three `ghApi` calls in the Step 1 test (default branch name trimmed, tip sha trimmed, then the POST); POST success → `created: true`; POST `status === 422` → `created: false`; any other failure → `{ ok: false, reason }`, where `reason` joins the legs that ran as `git: {gitReason}; contents-api: {apiReason}` and `apiReason` is `r.error || r.failure || `HTTP ${r.status}``. Export `claimsBranchExists` and `ensureClaimsBranch`. Header comment: one sentence naming the bootstrap.
+- `writeClaimBlob`'s 422/409/404 block: after the existing self-write check, when the fresh re-read succeeded and is `absent`, consult `claimsBranchExists(deps.ghApi, repoSlug)`: `false` → return `{ ok: false, branchMissing: true, failure: null }`; `null` (could not tell) → return `{ ok: false, failure: 'network-failure' }` (transient, never the false contest this record removes); `true` → keep the existing `conflict: true` return. Any other re-read outcome keeps today's behavior unchanged.
+- `ensureClaimsBranch`: git leg via `bootstrapClaimsBranchGit({ runner: deps.gitRunner })` when `deps.gitRunner` is set; its `ok` → `{ ok: true, created, via: 'git' }`. Otherwise the contents-API leg — the three `ghApi` calls in the Step 1 test (default branch name trimmed, tip sha trimmed, then the POST). POST success is `failure === null && status === null` only → `created: true`. POST `status === 422` → `claimsBranchExists(deps.ghApi, repoSlug) === true` → `created: false` (a lost race, the same settle-by-re-read the git leg's `ls-remote` does); anything else on a 422 (`false` or `null`) is a refusal — a ruleset blocking ref creation also answers 422. Every other POST result (404 included) is a refusal. A refusal returns `{ ok: false, reason }`, where `reason` joins the legs that ran as `git: {gitReason}; contents-api: {apiReason}` and `apiReason` is `r.error || r.failure || `HTTP ${r.status}`` — the response text verbatim, which is why `defaultGhApi`'s catch keeps `error` on every thrown result, 4xx statuses included. Export `claimsBranchExists` and `ensureClaimsBranch`. Header comment: one sentence naming the bootstrap.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -220,6 +233,8 @@ git commit -m "Detect a missing claims-registry branch on the contents API — a
 ```
 
 ### Task 3: claim-targets — bootstrap once, retry, exit 6 on refusal
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/claim-targets/claim-targets.js` (USAGE :39-50, the target loop :439-627)
@@ -236,6 +251,7 @@ git commit -m "Detect a missing claims-registry branch on the contents API — a
 - [AC1.1] `(bm2) branchless remote, contents-API transport (no gitRunner): PUT 404 + branches 404 → POST git/refs, retry, exit 0` — stateful fake `ghApi`: contents GET 404 until the claim PUT lands; PUT returns 404 while the branch is absent; `branches/claims-registry` 404 while absent; the `git/refs` POST flips it. Assert exit `0`, `claimed` `[N]`, exactly one `git/refs` POST.
 - [AC2.1, AC2.2] `(bm3) two first claims (different records) against one branchless remote: both exit 0, exactly one branch creation wins, neither contested` — one shared fake remote (branch flag + blob map); run A (`--targets 11`) bootstraps; run B (`--targets 12`) starts from a stale view (its first fetch still fails `couldn't find remote ref`) and its bootstrap push is rejected `(stale info)` with `ls-remote` showing the branch. Assert both exit `0`, the remote's created-count is `1`, neither stdout contains `contested`.
 - [AC3.1, AC3.2] `(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3` — git push stderr `remote: Permission to acme/w.git denied to bot.`, POST `{ failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' }`. Assert exit `6`; stderr includes `claim-targets: claims-registry branch missing on origin and could not be created:` and ends with `— create it from the default branch\n`; `JSON.parse(stdout).branchMissing.branch === 'claims-registry'`; `branchMissing.reason` matches both refusal texts.
+- [AC3.1] `(bm4b) ruleset refusal: git push rejected "[remote rejected] … (push declined due to repository rule violations)", POST git/refs answers 422 "Repository rule violations found … Cannot create ref", branch still absent: exit 6, never a lost-race success and never exit 4` — assert exit `6` and `branchMissing.reason` matches `/Repository rule violations found/`.
 - `(bm5) --keep-going with a refused bootstrap still exits 6` — same fakes, `--keep-going`; assert exit `6`.
 - `(bm6) branch still missing after a successful bootstrap: one bootstrap only, transient exit 4` — bootstrap reports success but the fetch keeps failing `couldn't find remote ref`; assert exit `4`, `transient[0].error === 'claims-branch-missing'`, exactly one bootstrap push.
 - [AC4.1] The existing `(d)` test (live holder → exit 3, holder named) stays green unchanged — it is this record's "genuine contest" acceptance case.
@@ -339,6 +355,7 @@ git commit -m "Document the claims-registry bootstrap and claim-targets exit 6 (
 
 **Files:**
 - Modify: `plugin/skills/dispatch/settle-and-merge.md` (the `**Claim-contest special case (before the numbered steps below).**` paragraph, ~:37-58) — 47,575 bytes against the 52,500-byte rail: add at most ~500 bytes
+- Modify: `plugin/skills/dispatch/firing-exclusion.md` (its first terminal-shape bullet, :7-8 — the mirror surface naming the stops the Claim-contest special case covers; per the spec's Plan Review Clarifications, exit 6 is excluded per record for the rest of the firing exactly like a contest)
 - Test: `tests/flow-claim-preflight.test.js`
 
 **Interfaces:**
@@ -367,7 +384,7 @@ test('settle-and-merge.md Claim-contest special case covers the exit-6 Claims br
 Run: `node --test tests/flow-claim-preflight.test.js`
 Expected: FAIL (`Claims branch missing` not found in the section)
 
-- [ ] **Step 3: Edit the paragraph** — in its opening sentence, after the "Claim in-flight" stop's parenthetical, add: `, or its "Claims branch missing" stop (\`claim-targets.js\` exit 6, #4495: the \`claims-registry\` branch is missing on origin and could not be created)`. In the failing-check-name sentence, add `, or \`flow-step-2.8-claims-branch-missing\` for the claims-branch-missing stop` and change "the two are different stop shapes" to "the three are different stop shapes". After the sentence ending "…it is a pre-flight stop, not a build/test failure.", add: `For the claims-branch-missing stop, skip steps 3-7 below: no \`failure-check\` classification, no attempt counted against \`dispatch-retry-ceiling\`, and no failure comment — a repository whose claims branch cannot be created would otherwise exhaust the ceiling on a record that was never at fault.` (Scoped to exit 6 only — the contested and in-flight stops keep today's wording unchanged.)
+- [ ] **Step 3: Edit the paragraph** — in its opening sentence, after the "Claim in-flight" stop's parenthetical, add: `, or its "Claims branch missing" stop (\`claim-targets.js\` exit 6, #4495: the \`claims-registry\` branch is missing on origin and could not be created)`. In the failing-check-name sentence, add `, or \`flow-step-2.8-claims-branch-missing\` for the claims-branch-missing stop` and change "the two are different stop shapes" to "the three are different stop shapes". After the sentence ending "…it is a pre-flight stop, not a build/test failure.", add: `For the claims-branch-missing stop, skip steps 3-7 below: no \`failure-check\` classification, no attempt counted against \`dispatch-retry-ceiling\`, and no failure comment — a repository whose claims branch cannot be created would otherwise exhaust the ceiling on a record that was never at fault.` (Scoped to exit 6 only — the contested and in-flight stops keep today's wording unchanged.) In `firing-exclusion.md`'s first bullet, change "A claim-contest/in-flight pre-flight stop" to "A claim-contest/in-flight/claims-branch-missing pre-flight stop" — no other change there; its rule already excludes that record for the rest of the firing.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -377,6 +394,6 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/dispatch/settle-and-merge.md tests/flow-claim-preflight.test.js
+git add plugin/skills/dispatch/settle-and-merge.md plugin/skills/dispatch/firing-exclusion.md tests/flow-claim-preflight.test.js
 git commit -m "Treat claim-targets exit 6 as a Settle pre-flight stop — no retry attempt, no failure comment (refs #4495)"
 ```
