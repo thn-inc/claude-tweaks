@@ -514,6 +514,26 @@ test('AC2: a record an interrupted pass filed under the legacy path is reused, n
   }
 });
 
+test('AC2: a path the legacy class never matched keys its id by the widened path', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  // No legacy match ends at `app/[id].tsx:3`, so the id key is the widened path with its own occurrence.
+  const FALLBACK = '- STAGED 10:00:00 — Reproduction: lens "3a" finding app/[id].tsx:3 not reproduced (single agent): the route reads its params before the guard runs. Staged to Review Console as low-confidence. Reversibility: high.';
+  const [item] = itemsForLine(FALLBACK);
+  assert.deepStrictEqual([item.kind, item.finding.path, item.finding.line], ['finding', 'app/[id].tsx', 3]);
+  assert.strictEqual(item.itemId, backfillItemId({ runId: RUN, sourceKey: FALLBACK, findingKey: '3a|app/[id].tsx:3@0' }));
+});
+
+test('AC2: two widened paths sharing a legacy tail keep their legacy occurrence keys and stay two items', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const TWO = '- STAGED 10:00:00 — Reproduction: lens "3a" findings app/[id]/page.tsx:9 the page reads params early / blog/[id]/page.tsx:9 the blog page skips the guard. Staged to Review Console as low-confidence. Reversibility: high.';
+  const items = itemsForLine(TWO);
+  assert.deepStrictEqual(items.map((i) => [i.kind, i.finding.path, i.finding.line]), [['finding', 'app/[id]/page.tsx', 9], ['finding', 'blog/[id]/page.tsx', 9]]);
+  assert.deepStrictEqual(items.map((i) => i.itemId), [
+    backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@0' }), backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@1' }),
+  ]);
+  assert.notStrictEqual(items[0].itemId, items[1].itemId);
+});
+
 // R17: a claim is never the producer's own note. Verbatim real lines from the acceptance run's
 // decisions.md files (the ones the earlier cleaning left boilerplate, ledger-row refs or location
 // fragments in).
