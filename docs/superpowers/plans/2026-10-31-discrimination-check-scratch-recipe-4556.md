@@ -41,6 +41,23 @@
 4. **Fallback trigger.** The no-git fallback applies when *creation* is refused, and the copies are deleted before the status word. It must never fall back to the shared tree; the lens keeps "never mutate the shared tree as a substitute".
 5. **#3988 continuity.** "the scratch checkout the rule above requires" must still resolve to #2740's sentence once that sentence says "scratch checkout".
 
+## AC coverage map
+
+| AC clause | Covered by |
+|---|---|
+| AC1.1 | Handoff: the PR description carries the probe table (Deliverable 1 already ran); verified by reading the PR body at Common Step 7 |
+| AC2.1 | Task 1 Step 1 `assertRecipe` + Step 2 |
+| AC3.1 | Task 1 Step 1's §7 row test (the one refused shape, `ls {wt}/node_modules`, `permission-rule`) |
+| AC4.1 | Task 2 Step 1 `assert2740` + `assertLens` |
+| AC4.2 | Task 2 Step 1 `assertLens`'s negative + Step 6's two `grep -c -F` zero counts |
+| AC4.3 | Task 2 Step 1 `assert2740`'s byte-identical ban-phrase check |
+| AC5.1 | Task 2 Step 6 runs `tests/plan-authoring-inserted-guard-reprove-prose.test.js` |
+| AC6.1 | Every new predicate's frozen-constant go-red test (Tasks 1-2); full `npm test` via `verify.js` at Common Step 5 |
+
+Waived docs/skill-authoring.md: read for the cite-don't-restate pattern only; no edit.
+Waived _shared/subagent-output-contract.md: read for the scratch-copy pattern only; its line-39 Write/Edit claim is an observation for the console, not an edit here.
+Waived build/SKILL.md: #4442 owns its `cd "$WORKTREE" && …` instruction; not touched.
+
 ---
 
 ### Task 1: Core recipe section, §7 rows, and their pins
@@ -56,7 +73,7 @@
 
 - [ ] **Step 1: Write the failing tests** in `tests/discrimination-check-scratch-recipe-conformance.test.js`. Read the core file and `scratch-worktree.md` with `readText`.
 
-  `assertRecipe(section)` asserts the section contains each of these literals:
+  `assertRecipe(section)` collapses whitespace first (`section.replace(/\s+/g, ' ')`, since the section is wrapped prose) and then asserts it contains each of these literals:
   - `session-tmp-resolve.js`
   - `worktree add --detach`
   - `checkout {base-sha} -- {path}`
@@ -83,11 +100,10 @@
     - Finds exactly one row whose cells[1] contains `ls "{wt}/node_modules"`, with cells[2] `permission-rule` and cells[3] containing `has been denied`. Its cells[4] names `NODE_PATH`.
     - Reuse the `splitRow`/section-7 slicing shape from `tests/scratch-worktree-shell-constraint-table.test.js`, copied locally; do not import it.
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 2: Run to verify they fail** (covers AC2.1, AC3.1, AC6.1)
 
-  Run: `node --test "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-4549-4550-4556/tests/discrimination-check-scratch-recipe-conformance.test.js"`
-
-  Expected: the two content tests FAIL (heading missing, rows missing). The go-red test may pass or error; that is fine at this stage.
+Run: `node --test "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-4549-4550-4556/tests/discrimination-check-scratch-recipe-conformance.test.js"`
+Expected: FAIL — the two content tests fail (heading missing, rows missing); the go-red test passes.
 
 - [ ] **Step 3: Write the core section.** Keep it at ≤ 2,000 B and wrapped at ~100 columns like its neighbours. Wording may tighten, but every pinned literal must stay:
 
@@ -168,6 +184,7 @@ git -C "{wt}" commit -m "Add the scratch-checkout discrimination recipe — core
 - Modify: `tests/build-dispatch-status-token-and-tree-immutability.test.js`, test 4.
 - Modify: `tests/review-vacuity-evidence-conformance.test.js:35`.
 - Modify: `tests/discrimination-check-scratch-recipe-conformance.test.js` (add the lens pin).
+- Test: `tests/plan-authoring-inserted-guard-reprove-prose.test.js` (run only, unchanged — #3988 still follows #2740, AC5.1).
 
 **Interfaces:**
 - Consumes: Task 1's heading literal `Discrimination checks in a scratch checkout` and its test file.
@@ -187,11 +204,10 @@ git -C "{wt}" commit -m "Add the scratch-checkout discrimination recipe — core
     - Asserts it does not include `a temporary \`git worktree\``.
     - Go-red: `assert.throws(() => assertLens(PRE_4556_LENS))`. `PRE_4556_LENS` is the frozen literal "Make any such mutation in a throwaway copy — under the agent's `SCRATCH:` directory or a temporary `git worktree` — never in the shared tree other lens agents are reading — and remove it before the status word (delete the `SCRATCH:` directory; `git worktree remove` a temporary worktree, not merely its directory). When neither can be created, the finding has no evidence: never mutate the shared tree as a substitute."
 
-- [ ] **Step 2: Run to verify they fail**
+- [ ] **Step 2: Run to verify they fail** (covers AC4.1, AC4.2, AC4.3, AC6.1)
 
-  Run each as its own call: `node --test` on the build test, the vacuity test, and the recipe test.
-
-  Expected: build test 4 FAILS, the vacuity test's first test FAILS, and the lens test FAILS. The go-red controls pass.
+Run: `node --test "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/flow+spec-4549-4550-4556/tests/build-dispatch-status-token-and-tree-immutability.test.js"`
+Expected: FAIL after Step 1 — test 4 fails (the #2740 sentence does not cite the recipe yet); its go-red control passes. Then run, each as its own call, `node --test` on `tests/review-vacuity-evidence-conformance.test.js` (first test FAILS) and `tests/discrimination-check-scratch-recipe-conformance.test.js` (the lens test FAILS).
 
 - [ ] **Step 3: Edit `build/dispatch.md:14`.** Make two in-place substitutions inside the one long paragraph; do not rewrap.
 
