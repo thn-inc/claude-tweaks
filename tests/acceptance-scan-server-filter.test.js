@@ -399,11 +399,28 @@ const guardThrows = (line, env) => {
   try { new Function('process', line)({ env }); return false; } catch { return true; }
 };
 
+// The calendar round-trip clause each date guard gained (#4598, fix round 2): a value that parses to NaN,
+// or that round-trips through toISOString to a different day (2026-02-30 -> 2026-03-02), is rejected.
+const CAL_SINCE_TEXT = ' || Number.isNaN(Date.parse(process.env.SINCE)) || new Date(process.env.SINCE).toISOString().slice(0, 10) !== process.env.SINCE';
+const CAL_SINCE_RE = /Number\.isNaN\(Date\.parse\(process\.env\.SINCE\)\) \|\| new Date\(process\.env\.SINCE\)\.toISOString\(\)\.slice\(0, 10\) !== process\.env\.SINCE/;
+const CAL_MID_RE = /Number\.isNaN\(Date\.parse\(process\.env\.MID\)\) \|\| new Date\(process\.env\.MID\)\.toISOString\(\)\.slice\(0, 10\) !== process\.env\.MID/;
+
 test('both placeholder guards throw on bad values and pass good ones', () => {
   const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
   const since = guardLine(closedFetchBlock(GAP), 'SINCE');
+  const frozenSince = guardLine(PRE_CHANGE_SLICED_FETCH, 'SINCE');
   assert.equal(guardThrows(since, { SINCE: day(31) }), false, 'the 31-day since-date must pass');
   for (const bad of ['', '{since-date}', day(0), day(29)]) assert.equal(guardThrows(since, { SINCE: bad }), true, `SINCE=${bad} must throw`);
+  // Calendar-invalid values the pre-change guard passes: '2026-10-00' parses to NaN and '2026-02-30' parses to
+  // 2026-03-02, and both are more than 30 days back or unparseable, so the old comparison lets them through.
+  // The frozen pre-change line passing them proves only the calendar clause can reject them.
+  for (const bad of ['2026-10-00', '2026-02-30']) {
+    assert.equal(guardThrows(frozenSince, { SINCE: bad }), false, `the pre-change SINCE guard passes ${bad}, so the calendar clause is what rejects it`);
+    assert.equal(guardThrows(since, { SINCE: bad }), true, `SINCE=${bad} must throw`);
+  }
+  assert.equal(guardThrows(since, { SINCE: '2026-02-28' }), false, 'a real calendar date more than 30 days back must still pass the SINCE guard');
+  assertClaimPinned(since, frozenSince, CAL_SINCE_RE, 'the SINCE guard must carry the calendar round-trip clause');
+  assert.equal(since.replace(CAL_SINCE_TEXT, ''), frozenSince, 'the SINCE guard differs from its pre-change line only by the calendar clause');
   const state = guardLine(PG, 'STATE_SEARCH');
   for (const good of ['', 'has:parent-issue']) assert.equal(guardThrows(state, { STATE_SEARCH: good }), false, `STATE_SEARCH=${good} must pass`);
   assert.equal(guardThrows(state, { STATE_SEARCH: '{state-map-search}' }), true);
@@ -514,7 +531,7 @@ test('the mid-date guard throws on bad values and passes a good one, sitting rig
   const block = closedFetchBlock(GAP);
   const since = guardLine(block, 'SINCE');
   const mid = guardLine(block, 'MID');
-  assert.equal(since, guardLine(PRE_CHANGE_SLICED_FETCH, 'SINCE'), 'the SINCE guard line must stay byte-identical');
+  assertClaimPinned(since, guardLine(PRE_CHANGE_SLICED_FETCH, 'SINCE'), CAL_SINCE_RE, 'the SINCE guard must carry the calendar round-trip clause, against the frozen pre-change line');
   const lines = block.split('\n').map((l) => l.trim());
   assert.equal(lines[lines.indexOf(since) + 1], mid, 'the MID guard must be the line right after the SINCE guard');
   const env = (m) => ({ SINCE: day(31), MID: m });
@@ -522,6 +539,18 @@ test('the mid-date guard throws on bad values and passes a good one, sitting rig
   for (const bad of ['', '{mid-date}', '2026-13-45', day(31), day(40), day(0), day(-1)]) {
     assert.equal(guardThrows(mid, env(bad)), true, `MID=${bad} must throw`);
   }
+  // Calendar-invalid values that lie strictly between a fixed SINCE (2025-01-01) and today, so the only clause
+  // that can reject them is the calendar one. Under the day(31) env above, 2026-02-30 would fail the lexical
+  // SINCE bound instead, so these run under their own env.
+  const calEnv = (m) => ({ SINCE: '2025-01-01', MID: m });
+  for (const bad of ['2026-10-00', '2026-02-30']) {
+    assert.equal(guardThrows(mid, calEnv(bad)), true, `MID=${bad} must throw`);
+  }
+  // Controls: the valid round-trip of 2026-02-30 and a 15-day MID pass under the same env, and the calendar
+  // clause is pinned on the live MID line.
+  assert.equal(guardThrows(mid, calEnv('2026-03-02')), false, '2026-03-02, the valid round-trip of 2026-02-30, must pass');
+  assert.equal(guardThrows(mid, calEnv(day(15))), false, 'a 15-day MID must pass under the fixed SINCE');
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, CAL_MID_RE, 'the MID guard must carry the calendar round-trip clause');
   // Control: the polarity-inverted guard comes out the other way on the good value.
   const invert = (line) => line.replace('if (!', 'if (');
   assert.equal(guardThrows(invert(mid), env(day(15))), true);

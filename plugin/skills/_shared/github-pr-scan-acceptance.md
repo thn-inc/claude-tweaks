@@ -79,8 +79,8 @@ gh issue list --state closed --limit "$LIMIT" \
   > "$RAW_NEW"
 node -e "
   const fs = require('fs');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.MID || '') || process.env.MID <= process.env.SINCE || process.env.MID >= new Date().toISOString().slice(0, 10)) throw new Error('MID is not a YYYY-MM-DD date later than SINCE and earlier than today — the mid-date placeholder was not substituted or was resolved wrong; an empty or inverted slice silently drops its records.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || Number.isNaN(Date.parse(process.env.SINCE)) || new Date(process.env.SINCE).toISOString().slice(0, 10) !== process.env.SINCE || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.MID || '') || Number.isNaN(Date.parse(process.env.MID)) || new Date(process.env.MID).toISOString().slice(0, 10) !== process.env.MID || process.env.MID <= process.env.SINCE || process.env.MID >= new Date().toISOString().slice(0, 10)) throw new Error('MID is not a YYYY-MM-DD date later than SINCE and earlier than today — the mid-date placeholder was not substituted or was resolved wrong; an empty or inverted slice silently drops its records.');
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
   const slices = [
