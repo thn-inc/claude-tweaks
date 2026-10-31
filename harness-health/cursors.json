@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793415112671
+    "lastAuditedMs": 1793438887519
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793415094295
+    "lastAuditedMs": 1793438885857
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
