@@ -147,6 +147,11 @@ function isReconcileResidueTitle(title) {
   return /^reconcile:/i.test((title || '').trim());
 }
 
+// #4701: the ranking key — fired-signal count plus shared Current State anchors.
+function depthKey(hit) {
+  return hit.score + hit.sharedAnchors.length;
+}
+
 // subject, records: issue-shaped objects — { number, title, body, labels }.
 // opts.titleSimilarityThreshold overrides the default (0.5) for tests.
 // Returns [{ number, title, score, signals, sharedAnchors }], sorted by depth
@@ -202,8 +207,7 @@ function findNearDuplicates(subject, records, opts = {}) {
     }
   }
 
-  results.sort((a, b) => (b.score + b.sharedAnchors.length) - (a.score + a.sharedAnchors.length)
-    || b.score - a.score || a.number - b.number);
+  results.sort((a, b) => depthKey(b) - depthKey(a) || b.score - a.score || a.number - b.number);
   return results;
 }
 
