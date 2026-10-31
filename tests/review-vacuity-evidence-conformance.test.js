@@ -32,7 +32,7 @@ test('lens 3f carries a vacuity-evidence diagnostic requiring observed execution
   assert.match(line, /docstring/);
   assert.match(line, /throwaway copy/);
   assert.match(line, /never in the shared tree/);
-  assert.match(line, /`git worktree remove`/);
+  assert.match(line, /Discrimination checks in a scratch checkout/);
   assert.match(line, /never mutate the shared tree as a substitute/);
   assert.match(line, /errored or crashed/);
 });

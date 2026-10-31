@@ -9,7 +9,9 @@
 // sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
 // {inFlight:[{issue,link}]}); 4 = transient gh failure; 5 = a claim write
 // reported success but the post-write read-back did not confirm it
-// ({unverified:[{issue}]}). See bin/lib/claim-targets/claim-targets.js for
+// ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
+// and could not be created ({branchMissing:{branch,reason}}, with or without
+// --keep-going). See bin/lib/claim-targets/claim-targets.js for
 // the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 
