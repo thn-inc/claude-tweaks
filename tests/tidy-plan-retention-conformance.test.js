@@ -86,7 +86,7 @@ test('tidy Step 4 remembers a declined keep-forever prune and fails closed (#446
   const s = step4Section();
   pinned(/the CLI looks up a decline itself before routing to `Prune plan \(archive\)`/, PRE_CHANGE_LOOKUP);
   assert.match(s, /declined-learning\.js" record-decline --source tidy < "\{D\}"/);
-  pinned(/a live decline, or a lookup that fails, routes them to Keep/, PRE_CHANGE_LOOKUP);
+  pinned(/a live decline, or a lookup that throws, routes them to Keep/, PRE_CHANGE_LOOKUP);
   assert.match(s, /excludes every row of a `Prune plan \(archive\)` `tidy-prune-plan-\{n\}` item/);
   assert.match(s, /\*\*Decline memory\*\* \(`keep-forever` only — excluding a `Prune plan \(ask\)` item records nothing\)/);
   assert.match(s, /stays live for 180 days \(reconcile's `pruneDeclines` expires it\)/);
@@ -152,6 +152,7 @@ test("tidy Step 4's 7 and 30 match plan-retention's constants (#4594)", () => {
 
 test('tidy Step 4 states the --cited second pass (#4594)', () => {
   pinned(/re-run[^.]*--cited \{plan\}/, PRE_CHANGE_CITATION);
+  pinned(/re-run the same call — every plan again — adding one `--cited \{plan\}`/, PRE_CHANGE_CITATION);
   pinned(/with no cited candidate, the first call's routes stand/, PRE_CHANGE_CITATION);
 });
 

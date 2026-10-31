@@ -60,7 +60,7 @@ files:
 - **Should feel:** a single deliberate maintenance decision, in line with ADR-0007's "explicit user direction", not a drip of deletions.
 - **Should understand:**
   - The row is **Stage** at every tier, `aggressive` included.
-  - Before staging, `bin/plan-retention.js` (run from `{REPO_ROOT}`) looks the decline up itself. A live decline, or a lookup that fails, routes the plans back to Keep.
+  - Before staging, `bin/plan-retention.js` (run from `{REPO_ROOT}`) looks the decline up itself. A live decline, or a lookup that throws, routes the plans back to Keep.
   - The citation check runs before the list is built, so a cited plan is never listed.
 - **Red flags:**
   - A `Prune plan` auto-applied at any tier.
