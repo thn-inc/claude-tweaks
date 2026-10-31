@@ -12,7 +12,7 @@ Every project-config lever claude-tweaks skills read, in one place — the way `
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" [--values | --all] [--run "$PIPELINE_RUN_DIR"] <key> [<key>…]
 ```
 
-For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` has no scalar form and is an invocation error under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
+For shell-variable capture, `--values` prints one plain value per line in request order instead of the JSON envelope — coerced values render natively (`true`, `14`); an unset no-default key and an unknown key each print an empty line (the same empty string the retired grep pipeline produced); `model-profiles` and `risk-path-globs` have no scalar form and are invocation errors under `--values`. A present-but-invalid value prints its schema default on stdout with exit 0, and gets one stderr line naming the key, the rejected value and the default (#4141). JSON mode carries `invalid: true` instead. List-typed keys (e.g. `merge-sensitive-paths`) resolve to the raw comma-separated string in both modes when configured — callers split on `,`; only the unset default is a JSON `[]`, which `--values` renders as an empty line (same empty-means-none reading as the retired grep).
 
 The `${CLAUDE_PLUGIN_ROOT}` spelling is a model-resolved placeholder, not a live env var — the substitution contract is `docs/skill-authoring.md`'s "Plugin-root references (`CLAUDE_PLUGIN_ROOT`)" section; follow it, it is not restated here.
 
@@ -22,10 +22,12 @@ Output is a single JSON object keyed by requested key. Each key resolves to the 
 - `"invalid": true` — a present-but-rejected value degraded to the schema default; distinct from known-but-unset, which is `source: "default"` with no flag
 - `{"error": "unknown-key"}` — the requested key is not in the schema (no value/source)
 
-Two carve-outs:
+Carve-outs:
 
 - The PreToolUse hook's `worktree-always` read stays an in-process `bin/lib/policy.js` call — hot path, never shells out.
 - `model-profiles` is policy-only (the `--run` overlay never applies) and returns `{value: null, source: "default"}` when the block is absent. Any fragment-reader failure — a malformed block, or a malformed sibling model key such as `frontier-run-cap` (the reader parses all four model keys; its throws aren't sub-classified) — degrades to `{value: null, source: "default", invalid: true}`.
+- `risk-path-globs` is policy-only too (never reads `--run`) and returns `{value: {}, source: "default"}` when absent; a malformed block degrades to `{value: null, source: "default", invalid: true}`, never a partial map.
+- `deploy-command`, `owned-owners`, `trusted-authors` and `risk-categories` are `policyOnly`: the `--run` overlay never applies.
 
 **Derived-default keys** come in two shapes; both are live, so a new derived key picks one deliberately and states the choice in its row.
 
@@ -45,7 +47,7 @@ Consolidating the two is deferred until a further derived lever appears (#580's 
 absent, empty, or fails validation — never throwing on malformed input. `integer` and `boolean`
 entries are additionally coerced to their native JS type; other types pass through unchanged once
 validated. A `string` entry rejects whitespace by default (a mistyped branch name); an entry carrying
-`allowWhitespace: true` — today only `release-hook`, a shell command — accepts it. An unrecognized
+`allowWhitespace: true` — `release-hook`, a shell command, and the control-mode string keys — accepts it. An unrecognized
 `key` returns `rawValue` untouched (nothing to coerce against).
 `bin/lib/issues/trust.js`'s `resolveRevertWindowDays` is the first caller
 (`trust-revert-window-days`); any future lever of the same shape — read a policy key, coerce with a
@@ -65,6 +67,7 @@ Every `POLICY_KEYS` row carries three human-facing fields alongside its shape: `
 | Worktree & execution | `pipeline-behavior` |
 | Integration model | `merge-safety` |
 | Project facts | `autonomy-trust` |
+| Control mode | `autonomy-trust` |
 | Dispatch & merge | `merge-safety` |
 | Review | `pipeline-behavior` |
 | Documentation | `housekeeping` |
@@ -112,12 +115,12 @@ Moved to `_shared/policy-schema-coverage.md` — its "`merge-verification` deriv
 | `auto-mode` | `policy.yml` | `/claude-tweaks:flow`, `/claude-tweaks:tidy`, `/claude-tweaks:build` standalone | unset (each skill keeps its own default: `/flow` → `auto`; standalone `/build` and unattended `/tidy` → `interactive`) | `default-on` → `auto`, `default-off` → `interactive` (never for a `/flow` run whose run dir is bound `dispatched: true`, which resolves `auto`) — the default mode for an interactively typed `/claude-tweaks:flow`, standalone `/claude-tweaks:build`, and unattended `/claude-tweaks:tidy`; an explicit mode argument always wins |
 | `integration-branch` | `policy.yml` only | `/claude-tweaks:routine`, `/claude-tweaks:dispatch`, `/claude-tweaks:wrap-up`, `/claude-tweaks:build`, `/claude-tweaks:flow`, `/claude-tweaks:assess-agent-autonomy`, plus the `SessionStart` worktree reaper (`bin/lib/hooks/worktree-reap.js` — the one non-skill consumer) — all via `_shared/integration-branch.md` | unset (each consumer keeps its own fallback; for the reaper that fallback is to reap nothing) | The branch where finished work lands and new work starts. Set it on any repo whose active development branch isn't its GitHub default — a `dev` → `staging` → `main` model — where the default is the one branch nothing should be measured against |
 | `autonomy` | `policy.yml` | `/claude-tweaks:capture` (born-`ready` filing), `/claude-tweaks:backlog refine` (`refine-mode.md` Step 3's advisory trust consequence lines — the ceiling also decides whether that fetch runs at all, gated to `trusted`+ or `--trust` — and Step 3.6; its headless posture's machine-grant chain, `refine-headless.md`, reached via `--source routine\|sweep` or the deprecated `grant` alias), `/claude-tweaks:ledger`, `/claude-tweaks:wrap-up` (the bookkeeping capabilities below) — all via `_shared/autonomy-ceiling.md` | `supervised` | `supervised`/`trusted`/`unattended` — a **ceiling on autonomous action, not a level**. `bin/lib/issues/trust.js`'s per-class evidence (rendered read-only by `/claude-tweaks:help` and `/claude-tweaks:backlog overview`) moves the level; this lever only ever caps it — a class that has earned trust still cannot exceed the configured ceiling, and lowering the ceiling revokes immediately without destroying the evidence history. Resolved by `bin/lib/issues/autonomy.js` — `resolveCeiling` picks the tier by precedence, `permittedGrants` maps `(ceiling, trust row)` to a concrete permission set, and `bookkeepingPermissions(ceiling)` maps the ceiling alone (no trust row needed) to the bookkeeping capabilities `_shared/autonomy-ceiling.md`'s own table enumerates. `_shared/autonomy-ceiling.md` is the contract for all of this. `trusted` also unlocks born-`ready` filing for classes whose verdict is `clean`; `unattended` additionally unlocks machine-originated grants, gated behind the `grant-origination-enabled` opt-in below — `refine`'s headless posture is the one path that acts on it. At `supervised` — the default — trust is computed and displayed and never acted on, and none of the bookkeeping capabilities are unlocked |
-| `trust-revert-window-days` | `policy.yml` | `bin/lib/issues/trust.js` (evidence engine), consumed by `_shared/trust-table.md`'s Fetch section | `14` | Minimum age in days since a closed record's tracker `closedAt` before its unreverted closing commit(s) count as known-good **operational** evidence in the trust table, alongside `demo:*` disposition evidence — see `_shared/autonomy-ceiling.md`. A malformed value (`0`, negative, non-integer) falls back to the default rather than throwing |
+| `trust-revert-window-days` | `policy.yml` | `bin/lib/issues/trust.js` (evidence engine), consumed by `_shared/trust-table.md`'s Fetch section | `14` | Minimum age in days since a closed record's tracker `closedAt` before its unreverted closing commit(s) count as known-good **operational** evidence in the trust table, alongside acceptance dispositions — see `_shared/autonomy-ceiling.md`. A malformed value (`0`, negative, non-integer) falls back to the default rather than throwing |
 | `grant-origination-enabled` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js`) | `false` | The reserved second opt-in `_shared/autonomy-ceiling.md` names (read as `grantOriginationEnabled` in `permittedGrants`) — `autonomy: unattended` alone never authorizes a machine-originated grant; this key is the other half. A human sets it deliberately in a project's `policy.yml`; no skill ever writes it |
 | `fleet-daily-grant-cap` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js`) | unset (uncapped) | Positive integer capping how many machine grants the headless posture may issue per UTC day, counted from today-dated audit-comment markers. Absent means no cap — optional-when-absent, not a hard requirement of the machine-grant path |
 | `risk-floor` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js` gate 5), `/claude-tweaks:demo`'s binary gate | `high` | `low`/`medium`/`high`/`always` — the risk tier at or above which `bin/lib/issues/oversight-floor.js`'s `exceedsOversightFloor` denies machine origination and requires a human review. `always` unconditionally denies regardless of the record's own tier. Shared with `size-floor` below — not prefixed `demo-`/`grant-`, since more than one consumer reads the same pair |
 | `size-floor` | `policy.yml` | `/claude-tweaks:backlog refine`'s headless posture (via `bin/lib/issues/grant-gate.js` gate 5), `/claude-tweaks:demo`'s binary gate | `high` | `low`/`medium`/`high`/`always` — the size tier at or above which `exceedsOversightFloor` denies machine origination, symmetric with `risk-floor` above |
-| `grant-sampling-every` | `policy.yml` | `/claude-tweaks:help` Stage 1 (`bin/lib/issues/grant-sampling.js`) | `10` | Flags every Nth machine-granted (audit-marker, like `fleet-daily-grant-cap`) merged record still `demo:pending`, in the Needs Attention table, with a `/claude-tweaks:demo #{n}` action (#310) |
+| `grant-sampling-every` | `policy.yml` | `/claude-tweaks:help` Stage 1 (`bin/lib/issues/grant-sampling.js`) | `10` | Flags every Nth machine-granted (audit-marker, like `fleet-daily-grant-cap`) merged record still pending acceptance, in Needs Attention, with a `/claude-tweaks:demo #{n}` action (#310) |
 
 ## Dispatch & merge
 
@@ -136,7 +139,7 @@ Canonical defaults for the keys in this section also live in `_shared/work-recor
 | `auto-merge-max-files` | `policy.yml` | `/claude-tweaks:dispatch`, `/claude-tweaks:assess-agent-autonomy` | `2` | Auto-merge blast-radius guideline (files) — same weighted treatment |
 | `merge-sensitive-paths` | `policy.yml` | `/claude-tweaks:assess-agent-autonomy`, `/claude-tweaks:review` | `[]` (empty) | Comma-separated path globs forcing a hard needs-human floor in the `merge-check` verdict, and feeding `/review`'s diff-heuristic risk proxy |
 | `work-links` | `policy.yml` | Work-record system (`/claude-tweaks:dispatch`, `/claude-tweaks:wrap-up`, etc.) | `body-text` | Native sub-issue/blocked-by APIs vs. `Blocked by #N` body-text lines |
-| `commit-scope` | `policy.yml` | `bin/compose-subject.js` — every merge fence (`_shared/pr-first-merge.md` Step 3 and the four local-merge fences) | unset | One `type(scope):` token (`[A-Za-z0-9._/-]+`) for every merge subject, and the fallback when `commit-scope-paths` matches nothing or more than one scope. Precedence: an explicit `--scope` on the composer call, then a `commit-scope-paths` match, then this key, else unscoped |
+| `commit-scope` | `policy.yml` | `bin/compose-subject.js` — every merge fence (`_shared/pr-first-merge.md` Step 3 and `_shared/local-merge-sequence.md` Step 1) | unset | One `type(scope):` token (`[A-Za-z0-9._/-]+`) for every merge subject, and the fallback when `commit-scope-paths` matches nothing or more than one scope. Precedence: an explicit `--scope` on the composer call, then a `commit-scope-paths` match, then this key, else unscoped |
 | `commit-scope-paths` | `policy.yml` | same as `commit-scope` | `[]` (empty) | Comma-separated `{path-prefix}={token}` pairs (e.g. `plugin/bin/=bin, plugin/skills/=skills`); each file changed in the fence's `--range {base}...{head}` diff (local-merge fences) or in the PR itself via `--pr {n}` (`gh pr diff --name-only`, pr-first fences) takes its longest matching prefix, and the subject is scoped only when exactly one token results — zero or several fall back to `commit-scope`, with a stderr note naming the spanned scopes. Set while the composer call carries neither `--range` nor `--pr`, the composer exits 1 instead of composing an unscoped subject silently. A `=` inside a prefix or token is unsupported. Whitespace around `=` is trimmed |
 | `pr-unarmed-age-hours` | `policy.yml` | `_shared/github-pr-scan.md`'s `repo-wide` scope | `24` | How long a green, gate-passed, granted PR may sit with `--auto` unarmed before the sweep surfaces `[pr-unarmed]` |
 | `unsettled-age-hours` | `policy.yml` | `_shared/github-pr-scan.md`'s `repo-wide` scope | `24` | How long a live claim or stale `bot:in-progress` may sit with no PR progress before the sweep surfaces `[unsettled]` |
@@ -225,6 +228,27 @@ Registered by #4029; read by `readEfficiencyCeilings` in `bin/lib/policy.js` for
 | `standard-run-round-trip-ceiling` |
 | `standard-run-procedure-kb-ceiling` |
 | `standard-run-verify-minutes-ceiling` |
+
+## Control mode
+
+Inert flat keys (#4609, #4608). `control-mode: on` implies its levers at skill-default precedence: an explicitly set lever wins, and `autonomy` is unchanged. Every other key here is consulted only when it is `on`. `isControlModeOn` in `bin/lib/policy.js` is the one comparison site (exactly `on`). Built-in risk slugs: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`. A list is written on one line as `a,b`: a quoted or bracketed list is rejected and a dash-style block is ignored. `owned-owners` and `trusted-authors` entries are logins, compared case-insensitively by consumers; `risk-categories` entries are slugs. An entry is never empty and holds no `@`, `/`, inner space or bracket other than a trailing `[bot]` (`a, b` is fine). On a flat key a `#` ends the value even inside quotes, so `deploy-command` stops there; `deploy-command`, `deploy-live-workflow` and `dev-test-account` reject a value left inside an unclosed quote (a `"` opens anywhere, a `'` at a word start) or a blank quoted one, and drop outer quotes only when they enclose the whole value. URL keys are written unquoted.
+
+| Key | Canonical home | Owner skill(s) | Default | Meaning |
+|---|---|---|---|---|
+| `control-mode` | `policy.yml` | none yet (#4608) | `off` | `off`/`on` |
+| `acceptance-target` | `policy.yml` | none yet (#4608) | `local` | `local`/`dev` |
+| `deploy-reach` | `policy.yml` | none yet (#4608) | `none` | `on-merge`/`command`/`none` |
+| `deploy-command` | `policy.yml`, base branch only | none yet (#4608) | unset | Executed command; spaces allowed |
+| `deploy-live-workflow` | `policy.yml` | none yet (#4608) | unset | CI workflow name; spaces allowed |
+| `deploy-version-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
+| `dev-base-url` | `policy.yml` | none yet (#4608) | unset | `http(s)` URL, no `user:pw@` |
+| `dev-test-account` | `policy.yml` | none yet (#4608) | unset | Vault entry name, never a credential |
+| `deploy-wait-seconds` | `policy.yml` | none yet (#4608) | `900` | Integer >= 0 |
+| `deploy-poll-seconds` | `policy.yml` | none yet (#4608) | `30` | Integer >= 1 |
+| `owned-owners` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, `[A-Za-z0-9_-]`, optional `[bot]` |
+| `trusted-authors` | `policy.yml`, base branch only | none yet (#4608) | `[]` | Logins, as `owned-owners` |
+| `risk-categories` | `policy.yml` | none yet (#4608) | `[]` | Extra lowercase slugs |
+| `risk-path-globs` | `policy.yml`, block | none yet (#4608) | `{}` | Slug to glob list, indented: `slug: [a, b,]` (one trailing comma; may span lines) or `slug:` then `- a` lines. A slug is built-in or from `risk-categories`; a glob is a string (quote `{a,b}`, `k: v`; a quoted one is literal, no escapes). Rejected whole: a respelled key line, a column-0 row, quoted keys, `slug : [a]`, doubled-quote escapes. Read it only through the resolver, never `resolveValue`: `null` with `invalid` means malformed, never unset |
 
 ## Additional levers
 
