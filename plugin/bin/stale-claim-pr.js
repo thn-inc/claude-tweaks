@@ -133,16 +133,12 @@ function resumeFields(body, runId) {
   return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
 }
 
-// runId.slice(RUN_ID_PREFIX_LENGTH) is the slug `record-{n}` of a dispatched run — the same slug
-// selectResumePr checks, which is what `dispatch resume #n` uses to find the run's PR; a direct
-// /flow run's slug is `spec-{n}`.
-
 // Is the matched run's directory gone — archived or absent — so the PR body's Resume line names
 // nothing a session can resume from? Exactly dispatch-resume.js's classifyPriorRun cases that return
 // `archived` or `absent` (tests/stale-claim-pr-cli.test.js pins the two against one world matrix):
-// archive/{runId} holds a run-state.json object whose status is not
-// 'archiving' (the marker archiveRunDir writes before moving anything); or archive/{runId} exists and
-// the root dir holds no run-state.json (a late-write stub); or the root dir is absent.
+// archive/{runId} holds a run-state.json object whose status is not 'archiving' (the marker
+// archiveRunDir writes before moving anything); or archive/{runId} exists and the root dir holds no
+// run-state.json (a late-write stub); or the root dir is absent.
 // A probe that cannot tell (no main checkout, a throw) is "not gone": today's PR-body route.
 function runDirGone(deps, runId) {
   try {
@@ -165,6 +161,9 @@ function runDirGone(deps, runId) {
 // The Resume half of a --resume verdict: when --issue names the claim and its run dir is gone
 // (whatever the PR body says), the dispatch-resume command for a dispatched run (slug `record-{n}`),
 // else `run-dir-gone` (dispatch resume could not find the run); otherwise the PR body's own line.
+// runId.slice(RUN_ID_PREFIX_LENGTH) is the run's slug: `record-{n}` for a dispatched run (the slug
+// selectResumePr checks, which `dispatch resume #n` uses to find the run's PR), `spec-{n}` for a
+// direct /flow run.
 function resumeFor(opts, body, runId, deps) {
   if (opts.issue !== null && runDirGone(deps, runId)) {
     if (runId.slice(RUN_ID_PREFIX_LENGTH) !== `record-${opts.issue}`) return { resolve: 'run-dir-gone' };
