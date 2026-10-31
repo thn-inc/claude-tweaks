@@ -272,14 +272,12 @@ function classifyPriorRun(ctx, runId) {
     priorRunPath, priorRunOpen: false, priorRunOwnerHost: null, state: null, readsDir: rootPresent ? rootDir : null,
   };
 
-  const statePath = path.join(rootDir, 'run-state.json');
-  const rootState = rootPresent ? readJsonFile(deps, statePath) : { ok: false, absent: true };
+  const rootState = rootPresent ? readJsonFile(deps, path.join(rootDir, 'run-state.json')) : { ok: false, absent: true };
 
   if (deps.exists(archiveDir)) {
     const archived = readJsonFile(deps, path.join(archiveDir, 'run-state.json'));
     const realArchive = archived.ok && archived.value.status !== 'archiving';
-    const rootHasState = !rootState.absent;
-    if (realArchive || !rootHasState) {
+    if (realArchive || rootState.absent) {
       return {
         ...base, priorRunDir: 'archived', state: archived.ok ? archived.value : null, readsDir: archiveDir,
       };
