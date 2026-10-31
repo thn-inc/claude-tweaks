@@ -179,6 +179,8 @@ anything with its own natural delimiter — rather than counting lines to guess 
 
 Extending a byte/line-pinned table cell — adding a second marker form alongside an existing one, widening a cell's content — can silently break an older, independently-authored test that end-anchored (`$`) that same row before the extension existed. #2970's `pr-run-comments.md` timing-row extension (adding `timing:{spec}` alongside the bare `timing` marker) broke `tests/timing-prose-conformance.test.js`'s #1928 AC6 pin, which had end-anchored the row — caught in a follow-up commit within the same build session, not at review. Before considering a table-row content extension complete, grep sibling test files for an anchored regex (`$`/`^`) against that same row, not just the test file most obviously related to the change.
 
+**The silent direction: new prose inside another suite's slice.** A suite that slices a region between two anchors and checks presence needles in it accepts a copy anywhere in the slice, so a paragraph inserted there can repeat a needle's phrase and keep that needle green after its own sentence loses it. Nothing goes red. #4343's Pre-verification catch-up subsection, saying "merge, never rebase", first landed inside `_shared/git-discipline.md`'s `### Post-push merge-state check` slice (`9a6f82053`), giving `tests/git-discipline-merge-state-conformance.test.js`'s uncontrolled `has('never rebase', …)` a second copy. Before adding text to a file other suites pin, grep `tests/` for the file and each suite's slice anchors; keep the new text outside the slice, or re-prove that suite's go-red controls on the edited slice.
+
 ## Decision Framework
 
 | The prose you want to assert on | Do this |
