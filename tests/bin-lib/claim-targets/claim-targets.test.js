@@ -1885,7 +1885,14 @@ function makeBranchlessRemote() {
 // when the remote already has the branch (a sibling bootstrapped meanwhile).
 // `refuseBootstrapWith` makes the bootstrap push throw that text instead.
 // `creationHidden` makes a successful bootstrap invisible to later fetches.
-function makeBranchlessGitRunner(remote, { staleView = false, refuseBootstrapWith = null, creationHidden = false } = {}) {
+// `claimPushFailsWith` makes every non-bootstrap push throw that text (a
+// transport failure, so the store falls back to the contents API).
+// The bootstrap's scratch ref resolves to BOOTSTRAP_BASE_SHA, distinct from the
+// claims-branch tip, so a test can tell which sha the bootstrap pushed.
+const BOOTSTRAP_BASE_SHA = 'basesha0';
+function makeBranchlessGitRunner(remote, {
+  staleView = false, refuseBootstrapWith = null, creationHidden = false, claimPushFailsWith = null,
+} = {}) {
   let staleLeft = staleView ? 1 : 0;
   let commitCounter = 0;
   const commitOwner = {};
@@ -1897,7 +1904,9 @@ function makeBranchlessGitRunner(remote, { staleView = false, refuseBootstrapWit
       if (!remote.branchExists || creationHidden) throw new Error("fatal: couldn't find remote ref claims-registry");
       return '';
     }
-    if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') return 'tip0\n';
+    if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') {
+      return String(args[1]).includes('claims-cas-bootstrap') ? `${BOOTSTRAP_BASE_SHA}\n` : 'tip0\n';
+    }
     if (args[0] === 'update-ref' && args[1] === '-d') return '';
     if (args[0] === 'ls-remote') return remote.branchExists ? 'tip0\trefs/heads/claims-registry\n' : '';
     if (args[0] === 'show') {
@@ -1928,6 +1937,8 @@ function makeBranchlessGitRunner(remote, { staleView = false, refuseBootstrapWit
         }
         remote.branchExists = true;
         remote.created += 1;
+      } else if (claimPushFailsWith) {
+        throw new Error(claimPushFailsWith);
       }
       return '';
     }
@@ -1942,7 +1953,9 @@ test('(bm1) branchless remote, git transport: bootstraps claims-registry from th
   const remote = makeBranchlessRemote();
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi: refuseAllGhApi, gh });
-  deps.gitRunner = makeBranchlessGitRunner(remote);
+  const inner = makeBranchlessGitRunner(remote);
+  const gitCalls = [];
+  deps.gitRunner = (args) => { gitCalls.push(args); return inner(args); };
 
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
@@ -1952,7 +1965,8 @@ test('(bm1) branchless remote, git transport: bootstraps claims-registry from th
   assert.equal(body.transportByIssue[720], 'git');
   const boot = bootstrapPushes(remote);
   assert.equal(boot.length, 1, 'exactly one bootstrap push');
-  assert.ok(boot[0][2].endsWith(':refs/heads/claims-registry'));
+  assert.ok(gitCalls.some((a) => a[0] === 'fetch' && String(a[3]).startsWith('HEAD:')), 'the base is fetched from the remote HEAD (default branch)');
+  assert.equal(boot[0][2], `${BOOTSTRAP_BASE_SHA}:refs/heads/claims-registry`, 'the branch is created at the sha the HEAD fetch resolved to');
   assert.equal(remote.pushes.length, 2, 'the bootstrap push, then the claim push');
 });
 
@@ -1960,15 +1974,20 @@ test('(bm1) branchless remote, git transport: bootstraps claims-registry from th
 // until the git/refs POST flips it. `postResponse` overrides that POST's answer
 // (a refusal) and leaves the branch absent.
 function makeBranchlessGhApi({ postResponse = null } = {}) {
-  const state = { branch: false, blob: null, refPosts: 0 };
+  const state = { branch: false, blobs: {}, refPosts: 0 };
   const ok = { stdout: '{}', failure: null, status: null };
+  const readIssue = (args) => (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-(\d+)\.json\?ref=/.exec(args[0]) || [])[1];
+  const writeIssue = (args) => (args[0] === '--method' && args[1] === 'PUT'
+    ? (/\/contents\/claims\/issue-(\d+)\.json$/.exec(args[2]) || [])[1] : undefined);
   function ghApi(args) {
-    if (args[0] === readPath(720)) {
-      return state.branch && state.blob ? readOk(state.blob, 'blob-sha') : readAbsent;
+    const reading = readIssue(args);
+    if (reading) {
+      return state.branch && state.blobs[reading] ? readOk(state.blobs[reading], 'blob-sha') : readAbsent;
     }
-    if (isWrite(args, '720')) {
+    const writing = writeIssue(args);
+    if (writing) {
       if (!state.branch) return readAbsent;
-      state.blob = Buffer.from(fieldOf(args, 'content'), 'base64').toString('utf8');
+      state.blobs[writing] = Buffer.from(fieldOf(args, 'content'), 'base64').toString('utf8');
       return ok;
     }
     if (args[0] === `repos/${REPO}/branches/claims-registry`) {
@@ -2091,4 +2110,72 @@ test('(bm6) branch still missing after a successful bootstrap: one bootstrap onl
   const body = JSON.parse(io.out[0]);
   assert.equal(body.transient[0].error, 'claims-branch-missing');
   assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
+});
+
+// The bm1-bm6 cases above all enter through the READ site (a gitRunner whose
+// fetch reports the branch missing). These two enter through the WRITE site:
+// the contents-API PUT answers 404 and the branch lookup confirms it.
+const POST_OK = { stdout: '{}', failure: null, status: null };
+
+test('(bm7) write site, contents-API only (no gitRunner): bootstrap refused -> exit 6, reason verbatim, no git leg named', () => {
+  const { ghApi, state } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.branchMissing.branch, 'claims-registry');
+  assert.match(body.branchMissing.reason, /HTTP 403: Resource not accessible by integration/);
+  assert.ok(!body.branchMissing.reason.includes('git:'), 'no git leg without a gitRunner');
+  assert.equal(state.refPosts, 1);
+});
+
+test('(bm8) write site, second sighting after a bootstrap that reported success: one bootstrap only, transient exit 4', () => {
+  // The POST reports success but the branch never appears.
+  const { ghApi, state } = makeBranchlessGhApi({ postResponse: POST_OK });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-missing');
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
+test('(bm9) write-site second sighting under --keep-going discards the git tip chain: the next target fetches fresh', () => {
+  // Target 720: the git read says the branch is missing -> git bootstrap -> the
+  // retried git read succeeds (tip0, which is chainable) -> the git claim push
+  // fails at the transport -> contents-API fallback: PUT 404 and the branch
+  // lookup 404 -> a second sighting, skipped. Target 721 must NOT inherit
+  // 720's tip0: a stale chain would read 721 against it with no fetch.
+  const remote = makeBranchlessRemote();
+  const { ghApi } = makeBranchlessGhApi({ postResponse: POST_OK });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const inner = makeBranchlessGitRunner(remote, { claimPushFailsWith: 'fatal: unable to access the remote' });
+  const claimsFetches = [];
+  deps.gitRunner = (args) => {
+    if (args[0] === 'fetch' && !String(args[3]).startsWith('HEAD:')) claimsFetches.push(args);
+    return inner(args);
+  };
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, []);
+  assert.deepEqual(body.skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-missing' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-missing' },
+  ]);
+  assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
+  assert.equal(claimsFetches.length, 3, '720 fetches twice (missing, then after the bootstrap); 721 fetches fresh instead of reusing 720\'s tip');
 });

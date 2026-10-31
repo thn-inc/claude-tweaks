@@ -397,7 +397,7 @@ function run(argv, deps) {
   // The one shape every stop site below shares: with `--keep-going`, record
   // `{issue, reason: skipReason, ...extra}` in `skipped` and keep looping
   // (signaled by returning `null` — `abort()`'s exit codes are always 3, 4,
-  // or 5, never null/0, so callers can tell the two outcomes apart with
+  // 5, or 6, never null/0, so callers can tell the two outcomes apart with
   // `!== null`); otherwise abort the whole run via the envelope
   // `{[envelopeKey]: [{issue, ...extra}]}`. `extra` is exactly what differs
   // between call sites (an `error`, a `link`, or a `holder`) and is identical
@@ -451,6 +451,9 @@ function run(argv, deps) {
   // `null` means skipped under `--keep-going`, else the exit code to return).
   let bootstrapAttempted = false;
   function handleBranchMissing(issue) {
+    // Whatever tip this run believed is untrustworthy once the branch is
+    // known missing — discard the chain on every path out, a skip included.
+    knownTip = null;
     if (bootstrapAttempted) {
       return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-missing' }) };
     }
@@ -460,7 +463,6 @@ function run(argv, deps) {
       deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${b.reason} — create it from the default branch\n`);
       return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason: b.reason } }, 6) };
     }
-    knownTip = null;
     return { retry: true };
   }
 
