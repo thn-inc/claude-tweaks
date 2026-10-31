@@ -35,12 +35,17 @@ function countAmbiguityMarkers(body) {
   return matches ? matches.length : 0;
 }
 
+// headingLine of a line that may carry a trailing \r: headingLine's text trim is [ \t] only.
+function headingOfLine(line) {
+  return headingLine(line.replace(/\r$/, ''));
+}
+
 // lines (+ their fence mask) -> index of the first unfenced level 2-4 heading line named
-// Open Questions, or -1. A trailing \r is dropped first: headingLine's text trim is [ \t] only.
+// Open Questions, or -1.
 function findOpenQuestionsStart(lines, fenced = fencedLineMask(lines)) {
   return lines.findIndex((l, i) => {
     if (fenced[i]) return false;
-    const h = headingLine(l.replace(/\r$/, ''));
+    const h = headingOfLine(l);
     return h !== null && h.level >= 2 && h.level <= 4 && OPEN_QUESTIONS_NAME_RE.test(h.text);
   });
 }
@@ -72,10 +77,10 @@ function dropEmptyOpenQuestions(body) {
   const fenced = fencedLineMask(lines);
   const start = findOpenQuestionsStart(lines, fenced);
   if (start === -1 || start >= authoredEnd) return { body, removed: false };
-  const level = headingLine(lines[start].replace(/\r$/, '')).level;
+  const level = headingOfLine(lines[start]).level;
   let end = start + 1;
   while (end < lines.length) {
-    const h = fenced[end] ? null : headingLine(lines[end].replace(/\r$/, ''));
+    const h = fenced[end] ? null : headingOfLine(lines[end]);
     if (h && h.level <= level) break;
     end++;
   }
