@@ -81,7 +81,7 @@ For each completed branch (in order), run `_shared/local-merge-sequence.md`'s St
 4. **Merge** — the sequence's Step 3, from the main checkout. Its guard repeats step 2's check as the race backstop.
 
    - **Merged** — record the merge commit (`git rev-parse {base-branch}`) and continue to the next branch.
-   - **The branch guard aborted** (stderr ends `Abort, do not merge.`; no merge started — the checkout moved after step 3 closed the run) — re-protect this branch's run (**Re-protect** below), then stop the reconciliation and run step 6 for the branches already merged.
+   - **The merge guard aborted** (stderr ends `Abort, do not merge.`; no merge started: the checkout moved, or another session's merge is in progress there) — re-protect this branch's run (**Re-protect** below), then stop the reconciliation and run step 6 for the branches already merged.
    - **Failed** — if a `MERGE_HEAD` exists, run `git merge --abort`. Then re-protect this branch's run (**Re-protect** below). A conflict goes to step 5; any other failure is recorded as `merge aborted: {first stderr line}` and the branch is skipped.
 
 5. **On a conflict** (predicted at step 2, or hit at step 4) — present the conflicts:
@@ -119,7 +119,7 @@ For each completed branch (in order), run `_shared/local-merge-sequence.md`'s St
 
 ### Re-protect
 
-After any failure that follows a branch's `close-run` — a step 4 branch-guard abort, a step 4 merge failure, a step 5 resolution abandoned or stopped before it lands, or a step 6 push failure — re-stamp that branch's run — `_shared/local-merge-sequence.md` Step 5 — with the `{worktree-path}` step 1 read (`run-state.json` no longer holds it), one Bash call per run, keeping the run's original owner:
+After any failure that follows a branch's `close-run` — a step 4 merge-guard abort, a step 4 merge failure, a step 5 resolution abandoned or stopped before it lands, or a step 6 push failure — re-stamp that branch's run — `_shared/local-merge-sequence.md` Step 5 — with the `{worktree-path}` step 1 read (`run-state.json` no longer holds it), one Bash call per run, keeping the run's original owner:
 
 ```bash
 env -u CLAUDE_CODE_SESSION_ID node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree-path}"
@@ -147,7 +147,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --status AUTO
 | {branch} | {spec} | Merged locally, push failed — run re-protected |
 | {branch} | {spec} | Not merged (pre-merge check failed: {reason}) — run still active |
 | {branch} | {spec} | Not merged (aborted) — run still active |
-| {branch} | {spec} | Not merged (checkout moved before the merge) — run re-protected |
+| {branch} | {spec} | Not merged (checkout moved, or another merge in progress, before the merge) — run re-protected |
 | {branch} | {spec} | Re-protect failed: {output line} — run unprotected |
 | {branch} | {spec} | Skipped (pipeline failed) |
 ```

@@ -47,7 +47,7 @@ files:
 
 ### 5. A failure after the close re-protects the run
 - **URL:** none — main checkout
-- **Action:** A branch-guard abort at the merge (the checkout moved after the close), a failed merge (aborted), a resolution abandoned or stopped before it lands, or a failed push (including no linked worktree left to push from) re-stamps each affected run with `env -u CLAUDE_CODE_SESSION_ID … record-worktree --run "{run-dir}" "{worktree-path}"`, using the path step 1 read.
+- **Action:** A merge-guard abort at the merge (the checkout moved, or another session's merge is in progress, after the close), a failed merge (aborted), a resolution abandoned or stopped before it lands, or a failed push (including no linked worktree left to push from) re-stamps each affected run with `env -u CLAUDE_CODE_SESSION_ID … record-worktree --run "{run-dir}" "{worktree-path}"`, using the path step 1 read.
 - **Should feel:** Self-healing — the worktree is protected again without the maintainer chasing it.
 - **Should understand:** Leaving the session id unset keeps the run's original owner. Otherwise the reconciling terminal would take over another terminal's run. Any output other than `worktree recorded` is logged to that run's `decisions.md` (the text goes through `log-decision.js --text-file`, never shell quoting) and named in the Summary. If that log call fails too, both outputs go in the Summary's `Re-protect failed` row.
 - **Red flags:** A re-protected run whose `sessionId` now names the reconciling session; a re-stamp failure that never reached `decisions.md`.

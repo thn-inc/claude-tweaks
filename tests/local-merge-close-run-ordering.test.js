@@ -475,9 +475,9 @@ test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
 
 // AC3: every failure that can follow close-run re-protects. The Re-protect section names each trigger, and
 // each failure site carries its own re-protect instruction (prose a fence test cannot reach).
-const REPROTECT_TRIGGERS = ['branch-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
+const REPROTECT_TRIGGERS = ['merge-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
 const REPROTECT_SITES = [
-  ['**The branch guard aborted** (stderr ends', "re-protect this branch's run", 200],
+  ['**The merge guard aborted** (stderr ends', "re-protect this branch's run", 200],
   ['**Failed** — if a `MERGE_HEAD` exists', "re-protect this branch's run", 120],
   ['abandoned or stopped before it lands', 're-protect every run closed for it', 200],
   ['**On push failure**', 're-protect every run step 3 closed', 300],
@@ -504,7 +504,7 @@ test("AC3: worktree-merge.md re-protects after every failure that can follow clo
   assert.ok(reprotectCoverage(dropTrigger).some((e) => /push failure/.test(e)), 'go-red: a trigger dropped from the Re-protect list must fail');
   const dropSite = live.replace("re-protect this branch's run (**Re-protect** below), then stop", 'stop');
   assert.notStrictEqual(dropSite, live);
-  assert.ok(reprotectCoverage(dropSite).some((e) => /branch guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
+  assert.ok(reprotectCoverage(dropSite).some((e) => /merge guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
   const dropFailed = live.replace("Then re-protect this branch's run (**Re-protect** below). A conflict", 'A conflict');
   assert.notStrictEqual(dropFailed, live);
   assert.ok(reprotectCoverage(dropFailed).some((e) => /Failed/.test(e)), 'go-red: a merge failure with no re-protect must fail');
