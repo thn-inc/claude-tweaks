@@ -123,6 +123,15 @@ function assertWatchReadsNoChecksAsPending(gateText) {
   assert.ok(mapping !== -1, 'the watch loop must map "no checks reported" output');
   assert.ok(/RC=8/.test(watch.slice(mapping, watch.indexOf('\n', mapping))), 'the mapping must set RC=8 (pending)');
   assert.ok(mapping < watch.indexOf('case "$RC"'), 'the mapping must run before the case on RC');
+  // The red arm stops the watch; the pending arm (which also bounds the no-checks wait) holds the deadline then sleeps.
+  const redStart = watch.indexOf('\n    1) ');
+  const pendStart = watch.indexOf('\n    8) ');
+  const pendEnd = watch.indexOf('\n    *) ');
+  assert.ok(redStart !== -1 && pendStart > redStart && pendEnd > pendStart, 'the watch loop must carry 1), 8) and *) arms in order');
+  const redArm = watch.slice(redStart, pendStart);
+  assert.ok(redArm.includes('break ;;') && !redArm.includes('sleep'), 'the 1) red arm must break without sleeping');
+  const pendArm = watch.slice(pendStart, pendEnd);
+  assert.ok(pendArm.includes('-ge "$DEADLINE" ] && RC=124 && break') && pendArm.includes('sleep 30 ;;'), 'the 8) pending arm must bound at the deadline (RC=124) and otherwise sleep 30');
 }
 
 test('the bounded watch reads "no checks reported" as pending, not failed (#4550)', () => {
@@ -132,6 +141,12 @@ test('the bounded watch reads "no checks reported" as pending, not failed (#4550
   assert.ok(line, 'live text carries the mapping line');
   assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(line + '\n', '')), 'removing the mapping must fail the pin');
   assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace('&& RC=8', '&& RC=1')), 'a mapping to the wrong code must fail the pin');
+  // Go-red controls for the red and pending arms.
+  const deadlineClause = '8) [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # still pending at the bound';
+  assert.ok(gate.includes('1) break ;;') && gate.includes(deadlineClause), 'live text carries the arms the controls mutate');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace('1) break ;;', '1) sleep 30 ;;')), 'a sleeping red arm must fail the pin');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(deadlineClause, '8) ')), 'removing the 8) deadline clause must fail the pin');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(deadlineClause + '\n       sleep 30 ;;', '8) RC=0 && break ;;')), 'an 8) arm that breaks green must fail the pin');
 });
 
 test('every consumer that restates the Step 2.5 CI read also reads the head-sha runs (#3405)', () => {

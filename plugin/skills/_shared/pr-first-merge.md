@@ -269,7 +269,7 @@ guard refuses a `--jq` program inside this loop (`_shared/scratch-worktree.md` �
    gh issue comment "$ISSUE" --repo {owner}/{repo} --body-file "{park-comment-path}"
    ```
    (`$REASON` holds the check names — from `{pr-checks-path}`'s `fail` rows, or the failing
-   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string. Under a derived `off`, `{value}`/`$VALUE` is `derived off`.)
+   head runs' `workflowName`s — or the pending-timeout phrase — passed as a `printf` argument, never expanded inside the format string. Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`.)
    **Verify the label landed** — re-read each record's labels (`gh issue view {n} --json labels`)
    after the add; a missing `bot:parked` is retried once. If it is still missing, the park has no
    lock the `[pr-unarmed]` sweep (`_shared/github-pr-scan.md`) would honor, so fall back to the one
