@@ -118,7 +118,10 @@ own config overlay:
 
 ```bash
 MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$PIPELINE_RUN_DIR" --values merge-verification)
+node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification
 ```
+
+The project-level read (no `--run`) tells a **derived** `off` from an explicit one: derived when `$MERGE_VERIFICATION` is `off` and that read's `merge-verification` entry is `{"value":"off","source":"default"}`, or the read fails — a wait, never a blind merge. `source: policy`, or a run-level `off` over another project value, is explicit.
 
 When one session merges several runs sequentially (`flow/worktree-merge.md`'s reconciliation),
 resolve the lever **per merged run** from that run's own directory (`--run "{that run's dir}"`) —
@@ -172,8 +175,7 @@ Classify from both reads, in this order:
 - Any `statusCheckRollup[]` entry with `conclusion` in `FAILURE`, `TIMED_OUT`, `ERROR`, or `STARTUP_FAILURE`
   — or any head run whose `status` is `completed` and whose `conclusion`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
   reconcile's concern). Take the **Red path** below now, before anything else. Under `off` this
-  read still runs — `off` skips the *wait*, not the read — but the value `off` merges anyway
-  (today's behavior); the red classification is logged and shown, not acted on.
+  read still runs — `off` skips the *wait*, not the read — but an explicit `off` merges anyway; a derived `off` takes the **Red path**. An explicit `off`'s red read is logged and shown, not acted on.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
@@ -185,7 +187,7 @@ Classify from both reads, in this order:
   `pull_request`-triggered workflow exists, and an explicit value is a statement that CI is
   expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
   seconds after a push, not instantly — and reads as **pending**, never green; under `off` it is
-  simply "no CI" and proceeds as green.
+  simply "no CI" and proceeds as green — derived `off` too, so a repo without PR CI never waits.
 - Otherwise (every entry `SUCCESS`/`NEUTRAL`/`SKIPPED`, and every head run `completed` without a failing conclusion) → **green**.
 
 Then, per resolved value:
@@ -204,9 +206,9 @@ must not lean on it. That is why the pending column below keys on `mergeStateSta
 |---|---|---|---|
 | `merge-when-green` | Step 3 as written — arm/merge (identical outcome when checks are already green) | `mergeStateStatus: BLOCKED` → Step 3 as written — arm `--auto` (the forge holds it; outcome `armed`). Any other value (`CLEAN`, `UNSTABLE`, `BEHIND`, `UNKNOWN`, …) → arming would merge immediately: **degrade to the `wait` row** — never to an immediate merge | Red path |
 | `wait` | Re-read (`gh pr view … --json state,mergeStateStatus,headRefOid`); if `headRefOid` changed since the first read or `state` is no longer `OPEN`, re-enter this step from the top (one re-entry; a second change reports `pending-review`, reason `moving-target`) — never merge blind; otherwise merge via Step 3's immediate `--squash` form (re-run its composer call first) | **Bounded watch** below | Red path |
-| `off` | Step 3 as written (today's behavior, unchanged) | Step 3 as written (today's behavior — this is the #540-shaped race the lever exists to close; a repo derives `off` only when it has no PR CI or a non-default integration branch, `_shared/policy-schema-coverage.md`'s coverage block) | Step 3 as written; the red read is logged for the summary |
+| `off` | Step 3 as written (today's behavior, unchanged) | Derived `off` with a non-empty rollup or a head run not yet `completed` → **Bounded watch** below, logged `AUTO {HH:MM:SS} — Step 2.5 (merge-verification gate): derived off with pending checks on PR #{n} — bounded watch. Reversibility: high.` Explicit `off` → Step 3 as written | Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |
 
-**Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**
+**Bounded watch (`wait`, `merge-when-green` when arming would not hold, and a derived `off` with pending checks) — 15 minutes, fixed.**
 Not a policy key: `merge-when-green` (arming) is the no-wait path, `wait` is its fallback, and a
 repo where 15 minutes is chronically wrong should enable required checks/auto-merge rather than
 tune a knob (parent #558's one-lever decision; this paragraph is the timeout's own rationale). Poll
