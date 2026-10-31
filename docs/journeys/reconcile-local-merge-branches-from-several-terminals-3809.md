@@ -5,6 +5,7 @@ files:
   - plugin/bin/compose-subject.js
   - plugin/bin/log-decision.js
   - plugin/skills/_shared/scratch-worktree.md
+  - plugin/skills/_shared/local-merge-sequence.md
 ---
 
 # Reconcile `local-merge` Branches From Several Terminals

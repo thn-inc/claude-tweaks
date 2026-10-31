@@ -22,7 +22,9 @@ empty in the next, so never carry a value in a shell variable across calls.
   switch that, and the branch guard exists to catch it (`[IL-05]`).
 - `{branch}` — the feature branch to merge.
 - `{issues}` — the record numbers this merge closes, space-separated: the composer's positional
-  arguments, one `Fixes #N` line each ("Close-via-merge" in `_shared/issue-claims.md`).
+  arguments, one `Fixes #N` line each ("Close-via-merge" in `_shared/issue-claims.md`). A caller
+  with no record for this branch drops Step 1's composer line and Step 3's
+  `-F "{subject-dir}/message.txt"`.
 - `{tag}` — the composer's body tag, rendered as `[{tag}]`. A caller that names no tag drops
   `--tag {tag}` from Step 1's composer line.
 - `{run-dir}` — the absolute run directory whose run protects `{branch}`'s worktree
@@ -91,12 +93,18 @@ own outcome.
 
 ## Step 3: Merge — from the main checkout
 
-The guard repeats Step 1's check as the race backstop — a concurrent session may have switched
-the checkout since:
+The guard runs two checks before merging. The branch check repeats Step 1's as the race
+backstop — a concurrent session may have switched the checkout since. The merge check refuses
+when a merge is already in progress: a `MERGE_HEAD` there is not this sequence's, and `git merge`
+would refuse to start anyway:
 
 ```bash
 if ! git branch --show-current | grep -qxF '{base-branch}'; then
   echo "Main checkout is not on '{base-branch}' — a concurrent session switched it. Abort, do not merge." >&2
+  exit 1
+fi
+if git rev-parse -q --verify MERGE_HEAD >/dev/null; then
+  echo "A merge is already in progress in the main checkout — not this sequence's. Abort, do not merge." >&2
   exit 1
 fi
 git merge --no-ff {branch} -F "{subject-dir}/message.txt"
@@ -105,18 +113,25 @@ git merge --no-ff {branch} -F "{subject-dir}/message.txt"
 `--no-ff` guarantees a real merge commit even when the branch would fast-forward: the commit the
 composer's `[{tag}]` paragraph and `Fixes #N` lines land on.
 
-**On failure** — the guard aborted (no merge started), or `git merge` exited non-zero for any
-reason (a conflict that appeared only after Step 1's prediction, the race it cannot rule out; a
-dirty working tree; unrelated histories): check for a merge in progress, from the main checkout
-where the merge ran:
+**On failure** — what state each failure leaves:
 
-```bash
-git rev-parse -q --verify MERGE_HEAD
-```
+- **A guard aborted** (either check — the stderr line names which): no merge of this sequence
+  started, and the checkout is not this sequence's to touch — nothing to undo or abort.
+- **`git merge` exited non-zero** (a conflict that appeared only after Step 1's prediction, the
+  race it cannot rule out; a dirty working tree; unrelated histories): the guard ruled out a
+  pre-existing merge, so a `MERGE_HEAD` now is this merge's. Check for it from the main checkout
+  where the merge ran:
 
-Exit 0 means a merge is in progress — run `git merge --abort` as its own call. Non-zero means
-the merge never started and the checkout is unchanged. Never attempt resolution here.
-`close-run` already ran, so Step 5 applies.
+  ```bash
+  git rev-parse -q --verify MERGE_HEAD
+  ```
+
+  Exit 0 means this merge is in progress. Non-zero means it never started and the checkout is
+  unchanged.
+
+What happens to an in-progress merge — abort it (`git merge --abort`, its own call) or leave it
+in place to resolve — is the caller's routing. `close-run` already ran, so Step 5 applies to
+every failure here.
 
 ## Step 4: Push — from inside the linked worktree, its own Bash call
 

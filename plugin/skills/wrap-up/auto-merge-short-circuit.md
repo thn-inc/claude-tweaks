@@ -260,11 +260,12 @@ once it sits past the TTL and repeated stuck passes. A closed run escalates the 
 reconcile's clean-status sweep (#3668; `pr-first-merge-post-merge.md` Step 4.2).
 
 **`integration-model: local-merge`:** run the Verdict backstop above first (anything but `{n}=1`,
-stop here and go to "Any layer fails" below). Then read the values below and run
-`_shared/local-merge-sequence.md` (its Step 2 — after the pre-merge checks, before merging, clear
-this run's worktree assignment — is the only `close-run`; do not clear it separately), the
-single-branch local-merge sequence (pre-merge checks, `close-run`, guarded merge, explicit-branch push, re-protect) and why its order is load-bearing,
-with this branch's bindings and failure routing. The run is finishing, as in
+stop here and go to "Any layer fails" below). Then read the values below, then run
+`_shared/local-merge-sequence.md` with this branch's bindings and failure routing. Its Step 2 —
+after the pre-merge checks, before merging, clear this run's worktree assignment — is the only
+`close-run`; do not clear it separately. That file is the single-branch local-merge sequence
+(pre-merge checks, `close-run`, guarded merge, explicit-branch push, re-protect) and why its
+order is load-bearing. The run is finishing, as in
 `flow/worktree-merge.md`'s reconciliation: the sequence's `close-run` marks it `clean` so its
 worktree is released for teardown once the branch lands.
 
@@ -317,8 +318,9 @@ was abandoned (conflict resolution requires judgment a headless run can't supply
 could not run is logged the way that step names it, not as a conflict.
 
 **If the merge call's guard aborts, `git merge` fails, or the push fails** (the sequence's Steps 3
-and 4): take that step's own failure rule — `git merge --abort` only when a merge is in progress,
-never on a push failure, and never undo the local merge. Then re-protect the run: the sequence's
+and 4): after a `git merge` failure, abort the in-progress merge (Step 3's `MERGE_HEAD` check
+exits 0) with `git merge --abort` as its own call — never after a guard abort, never on a push
+failure — and never undo the local merge. Then re-protect the run: the sequence's
 Step 5, with the `{worktree-path}` read above; when it does not print `worktree recorded`, log its
 output line to `decisions.md` rather than ignoring it. Then fall back to rendering the console
 normally, exactly as for a failed pre-merge check, logging why the auto-merge path was abandoned —

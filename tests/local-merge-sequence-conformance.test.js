@@ -36,6 +36,13 @@ const PRE_MERGE = [
 ];
 const CLOSE_RUN = 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "{run-dir}"';
 const MERGE = 'git merge --no-ff {branch} -F "{subject-dir}/message.txt"';
+const MERGE_GUARD = 'if git rev-parse -q --verify MERGE_HEAD >/dev/null; then';
+const MERGE_GUARD_BLOCK = [
+  MERGE_GUARD,
+  '  echo "A merge is already in progress in the main checkout — not this sequence\'s. Abort, do not merge." >&2',
+  '  exit 1',
+  'fi',
+].join('\n');
 const PUSH = 'git -C "{worktree-path}" push origin {base-branch}';
 const REPROTECT = 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree-path}"';
 
@@ -55,6 +62,8 @@ const FACTS = {
   'pre-merge fence': (t) => fenceCount(t, (f) => PRE_MERGE.every((l) => f.includes(l))) === 1,
   'close-run fence is one command': (t) => fenceCount(t, (f) => f.trim() === CLOSE_RUN) === 1,
   'merge fence': (t) => fenceCount(t, (f) => f.includes(PRE_MERGE[0]) && f.trim().endsWith(MERGE)) === 1,
+  'merge-in-progress guard precedes the merge': (t) => fenceCount(t, (f) => f.includes(PRE_MERGE[0])
+    && f.includes(MERGE_GUARD) && f.indexOf(MERGE_GUARD) < f.indexOf('git merge --no-ff')) === 1,
   'push fence is one command': (t) => fenceCount(t, (f) => f.trim() === PUSH) === 1,
   're-protect fence': (t) => fenceCount(t, (f) => f.trim() === REPROTECT) === 1,
   ...Object.fromEntries(Object.entries(PROSE).map(([n, lit]) => [n, (t) => collapse(t).includes(collapse(lit))])),
@@ -64,6 +73,7 @@ const DOCTORS = {
   'pre-merge fence': (t) => t.replace(PRE_MERGE[2], 'git merge-tree --write-tree --name-only {base-branch} {branch}'),
   'close-run fence is one command': (t) => t.replace(CLOSE_RUN, `${CLOSE_RUN} && ${PUSH}`),
   'merge fence': (t) => t.replace(MERGE, 'git merge --no-ff {branch}'),
+  'merge-in-progress guard precedes the merge': (t) => t.replace(`${MERGE_GUARD_BLOCK}\n`, ''),
   'push fence is one command': (t) => t.replace(`${PUSH}\n`, `git merge --no-ff {branch} && ${PUSH}\n`),
   're-protect fence': (t) => t.replace(REPROTECT, 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}"'),
   ...Object.fromEntries(Object.entries(PROSE).map(([n, lit]) => [n, (t) => stripLoose(t, lit)])),
@@ -132,7 +142,12 @@ const PRE_4073_BLOCK = {
   'merge-tree pre-check': 'git merge-tree --write-tree --name-only {integration-branch} {branch} || exit 1',
   'close-run call': 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"',
 };
-const inlineBlockParts = (t) => BLOCK.filter(([, needle]) => collapse(t).includes(collapse(needle))).map(([name]) => name);
+// Fence-scoped parts: prose may quote the merge call (auto-merge-short-circuit.md does), a ```bash fence may not.
+const FENCED_BLOCK = [['merge call', 'git merge --no-ff']];
+const inlineBlockParts = (t) => [
+  ...BLOCK.filter(([, needle]) => collapse(t).includes(collapse(needle))).map(([name]) => name),
+  ...FENCED_BLOCK.filter(([, needle]) => fencesOf(t).some((f) => f.includes(needle))).map(([name]) => name),
+];
 
 // Each caller's **Bindings** paragraph binds every placeholder but {subject-dir}: `{x}` = … or `{x}` — none.
 function bindingsGaps(text) {
@@ -145,23 +160,28 @@ function bindingsGaps(text) {
 const deltaGaps = (text, deltas) => Object.entries(deltas).filter(([, lit]) => !collapse(text).includes(collapse(lit))).map(([n]) => n);
 
 test('the anchor: the sequence itself carries every block part', () => {
-  assert.deepEqual(inlineBlockParts(read(SEQUENCE)), BLOCK.map(([n]) => n));
+  assert.deepEqual(inlineBlockParts(read(SEQUENCE)), [...BLOCK, ...FENCED_BLOCK].map(([n]) => n));
 });
+
+const citesSequence = (t) => collapse(t).includes(CITATION);
 
 function siteTests(site) {
   test(`${site.label}: cites ${CITATION}`, () => {
     const live = read(site.file);
-    assert.ok(collapse(live).includes(CITATION));
+    assert.ok(citesSequence(live));
     const doctored = live.split(CITATION).join('_shared/zzz-no-such-sequence-4073.md'); // a nonsense token: a hit means re-pick it
-    assert.ok(!collapse(doctored).includes(CITATION), 'go-red: an uncited site must fail');
+    assert.notEqual(doctored, live);
+    assert.ok(!citesSequence(doctored), 'go-red: an uncited site must fail');
   });
-  test(`${site.label}: carries no inline copy of the guard, composer, merge-tree or close-run block`, () => {
+  test(`${site.label}: carries no inline copy of the guard, composer, merge-tree, close-run or merge block`, () => {
     const live = read(site.file);
     assert.deepEqual(inlineBlockParts(live), []);
     for (const [name] of BLOCK) {
       const wrapped = PRE_4073_BLOCK[name].replace(' ', '\n   '); // a line-wrapped copy is still caught [IL-66]
       assert.deepEqual(inlineBlockParts(`${live}\n${wrapped}\n`), [name], `go-red: ${name}`);
     }
+    assert.deepEqual(inlineBlockParts(`${live}\n\`\`\`bash\ngit merge --no-ff {branch}\n\`\`\`\n`), ['merge call'], 'go-red: a fenced merge call');
+    assert.deepEqual(inlineBlockParts(`${live}\nProse quotes \`git merge --no-ff {branch}\`.\n`), [], 'a prose mention stays legal');
   });
   test(`${site.label}: binds every placeholder the sequence needs`, () => {
     const live = read(site.file);
@@ -181,7 +201,9 @@ function siteTests(site) {
   });
 }
 
-// Site-side half (Tasks 2-4 of the #4073 plan): callers append here without restructuring.
+// A file that runs the sequence goes in SITES with its bindings and deltas; a file that names it
+// without running it goes in MENTIONS (below) with a one-line reason. An entry that stops citing
+// the sequence fails with "shrink the list".
 const SITES = [
   { label: 'local-merge-auto-finish.md', file: 'plugin/skills/_shared/local-merge-auto-finish.md', deltas: {
     'tag auto-finish': '`{tag}` = `auto-finish`',
@@ -194,12 +216,14 @@ const SITES = [
     'park reason: pre-check failed': 'pre-check failed:',
     'park reason: checkout switched': 'main checkout switched to',
     'park reason: merge aborted': 'merge aborted:',
+    'own abort rule': 'this procedure aborts it with `git merge --abort` as its own call; after a guard abort it never aborts',
   } },
   { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', deltas: {
     'own tag': "`{tag}` = this file's own `{tag}`",
     'single issue': '`{issues}` = `{issue}`',
     'integration-branch binding': '`{base-branch}` = `{integration-branch}`',
     're-protect output logged': 'log its output line to `decisions.md`',
+    'own abort rule': "abort the in-progress merge (Step 3's `MERGE_HEAD` check exits 0) with `git merge --abort` as its own call — never after a guard abort, never on a push failure",
   } },
   { label: 'settle-and-merge.md', file: 'plugin/skills/dispatch/settle-and-merge.md', deltas: {
     'two-issue composer call': '`{issues}` = `{issue} {second-issue}`',
@@ -208,6 +232,7 @@ const SITES = [
     'remote-show fallback': "git remote show origin | sed -n '/HEAD branch/s/.*: //p'",
     'group worktree': '`{worktree-path}` = `{group-worktree}`',
     're-protect output logged': 'log its output line to `{run-dir}/decisions.md`',
+    'own abort rule': "abort the in-progress merge (Step 3's `MERGE_HEAD` check exits 0) with `git merge --abort` as its own call — never after a guard abort, never on a push failure",
   } },
   { label: 'worktree-merge.md', file: 'plugin/skills/flow/worktree-merge.md', deltas: {
     'no tag': '`{tag}` — none: drop `--tag {tag}`',
@@ -233,7 +258,8 @@ test("worktree-merge.md: a composer failure skips the branch and continues (AC3)
 
 // Roster, both directions: every plugin/skills file citing the sequence is a SITES entry or a MENTIONS
 // entry (a file that names the sequence without running it), and every entry still cites it.
-// Task 4 adds the two mention-only files its sweep creates; an entry that stops citing fails with "shrink the list".
+// A file that runs the sequence goes in SITES with its bindings and deltas; a file that names it
+// without running it goes here with a one-line reason; an entry that stops citing fails with "shrink the list".
 const MENTIONS = new Map([
   ['plugin/skills/_shared/policy-schema.md', 'commit-scope row names the composer call site; runs nothing'],
   ['plugin/skills/_shared/integration-model.md', 'consumer table names the local-merge path; runs nothing'],
@@ -264,18 +290,24 @@ test('the SITES roster is exactly the files citing the sequence', () => {
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
 
-test('docs register the new _shared file (AC5)', () => {
-  const graph = readText(path.join(ROOT, 'docs/skill-graph.md'));
-  const rowOf = (g, key) => g.split('\n').find((l) => l.startsWith(key));
-  const KEY = '| `_shared/local-merge-sequence.md` |';
-  const row = rowOf(graph, KEY);
+const SEQUENCE_ROW_KEY = '| `_shared/local-merge-sequence.md` |';
+function assertGraphRows(graph) {
+  const rowOf = (key) => graph.split('\n').find((l) => l.startsWith(key));
+  const row = rowOf(SEQUENCE_ROW_KEY);
   assert.ok(row, 'skill-graph.md has no row for _shared/local-merge-sequence.md');
   for (const s of ['/flow', '/wrap-up', 'local-merge-auto-finish.md', 'auto-merge-short-circuit.md', 'worktree-merge.md']) assert.ok(row.includes(s), `row names ${s}`);
-  const autoFinish = rowOf(graph, '| `_shared/local-merge-auto-finish.md` |');
+  const autoFinish = rowOf('| `_shared/local-merge-auto-finish.md` |');
   assert.ok(autoFinish.includes('`_shared/local-merge-sequence.md`'), 'the auto-finish row cites the sequence');
   assert.ok(!collapse(autoFinish).includes("Reuses `wrap-up/auto-merge-short-circuit.md`'s own local-merge git mechanics"), 'the retired reuse clause is gone');
-  // go-red: a renamed row is not found.
-  assert.equal(rowOf(graph.replace(KEY, '| `_shared/zzz-4073.md` |'), KEY), undefined, 'go-red: a missing row must fail the lookup');
+}
+
+test('docs register the new _shared file (AC5)', () => {
+  const graph = readText(path.join(ROOT, 'docs/skill-graph.md'));
+  assertGraphRows(graph);
+  // go-red: a renamed row fails the row assertions.
+  const doctored = graph.replace(SEQUENCE_ROW_KEY, '| `_shared/zzz-4073.md` |');
+  assert.notEqual(doctored, graph);
+  assert.throws(() => assertGraphRows(doctored), /has no row for _shared\/local-merge-sequence\.md/, 'go-red: a missing row must fail');
   const structure = readText(path.join(ROOT, 'docs/plugin-structure.md'));
   const shared = structure.split('\n').find((l) => l.startsWith('| _shared |'));
   assert.ok(shared.split(' | ')[1].includes('local-merge-sequence.md'), 'plugin-structure.md curated _shared row lists it');

@@ -118,7 +118,9 @@ it literally into the next call; never carry it in a shell variable across calls
    redundant-but-safe, never harmful.
 
    **On any failure** (the step's guard aborts, or `git merge` exits non-zero for any reason):
-   after that step's own `git merge --abort` rule, this is the one point in this procedure that
+   after a `git merge` failure with a merge in progress (the step's `MERGE_HEAD` check exits 0),
+   this procedure aborts it with `git merge --abort` as its own call; after a guard abort it never
+   aborts — the checkout is not this run's to touch. This is the one point in this procedure that
    must never attempt resolution — `_shared/auto-mode-contract.md`'s "does NOT silence" table
    states plainly: "Resolution of merge conflicts in worktree finishing | Conflict resolution
    requires intent the model cannot infer." Go to the **Park** branch below, with

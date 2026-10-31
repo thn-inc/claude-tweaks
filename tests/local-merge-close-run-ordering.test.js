@@ -61,6 +61,7 @@ const SITES = [
 const PRE_MERGE_NEEDLE = 'git merge-tree --write-tree';
 const CLOSE_RUN_NEEDLE = 'bin/hooks.js" close-run --run';
 const MERGE_NEEDLE = 'git merge --no-ff';
+const PUSH_NEEDLE = 'push origin {base-branch}';
 const REPROTECT_NEEDLE = 'bin/hooks.js" record-worktree --run';
 const WORKTREE_READ_NEEDLE = "run-state.json').worktree";
 
@@ -109,44 +110,47 @@ function locate(text) {
   const P = fenceIndex(text, PRE_MERGE_NEEDLE);
   const C = flat.indexOf(CLOSE_RUN_NEEDLE);
   const M = fenceIndex(text, MERGE_NEEDLE);
+  const U = fenceIndex(text, PUSH_NEEDLE);
   const R = M < 0 ? -1 : fenceIndex(text, REPROTECT_NEEDLE, M);
   const W = flat.lastIndexOf(WORKTREE_READ_NEEDLE); // the LAST read: an earlier ledger-deletion read is fine
   const closeRuns = flat.split(CLOSE_RUN_NEEDLE).length - 1;
-  return { P, C, M, R, W, closeRuns };
+  return { P, C, M, U, R, W, closeRuns };
 }
 
-// Ordering errors; empty when pre-merge checks < close-run < merge < re-protect and no worktree read follows
-// close-run. With `readsWorktree`, the read must also exist and precede close-run (it nulls the field).
+// Ordering errors; empty when pre-merge checks < close-run < merge < push < re-protect and no worktree read
+// follows close-run. With `readsWorktree`, the read must also exist and precede close-run (it nulls the field).
 function checkOrdering(text, { readsWorktree = false } = {}) {
-  const { P, C, M, R, W, closeRuns } = locate(text);
+  const { P, C, M, U, R, W, closeRuns } = locate(text);
   const errors = [];
   if (P < 0) errors.push(`no bash fence containing ${PRE_MERGE_NEEDLE}`);
   if (closeRuns !== 1) errors.push(`expected exactly one ${CLOSE_RUN_NEEDLE}, found ${closeRuns}`);
   if (M < 0) errors.push(`no bash fence containing ${MERGE_NEEDLE}`);
+  if (U < 0) errors.push(`no bash fence containing ${PUSH_NEEDLE}`);
   if (R < 0) errors.push(`no ${REPROTECT_NEEDLE} fence after the merge`);
-  if (P >= 0 && C >= 0 && M >= 0 && R >= 0 && !(P < C && C < M && M < R)) {
-    errors.push(`order is not pre-merge checks < close-run < merge < re-protect (P=${P} C=${C} M=${M} R=${R})`);
+  if (P >= 0 && C >= 0 && M >= 0 && U >= 0 && R >= 0 && !(P < C && C < M && M < U && U < R)) {
+    errors.push(`order is not pre-merge checks < close-run < merge < push < re-protect (P=${P} C=${C} M=${M} U=${U} R=${R})`);
   }
   if (W >= 0 && C >= 0 && W > C) errors.push(`the worktree is read from run-state.json after close-run nulled it (W=${W} C=${C})`);
   if (readsWorktree && !(W >= 0 && C >= 0 && W < C)) errors.push(`the worktree read must exist and precede close-run (W=${W} C=${C})`);
   return errors;
 }
 
-// Move the close-run fence ahead of the pre-merge-checks fence: a pure permutation of two whole fences,
-// so every marker is still present exactly once and only the order changes.
-function closeRunBeforePreMerge(text) {
+// Move the fence containing `moving` ahead of the fence containing `anchor`: a pure permutation of two whole
+// fences, so every marker is still present exactly once and only the order changes.
+function moveFenceBefore(text, moving, anchor) {
   const fences = [...text.matchAll(/^[ \t]*```bash\n[\s\S]*?\n[ \t]*```/gm)];
   const only = (needle) => {
     const hits = fences.filter((m) => m[0].includes(needle));
     assert.strictEqual(hits.length, 1, `expected exactly one bash fence containing ${JSON.stringify(needle)}`);
     return hits[0];
   };
-  const pre = only(PRE_MERGE_NEEDLE);
-  const close = only(CLOSE_RUN_NEEDLE);
-  assert.ok(pre.index < close.index, 'the live close-run fence follows the pre-merge checks fence');
-  const without = text.slice(0, close.index) + text.slice(close.index + close[0].length);
-  return `${without.slice(0, pre.index)}${close[0]}\n\n${without.slice(pre.index)}`;
+  const before = only(anchor);
+  const moved = only(moving);
+  assert.ok(before.index < moved.index, `the live ${moving} fence follows the ${anchor} fence`);
+  const without = text.slice(0, moved.index) + text.slice(moved.index + moved[0].length);
+  return `${without.slice(0, before.index)}${moved[0]}\n\n${without.slice(before.index)}`;
 }
+const closeRunBeforePreMerge = (text) => moveFenceBefore(text, CLOSE_RUN_NEEDLE, PRE_MERGE_NEEDLE);
 
 // Frozen pre-change excerpt: the local-merge opener and the merge fence exactly as they read before
 // #3762 (short-circuit lines 237-242 and 283-289), close-run ahead of the guard and composer.
@@ -267,7 +271,7 @@ for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
   const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
 
-  test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
+  test(`${label}: pre-merge checks, close-run, merge, push, re-protect appear in that order`, () => {
     assert.deepStrictEqual(checkOrdering(raw, site), []);
   });
 
@@ -278,6 +282,55 @@ for (const site of SITES) {
     assert.ok(P >= 0 && C >= 0 && M >= 0 && R >= 0 && closeRuns === 1, 'every marker is still present exactly once');
     const errors = checkOrdering(permuted, site);
     assert.ok(errors.some((e) => /order is not/.test(e)), `expected an "order is not" error, got ${JSON.stringify(errors)}`);
+  });
+
+  test(`go-red: ${label} with the push fence moved ahead of the merge fence fails the ordering check`, () => {
+    const permuted = moveFenceBefore(raw, PUSH_NEEDLE, MERGE_NEEDLE);
+    assert.notStrictEqual(permuted, raw, 'the permutation must change the text');
+    const { P, C, M, U, R, closeRuns } = locate(permuted);
+    assert.ok(P >= 0 && C >= 0 && M >= 0 && U >= 0 && R >= 0 && closeRuns === 1, 'every marker is still present exactly once');
+    const errors = checkOrdering(permuted, site);
+    assert.ok(errors.some((e) => /order is not/.test(e)), `expected an "order is not" error, got ${JSON.stringify(errors)}`);
+  });
+
+  test(`${label}: merge fence, run against a fixture repo — merges when no merge is in progress, refuses a foreign MERGE_HEAD`, () => {
+    const fence = extractFence(raw, MERGE_NEEDLE);
+    const ident = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+    const run = (body, repo) => {
+      fs.mkdirSync(SUBJECT_DIR, { recursive: true });
+      fs.writeFileSync(path.join(SUBJECT_DIR, 'message.txt'), 'subject\n');
+      return runFence(body, { cwd: repo, env: ident, vars });
+    };
+    const head = (repo, ref = 'HEAD') => git(repo, 'rev-parse', ref).trim();
+
+    const clean = makeRepo();
+    const merged = run(fence, clean);
+    assert.strictEqual(merged.code, 0, merged.stderr);
+    assert.strictEqual(git(clean, 'log', '-1', '--format=%P').trim().split(' ').length, 2, 'a --no-ff merge commit landed');
+
+    // A foreign merge in progress: `other` merged with --no-commit leaves MERGE_HEAD and a clean index.
+    const busyRepo = () => {
+      const repo = makeRepo();
+      git(repo, 'checkout', '-q', '-b', 'other');
+      fs.writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+      git(repo, 'add', 'c.txt');
+      git(repo, 'commit', '-q', '-m', 'other');
+      git(repo, 'checkout', '-q', 'main');
+      fixtureGit(['-C', repo, 'merge', '-q', '--no-ff', '--no-commit', 'other'], { encoding: 'utf8', stdio: 'pipe' });
+      return repo;
+    };
+    const busy = busyRepo();
+    const before = head(busy);
+    const refused = run(fence, busy);
+    assert.strictEqual(refused.code, 1);
+    assert.match(refused.stderr, /A merge is already in progress in the main checkout — not this sequence's\. Abort, do not merge\./);
+    assert.strictEqual(head(busy), before, 'HEAD is unchanged');
+    assert.strictEqual(head(busy, 'MERGE_HEAD'), head(busy, 'other'), "the foreign merge is left exactly as it was");
+
+    // go-red: without the merge-in-progress check, the run never names the foreign merge.
+    const unguarded = fence.replace(/^if git rev-parse -q --verify MERGE_HEAD >\/dev\/null; then\n[\s\S]*?\nfi\n/m, '');
+    assert.notStrictEqual(unguarded, fence, 'the doctor must remove the check');
+    assert.doesNotMatch(run(unguarded, busyRepo()).stderr, /A merge is already in progress in the main checkout/, 'go-red: the unguarded fence must not print the guard line');
   });
 
   test(`${label}: the worktree read ${readsWorktree ? 'precedes close-run (required)' : 'is not required'}`, () => {
