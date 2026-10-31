@@ -24,7 +24,7 @@ files:
 
 **Entry point:** the merge of the parent's last open sub-issue, on any merge path: a pr-first `merged` outcome, dispatch close-out, wrap-up `merge` mode, or a local-merge push. Each reaches `_shared/pr-first-merge-post-merge.md`'s `### Step 4.0b: Close below-floor parents (#4466)`.
 
-**Success state:** the parent is `CLOSED` and carries one `## Closed below the oversight floor` comment. The comment lists every sub-issue as `- #{n} {title} — closed by PR #{pr}`. The parent has no `demo:*` label and no Verification Brief.
+**Success state:** the parent is `CLOSED` and carries one `## Closed below the oversight floor` comment. The comment lists every sub-issue as `- #{n} {title} — closed by PR #{pr}`. The parent has no acceptance label in either spelling (`demo:*` or `accept:*`) and no Verification Brief.
 
 ## Steps
 
@@ -59,7 +59,7 @@ files:
 - **Should feel:** a one-click cleanup, not an investigation.
 - **Should understand:**
   - The row is staged at every `tidy-aggressiveness` tier. Approving it runs the same **Close the parent below the floor** section, with the same comment and idempotence checks.
-  - Tidy's Step 7.5 checklist verifies the parent as `CLOSED`, carrying the heading comment and no `demo:*` label.
+  - Tidy's Step 7.5 checklist verifies the parent as `CLOSED`, carrying the heading comment and no acceptance label in either spelling (`_shared/work-record.md`).
   - A parent above the floor still gets the brief-and-`/claude-tweaks:demo` row instead.
 - **Red flags:**
   - A stranded below-floor parent that tidy reports nowhere.
@@ -75,3 +75,5 @@ files:
 ## Origin
 
 Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-4466`).
+
+The success state and Step 3's checklist clause updated during build of #4610: the Step 7.5 checklist checks for no acceptance label in either spelling.

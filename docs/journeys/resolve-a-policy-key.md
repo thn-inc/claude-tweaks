@@ -16,7 +16,7 @@ files:
 **Persona:** claude-tweaks skill author (or a maintainer of a project using the plugin) who wants proof that policy resolution honors the documented precedence chain — run config, then `policy.yml`, then schema default — rather than trusting each skill's prose to have re-implemented it correctly.
 **Goal:** Watch one key resolve under three configurations and confirm the returned `{value, source}` envelope changes exactly as `plugin/skills/_shared/policy-schema.md` §Canonical read path says it will.
 **Entry point:** A terminal at a project checkout root (any repo with — or even without — a `.claude-tweaks/policy.yml`).
-**Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does.
+**Success state:** Three JSON objects whose `source` fields read `default`, `policy`, and `run-config` respectively, plus one `renamed-from` resolution proving the alias table is live, plus one `--all` snapshot whose every row carries `{value, source}` decorated with schema metadata, plus one direct-from-`policy.yml` read proving the enforcement hook honors the same alias table the CLI does, plus three `risk-path-globs` reads (unset, valid block, typo'd block) whose answers — `{}` from `default`, the slug-to-glob map from `policy`, and `null` flagged `invalid` — are each distinct.
 
 ## Steps
 
@@ -63,7 +63,7 @@ files:
 - **Red flags:** A malformed block resolving `{}`, which would silently switch off a safety check; a key after the block (`autonomy: trusted`) swallowed into it.
 
 ## Origin
-- Step 2 and step 6 updated during build of #4609 (control-mode keys) — `risk-path-globs` is the second block-style key, parsed by `plugin/bin/lib/risk-path-globs.js`
+- Step 2, step 6 and the success state updated during build of #4609 (control-mode keys) — `risk-path-globs` is the second block-style key, parsed by `plugin/bin/lib/risk-path-globs.js`
 - Created during build of #329 (policy resolver CLI); step 3 and the alias red-flag in step 2 updated during build of #332 (policy-key naming convention + rename program — `review-severity-floor` → `review-auto-apply-ceiling`, seven identity aliases); step 5 added during build of #602, when the hook's own read path (`isWorktreeAlwaysOn`/`rawValue` in `plugin/bin/lib/policy.js`) became alias-aware
 - No step change during build of #194 (Phase 2 doc-convention wiring) — five new keys (`doc-convention-{tutorial,how-to,reference,explanation,journey}`) were registered following `doc-convention-adr`'s exact existing shape, so step 4's `--all` snapshot already covers them with no new mechanism to demonstrate
 - No step change during build of #1654 (dispatch group-size guard lever) — `dispatch-group-size-guard` was registered following `dispatch-batch-size`/`dispatch-retry-ceiling`'s exact existing `type: 'integer'` shape, so step 4's `--all` snapshot already covers it with no new mechanism to demonstrate

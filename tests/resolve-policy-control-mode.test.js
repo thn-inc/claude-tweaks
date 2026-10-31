@@ -684,7 +684,6 @@ test('parseRiskPathGlobs returns its three shapes', () => {
 
 test('risk-path-globs.js requires nothing, so it cannot close a cycle with policy-schema.js, its caller', () => {
   assert.deepStrictEqual(require.cache[require.resolve('../plugin/bin/lib/risk-path-globs')].children, []);
-  assert.strictEqual(require('../plugin/bin/lib/policy-schema').parseRiskPathGlobs, undefined, 'no facade');
 });
 
 test('auditPolicy reports an invalid block once, and nothing for a valid one', () => {

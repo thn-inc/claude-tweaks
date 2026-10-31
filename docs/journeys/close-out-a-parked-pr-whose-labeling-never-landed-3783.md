@@ -43,12 +43,12 @@ files:
 - **Should understand:**
   - The predicate close-out applies is `_shared/acceptance-labeling-landed.md`; step 3 states only what it does on each outcome.
   - **Landed** means an `acceptance-labeling` row of `pass` or `skip` in every file read; `fail`, `unknown`, a missing row or a missing/unreadable file means not landed.
-  - **Live check first.** If every `Fixes` record already carries `demo:pending`, or the PR already carries a trusted `brief`/`try-it` run comment, labeling is treated as landed — re-running would duplicate the issue pointer comment.
-  - **A failed read is not landed.** A failed label or comment read, or an empty `Fixes` set, never counts as landed on its own: Step 1 runs unless the other live check (a trusted run comment, or `demo:pending` on every `Fixes` record) lands. An unreadable `verify.json` is not rescued by the live check at all.
+  - **Live check first.** If every `Fixes` record already carries a pending acceptance label in either spelling (`demo:pending` or `accept:pending`, `_shared/work-record.md`), or the PR already carries a trusted `brief`/`try-it` run comment, labeling is treated as landed — re-running would duplicate the issue pointer comment.
+  - **A failed read is not landed.** A failed label or comment read, or an empty `Fixes` set, never counts as landed on its own: Step 1 runs unless the other live check (a trusted run comment, or a pending acceptance label on every `Fixes` record) lands. An unreadable `verify.json` is not rescued by the live check at all.
   - **Otherwise** it runs `_shared/pr-first-merge.md` Step 1 with `PIPELINE_RUN_DIR` (the resolved dir, or each not-landed member's `spec-{N}/`) and `CLOSING_SUB_ISSUES` (the PR's `Fixes` records), before Mark ready and before the confirmation gate.
   - **No run dir** (no valid marker, or neither path exists): the candidate stops with `stopped: acceptance labeling unverifiable — no run dir`.
   - **Screenshots from a close-out labeling run** go to their own evidence-only PR (`Refs #{record}`), never onto the dispatcher's main checkout: close-out runs from the main checkout, so `verification-brief.md` Step 4's `bin/evidence-route.js` integration-branch guard takes the evidence-PR route even while the parked PR is still open (#4039 — see `land-demo-evidence-after-the-pr-merged-4039.md`).
-- **Red flags:** a merge reaching the confirmation gate with no labeling and a `fail` row; labeling re-run when `demo:pending` is already on every record; a guess at a run dir; screenshot evidence committed or pushed on the main checkout.
+- **Red flags:** a merge reaching the confirmation gate with no labeling and a `fail` row; labeling re-run when a pending acceptance label is already on every record; a guess at a run dir; screenshot evidence committed or pushed on the main checkout.
 
 ### 4. Confirm and merge
 - **URL:** `dispatch/close-out-confirmation.md`, then `pr-first-merge.md` Step 3
@@ -62,3 +62,4 @@ files:
 - Created during build of #3783 (verify.json acceptance guard). Observed on #3712's run (PR #3749): wrap-up skipped acceptance labeling and Verify execution, the unattended console resolved `leave-open`, and close-out's step 3 assumed a `pending-review` PR implied labeling had run.
 - Updated during build of #4273: step 2's `DIRTY` case now first gets close-out's re-verified update offer (`update-a-conflicting-parked-pr-at-close-out-4273.md`) instead of a stop.
 - Updated during build of #4045: the landed rule now lives in _shared/acceptance-labeling-landed.md, cited by pr-first-merge Step 1, close-out step 3 and tidy.
+- Updated during build of #4610: step 3's live check accepts a pending acceptance label in either spelling, `demo:pending` or `accept:pending`.
