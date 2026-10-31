@@ -1314,14 +1314,21 @@ test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from
 });
 
 // #4559: `drop` and `clear` destroy stack entries — a sibling worktree's
-// in-flight WIP stash included — so they warn like push/pop; only the
-// subcommands that leave the stack intact stay silent.
-test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
+// in-flight WIP stash included — and `branch` drops the entry it applies,
+// while `store` and `import` write onto the stack; all of them warn like
+// push/pop. Only the subcommands that leave the stack alone stay silent.
+// These are command strings fed to the hook — nothing here runs git stash.
+const STASH_SHA = 'a'.repeat(40);
+test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, `branch`, `store`, `import`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
   const { wt } = mainAndWorktree();
-  for (const cmd of ['git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop']) {
+  const cmds = [
+    'git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop',
+    'git stash branch fix-wip', `git stash store -m x ${STASH_SHA}`, `git stash import ${STASH_SHA}`,
+  ];
+  for (const cmd of cmds) {
     const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
     assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
-    assert.ok(!out.json.hookSpecificOutput, `must warn, never deny: ${cmd}`);
+    assert.notStrictEqual(out.json.hookSpecificOutput?.permissionDecision, 'deny', `must warn, never deny: ${cmd}`);
   }
 });
 

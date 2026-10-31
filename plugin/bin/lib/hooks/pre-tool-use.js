@@ -898,12 +898,14 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // test discrimination against a baseline; #2065 closed the gap where only
 // the bare/`pop` spellings were covered — the exact hazard, reachable
 // through the equally common explicit `stash push`/`-u`/`-m` forms. #4559
-// added `drop` and `clear`: they destroy stack entries — a sibling
-// worktree's in-flight WIP stash included — so they are stack-destroying and
-// warn like `pop`. This is a WARN, never a deny: unlike E1/worktree-required,
-// there is no provable "whose stash entry is this" signal to gate on — only a
-// heads-up pointing at a non-mutating alternative. `list`/`show`/`apply`/
-// `branch` stay silent (`apply` changes the worktree, not the stack) — mirroring git-command.js's own
+// added `drop` and `clear`, which destroy stack entries — a sibling
+// worktree's in-flight WIP stash included — and `branch`, which drops the
+// entry it applies (stash@{0} when bare), so all three warn like `pop`; and
+// `store` and `import`, which write onto the stack like `push`. This is a
+// WARN, never a deny: unlike E1/worktree-required, there is no provable "whose
+// stash entry is this" signal to gate on — only a heads-up pointing at a
+// non-mutating alternative. Only `list`/`show`/`apply` stay silent (`apply`
+// changes the worktree, not the stack) — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
@@ -924,7 +926,8 @@ function checkGitStashWarn(segments, warnings) {
     if (t[index] !== 'stash') continue;
     const next = t[index + 1];
     const mutatesStack = next === undefined || next === 'pop' || next === 'push'
-      || next === 'save' || next === 'drop' || next === 'clear'
+      || next === 'save' || next === 'drop' || next === 'clear' || next === 'branch'
+      || next === 'store' || next === 'import'
       || (typeof next === 'string' && next.startsWith('-'));
     if (!mutatesStack) continue;
     if (!dir) continue;
