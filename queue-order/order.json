@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-31T20:47:41.196Z",
+  "computedAt": "2026-10-31T20:53:17.776Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -16,11 +16,6 @@
       {
         "number": 4728,
         "updatedAt": "2026-10-31T16:41:11Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4727,
-        "updatedAt": "2026-10-31T16:10:36Z",
         "state": "OPEN"
       },
       {
@@ -950,12 +945,12 @@
       },
       {
         "number": 4495,
-        "updatedAt": "2026-10-31T19:14:46Z",
+        "updatedAt": "2026-10-31T20:51:53Z",
         "state": "CLOSED"
       },
       {
         "number": 4588,
-        "updatedAt": "2026-10-31T19:15:12Z",
+        "updatedAt": "2026-10-31T20:52:24Z",
         "state": "CLOSED"
       }
     ]
