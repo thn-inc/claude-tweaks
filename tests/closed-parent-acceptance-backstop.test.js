@@ -157,12 +157,11 @@ function runFetchBlock(login) {
     $ALL_STATES: [],
     $PARENTS: null,
   };
-  // The fence redirects `gh api user --jq .login` into this file (a `$(gh ...)` assignment is a
-  // refused fence shape), so the test writes what that command would have printed.
-  fs.writeFileSync(p('GH_LOGIN.txt'), login + '\n');
+  // The fence redirects `gh api user --jq .login` into `$PARENTS.login` (a `$(gh ...)` assignment
+  // is a refused fence shape), so the test writes what that command would have printed.
+  fs.writeFileSync(p('PARENTS.json.login'), login + '\n');
   let script = scanScript(PG, 'process.env.STATE_SEARCH');
   // Longer names first, so a name that prefixes another is never clipped.
-  script = script.split('$GH_LOGIN').join(p('GH_LOGIN.txt'));
   for (const token of Object.keys(files).sort((a, b) => b.length - a.length)) {
     const file = p(token.slice(1) + '.json');
     if (files[token] !== null) fs.writeFileSync(file, JSON.stringify(files[token]));
