@@ -644,8 +644,8 @@ test('(stale-pr-3) open PR carries a different run id, or only an inline mention
   });
   const { gh } = makeGh({
     openPrs: [
-      { url: 'https://github.com/acme/w/pull/3928', body: '<!-- claude-tweaks-run: 2026-10-22T999999-other -->\n' },
-      { url: 'https://github.com/acme/w/pull/3929', body: `see claude-tweaks-run: ${RUN} in #12\n` },
+      { url: 'https://github.com/acme/w/pull/3928', body: '<!-- claude-tweaks-run: 2026-10-22T999999-other -->\n', isCrossRepository: false },
+      { url: 'https://github.com/acme/w/pull/3929', body: `see claude-tweaks-run: ${RUN} in #12\n`, isCrossRepository: false },
     ],
   });
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -654,6 +654,9 @@ test('(stale-pr-3) open PR carries a different run id, or only an inline mention
 
   assert.equal(code, 0);
   assert.deepEqual(JSON.parse(io.out[0]).claimed, [772]);
+  // A listing the normalizer rejected would also reclaim, through the fail-open catch, with a stderr line:
+  // no such line means the matcher itself ran and found no marker line.
+  assert.ok(!io.err.some((s) => s.includes('#772')), 'the listing is well formed, so the check did not fail open');
   const w = calls.find((a) => isWrite(a, '772'));
   assert.equal(fieldOf(w, 'sha'), 'sha772', 'an unmatched marker must fall through to the ordinary conditional reclaim write');
 });
@@ -742,7 +745,7 @@ test('(stale-pr-5) stale blob whose runId is not a run-id shape: reclaims and ne
     writes: { 774: [writeOk] },
   });
   const { gh, calls: ghCalls } = makeGh({
-    openPrs: [{ url: PR_URL, body: '<!-- claude-tweaks-run: otherRun -->\n' }],
+    openPrs: [{ url: PR_URL, body: '<!-- claude-tweaks-run: otherRun -->\n', isCrossRepository: false }],
   });
   const { deps, io } = baseDeps({ ghApi, gh });
 
@@ -813,7 +816,7 @@ test('staleClaimInFlightPr: an HTML-comment and a plain marker line both match; 
     'a non-array pr list result fails open to null',
   );
   assert.equal(
-    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: 'https://github.com/evil/x/pull/1', body: `claude-tweaks-run: ${RUN}\n` }]), 'acme', 'w'),
+    claimStore.staleClaimInFlightPr(staleMarker(RUN), ghWith([{ url: 'https://github.com/evil/x/pull/1', body: `claude-tweaks-run: ${RUN}\n`, isCrossRepository: false }]), 'acme', 'w'),
     null,
     'a cross-repo PR url never returns',
   );

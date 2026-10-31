@@ -950,3 +950,71 @@ test('resolveRepoSlugOrThrow: trims the slug, null on empty/absent output, rethr
   const timeout = Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' });
   assert.throws(() => resolveRepoSlugOrThrow(() => { throw timeout; }), (e) => e === timeout);
 });
+
+// ---- #4596: the injectable stale-claim matcher, split out of staleClaimInFlightPr ----
+const SC_RUN = '2026-10-31T005940-record-4596';
+const SC_URL = 'https://github.com/acme/w/pull/7';
+const scListed = (over) => ({ url: SC_URL, body: `claude-tweaks-run: ${SC_RUN}`, isCrossRepository: false, ...over });
+const scFiller = (n) => Array.from({ length: n }, (_, i) => ({
+  url: `https://github.com/acme/w/pull/${1000 + i}`, body: 'unrelated', isCrossRepository: false,
+}));
+
+test('openPrListArgs builds the gh pr list argv staleClaimInFlightPr uses', () => {
+  const { openPrListArgs } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.deepEqual(openPrListArgs('acme', 'w'), [
+    'pr', 'list', '--repo', 'acme/w', '--state', 'open', '--json', 'url,body,isCrossRepository', '--limit', '1000',
+  ]);
+});
+
+test('staleClaimRunId returns a shaped runId, null for a bad shape, and throws on malformed JSON', () => {
+  const { staleClaimRunId } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(staleClaimRunId(JSON.stringify({ runId: SC_RUN })), SC_RUN);
+  assert.equal(staleClaimRunId(JSON.stringify({ runId: '../x' })), null);
+  assert.equal(staleClaimRunId('{}'), null);
+  assert.throws(() => staleClaimRunId('not json'));
+});
+
+test('matchStaleClaimPr returns the matched entry, null on no match, and throws on a non-array or a capped no-match listing', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed()], 'acme', 'w').url, SC_URL);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ isCrossRepository: true })], 'acme', 'w'), null);
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ body: `see claude-tweaks-run: ${SC_RUN} here` })], 'acme', 'w'), null);
+  assert.throws(() => matchStaleClaimPr(SC_RUN, {}, 'acme', 'w'), /open-PR listing is not an array/);
+  assert.throws(() => matchStaleClaimPr(SC_RUN, scFiller(1000), 'acme', 'w'), /1000-entry limit/);
+  assert.equal(matchStaleClaimPr(SC_RUN, scFiller(999), 'acme', 'w'), null);
+});
+
+test('matchStaleClaimPr returns a { url, body } projection, not the raw listing entry', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const entry = scListed({ extra: 'dropped' });
+  assert.deepEqual(matchStaleClaimPr(SC_RUN, [entry], 'acme', 'w'), { url: SC_URL, body: entry.body });
+});
+
+test('matchStaleClaimPr rejects a marked non-cross-repo entry whose url is another repo (the url guard alone)', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url: 'https://github.com/evil/x/pull/1' })], 'acme', 'w'), null);
+});
+
+test('staleClaimInFlightPr runs the shared normalizer: a malformed gh listing reaches onError, as the CLI reports it (#4596)', () => {
+  const { staleClaimInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const claim = JSON.stringify({ runId: SC_RUN });
+  const errors = [];
+  const noBody = [{ url: SC_URL, isCrossRepository: false }];
+  assert.equal(staleClaimInFlightPr(claim, () => JSON.stringify(noBody), 'acme', 'w', (e) => errors.push(e)), null);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /entry 0 is not a PR/);
+  const mcpShaped = [{ html_url: SC_URL, body: `claude-tweaks-run: ${SC_RUN}`, head: { repo: { full_name: 'acme/w' } } }];
+  assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(mcpShaped), 'acme', 'w'), { link: SC_URL });
+});
+
+test('staleClaimInFlightPr: a null-body same-repo PR before the marked one is skipped, not a failed check (the matcher body guard alone)', () => {
+  const { staleClaimInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const claim = JSON.stringify({ runId: SC_RUN });
+  const errors = [];
+  const listing = [
+    { url: 'https://github.com/acme/w/pull/6', body: null, isCrossRepository: false },
+    scListed(),
+  ];
+  assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(listing), 'acme', 'w', (e) => errors.push(e)), { link: SC_URL });
+  assert.deepEqual(errors, []);
+});

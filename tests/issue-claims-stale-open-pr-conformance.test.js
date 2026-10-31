@@ -2,9 +2,12 @@
 // Pins _shared/issue-claims.md's "The lock" step 4 (#4423): the manual MCP claim path owes the same
 // stale-claim in-flight check bin/claim-targets.js runs through claim-store.js's `staleClaimInFlightPr`
 // — a TTL-expired claim whose run's marker sits on an open same-repo PR is in flight, not abandoned.
+// Since #4596 step 4 calls bin/stale-claim-pr.js for that verdict instead of restating the marker-match
+// rule, so the rule lives once, in code (tests/stale-claim-pr-cli.test.js pins it).
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -22,29 +25,58 @@ function lockStep4() {
   return ISSUE_CLAIMS.slice(start, end);
 }
 
-test('The lock step 4 carries the stale-claim open-PR check for the MCP path (#4423)', () => {
+test('AC1.2: The lock step 4 names the stale-claim CLI on the MCP path (#4596)', () => {
   const step4 = lockStep4();
   assert.match(step4, /`'stale'` blob/, 'the check is keyed on the stale classification');
-  assert.ok(step4.includes('staleClaimInFlightPr'), 'names the gh-CLI twin');
+  assert.ok(step4.includes('bin/stale-claim-pr.js'), 'calls the one matcher implementation');
+  assert.ok(step4.includes('--claim-file'), 'hands it the stale blob');
+  assert.ok(step4.includes('--listing'), 'hands it the agent-fetched MCP listing');
   assert.ok(step4.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool');
-  assert.ok(step4.includes('claude-tweaks-run: {runId}'), 'matches the run marker line');
-  assert.ok(step4.includes('<!-- claude-tweaks-run: {runId} -->'), 'matches the HTML-comment marker form');
-  assert.ok(step4.includes('`head.repo.full_name` is this repo'), 'a fork PR never counts, as the gh twin\'s isCrossRepository check');
+  assert.ok(step4.includes('staleClaimInFlightPr'), 'names the gh-CLI twin');
 });
 
-test('The lock step 4 stale check fails open: a failed listing falls through to the write (#4423)', () => {
+test('The lock step 4 runs the CLI first, lists PRs only on its exit 2 (gh absent), then re-runs with --listing (#4596)', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  const firstRun = step4.indexOf('bin/stale-claim-pr.js');
+  const listing = step4.indexOf('mcp__github__list_pull_requests');
+  assert.ok(firstRun !== -1 && listing > firstRun, 'the CLI runs before any MCP listing');
+  assert.ok(!/stale-claim-pr\.js" --claim-file[^`]*--listing/.test(step4.slice(0, listing)), 'the first run carries no --listing');
+  assert.match(step4, /Exit 2 means `gh` is absent: list the repo's open PRs/);
+  assert.match(step4, /re-run it adding `--listing "\{that path\}"`/);
+});
+
+test('AC1.1: The lock step 4 no longer restates the marker-match rule (#4596)', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  for (const retired of [
+    'claude-tweaks-run: {runId}',
+    '<!-- claude-tweaks-run: {runId} -->',
+    'head.repo.full_name',
+    RUN_ID_SHAPE.source,
+  ]) {
+    assert.ok(!step4.includes(retired), `step 4 must not restate "${retired}" — bin/stale-claim-pr.js owns it`);
+  }
+});
+
+test('The lock step 4 stale check fails open: a failed check falls through to the write (#4423)', () => {
   const step4 = lockStep4().replace(/\s+/g, ' ');
   assert.match(
     step4,
-    /failed or unparseable listing falls through to the write/,
+    /failure[^.]*non-zero exit[^.]*falls through to the write/,
     'a broken listing must never wedge the claim path',
   );
   assert.match(step4, /after one line saying the check failed — never silently/, 'as the gh twin\'s onError warning');
 });
 
-test('every prose copy of the run-id shape equals claim-store.js\'s RUN_ID_SHAPE (#4423)', () => {
-  // Agents execute these copies on the MCP path and in /tidy, so a drift from the code is a behavior split.
-  for (const rel of ['_shared/issue-claims.md', 'tidy/scan-procedures.md', 'flow/claim-targets.md']) {
-    assert.ok(readText(path.join(SKILLS, rel)).includes(RUN_ID_SHAPE.source), `${rel} states RUN_ID_SHAPE verbatim`);
-  }
+test('the run-id shape is restated only in flow/claim-targets.md (#4423, #4596)', () => {
+  // bin/stale-claim-pr.js owns the stale-claim match now; the one remaining prose copy validates a run id
+  // read from a tombstone's PR for the resume route, so it stays pinned to claim-store.js's RUN_ID_SHAPE.
+  // The copy list is built by walking every skill file, never from a remembered list, so a new copy
+  // anywhere under plugin/skills/ fails here (.claude/skills/prose-code-twin-pin).
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+  const copies = walk(SKILLS)
+    .filter((f) => f.endsWith('.md') && readText(f).includes(RUN_ID_SHAPE.source))
+    .map((f) => path.relative(SKILLS, f).split(path.sep).join('/'));
+  assert.deepEqual(copies, ['flow/claim-targets.md'],
+    'only flow/claim-targets.md states RUN_ID_SHAPE; every other skill file must call bin/stale-claim-pr.js');
 });

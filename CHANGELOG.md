@@ -53,6 +53,26 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.157.1](https://github.com/thn-inc/claude-tweaks/compare/v6.157.0...v6.157.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* closing-tally.js has no Resolve-lane field, so a refine… ([#4566](https://github.com/thn-inc/claude-tweaks/issues/4566)) ([2be4220](https://github.com/thn-inc/claude-tweaks/commit/2be422069a9d2bb2964ad06db86afffe840cc9a8))
+* Rebind the run PR body when a resumed run reuses a… ([#4580](https://github.com/thn-inc/claude-tweaks/issues/4580)) ([a9192e0](https://github.com/thn-inc/claude-tweaks/commit/a9192e004e8199467fcb051693560eb1d49607bb))
+* Review Console: a contested-pair partner re-staged after… ([#4583](https://github.com/thn-inc/claude-tweaks/issues/4583)) ([fed1736](https://github.com/thn-inc/claude-tweaks/commit/fed17360e564e97df8a88da8768703ee50859aba))
+* Treat a renumbered journey step and an extended Origin… ([#4590](https://github.com/thn-inc/claude-tweaks/issues/4590)) ([3813a59](https://github.com/thn-inc/claude-tweaks/commit/3813a598d57b9ec1cc318c91632f22483d67534e))
+
+### Highlights
+* Closing a below-floor parent after a merge now relies on the same tested code that settles the merge's closing links.
+* /tidy and the gh-absent claim path decide whether a stale claim's run still has an open PR with the same code /flow uses.
+* Skill authors get an explicit rule for keeping untrusted text out of shell and paste commands, and review now looks for it.
+* A multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a later spec inserts a journey step that renumbers an earlier spec's steps, or adds itself to a journey's Origin line.
+* The closing tally from `/claude-tweaks:backlog refine #N` now counts resolved decisions instead of leaving them unclassified.
+* No user-visible change — documentation accuracy fix.
+* A re-flagged review finding that a later contested-pair verdict covers is now settled at the Review Console.
+* A resumed run that reuses a still-open draft PR now rebinds the PR body to the new run, so the phase checklist updates at every phase exit instead of being refused until a manual rewrite.
+
 ## [6.157.0](https://github.com/thn-inc/claude-tweaks/compare/v6.156.3...v6.157.0) (2026-10-30)
 
 

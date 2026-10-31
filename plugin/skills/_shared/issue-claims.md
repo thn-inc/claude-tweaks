@@ -164,7 +164,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      check for an in-flight build (#974) — the MCP-transport equivalent of the in-flight check
      the "In-flight detection at claim time (#315)" section below documents for the `gh`-CLI
      transport (`tombstoneInFlightPr`, run inside `bin/claim-targets.js`, which does not apply
-     here — this manual MCP path has no CLI to delegate to). Parse the tombstone content already
+     here — the tombstone check has no CLI of its own). Parse the tombstone content already
      extracted in step 2: when its `reason` field starts with `pr-opened:` and its `link` field is
      a well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
      as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
@@ -176,16 +176,19 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      section. A still-`OPEN` state means a build for this issue already exists and reclaiming
      would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
      in-flight card does. Any other state (closed, merged) or a failed read falls through to the
-     write below unchanged. For a `'stale'` blob, the counterpart (#4423; gh-CLI twin:
-     `claim-store.js`'s `staleClaimInFlightPr`): validate its `runId` against
-     `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (a mismatch skips the check), then list the
-     repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`,
-     `perPage: 100`, paging until exhausted) and look for a PR whose `html_url` is a same-repo PR
-     URL, whose `head.repo.full_name` is this repo (a fork PR's body proves nothing), and whose
-     body has a trimmed line equal to `claude-tweaks-run: {runId}` or
-     `<!-- claude-tweaks-run: {runId} -->`. A match stops the claim and writes nothing, as the
-     tombstone case does. A failed or unparseable listing falls through to the write (fail open),
-     after one line saying the check failed — never silently, so it is not read as no marked PR.
+     write below unchanged. For a `'stale'` blob, the counterpart (#4423): run
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"`
+     — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s
+     `staleClaimInFlightPr`); it validates the run id first, so a claim with no usable run id never
+     lists PRs. A JSON verdict is the answer. Exit 2 means `gh` is absent: list the repo's open PRs
+     once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging
+     until exhausted), Write every page's entries as one JSON array to the path
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
+     prints, and re-run it adding `--listing "{that path}"` (it normalizes the MCP entries itself).
+     `"match": true` stops the claim and writes nothing, as the tombstone case does. A non-null
+     `failure`, a non-zero exit other than the exit 2 that triggers the listing, or a listing that
+     could not be fetched or written, falls through to the write (fail open), after one line saying
+     the check failed — never silently, so it is not read as no marked PR.
      Otherwise, write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
@@ -504,7 +507,7 @@ one stderr warning on a failed check).
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of
 `outcome` (`flow/claim-targets.md`'s "Branch on exit code"). That CLI is the `gh`-transport only
 (see "The lock" step 4's MCP note above) — "The lock" step 4's own in-flight check (#974) is
-where the `gh`-absent MCP path gets the equivalent stop, since it has no CLI to delegate to.
+where the `gh`-absent MCP path gets the equivalent stop, since the tombstone check has no CLI of its own.
 
 Every claim, skip, break, and release is logged to the run's `decisions.md` per
 `_shared/auto-decision-log.md` (status `AUTO`, reversible: release overwrites the blob with a
