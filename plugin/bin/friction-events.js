@@ -61,6 +61,7 @@ const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./lib/hooks/context');
 const wtDetect = require('./lib/hooks/worktree-detect');
+const { canonicalRealpath } = require('./lib/path-guard');
 const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
 
 const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
@@ -210,7 +211,7 @@ const realDeps = {
   findRunsByWorktreePath: ctxLib.findRunsByWorktreePath,
   sessionId: () => process.env.CLAUDE_CODE_SESSION_ID || null,
   repoInfo: wtDetect.repoInfo,
-  realpath: wtDetect.safeReal,
+  realpath: (p) => canonicalRealpath(p),
   findAdHocRunsBySessionId: ctxLib.findAdHocRunsBySessionId,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -242,8 +243,12 @@ function run(argv, deps = realDeps) {
   // spawns git.
   if (siblings.length > 0) {
     const info = deps.repoInfo(worktreePath) || {};
-    const inMainCheckout = Boolean(info.repoRoot) && !info.isLinkedWorktree
-      && info.repoRoot === deps.realpath(worktreePath);
+    // Both sides go through the same canonicalizer (on-disk case), as
+    // findRunsByWorktreePath's own matching does, so a miscased spelling of the
+    // main checkout on a case-insensitive volume is still recognised.
+    const repoRoot = info.repoRoot ? deps.realpath(info.repoRoot) : null;
+    const inMainCheckout = Boolean(repoRoot) && !info.isLinkedWorktree
+      && repoRoot === deps.realpath(worktreePath);
     if (inMainCheckout) {
       siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isAdHocRunDir(siblingDir)
         && Boolean(sessionId) && state?.sessionId === sessionId);
