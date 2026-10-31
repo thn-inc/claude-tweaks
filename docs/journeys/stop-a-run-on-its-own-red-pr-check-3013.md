@@ -49,4 +49,5 @@ files:
 - Updated during `/claude-tweaks:build` of record #3405 (2026-10-17): the reader also lists the head sha's workflow runs, so a partial rollup reads `pending`; a stale head skips that read.
 - Updated during `/claude-tweaks:build` of record #3257 (2026-10-19): the merge gate now normalizes StatusContext entries the same way this reader does, so the former red-here/pending-at-merge divergence is gone.
 - Updated during `/claude-tweaks:build` of record #3258 (2026-10-19): on a red read the reader compares against the PR's base-branch tip; all-inherited red is `inherited-red` (a caveat pass), mixed red names only the attributable checks, an unreadable base stays `red`.
+- Updated during `/claude-tweaks:build` of record #4550 (2026-10-31): the `merge-verification: off` caveat pass now applies only to an explicit `off`. A derived `off` (no `policy.yml` key, e.g. a non-default integration branch) fails the gate on red, matching the merge gate's derived-`off` Red path.
 - Related: `docs/journeys/recover-a-ci-parked-run.md` (the merge gate's own red path, after review)
