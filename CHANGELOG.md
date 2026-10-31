@@ -63,6 +63,16 @@ Three conventions follow from how this repo works, and all are visible below:
 * Review Console: a contested-pair partner re-staged after… ([#4583](https://github.com/thn-inc/claude-tweaks/issues/4583)) ([fed1736](https://github.com/thn-inc/claude-tweaks/commit/fed17360e564e97df8a88da8768703ee50859aba))
 * Treat a renumbered journey step and an extended Origin… ([#4590](https://github.com/thn-inc/claude-tweaks/issues/4590)) ([3813a59](https://github.com/thn-inc/claude-tweaks/commit/3813a598d57b9ec1cc318c91632f22483d67534e))
 
+### Highlights
+* Closing a below-floor parent after a merge now relies on the same tested code that settles the merge's closing links.
+* /tidy and the gh-absent claim path decide whether a stale claim's run still has an open PR with the same code /flow uses.
+* Skill authors get an explicit rule for keeping untrusted text out of shell and paste commands, and review now looks for it.
+* A multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a later spec inserts a journey step that renumbers an earlier spec's steps, or adds itself to a journey's Origin line.
+* The closing tally from `/claude-tweaks:backlog refine #N` now counts resolved decisions instead of leaving them unclassified.
+* No user-visible change — documentation accuracy fix.
+* A re-flagged review finding that a later contested-pair verdict covers is now settled at the Review Console.
+* A resumed run that reuses a still-open draft PR now rebinds the PR body to the new run, so the phase checklist updates at every phase exit instead of being refused until a manual rewrite.
+
 ## [6.157.0](https://github.com/thn-inc/claude-tweaks/compare/v6.156.3...v6.157.0) (2026-10-30)
 
 
