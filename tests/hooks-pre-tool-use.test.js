@@ -1313,10 +1313,29 @@ test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from
   }
 });
 
-test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+// #4559: `drop` and `clear` destroy stack entries — a sibling worktree's
+// in-flight WIP stash included — so they warn like push/pop; only the
+// subcommands that leave the stack intact stay silent.
+test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
+  for (const cmd of ['git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop']) {
+    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+    assert.ok(!out.json.hookSpecificOutput, `must warn, never deny: ${cmd}`);
+  }
+});
+
+test('AC7.2: `git stash list`, `show` and `apply` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash list', 'git stash show', 'git stash apply']) {
+    assert.deepStrictEqual(pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt }), {}, `expected silence for: ${cmd}`);
+  }
+});
+
+test('#4559: `git stash drop` from the main checkout is silent', () => {
+  const { main } = mainAndWorktree();
+  const out = pre.run({ input: bashInput('git stash drop', main), runDir: null, runState: null, cwd: main });
+  assert.deepStrictEqual(out, {});
 });
 
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree

@@ -897,11 +897,13 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // call proved this by popping a sibling worktree's WIP stash while comparing
 // test discrimination against a baseline; #2065 closed the gap where only
 // the bare/`pop` spellings were covered — the exact hazard, reachable
-// through the equally common explicit `stash push`/`-u`/`-m` forms. This is
-// a WARN, never a deny: unlike E1/worktree-required, there is no provable
-// "whose stash entry is this" signal to gate on — only a heads-up pointing
-// at a non-mutating alternative. `list`/`show`/`apply`/`drop`/`clear`/
-// `branch` stay silent — mirroring git-command.js's own
+// through the equally common explicit `stash push`/`-u`/`-m` forms. #4559
+// added `drop` and `clear`: they destroy stack entries — a sibling
+// worktree's in-flight WIP stash included — so they are stack-destroying and
+// warn like `pop`. This is a WARN, never a deny: unlike E1/worktree-required,
+// there is no provable "whose stash entry is this" signal to gate on — only a
+// heads-up pointing at a non-mutating alternative. `list`/`show`/`apply`/
+// `branch` stay silent (`apply` changes the worktree, not the stack) — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
@@ -922,14 +924,15 @@ function checkGitStashWarn(segments, warnings) {
     if (t[index] !== 'stash') continue;
     const next = t[index + 1];
     const mutatesStack = next === undefined || next === 'pop' || next === 'push'
-      || next === 'save' || (typeof next === 'string' && next.startsWith('-'));
+      || next === 'save' || next === 'drop' || next === 'clear'
+      || (typeof next === 'string' && next.startsWith('-'));
     if (!mutatesStack) continue;
     if (!dir) continue;
     const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(dir);
     if (indeterminate || !isLinkedWorktree) continue;
     warnings.push(
       'claude-tweaks: git stash is repository-wide, shared by every linked worktree of this '
-      + "checkout — running it here can push onto or pop a SIBLING worktree's stash entry. "
+      + "checkout — running it here can push onto, pop, or drop a SIBLING worktree's stash entry. "
       + 'Compare against a baseline without mutating the tree instead: `git show <rev>:<path>`, '
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
       + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
