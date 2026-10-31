@@ -69,8 +69,8 @@ check" registration procedure, in the same spirit as `docs/hooks.md` for `plugin
   process) must **partition `ALL_CHECKS` exactly** — no overlap, nothing silently dropped. A new
   check has to join one list or the other.
   The unscoped `hooks.js reconcile` CLI defers three of the seven to that same background pass
-  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them and runs inline beside `archive`); an explicit `--checks` call is
-  never deferred.
+  (`CLI_DEFERRED_CHECKS`, #4032 — see the Timing contract below; `post-merge` is not among them
+  and runs inline beside `archive`); an explicit `--checks` call is never deferred.
 
 ## Adding a new check
 
@@ -760,7 +760,10 @@ An unscoped `hooks.js reconcile` call took about 52.5 s; the contract below is w
   page, a malformed node or any other error leaves that key out, and the per-item `gh` twins
   resolve it, so they stay the sole owner of `pr-not-found` and every failure string. It runs only
   when `origin` is provably on `github.com`, and the query is pinned there with `--hostname
-  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path. `post-merge` dispatches ahead of `archive`'s warm-up, so it prefetches the recorded PR number of every unmarked run itself (`prefetchPostMergePrStates`, clean runs included) before its per-run lookups; otherwise each active run would cost one live `gh pr view` per pass.
+  github.com` so a `GH_HOST` cannot redirect it; any other host takes the per-item path.
+  `post-merge` dispatches ahead of `archive`'s warm-up, so it prefetches the recorded PR number of
+  every unmarked run itself (`prefetchPostMergePrStates`, clean runs included) before its per-run
+  lookups; otherwise each active run would cost one live `gh pr view` per pass.
 - **Claim blobs are reused by blob sha** (`release-merged.js`, `claimBlobs` key). An active claim's
   contents are cached by git blob sha and rewritten each pass to that pass's active claims, so it
   stays bounded. The reuse skips only the contents read — classification and the PR/issue join
