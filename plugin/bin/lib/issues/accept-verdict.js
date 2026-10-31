@@ -27,6 +27,7 @@
 
 const { isTrustedComment } = require('./comment-trust');
 const { dispositionState } = require('./acceptance');
+const { normalizeLabelNames } = require('./record-vocabulary');
 
 const VERDICTS = new Set(['approved', 'changes-requested']);
 const CHOICES = new Set(['fix-forward', 'revert-now']);
@@ -156,12 +157,14 @@ function parseVerdictMarker(input) {
 
 // verdict is parseVerdictMarker's result.verdict. The marker counts only when its
 // word equals the record's current disposition. Without a marker nothing disagreed,
-// so that case takes no action and carries no note.
+// so that case takes no action and carries no note. labels may be strings or gh's
+// { name } objects.
 function verdictAgreement(input) {
   const { labels, verdict } = input || {};
   const word = verdict && verdict.verdict;
   if (!VERDICTS.has(word)) return { action: 'none' };
-  return dispositionState(labels) === word ? { action: 'proceed' } : { action: 'none', note: DISAGREE_NOTE };
+  const names = Array.isArray(labels) ? normalizeLabelNames(labels) : [];
+  return dispositionState(names) === word ? { action: 'proceed' } : { action: 'none', note: DISAGREE_NOTE };
 }
 
 module.exports = { renderVerdictMarker, parseVerdictMarker, verdictAgreement };

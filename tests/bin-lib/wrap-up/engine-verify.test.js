@@ -1672,7 +1672,7 @@ test('AC3.1: engine-verify agrees on mixed labels', () => {
   for (const labels of [['demo:pending', 'demo:changes-requested'], ['accept:pending', 'demo:changes-requested'], ['demo:pending', 'accept:changes-requested']]) {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
     assert.strictEqual(row.result, 'fail', labels.join('+'));
-    assert.match(row.detail, /#900: pending label outranked by a verdict/, labels.join('+'));
+    assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
     assert.doesNotMatch(row.detail, /missing demo:pending label/, labels.join('+'));
   }
 

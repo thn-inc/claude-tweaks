@@ -109,7 +109,7 @@ to, trips the breaker:
   `discoverClosingCommits`/`isClosingCommitReverted` — the same detector the class-scoped mechanism
   above uses, not a second implementation of the same git-log parsing);
 - the record reopened after having been observed closed;
-- the record carries the changes-requested acceptance label (`demo:changes-requested` or `accept:changes-requested`).
+- the record's acceptance facet reads `changes-requested` (`_shared/work-record.md`).
 
 **Machine-granted scope is load-bearing.** Only records the machine-grant unit itself granted
 `auto:merge` to are ever watched (`merge-lane/watched.json`, seeded exclusively at that grant —

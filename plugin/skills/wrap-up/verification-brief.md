@@ -147,12 +147,17 @@ Run the check-then-create loop from `_shared/label-bootstrap.md` with:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"]
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
+  ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
+  ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
+  ["accept:changes-requested", "Acceptance: a human found a gap — see the linked follow-up record", "006B75"]
 ]
 ```
 
-Only `demo:pending` is bootstrapped here — `/wrap-up` never applies the other two acceptance
-labels (see `_shared/work-record.md`'s permission matrix).
+`/wrap-up` applies only `demo:pending` — it never applies the approved or changes-requested
+acceptance labels (see `_shared/work-record.md`'s permission matrix). The `accept:*` rows only
+create the labels in the repo (`_shared/label-bootstrap.md`, below its canonical array).
 
 ## Step 2: Author the observation plan
 

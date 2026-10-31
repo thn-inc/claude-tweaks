@@ -15,7 +15,7 @@ const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
 // first. Every reader must see both, resolved by the one precedence rule in
-// record-vocabulary.js's acceptanceOf. This suite pins three things:
+// record-vocabulary.js's acceptanceOf. This suite pins four things:
 //   - AC3.1: readers that classify a record agree on a mixed-label record.
 //   - AC3.3: no reader sees `accept:pending` (or any accept:* label) as "no
 //     acceptance state", and a NEW module that reads demo:* labels fails here
@@ -23,7 +23,11 @@ const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 //   - the guard: a demo:* verdict literal in plugin/bin code outside the three
 //     modules that must spell it (the vocabulary, the batch marker, and the closure
 //     check that reports the legacy spelling back) fails.
+//   - the prose rules the labels depend on: a /demo verdict replaces prior labels,
+//     /demo finds a fresh brief behind an outranked pending label, and the acceptance
+//     consumers provision the accept:* rows.
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
+const SKILLS_ROOT = path.join(__dirname, '..', 'plugin', 'skills');
 
 function walk(dir) {
   const out = [];
@@ -287,4 +291,99 @@ test('plugin/bin names a demo:* verdict literal only in the three modules that m
     'read a verdict through acceptanceOf / dispositionState, never a demo:* literal — only the vocabulary, the batch marker and the closure check spell the legacy label');
   assert.ok(BIN_FILES.length >= 400, `walked ${BIN_FILES.length} files, expected the whole plugin/bin tree`);
   assert.ok(sites >= 5, `matched ${sites} allowed literal sites, expected at least 5 — the matcher stopped matching`);
+});
+
+// --- The prose rules the labels depend on ---
+
+const skillText = (...parts) => readText(path.join(SKILLS_ROOT, ...parts));
+const collapse = (text) => text.replace(/\s+/g, ' ');
+const LABEL_RE = /`((?:demo|accept):[a-z-]+)`/g;
+const labelsIn = (text) => [...text.matchAll(LABEL_RE)].map((m) => m[1]).sort();
+
+// The labels /demo's replacement rule removes, per bullet.
+function demoRemovals() {
+  const skill = skillText('demo', 'SKILL.md');
+  const from = skill.indexOf('**A verdict replaces any prior acceptance label the record carries.**');
+  assert.notEqual(from, -1, 'the replacement rule must exist in /demo Step 3');
+  const rule = skill.slice(from, skill.indexOf('**Provenance signal', from));
+  const bullet = (name) => {
+    const line = rule.split('\n').find((l) => l.startsWith(`- **${name}:**`));
+    assert.ok(line, `the replacement rule must have a ${name} bullet`);
+    return labelsIn(line);
+  };
+  return { rule: collapse(rule), every: bullet('Every verdict'), approve: bullet('Approve'), changes: bullet('Request changes') };
+}
+
+test('/demo Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
+  const { every, approve, changes } = demoRemovals();
+  assert.deepEqual(every, ['accept:pending', 'demo:pending']);
+  assert.deepEqual(approve, ['accept:changes-requested', 'demo:changes-requested']);
+  assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch']);
+
+  // Every record a verdict can land on: each subset of the three states, both spellings.
+  const prior = STATES.flatMap((state) => [`demo:${state}`, `accept:${state}`]);
+  const apply = (labels, removed, added) => [...labels.filter((l) => !removed.includes(l)), added];
+  for (let mask = 0; mask < 2 ** prior.length; mask += 1) {
+    const labels = prior.filter((_, i) => mask & (1 << i));
+    assert.equal(acceptanceOf(apply(labels, [...every, ...approve], 'demo:approved')), 'approved', labels.join('+'));
+    assert.equal(acceptanceOf(apply(labels, [...every, ...changes], 'demo:changes-requested')), 'changes-requested', labels.join('+'));
+  }
+});
+
+test('/demo Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
+  const skill = skillText('demo', 'SKILL.md');
+  const { rule } = demoRemovals();
+  assert.match(rule, /only when those labels hold it\*\*, `demo:pending` included/);
+  assert.match(rule, /exits 1 with "not found"/);
+  // The verdict commands themselves name no removal, so none can run unconditionally.
+  assert.doesNotMatch(skill, /gh issue edit \{n\} --remove-label/);
+  assert.doesNotMatch(skill, /silent no-op/);
+});
+
+test('the permission matrix gives /demo the same removals as its Step 3, and adds no accept:* label', () => {
+  const { every, approve, changes } = demoRemovals();
+  const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/demo`** |'));
+  assert.ok(row, 'the matrix must have a /demo row');
+  const [, adds, removes] = row.split(' | ').map((cell) => cell.trim());
+  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...changes].sort());
+  assert.match(removes, /only when the record holds it/);
+  assert.deepEqual(labelsIn(adds).filter((l) => l.startsWith('accept:')), []);
+});
+
+test('the two contract files state /demo as the one exception to "no skill writes accept:*"', () => {
+  const matrix = collapse(skillText('_shared', 'work-record-permission-matrix.md'));
+  const bootstrap = collapse(skillText('_shared', 'label-bootstrap.md'));
+  assert.match(matrix, /no skill adds an `accept:\*` label today\. The one exception on the removing side is `\/demo`/);
+  assert.match(bootstrap, /No skill adds an `accept:\*` label yet; `\/demo` removes them/);
+  assert.doesNotMatch(matrix, /adds or removes an `accept:\*` label/);
+  assert.doesNotMatch(bootstrap, /no skill writes `accept:\*`/);
+});
+
+test('every acceptance bootstrap list provisions the four accept:* rows, byte-equal to the canonical array', () => {
+  const canonicalMatch = skillText('_shared', 'label-bootstrap.md').match(/## Canonical LABELS_JSON[\s\S]*?```js\n([\s\S]*?)\n```/);
+  assert.ok(canonicalMatch, 'the canonical LABELS_JSON fence must resolve');
+  const canonical = JSON.parse(canonicalMatch[1]);
+  const acceptRows = canonical.filter(([name]) => name.startsWith('accept:'));
+  assert.equal(acceptRows.length, 4);
+
+  for (const file of [['wrap-up', 'verification-brief.md'], ['wrap-up', 'verification-brief-parent-gate.md']]) {
+    const match = skillText(...file).match(/LABELS_JSON = (\[[\s\S]*?\n\])/);
+    assert.ok(match, `${file.join('/')}: the LABELS_JSON list must resolve`);
+    const rows = JSON.parse(match[1]);
+    assert.deepEqual(rows.filter(([name]) => name.startsWith('accept:')), acceptRows, file.join('/'));
+    assert.deepEqual(rows.filter(([name]) => name.startsWith('demo:')).map(([name]) => name), ['demo:pending'], file.join('/'));
+  }
+
+  // /demo lists names and copies the rows from the canonical array.
+  const skill = skillText('demo', 'SKILL.md');
+  const from = skill.indexOf('**Label-backed entries** (Step 1');
+  const list = labelsIn(skill.slice(from, skill.indexOf('**A verdict replaces', from)));
+  for (const [name] of acceptRows) assert.ok(list.includes(name), `/demo Step 3 must bootstrap ${name}`);
+});
+
+test('/demo fetches the fresh brief when any pending label is present, even one a verdict outranks', () => {
+  const paths = collapse(skillText('demo', 'entry-paths.md'));
+  assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
+  assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
+  assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
 });

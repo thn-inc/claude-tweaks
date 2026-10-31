@@ -348,6 +348,19 @@ test('AC4.3: without a marker nothing disagreed, so there is no action and no no
   assert.deepStrictEqual(verdictAgreement(), none, 'no argument');
 });
 
+test('AC4.3: verdictAgreement reads gh { name } labels the same as bare strings', () => {
+  const approved = { v: 1, verdict: 'approved' };
+  const asObjects = (names) => names.map((name) => ({ name }));
+  for (const names of [['accept:approved'], ['demo:approved'], ['accept:pending'], ['accept:approved', 'demo:pending'], []]) {
+    assert.deepStrictEqual(
+      verdictAgreement({ labels: asObjects(names), verdict: approved }),
+      verdictAgreement({ labels: names, verdict: approved }),
+      names.join('+') || '(none)',
+    );
+  }
+  assert.deepStrictEqual(verdictAgreement({ labels: asObjects(['accept:approved']), verdict: approved }), { action: 'proceed' });
+});
+
 test('AC4.3: a parsed marker feeds verdictAgreement directly', () => {
   const { verdict } = parseOwner(good);
   assert.deepStrictEqual(verdictAgreement({ labels: ['accept:changes-requested'], verdict }), { action: 'proceed' });

@@ -28,7 +28,9 @@ gh issue list --search "label:demo:pending,accept:pending" --state all --json nu
 
 The comma is an OR across the two pending spellings (`_shared/work-record.md`, Acceptance axis).
 A record carrying a pending label is listed regardless of any resolution label it also carries;
-this scope enumerates pending labels and does not apply the precedence rule.
+this scope enumerates pending labels and does not apply the precedence rule. The query is a search,
+so a record labelled seconds before the run can be missing while the search index lags — unwarned,
+and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
 ({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref

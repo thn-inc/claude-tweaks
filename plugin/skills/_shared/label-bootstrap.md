@@ -99,7 +99,8 @@ families plus the optional `priority:*` family — see that table for the curren
 and total counts, rather than a count restated here), with descriptions pre-checked against
 GitHub's 100-character cap. **Consumers bootstrap only the labels they are about to apply** —
 copy the relevant pairs, don't create the full array below speculatively (except `/init`'s
-one-time provision-now offer, which uses this list whole):
+one-time provision-now offer, which uses this list whole, and the acceptance consumers' `accept:*`
+rows, per the note below the array):
 
 ```js
 [
@@ -148,4 +149,4 @@ one-time provision-now offer, which uses this list whole):
 ]
 ```
 
-The `accept:*` rows are provisioned alongside the `demo:*` rows while both spellings are read (`_shared/work-record.md`, Acceptance axis). Bootstrapping them only creates the labels in the repo; it never applies one to a record, and no skill writes `accept:*` yet.
+The `accept:*` rows are provisioned alongside the `demo:*` acceptance rows while both spellings are read (`_shared/work-record.md`, Acceptance axis): the acceptance consumers, `wrap-up/verification-brief.md` Step 1, `wrap-up/verification-brief-parent-gate.md`'s Apply the gate and `demo/SKILL.md` Step 3, each list all four, and `/init`'s provision-now offer takes the whole array. This is the one exception to "only the labels they are about to apply", and it applies nothing: bootstrapping creates the labels in the repo and never puts one on a record. No skill adds an `accept:*` label yet; `/demo` removes them when a verdict replaces them (`_shared/work-record-permission-matrix.md`).

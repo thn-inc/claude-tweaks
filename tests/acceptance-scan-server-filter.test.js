@@ -565,3 +565,8 @@ test('the acceptance-queue lists records carrying either pending spelling', () =
   assert.ok(!QUEUE.includes('gh issue list --label demo:pending'));
 });
 
+test('the acceptance-queue names its search-index lag as an unwarned, self-correcting gap', () => {
+  const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
+  assert.match(QUEUE, /query\s+is\s+a\s+search[\s\S]{0,120}index\s+lags[\s\S]{0,40}unwarned[\s\S]{0,40}next\s+run/);
+});
+

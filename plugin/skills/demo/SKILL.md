@@ -48,8 +48,8 @@ Not for: discovering what's outstanding across the backlog (`/claude-tweaks:help
 ## Input
 
 `$ARGUMENTS` — *(none)* resolves this session's own unrecorded work via session-recall (Step 1);
-`#N` resolves that single record's Verification Brief, falling back — when its acceptance facet
-does not read `pending` (either label spelling, `_shared/work-record.md`) — first to the record's closing commit in git history, then to session-recall
+`#N` resolves that single record's Verification Brief, falling back — when it carries no pending
+acceptance label (either spelling, `_shared/work-record.md`) — first to the record's closing commit in git history, then to session-recall
 scoped to that `#N` (Step 1); `#N[,#M...]` — grammar (notation, tokenization) is `_shared/record-batch-input.md`'s contract —
 is an explicit human-supplied batch: each ref
 runs the `#N` path in list order,
@@ -244,16 +244,26 @@ batched across items — so the next ref's Step 1 starts only once this ref's la
 follow-up filing) has landed.
 
 **Label-backed entries** (Step 1's `#N` lookup): bootstrap `demo:approved`,
-`demo:changes-requested`, and `demo:approved-batch` via the check-then-create loop from
-`_shared/label-bootstrap.md` before the first swap this run.
+`demo:changes-requested`, `demo:approved-batch`, `accept:pending`, `accept:approved`,
+`accept:approved-batch` and `accept:changes-requested` via the check-then-create loop from
+`_shared/label-bootstrap.md` before the first swap this run, copying each row from that file's
+canonical `LABELS_JSON`. The `accept:*` rows only create the labels in the repo; this skill applies
+none of them.
 
-**Clearing the pending twin.** This skill still writes only `demo:*`. When the labels Step 1 fetched
-for this ref include `accept:pending` (`_shared/work-record.md`), the verdict command below also
-passes `--remove-label accept:pending` in the same invocation: most-conservative-wins would
-otherwise let the leftover `accept:pending` outrank the new verdict and keep the record pending.
-Pass it **only when the record carries the label** — `gh issue edit --remove-label` errors on a
-label the repo has never created, which is every repo that has not yet re-provisioned the
-`accept:*` set, so an unconditional removal would fail the whole edit and drop the verdict.
+**A verdict replaces any prior acceptance label the record carries.** This skill still adds only
+`demo:*`, but most-conservative-wins (`_shared/work-record.md`) would otherwise let a leftover label
+outrank the new verdict: an Approve on a previously rejected record would keep reading
+`changes-requested`. So the verdict command below also passes, in the same invocation, one
+`--remove-label` for each of these that the labels Step 1 fetched for this ref hold:
+
+- **Every verdict:** `demo:pending`, `accept:pending`.
+- **Approve:** `demo:changes-requested`, `accept:changes-requested`.
+- **Request changes:** `demo:approved`, `accept:approved`, `demo:approved-batch`, `accept:approved-batch`.
+
+Pass each **only when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label`
+exits 1 with "not found" on a label the repo has never created and fails the whole edit, dropping
+the verdict, while a label the record holds is known to exist. A closing-commit reconstruction needs
+no variant: it passes whichever of these it holds, usually none.
 
 **Provenance signal (Approve only).** A single-record verdict and a `#N,#M` batch-list verdict
 are otherwise byte-identical on the wire — both run Step 2's per-item walkthrough in full — so
@@ -269,9 +279,9 @@ writes no equivalent facet. A pre-existing approved label carries no such marker
 as single-record-backed — the safer default, since promoting an unlabeled historical approval to
 "batch" would understate coverage rather than overstate it.
 
-- **Approve** — `gh issue edit {n} --remove-label demo:pending --add-label demo:approved` — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation, and add `--remove-label accept:pending` when the record carries it (the twin note above). `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). One command covers both entry shapes: `--remove-label demo:pending` on a record that does not carry it is a silent no-op — verified on this repo, exit 0, and `--add-label` in the same invocation still lands — so a closing-commit reconstruction, which never had `demo:pending`, needs no variant. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: below the oversight floor the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) closes a parent with no sign-off, but a parent above the floor is closed only here, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
+- **Approve** — `gh issue edit {n} --add-label demo:approved`, plus the `--remove-label` flags the replacement rule above selects for Approve — for a batch-sourced verdict (per the Provenance signal note above), add `--add-label demo:approved-batch` to the same invocation. `work-backend: local-files`: set `facets.acceptance = 'approved'` via `writeRecord` — no equivalent provenance facet on this driver (see the Provenance signal note above). For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`) — close it too: below the oversight floor the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) closes a parent with no sign-off, but a parent above the floor is closed only here, so without this the parent stays open forever and the acceptance label is the only trace the parent issue was ever accepted. `work-backend: github-issues`: `gh issue close {n} --reason completed`. `work-backend: local-files`: `closeRecord(path)` (`bin/lib/issues/local-store.js`), run **after** the `writeRecord` call above — `closeRecord` does its own fresh read of the file, so calling it second means it preserves the `acceptance: 'approved'` facet just written rather than racing it.
 - **Request changes** — prompt for a short reason inline, then:
-  1. **`work-backend: github-issues`:** `gh issue edit {n} --remove-label demo:pending --add-label demo:changes-requested`, plus `--remove-label accept:pending` when the record carries it (the twin note above). **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
+  1. **`work-backend: github-issues`:** `gh issue edit {n} --add-label demo:changes-requested`, plus the `--remove-label` flags the replacement rule above selects for Request changes. **`work-backend: local-files`:** set `facets.acceptance = 'changes-requested'` via `writeRecord`. For a decomposition parent — `parent-issue` in its labels (`work-backend: github-issues`) or `facets.isParentIssue === true` (`work-backend: local-files`), the same two-driver test the Approve branch above uses — nothing further follows this: the parent stays open, since a changes-requested verdict means the parent issue's work is not done.
   2. File a linked follow-up record and note the bidirectional link back on the original — read
      `follow-up-record.md` in this skill's directory and follow its items 2 and 3 (both drivers:
      `recordPayload` under `work-backend: github-issues`, `createRecord`+`deriveSlug` under

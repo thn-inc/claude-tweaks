@@ -53,9 +53,10 @@ never carry the `risk:*`/`size:*` data a pre-fill would need.
 gh issue view {n} --json number,title,body,labels,url,state
 ```
 
-If the record's acceptance facet reads `pending` (over the labels just fetched:
-`demo:pending` or `accept:pending`, most-conservative-wins per `_shared/work-record.md`), fetch its
-Verification Brief: the last issue
+If the labels just fetched carry a pending acceptance label in either spelling
+(`_shared/work-record.md`), even one a verdict outranks so the acceptance facet reads otherwise
+(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show), fetch
+its Verification Brief: the last issue
 comment **containing** `## Verification Brief`. Fetch every comment (`gh issue view {n} --json
 comments`) and take the last one carrying that heading — test the heading, never assume the
 position. A `.comments[-1]` shortcut holds only when the brief happens to be the most recent
@@ -94,7 +95,7 @@ that gate: `/claude-tweaks:wrap-up`'s own eager path (closing the parent's last 
 `tidy/step-1-records.md`'s Shape 7 under `local-files`) — all of them write the identical
 `demo:pending` + brief, so this branch never needs to know or care which one ran.
 
-If the record's acceptance facet does **not** read `pending` (e.g. it was built ad hoc in some other session
+If the record carries **no** pending acceptance label (e.g. it was built ad hoc in some other session
 and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Phase 4 execution step
 — **or it reached Phase 4 and simply didn't clear the oversight floor, per `#367`** — a normal,
 common case now, not an anomaly), recover that **closing
@@ -201,7 +202,7 @@ reconstructs the same way.
 
 ### PR run-comment lookup (`pr-first` records)
 
-Cited by the pending-facet pointer case and the closing-commit reconstruction's Try it step, both
+Cited by the pending-label pointer case and the closing-commit reconstruction's Try it step, both
 above — stated once, run from either. `work-backend: github-issues` only; a `local-files` record
 has no PR and skips it.
 

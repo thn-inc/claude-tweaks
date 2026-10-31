@@ -34,15 +34,16 @@ column holds as written whatever the ceiling says.
 | **`/reflect`** (tangential routing, Defer) | `risk:*`, `size:*` (scored per the Scoring axis from the filed content); `ready` (born-ready — **only** on a body composed via `specShapedBody` carrying a valid `Defer-reason:` and a `via specShapedBody` footer); Type (content-judged: `task`/`bug`/`feature`); `needs:definition` (**instead of** `ready`/scoring, on the composer's `openQuestion` variant); `parked` (a Defer with a real `Trigger:` — never alongside `ready`) | nothing | `auto:*`, `bot:*`, `priority:*`, `demo:*`, and `ready` on any body not composed by `specShapedBody` or alongside `parked`/`needs:definition` |
 | **`/review`** (Step 3 Defer — Capture routes file under `/capture`'s own row) | `risk:*`, `size:*` (scored per the Scoring axis from the filed content); `ready` (born-ready — **only** on a body composed via `specShapedBody` carrying a valid `Defer-reason:` and a `via specShapedBody` footer); Type (content-judged: `task`/`bug`/`feature`); `needs:definition` (**instead of** `ready`/scoring, on the composer's `openQuestion` variant); `parked` (a Defer with a real `Trigger:` — never alongside `ready`) | nothing | `auto:*`, `bot:*`, `priority:*`, `demo:*`, and `ready` on any body not composed by `specShapedBody` or alongside `parked`/`needs:definition` |
 | **`/visual-review`** (Findings & Ideas Defer — standalone runs; under `/review` its findings route through that row) | `risk:*`, `size:*` (scored per the Scoring axis from the filed content); `ready` (born-ready — **only** on a body composed via `specShapedBody` carrying a valid `Defer-reason:` and a `via specShapedBody` footer); Type (content-judged: `task`/`bug`/`feature`); `needs:definition` (**instead of** `ready`/scoring, on the composer's `openQuestion` variant); `parked` (a Defer with a real `Trigger:` — never alongside `ready`) | nothing | `auto:*`, `bot:*`, `priority:*`, `demo:*`, and `ready` on any body not composed by `specShapedBody` or alongside `parked`/`needs:definition` |
-| **`/demo`** | `demo:approved`, `demo:changes-requested`, `demo:approved-batch` (Approve only, stacked alongside `demo:approved`, batch-sourced verdicts only) | `demo:pending` (on resolution) | `auto:*`, `ready`, `bot:*`, adding `demo:pending` itself |
+| **`/demo`** | `demo:approved`, `demo:changes-requested`, `demo:approved-batch` (Approve only, stacked alongside `demo:approved`, batch-sourced verdicts only) | A verdict replaces the prior acceptance labels, each removed only when the record holds it (`demo/SKILL.md` Step 3): `demo:pending`, `accept:pending` on every verdict; `demo:changes-requested`, `accept:changes-requested` on Approve; `demo:approved`, `accept:approved`, `demo:approved-batch`, `accept:approved-batch` on Request changes | `auto:*`, `ready`, `bot:*`, adding `demo:pending` itself |
 
 **`accept:*` twins (reserved).** `accept:pending`, `accept:approved`, `accept:changes-requested` and
 `accept:approved-batch` take the same who-may-set rules as their `demo:*` twin in each row above:
 wherever a row lists a `demo:*` label under Adds, Removes or Never, read the `accept:*` twin as
 governed identically. This is reserved until the accept-skill record switches the writers: no
-skill adds or removes an `accept:*` label today, so no actor gains a write it does not already
-perform, and the reservation exists so the switch is a rename of the label an existing write
-names, never a widening of who may write.
+skill adds an `accept:*` label today. The one exception on the removing side is `/demo`, whose row
+above removes them when a verdict replaces them, and no other actor removes one. The reservation
+exists so the switch is a rename of the label an existing write names, never a widening of who may
+write.
 
 **Driver-conditional note:** grants are *enforceable* only under the `github-issues` driver —
 GitHub's RBAC means applying a label requires triage permission (a label is a maintainer's

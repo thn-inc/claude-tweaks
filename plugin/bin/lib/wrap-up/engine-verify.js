@@ -922,7 +922,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     if (dispositionState(labelNames) !== 'pending') {
       const carriesPending = labelNames.includes(LABELS.DEMO_PENDING) || labelNames.includes(LABELS.ACCEPT_PENDING);
       failing.push(carriesPending
-        ? `#${target}: pending label outranked by a verdict`
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
         : `#${target}: missing demo:pending label`);
       continue;
     }
