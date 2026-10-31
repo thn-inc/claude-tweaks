@@ -112,7 +112,9 @@ test('the gate cross-checks head-sha workflow runs before reading green (#3405)'
 
 // #4550: `gh pr checks` on a PR whose checks have not registered yet prints "no checks reported on
 // the '<branch>' branch" and exits 1 — the watch must read that as pending (RC=8), not a failed check.
-const NO_CHECKS_MAPPING = "grep -q '^no checks reported'";
+// The match is whole-line (-x) so a check *named* "no checks reported…" cannot mask a red or green exit.
+const NO_CHECKS_MAPPING = `grep -qx "no checks reported on the '.*' branch"`;
+const PRE_REVIEW_NO_CHECKS_MAPPING = "grep -q '^no checks reported'";
 
 function assertWatchReadsNoChecksAsPending(gateText) {
   const step25 = gateText.indexOf('## Step 2.5: Merge-verification gate');
@@ -141,6 +143,7 @@ test('the bounded watch reads "no checks reported" as pending, not failed (#4550
   assert.ok(line, 'live text carries the mapping line');
   assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(line + '\n', '')), 'removing the mapping must fail the pin');
   assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace('&& RC=8', '&& RC=1')), 'a mapping to the wrong code must fail the pin');
+  assert.throws(() => assertWatchReadsNoChecksAsPending(gate.replace(NO_CHECKS_MAPPING, PRE_REVIEW_NO_CHECKS_MAPPING)), 'a prefix match any check row can satisfy must fail the pin');
   // Go-red controls for the red and pending arms.
   const deadlineClause = '8) [ "$(date +%s)" -ge "$DEADLINE" ] && RC=124 && break  # still pending at the bound';
   assert.ok(gate.includes('1) break ;;') && gate.includes(deadlineClause), 'live text carries the arms the controls mutate');
@@ -183,6 +186,10 @@ const RELEASE_PROJECT_READ = 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js"
 const RELEASE_DELTA_2 = 'an explicit `off` still merges anyway; a derived `off` (Step 2.5) red is `failed`';
 const RELEASE_DELTA_3 = 'a derived `off` (Step 2.5) takes the bounded watch, an explicit one does not wait';
 const CHECK_GATE_RED = 'When it prints `off` and Step 2.5 reads it as explicit';
+const CHECK_GATE_RUN_READ = 'run its project-level `resolve-policy.js merge-verification` read and apply its rule; a failed or unparseable read is derived';
+const MANIFESTO_OFF_ROW_RULE = "a derived `off` (local-merge, no-PR-CI, or non-default-integration-branch repos) still waits on and parks on the PR's own reported checks (`_shared/pr-first-merge.md` Step 2.5)";
+// Frozen pre-#4550 Manifesto row (git show 316a1fa3e^) — go-red control for the row pin [IL-105].
+const PRE_4550_MANIFESTO_OFF_ROW = '| Merge verification | `off` | Merge sites merge without consulting CI (the derived value for local-merge, no-PR-CI, or non-default-integration-branch repos) |';
 
 function assertCoverageCitesDerivedOff(text) {
   const end = text.indexOf('<!-- merge-verification-derivation:end -->');
@@ -204,6 +211,7 @@ function assertReleaseCitesDerivedOff(text) {
 function assertCheckGateCitesDerivedOff(text) {
   const red = text.slice(text.indexOf('- **`red`**'), text.indexOf('\n- **', text.indexOf('- **`red`**') + 1));
   assert.ok(red.includes(CHECK_GATE_RED), 'pr-check-gate passes red with a caveat only under an explicit off');
+  assert.ok(red.includes(CHECK_GATE_RUN_READ), 'pr-check-gate tells the reader to run the project-level read, and a failed read is derived');
   assert.ok(red.includes('a derived `off`'), 'pr-check-gate names a derived off among the gate-failure values');
   assert.ok(!red.includes('{"value":"off","source":"default"}'), 'pr-check-gate cites the rule, never restates its condition');
 }
@@ -226,4 +234,21 @@ test('plan-review clarification: the PR-check gate fails a derived-off red and p
   const text = read('_shared', 'pr-check-gate.md');
   assertCheckGateCitesDerivedOff(text);
   assert.throws(() => assertCheckGateCitesDerivedOff(text.replace(CHECK_GATE_RED, 'When it prints `off`')));
+  assert.throws(() => assertCheckGateCitesDerivedOff(text.replace(CHECK_GATE_RUN_READ, 'its project-level read')), 'dropping the run-the-read instruction must fail the pin');
+});
+
+function assertManifestoCitesDerivedOff(text) {
+  const row = text.split('\n').find((l) => l.startsWith('| Merge verification | `off` |'));
+  assert.ok(row, 'Manifesto override table carries the Merge verification off row');
+  assert.ok(row.includes('An explicit `off`') && row.includes('merges without waiting on CI'), 'the off row scopes the no-wait merge to an explicit off');
+  assert.ok(row.includes(MANIFESTO_OFF_ROW_RULE), 'the off row says a derived off still waits on and parks on reported checks, citing Step 2.5');
+  assert.ok(!row.includes('{"value":"off","source":"default"}'), 'the off row cites the rule, never restates its condition');
+}
+
+test('the Manifesto off override row tells an explicit off from a derived one (#4550)', () => {
+  const text = read('flow', 'manifesto-overrides.md');
+  assertManifestoCitesDerivedOff(text);
+  const row = text.split('\n').find((l) => l.startsWith('| Merge verification | `off` |'));
+  assert.throws(() => assertManifestoCitesDerivedOff(text.replace(row, PRE_4550_MANIFESTO_OFF_ROW)), 'the pre-#4550 row must fail the pin');
+  assert.throws(() => assertManifestoCitesDerivedOff(text.replace(MANIFESTO_OFF_ROW_RULE, '')), 'dropping the derived-off clause must fail the pin');
 });

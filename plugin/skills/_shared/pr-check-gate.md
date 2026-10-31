@@ -49,7 +49,7 @@ tooling problem with the read itself — treat it exactly like `read-failed` bel
 
 - **`red`** — resolve the lever first: `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run
   "$PIPELINE_RUN_DIR" --values merge-verification`.
-  When it prints `off` and Step 2.5 reads it as explicit (its project-level `resolve-policy.js merge-verification` read), route `red` like
+  When it prints `off` and Step 2.5 reads it as explicit (run its project-level `resolve-policy.js merge-verification` read and apply its rule; a failed or unparseable read is derived), route `red` like
   `pending` — pass with a caveat naming the failing checks, writing yourself (the CLI logs nothing
   on `red`) the same `--status AUTO` line as the `pending`/`stale` bullet below — matching
   `_shared/pr-first-merge.md` Step 2.5's explicit-`off` behaviour (a red PR check is "logged and shown, not acted on" there too).

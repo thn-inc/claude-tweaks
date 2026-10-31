@@ -121,7 +121,7 @@ MERGE_VERIFICATION=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --run "$
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification
 ```
 
-The project-level read (no `--run`; run it only when the first prints `off`) tells a **derived** `off` from an explicit one: derived when `$MERGE_VERIFICATION` is `off` and that read's `merge-verification` entry is `{"value":"off","source":"default"}`, or the read fails — a wait, never a blind merge. `source: policy`, or a run-level `off` over another project value, is explicit.
+The project-level read (no `--run`; run it only when the first prints `off`) tells a **derived** `off` from an explicit one: explicit only when its `merge-verification` entry shows `source: policy`, or a run-level `off` over another project value; derived otherwise — `{"value":"off","source":"default"}`, or the read fails or is unparseable — a wait, never a blind merge.
 
 When one session merges several runs sequentially (`flow/worktree-merge.md`'s reconciliation),
 resolve the lever **per merged run** from that run's own directory (`--run "{that run's dir}"`) —
@@ -220,7 +220,7 @@ immediately:
 DEADLINE=$(( $(date +%s) + 900 ))
 while :; do
   gh pr checks {pr-number} --repo {owner}/{repo} > "{pr-checks-path}" 2>&1; RC=$?
-  grep -q '^no checks reported' "{pr-checks-path}" && RC=8  # none registered yet
+  grep -qx "no checks reported on the '.*' branch" "{pr-checks-path}" && RC=8  # none registered yet
   case "$RC" in
     0) gh run list --repo {owner}/{repo} --commit {headRefOid} --limit 100 --json status > "{pr-runs-path}" || { RC=2; break; }
        PENDING_RUNS=$(node -e "console.log(require(process.argv[1]).filter((r) => r.status !== 'completed').length)" -- "{pr-runs-path}") || { RC=2; break; }
