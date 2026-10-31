@@ -207,11 +207,14 @@ apply the same projection to the prose, and compare at that level.
 table nor a vocabulary.
 
 - *A validation regex that agents run from prose.* `plugin/bin/lib/issues/claim-store.js`'s
-  `RUN_ID_SHAPE` is restated verbatim in three skill files, and on the gh-absent MCP path that prose
-  copy is the implementation. Export the constant. Build the copy list by `grep -rlF` on a
-  distinctive fragment, never by memory. Assert every copy `includes(RUN_ID_SHAPE.source)`:
-  `tests/issue-claims-stale-open-pr-conformance.test.js`'s "every prose copy of the run-id shape
-  equals claim-store.js's RUN_ID_SHAPE" test.
+  `RUN_ID_SHAPE` was restated verbatim in three skill files, and on the gh-absent MCP path that prose
+  copy was the implementation. Export the constant. Build the copy list by `grep -rlF` on a
+  distinctive fragment, never by memory. Assert every copy `includes(RUN_ID_SHAPE.source)`.
+  Since #4596 it is restated in one skill file, `flow/claim-targets.md`; the gh-absent MCP path and
+  `/tidy` call `plugin/bin/stale-claim-pr.js` instead, so there is no prose copy left to drift.
+  `tests/issue-claims-stale-open-pr-conformance.test.js`'s "the run-id shape is restated only in
+  flow/claim-targets.md" test asserts the copy list both ways: the one copy matches, the two retired
+  copies are absent.
 - *A code detector whose input line is produced by a code composer.* `staleClaimInFlightPr` matches
   a run marker that `plugin/bin/lib/flow/pr-body.js` writes. It shipped pinned only against
   hand-typed markers, which agree with the detector by construction. Pin the detector to the

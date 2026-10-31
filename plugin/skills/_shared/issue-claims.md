@@ -176,16 +176,18 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      section. A still-`OPEN` state means a build for this issue already exists and reclaiming
      would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
      in-flight card does. Any other state (closed, merged) or a failed read falls through to the
-     write below unchanged. For a `'stale'` blob, the counterpart (#4423; gh-CLI twin:
-     `claim-store.js`'s `staleClaimInFlightPr`): validate its `runId` against
-     `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (a mismatch skips the check), then list the
-     repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`,
-     `perPage: 100`, paging until exhausted) and look for a PR whose `html_url` is a same-repo PR
-     URL, whose `head.repo.full_name` is this repo (a fork PR's body proves nothing), and whose
-     body has a trimmed line equal to `claude-tweaks-run: {runId}` or
-     `<!-- claude-tweaks-run: {runId} -->`. A match stops the claim and writes nothing, as the
-     tombstone case does. A failed or unparseable listing falls through to the write (fail open),
-     after one line saying the check failed — never silently, so it is not read as no marked PR.
+     write below unchanged. For a `'stale'` blob, the counterpart (#4423): list the repo's open PRs
+     once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging
+     until exhausted), Write every page's entries as one JSON array to the path
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
+     prints, then run
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --listing "{that path}" --repo "{owner}/{repo}"`
+     — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s
+     `staleClaimInFlightPr`); it validates the run id and normalizes the MCP entries itself.
+     `"match": true` stops the claim and writes nothing, as the tombstone case does. A non-null
+     `failure`, a non-zero exit, or a listing that could not be fetched or written, falls through to
+     the write (fail open), after one line saying the check failed — never silently, so it is not
+     read as no marked PR.
      Otherwise, write **conditionally** (**with** `sha` = the current file's blob sha from step 1):
 <!-- when: transport=gh -->
      - **gh CLI:** the same `PUT contents` call as step 3, adding `-f "sha=${CURRENT_SHA}"`. (This
