@@ -15,11 +15,31 @@
 // cannot see an agent session's MCP tools, so a gh-absent environment skips and
 // tidy's `parent-gate` backstop stays the recovery for every fail-open path.
 //
+// The marker may sit in the top-level `decisions.md` or, for a multi-spec run, in
+// any `spec-*/decisions.md` (flow/multi-spec.md exports `{parent}/spec-{N}/` as
+// PIPELINE_RUN_DIR, so the merging session's Step 4.0b may log there).
+//
+// Transient failures retry, bounded. Step 4.0's `closing-links` exit 5 (a `gh pr
+// view`/`gh pr edit` failure or a malformed read: gh or its transport), and a
+// Step 4.0b call that failed as a whole on a gh read (`gh-failed` with no parent
+// and no record: the default-branch read), write an ATTEMPT_STEP line instead
+// of the marker — a location the marker rule never matches — and defer the run
+// as `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
+// failure writes the marker as any other failure does. Every other exit is
+// deterministic (2 malformed invocation, 3 run dir not anchored, 4 pre-merge
+// only), as is an unreadable exit-0 envelope: those write the marker at once.
+//
+// The caller may pass `budgetExceeded` (the pass's wall-clock budget, index.js's
+// `budget.exceeded`). It is checked before each run's steps, never mid-run; once
+// it reads true, every remaining run that would have run skips `budget-exhausted`
+// and is deferred to the next pass.
+//
 // Returns { entries, deferred, failure? }. `deferred` lists the run dirs skipped
 // for a RETRYABLE reason — archive must not archive them in this pass, or the
-// retry never comes (archive-merged.js's `postMergeDeferred`). Exactly four
-// reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, and the
-// transient PR lookup failure `network-failure`. Every other skip is NOT
+// retry never comes (archive-merged.js's `postMergeDeferred`). Exactly six
+// reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, the
+// transient PR lookup failure `network-failure`, `transient-failure` and
+// `budget-exhausted`. Every other skip is NOT
 // deferred: `gh-absent`, `dry-run`, `marker-write-failed`, `integration-unknown`
 // and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
 // before it answers, and one of archive's own structurally-stuck reasons —
@@ -43,6 +63,12 @@ const { run: closingLinksRun } = require('../../closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
 const PARENT_STEP = 'reconcile post-merge parent-close';
+// A transient failure's retry line: a different location from MARKER_STEP, so it is never a marker.
+const ATTEMPT_STEP = 'reconcile post-merge attempt';
+const MAX_ATTEMPTS = 3;
+// closing-links.js's one transient exit: `gh pr view` / `gh pr edit` failed, or a required read was malformed.
+const TRANSIENT_CLOSING_LINKS_EXIT = 5;
+const TRANSIENT_REASON = 'transient-failure';
 const CLOSE_WINDOW_MS = 10 * 60 * 1000;
 const MERGE_GRACE_MS = 10 * 60 * 1000;
 const CLAIM_STALE_MS = 10 * 60 * 1000;
@@ -89,6 +115,23 @@ function composeSummaryText({ pr, action, closed, skipped }) {
 
 function readDecisions(runDir) {
   try { return fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return ''; }
+}
+
+// Is this run done? The top-level decisions.md, then each multi-spec `spec-*/decisions.md` (see the header).
+function runHasMarker(runDir) {
+  if (hasPostMergeMarker(readDecisions(runDir))) return true;
+  let children;
+  try { children = fs.readdirSync(runDir, { withFileTypes: true }); } catch { return false; }
+  return children.some((c) => c.isDirectory() && c.name.startsWith('spec-')
+    && hasPostMergeMarker(readDecisions(path.join(runDir, c.name))));
+}
+
+// Pure: how many ATTEMPT_STEP lines this decisions.md text holds.
+function countAttempts(decisionsText) {
+  return String(decisionsText).split('\n').filter((line) => {
+    const entry = parseEntry(line);
+    return Boolean(entry) && entry.location === ATTEMPT_STEP;
+  }).length;
 }
 
 function readPolicyRaw(root) {
@@ -176,14 +219,14 @@ async function prefetchPostMergePrStates(root, prStates) {
   for (const { dir, state } of candidateRuns(root)) {
     const pr = state && state.pr && state.pr.number;
     if (!Number.isInteger(pr) || pr <= 0) continue;
-    if (hasPostMergeMarker(readDecisions(dir))) continue;
+    if (runHasMarker(dir)) continue;
     wanted.add(pr);
   }
   await prStates.prefetch({ numbers: [...wanted] });
 }
 
 async function postMerge({
-  cwd, integration, prStates, dryRun = false, now = Date.now, deps = {},
+  cwd, integration, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
 } = {}) {
   const entries = [];
   const deferred = [];
@@ -210,7 +253,7 @@ async function postMerge({
   for (const { dir, state } of candidateRuns(root)) {
     const pr = state && state.pr && state.pr.number;
     if (!Number.isInteger(pr) || pr <= 0) continue;
-    if (hasPostMergeMarker(readDecisions(dir))) continue;
+    if (runHasMarker(dir)) continue;
 
     let prState;
     try { prState = await prStates.byNumberAsync(pr); } catch { prState = TRANSIENT_PR_FAILURE; } // a real throw from the lookup is a transport failure
@@ -236,9 +279,15 @@ async function postMerge({
       entries.push({ runDir: dir, pr, action: 'skipped', reason: 'dry-run' });
       continue;
     }
+    // Checked between runs, never mid-run: a run left over is the next pass's, so archive keeps it.
+    if (typeof budgetExceeded === 'function' && budgetExceeded()) {
+      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'budget-exhausted' });
+      deferred.push(dir);
+      continue;
+    }
 
     if (deps.beforeClaim) deps.beforeClaim(dir);
-    const claim = takeClaim(dir, now());
+    const claim = (deps.takeClaim || takeClaim)(dir, now());
     if (!claim.ok) {
       entries.push({ runDir: dir, pr, action: 'skipped', reason: claim.reason });
       deferred.push(dir);
@@ -246,10 +295,12 @@ async function postMerge({
     }
     try {
       // A pass that finished between the first read and the claim wrote its marker already.
-      if (hasPostMergeMarker(readDecisions(dir))) continue;
-      entries.push(processRun({
+      if (runHasMarker(dir)) continue;
+      const entry = processRun({
         dir, pr, root, owner, repo, workLinks, riskFloor, integration, timedGh, runClosingLinks, closeParents, writeEntries, now,
-      }));
+      });
+      entries.push(entry);
+      if (entry.reason === TRANSIENT_REASON) deferred.push(dir);
     } catch (e) {
       entries.push({ runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e) });
     } finally {
@@ -272,22 +323,39 @@ function processRun({
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
   const stamp = now();
-  const write = (items, ran) => {
+  // A failed write still reports the parents Step 4.0b closed: they are closed on GitHub either way.
+  const write = (items, ran, parentsClosed = 0) => {
     try {
       writeEntries({ runDir: dir, items });
     } catch {
-      return { runDir: dir, pr, action: 'skipped', reason: 'marker-write-failed' };
+      return { runDir: dir, pr, action: 'skipped', reason: 'marker-write-failed', parentsClosed };
     }
     return ran;
   };
+  // A transient failure under the bound: an attempt line (never a marker) and a deferred skip.
+  // Returns null once MAX_ATTEMPTS lines exist, so the caller writes the marker instead.
+  const retry = (condition) => {
+    const attempt = countAttempts(readDecisions(dir)) + 1;
+    if (attempt > MAX_ATTEMPTS) return null;
+    const text = oneLine(`condition: ${condition} (attempt ${attempt} of ${MAX_ATTEMPTS}) → fallback: the next reconcile pass retries Steps 4.0 and 4.0b; after ${MAX_ATTEMPTS} attempts the tidy parent-gate backstop recovers the parent`);
+    const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: ATTEMPT_STEP, text, reversibility: 'n/a' }) };
+    return write([item], {
+      runDir: dir, pr, action: 'skipped', reason: TRANSIENT_REASON, detail: oneLine(condition), attempt,
+    });
+  };
 
   if (!envelope || !Array.isArray(envelope.closingSet)) {
-    const returned = code !== 0 ? `exit ${code}` : (envelope && envelope.action) || 'an unreadable envelope';
+    const unreadable = code === 0 && !(envelope && envelope.action);
+    const returned = code !== 0 ? `exit ${code}` : unreadable ? 'an unreadable envelope' : envelope.action;
+    if (code === TRANSIENT_CLOSING_LINKS_EXIT) {
+      const retried = retry(`Step 4.0 returned exit ${code} (a gh failure)`);
+      if (retried) return retried;
+    }
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
     // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit or an unreadable
     // envelope), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
     return write([item], {
-      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(envelope ? {} : { step40Failed: true }),
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable ? { step40Failed: true } : {}),
     });
   }
 
@@ -305,6 +373,12 @@ function processRun({
     closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, integrationBranch: integration, gh: timedGh,
     selfInclude: false,
   });
+  // The whole call failed on a gh read (no parent, no record: the default-branch read) before any write.
+  const wholeCallGhFailure = skipped.find((s) => s.reason === 'gh-failed' && s.parent == null && s.issue == null);
+  if (wholeCallGhFailure && closed.length === 0) {
+    const retried = retry(`Step 4.0b failed on a gh read (${wholeCallGhFailure.detail || 'no detail'})`);
+    if (retried) return retried;
+  }
   const items = closed.map((c) => ({
     entry: formatEntry({
       status: 'AUTO',
@@ -323,10 +397,10 @@ function processRun({
       reversibility: 'n/a',
     }),
   });
-  return write(items, { runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length });
+  return write(items, { runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length }, closed.length);
 }
 
 module.exports = {
   postMerge, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText,
-  MARKER_STEP, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };

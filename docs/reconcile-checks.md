@@ -599,8 +599,11 @@ the source of truth; the module only decides when the steps run and records that
   Step 4.0b` (the merging session's own marker, `(skipped)` form included). A heading or a hand-written
   note never matches. The check appends its marker last, after one `AUTO … reconcile post-merge
   parent-close` line per parent it closed (a different location, so it is not a marker), or a single
-  `SKIP` marker when Step 4.0 produced no closing set. The marker is re-read once more under the
-  claim, so a pass that finished in between is not repeated.
+  `SKIP` marker when Step 4.0 produced no closing set. The marker is read from the top-level
+  `decisions.md` and from every `spec-*/decisions.md`: a multi-spec run exports `{parent}/spec-{N}/`
+  as `PIPELINE_RUN_DIR`, so the merging session's Step 4.0b may log there. It is re-read once more,
+  the same way, under the claim, so a pass that finished in between is not repeated. A
+  `reconcile post-merge attempt` line (a transient failure's retry, below) is never a marker.
 - **One-time catch-up.** On the first reconcile after this ships, every run that merged without a
   marker gets a late Step 4.0 and Step 4.0b pass once: legacy runs, and runs merged in-session by an
   older installed build, which writes no summary marker. This is bounded three ways. Step 4.0 runs
@@ -631,24 +634,45 @@ the source of truth; the module only decides when the steps run and records that
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
   failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
-- **How the guard clears.** Exactly four reasons defer a run: `merge-grace`, `in-flight`,
-  `claim-failed` and `network-failure` (the transient PR-state failure). A run leaves the set once
-  `post-merge` acts on it, which for `merge-grace` is within one grace window. Nothing else defers.
-  Each reason is normally cleared by a later pass, but two cases are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
+- **How the guard clears.** Exactly six reasons defer a run: `merge-grace`, `in-flight`,
+  `claim-failed`, `network-failure` (the transient PR-state failure), `transient-failure` (below)
+  and `budget-exhausted` (below). A run leaves the set once `post-merge` acts on it, which for
+  `merge-grace` is within one grace window and for `transient-failure` within `MAX_ATTEMPTS` (3)
+  more passes. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
+  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
   deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
   every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
   because the alternative is archiving a run the reconciler still owes its steps:
 
   | Skip reason | Deferred | Why |
   |---|---|---|
-  | `merge-grace`, `in-flight`, `claim-failed`, `network-failure` | yes | Retryable: the next pass can act. |
+  | `merge-grace`, `in-flight`, `claim-failed`, `network-failure`, `transient-failure`, `budget-exhausted` | yes | Retryable: the next pass can act. |
   | `pr-not-found`, `invalid-arguments`, `no-pr-state` and any other non-network PR-state failure string | no | A definitive answer a retry will not change. Archive keeps tracking the run as structurally stuck (#3543), so it is not hidden. |
   | `gh-absent`, `dry-run`, `error` | no | Not retryable within the pass. |
-  | `marker-write-failed` | no | See the next bullet. |
-  | `integration-unknown` | no | See the bullet after it. |
+  | `marker-write-failed` | no | See the marker-write bullet below. |
+  | `integration-unknown` | no | See the bullet after that one. |
 
+- **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
+  in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
+  or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
+  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. Step 4.0b's
+  whole-call gh failure (`gh-failed` with no parent and no record: the default-branch read) is
+  transient too; a `gh-failed` skip for one parent or record is that parent's, and the marker is
+  written as usual. A transient failure appends a `SKIP … reconcile post-merge attempt` line
+  (`condition: … (attempt N of 3) → fallback: the next reconcile pass retries …`), never the
+  marker, and the run is deferred. Once three attempt lines exist, the next transient failure
+  writes the marker as a deterministic one does, so the retry is bounded and the parent falls to
+  tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window: a
+  record it reopened last time reads open and is settled open.
+- **Budget (`budget-exhausted`).** `index.js` hands `postMerge` the pass's own wall-clock budget as
+  `budgetExceeded`. It is checked before each run's steps, never mid-run, so a catch-up or several
+  armed merges cannot run the inline 18 s passes (the unscoped CLI, Step 4.2, dispatch's calls) past
+  their ceiling by more than one run. Once it reads exceeded, every remaining run that would have
+  run skips `budget-exhausted` and is deferred, so archive leaves it for the next pass. A `--checks`
+  subset runs with an unbounded budget, so it never trips there.
 - **Marker-write failure means "nothing re-closes", not "nothing runs twice".** When appending the
-  marker fails, the entry is `skipped` / `marker-write-failed` and the run is not deferred. If
+  marker fails, the entry is `skipped` / `marker-write-failed` and the run is not deferred. The entry
+  still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. If
   archive archives it in the same pass, archived runs are never walked again and the steps do not
   repeat. If archive leaves the run in place for its own reasons, Steps 4.0 and 4.0b run again on
   each pass while the write keeps failing. That is safe because both are idempotent: a parent
@@ -673,14 +697,17 @@ the source of truth; the module only decides when the steps run and records that
 
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `postMergeRan` (runs whose
   steps this pass ran, `action: 'ran'` without `step40Failed`), `postMergeParentsClosed` (the parents
-  those runs closed below the floor) and `postMergeFailed` (runs whose Step 4.0 itself failed: the
-  entry carries `step40Failed: true` for a non-zero `closing-links` exit or an unreadable envelope,
-  a SKIP marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an
-  envelope that merely carries no closing set, such as `not-merged`, is not a failure). A failure is
-  never counted in `postMergeRan`. The next SessionStart renders them in its prior-pass line (`post-merge
-  steps ran for N merged run(s), closing M parent record(s) below the oversight floor`; `post-merge
-  Step 4.0 failed for N merged run(s) (tidy's parent-gate backstop recovers them)`); without them a
-  background parent close, or a failed attempt, would never be visible outside GitHub and `decisions.md`.
+  closed below the floor, by those runs and by `marker-write-failed` ones) and `postMergeFailed` (runs
+  whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero `closing-links`
+  exit, exit 5 only once its retries are spent, or an unreadable envelope, a SKIP marker is written,
+  Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope that merely carries no
+  closing set, such as `not-merged`, is not a failure). A failure is never counted in `postMergeRan`,
+  and a `transient-failure` retry is in none of the three. The next SessionStart renders them in its
+  prior-pass line (`post-merge steps ran for N merged run(s), closing M parent record(s) below the
+  oversight floor`, or `post-merge steps closed M parent record(s) below the oversight floor` when
+  only marker-write-failed runs closed any; `post-merge Step 4.0 failed for N merged run(s) (tidy's
+  parent-gate backstop recovers them)`); without them a background parent close, or a failed
+  attempt, would never be visible outside GitHub and `decisions.md`.
 
 ## Timing contract (#4032)
 

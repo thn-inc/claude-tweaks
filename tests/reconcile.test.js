@@ -1641,6 +1641,21 @@ test('AC1 (#4599): the dispatch order is release, post-merge, archive when all t
   assert.ok(at("checks.includes('post-merge')") < at("checks.includes('archive')"), 'post-merge dispatches before archive');
 });
 
+test('M4 (#4599): post-merge is handed a live predicate over the pass\'s own wall-clock budget', async () => {
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const original = budgetMod.createBudget;
+  let tripped = false;
+  let made = 0;
+  const { postMergeOpts } = await reconcileWithAsyncMerge(['post-merge'], {
+    afterStubs: () => { budgetMod.createBudget = () => { made += 1; return { exceeded: () => tripped, remainingMs: () => 1 }; }; },
+  }).finally(() => { budgetMod.createBudget = original; });
+  assert.equal(made, 1, 'one budget per pass');
+  assert.equal(typeof postMergeOpts.budgetExceeded, 'function');
+  assert.equal(postMergeOpts.budgetExceeded(), false);
+  tripped = true;
+  assert.equal(postMergeOpts.budgetExceeded(), true, 'it reads the pass budget when called, not a snapshot');
+});
+
 test('AC1 (#4599): post-merge\'s deferred set reaches archiveMerged as postMergeDeferred', async () => {
   const { archiveOpts } = await reconcileWithAsyncMerge(['archive'], { postMergeDeferred: ['/runs/a', '/runs/b'] });
   assert.deepEqual(archiveOpts.postMergeDeferred, ['/runs/a', '/runs/b']);
