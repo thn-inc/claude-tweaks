@@ -91,12 +91,17 @@ const PVC_FACTS = [
 const STEP_FLAGS = '--step "Pre-verification catch-up"';
 const GATE = 'Only a `pr-first` worktree run catches up';
 const STEPS = "Run `_shared/git-discipline.md`'s Catch-up (`auto`) steps 1-4";
+// The Scope guards sit between the gate and the Procedure: the unresolved-model SKIP, then the
+// multi-spec SKIP and the reason sentence that follows it.
+const UNRESOLVED_SKIP = 'condition: integration-model unresolved → fallback: no pre-verification catch-up';
+const MULTI_SKIP = 'condition: multi-spec shared branch';
+const MULTI_REASON = 'A multi-spec run skips even under `pr-first` because';
 
 function assertPreVerifyProcedure(text) {
   const s = procedure(text);
   // The log-decision flags (read by the gate SKIPs) open the file, and the model gate precedes
-  // the fetch: the gate paragraph comes before the paragraph citing the steps.
-  requireOrder(s, [STEP_FLAGS, GATE, STEPS]);
+  // the fetch: the gate paragraph comes before the Scope guards and the paragraph citing the steps.
+  requireOrder(s, [STEP_FLAGS, GATE, UNRESOLVED_SKIP, MULTI_SKIP, MULTI_REASON, STEPS]);
   assert.deepEqual(missingFacts(PVC_FACTS, s), [], 'Pre-verification catch-up facts');
 }
 
@@ -163,6 +168,23 @@ test('AC2.1 go-red: the model gate placed after the Catch-up steps fails the ord
   assert.throws(() => assertPreVerifyProcedure(absent), /marker missing: Only a `pr-first` worktree run catches up/);
 });
 
+test('AC2.1 go-red: the multi-spec SKIP and reason moved after the Procedure paragraph fail the order check', () => {
+  const from = PVC.indexOf('`--text "' + MULTI_SKIP);
+  const reasonAt = PVC.indexOf(MULTI_REASON);
+  const end = PVC.indexOf('\n\n## Procedure');
+  assert.ok(from !== -1 && reasonAt > from && end > reasonAt, 'multi-spec SKIP and reason not found in order');
+  const STEPS_MSG = /Run `_shared\/git-discipline\.md`'s Catch-up \(`auto`\) steps 1-4 must come after the previous marker/;
+  // Both the SKIP and the reason sentence move to the end of the file, behind the Procedure paragraph.
+  const both = `${PVC.slice(0, from).trimEnd()}\n${PVC.slice(end)}\n\n${PVC.slice(from, end)}\n`;
+  assert.notEqual(both, PVC);
+  assert.throws(() => assertPreVerifyProcedure(both), STEPS_MSG);
+  // The reason sentence alone moves: it has its own marker, so the order check still goes red.
+  const reasonEnd = PVC.indexOf('\n', reasonAt);
+  const alone = `${PVC.slice(0, reasonAt)}${PVC.slice(reasonEnd + 1)}\n${PVC.slice(reasonAt, reasonEnd)}\n`;
+  assert.notEqual(alone, PVC);
+  assert.throws(() => assertPreVerifyProcedure(alone), STEPS_MSG);
+});
+
 test('AC1.1 go-red: the log-decision flags placed after the gate SKIPs fail the order check', () => {
   const moved = `${PVC.replace(STEP_FLAGS, '--step "elsewhere"')}\n${STEP_FLAGS}\n`;
   assert.notEqual(moved, PVC);
@@ -213,7 +235,7 @@ function step5(text) {
 const BUILD_FACTS = [
   { name: 'after Category A fixes', needle: 'Immediately before that run and after any Category A fix commit' },
   { name: 'cites the shared procedure', needle: 'run `_shared/pre-verification-catchup.md`' },
-  { name: 'pr-first worktree, every mode', needle: 'a `pr-first` worktree run, in every mode, merges in a base that moved during the build' },
+  { name: 'single-spec pr-first worktree, every mode', needle: 'a single-spec `pr-first` worktree run, in every mode, merges in a moved base' },
   { name: 'VERIFICATION_SHA is post-merge', needle: '`VERIFICATION_SHA` is then the post-merge HEAD' },
   { name: 'others log a SKIP', needle: 'any other run logs its `SKIP`' },
   { name: 'not repeated after a fix', needle: 'It is not repeated before a re-run after a fix' },
