@@ -603,10 +603,14 @@ test('archive-run: a Review Console terminal decision line turns the can\'t-tell
 });
 
 test('#4773: archive-run refuses an undeclared flag (--dry-run) with its usage line, before any move or commit', () => {
-  for (const args of [['--run', null, '--dry-run'], ['--dry-run', '--run', null]]) {
+  const argOrders = [
+    (runDir) => ['--run', runDir, '--dry-run'],
+    (runDir) => ['--dry-run', '--run', runDir],
+  ];
+  for (const buildArgs of argOrders) {
     const { root, runDir, runId } = runDirFixture('clean');
     const headBefore = git(['rev-parse', 'HEAD'], root);
-    const result = runHook(['archive-run', ...args.map((a) => (a === null ? runDir : a))], { cwd: root });
+    const result = runHook(['archive-run', ...buildArgs(runDir)], { cwd: root });
     assert.strictEqual(result.code, 0);
     assert.strictEqual(result.stdout, 'claude-tweaks: usage: archive-run [--run <dir>]\n');
     assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must stay in place');
