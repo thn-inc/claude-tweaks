@@ -59,8 +59,12 @@ function assert2740(text) {
     'dispatch.md must direct that the recipe steps be pasted into the SDD invocation instruction (#4556).'
   );
   assert.ok(
-    text.includes('`/build` fills `{plugin-root}` and `{worktree}`; SDD fills `{reviewed-sha}`'),
-    'dispatch.md must split placeholder ownership: /build fills plugin-root and worktree, SDD fills the per-dispatch ones (#4556).'
+    text.includes('`/build` fills `{plugin-root}` and `{worktree}`;'),
+    'dispatch.md must split placeholder ownership: /build fills plugin-root and worktree (#4556).'
+  );
+  assert.ok(
+    text.includes('SDD fills `{reviewed-sha}`, the commit under review, `{base-sha}`, the task\'s base, and `{id}`, task plus reviewer role plus round, per dispatch'),
+    'dispatch.md must give SDD the per-dispatch placeholders: reviewed-sha, base-sha, and id with the round (#4556).'
   );
 }
 
@@ -75,4 +79,10 @@ const PRE_4556_2740 =
 test('the #2740 pin goes red on the pre-#4556 sentence (go-red)', () => {
   assert.throws(() => assert2740(PRE_4556_2740));
   assert.throws(() => assert2740(DISPATCH.split('`/build` fills `{plugin-root}`').join('`/build` supplies `{plugin-root}`')));
+  // Delete SDD's half of the split, and each placeholder within it.
+  const sddHalf = "SDD fills `{reviewed-sha}`, the commit under review, `{base-sha}`, the task's base, and `{id}`, task plus reviewer role plus round, per dispatch";
+  assert.ok(DISPATCH.includes(sddHalf), 'live dispatch.md must carry SDD\'s half to mutate');
+  assert.throws(() => assert2740(DISPATCH.split(sddHalf).join('SDD fills nothing')));
+  assert.throws(() => assert2740(DISPATCH.split('and `{id}`, task plus reviewer role plus round,').join('and `{id}`,')));
+  assert.throws(() => assert2740(DISPATCH.split('`{base-sha}`, the task\'s base,').join('')));
 });

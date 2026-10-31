@@ -52,12 +52,25 @@ const RECIPE_LITERALS = [
   'a control that stays green',
   'run it per step 4',
   'task, reviewer role and round',
+  'never fall back to the shared tree',
+  'no evidence, tear down',
+  'otherwise tear down (step 6): the check has no evidence',
+];
+
+// Outcome clauses: each must appear exactly once, so a reworded copy elsewhere cannot mask a mutated one.
+const ONCE_LITERALS = [
+  'never fall back to the shared tree',
+  'no evidence, tear down',
+  'otherwise tear down (step 6): the check has no evidence',
 ];
 
 function assertRecipe(section) {
   const flat = section.replace(/\s+/g, ' ');
   for (const literal of RECIPE_LITERALS) {
     assert.ok(flat.includes(literal), `recipe lost ${JSON.stringify(literal)}`);
+  }
+  for (const literal of ONCE_LITERALS) {
+    assert.strictEqual(flat.split(literal).length - 1, 1, `${JSON.stringify(literal)} must appear exactly once`);
   }
   assert.ok(!flat.includes('ln -s "'), 'recipe must not carry an affirmative link command');
 }
@@ -99,6 +112,17 @@ test('the recipe pin goes red without the section or with a dropped step (go-red
   // The run-provenance control (I3) and the fallback's run command (fm2) are each load-bearing.
   assert.throws(() => assertRecipe(live.split('a control that stays green').join('a run that stays green')));
   assert.throws(() => assertRecipe(live.split('run it per step 4').join('run the test there')));
+  // Outcome clauses (steps 2, 4, 5): reword each to a permissive outcome, on the whitespace-flattened text
+  // because step 2's clause wraps across lines.
+  const flatLive = live.replace(/\s+/g, ' ');
+  for (const [from, to] of [
+    ['never fall back to the shared tree', 'fall back to the shared tree'],
+    ['no evidence, tear down', 'proceed'],
+    ['otherwise tear down (step 6): the check has no evidence', 'otherwise proceed anyway'],
+  ]) {
+    assert.ok(flatLive.includes(from), `live section must carry ${JSON.stringify(from)} to mutate`);
+    assert.throws(() => assertRecipe(flatLive.split(from).join(to)), undefined, `${from} -> ${to} must go red`);
+  }
 });
 
 // Section 7 slicing, copied from scratch-worktree-shell-constraint-table.test.js.
@@ -185,6 +209,9 @@ function assertLensDispatcher(md) {
     '`{id}`',
     '_shared/scope-resolution.md',
     'No-git fallback',
+    '`git merge-base {base} HEAD`',
+    'HEAD when the scope is uncommitted work',
+    "put the No-git fallback instruction into 3f's prompt yourself",
   ]) {
     assert.ok(line.includes(literal), `dispatcher paragraph lost ${JSON.stringify(literal)}`);
   }
@@ -199,4 +226,12 @@ test('the dispatcher-paragraph pin goes red without the paragraph or without the
   assert.notStrictEqual(live, LENS, 'the mutation must remove the paragraph');
   assert.throws(() => assertLensDispatcher(live));
   assert.throws(() => assertLensDispatcher(LENS.split('_shared/scope-resolution.md').join('the scope rules')));
+  for (const [from, to] of [
+    ['`git merge-base {base} HEAD`', "this review's `{base}`"],
+    ['HEAD when the scope is uncommitted work', 'the same'],
+    ["put the No-git fallback instruction into 3f's prompt yourself", 'nothing more is needed'],
+  ]) {
+    assert.ok(LENS.includes(from), `live lens file must carry ${JSON.stringify(from)} to mutate`);
+    assert.throws(() => assertLensDispatcher(LENS.split(from).join(to)), undefined, `${from} -> ${to} must go red`);
+  }
 });

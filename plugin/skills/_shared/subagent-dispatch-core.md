@@ -165,8 +165,8 @@ edit there would be lost. One plain command per Bash call, literal absolute path
    variable, never a link (`ln -s`, `mklink /J`) — for Node (CommonJS `require` only):
    `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`. A green run counts
    as evidence only after a control has gone red in this same checkout (an Edit under `{disc-path}`
-   making the mutated file throw at load); a control that stays green means the code ran from the
-   shared tree: no evidence, tear down.
+   making the mutated file throw at load); a control that stays green means the run did not load the
+   scratch copy (the code ran from the shared tree, or the test never loads the mutated file): no evidence, tear down.
 5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
    never fall back to the shared tree.
 6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
