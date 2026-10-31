@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // bin/stale-claim-pr.js — does a TTL-expired claim's run still hold an open
-// draft PR in this repo? The one implementation of that verdict: the MCP claim
+// same-repo PR? The one implementation of that verdict: the MCP claim
 // path of _shared/issue-claims.md and /tidy Step 4.7 (tidy/scan-procedures.md)
 // call this instead of restating the marker-match rule and the Resume-line
 // grammar in prose (#4596). It runs claim-store.js's matchStaleClaimPr, the
@@ -32,7 +32,11 @@
 // listing that is not an array of PRs or hit the 1000-entry limit) is data the
 // caller must treat as "could not tell", never as "no PR": the stale claim is
 // not proven abandoned. A claim whose runId is absent or not a valid run id is
-// a clean no-match, and no listing is read and no `gh` call is made.
+// a clean no-match, and no listing is read and no `gh` call is made. A repo on a
+// host other than github.com (a GitHub Enterprise `--repo host/owner/name` or
+// `origin`) is the failure `stale-claim matching supports github.com only`,
+// since claim-store.js's isSameRepoPrUrl recognises github.com PR urls alone —
+// without this the matcher would report a clean no-match for a marked PR.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout, so the
 // codes only cover what stops a verdict being reached; no JSON on 1-3):
 //   1  malformed invocation (unknown flag, a flag missing its value, no
@@ -50,7 +54,7 @@ const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl, repoSlug } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl } =require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]\n';
@@ -86,7 +90,7 @@ function defaultGh(args) {
 }
 
 const realDeps = {
-  ghAvailable, remoteUrl, parseRepo, repoSlug,
+  ghAvailable, remoteUrl, parseRepo,
   gh: defaultGh,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   stdout: (s) => process.stdout.write(s),
@@ -112,6 +116,10 @@ function run(argv, deps) {
     ? deps.parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
     : deps.parseRepo(remote);
   if (!repoSpec) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo owner/name\n'); return 3; }
+  if (repoSpec.host && repoSpec.host !== 'github.com') {
+    deps.stdout(`${JSON.stringify({ match: false, link: null, failure: 'stale-claim matching supports github.com only' })}\n`);
+    return 0;
+  }
   const { owner, repo } = repoSpec;
 
   let verdict;

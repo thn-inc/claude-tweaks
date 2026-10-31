@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { run, parseArgs } = require('../plugin/bin/stale-claim-pr');
-const { parseRepo, repoSlug } = require('../plugin/bin/lib/repo-resolve');
+const { parseRepo } =require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
 const RUN = '2026-10-31T005940-record-4596';
@@ -39,7 +39,6 @@ function fakeDeps(files, overrides = {}) {
     ghAvailable: () => { calls.ghAvailable++; return true; },
     remoteUrl: () => 'https://github.com/acme/w.git',
     parseRepo,
-    repoSlug,
     gh: (args) => { calls.gh.push(args); throw new Error('gh must not be called'); },
     readFile: (p) => {
       calls.readFile.push(p);
@@ -166,7 +165,7 @@ test('each failure source is a failure verdict at exit 0, never a throw or a no-
       failure: /entry 0 is not an object/,
     },
     {
-      name: 'matcher refuses the listing', files: { ...claimFile(), [LISTING]: '"x"' }, args: ['--listing', LISTING],
+      name: 'listing is not an array', files: { ...claimFile(), [LISTING]: '"x"' }, args: ['--listing', LISTING],
       failure: /not an array/,
     },
   ];
@@ -283,6 +282,32 @@ test('an unresolved repo exits 3 naming --repo, with no stdout; --repo resolves 
   assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING], unparseable), 3);
   const withRepo = fakeDeps(files, { remoteUrl: () => { throw new Error('no such remote'); } });
   assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'acme/w'], withRepo), 0);
+});
+
+test('a non-github.com host is the failure verdict, never a clean no-match, and nothing is read', () => {
+  const ghes = 'https://ghe.example.com/acme/w/pull/7';
+  const files = { ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ url: ghes, body: MARKED })]) };
+  const want = { match: false, link: null, failure: 'stale-claim matching supports github.com only' };
+  const sources = [
+    ['--repo host/owner/name', ['--repo', 'ghe.example.com/acme/w'], undefined],
+    ['a GHES https origin', [], { remoteUrl: () => 'https://ghe.example.com/acme/w.git' }],
+    ['a GHES ssh origin', [], { remoteUrl: () => 'git@ghe.example.com:acme/w.git' }],
+  ];
+  for (const [name, extra, overrides] of sources) {
+    const deps = fakeDeps(files, overrides || {});
+    assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, ...extra], deps), 0, name);
+    assert.deepEqual(verdictOf(deps), want, name);
+    assert.deepEqual(deps.calls.readFile, [], `${name}: no claim or listing read`);
+    assert.deepEqual(deps.calls.gh, [], `${name}: no gh call`);
+    assert.equal(deps.calls.ghAvailable, 0, `${name}: no gh probe`);
+  }
+  const ghDeps = fakeDeps(claimFile(), { remoteUrl: () => 'https://ghe.example.com/acme/w.git' });
+  assert.equal(run(['--claim-file', CLAIM], ghDeps), 0);
+  assert.deepEqual(verdictOf(ghDeps), want);
+  assert.deepEqual(ghDeps.calls.gh, [], 'the gh path never lists a GHES repo either');
+  const explicit = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ body: MARKED })]) });
+  assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'github.com/acme/w'], explicit), 0);
+  assert.equal(verdictOf(explicit).match, true, 'an explicit github.com host still matches');
 });
 
 test('--repo owner/name is the repo the same-repo check runs against', () => {
