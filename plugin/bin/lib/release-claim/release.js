@@ -254,16 +254,19 @@ function releaseClaim({
     result.outcome = 'already-released';
     // #4495: a remote with no claims-registry branch has no claim to release.
     // Report it plainly; the branch is created only by claim-targets, never here.
+    // Nothing was ever claimed, so no release comment either — it would be false.
     if (blob.branchMissing) result.note = 'nothing to release — the claims-registry branch does not exist on origin';
   }
-  try {
-    postReleaseComment({
-      owner, repo, host, issueNumber, body: payload.commentBody, runner,
-    });
-    result.calls.push('comment');
-    result.commentPosted = true;
-  } catch (err) {
-    result.note = result.note ? `${result.note}; ${errorText(err)}` : errorText(err);
+  if (!blob.branchMissing) {
+    try {
+      postReleaseComment({
+        owner, repo, host, issueNumber, body: payload.commentBody, runner,
+      });
+      result.calls.push('comment');
+      result.commentPosted = true;
+    } catch (err) {
+      result.note = result.note ? `${result.note}; ${errorText(err)}` : errorText(err);
+    }
   }
   const labels = [...(removeGrants ? GRANT_LABELS : []), ...(removeInProgress ? [IN_PROGRESS_LABEL] : [])];
   for (const label of labels) {

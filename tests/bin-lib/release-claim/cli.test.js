@@ -491,4 +491,5 @@ test('#4495: a branchless claims remote exits 3 with a "nothing to release" note
   assert.equal(env.error, null);
   assert.equal(gitCalls.some((a) => a[0] === 'push'), false, 'a release never creates the branch');
   assert.equal(calls.some(isPut), false);
+  assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
 });

@@ -46,7 +46,7 @@ from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-o
 `POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
 retries; a refused creation exits `6` naming the branch and the reason verbatim. The MCP transport
 bootstraps via the **Bootstrap the branch** bullet below. `release-claim.js` never creates it: a
-branchless remote is exit `3` (a "nothing to release" note on the git transport).
+branchless remote is exit `3` (a "nothing to release" note on the git transport; no comment).
 
 **One keyspace, one classifier, both transports.** `claims/issue-<number>.json`, a blob on the
 `claims-registry` branch, is the *only* lock — checked and written identically whether this run
@@ -79,7 +79,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   - **gh CLI:** `gh api "repos/{owner}/{repo}/git/refs/heads/${CLAIMS_BRANCH}"` to check;
     `DEFAULT_SHA=$(gh api "repos/{owner}/{repo}/commits/$(gh api "repos/{owner}/{repo}" -q .default_branch)" -q .sha)`
     then `gh api "repos/{owner}/{repo}/git/refs" -f "ref=refs/heads/${CLAIMS_BRANCH}" -f "sha=${DEFAULT_SHA}"`
-    to create.
+    to create. `claim-targets.js` (so flow Step 2.8) runs this itself — do not hand-run it as well.
 <!-- /when -->
 <!-- when: transport=mcp -->
   - **MCP:** call `create_branch` with name = `CLAIMS_BRANCH` (`claims-registry`,

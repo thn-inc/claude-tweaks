@@ -557,4 +557,6 @@ test('releaseClaim against a branchless remote: nothing to release, no registry 
   assert.equal(r.error, undefined);
   assert.equal(gitCalls.some((a) => a[0] === 'push'), false);
   assert.equal(ghCalls.some((a) => a.includes('PUT') || a.includes('POST')), false);
+  assert.equal(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'comment'), false, 'no false "Released by run" comment on a record this run never claimed');
+  assert.equal(r.commentPosted, false);
 });
