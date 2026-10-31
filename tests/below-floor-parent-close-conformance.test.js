@@ -377,7 +377,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
     'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
   // The no-settle-poll claim is the argv the module actually passes, read from its source.
-  const source = fs.readFileSync(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'), 'utf8');
+  const source = readText(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'));
   assert.match(source, /'--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String\(CLOSE_WINDOW_MS\)/, 'post-merge.js passes --settle-ms 0 and the close window');
   const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
@@ -454,7 +454,7 @@ test('#4599: the auto-merge short-circuit and the journey name the reconciler be
     'the short-circuit names the reconciler check, with tidy\'s backstop as the last resort',
   );
   assert.ok(!shortCircuit.includes("backstop scope exists to catch"), 'the "backstop exists to catch" framing is gone');
-  const journey = collapse(fs.readFileSync(path.join(ROOT, 'docs', 'journeys', 'close-a-below-floor-decomposition-parent-4466.md'), 'utf8'));
+  const journey = collapse(readText(path.join(ROOT, 'docs', 'journeys', 'close-a-below-floor-decomposition-parent-4466.md')));
   assert.ok(
     journey.includes('is closed by the first reconcile pass at least 10 minutes after the merge (the `post-merge` check'),
     'the journey states when the reconciler closes an armed merge\'s parent',

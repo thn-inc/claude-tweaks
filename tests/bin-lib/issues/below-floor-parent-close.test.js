@@ -1,8 +1,8 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
 const path = require('path');
+const { readText } = require('../../helpers/read-skill');
 const {
   CLOSE_HEADING, composeCloseComment, closeBelowFloorParents,
 } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
@@ -12,7 +12,7 @@ const GATE_PROSE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'w
 // The template step 2 of the prose renders: the first fenced markdown block
 // after "Compose the closing comment" — heading line, blank line, first paragraph.
 function proseTemplate() {
-  const text = fs.readFileSync(GATE_PROSE, 'utf8');
+  const text = readText(GATE_PROSE);
   const after = text.slice(text.indexOf('**2. Compose the closing comment:**'));
   const block = /```markdown\n([\s\S]*?)\n```/.exec(after)[1];
   const [heading, intro, listing] = block.split('\n\n');
@@ -21,12 +21,12 @@ function proseTemplate() {
 
 // The listing line for a sub-issue left with no PR: "is listed as `- #{n} {title}`".
 function proseBareListingLine() {
-  const text = fs.readFileSync(GATE_PROSE, 'utf8');
+  const text = readText(GATE_PROSE);
   return /is listed as `(- #\{n\} \{title\})`/.exec(text)[1];
 }
 
 function proseNotPlannedLine() {
-  const text = fs.readFileSync(GATE_PROSE, 'utf8');
+  const text = readText(GATE_PROSE);
   return /`(No sub-issue closed as completed[^`]*)`/.exec(text)[1];
 }
 
