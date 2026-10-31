@@ -1858,7 +1858,8 @@ async function runReconcileBackground(argv) {
       // Runs whose Step 4.0 itself failed (non-zero exit, unreadable envelope): a SKIP marker was written,
       // Step 4.0b never ran, and the parent waits for tidy's backstop, so they are never counted as ran.
       postMergeFailed: (r.postMerge || []).filter((e) => e.action === 'ran' && e.step40Failed).length,
-      postMergeParentsClosed: (r.postMerge || []).reduce((n, e) => n + (e.action === 'ran' && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
+      // A `marker-write-failed` entry counts too: its parents are closed on GitHub, only the marker is missing.
+      postMergeParentsClosed: (r.postMerge || []).reduce((n, e) => n + ((e.action === 'ran' || e.reason === 'marker-write-failed') && Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,
       prunedRemote: (r.remoteBranches || []).filter((b) => b.action === 'delete').length,

@@ -727,6 +727,12 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
   assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge Step 4\.0 failed for 1 merged run\(s\)/);
 
+  // Closes from runs whose marker write failed alone: no run counted as ran, the closes still render.
+  seed({ postMergeRan: 0, postMergeParentsClosed: 3 });
+  const closedOnly = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(closedOnly.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor/);
+
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);

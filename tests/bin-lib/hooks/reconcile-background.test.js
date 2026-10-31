@@ -241,7 +241,7 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
-test('reconcile-background summary: counts post-merge runs and the parents they closed, skipped entries excluded (#4599)', async () => {
+test('reconcile-background summary: counts post-merge runs and the parents they closed, a marker-write-failed entry\'s parents included (#4599)', async () => {
   const summary = await backgroundSummaryFor({
     postMerge: [
       { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 2 },
@@ -254,7 +254,8 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
   });
   assert.equal(summary.postMergeRan, 2, 'a Step 4.0 failure is not a run that ran');
   assert.equal(summary.postMergeFailed, 2);
-  assert.equal(summary.postMergeParentsClosed, 2);
+  // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted.
+  assert.equal(summary.postMergeParentsClosed, 7);
   for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
     const none = await backgroundSummaryFor(result);
     assert.equal(none.postMergeRan, 0);

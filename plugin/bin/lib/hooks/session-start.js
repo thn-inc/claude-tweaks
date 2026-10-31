@@ -333,9 +333,12 @@ async function run(ctx) {
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
         // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); absent in
         // an older status file, zero renders nothing.
+        const closedParents = s.postMergeParentsClosed;
         if (s.postMergeRan) {
-          const closed = s.postMergeParentsClosed;
-          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${closed ? `, closing ${closed} parent record(s) below the oversight floor` : ''}`);
+          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${closedParents ? `, closing ${closedParents} parent record(s) below the oversight floor` : ''}`);
+        } else if (closedParents) {
+          // Every close came from a run whose marker write failed: the parents are still closed on GitHub.
+          lines.push(`post-merge steps closed ${closedParents} parent record(s) below the oversight floor`);
         }
         // Step 4.0 failed for these (counted apart from `postMergeRan`): no parent was closed, so tidy's
         // parent-gate backstop is the recovery.
