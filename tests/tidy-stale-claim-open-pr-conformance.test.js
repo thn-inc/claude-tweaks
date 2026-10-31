@@ -91,7 +91,7 @@ test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes t
   const sentence = flat.slice(rowAt, archivedAt);
   assert.ok(sentence.includes('`/claude-tweaks:dispatch resume #{n}`'), 'names the dispatch-resume command in the Resume row sentence');
   assert.ok(sentence.includes('`record-{n}`'), 'the dispatch line is for a dispatched run');
-  assert.ok(!sentence.includes('. '),'the slice stays inside one sentence');
+  assert.ok(!sentence.includes('. '), 'the slice stays inside one sentence');
 });
 
 test('AC2.1: a present run dir still renders the PR body\'s resume line (#4673)', () => {
