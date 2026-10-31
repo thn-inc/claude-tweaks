@@ -327,11 +327,11 @@ the Conventional-Commits subject and one `Fixes #{n}` line per record, `Refs #{n
 `{keep-open}` one: the comma-joined `{issue-list}` numbers on a `Refs` line of the post-refresh
 PR body (`closing-links.js --mode pre-merge`'s `keepOpen`, or `parseFixesSpan(body).refs`);
 omit `--keep-open {keep-open}` when none. So the message's `Fixes` lines are the PR body's
-(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because the merge commit's own message is what GitHub scans for
-closing keywords on a non-default integration branch, where the PR body's keywords don't
-fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
-*default* branch — an explicit merge commit message is what makes closing work on any
-integration branch). `--squash` keeps one conventional commit per PR.
+(`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because GitHub closes records
+from them only when the merge lands on the repo's default branch, and the lines travel with the
+commit when it is later promoted; on a non-default integration branch they close nothing, and
+`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself. `--squash` keeps one
+conventional commit per PR.
 
 When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
 

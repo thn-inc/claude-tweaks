@@ -105,6 +105,139 @@ test('deferred-closure section states the keyword neutralization', () => {
   assertLifecycleWiring(read('pr-early-run-lifecycle.md'));
 });
 
+// ---- #4549: the closing-keyword contract is "default branch only"; Step 4.0 closes on a non-default base ----
+const fs = require('node:fs');
+const PLUGIN = path.join(__dirname, '..', 'plugin');
+const collapse = (s) => s.replace(/\s+/g, ' ');
+const stepOf = (text, start, end) => {
+  const s = text.indexOf(start);
+  assert.notEqual(s, -1, `heading missing: ${start}`);
+  const e = text.indexOf(end, s + start.length);
+  assert.notEqual(e, -1, `end heading missing: ${end}`);
+  return collapse(text.slice(s, e));
+};
+const step3Of = (text) => stepOf(text, '## Step 3:', '\n## ');
+const step40Of = (text) => stepOf(text, '### Step 4.0:', '### Step 4.0b');
+const step40bOf = (text) => stepOf(text, '### Step 4.0b', '### Step 4.1');
+
+// The pre-change text (before #4549), kept verbatim as the go-red controls.
+const PRE_CHANGE_STEP3_CLAIM = collapse(`restated here because the merge commit's own message is what GitHub scans for
+closing keywords on a non-default integration branch, where the PR body's keywords don't
+fire (GitHub only auto-closes from a merge commit's message, or a PR body merged into the
+*default* branch — an explicit merge commit message is what makes closing work on any
+integration branch).`);
+const PRE_CHANGE_STEP40_REPORT = collapse(`Whatever the \`action\`, report each \`failed[]\` record (reopen it
+by hand) and each \`pendingClose[]\` record (the merge may still close it — re-run the step once,
+then reopen it by hand if it closed) in the closing summary, never as anything but \`merged\`.`);
+const PRE_CHANGE_STEP40B_GATE = collapse(`It is also a no-op unless the branch the merge landed on — the integration branch
+(\`_shared/integration-branch.md\`) — is the repo's default branch
+(\`gh repo view --json defaultBranchRef -q .defaultBranchRef.name\`). GitHub closes \`Fixes #N\`
+records and a PR's other closing links only on the default branch, so a merge into any other branch
+leaves its sub-issues open: counting them \`CLOSED\` would close the parent early.`);
+const PRE_CHANGE_STEP40B_ACTIONS = collapse(`which only an exit-0 \`post-merge\` action
+carries (\`reopen-failed\`, \`close-pending\`, \`reopened\` or \`nothing-closed\`)`);
+
+function assertNoAnyBranchClaim(text) {
+  assert.ok(!/any\s+integration\s+branch/.test(text), 'Step 3 still says keywords work on any integration branch');
+}
+function assertStep3DefaultOnly(step3) {
+  assert.ok(step3.includes("only when the merge lands on the repo's default branch"), 'Step 3 scopes the keywords to the default branch');
+  assert.ok(step3.includes("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself"), 'Step 3 points at Step 4.0');
+}
+function assertNoOldClaimAnywhere(files) {
+  const offenders = Object.entries(files).filter(([, t]) => /closing\s+work\s+on\s+any\s+integration\s+branch/.test(t)).map(([f]) => f);
+  assert.deepStrictEqual(offenders, [], `files still carrying the any-integration-branch claim: ${offenders.join(', ')}`);
+}
+function assertStep40ReportsCloseFailed(step40) {
+  assert.ok(step40.includes('`closeFailed[]`'), 'Step 4.0 names closeFailed[]');
+  assert.ok(step40.includes('close it by hand'), 'Step 4.0 tells the caller to close a closeFailed[] record by hand');
+}
+function assertStep40ReportsBaseUnchecked(step40) {
+  assert.ok(step40.includes('A `baseUnchecked: true` envelope'), 'Step 4.0 names the baseUnchecked envelope');
+}
+function assertStep40bUsesClosingSet(step40b) {
+  assert.ok(
+    step40b.includes('`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`'),
+    'Step 4.0b lists close-failed and closed among the closingSet-carrying actions',
+  );
+  assert.ok(!step40b.includes('It is also a no-op unless the branch the merge landed on'), 'the PR-merge non-default no-op is gone');
+  assert.ok(step40b.includes('After a PR merge there is no such gate'), 'a PR merge uses closingSet[] on either branch');
+  assert.ok(step40b.includes('`base-unchecked`'), 'Step 4.0b lists base-unchecked as a reason closingSet[] is absent');
+}
+function assertStep40bHoldsCloseFailedParent(step40b) {
+  assert.ok(
+    step40b.includes('A `closeFailed[]` record holds its parent the same way'),
+    'a closeFailed[] record\'s parent is skipped and named',
+  );
+}
+function walkFiles(dir, exts, acc = {}) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, e.name);
+    if (e.isDirectory()) { if (e.name !== 'node_modules') walkFiles(full, exts, acc); }
+    else if (exts.some((x) => e.name.endsWith(x))) acc[path.relative(PLUGIN, full)] = collapse(fs.readFileSync(full, 'utf8'));
+  }
+  return acc;
+}
+
+test('#4549 AC1.1: Step 3 no longer claims keywords close on any integration branch', () => {
+  assertNoAnyBranchClaim(step3Of(read('pr-first-merge.md')));
+  assert.throws(() => assertNoAnyBranchClaim(PRE_CHANGE_STEP3_CLAIM), /any integration branch/, 'go-red: the pre-change sentence fails the check');
+});
+
+test('#4549 AC1.2: Step 3 says keywords close only on the default branch and points at Step 4.0', () => {
+  const step3 = step3Of(read('pr-first-merge.md'));
+  assertStep3DefaultOnly(step3);
+  assert.throws(() => assertStep3DefaultOnly(PRE_CHANGE_STEP3_CLAIM), /scopes the keywords/, 'go-red: the pre-change sentence fails the check');
+  const noPointer = step3.replace("`pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself", '');
+  assert.notEqual(noPointer, step3, 'go-red: the doctored text differs');
+  assert.throws(() => assertStep3DefaultOnly(noPointer), /points at Step 4\.0/, 'go-red: dropping the Step 4.0 pointer fails the check');
+});
+
+test('#4549 AC1.3: no plugin file still carries the any-integration-branch claim', () => {
+  const files = walkFiles(PLUGIN, ['.md', '.js']);
+  assert.ok(Object.keys(files).length > 100, 'the walk found the plugin payload');
+  assertNoOldClaimAnywhere(files);
+  assert.throws(
+    () => assertNoOldClaimAnywhere({ ...files, 'skills/_shared/pr-first-merge.md': PRE_CHANGE_STEP3_CLAIM }),
+    /pr-first-merge\.md/,
+    'go-red: the pre-change sentence is found',
+  );
+});
+
+test('#4549 AC7.1: Step 4.0 tells the caller to report closeFailed[] for a hand close', () => {
+  const step40 = step40Of(read('pr-first-merge-post-merge.md'));
+  assertStep40ReportsCloseFailed(step40);
+  assert.throws(() => assertStep40ReportsCloseFailed(PRE_CHANGE_STEP40_REPORT), /names closeFailed/, 'go-red: the pre-change report list fails the check');
+});
+
+test('#4549 AC7.1b: Step 4.0 names the baseUnchecked envelope', () => {
+  const step40 = step40Of(read('pr-first-merge-post-merge.md'));
+  assertStep40ReportsBaseUnchecked(step40);
+  assert.throws(() => assertStep40ReportsBaseUnchecked(PRE_CHANGE_STEP40_REPORT), /baseUnchecked/, 'go-red: the pre-change text fails the check');
+});
+
+test('#4549 AC7.2: Step 4.0b lists close-failed and closed and uses closingSet[] on a non-default branch', () => {
+  const step40b = step40bOf(read('pr-first-merge-post-merge.md'));
+  assertStep40bUsesClosingSet(step40b);
+  assert.throws(
+    () => assertStep40bUsesClosingSet(`${PRE_CHANGE_STEP40B_GATE} ${PRE_CHANGE_STEP40B_ACTIONS}`),
+    /close-failed/,
+    'go-red: the pre-change paragraph and action list fail the check',
+  );
+  const noGate = step40b.replace('After a PR merge there is no such gate', 'After a PR merge');
+  assert.notEqual(noGate, step40b, 'go-red: the doctored text differs');
+  assert.throws(() => assertStep40bUsesClosingSet(noGate), /uses closingSet/, 'go-red: dropping the no-gate sentence fails the check');
+  const noBaseUnchecked = step40b.replaceAll('`base-unchecked`', '`x`');
+  assert.notEqual(noBaseUnchecked, step40b, 'go-red: the doctored text differs');
+  assert.throws(() => assertStep40bUsesClosingSet(noBaseUnchecked), /base-unchecked/, 'go-red: dropping base-unchecked fails the check');
+});
+
+test('#4549 AC7.3: Step 4.0b skips and names the parent of a closeFailed[] record', () => {
+  const step40b = step40bOf(read('pr-first-merge-post-merge.md'));
+  assertStep40bHoldsCloseFailedParent(step40b);
+  assert.throws(() => assertStep40bHoldsCloseFailedParent(PRE_CHANGE_STEP40B_GATE), /skipped and named/, 'go-red: the pre-change text fails the check');
+});
+
 test('go-red controls: each assertWiring throws with its added block sliced out', () => {
   const cut = (file, [s, e]) => without(read(file), s, e);
   const refresh = cut('pr-checklist-refresh.md', BLOCKS.refresh);

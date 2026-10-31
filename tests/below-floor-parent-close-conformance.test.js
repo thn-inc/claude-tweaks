@@ -246,12 +246,12 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
     ),
     'an unseen armed merge is the backstop\'s by design',
   );
-  assert.ok(
-    collapse(body).includes(
-      'It is also a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch',
-    ),
-    'non-default integration branch is a no-op',
-  );
+  // #4549: the default-branch no-op is scoped to the no-PR local merge entry; a PR merge uses closingSet[] on either branch.
+  const LOCAL_MERGE_NO_OP = 'After a no-PR local merge it is a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch';
+  const PRE_CHANGE_NO_OP = 'It is also a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch';
+  const checkLocalMergeNoOp = (text) => assert.ok(collapse(text).includes(LOCAL_MERGE_NO_OP), 'non-default integration branch is a no-op after a local merge only');
+  checkLocalMergeNoOp(body);
+  assert.throws(() => checkLocalMergeNoOp(PRE_CHANGE_NO_OP), /after a local merge only/, 'go-red: the pre-change unscoped sentence fails the check');
 });
 
 test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs:* parent', () => {
@@ -321,7 +321,9 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'
   \`\`\`
 `;
-  const CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)";
+  const CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`)";
+  // #4549: the pre-change action list, kept as the control for the list pinned below.
+  const PRE_4549_CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)";
   assert.ok(!raw.includes('closingIssuesReferences'), 'AC1.1: Step 4.0b no longer reads closingIssuesReferences itself');
   assert.ok(PRE_CHANGE_STEP_40B_READ.includes('closingIssuesReferences'), 'AC1.1 go-red: the pre-change read carries the literal');
   assert.ok(body.includes(CLOSING_SET_READ), 'Step 4.0b reads closingSet[] from Step 4.0');
@@ -333,10 +335,10 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   const unscopedBody = body.replace(SCOPED_SKIP, 'When `closingSet[]` is absent');
   assert.notEqual(unscopedBody, body, 'go-red: the doctored text differs from the live section');
   assert.throws(() => checkScopedSkip(unscopedBody), /Step 4\.0b skips when the field is absent, after a PR merge only/, 'go-red: an unscoped skip sentence fails the check');
-  assert.ok(
-    body.includes('which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)'),
-    'only an exit-0 post-merge action carries the lists',
-  );
+  const ACTIONS = 'which only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`)';
+  const checkActions = (text) => assert.ok(text.includes(ACTIONS), 'only an exit-0 post-merge action other than base-unchecked carries the lists');
+  checkActions(body);
+  assert.throws(() => checkActions(collapse(PRE_4549_CLOSING_SET_READ)), /carries the lists/, 'go-red: the pre-change action list fails the check');
   assert.ok(body.includes('skip this step entirely, never subtracting nothing, and log it'), 'skips the whole step without the lists');
   assert.ok(raw.includes('--status SKIP --step "pr-first-merge Step 4.0b (skipped)"'), 'the skip is logged through log-decision.js');
   assert.ok(
