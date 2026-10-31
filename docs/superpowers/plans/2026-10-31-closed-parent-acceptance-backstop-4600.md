@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- **Decision Q1 (Reading B):** exclude any closed parent carrying #4466's durable close marker before applying the floor. On GitHub the marker is a comment from a trusted author (`bin/lib/issues/comment-trust.js`'s `isTrustedComment`) whose body has a line matching `/^## Closed below the oversight floor\s*$/m`, the same test `bin/lib/issues/below-floor-parent-close.js` applies. On local-files it is the same heading line in the parent record's body. Only then compute the sub-issue risk aggregate against `risk-floor`. AC2 must hold even after the floor or a sub-issue's `risk:*` label changes. An untrusted marker comment counts as no marker. That fails toward printing the row, so a forged comment can never hide a gap.
+- **Decision Q1 (Reading B):** exclude any closed parent carrying #4466's durable close marker before applying the floor. AC2 must hold even after the floor or a sub-issue's `risk:*` label changes. The marker is recognised exactly as #4466 recognises it (spec `## Plan Review Clarifications`). On GitHub: a comment whose body has a line matching `/^## Closed below the oversight floor\s*$/m`, from a trusted author (`bin/lib/issues/comment-trust.js`'s `isTrustedComment`) or from the current `gh` identity (`gh api user --jq .login`). That is the test `bin/lib/issues/below-floor-parent-close.js` applies. On local-files: the same heading line in the parent record's body. Only then compute the sub-issue risk aggregate against `risk-floor`. Any other marker comment counts as no marker, which fails toward printing the row.
 - **Decision Q2 (Reading B):** a closed parent with zero discoverable sub-issues prints no `[acceptance-gap]` row. The sweep emits one warning line with the count of such parents.
 - **Decision Q3 (Reading B):** only parents closed in the last 30 days are swept, the same window as the `acceptance-gap` scope. GitHub: server `closed:>=$SINCE` (31 days back), then a strict 30-day client `closedAt` cutoff. local-files: a `closedAt` older than 30 days drops the parent; a missing or unparseable `closedAt` keeps it, as Shape 8 does.
-- **The prior review's "also noted" ruling:** on GitHub, a closed parent whose sub-issue is missing from the state map (truncated, or the native search index lagging) is indeterminate. It prints no row and is counted in its own warning line.
+- **Sub-issue missing from the state map (spec `## Plan Review Clarifications`):** on GitHub, a closed parent whose sub-issue is missing from the state map (truncated, or the native search index lagging) still prints the row when its readable sub-issues already exceed the floor, since an unread sub-issue can only raise the maximum. Only otherwise is it indeterminate: it prints no row and is counted in its own warning line.
 - The row is exactly the existing `[acceptance-gap]` form, so tidy routes it like every other acceptance gap. GitHub: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`. local-files: `{path}<TAB>[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`.
 - The parent floor is the existing rule: `exceedsOversightFloor({ risk: maxRiskTier(...) }, { riskFloor, sizeFloor: null })` from `bin/lib/issues/oversight-floor.js`. A single unscored sub-issue fails closed (exceeds).
 - Open-parent behavior must not change. `tests/below-floor-parent-close-conformance.test.js`'s two AC3.1 tests feed gate objects and records with no closed-parent fields, and their exact output stays as it is. The pre-filter reads only `$GATES`, because those tests substitute only `$GATES`.
@@ -37,6 +37,7 @@
 ### Task 1: `closedParentGap` and `needsBackstop`'s `parentExceedsFloor`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/acceptance.js` (`needsBackstop` at ~80-89; new `closedParentGap` after `parentGateState`; exports)
@@ -48,8 +49,8 @@
   1. `belowFloorClose === true` → `'none'` (Q1).
   2. `needsBackstop({ state: 'CLOSED', labels: parentLabels, isParent: true, parentExceedsFloor: true, stateReason })` is false → `'none'` (a disposition, or a not-planned or duplicate close).
   3. Empty or missing `subIssues` → `'no-sub-issues'` (Q2).
-  4. Any `unread === true` → `'unread-sub-issue'`.
-  5. Otherwise, `'gap'` when `exceedsOversightFloor({ risk: maxRiskTier(subIssues) }, { riskFloor, sizeFloor: null }).exceeds`, else `'none'`.
+  4. Let `readable` be the sub-issues without `unread === true`. Compute `exceedsOversightFloor({ risk: maxRiskTier(readable) }, { riskFloor, sizeFloor: null }).exceeds`. If no sub-issue is unread, `'gap'` when it exceeds, else `'none'`.
+  5. With at least one unread sub-issue: `'gap'` when `readable` is non-empty and exceeds (an unread sub-issue can only raise the maximum), else `'unread-sub-issue'`.
 
   Both helpers come from `./oversight-floor`. `maxRiskTier` takes `[{ risk }]`, so pass `subIssues` directly. `oversight-floor.js` does not require `acceptance.js`, so there is no require cycle.
 
@@ -93,7 +94,11 @@ test('AC2.1: closedParentGap excludes a #4466-closed parent before the floor', (
 test('closedParentGap reports an unreadable parent instead of guessing', () => {
   assert.equal(closedParentGap({ parentLabels: [], subIssues: [], riskFloor: 'high' }), 'no-sub-issues');
   assert.equal(closedParentGap({ parentLabels: [], riskFloor: 'high' }), 'no-sub-issues');
-  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'high' }, { risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  // A readable sub-issue already above the floor proves the gap: an unread one can only raise the max.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'high' }, { risk: null, unread: true }], riskFloor: 'high' }), 'gap');
+  // Readable ones below the floor: indeterminate, never a guessed row.
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: 'low' }, { risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [{ risk: null, unread: true }], riskFloor: 'high' }), 'unread-sub-issue');
   // The disposition and marker checks run first: an approved or #4466-closed parent is never counted.
   assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: [], riskFloor: 'high' }), 'none');
   assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [], riskFloor: 'high' }), 'none');
@@ -163,13 +168,13 @@ Constants: `const GAP_TAIL = ' — closed with no acceptance disposition — rec
    - #9 control `Closed above floor`: identical to #7 but `belowFloorClose: false` → acceptance-gap row
 
    Assert stdout equals exactly the #9 row.
-3. `Q2: an unreadable closed parent prints no row and one warning line per cause`. Same runner over: #10 CLOSED with `subIssues: []`, #11 CLOSED with `subIssues: []`, #12 CLOSED with `[sub(121, 'high'), sub(122, null, 'OPEN', true)]`, and control #14 CLOSED with `[sub(141, 'high')]`. Capture stderr (`spawnSync`). Assert stdout is exactly the #14 acceptance-gap row. Assert stderr has exactly one line containing `'2 closed parent'` and `'no-sub-issues'`, and exactly one containing `'1 closed parent'` and `'unread-sub-issue'`. Assert an all-open fixture writes nothing to stderr.
+3. `Q2: an unreadable closed parent prints no row and one warning line per cause`. Same runner over: #10 CLOSED with `subIssues: []`, #11 CLOSED with `subIssues: []`, #12 CLOSED with `[sub(121, 'low'), sub(122, null, 'OPEN', true)]`, #16 CLOSED with `[sub(161, 'high'), sub(162, null, 'OPEN', true)]`, and control #14 CLOSED with `[sub(141, 'high')]`. Capture stderr (`spawnSync`). Assert stdout is exactly the #14 and #16 acceptance-gap rows, in that fixture order. Assert stderr has exactly one line containing `'2 closed parent'` and `'no-sub-issues'`, and exactly one containing `'1 closed parent'` and `'unread-sub-issue'`. Assert an all-open fixture writes nothing to stderr.
 4. `AC1.1: the parent-gate fetch block merges open and closed parents inside the 30-day window and marks the #4466 close`. Extract the one PG node script carrying `process.env.STATE_SEARCH`. Substitute `$PI_NEW`, `$PI_LEG`, `$PC_NEW`, `$PC_LEG`, `$ALL_STATES` and `$PARENTS` with fixture paths, replacing longer names first, and `${CLAUDE_PLUGIN_ROOT}` with the plugin root. Run it with env `{ FETCH_LIMIT: '500', STATE_SEARCH: '' }`. The fixtures use real `gh issue list --json` shapes; closed rows look like `{"number":3979,"state":"CLOSED","stateReason":"COMPLETED","closedAt":"2026-10-27T06:05:03Z","labels":[{"name":"parent-issue"}],"comments":[{"author":{"login":"x"},"authorAssociation":"MEMBER","body":"..."}]}`, probed on this repo.
    - PI_NEW: open #10 (no `state` field). PI_LEG: open #10 duplicate.
-   - PC_NEW: #11 closed 5 days ago, with a MEMBER comment whose body is `'## Closed below the oversight floor\n\nEvery sub-issue …'`. #12 closed 40 days ago. #13 closed 5 days ago, with the same marker comment but `authorAssociation: 'NONE'`. #15 closed 5 days ago, with a MEMBER comment that only quotes the heading mid-line (`'see ## Closed below the oversight floor'`).
+   - PC_NEW: #11 closed 5 days ago, with a MEMBER comment whose body is `'## Closed below the oversight floor\n\nEvery sub-issue …'`. #12 closed 40 days ago. #13 closed 5 days ago, with the same marker comment but `authorAssociation: 'NONE'` and author `stranger`. #15 closed 5 days ago, with a MEMBER comment that only quotes the heading mid-line (`'see ## Closed below the oversight floor'`). #17 closed 5 days ago, with the marker comment under `authorAssociation: 'NONE'` and author `bot-self`.
    - PC_LEG: #11 duplicate. ALL_STATES: `[]`.
 
-   Assert `$PARENTS` holds numbers `[10, 11, 13, 15]` (sorted). Assert `belowFloorClose` is `true` only for #11, #11 keeps `state: 'CLOSED'`, and no row carries a `comments` key.
+   Substitute `LOGIN: 'bot-self'` into the env (the block's current-`gh`-identity value). Assert `$PARENTS` holds numbers `[10, 11, 13, 15, 17]` (sorted). Assert `belowFloorClose` is `true` for exactly #11 and #17, #11 keeps `state: 'CLOSED'`, and no row carries a `comments` key. Control: with `LOGIN: ''`, #17's `belowFloorClose` is `false`.
 5. `AC1.1: the closed-parent fetches are bounded to the window and carry what the gate reads`. In PG, find the `gh issue list --label (parent-issue|family:parent) --state closed` lines. Assert there are exactly 2. Assert each carries `--search "closed:>=$SINCE"` and a `--json` list containing `state`, `stateReason`, `closedAt`, `comments`, `body` and `labels`. Assert the `SINCE=` assignment computes the date in-block (it contains `31 * 864e5`), so no placeholder is left to substitute.
 6. `AC1.1: every gate composer carries the parent's closed state and the unread flag`. Run the body-text composer (the PG script carrying `parseSubIssues(p.body)`) with `$PARENTS`/`$ALL_STATES`/`$GATES` fixtures. Run the native composer (the PG script carrying `batch.byParent`), with `$PG_BATCH` too. The parent fixture has `state:'CLOSED', stateReason:'COMPLETED', belowFloorClose: true`, and one of its two sub-issues is absent from `$ALL_STATES`. Assert `gates[0]` has `state === 'CLOSED'`, `stateReason === 'COMPLETED'`, `belowFloorClose === true`, and `unread` values `[false, true]`. For a parent row with no `state`, assert `state === 'OPEN'`, `stateReason === null` and `belowFloorClose === false`. The Fallback composer needs `gh`, so for it assert the script text contains `state: p.state || 'OPEN'`, `stateReason: p.stateReason || null`, `belowFloorClose: p.belowFloorClose === true` and `unread: !info`.
 
@@ -184,7 +189,8 @@ Expected: FAIL. Test 1 has no `[acceptance-gap]` rows, test 4 cannot find `$PC_N
   - `fetched` becomes `['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require)`.
   - Require `isTrustedComment` from `${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/comment-trust.js`.
   - Add `const cutoff = new Date(Date.now() - 30 * 864e5).toISOString();`.
-  - `parents` keeps the number-keyed dedup over `fetched.flat().filter((p) => p.state !== 'CLOSED' || p.closedAt > cutoff)`. Each row maps to `{ ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isTrustedComment(c) && /^## Closed below the oversight floor\s*$/m.test(c.body || '')) }`.
+  - In the shell, before the node block: `LOGIN="$(gh api user --jq .login)"` + `export LOGIN`. A failed lookup leaves it empty, and only trusted authors then count.
+  - `parents` keeps the number-keyed dedup over `fetched.flat().filter((p) => p.state !== 'CLOSED' || p.closedAt > cutoff)`. Each row maps to `{ ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => (isTrustedComment(c) || (process.env.LOGIN && c.author && c.author.login === process.env.LOGIN)) && /^## Closed below the oversight floor\s*$/m.test(c.body || '')) }`.
 - **Three composers.** Each gate object adds `state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,`. Each sub-issue object adds `unread: !info`.
 - **Pre-filter block.** Also require `closedParentGap`. Replace the `.filter(...due).forEach(...)` chain with one `gates.forEach((f) => { … })`:
   - When `f.state === 'CLOSED'`: `const v = closedParentGap({ parentLabels: f.parentLabels, stateReason: f.stateReason, belowFloorClose: f.belowFloorClose, subIssues: f.subIssues.map((s) => ({ risk: parseRecordFacets(s.labels).risk, unread: s.unread === true })), riskFloor })`. Print the `[acceptance-gap]` row when `v === 'gap'`, count the two "cannot read" verdicts by verdict name, then return.
@@ -210,6 +216,7 @@ git commit -m "Report hand-closed above-floor parents from the GitHub parent-gat
 ### Task 3: local-files Shape 7 reports a hand-closed above-floor parent
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/tidy/step-1-records.md`:
