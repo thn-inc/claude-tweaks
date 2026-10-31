@@ -1,6 +1,6 @@
 ---
 name: hooks-js-verb-registration
-description: Use when adding a subcommand (verb) to `plugin/bin/hooks.js` — every site the verb must land in so the dispatcher, the --help guard, the flag-strict guard and the docs agree, plus the decisions each verb owes (stdout contract, exit codes, --run anchoring). Keywords - hooks.js, verb, subcommand, VERBS, USAGE, KNOWN_FLAGS, resolveRunArg, check-pass-reentry, runAccepting, anchored --run.
+description: Use when adding a subcommand (verb) to `plugin/bin/hooks.js`, or adding or removing a flag on an existing verb — every site the verb or flag must land in so the dispatcher, the --help guard, the flag-strict guard and the docs agree, plus the decisions each verb owes (stdout contract, exit codes, --run anchoring) and each flag owes (typo behavior, combination refusals). Keywords - hooks.js, verb, subcommand, flag, VERBS, USAGE, KNOWN_FLAGS, VALUE_FLAGS, flagVal, resolveRunArg, check-pass-reentry, runAccepting, anchored --run.
 ---
 
 # hooks.js verb registration

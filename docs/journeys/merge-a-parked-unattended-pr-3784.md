@@ -6,6 +6,7 @@ files:
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/flow/summary-template.md
   - plugin/bin/lib/hooks/run-dir-resolve.js
+  - plugin/skills/_shared/pipeline-run-dir.md
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -43,15 +44,17 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should feel:** immediate. One command, no prompts.
 - **Should understand:**
   - **When it routes.** The router fires only when the arguments are nothing but `merge`, at most one record reference, and wrap-up's own tokens. Free text like "fix the merge bug" stays conversation-based work.
-  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run is never `interrupted`. When wrap-up already closed it, merge mode adopts it through `resolve-run-dir --archived`, read-only. That covers a run moved to `archive/`, and a `clean` run `archive-run` refused, as long as the run records a PR (#4677).
+  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run is never `interrupted`. When wrap-up already closed it, merge mode adopts it through `resolve-run-dir --archived`, read-only. That covers a run moved to `archive/`, and a `clean` run `archive-run` refused, as long as the run records a PR and no newer run of the same record is still open (#4677).
   - **Whose run it adopts.** `resolve-run-dir --spec-slug "spec-{n}"` matches the slug as a whole `-`-delimited name segment, so `spec-378` adopts `…-spec-378` (or a multi-spec `…-spec-378-379`) and never a `…-spec-3784` neighbour's run (#3865).
   - **When neither lookup resolves,** it stops and names the record. It never mints a run dir.
+  - **When a newer run is still open.** If a newer run for the same record is `interrupted`, or `active` but not adoptable, the `--archived` lookup refuses instead of adopting the older closed run. Its message names that newer run and says to resume or close it. The older run's PR is still `OPEN`, so the `OPEN` precondition in step 3 would not catch it, and merging it would skip the newer run.
 - **Red flags:**
   - A bare `merge`, or `merge` with `cleanup-only`, `--dry-run` or `resume`, doing anything but report the tokens and stop.
   - `--dry-run` performing a real merge.
   - Merge mode for `#378` adopting a run dir whose name ends `-spec-3784` or `-spec-3784-3790` — another record's PR and claim.
   - The command the flow summary recommended stopping with "no pipeline run directory resolved" because wrap-up already archived the parked run (#4437's run, #4677).
   - The `--archived` fallback adopting a live `interrupted` run, or a run that records no PR.
+  - The `--archived` fallback adopting an older closed run, and merging its PR, while a newer run of the same record is still `interrupted` or `active`.
 
 ### 3. Pass the preconditions
 - **URL:** `merge-mode.md`'s Preconditions
@@ -106,4 +109,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 ## Origin
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
 - Updated during build of #3865: Step 2's run adoption now matches the record's spec slug as a whole name segment, not a substring, so a record never adopts a run belonging to another record whose number starts with the same digits.
-- Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand.
+- Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand. The build's review then made the fallback refuse when a newer run of the same record is still open.
