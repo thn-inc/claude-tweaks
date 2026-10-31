@@ -441,6 +441,8 @@ test('AC2.1-AC2.5: isRelatedCandidate keeps strong or title-similar hits, drops 
   assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['main'] }), false);
   // AC2.2: six shared anchors (the #3508 shape) is strong, kept.
   assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b', 'c', 'd', 'e', 'f'] }), true);
+  // AC2.2 boundary: exactly 2 shared anchors on one signal (the #4229 shape) is kept.
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b'] }), true);
   // AC2.3: title similarity alone is kept.
   assert.strictEqual(isRelatedCandidate({ score: 1, signals: ['title-similarity'], sharedAnchors: [] }), true);
   // AC2.4: score >= 2 is strong, kept.

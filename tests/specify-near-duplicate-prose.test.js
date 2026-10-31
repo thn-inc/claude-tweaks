@@ -237,8 +237,10 @@ function nearDupSection(text = SHAPING_MODE) {
 }
 
 function assertRelatedFilterProse(section) {
-  assert.doesNotMatch(section, /append every candidate/);
+  assert.doesNotMatch(section, /append every candidate as/, 'old append-every-candidate rule present');
   assert.match(section, /isRelatedCandidate/);
+  assert.match(section, /overwrite it with this record's finder output — never run against a file an earlier record left/);
+  assert.match(section, /When the call exits non-zero or prints no JSON line, append nothing[^.]*\(split failed: \{stderr\}\)/);
   assert.match(section, /at least 2 signals or 2 shared(?: Current State)? anchors/);
   assert.match(section, /title-similarity/);
   assert.match(section, /Not added to Related \(one signal, under 2 shared anchors\)/);
@@ -255,10 +257,12 @@ test('AC1.1/AC1.2/AC4.1: shaping-mode.md filters the Related append through isRe
 
 test('AC3.1: the Related-filter pin fails against the old append-every-candidate sentence (#4702)', () => {
   const live = nearDupSection();
+  // Swap only the append clause back to the old rule, keeping every other pinned phrase, so the
+  // old-rule guard is the one assertion that can fail — its own message is the matcher.
   const mutated = live.replace(
-    /— render every candidate[\s\S]*?so a human can still add one by hand\./,
-    '— and append every candidate as `#{n}` to the composed body\'s `**Related:**` line.',
+    'Append only `related` to the composed body\'s `**Related:**` line',
+    'and append every candidate as `#{n}` to the composed body\'s `**Related:**` line',
   );
-  assert.notStrictEqual(mutated, live, 'the mutation must replace the new append sentence');
-  assert.throws(() => assertRelatedFilterProse(mutated), /append every candidate/);
+  assert.notStrictEqual(mutated, live, 'the mutation must replace the new append clause');
+  assert.throws(() => assertRelatedFilterProse(mutated), /old append-every-candidate rule present/);
 });

@@ -96,7 +96,7 @@ more, render a three-column table in the shaping output before proceeding —
 |--------|-------|---------|
 | #{n} | {score} | {signals, comma-joined} |
 
-— render every candidate in the table, then split the hits mechanically — the table omits anchor counts, so never filter by eye. Write the finder's output to `$NEAR_DUP_HITS` (resolved as in the refusal step below) and run:
+— render every candidate in the table, then split the hits mechanically — the table omits anchor counts, so never filter by eye. Resolve `$NEAR_DUP_HITS` first (`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json` prints it), overwrite it with this record's finder output — never run against a file an earlier record left — then run the call below (its first line re-resolves the same path; the refusal step reuses the file):
 
 ```bash
 NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
@@ -107,7 +107,7 @@ console.log(JSON.stringify({ related: hits.filter(isRelatedCandidate).map((h) =>
 " -- "$NEAR_DUP_HITS"
 ```
 
-Append only `related` to the composed body's `**Related:**` line (creating the line if the record doesn't already carry one) — the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit. Name `rest` on one line under the table, `Not added to Related (one signal, under 2 shared anchors): #a, #b`, so a human can still add one by hand. Omit that line when `rest` is empty, and leave `**Related:**` untouched (create no line) when `related` is empty. A candidate surfaced here is worth a human's
+Append only `related` to the composed body's `**Related:**` line (creating the line if the record doesn't already carry one) — the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit. Name `rest` on one line under the table, `Not added to Related (one signal, under 2 shared anchors): #a, #b`, so a human can still add one by hand. Omit that line when `rest` is empty, and leave `**Related:**` untouched (create no line) when `related` is empty. When the call exits non-zero or prints no JSON line, append nothing and name every hit on the `Not added to Related` line followed by `(split failed: {stderr})` — never fall back to appending every candidate or to filtering by eye. A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
