@@ -117,5 +117,83 @@ test('the sequence cites the integration-model fragment and the pr-first-merge s
   assert.ok(flat.includes('`{subject-dir}` — resolves per `_shared/pr-first-merge.md` Step 3'));
 });
 
+// The block no caller may carry inline (collapsed, so a line-wrapped copy is still caught).
+const BLOCK = [
+  ['branch guard', 'if ! git branch --show-current | grep -qxF'],
+  ['composer call', 'bin/compose-subject.js" '],
+  ['merge-tree pre-check', 'git merge-tree --write-tree --name-only'],
+  ['close-run call', 'bin/hooks.js" close-run --run'],
+];
+// Frozen pre-#4073 lines from wrap-up/auto-merge-short-circuit.md (its pre-merge fence and close-run fence).
+const PRE_4073_BLOCK = {
+  'branch guard': "if ! git branch --show-current | grep -qxF '{integration-branch}'; then",
+  'composer call': 'node "${CLAUDE_PLUGIN_ROOT}/bin/compose-subject.js" {issue} --tag {tag} --range {integration-branch}...{branch} --out-dir "{subject-dir}" || exit 1',
+  'merge-tree pre-check': 'git merge-tree --write-tree --name-only {integration-branch} {branch} || exit 1',
+  'close-run call': 'node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"',
+};
+const inlineBlockParts = (t) => BLOCK.filter(([, needle]) => collapse(t).includes(collapse(needle))).map(([name]) => name);
+
+// Each caller's **Bindings** paragraph binds every placeholder but {subject-dir}: `{x}` = … or `{x}` — none.
+function bindingsGaps(text) {
+  const start = text.indexOf('**Bindings');
+  if (start < 0) return ['no **Bindings** paragraph'];
+  const end = text.indexOf('\n\n', start);
+  const para = collapse(end < 0 ? text.slice(start) : text.slice(start, end));
+  return BOUND.filter((p) => !new RegExp('`\\{' + esc(p) + '\\}` (?:=|— none)').test(para));
+}
+const deltaGaps = (text, deltas) => Object.entries(deltas).filter(([, lit]) => !collapse(text).includes(collapse(lit))).map(([n]) => n);
+
+test('the anchor: the sequence itself carries every block part', () => {
+  assert.deepEqual(inlineBlockParts(read(SEQUENCE)), BLOCK.map(([n]) => n));
+});
+
+function siteTests(site) {
+  test(`${site.label}: cites ${CITATION}`, () => {
+    const live = read(site.file);
+    assert.ok(collapse(live).includes(CITATION));
+    const doctored = live.split(CITATION).join('_shared/zzz-no-such-sequence-4073.md'); // a nonsense token: a hit means re-pick it
+    assert.ok(!collapse(doctored).includes(CITATION), 'go-red: an uncited site must fail');
+  });
+  test(`${site.label}: carries no inline copy of the guard, composer, merge-tree or close-run block`, () => {
+    const live = read(site.file);
+    assert.deepEqual(inlineBlockParts(live), []);
+    for (const [name] of BLOCK) {
+      const wrapped = PRE_4073_BLOCK[name].replace(' ', '\n   '); // a line-wrapped copy is still caught [IL-66]
+      assert.deepEqual(inlineBlockParts(`${live}\n${wrapped}\n`), [name], `go-red: ${name}`);
+    }
+  });
+  test(`${site.label}: binds every placeholder the sequence needs`, () => {
+    const live = read(site.file);
+    assert.deepEqual(bindingsGaps(live), []);
+    const doctored = live.replace(/`\{worktree-path\}` =/, '`{worktree-path}` is');
+    assert.notEqual(doctored, live);
+    assert.deepEqual(bindingsGaps(doctored), ['worktree-path'], 'go-red: a dropped binding');
+  });
+  test(`${site.label}: keeps its own deltas`, () => {
+    const live = read(site.file);
+    assert.deepEqual(deltaGaps(live, site.deltas), []);
+    for (const [name, lit] of Object.entries(site.deltas)) {
+      const doctored = stripLoose(live, lit);
+      assert.notEqual(doctored, live, `${name}: the strip matched nothing`);
+      assert.deepEqual(deltaGaps(doctored, site.deltas), [name], `go-red: ${name}`);
+    }
+  });
+}
+
 // Site-side half (Tasks 2-4 of the #4073 plan): callers append here without restructuring.
-const SITES = [];
+const SITES = [
+  { label: 'local-merge-auto-finish.md', file: 'plugin/skills/_shared/local-merge-auto-finish.md', deltas: {
+    'tag auto-finish': '`{tag}` = `auto-finish`',
+    'single issue': '`{issues}` = `{issue}`',
+    'feature-branch binding': '`{branch}` = `{feature-branch}`',
+    'verification between merge and push': '6. **Verify on the merged result**',
+    're-stamp output logged': "carry it into the log call's `{text-file}`",
+  } },
+  { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', deltas: {
+    'own tag': "`{tag}` = this file's own `{tag}`",
+    'single issue': '`{issues}` = `{issue}`',
+    'integration-branch binding': '`{base-branch}` = `{integration-branch}`',
+    're-stamp output logged': 'log its output line to `decisions.md`',
+  } },
+];
+for (const site of SITES) siteTests(site);

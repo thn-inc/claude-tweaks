@@ -24,7 +24,8 @@ const LOCAL_SITES = [
 // #4073: the composer and --no-ff merge fences live once in the shared sequence; the four
 // LOCAL_SITES cite it. LOCAL_FENCE_FILES lists the files that still carry the fences.
 const LOCAL_SEQUENCE = 'plugin/skills/_shared/local-merge-sequence.md';
-const LOCAL_FENCE_FILES = [LOCAL_SEQUENCE, ...LOCAL_SITES];
+// Task 3 of #4073 narrows this to [LOCAL_SEQUENCE] once the last two callers are migrated.
+const LOCAL_FENCE_FILES = [LOCAL_SEQUENCE, 'plugin/skills/dispatch/settle-and-merge.md', 'plugin/skills/flow/worktree-merge.md'];
 
 // Frozen pre-change excerpts (byte-for-byte from the pre-#2251 files).
 const PRE_PR_FIRST_SITE = `gh pr merge {pr-number} --repo {owner}/{repo} --auto --merge \\

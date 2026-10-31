@@ -43,21 +43,6 @@ fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 // the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
 const SITES = [
   {
-    label: 'auto-merge-short-circuit.md',
-    file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md',
-    readsWorktree: true,
-    logNeedle: 'log any other line',
-    worktreeVar: 'worktree-path',
-    vars: {
-      'integration-branch': 'main',
-      branch: 'feat',
-      issue: '1',
-      tag: 'fast-lane',
-      'subject-dir': posix(SUBJECT_DIR),
-      'worktree-path': posix(WORKTREE),
-    },
-  },
-  {
     label: 'settle-and-merge.md',
     file: 'plugin/skills/dispatch/settle-and-merge.md',
     readsWorktree: false,
@@ -70,20 +55,6 @@ const SITES = [
       'second-issue': '2',
       'subject-dir': posix(SUBJECT_DIR),
       'group-worktree': posix(WORKTREE),
-    },
-  },
-  {
-    label: 'local-merge-auto-finish.md',
-    file: 'plugin/skills/_shared/local-merge-auto-finish.md',
-    readsWorktree: true,
-    logNeedle: 'carry it into the log call\'s `{text-file}`',
-    worktreeVar: 'worktree-path',
-    vars: {
-      'base-branch': 'main',
-      'feature-branch': 'feat',
-      issue: '1',
-      'subject-dir': posix(SUBJECT_DIR),
-      'worktree-path': posix(WORKTREE),
     },
   },
   {
@@ -415,6 +386,37 @@ for (const site of SITES) {
     const after = collapse(raw).slice(R, R + 600);
     assert.match(after, /worktree recorded/);
     assert.ok(after.includes(collapse(logNeedle)), `a re-stamp that fails must be logged, not ignored: expected ${JSON.stringify(logNeedle)} within the window`);
+  });
+}
+
+// #4073: each caller reads run-state.json's `worktree` (when it reads it) before the step that runs the
+// sequence's close-run, since close-run nulls the field. `closeAnchor` is that step's literal, on one line.
+const CITING_SITES = [
+  { label: 'local-merge-auto-finish.md', file: 'plugin/skills/_shared/local-merge-auto-finish.md', readsWorktree: true, closeAnchor: '4. **Close the run**' },
+  { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', readsWorktree: true, closeAnchor: "Run the sequence's Steps 1-4 in order" },
+];
+function siteReadOrder(text, { readsWorktree, closeAnchor }) {
+  const flat = collapse(text);
+  const C = flat.indexOf(collapse(closeAnchor));
+  const W = flat.lastIndexOf(WORKTREE_READ_NEEDLE);
+  const errors = [];
+  if (C < 0) errors.push('close anchor missing');
+  if (readsWorktree && W < 0) errors.push('worktree read missing');
+  if (C >= 0 && W >= 0 && W > C) errors.push('worktree read follows the close step');
+  return errors;
+}
+for (const site of CITING_SITES) {
+  test(`${site.label}: the run-state.json worktree read precedes the step that closes the run`, () => {
+    const live = readText(path.join(ROOT, site.file));
+    assert.deepStrictEqual(siteReadOrder(live, site), []);
+    const noAnchor = live.split(site.closeAnchor).join('');
+    assert.notStrictEqual(noAnchor, live);
+    assert.deepStrictEqual(siteReadOrder(noAnchor, site), ['close anchor missing']);
+    const moved = `${live.split(WORKTREE_READ_NEEDLE).join('')}\n${WORKTREE_READ_NEEDLE}\n`;
+    assert.deepStrictEqual(siteReadOrder(moved, site), ['worktree read follows the close step'], 'go-red: the order comparison');
+    if (site.readsWorktree) {
+      assert.deepStrictEqual(siteReadOrder(live.split(WORKTREE_READ_NEEDLE).join(''), site), ['worktree read missing']);
+    }
   });
 }
 
