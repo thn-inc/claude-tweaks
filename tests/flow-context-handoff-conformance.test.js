@@ -125,7 +125,7 @@ test('the verbatim-copy check can go red: one changed word in the copy fails it'
 function shellItemGaps(tpl) {
   const s = squash(tpl);
   const gaps = [];
-  if (!/scratch-worktree\.md` §7/.test(s)) gaps.push('the scratch-worktree.md §7 citation');
+  if (!/scratch-worktree\.md`?\s*§7/.test(s)) gaps.push('the scratch-worktree.md §7 citation');
   if (!s.includes('One plain command per Bash call')) gaps.push('the "One plain command per Bash call" citation');
   if (!/[Ff]orward this constraint to any agent you dispatch/.test(s)) gaps.push('the forward-to-dispatched-agents instruction');
   return gaps;
@@ -142,6 +142,21 @@ test('the shell-constraint check can go red: the item removed from the template 
   const without = tpl.replace(item, '');
   assert.notEqual(without, tpl, 'the item anchor is gone from the template');
   assert.ok(shellItemGaps(without).length > 0, 'the check must report the removed item as missing');
+});
+
+test('each sub-check can go red on its own: removing one citation or the forward sentence reports exactly that gap', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const s = squash(tpl);
+  const cases = [
+    ['scratch-worktree.md` §7', 'scratch-worktree.md` (refusal table)', 'the scratch-worktree.md §7 citation'],
+    ['One plain command per Bash call', 'One shell rule', 'the "One plain command per Bash call" citation'],
+    ['Forward this constraint to any agent you dispatch', 'Note this constraint', 'the forward-to-dispatched-agents instruction'],
+  ];
+  for (const [anchor, swap, gap] of cases) {
+    const doctored = s.replace(anchor, swap);
+    assert.notEqual(doctored, s, `the anchor ${JSON.stringify(anchor)} is gone from the template`);
+    assert.deepEqual(shellItemGaps(doctored), [gap]);
+  }
 });
 
 test("steps-and-gates.md's Partial step lists: a handed-off run renders the partial note naming handoff.json", () => {
