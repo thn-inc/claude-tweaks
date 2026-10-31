@@ -46,7 +46,7 @@
 | AC7.1 | Task 2 `AC7.1: no policy.yml takes the body-text path` |
 | AC8.1 | Task 2 Step 5 (revert-to-red proof) |
 | AC9.1 | `npm test`, run centrally by the pipeline's `/claude-tweaks:test` step |
-| AC10.1 (Decision) | Task 2 `AC10.1: body-text Parent line absent from the parent task list is a logged mismatch, not a gate member` |
+| AC10.1, AC10.2, AC10.3, AC10.4 (Decision) | Task 2 `AC10.1: body-text Parent line absent from the parent task list is a logged mismatch, not a gate member` |
 
 Waived wrap-up/verification-brief-parent-gate.md: read only — its body-text prose already describes the behavior this plan mechanizes; no wording changes.
 Waived _shared/work-record.md: read only — the `Parent: #N` entry is the format source; unchanged.
