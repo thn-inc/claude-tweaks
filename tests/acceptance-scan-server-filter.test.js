@@ -96,7 +96,7 @@ test('closed-record fetch is server-filtered', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,
-    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>=\$SINCE -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
+    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>=\$SINCE -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending"/,
     'the closed-record fetch must narrow on the server through --search'
   );
   const occurrences = [...GAP.matchAll(/gh issue list --state closed/g)];
@@ -117,7 +117,7 @@ test('the unsearched-fetch detector rejects a fetch with no --search within 120 
 test('negated labels are exactly needsBackstop dispositions', () => {
   const search = closedSearchString(GAP);
   const negated = [...search.matchAll(/-label:(\S+?)(?=\s|$)/g)].map((m) => m[1]).sort();
-  assert.deepEqual(negated, ['demo:approved', 'demo:changes-requested', 'demo:pending']);
+  assert.deepEqual(negated, ['accept:approved', 'accept:changes-requested', 'accept:pending', 'demo:approved', 'demo:changes-requested', 'demo:pending']);
   for (const label of negated) {
     assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
   }
@@ -544,3 +544,25 @@ test('the closed-record fetch names search-index lag as an unwarned, self-correc
   // Control: the lag named without the closed-record anchor is not enough.
   assert.ok(!lag.test('the state map may miss a just-linked sub-issue while the search index lags — unwarned'));
 });
+
+// ---- accept:* read sites (#4610 expand step) ---------------------------------------------------
+
+test('the acceptance-gap search excludes all three accept: labels as well as the demo: ones', () => {
+  const search = closedSearchString(GAP);
+  for (const label of ['accept:approved', 'accept:changes-requested', 'accept:pending']) {
+    assert.ok(search.includes(`-label:${label}`), `the search must negate ${label}: ${search}`);
+    assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
+  }
+  // Control: the frozen pre-change fetch carries no accept: negation, so the check can fail.
+  assert.ok(!PRE_CHANGE_GAP_FETCH.includes('-label:accept:'));
+});
+
+test('the acceptance-queue lists records carrying either pending spelling', () => {
+  const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
+  const query = 'gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200';
+  assert.ok(QUEUE.includes(query), 'the queue query must read both pending spellings in one search');
+  // Control: the single-spelling form it replaced is gone and does not satisfy the check.
+  assert.ok(!QUEUE.includes('gh issue list --label demo:pending'));
+  assert.ok(!'gh issue list --label demo:pending --state all --json number,title --limit 200'.includes(query));
+});
+
