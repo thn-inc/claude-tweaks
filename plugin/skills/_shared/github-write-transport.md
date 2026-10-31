@@ -25,11 +25,11 @@ probe, not an environment classification — it holds regardless of *why* `gh` i
 | Comment | `gh issue comment {n} --body-file` | `add_issue_comment` — a body that starts with a `<!-- … -->` marker follows **Marker comments on the MCP path** below |
 | Close | `gh issue close {n} --reason ...` | `issue_write` (update mode, `state: closed` plus `state_reason` — `completed` for `--reason completed`, `not_planned` for `--reason "not planned"`; never pass `labels`, per **Full-replace hazard** below) |
 | Get a single issue by number | `gh issue view {n} --json state,...` | `issue_read` (get mode); its `state_reason`, `labels`, `title`, `body` and `closed_by_pull_requests` (`references[].number`, up to 5) fields stand in for `gh`'s `stateReason`, `labels`, `title`, `body` and `closedByPullRequestsReferences`; MCP spells state values lowercase |
-| List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 |
+| List an issue's comments | `gh api repos/{owner}/{repo}/issues/{n}/comments?per_page=100` | `issue_read` (get_comments mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 (the `gh` form is the single-page read the call sites run) |
 | List an issue's native sub-issues | `gh api --paginate "repos/{owner}/{repo}/issues/{n}/sub_issues"` | `issue_read` (`get_sub_issues` mode) — `perPage: 100`, then `page` 2, 3, … until a page returns fewer than 100 |
 | Get an issue's native parent | the sub-issue relationship read from the child's side | `issue_read` (`get_parent` mode) |
 | Read the current identity's login | `gh api user --jq .login` | `get_me` (its `login` field) |
-| Read the repo's default branch | `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` | no MCP tool — read `git remote show origin`'s `HEAD branch:` line, `_shared/integration-branch.md` rank 5's own fallback, which needs neither transport |
+| Read the repo's default branch | `gh repo view --json defaultBranchRef -q .defaultBranchRef.name` | no MCP tool — read `git remote show origin`'s `HEAD branch:` line, `_shared/integration-branch.md` rank 5's own fallback, which needs neither transport; an empty or `(unknown)` branch counts as a failing read |
 
 ### Marker comments on the MCP path
 

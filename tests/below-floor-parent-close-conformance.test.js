@@ -732,7 +732,7 @@ const GH_TO_MCP = [
   [/^gh issue view\b/, '`issue_read`'],
   [/^gh issue comment\b/, '`add_issue_comment`'],
   [/^gh issue close\b/, '`issue_write`'],
-  [/^gh issue edit\b/, '`issue_write`'],
+  [/^gh issue edit\b.*--add-label/, '`issue_write`'], // the only edit shape the gate issues; another flag fails as unmapped
   [/^gh issue reopen\b/, '`issue_write`'], // Step 4.0b's restore hint in its log-decision reversibility text
   [/^gh repo view\b/, 'git remote show origin'],
 ];
@@ -773,6 +773,7 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   assert.ok(transport.includes('`get_parent`'), 'native parent resolution');
   assert.ok(transport.includes('`_shared/label-bootstrap.md`'), 'the label bootstrap states its MCP-path behavior');
   assert.ok(transport.includes('`get_comments` for comments, paged per its row'), 'comment reads are paged per the comments row');
+  assert.ok(transport.includes('every `gh issue view` read'), 'explicit pairing: every gh issue view read is issue_read');
   assert.ok(transport.includes('`gh api user` is `get_me`'), 'explicit pairing: gh api user is get_me');
   assert.ok(transport.includes('`gh issue comment` is `add_issue_comment`'), 'explicit pairing: gh issue comment is add_issue_comment');
   assert.ok(
@@ -798,6 +799,13 @@ test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
 test('#4602: settle-and-merge\'s #205 paragraph lists the calls the Parent-Gate Procedure makes', () => {
   const p = collapse(paragraph(read('dispatch/settle-and-merge.md'), 'This blanket mapping also covers'));
   for (const lit of ['`gh issue close`', 'sub_issues', '`gh api user`', 'verification-brief-parent-gate.md', 'Transport (#4602)']) assert.ok(p.includes(lit), `names ${lit}`);
+  // Derived from the gate file's own calls, so a call shape added there without a mention in the
+  // Parent-Gate sentence (the earlier sentence names verification-brief.md's own calls) fails.
+  const parentGateAt = p.indexOf('The Parent-Gate Procedure makes');
+  assert.ok(parentGateAt !== -1, 'the Parent-Gate sentence is present');
+  const parentGate = p.slice(parentGateAt);
+  const named = (call) => (/sub_issues/.test(call) ? 'sub_issues' : call.split(' ').slice(0, 3).join(' '));
+  for (const call of ghCalls(read(GATE_REL))) assert.ok(parentGate.includes(named(call)), `names ${named(call)} (gate call: ${call})`);
   assert.ok(!p.includes('No separate mapping table entry is needed'), 'the stale no-row claim is gone');
   assert.ok(!p.includes('is one of the three standard shapes'), 'the stale three-shapes claim is gone');
 });

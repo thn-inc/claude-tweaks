@@ -23,12 +23,12 @@ This blanket mapping also covers the `gh` calls the Auto-merge gate's acceptance
 delegates to per member (`wrap-up/verification-brief.md`'s Routing section onward, and its
 Parent-Gate Procedure) — `#205`: the `verification-brief.md` calls (`gh issue comment`,
 `gh issue edit --add-label`) are `add_issue_comment`/`issue_write` shapes, its evidence-pr
-`gh pr create` is the PR create exception (#929), and its Step 1 runs `_shared/label-bootstrap.md`.
+`gh pr create` is the PR create exception (#929), and its Step 1 runs `_shared/label-bootstrap.md`,
+which has no MCP row: skip that loop on the MCP path, as the **Transport (#4602).** paragraph says.
 The Parent-Gate Procedure makes `gh api .../sub_issues`, `gh issue view`, `gh api user`,
-`gh issue comment`, `gh issue close` and `gh issue edit --add-label`; each one's MCP tool, and the
-label bootstrap's MCP-path behavior, is in the **Transport (#4602).** paragraph of
-`wrap-up/verification-brief-parent-gate.md`. A gh-absent group auto-merge gate resolves as the
-rest of this file does.
+`gh issue comment`, `gh issue close` and `gh issue edit --add-label`; each one's MCP tool is in
+that paragraph of `wrap-up/verification-brief-parent-gate.md`. A gh-absent group auto-merge gate
+resolves as the rest of this file does.
 
 ## Step 6: Settle — on pipeline failure
 

@@ -61,7 +61,9 @@ nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already post
 absent, each call runs through the GitHub MCP tool its `_shared/github-write-transport.md` row names
 (that file's Detection rule). Under **Resolve the parent**, the native parent read is `issue_read`
 (`get_parent`) and the body-text read is `issue_read` (`get`), whose `body` you write with the Write
-tool to `$WRAPUP_PARENT_BODY`'s path before running the `parseSubIssues` script. Under **Enumerate
+tool to the path the `session-tmp-resolve.js --value wrapup-parent-body.md` line of the body-text
+fence under **Enumerate the parent's sub-issues** prints (run it first, as its own call), then run
+the `parseSubIssues` script against that file. Under **Enumerate
 the parent's sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row),
 and every `gh issue view` read (the parent body, each sub-issue, the parent's labels, and the
 comment reads in **Close the parent below the floor** and **Apply the gate**) is `issue_read`
@@ -74,15 +76,17 @@ before any rule below reads it: uppercase `state` and `state_reason` (`closed` �
 `completed` → `COMPLETED`, `not_planned` → `NOT_PLANNED`, `reopened` → `REOPENED`) before
 `subIssues` is built for `parentGateState` (which matches `CLOSED` exactly), before the close-reason
 test, and before the idempotence check; pass `parentLabels` as label names; and take `{pr}` from the
-last of the references `closed_by_pull_requests` returns (at most 5 — a deterministic truncation).
-On the MCP path a "`gh` call" in the paragraphs below means the tool its row names. The
-default-branch read in Step 4.0b is `git remote show origin` on that path
-(`_shared/integration-branch.md`'s rank-5 git read); when it fails, it is a failing call under the
-paragraph below, which skips the whole of Step 4.0b.
+last of the references `closed_by_pull_requests` returns (at most 5 — a deterministic truncation that
+can name a different PR than the `gh` path's uncapped list). On the MCP path a "`gh` call" in the
+paragraphs below means the tool its row names. The default-branch read in Step 4.0b is
+`git remote show origin` on that path (`_shared/integration-branch.md`'s rank-5 git read); when it
+fails, or prints an empty or `(unknown)` branch, it is a failing call under the paragraph below,
+which skips the whole of Step 4.0b.
 
 **Fail open on every `gh` call in this section.** If neither `gh` nor the GitHub MCP server is
-available, `gh` is unauthenticated, the repo has no GitHub remote, or any parent-gate `gh` call
-below fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to
+available, `gh` is present but unauthenticated (the Detection rule picks `gh` on presence alone, so
+there is no fallback to MCP), the repo has no GitHub remote, or any parent-gate `gh` call below
+fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to
 the no-parent path (`verification-brief.md`'s Oversight-floor gate, then Steps 1-4 on this record
 itself when it clears the floor) — never blocking the wrap-up, the auto-merge short-circuit, or
 the dispatched group's merge gate. The post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
