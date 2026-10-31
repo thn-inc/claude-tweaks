@@ -50,8 +50,8 @@ Stage vocabulary is exactly these three words — **backlog** (absence of stage 
 | **Stage** | backlog (no label) \| `parked` \| `ready` | Labels — backlog is the absence of stage labels |
 | **Authorization** | `auto:build`, `auto:merge`, `auto:merge-pending` | Labels — human-granted, except `auto:merge-pending` (machine-only waypoint, see Grant semantics) — absence of all three is the default not-authorized state |
 | **Bot state** | `bot:in-progress`, `bot:blocked`, `bot:parked` | Labels — machinery-owned visibility layer. `bot:blocked` = hit the retry ceiling, or a plan-review question awaits a human answer (`build/plan-review.md`) — grants revoked either way; `bot:parked` = merge-verification gate parked it on a red/timed-out PR check (grants stay intact) — the two never overlap on one record |
-| **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested` — or no label | Labels — `demo:pending` is written by every skill the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `demo:approved`/`demo:changes-requested` by `/claude-tweaks:demo` alone; independent of Stage and of the issue's own open/closed state |
-| **Acceptance provenance** | `demo:approved-batch` — a modifier, always stacked alongside `demo:approved`, never on its own | Label — written only when `/claude-tweaks:demo` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
+| **Acceptance** | `demo:pending` \| `demo:approved` \| `demo:changes-requested`, read alongside their `accept:pending` \| `accept:approved` \| `accept:changes-requested` twins — or no label | Labels — both spellings are read, most-conservative-wins (Acceptance semantics below); every writer still adds `demo:*` until the accept-skill record (#4613) switches them, and the contract step (#4625) removes `demo:*`. `demo:pending` is written by every skill the permission matrix below grants it to (more than one, and the matrix is the list; do not restate a single writer here), resolved to `demo:approved`/`demo:changes-requested` by `/claude-tweaks:demo` alone; independent of Stage and of the issue's own open/closed state |
+| **Acceptance provenance** | `demo:approved-batch` (or its `accept:approved-batch` twin) — a modifier, always stacked alongside the approved label, never on its own | Label — written only when `/claude-tweaks:demo` resolves the verdict via a `#N,#M` batch invocation rather than a dedicated single-record session (both run the same per-item walkthrough — this distinguishes invocation shape, not whether one happened); absent means single-record-backed (including every `demo:approved` label applied before this modifier existed). Sole consumer: `bin/lib/issues/trust.js`'s coverage/verdict computation, via `bin/lib/issues/acceptance.js`'s `approvalProvenance` |
 
 **Origin axis, the two no-label cases:** a human filing directly on GitHub carries no `by:*`
 label (absence = human-filed). Records created as side effects of other skills (e.g.
@@ -78,7 +78,7 @@ cover at all.
 The core label families below, plus an optional `priority:*` family (see the table for the
 current per-family and total counts). The canonical `LABELS_JSON` (names + ≤100-char
 descriptions + colors) lives in `_shared/label-bootstrap.md`; consumers bootstrap only the labels
-they are about to apply.
+they are about to apply, apart from the exceptions that file names.
 
 **Color convention (#1873).** Stated once here; the values themselves live in
 `_shared/label-bootstrap.md`'s `LABELS_JSON` array, and `ensureLabelPayload`
@@ -101,8 +101,8 @@ per-member), visually distinct from the graded dimensions above — see the Colo
 | Stage (2) | `parked`, `ready` | `2EA44F` | Stage |
 | Grants (3) | `auto:build`, `auto:merge`, `auto:merge-pending` | `1D76DB` | Authorization |
 | Bot state (3) | `bot:in-progress`, `bot:blocked`, `bot:parked` | `6A737D` | Bot state |
-| Acceptance (3) | `demo:pending`, `demo:approved`, `demo:changes-requested` | `006B75` | Acceptance |
-| Acceptance provenance (1) | `demo:approved-batch` | `006B75` | Modifier stacked alongside `demo:approved` — batch-invocation-sourced vs. single-record-backed (absent) |
+| Acceptance (6) | `demo:pending`, `demo:approved`, `demo:changes-requested`; twins `accept:pending`, `accept:approved`, `accept:changes-requested` | `006B75` | Acceptance |
+| Acceptance provenance (2) | `demo:approved-batch`, `accept:approved-batch` | `006B75` | Modifier stacked alongside `demo:approved` — batch-invocation-sourced vs. single-record-backed (absent) |
 | Closure (1) | `wontfix` | `CCCCCC` | re-filing suppression |
 | Upstream (1) | `upstream-candidate` | `0052CC` | marks a record whose real destination is the claude-tweaks plugin, filed locally only because a headless run could not clear `/claude-tweaks:feedback`'s confirmation gate |
 | Structure (1) | `parent-issue` | `E99695` | Structure: parent issue — carries the acceptance gate for its sub-issues. Marks a `/claude-tweaks:specify` decomposition parent — the only thing that makes it enumerable for `/claude-tweaks:tidy`'s `parent-gate` sweep (`_shared/github-pr-scan-acceptance.md`); never carried by a sub-issue |
@@ -263,10 +263,33 @@ was asked — distinct from tests passing (`/claude-tweaks:test`) and code-quali
   list order, never a backlog sweep — and resolves the label to `demo:approved` or
   `demo:changes-requested` — `/claude-tweaks:help` (Stage 4.7) is the sole discovery surface for
   which records are outstanding. On the latter, it files a linked follow-up backlog record.
-- The three values are mutually exclusive by construction — `/claude-tweaks:demo` always removes
-  `demo:pending` in the same operation it adds the resolution label.
+- Mutual exclusion is no longer guaranteed by construction: with `demo:*` and `accept:*` both
+  read, a record can carry labels from both vocabularies, or two resolutions, at once. Every
+  reader resolves that by **most-conservative-wins**: `changes-requested` beats `pending` beats
+  `approved` beats no verdict (`bin/lib/issues/record-vocabulary.js`'s `acceptanceOf`). A stray
+  `approved` therefore never hides an open `pending` or a `changes-requested`. The `-batch`
+  provenance modifier, in either spelling, only ever annotates an `approved` result.
 - `auto:merge` governs merge timing only; it has no bearing on whether `demo:pending` eventually
   gets resolved.
+
+### The `accept-verdict` comment
+
+A human, or Dispatch on a human's behalf, can record the verdict as a PR or issue comment holding
+one machine-readable marker. The format is the contract `bin/lib/issues/accept-verdict.js` parses,
+and `_shared/pr-run-comments.md`'s "The `accept-verdict` comment" section is where it is specified
+in full. In short: a single-line HTML comment, alone on its own line, at column 0, before any
+code block in the comment, carrying a JSON object with `v` (`1`), `verdict` (`approved` or
+`changes-requested`), `choice` (`fix-forward` or `revert-now`, required with `changes-requested`,
+rejected with `approved`) and an optional `note`.
+
+- **A marker counts only when its `verdict` equals the record's current verdict label.** The label
+  stays the source of truth. A marker that disagrees with it yields no action and a visible
+  "verdict label and comment disagree" note; neither side silently wins.
+- **Only a trusted author's comment counts** (`OWNER`, `MEMBER`, `COLLABORATOR`, per
+  `bin/lib/issues/comment-trust.js`).
+- **Trust limit (#3358).** The author association cannot tell the maintainer from an agent running
+  under the maintainer's account, so a trusted-looking marker is the maintainer's word, not proof
+  of a human. The plugin never authors a verdict marker itself; only Dispatch or the human does.
 
 ## Labels are projection, not truth
 
