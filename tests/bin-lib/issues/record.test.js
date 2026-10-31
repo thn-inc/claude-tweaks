@@ -402,6 +402,25 @@ test('parseRecordFacets: LABELS exposes the three demo:* acceptance label string
   assert.strictEqual(LABELS.DEMO_CHANGES_REQUESTED, 'demo:changes-requested');
 });
 
+test('parseRecordFacets: accept:* labels set acceptance, and LABELS exposes the three accept:* strings', () => {
+  assert.strictEqual(LABELS.ACCEPT_PENDING, 'accept:pending');
+  assert.strictEqual(LABELS.ACCEPT_APPROVED, 'accept:approved');
+  assert.strictEqual(LABELS.ACCEPT_CHANGES_REQUESTED, 'accept:changes-requested');
+  assert.strictEqual(parseRecordFacets(['accept:pending']).acceptance, 'pending');
+  assert.strictEqual(parseRecordFacets(['accept:approved']).acceptance, 'approved');
+  assert.strictEqual(parseRecordFacets(['accept:changes-requested']).acceptance, 'changes-requested');
+});
+
+test('acceptanceOf: changes-requested beats pending beats approved beats null, across both vocabularies', () => {
+  const { acceptanceOf } = require('../../../plugin/bin/lib/issues/record-vocabulary');
+  assert.strictEqual(acceptanceOf([]), null);
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved-batch']), null);
+  assert.strictEqual(acceptanceOf(['demo:approved', 'accept:pending']), 'pending');
+  assert.strictEqual(acceptanceOf(['accept:pending', 'demo:changes-requested', 'accept:approved']), 'changes-requested');
+  // Orthogonal category: an unrelated label alongside does not disturb the verdict.
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved', 'type:bug']), 'approved');
+});
+
 test('parseRecordFacets: ceremony:fast-lane sets facets.ceremony', () => {
   assert.strictEqual(parseRecordFacets(['ceremony:fast-lane']).ceremony, 'fast-lane');
 });
