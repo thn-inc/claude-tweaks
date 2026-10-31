@@ -445,4 +445,63 @@ test('bootstrapClaimsBranchGit: a refused push (permission) is transport-failure
   assert.equal(r.ok, false);
   assert.equal(r.failure, 'transport-failure');
   assert.match(r.reason, /Permission to acme\/w\.git denied/);
+  assert.equal('timedOut' in r, false);
+});
+
+test('bootstrapClaimsBranchGit: a contested push whose ls-remote shows no branch is transport-failure with the rejection text — never success', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (args[0] === 'rev-parse') return 'abc123\n';
+    if (args[0] === 'push') { const e = new Error('push failed'); e.stderr = '! [rejected] abc123 -> claims-registry (stale info)'; throw e; }
+    if (args[0] === 'ls-remote') return '';
+    return '';
+  };
+  const r = bootstrapClaimsBranchGit({ runner });
+  assert.equal(r.ok, false);
+  assert.equal(r.failure, 'transport-failure');
+  assert.match(r.reason, /\(stale info\)/);
+  assert.deepEqual(calls.find((a) => a[0] === 'ls-remote'), ['ls-remote', '--heads', 'origin', 'refs/heads/claims-registry']);
+});
+
+test('bootstrapClaimsBranchGit: an ls-remote that throws after a contested push is the same transport-failure, carrying the original rejection', () => {
+  const runner = (args) => {
+    if (args[0] === 'rev-parse') return 'abc123\n';
+    if (args[0] === 'push') { const e = new Error('push failed'); e.stderr = '! [rejected] abc123 -> claims-registry (stale info)'; throw e; }
+    if (args[0] === 'ls-remote') throw new Error('fatal: unable to access: Could not resolve host');
+    return '';
+  };
+  const r = bootstrapClaimsBranchGit({ runner });
+  assert.equal(r.ok, false);
+  assert.equal(r.failure, 'transport-failure');
+  assert.match(r.reason, /\(stale info\)/);
+  assert.doesNotMatch(r.reason, /Could not resolve host/);
+});
+
+test('bootstrapClaimsBranchGit: the scratch ref the fetch wrote is the one deleted afterwards, on success and on failure', () => {
+  for (const pushFails of [false, true]) {
+    const calls = [];
+    const runner = (args) => {
+      calls.push(args);
+      if (args[0] === 'rev-parse') return 'abc123\n';
+      if (args[0] === 'push' && pushFails) throw new Error('remote: Permission to acme/w.git denied to bot.');
+      return '';
+    };
+    bootstrapClaimsBranchGit({ runner });
+    const fetchArgs = calls.find((a) => a[0] === 'fetch');
+    const scratchRef = fetchArgs[fetchArgs.length - 1].replace(/^HEAD:/, '');
+    assert.match(scratchRef, /^refs\/claims-cas-bootstrap\//);
+    assert.deepEqual(calls.find((a) => a[0] === 'update-ref'), ['update-ref', '-d', scratchRef]);
+  }
+});
+
+test('bootstrapClaimsBranchGit: a timeout-shaped error is transport-failure AND timedOut', () => {
+  const timeoutErr = new Error('Command timed out');
+  timeoutErr.killed = true;
+  timeoutErr.signal = 'SIGTERM';
+  const runner = (args) => { if (args[0] === 'fetch') throw timeoutErr; return ''; };
+  const r = bootstrapClaimsBranchGit({ runner });
+  assert.equal(r.ok, false);
+  assert.equal(r.failure, 'transport-failure');
+  assert.equal(r.timedOut, true);
 });

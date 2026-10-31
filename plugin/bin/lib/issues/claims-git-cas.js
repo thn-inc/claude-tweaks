@@ -208,7 +208,7 @@ function writeClaimBlobGit({
 }
 
 // {remote, branch, runner} -> {ok: true, created: boolean} |
-//   {ok: false, failure: 'transport-failure', reason}
+//   {ok: false, failure: 'transport-failure', reason, timedOut?}
 // Creates the claims branch on a remote that has none (#4495), based on the
 // default branch's tip (the remote's HEAD) — never an orphan commit. The push
 // is create-only: an empty `--force-with-lease=ref:` expectation means the
@@ -230,7 +230,7 @@ function bootstrapClaimsBranchGit({ remote = 'origin', branch = CLAIMS_BRANCH, r
         if (String(listed).trim()) return { ok: true, created: false };
       } catch { /* an unreadable remote leaves the original rejection as the reason */ }
     }
-    return { ok: false, failure: 'transport-failure', reason: errText(err) };
+    return { ok: false, failure: 'transport-failure', reason: errText(err), ...timedOutFlag(err) };
   } finally {
     try { runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the bootstrap's own outcome */ }
   }
