@@ -994,3 +994,15 @@ test('matchStaleClaimPr rejects a marked non-cross-repo entry whose url is anoth
   const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
   assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url: 'https://github.com/evil/x/pull/1' })], 'acme', 'w'), null);
 });
+
+test('staleClaimInFlightPr runs the shared normalizer: a malformed gh listing reaches onError, as the CLI reports it (#4596)', () => {
+  const { staleClaimInFlightPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const claim = JSON.stringify({ runId: SC_RUN });
+  const errors = [];
+  const noBody = [{ url: SC_URL, isCrossRepository: false }];
+  assert.equal(staleClaimInFlightPr(claim, () => JSON.stringify(noBody), 'acme', 'w', (e) => errors.push(e)), null);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0].message, /entry 0 is not a PR/);
+  const mcpShaped = [{ html_url: SC_URL, body: `claude-tweaks-run: ${SC_RUN}`, head: { repo: { full_name: 'acme/w' } } }];
+  assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(mcpShaped), 'acme', 'w'), { link: SC_URL });
+});

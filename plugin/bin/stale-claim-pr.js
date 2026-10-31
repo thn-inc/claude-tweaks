@@ -54,7 +54,7 @@ const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl } =require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]\n';

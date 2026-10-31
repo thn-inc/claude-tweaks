@@ -42,6 +42,7 @@ const { execFileSync } = require('child_process');
 const { CLAIMS_BRANCH } = require('./claims');
 const { readClaimBlobGit, writeClaimBlobGit, defaultRunner } = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
+const { normalizePrListing } = require('./mcp-pr-shape');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
 // whose rejection a fresh read proves spurious (#787 final-review finding I1 —
@@ -582,8 +583,10 @@ function matchStaleClaimPr(runId, prs, owner, repo) {
 // One `pr list` serves every stale target of a claim run (the caller memoizes
 // `gh`). Fails open like its tombstone twin — a broken check must never block
 // a legitimate reclaim — but a failed check (a thrown `gh`, an unparseable or
-// non-array listing, or a no-match listing that hit OPEN_PR_LIST_LIMIT and so
-// may have cut the marked PR off) is not a clean "no marked PR", so the
+// non-array listing, an entry `normalizePrListing` rejects — the same
+// normalizer the `stale-claim-pr.js` CLI runs — or a no-match listing that
+// hit OPEN_PR_LIST_LIMIT and so may have cut the marked PR off) is not a
+// clean "no marked PR", so the
 // optional trailing `onError(err)` lets the caller surface it (#4423). An
 // `onError` that itself throws is swallowed — this function always returns null
 // on failure.
@@ -591,7 +594,7 @@ function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
     const runId = staleClaimRunId(content);
     if (runId === null) return null;
-    const prs = JSON.parse(gh(openPrListArgs(owner, repo)));
+    const prs = normalizePrListing(JSON.parse(gh(openPrListArgs(owner, repo))), owner, repo);
     const m = matchStaleClaimPr(runId, prs, owner, repo);
     return m ? { link: m.url } : null;
   } catch (e) {

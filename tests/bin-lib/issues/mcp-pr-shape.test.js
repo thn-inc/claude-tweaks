@@ -42,8 +42,34 @@ test('normalizePrListing throws on an agent-recorded error element or an entry w
   assert.throws(() => normalizePrListing([mcp('acme/w'), { message: 'x' }], 'acme', 'w'), /entry 1 is not a PR/);
 });
 
-test('normalizePrListing detects an MCP entry by html_url alone (no head -> cross-repository)', () => {
-  assert.deepEqual(normalizePrListing([{ html_url: U, body: B }], 'acme', 'w'), [{ url: U, body: B, isCrossRepository: true }]);
+test('normalizePrListing throws on an MCP entry with no head (the head-key guard alone)', () => {
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing throws on an MCP entry whose head is not an object or has no repo key', () => {
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: {} }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: null }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: 'x' }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing throws on an MCP entry with no body key (the body guard alone)', () => {
+  assert.throws(() => normalizePrListing([{ html_url: U, head: { repo: { full_name: 'acme/w' } } }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing throws on a gh-shaped entry with no body key (the body guard alone)', () => {
+  assert.throws(() => normalizePrListing([{ url: U, isCrossRepository: false }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing throws on a body that is neither a string nor null', () => {
+  assert.throws(() => normalizePrListing([{ url: U, body: 5, isCrossRepository: false }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ html_url: U, body: {}, head: { repo: { full_name: 'acme/w' } } }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
+test('normalizePrListing accepts body: null on both shapes (REST returns null for an empty body)', () => {
+  assert.deepEqual(normalizePrListing([{ url: U, body: null, isCrossRepository: false }], 'acme', 'w'),
+    [{ url: U, body: null, isCrossRepository: false }]);
+  assert.deepEqual(normalizePrListing([{ html_url: U, body: null, head: { repo: { full_name: 'acme/w' } } }], 'acme', 'w'),
+    [{ url: U, body: null, isCrossRepository: false }]);
 });
 
 test('normalizePrListing detects an MCP entry by head alone (a head key with no html_url is not a PR)', () => {

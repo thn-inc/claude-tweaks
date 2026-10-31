@@ -8,7 +8,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { run, parseArgs } = require('../plugin/bin/stale-claim-pr');
-const { parseRepo } =require('../plugin/bin/lib/repo-resolve');
+const { parseRepo } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
 const RUN = '2026-10-31T005940-record-4596';
@@ -143,6 +143,16 @@ test('a listing file entry that is not a PR is a failure, never a no-match', () 
   const deps = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([{ message: 'Not Found', status: '404' }]) });
   assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING], deps), 0);
   assert.match(verdictOf(deps).failure, /entry 0 is not a PR/);
+});
+
+test('a marked MCP entry with no head is a failure, never a no-match', () => {
+  const noHead = { html_url: PR_URL, body: MARKED };
+  const deps = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([noHead]) });
+  assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING], deps), 0);
+  const v = verdictOf(deps);
+  assert.equal(v.match, false);
+  assert.equal(v.link, null);
+  assert.match(v.failure, /entry 0 is not a PR/);
 });
 
 test('each failure source is a failure verdict at exit 0, never a throw or a no-match', () => {
@@ -305,6 +315,8 @@ test('a non-github.com host is the failure verdict, never a clean no-match, and 
   assert.equal(run(['--claim-file', CLAIM], ghDeps), 0);
   assert.deepEqual(verdictOf(ghDeps), want);
   assert.deepEqual(ghDeps.calls.gh, [], 'the gh path never lists a GHES repo either');
+  assert.equal(ghDeps.calls.ghAvailable, 0, 'the gh path never probes gh for a GHES repo');
+  assert.deepEqual(ghDeps.calls.readFile, [], 'the gh path reads no claim file for a GHES repo');
   const explicit = fakeDeps({ ...claimFile(), [LISTING]: JSON.stringify([ghEntry({ body: MARKED })]) });
   assert.equal(run(['--claim-file', CLAIM, '--listing', LISTING, '--repo', 'github.com/acme/w'], explicit), 0);
   assert.equal(verdictOf(explicit).match, true, 'an explicit github.com host still matches');
