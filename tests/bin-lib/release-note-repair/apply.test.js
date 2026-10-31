@@ -90,11 +90,40 @@ test('applyReleaseNote never mistakes a shorter nested fence for the close of a 
   assert.ok(rnAt > outerClose, 'Release Note must land after the outer fence closes, never inside the nested block');
 });
 
-test('AC3.1: a fenced ## Original request is not the boundary — the closed fence no longer reads as unterminated (#4561)', () => {
-  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n`;
+test('AC3.1: a fenced ## Original request is not the boundary — the real unfenced one later is (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n\n## Original request\n\nSee thread.\n`;
   const out = applyReleaseNote(body, F.LINE);
   assert.equal(out.mode, 'inserted');
+  const realIn = body.lastIndexOf('## Original request');
+  const realOut = out.body.lastIndexOf('## Original request');
+  assert.ok(out.body.indexOf('## Release Note') < realOut, 'Release Note lands before the real boundary');
+  assert.ok(out.body.indexOf('## Release Note') > out.body.indexOf('```\n', out.body.indexOf('```markdown') + 1), 'and after the fenced look-alike');
+  assert.equal(out.body.slice(realOut), body.slice(realIn), 'the verbatim section is byte-identical');
   assert.equal(checkBody(out.body).verdict, 'conforming');
+});
+
+test('AC3.1: an authored unterminated fence closed inside the verbatim section hides the real boundary — refused (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC_UNTERMINATED_FENCE)}\n## Original request\n\nSome text\n\`\`\`\n\n## Original heading\n\nmore\n`;
+  assert.throws(() => applyReleaseNote(body, F.LINE), RepairError);
+});
+
+test('AC3.1: a body whose only ## Original request is inside a closed fence is refused, the boundary being ambiguous (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n`;
+  assert.throws(() => applyReleaseNote(body, F.LINE), RepairError);
+});
+
+test('a tab after ## counts as the Release Note heading — filled, not inserted, per the shared headingLine (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '##\tRelease Note\n', F.TA);
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(out.mode, 'filled');
+  assert.equal(onlyReleaseNoteAdded(body, out.body, F.LINE), true);
+});
+
+test('a tab-indented ``` is not a fence for the repair writer, as for findSection (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] x\n\n\t```\n## Example\n\t```\n');
+  const out = applyReleaseNote(body, F.LINE);
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Example'));
+  assert.notEqual(findSection(body, 'Example', { levelPattern: '2' }), null);
 });
 
 test('AC2.1: a Release Note heading only inside a fence is absent — inserted, never filled (#4561)', () => {

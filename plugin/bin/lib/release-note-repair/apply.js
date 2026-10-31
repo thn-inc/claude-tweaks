@@ -20,10 +20,11 @@ class RepairError extends Error {}
 const splitKeepingEol = (text) => text.match(/[^\n]*\n|[^\n]+$/g) || [];
 const bare = (line) => line.replace(/\r?\n$/, '');
 
-const isReleaseNoteHeading = (l) => {
+const isLevel2Heading = (l, text) => {
   const h = headingLine(l);
-  return h !== null && h.level === 2 && h.text === 'Release Note';
+  return h !== null && h.level === 2 && h.text === text;
 };
+const isReleaseNoteHeading = (l) => isLevel2Heading(l, 'Release Note');
 
 function applyReleaseNote(body, rawLine) {
   const text = String(body);
@@ -33,6 +34,11 @@ function applyReleaseNote(body, rawLine) {
   const bareLines = lines.map(bare);
   const fenced = fencedLineMask(bareLines);
   const originalAt = findHeadingLine(bareLines, 'Original request', { levelPattern: '2', fenced });
+  // A fenced look-alike with no unfenced heading may be the real boundary swallowed by an authored
+  // fence that a fence line inside the verbatim text closes — refuse rather than write into it.
+  if (originalAt === -1 && bareLines.some((l, k) => fenced[k] && isLevel2Heading(l, 'Original request'))) {
+    throw new RepairError('a ## Original request heading sits inside a fenced block with no unfenced one — the verbatim boundary is ambiguous');
+  }
   const authoredEnd = originalAt === -1 ? lines.length : originalAt;
   // An unterminated fence opened before the insert point leaves no boundary to trust — refuse
   // rather than guess. One opened after ## Original request sits in verbatim text and never refuses.
