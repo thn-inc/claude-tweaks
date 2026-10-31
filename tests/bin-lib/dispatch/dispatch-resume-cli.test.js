@@ -1254,15 +1254,12 @@ test('a bound run owned by this same session id is never proven dead: concurrent
   const state = { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } };
   const bound = makeEnv({ alive: () => false });
   bound.cfg.runDirs = [{ dir: LEFTOVER, state }];
-  const boundResult = exec(bound, BOUND).json;
-  assert.deepStrictEqual(boundResult, { concurrent: true, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
-  assert.ok(boundResult.line.includes(`close-run --run "${LEFTOVER}"`));
+  assert.deepStrictEqual(exec(bound, BOUND).json, { concurrent: true, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
   const verdict = makeEnv({ alive: () => false });
   verdict.cfg.runDirs = [{ dir: LEFTOVER, state }];
   const r = exec(verdict);
   assert.equal(r.code, 3);
   assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
-  assert.ok(r.json.line.includes(`close-run --run "${LEFTOVER}"`));
 });
 
 // ---- the same run-dir scan in verdict mode (Step 2, before Step 3 archives anything) ----

@@ -347,20 +347,19 @@ function boundRunConflict(ctx, excluded) {
     const name = path.basename(dir);
     const owner = isObject(state.owner) ? state.owner : null;
     // ownerClass reads this session's own block as dead (right for the prior run); here it may be a
-    // second resume sharing the session id (#965), so it is never proven dead in the scan: its line
-    // covers both a resume still running and a crashed one left open.
+    // second resume sharing the session id (#965), so it is never proven dead in the scan.
     const ownSession = owner !== null && nonEmptyString(deps.sessionId) !== null && owner.sessionId === deps.sessionId;
-    const cls = ownerClass(deps, state);
-    if (cls === 'dead-owner' && !ownSession) {
-      return {
-        reason: 'stale-bound-run',
-        line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to run ${name}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
-      };
-    }
     if (ownSession) {
       return {
         reason: 'concurrent-resume',
         line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to another active run ${name} owned by this same session — if another dispatch resume in this session is still running, stop it, then run /claude-tweaks:dispatch resume #${issue}; if an earlier resume in this session crashed and left that run open, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
+      };
+    }
+    const cls = ownerClass(deps, state);
+    if (cls === 'dead-owner') {
+      return {
+        reason: 'stale-bound-run',
+        line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to run ${name}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
       };
     }
     if (cls === 'unknown-owner') {
