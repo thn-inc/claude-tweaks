@@ -1408,6 +1408,9 @@ test("tidy/scan-procedures.md's explicit reconcile --checks list names exactly A
   const m = /hooks\.js" reconcile --checks ([a-z,-]+) --json/.exec(prose);
   assert.ok(m, 'Reconcile-first call with an explicit --checks list found');
   assert.deepEqual([...m[1].split(',')].sort(), [...ALL_CHECKS].sort());
+  // The count the prose states beside the list is the list's own (#4599 left it at "nine").
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  assert.ok(prose.includes(`(all ${words[ALL_CHECKS.length]}, \`ALL_CHECKS\` order)`), `the stated count is ${words[ALL_CHECKS.length]}`);
 });
 
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
