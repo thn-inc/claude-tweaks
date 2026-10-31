@@ -260,6 +260,51 @@ test('a sha stored twice: a sibling restoring the older copy first leaves one al
   assert.deepEqual(stack(dir), [x, y, x]);
 });
 
+const NOTHING_WRITTEN = /same commit already at stash@\{0\} — git stash store wrote nothing/;
+
+test('a store that writes nothing is reported as a failed restore, never as restored (probe A: older copy of the sha at stash@{0} dropped)', () => {
+  const dir = fixture();
+  const { root, runDir } = withRunDir();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{2}');
+  assert.deepEqual(stack(dir), [x, y]);
+  const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root });
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.removed, [x]);
+  assert.deepEqual(r.json.restored, []);
+  assert.deepEqual(r.json.alreadyPresent, []);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].sha, x.sha);
+  assert.match(r.json.restoreFailed[0].error, NOTHING_WRITTEN);
+  assert.equal(r.json.restoreFailed[0].command, storeCommand(x.subject, x.sha));
+  assert.match(r.err, new RegExp(`restore failed for ${x.sha}; recover with:`));
+  assert.deepEqual(stack(dir), [x, y]);
+  const text = decisionsOf(runDir);
+  assert.equal(r.json.logged, true);
+  assert.doesNotMatch(text, /restored via git stash store/);
+  assert.match(text, /- FAILED \d{2}:\d{2}:\d{2} — Stash guard: implementer for task 2 removed stash entry [0-9a-f]{40} .*; restore failed: same commit already at stash@\{0\} — git stash store wrote nothing — recover with: git stash store -m /);
+});
+
+test('a store that writes nothing: probe B (two newer entries dropped) restores what it can and reports the rest as failed', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  assert.deepEqual(stack(dir), [x]);
+  const r = compare(dir, baseline, ['--restore']);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.removed.length, 2);
+  assert.deepEqual(r.json.restored, [y.sha]);
+  assert.deepEqual(r.json.alreadyPresent, []);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].sha, x.sha);
+  assert.match(r.json.restoreFailed[0].error, NOTHING_WRITTEN);
+  // Only the real write landed: y went on top of the surviving x.
+  assert.deepEqual(stack(dir), [y, x]);
+});
+
 test('AC3.2: without --restore the stack is left unchanged', () => {
   const dir = fixture();
   stashPush(dir, 'one');

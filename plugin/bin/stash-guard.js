@@ -20,7 +20,10 @@
 // logged and logError are omitted. An added entry is reported and left on the stack,
 // never popped. A sha can occur more than once on the stack: removed and added are
 // multiset differences, so dropping one copy of a doubled sha is detected, and every
-// removed copy gets its own restore outcome.
+// removed copy gets its own restore outcome. `git stash store` of a sha already at
+// stash@{0} exits 0 and writes nothing, so every store is confirmed by re-reading the
+// stack; one that wrote nothing is a restoreFailed entry (error "same commit already at
+// stash@{0} — git stash store wrote nothing"), never counted or logged as restored.
 //
 // Position limit: a restored entry always lands at stash@{0} (`git stash store` pushes),
 // so only the relative order among the restored entries comes back; entries that
@@ -230,25 +233,36 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
   for (let i = removed.length - 1; i >= 0; i--) {
     const entry = removed[i];
     const expected = (currentCounts.get(entry.sha) || 0) + (handled.get(entry.sha) || 0);
-    let present = false;
+    let seen = null;
     try {
-      present = (countBySha(readStack(deps.git, repo)).get(entry.sha) || 0) > expected;
+      seen = countBySha(readStack(deps.git, repo)).get(entry.sha) || 0;
     } catch { /* fall through to the store */ }
-    if (present) {
+    if (seen !== null && seen > expected) {
       outcomes[i] = { alreadyPresent: true };
       handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
       continue;
     }
-    try {
-      deps.git(['-C', repo, 'stash', 'store', '-m', entry.subject, entry.sha]);
-      outcomes[i] = { restored: true };
-      handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
-    } catch (e) {
+    const fail = (error) => {
       const command = storeCommand(entry.subject, entry.sha);
-      const error = oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e));
       outcomes[i] = { failed: { sha: entry.sha, subject: entry.subject, error, command } };
       deps.stderr(`${NAME}: restore failed for ${entry.sha}; recover with:\n${command}\n`);
+    };
+    try {
+      deps.git(['-C', repo, 'stash', 'store', '-m', entry.subject, entry.sha]);
+    } catch (e) {
+      fail(oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e)));
+      continue;
     }
+    // `git stash store` of a sha already at stash@{0} exits 0 without writing an entry, so a
+    // clean exit proves nothing: confirm the sha's count went up. A failed re-read cannot
+    // refute the exit code, so it counts as restored.
+    let wrote = true;
+    try {
+      wrote = (countBySha(readStack(deps.git, repo)).get(entry.sha) || 0) > (seen === null ? expected : seen);
+    } catch { /* trust the exit code */ }
+    if (!wrote) { fail('same commit already at stash@{0} — git stash store wrote nothing'); continue; }
+    outcomes[i] = { restored: true };
+    handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
   }
   return outcomes;
 }
