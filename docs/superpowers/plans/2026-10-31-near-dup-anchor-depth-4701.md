@@ -28,6 +28,8 @@ Scope keywords: findNearDuplicates, deepOverlapHits
 - `plugin/bin/lib/dispatch/in-flight-neighbours.js` — filters by `isStrongNearDuplicate`, then sorts `nearOnly` by number; order-insensitive.
 - `plugin/skills/specify/shaping-mode.md` — renders the table and appends the `**Related:**` line in finder order; this is the consumer the change is for.
 
+Plan-audit Check B's other keyword hits are prose that names `findNearDuplicates` without stating its order — `docs/plugin-structure.md:28`, `plugin/skills/dispatch/SKILL.md:167`, `plugin/skills/dispatch/queue-pull-script.md:681` — and an archived plan (`docs/superpowers/plans/2026-10-28-fenced-heading-skip-4369.md`): no change needed.
+
 ## Review Focus
 
 - Ties under the new key (equal `score + sharedAnchors.length`) must still order by score descending, then number ascending — pinned by the renamed existing sort test (expected `[20, 5, 30]`).
@@ -92,12 +94,15 @@ Sort at :199 becomes key `score + sharedAnchors.length` descending, then `score`
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/bin-lib/issues/near-duplicate.test.js`
-Expected: PASS (all tests, including the unchanged `shapingRefusal` and `isStrongNearDuplicate` ones — AC3.1)
+Run: `node --test tests/bin-lib/issues/near-duplicate.test.js tests/bin-lib/dispatch/near-dup-pairs.test.js tests/dispatch-near-dup-pairs-script.test.js tests/dispatch-near-dup-neighbour-prose.test.js`
+Expected: PASS (all tests, including the unchanged `shapingRefusal` and `isStrongNearDuplicate` ones — AC3.1). `near-dup-pairs.test.js` asserts pair order (`:51`, `:80`); if a fixture there now orders differently, the pairs are a read-only consumer — report it rather than changing the consumer, and adjust only if the new order is the intended depth-first order.
 
 - [ ] **Step 5: Prove discrimination by reverting the sort (AC2.1)**
 
-Temporarily restore `results.sort((a, b) => b.score - a.score || a.number - b.number);` at the sort line, run `node --test tests/bin-lib/issues/near-duplicate.test.js`, confirm the #4093/#3508 test fails on its order assertion, then put the new sort back and re-run to PASS.
+Temporarily restore `results.sort((a, b) => b.score - a.score || a.number - b.number);` at the sort line, then:
+
+Run: `node --test --test-name-pattern "AC1.1" tests/bin-lib/issues/near-duplicate.test.js`
+Expected: FAIL on the order assertion (old sort puts 3508 last). Put the new sort back and re-run: PASS. Never commit the reverted line.
 
 - [ ] **Step 6: Commit**
 
