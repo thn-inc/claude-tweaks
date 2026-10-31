@@ -540,3 +540,21 @@ test('#2090: a sweep write conflict whose re-read shows the ORIGINAL holder stil
   assert.match(r.error, /still held by the original holder/);
   assert.deepEqual(calls, [], 'no release comment — the sweep release did not actually happen');
 });
+
+// #4495: a remote with no claims-registry branch has no claim to release — the
+// release path reports that as already-released with a note and never creates
+// the branch (claim-targets alone bootstraps it).
+test('releaseClaim against a branchless remote: nothing to release, no write of any kind', () => {
+  const ghCalls = [];
+  const gitCalls = [];
+  const gitRunner = (args) => { gitCalls.push(args); if (args[0] === 'fetch') { const e = new Error('x'); e.stderr = "fatal: couldn't find remote ref claims-registry"; throw e; } return ''; };
+  const runner = (args) => { ghCalls.push(args); return ''; };
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 7, runId: 'run-a', reason: 'done', runner, gitRunner, now: 0,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.match(r.note, /nothing to release/);
+  assert.equal(r.error, undefined);
+  assert.equal(gitCalls.some((a) => a[0] === 'push'), false);
+  assert.equal(ghCalls.some((a) => a.includes('PUT') || a.includes('POST')), false);
+});

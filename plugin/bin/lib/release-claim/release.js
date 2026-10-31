@@ -61,7 +61,8 @@ function readClaimBlob({
   };
   const result = claimStore.readClaimBlob({ ghApi, gitRunner }, `${owner}/${repo}`, issueNumber);
   if (result.failure) { const e = new Error(`claim-store read failure: ${result.failure}`); throw e; }
-  return result.absent ? { content: null, sha: null, absent: true } : { content: result.content, sha: result.sha };
+  if (result.absent) return result.branchMissing ? { content: null, sha: null, absent: true, branchMissing: true } : { content: null, sha: null, absent: true };
+  return { content: result.content, sha: result.sha };
 }
 
 // Conditional overwrite (sha = the blob's current sha from the read) — now
@@ -250,6 +251,9 @@ function releaseClaim({
     // guards only a live/stale lock held by another run) deliberately does
     // not apply here: the comment and label removals still run.
     result.outcome = 'already-released';
+    // #4495: a remote with no claims-registry branch has no claim to release.
+    // Report it plainly; the branch is created only by claim-targets, never here.
+    if (blob.branchMissing) result.note = 'nothing to release — the claims-registry branch does not exist on origin';
   }
   try {
     postReleaseComment({
