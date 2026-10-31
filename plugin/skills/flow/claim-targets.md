@@ -299,6 +299,8 @@ stays best-effort and the claim read stays the authoritative hold check:
   `gh repo view` timeout is retried once, then, if it still fails, reported here with every
   requested target listed in `transient` and empty `released`/`releaseFailed` (nothing was claimed
   yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
+  Also covers a `claims-registry` branch still missing after a successful bootstrap (#4495) —
+  `error: 'claims-branch-missing'`, rendered on the same transient-failure card.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -400,8 +402,9 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 `never-started: file-overlap group partial claim` internally, per `_shared/issue-claims.md`'s
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
-**`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable claims branch fails every target alike); a per-target contest, transient failure, or
-unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
+**`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable
+claims branch fails every target alike); a per-target contest, transient failure, or unverified
+write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
 (#315) or a stale claim whose run marker sits on an open PR (#4423), `{issue, reason: 'in-flight',

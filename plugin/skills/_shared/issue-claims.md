@@ -45,8 +45,8 @@ never contested, never a generic transport failure. `claim-targets.js` bootstrap
 from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-only git push, else
 `POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
 retries; a refused creation exits `6` naming the branch and the reason verbatim. The MCP transport
-does the same with the MCP create-branch tool before its first write. `release-claim.js` never
-creates it: a branchless remote is exit `3` with a "nothing to release" note.
+bootstraps via the **Bootstrap the branch** bullet below. `release-claim.js` never creates it: a
+branchless remote is exit `3` (a "nothing to release" note on the git transport).
 
 **One keyspace, one classifier, both transports.** `claims/issue-<number>.json`, a blob on the
 `claims-registry` branch, is the *only* lock — checked and written identically whether this run
@@ -230,7 +230,8 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   label step, #1631 — `--remove-in-progress` is still accepted, now a no-op, and
   `--keep-in-progress-label` is the only way to suppress it); `--remove-grants` (stripping
   `auto:build`/`auto:merge-pending`/`auto:merge`) stays opt-in — see "Grant revocation" below.
-  Exit `0` released / `3` already released or swept (a branchless remote is `3` with a nothing-to-release note) / `4` held by another run / `5` claim blob is
+  Exit `0` released / `3` already released or swept (a branchless remote is `3`, with a
+  nothing-to-release note on the git transport) / `4` held by another run / `5` claim blob is
   corrupt/unreadable (nothing written — distinct from `4`, since a corrupt blob can never
   self-resolve the way a live holder's claim eventually expires; do not retry-and-wait on `5` the
   way `4` permits) / `1` failed / `2` malformed or `gh` absent. The MCP path stays the manual
