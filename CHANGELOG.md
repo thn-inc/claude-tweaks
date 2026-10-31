@@ -66,6 +66,17 @@ Three conventions follow from how this repo works, and all are visible below:
 
 * Backstop hand-closed above-floor parents that carry no… ([#4600](https://github.com/thn-inc/claude-tweaks/issues/4600)) ([0baad51](https://github.com/thn-inc/claude-tweaks/commit/0baad513dff29666441ffe59028a441671179767))
 
+### Highlights
+* No user-visible change.
+* Tidy again flags a decomposed feature whose parent was closed by hand without a demo sign-off.
+* Fewer refused Bash calls after a /flow context handoff: the continuation agent is now told the worktree shell constraint up front.
+* Absence acceptance criteria that search the whole repo now exclude the pipeline run directory, so a `/flow` build no longer needs a Review Console ruling when its own committed spec quotes the removed name.
+* /claude-tweaks:tidy computes plan-retention routing with a deterministic helper instead of per-plan prose arithmetic, so large plan archives route consistently.
+* No user-visible change.
+* No user-visible change.
+* Specs for state-classifying features now state up front that unlisted states are refused, so plan review stops escalating each newly found state to a human.
+* Decomposed work below the review floor now closes its parent even when the last piece merges through auto-merge after the session ends.
+
 ## [6.158.1](https://github.com/thn-inc/claude-tweaks/compare/v6.158.0...v6.158.1) (2026-10-31)
 
 
