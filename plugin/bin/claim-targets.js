@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // bin/claim-targets.js — group-claim CLI on the shared claim store.
-//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]
+//   node bin/claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]
 // --steps with neither build nor test claims nothing (skipGuard: no-build-or-test).
+// --resume-pr re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588).
 // Exit 0 = all claimed (or, with --keep-going, partial; or skip-guarded); 2 = malformed
 // invocation or missing dependency; 3 = contested, or in flight — a pr-opened
 // tombstone whose linked PR is still open, or a stale claim whose run marker

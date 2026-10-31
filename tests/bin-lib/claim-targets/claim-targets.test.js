@@ -851,6 +851,235 @@ test('staleClaimInFlightPr matches the run marker pr-body.js composes, in either
   }
 });
 
+// #4588: `--resume-pr <url>` is the one narrow exception to the stale in-flight
+// stop — a 'stale' claim whose in-flight PR link EQUALS the flag re-claims
+// through the ordinary conditional write instead of exiting 3. Nothing else
+// changes: a mismatched link, a pr-opened tombstone and every other shape keep
+// today's behavior, and the envelope gains `resumedPr` only when the flag is passed.
+const RESUME_PR = 'https://github.com/acme/w/pull/7';
+const resumeMarkedPr = { ...markedPr, url: RESUME_PR };
+
+test('(resume-pr) re-claims a stale blob whose in-flight link equals the flag: exit 0, claimed, resumedPr names it, a claim write happened', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 780: [readOk(staleMarker(RUN), 'sha780'), confirmRead()] },
+    writes: { 780: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '780', '--resume-pr', RESUME_PR], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [780]);
+  assert.deepEqual(body.resumedPr, [{ issue: 780, link: RESUME_PR }]);
+  const w = calls.find((a) => isWrite(a, '780'));
+  assert.ok(w, 'a claim write must have happened');
+  assert.equal(fieldOf(w, 'sha'), 'sha780', 'the re-claim is the ordinary conditional write against the stale blob');
+});
+
+test('(resume-pr-2) a mismatched link still stops in-flight: exit 3, the PR found, no write', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 781: [readOk(staleMarker(RUN), 'sha781')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '781', '--resume-pr', 'https://github.com/acme/w/pull/8'], deps);
+
+  assert.equal(code, 3);
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.inFlight[0].link, RESUME_PR);
+  assert.ok(!('resumedPr' in body), 'an in-flight stop envelope never carries resumedPr');
+  assert.ok(!calls.some((a) => isWrite(a, '781')), 'a mismatched --resume-pr must not re-claim');
+});
+
+test('(resume-pr-2b) near-miss links never match: a trailing slash, a longer PR number, a case change and an http scheme are not the same string', () => {
+  for (const flag of [`${RESUME_PR}/`, `${RESUME_PR}0`, RESUME_PR.replace('acme', 'ACME'), RESUME_PR.replace('https', 'http')]) {
+    const { ghApi, calls } = makeGhApi({
+      reads: { 781: [readOk(staleMarker(RUN), 'sha781')] },
+      writes: {},
+    });
+    const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+    const { deps } = baseDeps({ ghApi, gh });
+
+    assert.equal(run(['--run-id', 'r1', '--targets', '781', '--resume-pr', flag], deps), 3, flag);
+    assert.ok(!calls.some((a) => isWrite(a, '781')), flag);
+  }
+});
+
+test('(resume-pr-2c) --keep-going with a mismatched link: skipped in-flight, no write, resumedPr is []', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 781: [readOk(staleMarker(RUN), 'sha781')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '781', '--keep-going', '--resume-pr', 'https://github.com/acme/w/pull/8'], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.skipped, [{ issue: 781, reason: 'in-flight', link: RESUME_PR }]);
+  assert.deepEqual(body.resumedPr, []);
+  assert.ok(!calls.some((a) => isWrite(a, '781')));
+});
+
+test('(resume-pr-3) a pr-opened tombstone is never overridden by --resume-pr: exit 3 inFlight, no write', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 782: [readOk(prOpenedTombstoneMarker(RUN, RESUME_PR), 'sha782')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ prState: 'OPEN' });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '782', '--resume-pr', RESUME_PR], deps);
+
+  assert.equal(code, 3);
+  assert.deepEqual(JSON.parse(io.out[0]).inFlight, [{ issue: 782, link: RESUME_PR }]);
+  assert.ok(!calls.some((a) => isWrite(a, '782')), 'the tombstone branch is untouched by --resume-pr');
+});
+
+test('(resume-pr-4) an abandoned: tombstone re-claims by the ordinary write; resumedPr is [] (the flag was passed, no stale branch ran)', () => {
+  const abandoned = JSON.stringify({
+    released: true, runId: RUN, reason: 'abandoned: spec 4589', releasedAt: new Date(NOW).toISOString(),
+  });
+  const { ghApi, calls } = makeGhApi({
+    reads: { 783: [readOk(abandoned, 'sha783'), confirmRead()] },
+    writes: { 783: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '783', '--resume-pr', RESUME_PR], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [783]);
+  assert.deepEqual(body.resumedPr, []);
+  assert.ok(calls.some((a) => isWrite(a, '783')));
+});
+
+// issue-claims.md ("swept: stale claim" tombstone shape): an ordinary tombstone
+// re-claim that never consults the stale in-flight check. Characterization pin of
+// today's behavior — green before the --resume-pr implementation, by design.
+test('(resume-pr-5) a swept: stale claim tombstone re-claims by the ordinary write; resumedPr is []', () => {
+  const swept = JSON.stringify({
+    released: true, runId: '2026-10-30T010101-sweep', reason: 'swept: stale claim', releasedAt: new Date(NOW).toISOString(), sweptFrom: RUN,
+  });
+  const { ghApi, calls } = makeGhApi({
+    reads: { 784: [readOk(swept, 'sha784'), confirmRead()] },
+    writes: { 784: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '784', '--resume-pr', RESUME_PR], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [784]);
+  assert.deepEqual(body.resumedPr, []);
+  assert.ok(calls.some((a) => isWrite(a, '784')));
+});
+
+test('(resume-pr-6) without --resume-pr the stale in-flight stop is unchanged and the envelope has no resumedPr key', () => {
+  const { ghApi, calls } = makeGhApi({
+    reads: { 785: [readOk(staleMarker(RUN), 'sha785')] },
+    writes: {},
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '785'], deps), 3);
+  const stopped = JSON.parse(io.out[0]);
+  assert.deepEqual(stopped.inFlight, [{ issue: 785, link: RESUME_PR }]);
+  assert.ok(!('resumedPr' in stopped));
+  assert.ok(!calls.some((a) => isWrite(a, '785')));
+
+  // And a success envelope without the flag carries no resumedPr either.
+  const ok = makeGhApi({ reads: { 786: [readAbsent, confirmRead()] }, writes: { 786: [writeOk] } });
+  const okDeps = baseDeps({ ghApi: ok.ghApi, gh: makeGh({}).gh });
+  assert.equal(run(['--run-id', 'r1', '--targets', '786'], okDeps.deps), 0);
+  assert.ok(!('resumedPr' in JSON.parse(okDeps.io.out[0])));
+});
+
+test('(resume-pr-7) --resume-pr with no usable value is malformed: exit 2, USAGE on stderr, no gh call', () => {
+  const gh = () => { throw new Error('must not be called'); };
+  const ghApi = () => { throw new Error('must not be called'); };
+  for (const argv of [
+    ['--run-id', 'r1', '--targets', '720', '--resume-pr'],
+    ['--run-id', 'r1', '--targets', '720', '--resume-pr', ''],
+    ['--run-id', 'r1', '--targets', '720', '--resume-pr', '  '],
+    ['--run-id', 'r1', '--targets', '720', '--resume-pr', '--keep-going'],
+  ]) {
+    const { deps, io } = baseDeps({ ghApi, gh });
+    assert.equal(run(argv, deps), 2, JSON.stringify(argv));
+    assert.equal(io.out.length, 0);
+    assert.ok(io.err.join('').includes('--resume-pr <url>'), 'USAGE documents the flag');
+  }
+});
+
+test('(resume-pr-8) with --run, appendClaimLog receives resumePr for the resumed issue only', () => {
+  const { ghApi } = makeGhApi({
+    reads: {
+      787: [readOk(staleMarker(RUN), 'sha787'), confirmRead()],
+      788: [readAbsent, confirmRead()],
+    },
+    writes: { 787: [writeOk], 788: [writeOk] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+  const logCalls = [];
+  deps.appendClaimLog = (args) => { logCalls.push(args); };
+
+  const code = run(['--run-id', 'r1', '--targets', '787,788', '--resume-pr', RESUME_PR, '--run', '/some/run/r1'], deps);
+
+  assert.equal(code, 0);
+  assert.deepEqual(JSON.parse(io.out[0]).resumedPr, [{ issue: 787, link: RESUME_PR }]);
+  assert.deepEqual(logCalls, [
+    { runDir: '/some/run/r1', issue: 787, transport: 'contents-api', resumePr: RESUME_PR },
+    { runDir: '/some/run/r1', issue: 788, transport: 'contents-api' },
+  ]);
+});
+
+test('(resume-pr-8b) a matched stale claim whose write loses the race is skipped, never listed in resumedPr', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 789: [readOk(staleMarker(RUN), 'sha789')] },
+    writes: { 789: [{ stdout: null, failure: null, status: 422 }] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '789', '--keep-going', '--resume-pr', RESUME_PR], deps);
+
+  assert.equal(code, 0);
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, []);
+  assert.equal(body.skipped[0].reason, 'contested');
+  assert.deepEqual(body.resumedPr, [], 'resumedPr names only claims that actually landed');
+});
+
+test('(resume-pr-9) defaultAppendClaimLog with resumePr writes the resume-pr claim line, still claim-log-only', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-resume-'));
+  fs.mkdirSync(path.join(root, '.git'));
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-4588');
+  fs.mkdirSync(runDir, { recursive: true });
+
+  const modulePath = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'claim-targets', 'claim-targets');
+  const script = [
+    `const { defaultAppendClaimLog } = require(${JSON.stringify(modulePath)});`,
+    `defaultAppendClaimLog({ runDir: ${JSON.stringify(runDir)}, issue: 4588, transport: 'git', resumePr: ${JSON.stringify(RESUME_PR)} });`,
+  ].join('\n');
+  execFileSync(process.execPath, ['-e', script], { cwd: root, encoding: 'utf8' });
+
+  const decisionsText = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.ok(decisionsText.includes(`claimed #4588 (bin/claim-targets.js, transport: git, resume-pr: ${RESUME_PR})`), decisionsText);
+  assert.equal(hasClaimLogFor(decisionsText, 4588), true);
+  assert.equal(classifyDecisions(decisionsText), 'claim-log-only');
+});
+
 // (c) stale target -> conditional PUT (re-claim)
 test('(c) stale target: conditional write re-claims with the blob sha', () => {
   const staleClaimedAt = new Date(NOW - 100 * 3600 * 1000).toISOString(); // 100h ago, ttl 72h
