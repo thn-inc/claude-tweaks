@@ -2,3 +2,11 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | review | High (3b, git-command.js:2518) — a `\|\|` after a `;;` arm loses the arm's cwd: `case $x in a) cd /wt; false;; esac \|\| echo x > f` reports only `/r/f` while bash 3.2 and 5 write `/wt/f`; a regression against origin/main, which reported `/wt/f`. Staged patch `staged/review-1.patch` | open | — |
+| 2 | review | High (3c, git-command.js:2246) — a `*` left after a closed `$(…)` or extglob group is read as a catch-all, dropping the case's start cwd: `case $x in $(echo a)*) cd /wt;; esac; echo x > f` reports only `/wt/f` while bash writes `/r/f` for a non-matching subject. Staged patch `staged/review-2.patch` | open | — |
+| 3 | review | Medium (3b, git-command.js:2814) — zsh's `;|` arm terminator was not recognised, so under zsh a `cd` in one arm chained into the next arm | fixed | Read `;\|` like `;;&`, rows ZSHBAR and ZSHBAR2, killed by a mutant — `6251a044a` |
+| 4 | review | Medium (3f, git-command.js:2246) — no row pinned a catch-all lookalike, so a loosened `*` regex passed the whole table | fixed | Rows LOOKA to LOOKD, killed by two catch-all mutants — `6251a044a` |
+| 5 | review | Low (3a, 3f) — the AC1.1 and AC2.3 test titles lacked `#4486`, and the #4303 loop title claimed exact bash verdicts for rows that now carry the case's start | fixed | Titles renamed — `6251a044a` |
+| 6 | review | Low (3f, git-command.js:2506) — no row pinned two cases in sequence or an inner case's `*` that is never the outer's | fixed | Rows SEQ and INNER, each killed by a mutant — `6251a044a` |
+| 7 | review | Low (3g, git-command.js:2513) — endArm's early return is reachable: a top-level backtick substitution holding a `;` inside an arm consumes the case's record, so `case a in b) echo \`true; true\`; cd /m;; *) echo y > g;; esac` reports only `/m/g` while bash writes `/r/g`; origin/main reports the same | open | — |
+| 8 | review | Info (3c, 3f, 3g) — tiebreak drops: the cwd-set cap collapse at 16 arm cwds (a spurious deny), the AC1.1 test repeating row A, the `(a\|*)` start-cwd superset, the uncommented `$` alternative at git-command.js:2246 and afterCases' undocumented chaining | accepted | Tiebreak recommended drop: each fails closed or sits below the materiality floor |
