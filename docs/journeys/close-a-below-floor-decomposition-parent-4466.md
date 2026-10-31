@@ -48,6 +48,7 @@ files:
   - A sub-issue this merge closed is listed with the merging PR even if GitHub has not yet linked it.
   - Step 4.0b does nothing unless the integration branch is the repo's default branch, because GitHub only closes `Fixes #N` there.
   - It skips a parent carrying a `needs:*` label, and a parent whose sub-issue Step 4.0 had to reopen or could not settle.
+  - After a PR merge, a Step 4.0 result with no `closingSet` (a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`) skips the whole step with a logged `SKIP`; tidy's `parent-gate` backstop (step 3) recovers the parent.
   - The close is the one named exception in `_shared/auto-mode-contract.md`'s never-reversible list. Its restore contract is a human `gh issue reopen`.
 - **Red flags:**
   - A second listing comment on a re-run.
@@ -75,4 +76,4 @@ files:
 
 ## Origin
 
-Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-4466`).
+Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-4466`). Updated by record #4597 (run `2026-10-31T030421-record-4597`): Step 4.0b reads Step 4.0's `closingSet` instead of its own hand-written `gh pr view` jq.
