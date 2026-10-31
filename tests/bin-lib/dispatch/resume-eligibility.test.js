@@ -337,6 +337,8 @@ const REFUSALS = [
     "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 is on a detached HEAD, not worktree-dispatch-record-4589 — check out worktree-dispatch-record-4589 there, or remove the worktree so resume recreates it, then run /claude-tweaks:dispatch resume #4589"],
   ['branch checked out elsewhere', { worktreeBranch: null, branchCheckedOutAt: '/repo/.claude/worktrees/other' }, 'branch-checked-out',
     "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589"],
+  ['branch still registered to the missing stalled worktree', { worktreeBranch: null, branchCheckedOutAt: WT }, 'branch-checked-out',
+    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C /repo worktree prune, then run /claude-tweaks:dispatch resume #4589"],
   ['local branch diverged', { worktreeBranch: null, localBranchSha: 'b'.repeat(40) }, 'branch-diverged',
     "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589"],
   // A guard input the gatherer forgot or mistyped is a refusal, never "nothing to refuse" (Closed rule).
@@ -359,13 +361,14 @@ for (const [name, over, reason, line] of REFUSALS) {
   });
 }
 
-test('every refusal reason except concurrent-resume is produced by the table above', () => {
+test('every refusal reason except the run-dir scan\'s two is produced by the table above', () => {
+  const scanOnly = ['concurrent-resume', 'stale-bound-run'];
   const produced = new Set(REFUSALS.map((r) => r[2]));
-  const missing = REFUSAL_REASONS.filter((r) => r !== 'concurrent-resume' && !produced.has(r));
+  const missing = REFUSAL_REASONS.filter((r) => !scanOnly.includes(r) && !produced.has(r));
   assert.deepStrictEqual(missing, []);
-  assert.ok(REFUSAL_REASONS.includes('concurrent-resume'));
+  for (const r of scanOnly) assert.ok(REFUSAL_REASONS.includes(r), r);
   assert.equal(new Set(REFUSAL_REASONS).size, REFUSAL_REASONS.length);
-  assert.equal(REFUSAL_REASONS.length, 23);
+  assert.equal(REFUSAL_REASONS.length, 24);
   assert.ok(Object.isFrozen(REFUSAL_REASONS));
 });
 
@@ -410,14 +413,16 @@ test('branch-diverged does not fire when the worktree exists, nor when the tips 
   assert.equal(present.eligible, true);
 });
 
-test('an omitted worktreeBranch fails closed; only an explicit null means the worktree is missing', () => {
+test('an omitted or mistyped worktreeBranch refuses invalid-input; only an explicit null means the worktree is missing', () => {
   const omitted = input();
   delete omitted.worktreeBranch;
-  const v = resumeEligibility(omitted);
-  assert.equal(v.reason, 'worktree-branch');
-  assert.ok(v.line.includes('undefined'), v.line);
-  assert.equal(verdict({ worktreeBranch: undefined }).reason, 'worktree-branch');
+  assert.deepStrictEqual(resumeEligibility(omitted), {
+    eligible: false, reason: 'invalid-input', line: invalidLine('stalled-worktree branch', 'undefined'),
+  });
+  assert.equal(verdict({ worktreeBranch: 7 }).line, invalidLine('stalled-worktree branch', 'number'));
   assert.equal(verdict({ worktreeBranch: null }).eligible, true);
+  // its own rule's position: a dirty worktree still refuses first
+  assert.equal(verdict({ worktreeBranch: undefined, worktreeDirty: ['x'] }).reason, 'dirty-worktree');
 });
 
 test('a malformed guard input yields to the earlier refusal that precedes its rule', () => {
@@ -429,10 +434,14 @@ test('a malformed guard input yields to the earlier refusal that precedes its ru
   assert.equal(verdict({ priorRunDir: 'live-owner', worktreeDirty: undefined }).reason, 'prior-run-live');
 });
 
-test('a closed issue whose state is lower-case or unknown is still refused, named in lower case', () => {
+test('a closed issue whose state is lower-case or unknown is still refused, named in lower case; a non-string state is invalid-input', () => {
   assert.ok(verdict({ issueState: 'CLOSED' }).line.startsWith('#4589 is closed'));
   assert.equal(verdict({ issueState: 'open' }).reason, 'record-closed');
-  assert.equal(verdict({ issueState: undefined }).reason, 'record-closed');
+  assert.equal(verdict({ issueState: 'MERGED' }).reason, 'record-closed');
+  assert.deepStrictEqual(verdict({ issueState: undefined }), {
+    eligible: false, reason: 'invalid-input', line: invalidLine('issue state', 'undefined'),
+  });
+  assert.equal(verdict({ issueState: null }).line, invalidLine('issue state', 'null'));
 });
 
 // ---- evaluation order (each pair swaps which of two refusing inputs wins) ----

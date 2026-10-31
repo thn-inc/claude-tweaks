@@ -10,21 +10,30 @@
 //                 priorRunPath, archivePriorRun, closePriorRun, localBranchExists, worktreePath,
 //                 context:{lastPhase, openDefects}}
 //     refused  → {eligible:false, issue, reason, line}   (`line` is the verdict's, printed verbatim)
+//     An eligible verdict then runs the run-dir scan below with the prior run's own root dir
+//     excluded, so a run left bound to the stalled worktree refuses before anything is archived.
 //   --bound-run  resume step 6a, after `record-worktree --dispatch` bound the new run: skips the
 //                verdict and re-checks concurrency. Prints {concurrent:false}, or {concurrent:true,
-//                reason:'live-sibling'|'concurrent-resume', line}. The bound run dir must resolve to a
-//                top-level dir of the main checkout's .claude-tweaks/pipelines/ (a worktree-local
-//                shadow is refused, [IL-127]); the run's own binding excludes its worktree lock from
-//                the sibling check, so a second resume that bound first shows up in the run-dir scan.
+//                reason:'live-sibling'|'concurrent-resume'|'stale-bound-run', line}. The bound run dir
+//                must resolve to a top-level dir of the main checkout's .claude-tweaks/pipelines/ (a
+//                worktree-local shadow is refused, [IL-127]); the run's own binding excludes its
+//                worktree lock from the sibling check, so a second resume that bound first shows up in
+//                the run-dir scan.
+//   The run-dir scan: a non-terminal top-level run dir (never an ad-hoc one) bound to the stalled
+//   worktree is `concurrent-resume`, or `stale-bound-run` — naming hooks.js close-run on that dir —
+//   when its owner is provably dead by the same owner ladder the prior run's probe uses.
 // Exit codes (a CLI-specific vocabulary — the verdict is data on stdout, no exit 1 at all):
 //   0  eligible, or {concurrent:false}
 //   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
-//      `git status`, branch reads); no failed read is taken as clean, with one exception by design:
-//      the sibling-session check fails open (findConflictingSession returns null when `git worktree
-//      list` cannot be read, so `siblingLive` is then false)
+//      `git status`, branch reads, run-dir listing); no failed read is taken as clean, with two
+//      exceptions by design: the sibling-session check fails open (findConflictingSession returns
+//      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
+//      work-links read does too — resolvePolicyConfig's result carries no read error, so an
+//      unreadable policy.yml resolves the `body-text` default and skips the native-blocker gate,
+//      exactly as resolve-policy.js (and so Step 2's queue) reads it
 // Order: list the PRs, then selectResumePr — a refusal there prints and exits 3 before any run-dir,
 // sibling, claim or worktree read (the prior run id comes from the chosen PR's marker). The only git
 // call against the stalled worktree is the --no-optional-locks `status`.
@@ -59,6 +68,8 @@ const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--
 
 const PR_FIELDS = 'url,number,headRefName,headRefOid,body,isDraft,isCrossRepository';
 const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
+// This build's own hooks.js, so the stale-bound-run remedy is a command the human can paste as is.
+const HOOKS_JS = path.join(__dirname, 'hooks.js');
 
 // ---- real deps ----
 
@@ -273,25 +284,62 @@ function classifyPriorRun(ctx, runId) {
 
   const state = parsed.value;
   const known = { ...base, state, priorRunOpen: NON_TERMINAL.has(state.status) };
+  const priorRunDir = ownerClass(deps, state);
+  return { ...known, priorRunDir, priorRunOwnerHost: priorRunDir === 'other-host-owner' ? state.owner.host : null };
+}
+
+// The owner ladder of a parsed run-state.json: 'dead-owner' | 'live-owner' | 'unknown-owner' |
+// 'other-host-owner'. Only a proven death is 'dead-owner'. classifyPriorRun and the bound-run scan
+// both judge a run's owner here.
+function ownerClass(deps, state) {
   const owner = state.owner;
-  if (owner === undefined || owner === null) return { ...known, priorRunDir: 'dead-owner' };
+  if (owner === undefined || owner === null) return 'dead-owner';
   // Present but not an object is a malformed block, not an absent one: a death must be proven.
-  if (!isObject(owner)) return { ...known, priorRunDir: 'unknown-owner' };
+  if (!isObject(owner)) return 'unknown-owner';
   // The resuming session never counts as a live owner of its own earlier run.
-  if (nonEmptyString(deps.sessionId) !== null && owner.sessionId === deps.sessionId) return { ...known, priorRunDir: 'dead-owner' };
+  if (nonEmptyString(deps.sessionId) !== null && owner.sessionId === deps.sessionId) return 'dead-owner';
   if (nonEmptyString(owner.host) === null) {
     // probeOwnerPid answers other-host for a host-less block, which is not a recording on another host.
     const validPid = Number.isInteger(owner.pid) && owner.pid > 0 && owner.pid <= MAX_PID;
-    return { ...known, priorRunDir: validPid ? 'unknown-owner' : 'dead-owner' };
+    return validPid ? 'unknown-owner' : 'dead-owner';
   }
   const probe = probeOwnerPid(owner, deps.probes);
   if (probe.result === 'negative') {
-    if (['gone', 'pid-reused', 'no-pid'].includes(probe.detail)) return { ...known, priorRunDir: 'dead-owner' };
-    if (probe.detail === 'other-host') return { ...known, priorRunDir: 'other-host-owner', priorRunOwnerHost: owner.host };
-    if (probe.detail === 'alive-no-start-time') return { ...known, priorRunDir: 'live-owner' };
-    return { ...known, priorRunDir: 'unknown-owner' };
+    if (['gone', 'pid-reused', 'no-pid'].includes(probe.detail)) return 'dead-owner';
+    if (probe.detail === 'other-host') return 'other-host-owner';
+    if (probe.detail === 'alive-no-start-time') return 'live-owner';
+    return 'unknown-owner';
   }
-  return { ...known, priorRunDir: probe.result === 'positive' ? 'live-owner' : 'unknown-owner' };
+  return probe.result === 'positive' ? 'live-owner' : 'unknown-owner';
+}
+
+// The first top-level run dir, other than `excluded`, still non-terminal and bound to the stalled
+// worktree -> {reason, line}; null when there is none. Every ad-hoc dir is skipped whoever stamped
+// it: EnterWorktree's friction placeholder stays non-terminal while the worktree is registered and
+// is never a record claim (#2783), and a second resume always binds a formal record-N run. A
+// provably dead owner (ownerClass) is a leftover the human can close; any other owner may still run.
+function boundRunConflict(ctx, excluded) {
+  const { deps, issue } = ctx;
+  const skip = new Set(excluded.filter((d) => d !== null).map(normalizePath));
+  const worktreeKey = normalizePath(ctx.worktreePath);
+  const listing = read('run dir listing', () => deps.listRunDirsWithState(ctx.mainRoot));
+  for (const { dir, state } of listing) {
+    if (skip.has(normalizePath(dir)) || isAdHocRunDir(dir)) continue;
+    if (!state || !NON_TERMINAL.has(state.status)) continue;
+    if (nonEmptyString(state.worktree) === null || normalizePath(state.worktree) !== worktreeKey) continue;
+    const name = path.basename(dir);
+    if (ownerClass(deps, state) === 'dead-owner') {
+      return {
+        reason: 'stale-bound-run',
+        line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to run ${name}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
+      };
+    }
+    return {
+      reason: 'concurrent-resume',
+      line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to another active run ${name} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${issue} once that run ends`,
+    };
+  }
+  return null;
 }
 
 // findConflictingSession reads only top-level run dirs when it excludes this session's own worktree
@@ -441,6 +489,14 @@ function runVerdict(ctx) {
     emit(ctx, { eligible: false, issue, reason: verdict.reason, line: verdict.line });
     return 3;
   }
+  // The --bound-run scan, run here too so a run left bound to the worktree refuses at Step 2, before
+  // Step 3 archives anything. Only an eligible verdict reaches it, so every verdict refusal keeps
+  // its precedence; the prior run's own root dir is the run being resumed, never a rival.
+  const hit = boundRunConflict(ctx, [prior.priorRunPath]);
+  if (hit !== null) {
+    emit(ctx, { eligible: false, issue, ...hit });
+    return 3;
+  }
   emit(ctx, {
     eligible: true,
     issue,
@@ -482,20 +538,9 @@ function runBound(ctx, boundRun) {
     return 3;
   }
 
-  const boundKey = normalizePath(bound);
-  const worktreeKey = normalizePath(ctx.worktreePath);
-  const sid = nonEmptyString(deps.sessionId);
-  const listing = read('run dir listing', () => deps.listRunDirsWithState(ctx.mainRoot));
-  for (const { dir, state } of listing) {
-    if (normalizePath(dir) === boundKey) continue;
-    if (!state || !NON_TERMINAL.has(state.status)) continue;
-    if (isAdHocRunDir(dir) && sid !== null && state.sessionId === sid) continue;
-    if (nonEmptyString(state.worktree) === null || normalizePath(state.worktree) !== worktreeKey) continue;
-    emit(ctx, {
-      concurrent: true,
-      reason: 'concurrent-resume',
-      line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to another active run ${path.basename(dir)} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${issue} once that run ends`,
-    });
+  const hit = boundRunConflict(ctx, [bound]);
+  if (hit !== null) {
+    emit(ctx, { concurrent: true, ...hit });
     return 3;
   }
   emit(ctx, { concurrent: false });

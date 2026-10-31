@@ -9,17 +9,19 @@
 // The Closed rule (spec D1): the eligible states are exhaustive. Every other state returns one
 // `line` naming the state and a manual remedy, evaluated in the order resumeEligibility lists.
 
+const path = require('path');
 const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
 
-// The vocabulary has one home. `concurrent-resume` is produced only by bin/dispatch-resume.js's
-// `--bound-run` mode (it needs a run-dir scan this pure function cannot make).
+// The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
+// bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
 const REFUSAL_REASONS = Object.freeze([
   'no-pr', 'multiple-prs', 'foreign-pr', 'not-draft', 'live-sibling', 'pr-opened', 'live-claim',
   'claim-not-resumable', 'run-mismatch', 'record-closed', 'blocked-by', 'not-granted', 'label-drift',
   'unlisted-label', 'unlisted-state', 'prior-run-live', 'prior-run-other-host', 'dirty-worktree',
-  'worktree-branch', 'branch-diverged', 'branch-checked-out', 'concurrent-resume', 'invalid-input',
+  'worktree-branch', 'branch-diverged', 'branch-checked-out', 'concurrent-resume', 'stale-bound-run',
+  'invalid-input',
 ]);
 
 const PRIOR_RUN_DIR_CLASSES = Object.freeze([
@@ -95,8 +97,9 @@ function parseClaim(content) {
   }
 }
 
-// The three inputs that guard a refusal (siblingLive, openBlockers, worktreeDirty) must be the
-// type the gatherer promises: a missing or mistyped one is never read as "nothing to refuse".
+// The inputs that guard a refusal (siblingLive, issueState, openBlockers, worktreeDirty,
+// worktreeBranch) must be the type the gatherer promises: a missing or mistyped one is never read
+// as "nothing to refuse", nor named in a refusal line as if it were a real state.
 function invalidInput(n, what, value) {
   const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
   return refuse('invalid-input', `#${n}'s ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #${n} again, and report it if it repeats`);
@@ -153,6 +156,7 @@ function resumeEligibility(input) {
     return refuse('run-mismatch', `#${n}'s claim names run ${claimRun} but PR #${prNo}'s claude-tweaks-run: marker names ${runId} — not resumable while they disagree; rebind PR #${prNo}'s claude-tweaks-run: marker to ${claimRun} by hand (the run that claimed #${n} last), then run ${resumeCmd}`);
   }
 
+  if (typeof issueState !== 'string') return invalidInput(n, 'issue state', issueState);
   if (issueState !== 'OPEN') {
     return refuse('record-closed', `#${n} is ${String(issueState).toLowerCase()} — not resumable; reopen it first if the work is still wanted, or close PR #${prNo}`);
   }
@@ -190,6 +194,9 @@ function resumeEligibility(input) {
   if (worktreeDirty.length > 0) {
     return refuse('dirty-worktree', `#${n}'s stalled worktree ${worktreePath} has uncommitted edits: ${worktreeDirty.join(', ')} — commit or discard them, then run ${resumeCmd}; resume never commits or pushes them`);
   }
+  if (worktreeBranch !== null && typeof worktreeBranch !== 'string') {
+    return invalidInput(n, 'stalled-worktree branch', worktreeBranch);
+  }
   if (worktreeBranch !== null && worktreeBranch !== pr.headRefName) {
     const on = worktreeBranch === '' ? 'a detached HEAD' : `branch ${worktreeBranch}`;
     return refuse('worktree-branch', `#${n}'s stalled worktree ${worktreePath} is on ${on}, not ${pr.headRefName} — check out ${pr.headRefName} there, or remove the worktree so resume recreates it, then run ${resumeCmd}`);
@@ -198,6 +205,11 @@ function resumeEligibility(input) {
   const worktreeMissing = worktreeBranch === null;
   const hasLocalBranch = worktreeMissing && nonEmptyString(localBranchSha) !== null;
   if (worktreeMissing && nonEmptyString(branchCheckedOutAt) !== null) {
+    // Still registered at the stalled path itself: the directory is gone, so prune, not remove.
+    if (typeof worktreePath === 'string' && path.resolve(branchCheckedOutAt) === path.resolve(worktreePath)) {
+      const main = path.dirname(path.dirname(path.dirname(worktreePath))); // {main}/.claude/worktrees/{name}
+      return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is still registered to the missing worktree ${worktreePath} — prune it with git -C ${main} worktree prune, then run ${resumeCmd}`);
+    }
     return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is checked out at ${branchCheckedOutAt} — remove that worktree (or resume from it), then run ${resumeCmd}`);
   }
   if (hasLocalBranch && localBranchSha !== pr.headRefOid) {

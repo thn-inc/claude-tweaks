@@ -1147,11 +1147,11 @@ test('--bound-run with nothing else bound -> exit 0 {concurrent:false}; no gh, n
   assert.deepStrictEqual(env.calls.readClaim, []);
 });
 
-test('--bound-run: a second non-terminal top-level run dir bound to the worktree -> exit 3 concurrent-resume naming its basename', () => {
+test('--bound-run: a second non-terminal top-level run dir bound to the worktree, owner live -> exit 3 concurrent-resume naming its basename', () => {
   const env = makeEnv();
   env.cfg.runDirs = [
     { dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: WT } },
-    { dir: `${ROOT}/2026-10-31T115900-record-4589`, state: { status: 'active', sessionId: 'rival', worktree: WT } },
+    { dir: `${ROOT}/2026-10-31T115900-record-4589`, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
   ];
   const r = exec(env, BOUND);
   assert.equal(r.code, 3);
@@ -1182,21 +1182,107 @@ test('--bound-run: the rival with an interrupted status still counts; terminal s
   }
 });
 
-test('--bound-run: only this session\'s own ad-hoc dir bound there -> {concurrent:false}; another session\'s ad-hoc dir there counts', () => {
-  const own = makeEnv();
-  own.cfg.runDirs = [{ dir: `${ROOT}/2026-10-31T115900-adhoc-standalone`, state: { status: 'active', sessionId: SESSION, worktree: WT } }];
-  const r = exec(own, BOUND);
-  assert.equal(r.code, 0);
-  assert.deepStrictEqual(r.json, { concurrent: false });
-  const foreign = makeEnv();
-  foreign.cfg.runDirs = [{ dir: `${ROOT}/2026-10-31T115900-adhoc-standalone`, state: { status: 'active', sessionId: 'rival', worktree: WT } }];
-  assert.equal(exec(foreign, BOUND).json.reason, 'concurrent-resume');
+test('--bound-run: an ad-hoc dir bound there never counts, whichever session stamped it (own, foreign with a live owner, empty id)', () => {
+  // The #4598 shape: the original dispatcher's EnterWorktree placeholder, left active while the worktree stays registered.
+  for (const [sessionId, sid] of [[SESSION, SESSION], ['rival', SESSION], ['', '']]) {
+    const env = makeEnv({ sessionId: sid });
+    env.cfg.runDirs = [{
+      dir: `${ROOT}/2026-10-31T061116-adhoc-standalone`,
+      state: { status: 'active', sessionId, worktree: WT, owner: { ...OWNER, sessionId: sessionId || 'x' } },
+    }];
+    const r = exec(env, BOUND);
+    assert.equal(r.code, 0, `ad-hoc dir stamped by ${JSON.stringify(sessionId)}`);
+    assert.deepStrictEqual(r.json, { concurrent: false });
+  }
 });
 
-test('--bound-run: an empty deps.sessionId never matches an ad-hoc dir with sessionId ""', () => {
-  const env = makeEnv({ sessionId: '' });
-  env.cfg.runDirs = [{ dir: `${ROOT}/2026-10-31T115900-adhoc-standalone`, state: { status: 'active', sessionId: '', worktree: WT } }];
-  assert.equal(exec(env, BOUND).json.reason, 'concurrent-resume');
+const HOOKS_JS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
+const LEFTOVER = `${ROOT}/2026-10-31T115900-record-4589`;
+const staleLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to run ${path.basename(dir)}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
+const concurrentLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${N} once that run ends`;
+
+test('--bound-run: a leftover run bound there whose owner is provably dead -> exit 3 stale-bound-run naming close-run on that dir', () => {
+  for (const [label, state, alive] of [
+    ['pid gone', { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER }, () => false],
+    ['no owner block', { status: 'interrupted', sessionId: 'rival', worktree: WT }, () => true],
+    ['host-less, no pid', { status: 'active', sessionId: 'rival', worktree: WT, owner: { sessionId: 'rival' } }, () => true],
+  ]) {
+    const env = makeEnv({ alive });
+    env.cfg.runDirs = [{ dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: WT } }, { dir: LEFTOVER, state }];
+    const r = exec(env, BOUND);
+    assert.equal(r.code, 3, label);
+    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'stale-bound-run', line: staleLine(LEFTOVER) }, label);
+  }
+});
+
+test('--bound-run: a bound run whose owner is live, unknown or on another host keeps the concurrent-resume line', () => {
+  for (const [label, owner, over] of [
+    ['live', OWNER, {}],
+    ['alive, no start time', { ...OWNER, pidStartedAt: null }, {}],
+    ['pidAlive throws', OWNER, { alive: () => { throw new Error('probe'); } }],
+    ['host-less with a valid pid', { sessionId: 'rival', pid: 4242 }, {}],
+    ['another host', { ...OWNER, host: 'elsewhere' }, {}],
+  ]) {
+    const env = makeEnv(over);
+    env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner } }];
+    const r = exec(env, BOUND);
+    assert.equal(r.code, 3, label);
+    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) }, label);
+  }
+});
+
+// ---- the same run-dir scan in verdict mode (Step 2, before Step 3 archives anything) ----
+
+test('verdict mode: an otherwise eligible record with a dead leftover run bound to the worktree -> exit 3 stale-bound-run', () => {
+  const env = makeEnv({ alive: () => false });
+  env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } }];
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'stale-bound-run', line: staleLine(LEFTOVER) });
+});
+
+test('verdict mode: a live run bound to the worktree -> exit 3 concurrent-resume; a terminal one, an ad-hoc one, or one on another worktree -> eligible', () => {
+  const live = makeEnv();
+  live.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } }];
+  const r = exec(live);
+  assert.equal(r.code, 3);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
+  for (const entry of [
+    { dir: LEFTOVER, state: { status: 'clean', sessionId: 'rival', worktree: WT, owner: OWNER } },
+    { dir: `${ROOT}/2026-10-31T061116-adhoc-standalone`, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
+    { dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: '/repo/.claude/worktrees/other', owner: OWNER } },
+  ]) {
+    const env = makeEnv();
+    env.cfg.runDirs = [entry];
+    assert.equal(exec(env).code, 0, JSON.stringify(entry));
+  }
+});
+
+test('verdict mode: the prior run\'s own root dir, non-terminal and bound to the worktree, is not counted', () => {
+  const env = makeEnv({ alive: () => false });
+  const state = { status: 'active', sessionId: 'dispatcher', worktree: WT, owner: OWNER };
+  setRunState(env, state);
+  env.cfg.runDirs = [{ dir: RUNDIR, state }];
+  const r = exec(env);
+  assert.equal(r.code, 0, JSON.stringify(r.json));
+  assert.equal(r.json.priorRunDir, 'dead-owner');
+  assert.equal(r.json.archivePriorRun, true);
+  assert.equal(r.json.closePriorRun, true);
+});
+
+test('verdict mode: a verdict refusal keeps its precedence over a run bound to the worktree', () => {
+  const env = makeEnv();
+  env.cfg.issue.labels = [{ name: 'bot:blocked' }, { name: 'auto:build' }];
+  env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } }];
+  assert.equal(exec(env).json.reason, 'not-granted');
+});
+
+test('verdict mode: a failing run-dir listing -> exit 4', () => {
+  const env = makeEnv();
+  env.deps.listRunDirsWithState = () => { throw new Error('listing boom'); };
+  const r = exec(env);
+  assert.equal(r.code, 4);
+  assert.match(r.err, /run dir listing/);
 });
 
 test('--bound-run: a live sibling on the lock check -> exit 3 live-sibling (checked before the run-dir scan)', () => {

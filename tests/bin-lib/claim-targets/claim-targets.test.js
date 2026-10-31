@@ -962,8 +962,9 @@ test('(resume-pr-4) an abandoned: tombstone re-claims by the ordinary write; res
 });
 
 // issue-claims.md ("swept: stale claim" tombstone shape): an ordinary tombstone
-// re-claim that never consults the stale in-flight check. Characterization pin of
-// today's behavior — green before the --resume-pr implementation, by design.
+// re-claim that never consults the stale in-flight check. Pins the ordinary tombstone
+// re-claim with --resume-pr passed (it was red before the implementation only because
+// the flag was unknown, exit 2).
 test('(resume-pr-5) a swept: stale claim tombstone re-claims by the ordinary write; resumedPr is []', () => {
   const swept = JSON.stringify({
     released: true, runId: '2026-10-30T010101-sweep', reason: 'swept: stale claim', releasedAt: new Date(NOW).toISOString(), sweptFrom: RUN,

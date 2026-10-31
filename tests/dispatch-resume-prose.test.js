@@ -275,22 +275,42 @@ const STOP_CLAIMS = [
   ['log-decision call carries --run "$GROUP_RUN_DIR"', /log-decision\.js" --run "\$GROUP_RUN_DIR" --status SKIP/],
   ['log-decision call carries --status', /--status SKIP/],
   ['log-decision call carries --section "/dispatch"', /--section "\/dispatch"/],
-  ['log-decision call carries --step "resume"', /--step "resume"/],
+  ['log-decision call carries the Degrade-trace --step "{step-name} (skipped)"', /--step "resume Step 7 dispatch \(skipped\)"/],
   ['log-decision call carries --reversibility n/a', /--reversibility n\/a/],
   ['log-decision text goes through --text-file', /--text-file "\{path\}"/],
   ['the temp path comes from session-tmp-resolve.js', /session-tmp-resolve\.js" DECISION_TEXT=decision-text-\{run-id\}-resume-stop\.md/],
-  ['the log text is one line from the line or stderr', /one-line text `Step 6a stop: \{the line, or the stderr with line breaks collapsed\}`/],
+  ['the log text is the Degrade-trace condition → fallback line', /one-line text `condition: \{the line, or the stderr with line breaks collapsed\} → fallback: nothing dispatched`/],
+  ['the log cites the Degrade-trace rule', /`_shared\/auto-decision-log\.md`'s Degrade-trace rule/],
+  ['a failed close-run does not end the sequence', /a failed `close-run` \(on the exit-2 path it refuses the same dir, exit 1\) does not end the sequence — the ExitWorktree, the log and the stop still run/],
+  ['no session id fails closed on the own lock', /Without a `CLAUDE_CODE_SESSION_ID`, `record-worktree` stamps no `sessionId`, so this check refuses `live-sibling` on this session's own lock \(fails closed\)/],
+  ['the printed reasons include stale-bound-run', /reason:'concurrent-resume'\|'live-sibling'\|'stale-bound-run', line\}/],
   ['the stop dispatches neither call', /then stop without dispatching either call\./],
 ];
 for (const [label, re] of STOP_CLAIMS) {
   test(`resume.md Step 6a: ${label}`, () => assertPinned(stepParagraph(RESUME, '6a'), re, label));
 }
 
-test('resume.md Step 6a: the stop sequence never tells the executor to continue', () => {
+test('resume.md Step 2: the refusal list names the bound-run scan and the close-run remedy', () => {
+  assertPinned(stepParagraph(RESUME, '2'), /`concurrent-resume` while its owner may be live, `stale-bound-run` naming `hooks\.js close-run` on that dir when the owner-process probe proves it dead/, 'bound-run scan refusals');
+});
+
+test('resume.md Step 7: cites SKILL.md Step 5 and two-call-gate.md for the gate and teardown', () => {
+  assertPinned(stepParagraph(RESUME, '7'), /`SKILL\.md` Step 5's gate between the calls and terminal-path teardown \(`two-call-gate\.md`\)/, 'gate citation');
+});
+
+test('resume.md Step 6a: nothing after the stop sentence hands off to Step 7', () => {
+  const STOP = 'then stop without dispatching either call.';
+  const handsOff = (par) => {
+    const i = par.indexOf(STOP);
+    assert.notStrictEqual(i, -1, 'stop sentence missing');
+    return /Step 7|\bcontinue\b|\bproceed\b|\bgo on\b/i.test(par.slice(i + STOP.length));
+  };
   const par = stepParagraph(RESUME, '6a');
-  const continues = (t) => /then continue|continue to Step 7|proceed to Step 7/i.test(t);
-  assert.strictEqual(continues(par), false);
-  assert.strictEqual(continues(par.replace('then stop without dispatching either call.', 'then continue to Step 7.')), true);
+  assert.strictEqual(handsOff(par), false);
+  // controls: an appended hand-off, and a continuation sentence right after the stop, both go red
+  assert.strictEqual(handsOff(par.replace(STOP, `${STOP} Then go on to Step 7.`)), true);
+  assert.strictEqual(handsOff(`${par} Then go on to Step 7.`), true);
+  assert.strictEqual(handsOff(par.replace(STOP, `${STOP} Then continue.`)), true);
 });
 
 // ---- resume.md: things it must not say ------------------------------------------------------
@@ -437,7 +457,7 @@ test('flow SKILL.md Step 2.8: the exit-code branch is unchanged and never reads 
 const STOPS = {
   claimTargets: {
     tombstone: /A `pr-opened:` tombstone still stops \(close-out owns it\)/,
-    mismatch: /`'stale'`\s+claim\s+whose\s+link\s+differs\s+from\s+`<url>`\s+still\s+stops\s+too/,
+    mismatch: /\ba\s+`'stale'`\s+claim\s+whose\s+link\s+differs\s+from\s+`<url>`\s+still\s+stops\s+too/,
   },
   lockStep4: {
     tombstone: /A\s+`pr-opened:`\s+tombstone\s+above\s+still\s+stops\s+whatever\s+`RESUME_PR`\s+says/,
