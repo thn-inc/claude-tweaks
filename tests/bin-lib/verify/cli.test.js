@@ -528,7 +528,9 @@ test('#3799: a --cwd subdirectory of the invoking checkout still runs and stamps
   assert.ok(fs.existsSync(appProbe), 'the check ran in packages/app');
   assert.ok(!fs.existsSync(path.join(a.repo, 'cwd-probe.txt')), 'the check did not run at the checkout root');
   // Realpath on both sides: macOS temp dirs resolve through /private.
-  assert.strictEqual(fs.realpathSync(fs.readFileSync(appProbe, 'utf8')), fs.realpathSync(path.join(a.repo, 'packages', 'app')));
+  const ran = fs.realpathSync(fs.readFileSync(appProbe, 'utf8'));
+  const want = fs.realpathSync(path.join(a.repo, 'packages', 'app'));
+  assert.strictEqual(ran, want, "the check's process.cwd() is packages/app");
 });
 
 test('#3799: the usage text says --cwd must stay inside the checkout verify.js runs from', async () => {
