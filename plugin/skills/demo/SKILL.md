@@ -258,7 +258,11 @@ outrank the new verdict: an Approve on a previously rejected record would keep r
 
 - **Every verdict:** `demo:pending`, `accept:pending`.
 - **Approve:** `demo:changes-requested`, `accept:changes-requested`.
+- **Single-record Approve** (not batch-sourced): `demo:approved-batch`, `accept:approved-batch`, since the human's individual verdict replaces the batch one.
 - **Request changes:** `demo:approved`, `accept:approved`, `demo:approved-batch`, `accept:approved-batch`.
+
+A batch-sourced Approve (the Provenance signal note below) removes neither batch label: it is the
+batch action, and it writes its own batch label in the same invocation.
 
 Pass each **only when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label`
 exits 1 with "not found" on a label the repo has never created and fails the whole edit, dropping

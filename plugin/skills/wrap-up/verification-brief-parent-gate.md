@@ -467,7 +467,7 @@ not to the parent, so it is present exactly when that run produced one.
 
 ## Apply the gate
 
-`work-backend: github-issues` — bootstrap `demo:pending` first, per `_shared/label-bootstrap.md`'s
+`work-backend: github-issues` — bootstrap the acceptance labels below first, per `_shared/label-bootstrap.md`'s
 check-then-create loop:
 
 ```js

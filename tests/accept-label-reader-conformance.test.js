@@ -7,7 +7,7 @@ const path = require('node:path');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 const { readText } = require('./helpers/read-skill');
 const { acceptanceOf, parseRecordFacets } = require('../plugin/bin/lib/issues/record-vocabulary');
-const { dispositionState } = require('../plugin/bin/lib/issues/acceptance');
+const { dispositionState, approvalProvenance } = require('../plugin/bin/lib/issues/acceptance');
 const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-breaker');
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
@@ -307,45 +307,85 @@ function demoRemovals() {
   assert.notEqual(from, -1, 'the replacement rule must exist in /demo Step 3');
   const rule = skill.slice(from, skill.indexOf('**Provenance signal', from));
   const bullet = (name) => {
-    const line = rule.split('\n').find((l) => l.startsWith(`- **${name}:**`));
+    const line = rule.split('\n').find((l) => l.startsWith(`- **${name}`));
     assert.ok(line, `the replacement rule must have a ${name} bullet`);
     return labelsIn(line);
   };
-  return { rule: collapse(rule), every: bullet('Every verdict'), approve: bullet('Approve'), changes: bullet('Request changes') };
+  return {
+    rule: collapse(rule),
+    every: bullet('Every verdict:'),
+    approve: bullet('Approve:'),
+    single: bullet('Single-record Approve'),
+    changes: bullet('Request changes:'),
+  };
 }
 
 test('/demo Step 3: a verdict replaces prior acceptance labels, so a later Approve takes effect', () => {
-  const { every, approve, changes } = demoRemovals();
+  const { every, approve, single, changes } = demoRemovals();
   assert.deepEqual(every, ['accept:pending', 'demo:pending']);
   assert.deepEqual(approve, ['accept:changes-requested', 'demo:changes-requested']);
+  assert.deepEqual(single, ['accept:approved-batch', 'demo:approved-batch']);
   assert.deepEqual(changes, ['accept:approved', 'accept:approved-batch', 'demo:approved', 'demo:approved-batch']);
 
-  // Every record a verdict can land on: each subset of the three states, both spellings.
-  const prior = STATES.flatMap((state) => [`demo:${state}`, `accept:${state}`]);
-  const apply = (labels, removed, added) => [...labels.filter((l) => !removed.includes(l)), added];
+  // Every record a verdict can land on: each subset of the three states and the batch
+  // marker, both spellings.
+  const prior = [...STATES, 'approved-batch'].flatMap((state) => [`demo:${state}`, `accept:${state}`]);
+  const apply = (labels, removed, added) => [...labels.filter((l) => !removed.includes(l)), ...added];
   for (let mask = 0; mask < 2 ** prior.length; mask += 1) {
     const labels = prior.filter((_, i) => mask & (1 << i));
-    assert.equal(acceptanceOf(apply(labels, [...every, ...approve], 'demo:approved')), 'approved', labels.join('+'));
-    assert.equal(acceptanceOf(apply(labels, [...every, ...changes], 'demo:changes-requested')), 'changes-requested', labels.join('+'));
+    const name = labels.join('+');
+    const individual = apply(labels, [...every, ...approve, ...single], ['demo:approved']);
+    assert.equal(acceptanceOf(individual), 'approved', name);
+    assert.equal(approvalProvenance(individual), 'walkthrough', `an individual Approve replaces the batch one: ${name}`);
+    const batch = apply(labels, [...every, ...approve], ['demo:approved', 'demo:approved-batch']);
+    assert.equal(approvalProvenance(batch), 'batch', `the batch action keeps its own label: ${name}`);
+    assert.equal(acceptanceOf(apply(labels, [...every, ...changes], ['demo:changes-requested'])), 'changes-requested', name);
   }
 });
+
+test('/demo Step 3: a batch-sourced Approve cannot strip the batch label it writes', () => {
+  const { rule } = demoRemovals();
+  assert.match(rule, /A batch-sourced Approve \(the Provenance signal note below\) removes neither batch label/);
+});
+
+// One verdict's command text, from its opener up to where the other driver's branch starts.
+function verdictCommand(opener, end) {
+  const skill = skillText('demo', 'SKILL.md');
+  const from = skill.indexOf(opener);
+  assert.notEqual(from, -1, `the verdict command must open with: ${opener}`);
+  const to = skill.indexOf(end, from);
+  assert.notEqual(to, -1, `the verdict command must end before: ${end}`);
+  return skill.slice(from, to);
+}
 
 test('/demo Step 3: each removal is conditional on the fetched labels, demo:pending included', () => {
   const skill = skillText('demo', 'SKILL.md');
   const { rule } = demoRemovals();
   assert.match(rule, /only when those labels hold it\*\*, `demo:pending` included/);
   assert.match(rule, /exits 1 with "not found"/);
-  // The verdict commands themselves name no removal, so none can run unconditionally.
-  assert.doesNotMatch(skill, /gh issue edit \{n\} --remove-label/);
   assert.doesNotMatch(skill, /silent no-op/);
 });
 
+test('/demo Step 3: each verdict command names no literal removal and cites the replacement rule', () => {
+  const commands = [
+    ['Approve', verdictCommand('- **Approve** — `gh issue edit', '`work-backend: local-files`')],
+    ['Request changes', verdictCommand('1. **`work-backend: github-issues`:** `gh issue edit', '**`work-backend: local-files`:**')],
+  ];
+  for (const [name, command] of commands) {
+    // A literal label here would run unconditionally, whichever position it holds.
+    assert.doesNotMatch(command, /--remove-label\s+\S*(?:demo|accept):/, name);
+    assert.ok(command.includes(`plus the \`--remove-label\` flags the replacement rule above selects for ${name}`), `${name} must cite the rule`);
+  }
+  assert.match(commands[0][1], /for a batch-sourced verdict .{0,60}add `--add-label demo:approved-batch`/);
+});
+
 test('the permission matrix gives /demo the same removals as its Step 3, and adds no accept:* label', () => {
-  const { every, approve, changes } = demoRemovals();
+  const { every, approve, single, changes } = demoRemovals();
   const row = skillText('_shared', 'work-record-permission-matrix.md').split('\n').find((l) => l.startsWith('| **`/demo`** |'));
   assert.ok(row, 'the matrix must have a /demo row');
   const [, adds, removes] = row.split(' | ').map((cell) => cell.trim());
-  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...changes].sort());
+  assert.deepEqual(labelsIn(removes), [...every, ...approve, ...single, ...changes].sort());
+  assert.match(removes, /on a single-record Approve, never on a batch-sourced one/);
   assert.match(removes, /only when the record holds it/);
   assert.deepEqual(labelsIn(adds).filter((l) => l.startsWith('accept:')), []);
 });
@@ -386,4 +426,10 @@ test('/demo fetches the fresh brief when any pending label is present, even one 
   assert.match(paths, /If the labels just fetched carry a pending acceptance label in either spelling .{0,120}even one a verdict outranks/);
   assert.match(paths, /If the record carries \*\*no\*\* pending acceptance label/);
   assert.doesNotMatch(paths, /acceptance facet does \*\*not\*\* read `pending`/);
+});
+
+test('/demo Input states the same fallback condition as its entry path', () => {
+  const skill = collapse(skillText('demo', 'SKILL.md'));
+  assert.match(skill, /falling back — when it carries no pending acceptance label \(either spelling/);
+  assert.doesNotMatch(skill, /when its acceptance facet does not read `pending`/);
 });
