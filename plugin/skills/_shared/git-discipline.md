@@ -242,8 +242,8 @@ is that list's own numbering and "difference N" is this list's.
    cannot resolve confidently: run `merge --abort` (its own Bash call), log `--status AUTO
    --reversibility high --text-file "{text-file}"`, `{text-file}` holding
    `pre-verification catch-up with origin/{integration-branch} aborted on a conflict it could not resolve confidently — verifying the un-merged tree`,
-   skip the comparison in difference 5, and run the verification on the un-merged tree; the build phase
-   exit's Post-push merge-state check and, past it, the merge path own the conflict.
+   skip the comparison in difference 5, and run the verification on the un-merged tree; the build
+   phase exit's Post-push merge-state check and, past it, the merge path own the conflict.
 4. A merge that fails without a conflict (git refusing to overwrite untracked working tree
    files, say): run `merge --abort` (its own Bash call; a no-op error when no merge is in
    progress is fine), log `--status SKIP --reversibility n/a --text-file "{text-file}"`,
@@ -253,8 +253,8 @@ is that list's own numbering and "difference N" is this list's.
    untracked files to get past it.
 5. A resolved conflict is committed before HEAD is compared, as in Catch-up step 4 above; Common
    Step 5's own run is the verification after resolving. Then compare `git -C "{worktree-path}"
-   rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log `--status SKIP --reversibility n/a
-   --text-file "{text-file}"`, `{text-file}` holding
+   rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log `--status SKIP
+   --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding
    `condition: branch already contains origin/{integration-branch} → fallback: nothing merged`.
    Advanced: log `--status AUTO --reversibility high --text-file "{text-file}"`, `{text-file}`
    holding

@@ -188,3 +188,115 @@ test('AC2.1: integration-model.md lists the Pre-verification catch-up as a consu
   assert.notEqual(mutated, IM);
   assert.throws(() => assertConsumerRow(mutated), /Consumer table lacks the Pre-verification catch-up row/);
 });
+
+// ---- The call site (build Common Step 5), the handoff line, and /test's Match branch.
+
+const BUILD = read('plugin/skills/build/SKILL.md');
+const HANDOFF = read('plugin/skills/build/handoff-template.md');
+const VERIFICATION = read('plugin/skills/test/verification.md');
+
+const STEP5 = '### Common Step 5: Final Verification';
+const CATCHUP = '**Catch up before verifying (#4343).**';
+
+// Common Step 5: from its heading to the next step heading, the heading asserted.
+function step5(text) {
+  const from = text.indexOf(STEP5);
+  assert.notStrictEqual(from, -1, `marker missing: ${STEP5}`);
+  const to = text.indexOf('\n### ', from + 1);
+  return to === -1 ? text.slice(from) : text.slice(from, to);
+}
+
+const BUILD_FACTS = [
+  { name: 'after Category A fixes', needle: 'Immediately before that run and after any Category A fix commit' },
+  { name: 'cites the shared procedure', needle: "run `_shared/git-discipline.md`'s Pre-verification catch-up" },
+  { name: 'pr-first worktree, every mode', needle: 'a `pr-first` worktree run, in every mode, merges in a base that moved during the build' },
+  { name: 'VERIFICATION_SHA is post-merge', needle: '`VERIFICATION_SHA` is then the post-merge HEAD' },
+  { name: 'others log a SKIP', needle: 'any other run logs its `SKIP`' },
+  { name: 'not repeated after a fix', needle: 'It is not repeated before a re-run after a fix' },
+  { name: 'abort verifies un-merged', needle: 'aborts the merge, and the run verifies the un-merged tree' },
+];
+
+function assertCatchupBeforeVerify(text) {
+  const s = step5(text);
+  requireOrder(s, ['run the shared verification procedure', '**Operational fixes first (#3489).**', CATCHUP, '**Note:**']);
+  assert.deepEqual(missingFacts(BUILD_FACTS, collapse(s)), [], 'Common Step 5 catch-up facts');
+}
+
+const HANDOFF_LINE = '- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | aborted on a conflict — verified the un-merged tree | skipped — {condition}}';
+
+function assertHandoffLine(text) {
+  const from = text.indexOf('### Verification');
+  assert.notStrictEqual(from, -1, 'marker missing: ### Verification');
+  const to = text.indexOf('### What was built', from);
+  assert.notStrictEqual(to, -1, 'marker missing: ### What was built');
+  assert.ok(text.slice(from, to).includes(HANDOFF_LINE), 'handoff Verification list lacks the pre-verification catch-up line');
+}
+
+const MATCH_NOTE = "build's Pre-verification catch-up (`_shared/git-discipline.md`) merges the integration branch in before its own run";
+const MISMATCH_NOTE = 'a later bookkeeping-only commit takes the Mismatch branch below, which runs no suite either';
+
+function assertMatchBullet(text) {
+  const from = text.indexOf('### Skip-if-recent (for /flow pipelines)');
+  assert.notStrictEqual(from, -1, 'marker missing: ### Skip-if-recent (for /flow pipelines)');
+  const next = text.indexOf('\n### ', from + 1);
+  const region = next === -1 ? text.slice(from) : text.slice(from, next);
+  const line = region.split('\n').find((l) => l.startsWith('- **Match**'));
+  assert.ok(line, 'marker missing: - **Match**');
+  const s = collapse(line);
+  assert.ok(s.includes(MATCH_NOTE), 'Match bullet does not name the pre-verification catch-up');
+  assert.ok(s.includes(MISMATCH_NOTE), 'Match bullet does not name the bookkeeping-only Mismatch path');
+}
+
+test('AC1.1/AC6.1: Common Step 5 places the catch-up before the verification run', () => {
+  assertCatchupBeforeVerify(BUILD);
+});
+
+test('AC6.1 go-red: Common Step 5 without the catch-up paragraph fails', () => {
+  const from = BUILD.indexOf(CATCHUP);
+  assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
+  const end = BUILD.indexOf('\n\n', from);
+  assert.notStrictEqual(end, -1);
+  const mutated = BUILD.slice(0, from) + BUILD.slice(end + 2);
+  assert.notEqual(mutated, BUILD);
+  assert.throws(() => assertCatchupBeforeVerify(mutated), /marker missing: \*\*Catch up before verifying \(#4343\)\.\*\*/);
+});
+
+test('AC6.1 go-red: the catch-up paragraph spliced above the verification sentence fails the order check', () => {
+  const from = BUILD.indexOf(CATCHUP);
+  assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
+  const end = BUILD.indexOf('\n\n', from);
+  const paragraph = BUILD.slice(from, end + 2);
+  const without = BUILD.slice(0, from) + BUILD.slice(end + 2);
+  const at = without.indexOf('After Common Steps 6 and 6.5, so the verified tree');
+  assert.notStrictEqual(at, -1, 'verification sentence missing from the live text');
+  const spliced = without.slice(0, at) + paragraph + without.slice(at);
+  assert.notEqual(spliced, BUILD);
+  assert.throws(() => assertCatchupBeforeVerify(spliced), /\*\*Catch up before verifying \(#4343\)\.\*\* must come after the previous marker/);
+});
+
+test('AC1.1 go-red: each Common Step 5 fact goes red alone', () => {
+  const s = collapse(step5(BUILD));
+  for (const f of BUILD_FACTS) {
+    assert.equal(s.split(f.needle).length, 2, `needle must occur exactly once in Common Step 5: ${f.name}`);
+    const m = s.replace(f.needle, '');
+    assert.notEqual(m, s, f.name);
+    assert.deepEqual(missingFacts(BUILD_FACTS, m), [f.name], f.name);
+  }
+});
+
+test('AC1.1: the build handoff names the catch-up outcome (standalone builds report it there)', () => {
+  assertHandoffLine(HANDOFF);
+  const mutated = HANDOFF.replace(HANDOFF_LINE, '');
+  assert.notEqual(mutated, HANDOFF);
+  assert.throws(() => assertHandoffLine(mutated), /handoff Verification list lacks the pre-verification catch-up line/);
+});
+
+test("AC3.1: /test's Skip-if-recent Match branch is the expected path after the catch-up", () => {
+  assertMatchBullet(VERIFICATION);
+  const noMatch = VERIFICATION.replace(MATCH_NOTE, '');
+  assert.notEqual(noMatch, VERIFICATION);
+  assert.throws(() => assertMatchBullet(noMatch), /Match bullet does not name the pre-verification catch-up/);
+  const noMismatch = VERIFICATION.replace(MISMATCH_NOTE, '');
+  assert.notEqual(noMismatch, VERIFICATION);
+  assert.throws(() => assertMatchBullet(noMismatch), /Match bullet does not name the bookkeeping-only Mismatch path/);
+});
