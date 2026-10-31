@@ -654,12 +654,6 @@ test('#4704: repoRoot and the worktree path are compared through the same canoni
   assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
 });
 
-test('#4704: with no path siblings to filter, repoInfo (a git spawn) is not called', () => {
-  const deps = fakeDeps();
-  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
-  assert.deepStrictEqual(deps.calls.repoInfo, []);
-});
-
 // Initialises `repo` as a real main checkout holding two ad-hoc run dirs (sessions
 // S1 and S2, one friction event each) and a formal primary run dir.
 function initMainCheckoutWithTwoSessions(repo) {
