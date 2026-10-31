@@ -1220,4 +1220,16 @@ test('ensureClaimsBranch: both legs refused → ok:false with both reasons verba
   assert.match(r.reason, /Permission to acme\/w\.git denied/);
   assert.match(r.reason, /HTTP 403: Resource not accessible/);
   assert.match(r.reason, /^git: .*; contents-api: /s);
+  assert.equal('transient' in r, false, 'a non-rate-limit refusal carries no transient key');
+});
+
+test('ensureClaimsBranch: a secondary-rate-limit POST is transient (reason verbatim); a 403 network-failure POST is not', () => {
+  const rateLimited = ensureClaimsBranch({
+    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' } }),
+  }, 'acme/w');
+  assert.deepEqual(rateLimited, { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true });
+  const refused = ensureClaimsBranch({
+    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'network-failure', status: 403, error: 'HTTP 403: Forbidden' } }),
+  }, 'acme/w');
+  assert.deepEqual(refused, { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
 });

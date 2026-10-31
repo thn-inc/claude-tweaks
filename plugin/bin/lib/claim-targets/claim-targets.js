@@ -47,7 +47,7 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure\n'
+  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap rate-limited by GitHub)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
   + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
   + '  exit 6 = the claims-registry branch is missing on origin and could not be created —\n'
@@ -459,6 +459,11 @@ function run(argv, deps) {
     }
     bootstrapAttempted = true;
     const b = claimStore.ensureClaimsBranch(deps, repoSlug);
+    // A secondary rate limit on the create is transient, not a refusal: a later
+    // run's bootstrap may succeed, so it is exit 4 (or a --keep-going skip).
+    if (!b.ok && b.transient) {
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-bootstrap-rate-limited' }) };
+    }
     if (!b.ok) {
       deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${b.reason} — create it from the default branch\n`);
       return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason: b.reason } }, 6) };

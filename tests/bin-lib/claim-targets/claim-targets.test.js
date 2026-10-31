@@ -2150,6 +2150,21 @@ test('(bm8) write site, second sighting after a bootstrap that reported success:
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
+test('(bm8b) write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
+  const { ghApi, state } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-rate-limited');
+  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
 test('(bm9) write-site second sighting under --keep-going discards the git tip chain: the next target fetches fresh', () => {
   // Target 720: the git read says the branch is missing -> git bootstrap -> the
   // retried git read succeeds (tip0, which is chainable) -> the git claim push

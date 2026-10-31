@@ -532,18 +532,24 @@ function apiRefusalReason(r) {
   return r.error || r.failure || `HTTP ${r.status}`;
 }
 
+// A contents-API refusal as a result. A secondary rate limit is the one
+// failure the classifier already knows is transient, so it is flagged.
+function apiRefusal(r) {
+  return { ok: false, reason: apiRefusalReason(r), ...(r.failure === 'secondary-rate-limit' ? { transient: true } : {}) };
+}
+
 // The contents-API leg of `ensureClaimsBranch`: create `CLAIMS_BRANCH` at the
 // default branch's tip via `POST git/refs`. A ref-creation 422 is ambiguous
 // (the branch already exists, or a ruleset forbids creating it), so only a
 // re-read of the branch settles it.
 function createClaimsBranchContentsApi(ghApi, repoSlug) {
   const branchRead = ghApi([`repos/${repoSlug}`, '-q', '.default_branch']);
-  if (branchRead.failure || branchRead.status) return { ok: false, reason: apiRefusalReason(branchRead) };
+  if (branchRead.failure || branchRead.status) return apiRefusal(branchRead);
   const defaultBranch = String(branchRead.stdout || '').trim();
   if (!defaultBranch) return { ok: false, reason: 'the repository reported no default branch' };
   const encoded = defaultBranch.split('/').map(encodeURIComponent).join('/');
   const tipRead = ghApi([`repos/${repoSlug}/git/ref/heads/${encoded}`, '-q', '.object.sha']);
-  if (tipRead.failure || tipRead.status) return { ok: false, reason: apiRefusalReason(tipRead) };
+  if (tipRead.failure || tipRead.status) return apiRefusal(tipRead);
   const tipSha = String(tipRead.stdout || '').trim();
   if (!tipSha) return { ok: false, reason: `the default branch ${defaultBranch} reported no tip sha` };
   const r = ghApi([
@@ -553,15 +559,17 @@ function createClaimsBranchContentsApi(ghApi, repoSlug) {
   ]);
   if (r.failure === null && r.status === null) return { ok: true, created: true };
   if (r.status === 422 && claimsBranchExists(ghApi, repoSlug) === true) return { ok: true, created: false };
-  return { ok: false, reason: apiRefusalReason(r) };
+  return apiRefusal(r);
 }
 
 // (deps: {ghApi, gitRunner?}, repoSlug)
-// -> { ok: true, created, via: 'git' | 'contents-api' } | { ok: false, reason }
+// -> { ok: true, created, via: 'git' | 'contents-api' } | { ok: false, reason, transient? }
 // Creates the missing `CLAIMS_BRANCH` (#4495) — the one bootstrap every
 // caller shares: a git push first (when a `gitRunner` is supplied), the
 // contents API when git cannot. A refusal is never retried; `reason` carries
-// each leg's own text verbatim.
+// each leg's own text verbatim. `transient: true` marks a contents-API leg
+// that hit a secondary rate limit — a later run may succeed, so it is no
+// refusal to act on.
 function ensureClaimsBranch(deps, repoSlug) {
   const reasons = [];
   if (deps.gitRunner) {
@@ -572,7 +580,7 @@ function ensureClaimsBranch(deps, repoSlug) {
   const a = createClaimsBranchContentsApi(deps.ghApi, repoSlug);
   if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
   reasons.push(`contents-api: ${a.reason}`);
-  return { ok: false, reason: reasons.join('; ') };
+  return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true } : {}) };
 }
 
 function isSameRepoPrUrl(link, owner, repo) {
