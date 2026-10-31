@@ -147,12 +147,23 @@ function isReconcileResidueTitle(title) {
   return /^reconcile:/i.test((title || '').trim());
 }
 
+// #4701: the ranking key — fired-signal count plus shared Current State anchors.
+function depthKey(hit) {
+  return hit.score + hit.sharedAnchors.length;
+}
+
 // subject, records: issue-shaped objects — { number, title, body, labels }.
 // opts.titleSimilarityThreshold overrides the default (0.5) for tests.
-// Returns [{ number, title, score, signals, sharedAnchors }], sorted by score descending
-// then number ascending — score is the count of signals that fired (1-3);
-// a record with zero fired signals is never included. sharedAnchors (#3520)
-// is the sorted Signal 3 intersection — [] when body-anchor-overlap did not fire.
+// Returns [{ number, title, score, signals, sharedAnchors }], sorted by depth
+// key (score + sharedAnchors.length) descending, then score descending, then
+// number ascending — score is the count of signals that fired (1-3); a record
+// with zero fired signals is never included. sharedAnchors (#3520) is the
+// sorted Signal 3 intersection — [] when body-anchor-overlap did not fire.
+// The depth key (#4701) lets a deep Current State duplicate with a differently
+// worded title (score 1, many anchors) outrank a shallow hit that only shares
+// Key Files and one anchor (score 2, one anchor). The fold is deliberate: a
+// body-only hit with 2 anchors (key 3) now outranks a title-plus-key-files hit
+// with no anchors (key 2).
 function findNearDuplicates(subject, records, opts = {}) {
   const titleThreshold = opts.titleSimilarityThreshold ?? DEFAULT_TITLE_SIMILARITY_THRESHOLD;
   const subjectNumber = subject && subject.number;
@@ -196,7 +207,7 @@ function findNearDuplicates(subject, records, opts = {}) {
     }
   }
 
-  results.sort((a, b) => b.score - a.score || a.number - b.number);
+  results.sort((a, b) => depthKey(b) - depthKey(a) || b.score - a.score || a.number - b.number);
   return results;
 }
 
@@ -213,6 +224,19 @@ function isStrongNearDuplicate(hit) {
   if (!hit || typeof hit !== 'object') return false;
   const anchors = Array.isArray(hit.sharedAnchors) ? hit.sharedAnchors.length : 0;
   return anchors >= STRONG_NEAR_DUPLICATE_MIN || hit.score >= STRONG_NEAR_DUPLICATE_MIN;
+}
+
+// #4701: a deep-overlap hit shares this many Current State anchors. Calibrated
+// on real pairs: the conflicting #3417/#3419 shared 3 anchors, the #4093/#3508
+// duplicate shared 6; one-anchor hits are routinely noise.
+const DEEP_OVERLAP_MIN = 3;
+
+// #4701: the hits (finder order kept) whose sharedAnchors reaches
+// DEEP_OVERLAP_MIN. A hit whose sharedAnchors is not an array is skipped;
+// a non-array input returns [].
+function deepOverlapHits(hits) {
+  if (!Array.isArray(hits)) return [];
+  return hits.filter((hit) => hit && Array.isArray(hit.sharedAnchors) && hit.sharedAnchors.length >= DEEP_OVERLAP_MIN);
 }
 
 // #3141: the refusal decision /specify shaping applies on top of the
@@ -276,5 +300,7 @@ module.exports = {
   MIN_REFUSAL_SCORE,
   STRONG_NEAR_DUPLICATE_MIN,
   isStrongNearDuplicate,
+  DEEP_OVERLAP_MIN,
+  deepOverlapHits,
   DEFAULT_TITLE_SIMILARITY_THRESHOLD,
 };

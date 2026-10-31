@@ -19,6 +19,7 @@ const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state
 const { writeRunState } = require('../../../plugin/bin/lib/hooks/context');
 const { scanUnresolvedConsoles } = require('../../../plugin/bin/lib/hooks/session-residue');
 const { runIdOf } = require('../../../plugin/bin/lib/console/resolve');
+const { planBatch } = require('../../../plugin/bin/lib/console/backfill-dispose');
 const { readText } = require('../../helpers/read-skill');
 
 const MAIN_SHA = '0123456789abcdef0123456789abcdef01234567';
@@ -466,6 +467,71 @@ test('R14a: a line with no path stays locationless', () => {
   const [item] = itemsForLine(noPath);
   assert.strictEqual(item.noClaimReason, 'no-path');
   assert.strictEqual(item.finding, undefined);
+});
+
+// FINDING_PATH: a path with `[`, `]`, `@` or `(` is reported whole (AC1). Its item id keeps the legacy
+// location key (AC2), so an item persisted before the path class widened still matches its re-split.
+const BRACKET = '- STAGED 10:00:00 — Reproduction: lens "3a" finding app/[id]/page.tsx:9 not reproduced (single agent): the page reads its params before the auth guard runs. Staged to Review Console as low-confidence. Reversibility: high.';
+const SCOPED = '- STAGED 10:00:00 — Reproduction: lens "3b" finding packages/@scope/x.ts:4 not reproduced (single agent): the export map drops the scoped entry point entirely. Staged to Review Console as low-confidence. Reversibility: high.';
+const BRACKET_ID = 'bf:92e55a23cd85de94';
+const SCOPED_ID = 'bf:8ea985962726eda2';
+
+test('AC1: a bracketed or scoped path is reported whole, at its line', () => {
+  assert.deepStrictEqual(splitDecisionLine(BRACKET).findings.map((f) => [f.path, f.line]), [['app/[id]/page.tsx', 9]]);
+  assert.deepStrictEqual(splitDecisionLine(SCOPED).findings.map((f) => [f.path, f.line]), [['packages/@scope/x.ts', 4]]);
+  const [item] = itemsForLine(BRACKET);
+  assert.deepStrictEqual([item.finding.path, item.finding.line], ['app/[id]/page.tsx', 9]);
+});
+
+test('AC2: the bracketed and scoped lines keep the item ids they had before the path class widened', () => {
+  assert.deepStrictEqual(itemsForLine(BRACKET).map((i) => i.itemId), [BRACKET_ID]);
+  assert.deepStrictEqual(itemsForLine(SCOPED).map((i) => i.itemId), [SCOPED_ID]);
+});
+
+test('AC2: a stored legacy sibling keyed by its legacy id re-splits to the widened finding, not split-drift', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const [item] = consoleWorkItems({
+    consoleDir: `/x/${RUN}`, consoleJson: { items: [{ ...KEEP(BRACKET_ID), backfillSource: BRACKET }] }, decisions: '', readStaged: () => null, runId: RUN,
+  });
+  assert.deepStrictEqual([item.itemId, item.kind, item.finding.path, item.noClaimReason], [BRACKET_ID, 'finding', 'app/[id]/page.tsx', undefined]);
+});
+
+test('AC2: a record an interrupted pass filed under the legacy path is reused, not filed a second time', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const [today] = consoleWorkItems({
+    consoleDir: `/x/${RUN}`, consoleJson: { items: [KEEP(newId(BRACKET))] }, decisions: `# D\n\n${BRACKET}\n`, readStaged: () => null, runId: RUN,
+  });
+  const earlier = { ...today, finding: { ...today.finding, path: '/page.tsx' } };
+  const verdict = { outcome: 'confirmed', severity: 'medium', evidence: { path: 'app/[id]/page.tsx', line: 9, quote: 'export default async function Page' }, reason: 'confirmed by tiebreak', recommendation: null };
+  const workList = (items) => ({ mainSha: MAIN_SHA, runs: [{ runDir: '/x/pipelines/archive/run-0', items }] });
+  const filed = planBatch({ workList: workList([earlier]), verdicts: { [earlier.itemId]: verdict }, existingIssues: [], digestComments: [] }).file[0];
+  assert.strictEqual(filed.itemId, BRACKET_ID);
+  const existingIssues = [{ number: 4631, title: filed.title, body: filed.text.split('\n\n').slice(1).join('\n\n') }];
+  for (const verdicts of [{ [today.itemId]: verdict }, {}]) {
+    const out = planBatch({ workList: workList([today]), verdicts, existingIssues, digestComments: [] });
+    assert.deepStrictEqual(out.file, [], JSON.stringify(verdicts));
+    assert.deepStrictEqual(out.reuse, [{ itemId: BRACKET_ID, number: 4631 }]);
+  }
+});
+
+test('AC2: a path the legacy class never matched keys its id by the widened path', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  // No legacy match ends at `app/[id].tsx:3`, so the id key is the widened path with its own occurrence.
+  const FALLBACK = '- STAGED 10:00:00 — Reproduction: lens "3a" finding app/[id].tsx:3 not reproduced (single agent): the route reads its params before the guard runs. Staged to Review Console as low-confidence. Reversibility: high.';
+  const [item] = itemsForLine(FALLBACK);
+  assert.deepStrictEqual([item.kind, item.finding.path, item.finding.line], ['finding', 'app/[id].tsx', 3]);
+  assert.strictEqual(item.itemId, backfillItemId({ runId: RUN, sourceKey: FALLBACK, findingKey: '3a|app/[id].tsx:3@0' }));
+});
+
+test('AC2: two widened paths sharing a legacy tail keep their legacy occurrence keys and stay two items', () => {
+  const RUN = '2026-10-24T090000-record-1';
+  const TWO = '- STAGED 10:00:00 — Reproduction: lens "3a" findings app/[id]/page.tsx:9 the page reads params early / blog/[id]/page.tsx:9 the blog page skips the guard. Staged to Review Console as low-confidence. Reversibility: high.';
+  const items = itemsForLine(TWO);
+  assert.deepStrictEqual(items.map((i) => [i.kind, i.finding.path, i.finding.line]), [['finding', 'app/[id]/page.tsx', 9], ['finding', 'blog/[id]/page.tsx', 9]]);
+  assert.deepStrictEqual(items.map((i) => i.itemId), [
+    backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@0' }), backfillItemId({ runId: RUN, sourceKey: TWO, findingKey: '3a|/page.tsx:9@1' }),
+  ]);
+  assert.notStrictEqual(items[0].itemId, items[1].itemId);
 });
 
 // R17: a claim is never the producer's own note. Verbatim real lines from the acceptance run's

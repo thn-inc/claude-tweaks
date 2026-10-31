@@ -6,10 +6,26 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
+const { parseRiskPathGlobs } = require('./risk-path-globs');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
 const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety', 'health-sweeps', 'models', 'housekeeping'];
+
+// Control mode (#4609). The four built-in invisible-risk category slugs, verbatim;
+// `risk-categories` entries are additional slugs beside these.
+const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
+
+// A `list` row's optional `element` names the rule every comma-separated entry
+// must match (isValidValue). A list row with no `element` accepts any text.
+const LIST_ELEMENT_PATTERNS = {
+  login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
+  slug: /^[a-z0-9][a-z0-9-]*$/,
+};
+
+// A `string` row's optional `pattern` the whole value must also match. The
+// authority holds no `@`: policy.yml is committed, so a URL never carries a credential.
+const HTTP_URL = /^https?:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/;
 
 // A `type: 'boolean'` entry's value — in policy.yml examples, routing-table prose, and
 // tests — must use the literal strings 'true'/'false', never 'on'/'off': resolveValue()
@@ -41,7 +57,7 @@ const POLICY_KEYS = [
   // derives it. Tier is `advanced` only because the core tier sits at its
   // enforced cap of 12 (tests/policy-schema-metadata.test.js); by the decision
   // rule it is core-shaped (a merge default).
-  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI verification a merge into the integration branch waits for — merge once green, wait for checks, or none.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI a merge waits for — merge once green, wait for checks, or off (a derived off still waits on and parks on reported checks).", category: 'merge-safety', tier: 'advanced' },
   // merge-authorization (#715): lets a human present at the run (the /flow
   // `pre-authorize-merge` token, #2734, or a Manifesto override) pre-authorize
   // "merge once every HARD-GATE is green" for this run only.
@@ -74,6 +90,10 @@ const POLICY_KEYS = [
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
+  // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry. policyOnly: risk-path-globs validates against it from policy.yml, so the two can never disagree.
+  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
+  // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -155,6 +175,20 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
+  // Control mode (#4609, human-in-control #4608): twelve inert flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
+  { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Read only with control mode on: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Read only with control mode on: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). policyOnly (here and on the two trust lists below) — the resolver skips the --run overlay, so a run config can name neither what executes nor who is trusted; the base-branch read stays the consumer's, since the resolver only sees the checkout it runs in. allowWhitespace — it is a shell command, like release-hook. closedQuote on the three allowWhitespace rows below: a quoted value holding a `#` is cut mid-quote by parseFlatLines, so an opening quote that never closes is invalid rather than a malformed command.
+  { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, policyOnly: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Read only with control mode on: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Read only with control mode on: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
   // The reserved second opt-in named by skills/_shared/autonomy-ceiling.md —
   // read by permittedGrants as grantOriginationEnabled. false by default: the
@@ -361,9 +395,9 @@ function parseFlatLines(raw) {
     // indentation. Dotted names still parse (the RENAMED_KEYS aliases such as
     // harness-health.scoped-rule-budget are dotted inputs), but new keys are
     // flat kebab-case per skills/_shared/policy-key-naming.md.
-    // An indented line belongs to a nested block's own field (today, only
-    // model-profiles' rows) and must never be read as a flat key in its own
-    // right.
+    // An indented line belongs to a nested block's own field (model-profiles'
+    // and risk-path-globs' rows, the two block keys) and must never be read as
+    // a flat key in its own right.
     if (/^\s/.test(rawLine)) continue;
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
@@ -373,6 +407,27 @@ function parseFlatLines(raw) {
     if (value) result[match[1]] = value;
   }
   return result;
+}
+
+// True when `value` ends inside a quote — what a `#` inside quotes leaves
+// behind once parseFlatLines cuts the line there. Shell-style: a `"` opens
+// anywhere (`-m"fix #12"`, `>"a#b"`); a `'` only at the start of a word (line
+// start, after whitespace, `=`, `(`, `;`, `|`, `&`), so an apostrophe inside a
+// word (`Bob's`) opens none; `\` escapes the next character except inside
+// single quotes.
+function endsInsideQuote(value) {
+  let quote = null;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch === '\\' && quote !== "'") {
+      i += 1;
+    } else if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || (ch === "'" && (i === 0 || /[\s=(;|&]/.test(value[i - 1])))) {
+      quote = ch;
+    }
+  }
+  return quote !== null;
 }
 
 function isValidValue(schemaEntry, value) {
@@ -395,8 +450,25 @@ function isValidValue(schemaEntry, value) {
       // against. allowWhitespace: true opts a command-shaped key (e.g.
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
-      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value));
+      // An optional `pattern` (#4609) must also match — e.g. a URL key.
+      // A `closedQuote` key (the #4609 keys only — release-hook's pinned F6/#2253
+      // contract keeps an unbalanced quote as an ordinary value) also rejects an
+      // opening quote that never closes — what a `#` inside the quotes leaves
+      // behind, since parseFlatLines cuts at any `#` — and a blank value inside
+      // its quotes (`""`).
+      if (schemaEntry.closedQuote === true) {
+        const trimmed = value.trim();
+        if (endsInsideQuote(trimmed)) return false;
+        if (stripEnclosingQuotes(trimmed).trim().length === 0) return false;
+      }
+      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
+        && (schemaEntry.pattern === undefined || schemaEntry.pattern.test(value));
     case 'list':
+      // An optional `element` (#4609) names the rule each comma-separated entry
+      // must match; an empty entry (a trailing or doubled comma) never does.
+      // A row with no `element` accepts anything, as before.
+      if (schemaEntry.element === undefined) return true;
+      return value.split(',').every((entry) => LIST_ELEMENT_PATTERNS[schemaEntry.element].test(entry.trim()));
     case 'opaque':
       return true;
     case 'map':
@@ -431,11 +503,31 @@ function stripMatchedQuotes(value) {
   return value;
 }
 
+// A closedQuote row's stripping: the outer pair goes only when it encloses the
+// whole value, meaning the first unescaped same quote is the last character, so
+// `"a" "b"` stays exactly as written. A `\` escapes except inside single quotes,
+// as in endsInsideQuote. Nothing is unescaped.
+function stripEnclosingQuotes(value) {
+  const quote = value[0];
+  if (quote !== '"' && quote !== "'") return value;
+  for (let i = 1; i < value.length; i += 1) {
+    if (value[i] === '\\' && quote === '"') i += 1;
+    else if (value[i] === quote) return i === value.length - 1 ? value.slice(1, -1) : value;
+  }
+  return value;
+}
+
 function resolveValue(key, rawValue) {
   const entry = SCHEMA_BY_KEY.get(key);
   if (!entry) return rawValue;
   if (rawValue === undefined || rawValue === null || rawValue === '') return entry.default;
   let strValue = String(rawValue);
+  // A closedQuote row validates the value as written, then strips: the rule reads
+  // quotes, so judging the stripped text would re-read `"a 'b"` as an unclosed `'`.
+  if (entry.closedQuote === true) {
+    const trimmed = strValue.trim();
+    return isValidValue(entry, trimmed) ? stripEnclosingQuotes(trimmed) : entry.default;
+  }
   // allowWhitespace entries (a shell command, e.g. release-hook) may be
   // quoted for readability in policy.yml — strip one matched pair before
   // validating, so a quoted command validates and resolves unquoted.
@@ -457,13 +549,15 @@ function hasOwn(obj, key) {
 //   { value, source }                      source: "run-config" | "policy" | "default"
 //   { value, source, "renamed-from": k }   value arrived via a RENAMED_KEYS migration
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
-//                                          the winning source (never cascades)
+//                                          the winning source (never cascades;
+//                                          risk-path-globs: null, not its default)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
-// Precedence per key: run-config (only when runConfigRaw is a string) ->
-// policy -> schema default. Alias normalization happens per source, BEFORE
-// precedence: old key alone -> migrate() contributes under the new name with
-// a renamed-from tag (a null migration contributes nothing, but still tags
-// renamed-from when the final resolution falls to the default); old + new in
+// Precedence per key: run-config (only when runConfigRaw is a string, and never
+// for a policyOnly row) -> policy -> schema default. Alias normalization
+// happens per source, BEFORE precedence: old key alone -> migrate() contributes
+// under the new name with a renamed-from tag (a null migration contributes
+// nothing, but still tags renamed-from when the final resolution falls to the
+// default); old + new in
 // one source -> the new key wins with no tag (the stray old key is
 // auditPolicy's business).
 
@@ -523,11 +617,28 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
   const result = {};
   for (const requested of requestedKeys) {
-    // model-profiles is the one block-style key — invisible to this flat
+    // model-profiles is a block-style key — invisible to this flat
     // resolver by design. Emit its documented absent shape; the CLI overwrites
     // this entry via its parsePolicyModelConfig delegation before printing.
     if (requested === 'model-profiles') {
       result[requested] = { value: null, source: 'default' };
+      continue;
+    }
+    // risk-path-globs is the other block-style key, resolved here from the
+    // policy source only (run configs hold flat lever lines, never blocks) by
+    // its own parser. A rejected block resolves to null, flagged invalid, never
+    // to a partial map or the {} that means unset — the absent shape model-profiles
+    // uses too, unlike the flat keys' schema default.
+    if (requested === 'risk-path-globs') {
+      const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
+      if (!parsed.present) {
+        result[requested] = { value: {}, source: 'default' };
+      } else if (parsed.ok) {
+        result[requested] = { value: parsed.value, source: 'policy' };
+      } else {
+        result[requested] = { value: null, source: 'default', invalid: true };
+        if (onInvalid) onInvalid(requested, parsed.raw);
+      }
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A
@@ -548,6 +659,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     const defaultValue = schemaEntry.default ?? null;
     let resolved = null;
     for (const source of sources) {
+      if (schemaEntry.policyOnly && source.name === 'run-config') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
       if (isValidValue(schemaEntry, raw)) {
@@ -596,7 +708,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
 // Shallow extractor for a nested `{topKey}:` block's first-level indented key
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
-// value (today, only model-profiles) is otherwise invisible to auditPolicy.
+// value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
+// risk-path-globs, the other block key, has its own parser: bin/lib/risk-path-globs.js.
 // Returns undefined when the block is absent, distinct from an empty map.
 function extractMapEntry(raw, topKey) {
   if (!raw) return undefined;
@@ -618,6 +731,15 @@ function extractMapEntry(raw, topKey) {
     // shallow means only the row's own key name is read here.
   }
   return found ? map : undefined;
+}
+
+// The slugs a risk-path-globs row may name: BUILTIN_RISK_CATEGORIES plus what
+// `risk-categories` adds — only from a value that passes its own validation, so
+// a malformed list can never widen them (#4609).
+function riskAllowedSlugs(policyRaw) {
+  const raw = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'];
+  if (raw === undefined || !isValidValue(SCHEMA_BY_KEY.get('risk-categories'), raw)) return BUILTIN_RISK_CATEGORIES;
+  return [...BUILTIN_RISK_CATEGORIES, ...raw.split(',').map((slug) => slug.trim())];
 }
 
 // Computed default for `integration-model` when absent from every config
@@ -707,9 +829,10 @@ function auditPolicy(repoRoot) {
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);
-  // model-profiles is the one block-style (non-flat) key today; parseFlatLines
+  // model-profiles is one of two block-style (non-flat) keys; parseFlatLines
   // can't see it, so it's read separately and merged in under its own name —
-  // this never collides with a flat-line entry of the same key.
+  // this never collides with a flat-line entry of the same key. The other,
+  // risk-path-globs, is checked by parseRiskPathGlobs after the flat loop below.
   const modelProfilesEntry = extractMapEntry(policyRaw, 'model-profiles');
   if (modelProfilesEntry !== undefined) policyEntries['model-profiles'] = modelProfilesEntry;
 
@@ -758,6 +881,12 @@ function auditPolicy(repoRoot) {
       sourceExcludedKeys.push({ key, value });
     }
   }
+  // A rejected risk-path-globs block (an inline value on the key line is also
+  // seen by the flat loop above, which flags it first — report it once).
+  const riskGlobs = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
+  if (riskGlobs.present && !riskGlobs.ok && !invalidValues.some((row) => row.key === 'risk-path-globs')) {
+    invalidValues.push({ key: 'risk-path-globs', value: riskGlobs.raw, expected: SCHEMA_BY_KEY.get('risk-path-globs') });
+  }
 
   // A recognized key still sitting in CLAUDE.md no longer applies to anything.
   // Its value is not audited — correcting a value nobody reads is not the fix;
@@ -780,6 +909,6 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
 };
