@@ -518,7 +518,16 @@ const DERIVED_OFF_NEEDLES = [
   ['red bullet: explicit merges, derived parks', 'but an explicit `off` merges anyway; a derived `off` takes the **Red path**'],
   ['AUTO line', 'derived off with pending checks on PR #{n} — bounded watch'],
   ['watch heading names derived off', 'and a derived `off` with pending checks)'],
+  ['AUTO lever field', 'bounded watch. Reversibility: high. [lever: merge-verification=off (default)]'],
 ];
+
+// Frozen pre-#4550 text (git show 47f5ad905) — go-red controls for the heading and the red bullet.
+const PRE_4550_WATCH_HEADING = '**Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**';
+const PRE_4550_RED_BULLET = `- Any \`statusCheckRollup[]\` entry with \`conclusion\` in \`FAILURE\`, \`TIMED_OUT\`, \`ERROR\`, or \`STARTUP_FAILURE\`
+  — or any head run whose \`status\` is \`completed\` and whose \`conclusion\`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
+  reconcile's concern). Take the **Red path** below now, before anything else. Under \`off\` this
+  read still runs — \`off\` skips the *wait*, not the read — but the value \`off\` merges anyway
+  (today's behavior); the red classification is logged and shown, not acted on.`;
 
 function assertDerivedOffRule(section) {
   for (const [label, needle] of DERIVED_OFF_NEEDLES) {
@@ -538,10 +547,17 @@ test('AC7.1: each derived-off pin goes red when its clause is removed, and on th
   }
   const currentRow = section.split('\n').find((l) => l.startsWith('| `off` |'));
   assert.throws(() => assertDerivedOffRule(section.replace(currentRow, PRE_4550_OFF_ROW)));
+  const currentHeading = section.split('\n').find((l) => l.startsWith('**Bounded watch ('));
+  assert.ok(currentHeading, 'Step 2.5 must carry the bounded-watch heading');
+  assert.throws(() => assertDerivedOffRule(section.replace(currentHeading, PRE_4550_WATCH_HEADING)), 'the pre-change heading must fail the pin');
+  const redStart = section.indexOf('- Any `statusCheckRollup[]` entry');
+  assert.ok(redStart !== -1, 'Step 2.5 must carry the red classification bullet');
+  const currentRedBullet = section.slice(redStart, section.indexOf('\n- Any entry with `status`', redStart));
+  assert.throws(() => assertDerivedOffRule(section.replace(currentRedBullet, PRE_4550_RED_BULLET)), 'the pre-change red bullet must fail the pin');
 });
 
 function assertEmptyRollupNeverWaits(bullet) {
-  assert.ok(bullet.includes('proceeds as green — derived `off` too, so a repo without PR CI never waits'), 'empty-rollup bullet must state a derived off never waits');
+  assert.ok(bullet.includes('proceeds as green — derived `off` too, so a PR with no checks never waits'), 'empty-rollup bullet must state a derived off never waits');
 }
 
 test('AC2.1 AC2.2: a derived off with an empty rollup still proceeds green', () => {
