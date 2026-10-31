@@ -52,6 +52,12 @@ test('normalizePrListing throws on an MCP entry whose head is not an object or h
   assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: 'x' }], 'acme', 'w'), /entry 0 is not a PR/);
 });
 
+test('normalizePrListing throws on a non-null head.repo with no string full_name (never a silent cross-repository)', () => {
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: { repo: {} } }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: { repo: { full_name: 7 } } }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ html_url: U, body: B, head: { repo: 'acme/w' } }], 'acme', 'w'), /entry 0 is not a PR/);
+});
+
 test('normalizePrListing throws on an MCP entry with no body key (the body guard alone)', () => {
   assert.throws(() => normalizePrListing([{ html_url: U, head: { repo: { full_name: 'acme/w' } } }], 'acme', 'w'), /entry 0 is not a PR/);
 });

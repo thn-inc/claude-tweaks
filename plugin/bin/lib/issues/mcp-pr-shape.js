@@ -18,7 +18,7 @@ function isPlainObject(value) {
 // element is not recognisably a PR (no string url, or a gh-shaped element
 // whose isCrossRepository is not a boolean, an entry with no body key or a
 // body that is neither a string nor null, an MCP entry whose head is not an
-// object with a repo key) — a read error the agent recorded as data, such as
+// object with a repo key, or a non-null head.repo with no string full_name) — a read error the agent recorded as data, such as
 // {message, status}, must fail here, never normalize into an entry the matcher
 // would skip as a clean no-match. full_name is compared exactly, as
 // isSameRepoPrUrl compares owner/repo; a null head repo (deleted fork) is
@@ -36,8 +36,11 @@ function normalizePrListing(entries, owner, repo) {
       // head.repo === null is a deleted fork (cross-repository); a missing head
       // or head.repo key is a malformed entry, which would otherwise read as one.
       if (!isPlainObject(entry.head) || !('repo' in entry.head)) throw notAPr();
-      const fullName = entry.head.repo ? entry.head.repo.full_name : undefined;
-      return { url: entry.html_url, body: entry.body, isCrossRepository: fullName !== `${owner}/${repo}` };
+      // A non-null head.repo must carry a string full_name: a renamed or dropped
+      // key would otherwise read as cross-repository and skip a marked same-repo PR.
+      const headRepo = entry.head.repo;
+      if (headRepo !== null && (!isPlainObject(headRepo) || typeof headRepo.full_name !== 'string')) throw notAPr();
+      return { url: entry.html_url, body: entry.body, isCrossRepository: headRepo === null || headRepo.full_name !== `${owner}/${repo}` };
     }
     if (typeof entry.url !== 'string' || typeof entry.isCrossRepository !== 'boolean') throw notAPr();
     return { url: entry.url, body: entry.body, isCrossRepository: entry.isCrossRepository };

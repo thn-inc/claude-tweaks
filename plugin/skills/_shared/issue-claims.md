@@ -164,7 +164,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      check for an in-flight build (#974) — the MCP-transport equivalent of the in-flight check
      the "In-flight detection at claim time (#315)" section below documents for the `gh`-CLI
      transport (`tombstoneInFlightPr`, run inside `bin/claim-targets.js`, which does not apply
-     here — this manual MCP path has no CLI to delegate to). Parse the tombstone content already
+     here — the tombstone check has no CLI of its own). Parse the tombstone content already
      extracted in step 2: when its `reason` field starts with `pr-opened:` and its `link` field is
      a well-formed `https://github.com/{owner}/{repo}/pull/{number}` URL for the SAME owner/repo
      as the issue being claimed (anything else — missing link, wrong repo, malformed value — skip
@@ -177,7 +177,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
      would race it — stop here, do not write, and report it the same way `flow/claim-targets.md`'s
      in-flight card does. Any other state (closed, merged) or a failed read falls through to the
      write below unchanged. For a `'stale'` blob, the counterpart (#4423): run
-     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --repo "{owner}/{repo}"`
+     `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}"`
      — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s
      `staleClaimInFlightPr`); it validates the run id first, so a claim with no usable run id never
      lists PRs. A JSON verdict is the answer. Exit 2 means `gh` is absent: list the repo's open PRs
@@ -507,7 +507,7 @@ one stderr warning on a failed check).
 `claim-store.js` and reports the stopped target via `inFlight`/`reason: 'in-flight'` instead of
 `outcome` (`flow/claim-targets.md`'s "Branch on exit code"). That CLI is the `gh`-transport only
 (see "The lock" step 4's MCP note above) — "The lock" step 4's own in-flight check (#974) is
-where the `gh`-absent MCP path gets the equivalent stop, since it has no CLI to delegate to.
+where the `gh`-absent MCP path gets the equivalent stop, since the tombstone check has no CLI of its own.
 
 Every claim, skip, break, and release is logged to the run's `decisions.md` per
 `_shared/auto-decision-log.md` (status `AUTO`, reversible: release overwrites the blob with a

@@ -7,6 +7,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('fs');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -69,14 +70,13 @@ test('The lock step 4 stale check fails open: a failed check falls through to th
 test('the run-id shape is restated only in flow/claim-targets.md (#4423, #4596)', () => {
   // bin/stale-claim-pr.js owns the stale-claim match now; the one remaining prose copy validates a run id
   // read from a tombstone's PR for the resume route, so it stays pinned to claim-store.js's RUN_ID_SHAPE.
-  assert.ok(
-    readText(path.join(SKILLS, 'flow', 'claim-targets.md')).includes(RUN_ID_SHAPE.source),
-    'flow/claim-targets.md states RUN_ID_SHAPE verbatim',
-  );
-  for (const rel of ['_shared/issue-claims.md', 'tidy/scan-procedures.md']) {
-    assert.ok(
-      !readText(path.join(SKILLS, rel)).includes(RUN_ID_SHAPE.source),
-      `${rel} must call bin/stale-claim-pr.js, not restate RUN_ID_SHAPE`,
-    );
-  }
+  // The copy list is built by walking every skill file, never from a remembered list, so a new copy
+  // anywhere under plugin/skills/ fails here (.claude/skills/prose-code-twin-pin).
+  const walk = (dir) => fs.readdirSync(dir, { withFileTypes: true })
+    .flatMap((e) => (e.isDirectory() ? walk(path.join(dir, e.name)) : [path.join(dir, e.name)]));
+  const copies = walk(SKILLS)
+    .filter((f) => f.endsWith('.md') && readText(f).includes(RUN_ID_SHAPE.source))
+    .map((f) => path.relative(SKILLS, f).split(path.sep).join('/'));
+  assert.deepEqual(copies, ['flow/claim-targets.md'],
+    'only flow/claim-targets.md states RUN_ID_SHAPE; every other skill file must call bin/stale-claim-pr.js');
 });

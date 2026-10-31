@@ -240,7 +240,7 @@ instead of `gh api`.)
 Releasing (#2090): `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason "swept: stale claim"` (or `--reason "swept: issue closed"` for the closed-issue row) — the `--sweep` flag is what lets a tidy run release a claim it does not itself own: without it, `release-claim.js`'s ordinary ownership check refuses every one of these as `skipped-not-owner`, since a tidy run's `--run` basename is never the crashed dispatcher's `runId`. The flag performs the same read → classify → tombstone `PUT` → conflict re-verify → comment → label-removal sequence as an ordinary release, resolving the issue's own open/closed state itself for the `'live'`-on-a-closed-issue row (never sweeping a `'live'` claim on an issue that is still open). Releases execute only after Step 6 batch approval — the flag makes an approved release executable, it does not make the decision autonomous.
 
 **Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, run
-`node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --repo "{owner}/{repo}" --resume`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}" --resume`
 — the matcher `/claude-tweaks:flow`'s claim step runs (`claim-store.js`'s `staleClaimInFlightPr`); on
 the `gh` path each call lists open PRs itself, one listing per stale claim (stale claims are few).
 With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__list_pull_requests`

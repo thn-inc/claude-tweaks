@@ -273,6 +273,13 @@ test('parseResumeLine: an empty or non-string run id never matches', () => {
   assert.equal(parseResumeLine(resume({ runDir: '/x/null' }), null), null);
 });
 
+test('parseResumeLine: a `..` segment in the dir is rejected on its own; a dotted name is not a segment', () => {
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/../x/.claude-tweaks/pipelines/' + RUN }), RUN), null, 'dot-dot segment');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/x/../' + RUN }), RUN), null, 'dot-dot before the run id');
+  const dotted = '/repo/a..b/.claude-tweaks/pipelines/' + RUN;
+  assert.deepEqual(parseResumeLine(resume({ runDir: dotted }), RUN), { runDir: dotted, target: '#4596', steps: 'review,polish,wrap-up' });
+});
+
 test('parseResumeLine: a dir with a space passes (real checkouts have them)', () => {
   const dir = '/Users/a b/.claude-tweaks/pipelines/' + RUN;
   assert.deepEqual(parseResumeLine(resume({ runDir: dir }), RUN), { runDir: dir, target: '#4596', steps: 'review,polish,wrap-up' });

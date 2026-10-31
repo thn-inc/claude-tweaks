@@ -63,13 +63,14 @@ function composeResumeLine({ runDir, target, nextStep }) {
 const RESUME_LINE_RE = /^`PIPELINE_RUN_DIR="([A-Za-z0-9._~\/:@+, -]+)" \/claude-tweaks:flow "([A-Za-z0-9#,._ -]+)" ([a-z][a-z,-]*)`$/;
 
 // (line, runId) -> { runDir, target, steps } | null. The dir must also end in
-// `/{runId}` — a Resume line for another run is never this run's.
+// `/{runId}` — a Resume line for another run is never this run's — and holds
+// no `..` segment, which the dir class admits but a run dir never carries.
 function parseResumeLine(line, runId) {
   // A non-string id would coerce into the suffix ('/undefined', '/null'); an
   // empty one would let any dir ending in `/` pass.
   if (typeof runId !== 'string' || runId === '') return null;
   const m = RESUME_LINE_RE.exec(line);
-  if (!m || !m[1].endsWith('/' + runId)) return null;
+  if (!m || !m[1].endsWith('/' + runId) || m[1].split('/').includes('..')) return null;
   return { runDir: m[1], target: m[2], steps: m[3] };
 }
 
