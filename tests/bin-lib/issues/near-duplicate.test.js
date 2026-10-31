@@ -450,6 +450,7 @@ test('AC2.1-AC2.5: isRelatedCandidate keeps strong or title-similar hits, drops 
   assert.strictEqual(isRelatedCandidate('x'), false);
   assert.strictEqual(isRelatedCandidate({}), false);
   assert.strictEqual(isRelatedCandidate({ score: 1 }), false);
+  assert.strictEqual(isRelatedCandidate({ score: 1, signals: 'title-similarity', sharedAnchors: [] }), false);
 });
 
 test('generic shared anchors never count toward sharedAnchors', () => {

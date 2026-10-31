@@ -147,11 +147,54 @@ function refusalFenceBody(text = SHAPING_MODE) {
   const lf = text.replace(/\r\n/g, '\n');
   const open = 'node -e "\n';
   const close = '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  const start = lf.indexOf(open);
-  const end = lf.indexOf(close, start);
+  // Close first, then the nearest open before it: the Related-split fence (#4702) also opens with `node -e "`.
+  const end = lf.indexOf(close);
+  const start = end === -1 ? -1 : lf.lastIndexOf(open, end);
   assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
   return { fence: lf.slice(start + open.length, end), end };
 }
+
+function relatedSplitFenceBody(text = SHAPING_MODE) {
+  const lf = text.replace(/\r\n/g, '\n');
+  const open = 'node -e "\n';
+  const close = '" -- "$NEAR_DUP_HITS"\n';
+  const end = lf.indexOf(close);
+  const start = end === -1 ? -1 : lf.lastIndexOf(open, end);
+  assert.ok(start !== -1 && end !== -1, 'Related-split fence anchors must exist');
+  return lf.slice(start + open.length, end);
+}
+
+test('the Related-split fence runs isRelatedCandidate over the hits file and splits related from rest (#4702)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const fence = relatedSplitFenceBody();
+  assert.match(fence, /isRelatedCandidate/);
+  assert.doesNotMatch(fence, /"/, 'the fence body sits inside a double-quoted shell string');
+  assert.doesNotMatch(fence.split('${CLAUDE_PLUGIN_ROOT}').join(''), /\$/, 'the fence body must not contain $ beyond ${CLAUDE_PLUGIN_ROOT}');
+  assert.doesNotMatch(fence, /`/, 'the fence body must not contain a backtick');
+  const code = fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-related-'));
+  try {
+    const hits = path.join(dir, 'hits.json');
+    fs.writeFileSync(hits, JSON.stringify([
+      { number: 1, score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['main'] },
+      { number: 2, score: 1, signals: ['body-anchor-overlap'], sharedAnchors: ['a', 'b', 'c', 'd', 'e', 'f'] },
+      { number: 3, score: 1, signals: ['title-similarity'], sharedAnchors: [] },
+    ]));
+    const out = execFileSync(process.execPath, ['-e', code, hits], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { related: [2, 3], rest: [1] });
+    fs.writeFileSync(hits, JSON.stringify([]));
+    const empty = execFileSync(process.execPath, ['-e', code, hits], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(empty.trim()), { related: [], rest: [] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('refusalFenceBody still extracts the refusal fence, not the Related-split fence before it (#4702)', () => {
+  assert.match(refusalFenceBody().fence, /shapingRefusal/);
+  assert.doesNotMatch(refusalFenceBody().fence, /isRelatedCandidate/);
+});
 
 test('refusalFenceBody reads a CRLF shaping-mode.md the same as LF (#3518)', () => {
   assert.strictEqual(refusalFenceBody(SHAPING_MODE.replace(/\n/g, '\r\n')).fence, refusalFenceBody().fence);
@@ -201,7 +244,9 @@ function assertRelatedFilterProse(section) {
   assert.match(section, /isRelatedCandidate/);
   assert.match(section, /at least 2 signals or 2 shared(?: Current State)? anchors/);
   assert.match(section, /title-similarity/);
-  assert.match(section, /Not added to Related/);
+  assert.match(section, /Not added to Related \(one signal, under 2 shared anchors\)/);
+  assert.match(section, /Omit that line when `rest` is empty/);
+  assert.match(section, /leave `\*\*Related:\*\*` untouched[^.]*when `related` is empty/);
   assert.match(section, /\|\s*Record\s*\|\s*Score\s*\|\s*Signals\s*\|/);
   assert.match(section, /render every candidate|every candidate in the table|lists every (?:finder )?hit/);
 }
@@ -218,5 +263,5 @@ test('AC3.1: the Related-filter pin fails against the old append-every-candidate
     '— and append every candidate as `#{n}` to the composed body\'s `**Related:**` line.',
   );
   assert.notStrictEqual(mutated, live, 'the mutation must replace the new append sentence');
-  assert.throws(() => assertRelatedFilterProse(mutated));
+  assert.throws(() => assertRelatedFilterProse(mutated), /append every candidate/);
 });

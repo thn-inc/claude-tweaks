@@ -96,8 +96,18 @@ more, render a three-column table in the shaping output before proceeding —
 |--------|-------|---------|
 | #{n} | {score} | {signals, comma-joined} |
 
-— render every candidate in the table, and append to the composed body's `**Related:**` line only the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit (creating the
-line if the record doesn't already carry one). Name the rest on one line under the table, `Not added to Related (one shallow signal): #a, #b`, so a human can still add one by hand. A candidate surfaced here is worth a human's
+— render every candidate in the table, then split the hits mechanically — the table omits anchor counts, so never filter by eye. Write the finder's output to `$NEAR_DUP_HITS` (resolved as in the refusal step below) and run:
+
+```bash
+NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
+node -e "
+const { isRelatedCandidate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const hits = JSON.parse(require('fs').readFileSync(process.argv[1], 'utf8'));
+console.log(JSON.stringify({ related: hits.filter(isRelatedCandidate).map((h) => h.number), rest: hits.filter((h) => !isRelatedCandidate(h)).map((h) => h.number) }));
+" -- "$NEAR_DUP_HITS"
+```
+
+Append only `related` to the composed body's `**Related:**` line (creating the line if the record doesn't already carry one) — the hits `isRelatedCandidate` (`bin/lib/issues/near-duplicate.js`, #4702) accepts: at least 2 signals or 2 shared Current State anchors (`isStrongNearDuplicate`), or a `title-similarity` hit. Name `rest` on one line under the table, `Not added to Related (one signal, under 2 shared anchors): #a, #b`, so a human can still add one by hand. Omit that line when `rest` is empty, and leave `**Related:**` untouched (create no line) when `related` is empty. A candidate surfaced here is worth a human's
 attention even when shaping proceeds normally.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
