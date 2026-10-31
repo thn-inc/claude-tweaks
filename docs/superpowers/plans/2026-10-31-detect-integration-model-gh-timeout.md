@@ -33,6 +33,7 @@
 - Decision Q1: `session-start.js`'s inline `reconcile()` call passes `forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`; `reconcile()` forwards it as `timeoutMs` to `resolveIntegrationModel` only when set (an unset option adds no key, so `{ mcpReachable }` stays the exact forwarded shape).
 - No top-level `require('./policy')` or `require('./shared-primitives')` in `policy-schema.js` (require cycle / cwd-anchored getter). Use the module's own `readFileSafe`, `parseFlatLines`, `isValidValue`, `resolveValue`, `SCHEMA_BY_KEY`.
 - Every real spawn keeps `windowsHide: true` in an options object literal `tests/windows-hide-spawn-conformance.test.js` can see (governing skill `gh-api-module-pattern`: "it accepts a literal `windowsHide` key there, or a bare identifier as the whole options argument whose own `const X = { … }` literal names it ... A spread ... satisfies neither and fails the full suite").
+- Task 3 edits `plugin/bin/lib/hooks/pre-tool-use.js`, governed by `pre-tool-use-gate-exemptions`. Decision Q5 narrows when the `prExempt` memo is written (stricter, never looser), so no new exemption is added, but the skill's test rule applies to the new gate tests: "Write the test, revert only the code fix (`git checkout -- {file}` on that one file, not `git stash`), confirm the new test — and only the new test — fails, then restore the fix. A green suite alone is not evidence the test discriminates." `phase-exit.js`'s `prPushReleased` only reads `prExempt` (it never writes it), so the skill's "A change to that branch's release conditions changes `prPushReleased` in the same commit" rule needs no edit there: the release conditions themselves are unchanged.
 - Every new test uses a fake `gh` (never the network); stub tests take `{ skip: STUB_SKIP }` from `tests/helpers/path-stub.js`; test fixtures live under `os.tmpdir()`.
 - Commit messages: `{Verb} {what} — {detail}`, reference `refs #4578`, never `closes`/`fixes`.
 
@@ -79,7 +80,6 @@ Waived AC17.2: provenance tag "(Q7: Reading B.)" — no behavior to test.
 Waived bin/verify-run-bookends.js: read-only style reference for the `degraded —` line.
 Waived plugin/bin/lib/shared-primitives.js: read-only reference for the env > policy > default ladder; not changed.
 Waived _shared/integration-model.md: run-scoped pin left untouched by design (spec Gotchas); its "Fails at any check → local-merge, fail-open" sentence stays true.
-Waived docs/hooks.md: cited for the never-break-a-session invariant only; not changed.
 
 ---
 
@@ -238,7 +238,7 @@ Expected: FAIL — no `degraded` field, no stderr line.
 
 - `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: formatForgeDegrade(degrade)` only when one was reported. Do the same in the merge-verification fallback (`resolveModel(r, { mcpReachable, onDegrade })`, only on the branch where `integration-model` was not requested) and add `degraded` to the `merge-verification` entry. Update the header comment.
 - `resolve-policy.js`: after `computeDerivedDefaults`, for `integration-model` then `merge-verification`, when that entry's `degraded` is set, write its Global Constraints stderr line once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade lines and the additive `degraded` field.
-- `docs/plugin-structure.md` line 234: add one clause naming the degraded stderr line and the additive `degraded` JSON field (#4578).
+- `docs/plugin-structure.md` line 234: add one clause naming the degraded stderr line and the additive `degraded` JSON field, for `integration-model` and a merge-verification-only request (#4578).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -254,10 +254,14 @@ git commit -m "Surface degraded integration-model detection in resolve-policy �
 
 ### Task 3: Timeout and degrade parameters on `resolveRunPinnedIntegrationModel`; the PreToolUse gate passes the hook bound and never caches a degrade
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (import line 37, `resolveRunPinnedIntegrationModel` 1621-1660, gate model resolution 2063-2077 and the `prExempt` write 2137-2148)
 - Test: `tests/hooks-pre-tool-use.test.js` (beside the existing `resolveRunPinnedIntegrationModel: exported …` test, ~1249)
 - Test: `tests/hooks-bookkeeping-stamps-gate.test.js` (beside the `#1258` `prExempt` tests, ~1752)
+- Modify: `docs/hooks.md` (the "The run's pin, not a fresh detection." bullet, line 45: its "Never persisted when the resolution itself threw" sentence gains the degraded-detection case — Decision Q5's behavior change)
 
 **Interfaces:**
 - Consumes: `HOOK_FORGE_PROBE_TIMEOUT_MS`, `GIT_REMOTE_PROBE_TIMEOUT_MS`, the `timeoutMs` and `onDegrade` options from Task 1; `fakeGh`.
@@ -326,7 +330,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/pre-tool-use.js tests/hooks-pre-tool-use.test.js tests/hooks-bookkeeping-stamps-gate.test.js
+git add plugin/bin/lib/hooks/pre-tool-use.js tests/hooks-pre-tool-use.test.js tests/hooks-bookkeeping-stamps-gate.test.js docs/hooks.md
 git commit -m "Bound the PR-stamp gate's forge probe explicitly — timeout parameter, never cache a degraded detection as prExempt, refs #4578"
 ```
 
