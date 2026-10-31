@@ -49,6 +49,9 @@ const RECIPE_LITERALS = [
   'never under the run directory',
   'shows no entry for `{disc-path}`',
   'rm -r "{disc-path}"',
+  'a control that stays green',
+  'run it per step 4',
+  'task, reviewer role and round',
 ];
 
 function assertRecipe(section) {
@@ -93,6 +96,9 @@ test('the recipe pin goes red without the section or with a dropped step (go-red
   const live = sectionOf(CORE, HEADING);
   assert.ok(live.includes('worktree remove --force'), 'live section must carry the teardown to mutate');
   assert.throws(() => assertRecipe(live.split('worktree remove --force').join('worktree remove')));
+  // The run-provenance control (I3) and the fallback's run command (fm2) are each load-bearing.
+  assert.throws(() => assertRecipe(live.split('a control that stays green').join('a run that stays green')));
+  assert.throws(() => assertRecipe(live.split('run it per step 4').join('run the test there')));
 });
 
 // Section 7 slicing, copied from scratch-worktree-shell-constraint-table.test.js.
@@ -146,7 +152,6 @@ test('the §7 row pin goes red on the pre-#4556 table tail and on a flipped verd
 
 function assertLens(line) {
   assert.ok(line.includes('**Discrimination checks in a scratch checkout**'), 'lens sentence must cite the core recipe by heading');
-  assert.ok(line.includes('3f prompt'), 'lens sentence must direct pasting the steps into the 3f prompt');
   assert.ok(line.includes('never mutate the shared tree as a substitute'), 'lens sentence must keep the no-substitute ban');
   assert.ok(!line.includes('a temporary `git worktree`'), 'lens sentence must drop the bare temporary worktree');
 }
@@ -163,4 +168,35 @@ const PRE_4556_LENS =
 
 test('the lens pin goes red on the pre-#4556 sentence (go-red)', () => {
   assert.throws(() => assertLens(PRE_4556_LENS));
+});
+
+// The dispatcher-side paste instruction lives in the lens procedure blockquote (where the
+// file's other inline-verbatim instructions sit), not in the bullet the lens agent reads.
+function assertLensDispatcher(md) {
+  const line = md.split('\n').find((l) => l.startsWith('> **Lens 3f scratch checkout.**'));
+  assert.ok(line, 'lens procedure must carry a "Lens 3f scratch checkout" dispatcher paragraph');
+  for (const literal of [
+    '**Discrimination checks in a scratch checkout**',
+    "lens 3f's prompt",
+    '`{plugin-root}`',
+    '`{worktree}`',
+    '`{base-sha}`',
+    '`{reviewed-sha}`',
+    '`{id}`',
+    '_shared/scope-resolution.md',
+    'No-git fallback',
+  ]) {
+    assert.ok(line.includes(literal), `dispatcher paragraph lost ${JSON.stringify(literal)}`);
+  }
+}
+
+test('the lens procedure tells the dispatcher how to fill the recipe and what uncommitted scope does (#4556)', () => {
+  assertLensDispatcher(LENS);
+});
+
+test('the dispatcher-paragraph pin goes red without the paragraph or without the uncommitted-scope clause (go-red)', () => {
+  const live = LENS.split('\n').filter((l) => !l.startsWith('> **Lens 3f scratch checkout.**')).join('\n');
+  assert.notStrictEqual(live, LENS, 'the mutation must remove the paragraph');
+  assert.throws(() => assertLensDispatcher(live));
+  assert.throws(() => assertLensDispatcher(LENS.split('_shared/scope-resolution.md').join('the scope rules')));
 });

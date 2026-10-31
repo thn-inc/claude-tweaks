@@ -58,6 +58,10 @@ function assert2740(text) {
     /paste[s]? (?:its|that section's) steps/,
     'dispatch.md must direct that the recipe steps be pasted into the SDD invocation instruction (#4556).'
   );
+  assert.ok(
+    text.includes('`/build` fills `{plugin-root}` and `{worktree}`; SDD fills `{reviewed-sha}`'),
+    'dispatch.md must split placeholder ownership: /build fills plugin-root and worktree, SDD fills the per-dispatch ones (#4556).'
+  );
 }
 
 test('dispatch.md: the tree-immutability directive cites the core scratch-checkout recipe (#4556)', () => {
@@ -70,4 +74,5 @@ const PRE_4556_2740 =
 
 test('the #2740 pin goes red on the pre-#4556 sentence (go-red)', () => {
   assert.throws(() => assert2740(PRE_4556_2740));
+  assert.throws(() => assert2740(DISPATCH.split('`/build` fills `{plugin-root}`').join('`/build` supplies `{plugin-root}`')));
 });

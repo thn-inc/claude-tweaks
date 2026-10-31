@@ -148,8 +148,9 @@ Applies to any dispatch that proves a test discriminates against reverted or edi
 `/claude-tweaks:build`'s SDD task reviewers (`build/dispatch.md`, #2740) and `/claude-tweaks:review`'s
 lens 3f Vacuity-evidence diagnostic. The dispatcher pastes these steps into the prompt — the agent
 never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{reviewed-sha}` and
-`{base-sha}` literally; each agent builds `{id}` from its own distinct token (lens and pair member,
-or task and reviewer role). Never mutate the shared worktree in place: a sibling agent's in-flight
+`{base-sha}` literally (a caller that pastes before the commit under review exists substitutes
+the first two and leaves the rest to the per-dispatch composer); each agent builds `{id}` from its
+own distinct token (lens and pair member, or task, reviewer role and round). Never mutate the shared worktree in place: a sibling agent's in-flight
 edit there would be lost. One plain command per Bash call, literal absolute paths:
 
 1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
@@ -162,7 +163,10 @@ edit there would be lost. One plain command per Bash call, literal absolute path
    under `{disc-path}`.
 4. **Run the one targeted test there**, reaching dependencies through the language's search-path
    variable, never a link (`ln -s`, `mklink /J`) — for Node (CommonJS `require` only):
-   `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`.
+   `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`. A green run counts
+   as evidence only after a control has gone red in this same checkout (an Edit under `{disc-path}`
+   making the mutated file throw at load); a control that stays green means the code ran from the
+   shared tree: no evidence, tear down.
 5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
    never fall back to the shared tree.
 6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
@@ -171,7 +175,7 @@ edit there would be lost. One plain command per Bash call, literal absolute path
 
 **No-git fallback** — when step 2's create is refused: write each file the test loads at its
 repo-relative path under `{disc-path}` (Read for unchanged files; for base content, the read-only
-`git -C "{worktree}" show {base-sha}:{path}`, written with Write), run the test there, and delete
+`git -C "{worktree}" show {base-sha}:{path}`, written with Write), run it per step 4, and delete
 the copies before the status word: `rm -r "{disc-path}"`.
 
 The create, checkout, test-run and teardown shapes passed the worktree guard from a
