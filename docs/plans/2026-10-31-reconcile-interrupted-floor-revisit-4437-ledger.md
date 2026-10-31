@@ -8,3 +8,4 @@
 | 4 | review | Lens 3a (low, tiebreak-confirmed): plan `:49` called `archive-merged.js` read only though the branch softened its comment | fixed | f39ada85e — waiver now says no code change, comment softened in d2c1f89d8 |
 | 5 | review | Lens 3a (low, tiebreak-confirmed): the measurement scripts live only in a session scratchpad, so nothing in the repo let the next revisit re-derive the counts | fixed | f39ada85e — the ruling paragraph states the counting method (run-id-named dirs, own `session-end` with a `sessionId`, the resume event types) |
 | 6 | review | Lens 3a (low, tiebreak can't-tell): the ruling did not disclose that only run-id-named directories were scanned | fixed | f39ada85e — "the 1,856 run-id-named directories" |
+| 7 | wrap-up | pr — PR #4662 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
