@@ -551,8 +551,9 @@ function staleClaimRunId(content) {
 
 // The pure matcher over an already-fetched listing (gh- or MCP-sourced, the
 // latter through `normalizePrListing`). Returns `{ url, body }` of the first
-// matching entry, or null for a clean no-match; throws when the listing is not an array or a
-// no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no marked PR").
+// matching entry, or null for a clean no-match; throws when the listing is not
+// an array or a no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no
+// marked PR").
 function matchStaleClaimPr(runId, prs, owner, repo) {
   if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
   const markers = [`claude-tweaks-run: ${runId}`, `<!-- claude-tweaks-run: ${runId} -->`];
@@ -586,10 +587,9 @@ function matchStaleClaimPr(runId, prs, owner, repo) {
 // non-array listing, an entry `normalizePrListing` rejects — the same
 // normalizer the `stale-claim-pr.js` CLI runs — or a no-match listing that
 // hit OPEN_PR_LIST_LIMIT and so may have cut the marked PR off) is not a
-// clean "no marked PR", so the
-// optional trailing `onError(err)` lets the caller surface it (#4423). An
-// `onError` that itself throws is swallowed — this function always returns null
-// on failure.
+// clean "no marked PR", so the optional trailing `onError(err)` lets the
+// caller surface it (#4423). An `onError` that itself throws is swallowed —
+// this function always returns null on failure.
 function staleClaimInFlightPr(content, gh, owner, repo, onError) {
   try {
     const runId = staleClaimRunId(content);

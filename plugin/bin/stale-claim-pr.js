@@ -104,6 +104,10 @@ function resumeFields(body, runId) {
   return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
 }
 
+function noMatch(failure = null) {
+  return { match: false, link: null, failure };
+}
+
 function run(argv, deps) {
   const opts = parseArgs(argv);
   if (opts.help) { deps.stdout(USAGE); return 0; }
@@ -117,7 +121,7 @@ function run(argv, deps) {
     : deps.parseRepo(remote);
   if (!repoSpec) { deps.stderr('stale-claim-pr.js: could not resolve owner/repo — pass --repo owner/name\n'); return 3; }
   if (repoSpec.host && repoSpec.host !== 'github.com') {
-    deps.stdout(`${JSON.stringify({ match: false, link: null, failure: 'stale-claim matching supports github.com only' })}\n`);
+    deps.stdout(`${JSON.stringify(noMatch('stale-claim matching supports github.com only'))}\n`);
     return 0;
   }
   const { owner, repo } = repoSpec;
@@ -125,7 +129,7 @@ function run(argv, deps) {
   let verdict;
   try {
     const runId = staleClaimRunId(deps.readFile(opts.claimFile));
-    if (runId === null) verdict = { match: false, link: null, failure: null };
+    if (runId === null) verdict = noMatch();
     else {
       let raw;
       if (opts.listing) raw = deps.readFile(opts.listing);
@@ -141,10 +145,10 @@ function run(argv, deps) {
       const match = matchStaleClaimPr(runId, normalizePrListing(JSON.parse(raw), owner, repo), owner, repo);
       verdict = match
         ? { match: true, link: match.url, ...(opts.resume ? resumeFields(match.body, runId) : {}), failure: null }
-        : { match: false, link: null, failure: null };
+        : noMatch();
     }
   } catch (e) {
-    verdict = { match: false, link: null, failure: e && e.message ? e.message : String(e) };
+    verdict = noMatch(e && e.message ? e.message : String(e));
   }
   deps.stdout(`${JSON.stringify(verdict)}\n`);
   return 0;
