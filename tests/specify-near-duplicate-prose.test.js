@@ -127,7 +127,7 @@ test('AC3.1/AC3.2: shaping-mode.md refusal paragraph names the minimum score of 
   assert.match(section, /at least 2 signals/);
   // Anchored to the refusal paragraph itself: other mentions of the floor must not mask its removal.
   assert.match(section, /scoring\s+\*{0,2}at least 2 signals\*{0,2}\s+\(`MIN_REFUSAL_SCORE`/);
-  assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+and\s+the\s+`\*\*Related:\*\*`\s+line\s+only/);
+  assert.match(section, /A\s+score-1\s+candidate\s+is\s+surfaced\s+in\s+the\s+table\s+\(and\s+on\s+the\s+`\*\*Related:\*\*`\s+line\s+when\s+`isRelatedCandidate`\s+accepts\s+it\)\s+only/);
   assert.doesNotMatch(section, /never blocks shaping on its own signal alone/);
   assert.doesNotMatch(section, /the one automatic\s+refusal the finder's signal authorizes on its own/);
   const mod = require('../plugin/bin/lib/issues/near-duplicate');
@@ -187,4 +187,36 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+function nearDupSection(text = SHAPING_MODE) {
+  const start = text.indexOf('Near-duplicate candidate check (#1944)');
+  const end = text.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'Near-duplicate section anchors must exist');
+  return text.slice(start, end);
+}
+
+function assertRelatedFilterProse(section) {
+  assert.doesNotMatch(section, /append every candidate/);
+  assert.match(section, /isRelatedCandidate/);
+  assert.match(section, /at least 2 signals or 2 shared(?: Current State)? anchors/);
+  assert.match(section, /title-similarity/);
+  assert.match(section, /Not added to Related/);
+  assert.match(section, /\|\s*Record\s*\|\s*Score\s*\|\s*Signals\s*\|/);
+  assert.match(section, /render every candidate|every candidate in the table|lists every (?:finder )?hit/);
+}
+
+test('AC1.1/AC1.2/AC4.1: shaping-mode.md filters the Related append through isRelatedCandidate (#4702)', () => {
+  assertRelatedFilterProse(nearDupSection());
+  assert.strictEqual(typeof require('../plugin/bin/lib/issues/near-duplicate').isRelatedCandidate, 'function');
+});
+
+test('AC3.1: the Related-filter pin fails against the old append-every-candidate sentence (#4702)', () => {
+  const live = nearDupSection();
+  const mutated = live.replace(
+    /— render every candidate[\s\S]*?so a human can still add one by hand\./,
+    '— and append every candidate as `#{n}` to the composed body\'s `**Related:**` line.',
+  );
+  assert.notStrictEqual(mutated, live, 'the mutation must replace the new append sentence');
+  assert.throws(() => assertRelatedFilterProse(mutated));
 });

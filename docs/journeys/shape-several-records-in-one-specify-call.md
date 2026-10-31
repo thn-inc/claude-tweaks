@@ -84,6 +84,7 @@ files:
 - Step 3 updated for #3366 (refusal also needs a candidate scoring at least 2 signals — a score-1 candidate is surfaced in the table and `**Related:**` line only; slash-command spans such as `/flow` are no longer body anchors)
 - Step 3 updated for #3393 (claims read through `createClaimReader`; an unreadable claim, including an unresolved repo slug, is listed as `unreadable` beside the candidate table, never read as absent)
 - Step 3 updated for #1321 (generated-file grep: a shaped record's Key Files lists a generated entry's generator as primary edit target, with the entry annotated)
+- Step 3 updated for #4702 (the **Related:** append keeps only hits isRelatedCandidate accepts — 2+ signals, 2+ shared anchors, or title similarity; the table still lists every hit)
 - Step 7 added for #1071 (parent-record guard: batch fail-all, tier-2 refuse-without-prompt, reported residue strip)
 - Step 8 added for #4142 (digest-container guard: per-element refusal, `refused — digest container` row, reported residue strip)
 - Steps 1 and 3 updated for #705 (range-form input, mandatory read-back verification after each write)
