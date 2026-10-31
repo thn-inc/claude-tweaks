@@ -19,10 +19,10 @@
 //     on write, for a whole namespace's multi-file set.
 //   - This module's failure classification is five-way (`contested` /
 //     `secondary-rate-limit` / `missing-path` / `missing-branch` /
-//     `transport-failure`) — the
-//     `conflict`/`secondaryRateLimit` distinction specifically is consumed by
-//     `claim-store.js`'s contents-API-fallback decision. `createNamespacedState`
-//     collapses every write failure to `{ok, error}` with no such signal.
+//     `transport-failure`) — the `conflict`/`secondaryRateLimit` distinction
+//     specifically is consumed by `claim-store.js`'s contents-API-fallback
+//     decision. `createNamespacedState` collapses every write failure to
+//     `{ok, error}` with no such signal.
 //   - This module targets `CLAIMS_BRANCH` (`claims-registry`);
 //     `createNamespacedState` hardcodes `HEALTH_STATE_BRANCH` (`health-state`).
 //   - `createNamespacedState` owns its own CAS retry loop internally

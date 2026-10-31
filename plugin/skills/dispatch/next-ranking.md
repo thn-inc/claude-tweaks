@@ -22,8 +22,8 @@ exist yet on a firing's first iteration, and `next`'s single-iteration alias nev
 A group with any member excluded under `reason: 'firing'` is excluded from the candidate pool for
 the rest of the firing, exactly like an oversized group — the record's labels alone (`auto:build`
 present, no `bot:blocked`) do not change on a claim-contest/in-flight/claims-branch-missing stop
-or a pre-retry-ceiling build/test failure, so without this the same firing's very next iteration re-selects the identical
-group and reproduces the identical stop. All three reasons are checked together, via one
+or a pre-retry-ceiling build/test failure, so without this the same firing's very next iteration
+re-selects the identical group and reproduces the identical stop. All three reasons are checked together, via one
 `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call — no separate key derivation for each.
 
 ```bash
