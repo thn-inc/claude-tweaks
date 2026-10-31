@@ -10,7 +10,7 @@ const {
   approvalProvenance,
   APPROVAL_PROVENANCE_LABEL,
   APPROVAL_PROVENANCE_LABELS,
-} =require('../../../plugin/bin/lib/issues/acceptance.js');
+} = require('../../../plugin/bin/lib/issues/acceptance.js');
 const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record-vocabulary.js');
 
 test('dispositionState reads each acceptance label', () => {
@@ -29,9 +29,11 @@ test('changes-requested wins over a stale demo:pending; pending now wins over ap
   // /demo removes demo:pending as it adds the verdict, but a partial write or a
   // concurrent edit can leave both. changes-requested must never be re-swept.
   // Human ruling at plan time (#4610): one precedence rule across both
-  // vocabularies — changes-requested > pending > approved > none — so
-  // demo:pending + demo:approved now resolves 'pending' (previously 'approved').
-  // This is the one deliberate exception to AC7 ("no demo:* behaviour changes").
+  // vocabularies — changes-requested > pending > approved > none. That changes two
+  // demo:*-only pairs, the deliberate exceptions to AC7 ("no demo:* behaviour
+  // changes"): demo:pending + demo:approved now resolves 'pending' (previously
+  // 'approved'), and demo:approved + demo:changes-requested now resolves
+  // 'changes-requested' (previously 'approved'; pinned in AC3.1 below).
   assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'pending');
   assert.equal(dispositionState(['demo:pending', 'demo:changes-requested']), 'changes-requested');
 });
@@ -53,10 +55,13 @@ test('AC3.1: mixed labels resolve to one disposition, most conservative first', 
     [['accept:approved', 'demo:approved'], 'approved'],
     [['accept:pending', 'accept:approved'], 'pending'],
     [['demo:pending', 'demo:approved'], 'pending'],
+    [['demo:approved', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'accept:changes-requested'], 'changes-requested'],
   ]) {
     assert.equal(dispositionState(labels), want, labels.join('+'));
     assert.equal(dispositionState([...labels].reverse()), want, `reversed ${labels.join('+')}`);
     assert.equal(parseRecordFacets(labels).acceptance, want, labels.join('+'));
+    assert.equal(parseRecordFacets([...labels].reverse()).acceptance, want, `reversed ${labels.join('+')}`);
   }
 });
 
