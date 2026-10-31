@@ -4,6 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   composePrEarlyBody, composeExpressBody, repairPrBody, hasRunMarker, hasPhasesPair, hasFixesPair,
+  composeResumeLine, parseResumeLine, resumeLineUnder,
 } = require('../../../plugin/bin/lib/flow/pr-body');
 const { isExpressPr } = require('../../../plugin/bin/lib/express/sampling');
 
@@ -235,4 +236,71 @@ test('#4025: isExpressPr tells an express body from a PR-early body', () => {
 
 test('#4025: composeExpressBody requires runId', () => {
   assert.throws(() => composeExpressBody({ specSummary: 's', fixesLines: [] }), /runId is required/);
+});
+
+// #4596 — parseResumeLine is composeResumeLine's strict parser twin; its input
+// is an untrusted PR body that /tidy renders as a paste command.
+const RUN = '2026-10-31T005940-record-4596';
+const DIR = '/repo/.claude-tweaks/pipelines/' + RUN;
+const resume = (over) => composeResumeLine({ runDir: DIR, target: '#4596', nextStep: 'review,polish,wrap-up', ...over });
+
+test('parseResumeLine round-trips composeResumeLine', () => {
+  assert.deepEqual(parseResumeLine(resume(), RUN), { runDir: DIR, target: '#4596', steps: 'review,polish,wrap-up' });
+  assert.deepEqual(parseResumeLine(resume({ target: '#1,#2' }), RUN), { runDir: DIR, target: '#1,#2', steps: 'review,polish,wrap-up' });
+});
+
+test('AC3.1: parseResumeLine rejects a shell tail or a $( ) target', () => {
+  assert.equal(parseResumeLine(resume() + '; rm -rf ~', RUN), null);
+  assert.equal(parseResumeLine(resume({ target: '#1$(touch /tmp/x)' }), RUN), null);
+  assert.equal(parseResumeLine(resume({ nextStep: 'build; rm -rf ~' }), RUN), null);
+});
+
+test('parseResumeLine rejects the unrendered placeholder and a foreign run', () => {
+  assert.equal(parseResumeLine(composeResumeLine({ target: '#1', nextStep: 'test' }), RUN), null);
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/.claude-tweaks/pipelines/2026-10-31T000000-other' }), RUN), null);
+  assert.equal(parseResumeLine(resume({ runDir: '/repo\\x/.claude-tweaks/pipelines/' + RUN }), RUN), null);
+});
+
+test('parseResumeLine: the run id must be a whole final path segment of the dir', () => {
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/pipelines/X' + RUN }), RUN), null);
+});
+
+test('parseResumeLine: an empty or missing run id never matches', () => {
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/pipelines/' }), ''), null);
+  assert.equal(parseResumeLine(resume(), undefined), null);
+});
+
+test('parseResumeLine: each excluded character in the dir or target decides rejection alone', () => {
+  // Each case has the right shape and a dir ending in the run id, so only the
+  // one excluded character rejects it.
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/a`b/' + RUN }), RUN), null, 'backtick in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/$HOME/' + RUN }), RUN), null, 'dollar in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/x" FOO="bar/' + RUN }), RUN), null, 'quote in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/a\nb/' + RUN }), RUN), null, 'newline in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/a\rb/' + RUN }), RUN), null, 'CR in dir');
+  assert.equal(parseResumeLine(resume({ target: '#1`id`' }), RUN), null, 'backtick in target');
+  assert.equal(parseResumeLine(resume({ target: '#1" ; rm -rf ~ "' }), RUN), null, 'quote in target');
+  assert.equal(parseResumeLine(resume({ target: '#1\\x' }), RUN), null, 'backslash in target');
+  assert.equal(parseResumeLine(resume({ target: '#1\n#2' }), RUN), null, 'newline in target');
+  assert.equal(parseResumeLine(resume({ target: '#1\r#2' }), RUN), null, 'CR in target');
+});
+
+test('parseResumeLine: the whole line must match, anchored at both ends', () => {
+  assert.equal(parseResumeLine(resume() + 'x', RUN), null, 'text after the closing backtick');
+  assert.equal(parseResumeLine(resume() + '\n', RUN), null, 'trailing newline');
+  assert.equal(parseResumeLine('x' + resume(), RUN), null, 'text before the opening backtick');
+  assert.equal(parseResumeLine(' ' + resume(), RUN), null, 'leading space');
+  assert.equal(parseResumeLine(resume({ nextStep: 'Review' }), RUN), null, 'uppercase step');
+  assert.equal(parseResumeLine(resume({ nextStep: 'review polish' }), RUN), null, 'space in steps');
+  assert.equal(parseResumeLine(null, RUN), null, 'non-string line');
+});
+
+test('resumeLineUnder reads the line under ### Resume in a composed body', () => {
+  const body = composePrEarlyBody({ runId: RUN, target: '#4596', nextStep: 'review', runDir: DIR });
+  const line = composeResumeLine({ runDir: DIR, target: '#4596', nextStep: 'review' });
+  assert.equal(resumeLineUnder(body), line);
+  assert.equal(resumeLineUnder(body.replace(/\n/g, '\r\n')), line);
+  assert.equal(resumeLineUnder(body.replace('### Resume', '### Other')), null);
+  assert.equal(resumeLineUnder('### Spec summary\n\nx\n\n### Resume'), null);
+  assert.equal(resumeLineUnder('### Resume\n\n   \n'), null);
 });
