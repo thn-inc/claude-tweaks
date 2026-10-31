@@ -15,6 +15,8 @@ const {
   MIN_REFUSAL_SCORE,
   STRONG_NEAR_DUPLICATE_MIN,
   isStrongNearDuplicate,
+  deepOverlapHits,
+  DEEP_OVERLAP_MIN,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
 const { findSection } = require('../../../plugin/bin/lib/issues/record-payload');
 
@@ -185,7 +187,7 @@ test('jaccard of two empty token sets is 0, never throws', () => {
   assert.strictEqual(jaccard([], []), 0);
 });
 
-test('sorting: multiple candidates sort by score descending then number ascending', () => {
+test('sorting: a two-signal hit ranks first, and one-signal hits of equal depth order by number', () => {
   const subject = {
     number: 1,
     title: 'dispatch pre-build near-duplicate check',
@@ -208,6 +210,38 @@ test('sorting: multiple candidates sort by score descending then number ascendin
   };
   const results = findNearDuplicates(subject, [oneSignalHigh, twoSignal, oneSignalLow]);
   assert.deepStrictEqual(results.map((r) => r.number), [20, 5, 30]);
+});
+
+test('AC1.1: #4093/#3508 shape — a six-anchor score-1 candidate outranks four one-anchor score-2 candidates (#4701)', () => {
+  const anchors = ['`parentGateState`', '`gateRow`', '`acceptanceLabeling`', '`resolvedGate`', '`plugin/bin/lib/wrap-up/engine-verify.js`', '`plugin/bin/lib/issues/acceptance.js`'];
+  const subject = { number: 4093, title: 'resolved parent false-fails missing demo pending', body: `## Current State\n\n${anchors.join(' ')}\n\n### Key Files\n\n- \`a.js\` — modify\n` };
+  const deep = { number: 3508, title: 'gated handling disagrees with procedure', body: `## Current State\n\n${anchors.join(' ')}\n\n### Key Files\n\n- \`q.js\` — modify\n- \`r.js\` — modify\n- \`s.js\` — modify\n` };
+  const shallow = [4551, 4603, 4610, 4617].map((n) => ({ number: n, title: `unrelated work ${n} zebra`, body: '## Current State\n\nTouches `parentGateState`.\n\n### Key Files\n\n- `a.js` — modify\n' }));
+  const results = findNearDuplicates(subject, [...shallow, deep]);
+  assert.deepStrictEqual(results.map((r) => r.number), [3508, 4551, 4603, 4610, 4617]);
+  assert.strictEqual(results[0].score, 1);
+  assert.strictEqual(results[0].sharedAnchors.length, 6);
+  assert.deepStrictEqual(deepOverlapHits(results).map((r) => r.number), [3508]);
+});
+
+test('sorting: an equal depth key breaks on score — score 2 + 1 anchor ranks above score 1 + 2 anchors', () => {
+  const subject = { number: 1, title: 'dispatch pre-build near-duplicate check', body: '## Current State\n\nUses `alpha.js` and `beta.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const twoSignalOneAnchor = { number: 40, title: 'dispatch pre-build near-duplicate check', body: '## Current State\n\nUses `alpha.js`.\n\n### Key Files\n\n- `x.js` — modify\n- `y.js` — modify\n- `z.js` — modify\n' };
+  const oneSignalTwoAnchors = { number: 10, title: 'totally unrelated', body: '## Current State\n\nUses `alpha.js` and `beta.js`.\n\n### Key Files\n\n- `w.js` — modify\n- `v.js` — modify\n- `u.js` — modify\n' };
+  const results = findNearDuplicates(subject, [oneSignalTwoAnchors, twoSignalOneAnchor]);
+  assert.deepStrictEqual(results.map((r) => [r.number, r.score, r.sharedAnchors.length]), [[40, 2, 1], [10, 1, 2]]);
+});
+
+test('deepOverlapHits includes exactly DEEP_OVERLAP_MIN anchors and excludes one fewer', () => {
+  assert.strictEqual(DEEP_OVERLAP_MIN, 3);
+  const three = { number: 1, sharedAnchors: ['a', 'b', 'c'] };
+  const two = { number: 2, sharedAnchors: ['a', 'b'] };
+  assert.deepStrictEqual(deepOverlapHits([two, three]), [three]);
+});
+
+test('deepOverlapHits ignores malformed hits', () => {
+  assert.deepStrictEqual(deepOverlapHits([null, {}, { sharedAnchors: 'abc' }]), []);
+  assert.deepStrictEqual(deepOverlapHits(null), []);
 });
 
 // ── #3141: generic tokens are not body anchors ──────────────────────────────
@@ -338,6 +372,16 @@ test('a non-ready candidate is not refused even with a live claim', () => {
 
 test('a candidate missing from stateByNumber is not refused', () => {
   assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity', 'key-files-overlap'] }], {}), null);
+});
+
+test('shapingRefusal over finder output names the deeper-overlap candidate when two qualify (#4701)', () => {
+  const title = 'dispatch pre-build near-duplicate check';
+  const subject = { number: 1, title, body: '## Current State\n\nUses `alpha.js`, `beta.js` and `gamma.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const deep = { number: 50, title, body: '## Current State\n\nUses `alpha.js`, `beta.js` and `gamma.js`.\n\n### Key Files\n\n- `q.js` — modify\n- `r.js` — modify\n- `s.js` — modify\n' };
+  const wide = { number: 10, title, body: '## Current State\n\nUses `alpha.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const hits = findNearDuplicates(subject, [wide, deep]);
+  assert.deepStrictEqual(hits.map((h) => [h.number, h.score, h.sharedAnchors.length]), [[50, 2, 3], [10, 3, 1]]);
+  assert.strictEqual(shapingRefusal(hits, { 10: LIVE, 50: LIVE }).number, 50);
 });
 
 test('shapingRefusal returns the first qualifying hit in the given order', () => {
