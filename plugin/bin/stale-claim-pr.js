@@ -73,6 +73,7 @@ const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
 const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { lstatType } = require('./lib/path-guard');
+const { RUN_ID_PREFIX_LENGTH } = require('./lib/dispatch/resume-eligibility');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume [--issue <n>]] [--help]\n';
@@ -132,14 +133,14 @@ function resumeFields(body, runId) {
   return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
 }
 
-// The run-id timestamp prefix `YYYY-MM-DDTHHMMSS-` (18 chars), so runId.slice(18) is the slug
-// `record-{n}` of a dispatched run — resume-eligibility.js's RUN_ID_PREFIX_LENGTH, whose selectResumePr
-// is what `dispatch resume #n` uses to find the run's PR; a direct /flow run's slug is `spec-{n}`.
-const RUN_ID_PREFIX_LENGTH = 18;
+// runId.slice(RUN_ID_PREFIX_LENGTH) is the slug `record-{n}` of a dispatched run — the same slug
+// selectResumePr checks, which is what `dispatch resume #n` uses to find the run's PR; a direct
+// /flow run's slug is `spec-{n}`.
 
 // Is the matched run's directory gone — archived or absent — so the PR body's Resume line names
 // nothing a session can resume from? Exactly dispatch-resume.js's classifyPriorRun cases that return
-// `archived` or `absent`: archive/{runId} holds a run-state.json object whose status is not
+// `archived` or `absent` (tests/stale-claim-pr-cli.test.js pins the two against one world matrix):
+// archive/{runId} holds a run-state.json object whose status is not
 // 'archiving' (the marker archiveRunDir writes before moving anything); or archive/{runId} exists and
 // the root dir holds no run-state.json (a late-write stub); or the root dir is absent.
 // A probe that cannot tell (no main checkout, a throw) is "not gone": today's PR-body route.

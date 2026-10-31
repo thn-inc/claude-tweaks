@@ -11,6 +11,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { run, parseArgs, realDeps } = require('../plugin/bin/stale-claim-pr');
+const { classifyPriorRun } = require('../plugin/bin/dispatch-resume');
 const { parseRepo } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody, composeResumeLine } = require('../plugin/bin/lib/flow/pr-body');
 
@@ -391,7 +392,7 @@ test('AC1.1: an absent run dir yields the dispatch resume line', () => {
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
 });
 
-test('AC1.1: a real archive wins over a root work/ stub', () => {
+test('AC1.1: a real archive wins over a root dir that holds run-state.json', () => {
   const r = runResume(composed(),
     present(ROOT_RUN, ROOT_STATE, ARCHIVE_RUN), archiveState('clean'));
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
@@ -484,6 +485,40 @@ test('AC1.1: a gone run dir whose slug is not record-{n} is resolve run-dir-gone
       assert.deepEqual(verdictOf(d), { match: true, link: PR_URL, resolve: 'run-dir-gone', failure: null }, runId);
       assert.equal('resume' in verdictOf(d), false, runId);
     }
+  }
+});
+
+// The CLI's "gone" verdict mirrors dispatch-resume.js's classifyPriorRun archived/absent classes
+// (#4673 review): drive both over one world matrix so a change to either rule the other does not
+// follow goes red. A live root world needs no owner probes — a run-state.json without an owner block
+// classifies dead-owner, never archived or absent.
+test('the CLI\'s gone verdict agrees with dispatch-resume classifyPriorRun on archived or absent', () => {
+  const state = (status) => JSON.stringify({ status });
+  const worlds = [
+    { name: 'nothing present', dirs: [], files: {} },
+    { name: 'live root, no archive', dirs: [ROOT_RUN], files: { [ROOT_STATE]: state('active') } },
+    { name: 'root dir without run-state.json, no archive', dirs: [ROOT_RUN], files: {} },
+    { name: 'real archive, absent root', dirs: [ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('clean') } },
+    { name: 'real archive beside a live root', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('clean'), [ROOT_STATE]: state('active') } },
+    { name: 'real archive beside a root stub', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('clean') } },
+    { name: 'archiving marker beside a live root', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('archiving'), [ROOT_STATE]: state('active') } },
+    { name: 'archiving marker, absent root', dirs: [ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('archiving') } },
+    { name: 'archiving marker beside a root stub', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: state('archiving') } },
+    { name: 'unparseable archive state beside a live root', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: '{not json', [ROOT_STATE]: state('active') } },
+    { name: 'non-object archive state beside a live root', dirs: [ROOT_RUN, ARCHIVE_RUN], files: { [ARCHIVE_STATE]: '[]', [ROOT_STATE]: state('active') } },
+    { name: 'non-object archive state, absent root', dirs: [ARCHIVE_RUN], files: { [ARCHIVE_STATE]: '[]' } },
+  ];
+  for (const w of worlds) {
+    const paths = new Set([...w.dirs, ...Object.keys(w.files)]);
+    const readFile = (p) => {
+      if (!(p in w.files)) throw Object.assign(new Error(`ENOENT: ${p}`), { code: 'ENOENT' });
+      return w.files[p];
+    };
+    const readdir = (dir) => Object.keys(w.files).filter((f) => path.dirname(f) === dir).map((f) => path.basename(f));
+    const classified = classifyPriorRun({ root: ROOT, deps: { exists: (p) => paths.has(p), readFile, readdir } }, RUN).priorRunDir;
+    const dispatchGone = classified === 'archived' || classified === 'absent';
+    const r = runResume(composed(), { pipelinesRoot: () => ROOT, exists: (p) => paths.has(p) }, w.files);
+    for (const v of [r.gh, r.mcp]) assert.equal(v.resume === DISPATCH, dispatchGone, `${w.name}: dispatch resume classified ${classified}`);
   }
 });
 
