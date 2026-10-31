@@ -45,7 +45,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_B
 ```
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
-commit's own deletions on that path (via `git log --numstat`) by three independent tests — any
+commit's own deletions on that path (via `git log --numstat`) by five independent tests — any
 one is enough to call the commit an extension rather than an overwrite:
 
 1. **Same-spec self-edit.** Every deleted line traces, via `git blame` on the commit's parent
@@ -64,9 +64,22 @@ one is enough to call the commit an extension rather than an overwrite:
    lines are ignored) — the shape a review fix produces when it converts numbered-list steps to the
    canonical `### N.` headers (`_shared/diataxis-genre-templates.md`) with no step text changed
    (#3341).
+4. **Step renumber.** Every non-blank deleted line is a numbered step heading (`### N. Name — x`)
+   that the hunk re-adds, as its own distinct heading, under a different number with the same
+   text — the shape inserting a step ahead of existing ones produces, since every later `### N.`
+   heading shifts while its text stays put (#4590). A deleted body line, or a renumbered heading
+   whose text also changed, fails this test.
+5. **Reference-preserving `Origin:` line.** Every non-blank deleted line is an `Origin:` line citing
+   at least one `#{N}` (blank deleted lines are ignored), and the hunk re-adds each as an `Origin:`
+   line that still cites every `#{N}` the deleted one did — a later spec recording its own build in
+   a journey's closing `Origin:` line while keeping the earlier spec's reference (#4590). An
+   `Origin:` rewrite that drops a reference fails this test. This test covers inline `Origin:`
+   lines (plain, `_italic_` or `**bold**`); the template's bulleted `## Origin` section falls under
+   test 2's list reflow, which does not check references.
 
-Only a commit that deletes lines failing *all three* tests — non-list content it did not itself
-add, a list it shrinks rather than reflows, or a step-markup change that also alters step text —
+Only a commit that deletes lines failing *all five* tests — non-list content it did not itself
+add, a list it shrinks rather than reflows, a step-markup change that also alters step text, a
+renumbered heading whose text changed, or an `Origin:` rewrite that drops a reference —
 is a real overwrite. HARD-GATE: stop before rendering the
 console and report the offending path, commit, and reason (the tool's `overwrites[]` array — exit
 code `1`) plus both commits' spec ids (`refs #{N}`). A clean run (exit `0`, `overwrites: []`, or no
@@ -76,4 +89,5 @@ walk could not run at all (an unresolvable `{EXPECTED_BASE}`) — treat both as 
 failure to run, not as a clean result, and fall back to the raw `git log --name-status` walk above
 plus a manual `git log --numstat` ruling. Algorithm: `bin/lib/flow/artifact-overwrite-check.js`;
 fixture coverage (append-only, self-correction, list reflow, step-markup reformat (pass and
-drop-a-step), and a genuine cross-spec overwrite, plus a live replay of the #1988–#1997 range): `tests/bin-lib/flow/artifact-overwrite-check.test.js`.
+drop-a-step), step renumber, reference-preserving Origin line, and a genuine cross-spec overwrite,
+plus live replays of the #1988–#1997 range and the `729a5ae5e..4706f21db` step insertion): `tests/bin-lib/flow/artifact-overwrite-check.test.js`.

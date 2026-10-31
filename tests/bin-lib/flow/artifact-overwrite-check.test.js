@@ -28,6 +28,8 @@ const {
   parseNameStatusLog,
   normalizeStepMarkup,
   isStepMarkupReformat,
+  isStepRenumber,
+  isReferencePreservingOriginLine,
   ArtifactOverwriteCheckError,
 } = require(MOD);
 
@@ -478,4 +480,460 @@ test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes 
   });
   assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
   assert.deepStrictEqual(result.overwrites, []);
+});
+
+// Commit A for the step-renumber fixtures: two `### N.` heading-form steps.
+const HEADING_STEPS = [
+  '# Demo',
+  '',
+  '### 1. Read the banner — A session starts.',
+  '- **Action:** Open it.',
+  '',
+  '### 2. Read the footer — A session ends.',
+  '- **Action:** Close it.',
+  '',
+].join('\n');
+
+test('AC1.1: inserting a step ahead of two existing ### N. steps (headings renumbered, text unchanged) passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', HEADING_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Sign in — A session begins.',
+    '- **Action:** Log in.',
+    '',
+    '### 2. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 3. Read the footer — A session ends.',
+    '- **Action:** Close it.',
+    '',
+  ].join('\n'));
+  commit(fx, 'Insert a sign-in step ahead of the existing steps (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC2.1: a renumbered heading whose text also changes still reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', HEADING_STEPS);
+  commit(fx, 'Add demo journey steps (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', [
+    '# Demo',
+    '',
+    '### 1. Sign in — A session begins.',
+    '- **Action:** Log in.',
+    '',
+    '### 2. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 3. Read the footer — A session closes.',
+    '- **Action:** Close it.',
+    '',
+  ].join('\n'));
+  const commitB = commit(fx, 'Insert a sign-in step and reword the footer step (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('parseHunks + isStepRenumber: a deleted ### N. heading re-added with a different number and the same text is a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +5 @@',
+    '-### 3. X',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+test('isStepRenumber: two deleted headings against one added heading is not a renumber (one added line serves one deletion)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 2. X',
+    '-### 3. X',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a heading re-added as a list-form step is not a renumber (the added line must itself be a heading)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +5 @@',
+    '-### 3. X',
+    '+4. **X**',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(normalizeStepMarkup(hunks[0].addedLines[0]), '4. X');
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a deleted body line beside the renumbered heading is not a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 3. X',
+    '-Body line.',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: a deletion-only hunk is not a renumber', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5 +4,0 @@',
+    '-### 3. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), false);
+});
+
+test('isStepRenumber: identical heading text needs a real matching, not a first-fit pass (3→5 and 5→4, not 3→4)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5,2 @@',
+    '-### 3. X',
+    '-### 5. X',
+    '+### 4. X',
+    '+### 5. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+test('the real #4488/#4484 journey step insertion (729a5ae5e..4706f21db) passes with no manual ruling', (t) => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  let head;
+  try {
+    head = execFileSync('git', ['-C', repoRoot, 'cat-file', '-t', '4706f21db'], { encoding: 'utf8' }).trim();
+  } catch {
+    head = null;
+  }
+  if (head !== 'commit') {
+    // Same environment-precondition as the replay tests above, but reported as
+    // a visible skip: the commit is not reachable in this checkout, so there
+    // is nothing to replay, and a silent pass would read as a verified replay.
+    t.skip('4706f21db not reachable in this checkout');
+    return;
+  }
+  const result = checkArtifactOverwrite({
+    base: '729a5ae5e',
+    head: '4706f21db',
+    paths: ['docs/journeys/route-a-review-finding-the-release-gate-can-see-4488.md'],
+    cwd: repoRoot,
+  });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+// Commit A for the Origin-line fixtures: one heading-form step and a closing
+// `Origin:` line citing #10.
+const ORIGIN_JOURNEY = [
+  '# Demo',
+  '',
+  '### 1. Read the banner — A session starts.',
+  '- **Action:** Open it.',
+  '',
+  'Origin: created during build of #10',
+  '',
+].join('\n');
+
+function originJourneyWithStep2(originLine) {
+  return [
+    '# Demo',
+    '',
+    '### 1. Read the banner — A session starts.',
+    '- **Action:** Open it.',
+    '',
+    '### 2. Read the footer — A session ends.',
+    '- **Action:** Close it.',
+    '',
+    originLine,
+    '',
+  ].join('\n');
+}
+
+test('AC3.1: an Origin: line that gains a #N reference and keeps the existing one passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ORIGIN_JOURNEY);
+  commit(fx, 'Add demo journey (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md',
+    originJourneyWithStep2('Origin: created during build of #10; step 2 added during build of #11'));
+  commit(fx, 'Append a footer step and cite this build in the Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC3.2: an Origin: line rewrite that drops the existing #N reference reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ORIGIN_JOURNEY);
+  commit(fx, 'Add demo journey (refs #10)');
+  write(fx.dir, 'docs/journeys/demo.md', originJourneyWithStep2('Origin: step 2 added during build of #11'));
+  const commitB = commit(fx, 'Append a footer step and replace the Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('parseHunks + isReferencePreservingOriginLine: a rewrite that keeps #10 and adds #11 is reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Origin: built in #10 and #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: a deleted Origin: line with no added Origin: line is not reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Something else.',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deleted non-Origin line beside the Origin rewrite is not reference-preserving', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-Body line.',
+    '-Origin: built in #10',
+    '+Origin: built in #10 and #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a reference is matched as a whole number (#10 is not kept by #101)', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -6 +6 @@',
+    '-Origin: built in #10',
+    '+Origin: built in #101',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: two deleted Origin: lines need two added Origin: lines, paired in order', () => {
+  const lessAdded = parseHunks([
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6 @@',
+    '-Origin: built in #10',
+    '-Origin: extended in #11',
+    '+Origin: built in #10, extended in #11',
+  ].join('\n'));
+  assert.strictEqual(isReferencePreservingOriginLine(lessAdded[0]), false);
+
+  const swapped = parseHunks([
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6,2 @@',
+    '-Origin: built in #10',
+    '-Origin: extended in #11',
+    '+Origin: extended in #11',
+    '+Origin: built in #10',
+  ].join('\n'));
+  assert.strictEqual(isReferencePreservingOriginLine(swapped[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deletion-only hunk is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +5,0 @@',
+    '-Origin: built in #10',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+// The closing `_Origin: ..._` line below is copied verbatim from the real
+// docs/journeys/reap-merged-worktrees-at-drain-end-3026.md (its pre-#3630 form):
+// the inline italic shape later records extend in place.
+const REAL_ITALIC_ORIGIN = "_Origin: record #3026 (reconcile's 18 s budget starved `reap` even under an explicit `--checks` subset), built 2026-10-19._";
+
+test('AC3.1 (real italic shape): a later spec appending "Updated by record #11" to an _Origin:_ line while keeping #3026 passes clean', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', REAL_ITALIC_ORIGIN, ''].join('\n'));
+  commit(fx, 'Add demo journey (refs #3026)');
+  const extended = REAL_ITALIC_ORIGIN.replace(/\._$/, '. Updated by record #11, built 2026-10-22: a footer step was added._');
+  assert.notStrictEqual(extended, REAL_ITALIC_ORIGIN);
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', extended, ''].join('\n'));
+  commit(fx, 'Cite this build in the italic Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC3.2 (real italic shape): an _Origin:_ line rewrite that drops #3026 reports an overwrite', () => {
+  const fx = repo();
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', REAL_ITALIC_ORIGIN, ''].join('\n'));
+  commit(fx, 'Add demo journey (refs #3026)');
+  write(fx.dir, 'docs/journeys/demo.md', ['# Demo', '', '_Origin: record #11, built 2026-10-22._', ''].join('\n'));
+  const commitB = commit(fx, 'Replace the italic Origin line (refs #11)');
+
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['docs/journeys/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, commitB);
+});
+
+test('the real #3630 _Origin:_ line extension (cdf6627d9~1..c31b0e07c) passes with no manual ruling', (t) => {
+  const repoRoot = path.join(__dirname, '..', '..', '..');
+  let head;
+  try {
+    head = execFileSync('git', ['-C', repoRoot, 'cat-file', '-t', 'c31b0e07c'], { encoding: 'utf8' }).trim();
+  } catch {
+    head = null;
+  }
+  if (head !== 'commit') {
+    // Same environment-precondition as the #4488/#4484 replay above: the commit
+    // is not reachable in this checkout, so there is nothing to replay.
+    t.skip('c31b0e07c not reachable in this checkout');
+    return;
+  }
+  // The base is the parent of the commit that added the journey: the check
+  // skips a file whose add commit falls outside the range.
+  const result = checkArtifactOverwrite({
+    base: 'cdf6627d9~1',
+    head: 'c31b0e07c',
+    paths: ['docs/journeys/reap-merged-worktrees-at-drain-end-3026.md'],
+    cwd: repoRoot,
+  });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('isReferencePreservingOriginLine: the bold **Origin:** form that keeps its reference and adds one is reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-**Origin:** #3026',
+    '+**Origin:** #3026, #3630',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: an italic _Origin:_ rewrite that drops the reference is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-_Origin: record #10, built 2026-10-19._',
+    '+_Origin: record #11, built 2026-10-22._',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deleted Origin: line citing no #N is not reference-preserving (nothing to preserve)', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +6 @@',
+    '-Origin: built here',
+    '+Origin: something else',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: blank deleted lines beside the Origin rewrite are ignored', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6 @@',
+    '-_Origin: record #10_',
+    '-',
+    '+_Origin: record #10, #11_',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), true);
+});
+
+test('isReferencePreservingOriginLine: a hunk deleting only blank lines is not reference-preserving', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6 +5,0 @@',
+    '-',
+    '+Origin: built in #10',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: a deleted non-Origin line carrying a #N is not reference-preserving even when enough Origin lines are added back', () => {
+  // Two Origin: lines are added back, so the added-count check passes and
+  // every cited #N is kept; only the deleted-line `Origin:` check rejects the
+  // deleted `Built earlier in #9.` line.
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -5,2 +5,2 @@',
+    '-Built earlier in #9.',
+    '-Origin: built in #10',
+    '+Origin: built in #9, #10',
+    '+Origin: built in #9, #10, #11',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isReferencePreservingOriginLine: deleted and added Origin: lines pair in order (the second pair drops #11)', () => {
+  const diff = [
+    '--- a/f.md',
+    '+++ b/f.md',
+    '@@ -6,2 +6,2 @@',
+    '-Origin: built in #10',
+    '-Origin: built in #11',
+    '+Origin: built in #10, #11',
+    '+Origin: other',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
+});
+
+test('isStepRenumber: a blank deleted line beside the renumbered heading is ignored', () => {
+  const diff = [
+    '--- a/docs/journeys/demo.md',
+    '+++ b/docs/journeys/demo.md',
+    '@@ -5,2 +5 @@',
+    '-### 3. X',
+    '-',
+    '+### 4. X',
+  ].join('\n');
+  const hunks = parseHunks(diff);
+  assert.strictEqual(isStepRenumber(hunks[0]), true);
 });

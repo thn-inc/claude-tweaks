@@ -517,16 +517,16 @@ test('AC3.1: autonomy-ceiling.md registers release/disposition.md as a consoleAu
   assertFactsAndGoRed(row, CEILING_FACTS, 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
 });
 
-// --- FAILED is hand-composed by four writers; the skill graph names what disposition.md reads (#3898 review) ---
+// --- FAILED is hand-composed by five writers; the skill graph names what disposition.md reads (#3898 review) ---
 const DECISION_LOG = path.join(ROOT, 'plugin', 'skills', '_shared', 'auto-decision-log.md');
 const FAILED_WRITER_FACTS = [
-  [/hand-composed by its four writers \(see the `STATUS` row below\)/, 'the schema intro counts four FAILED writers'],
-  [/hand-composed by `backlog\/refine-mode\.md`, `apply-refine-labels\.js`, `release\/bookkeeping\.md` and `release\/disposition\.md` rather than/, 'the STATUS row names all four FAILED writers'],
-  [/Hand-composed by its four writers \(see the `STATUS` row above\)/, 'the FAILED outcome row counts four writers'],
+  [/hand-composed by its five writers \(see the `STATUS` row below\)/, 'the schema intro counts five FAILED writers'],
+  [/hand-composed by `backlog\/refine-mode\.md`, `backlog\/refine-record\.md`, `apply-refine-labels\.js`, `release\/bookkeeping\.md` and `release\/disposition\.md` rather than/, 'the STATUS row names all five FAILED writers'],
+  [/Hand-composed by its five writers \(see the `STATUS` row above\)/, 'the FAILED outcome row counts five writers'],
 ];
 
 test('AC3.1: auto-decision-log.md names every FAILED writer, release/bookkeeping.md and release/disposition.md included (with go-red)', () => {
-  assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all four hand-composing FAILED writers');
+  assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all five hand-composing FAILED writers');
   assert.doesNotMatch(readText(DECISION_LOG), /its two writers/, 'no stale "two writers" count may remain');
 });
 
