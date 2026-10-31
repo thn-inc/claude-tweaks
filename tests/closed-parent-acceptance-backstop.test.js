@@ -225,32 +225,22 @@ test('AC1.1: every gate composer carries the parent\'s closed state and the unre
   fs.writeFileSync(p('parents.json'), JSON.stringify(parents));
   fs.writeFileSync(p('states.json'), JSON.stringify([{ number: 101, state: 'CLOSED', labels: [{ name: 'risk:low' }] }]));
   fs.writeFileSync(p('batch.json'), JSON.stringify({ byParent: { 1: [101, 102], 2: [101] } }));
+  // The REST fallback's inputs: its jsonl is what the per-parent `gh api --paginate` loop appends, one row per parent.
+  fs.writeFileSync(p('sub-issues.jsonl'), '{"number":1,"subIssueNumbers":[101,102]}\n{"number":2,"subIssueNumbers":[101]}\n');
+  fs.writeFileSync(p('pg-fail.txt'), '');
   const run = (needle, out) => {
     const gatesFile = p(out);
     const script = scanScript(PG, needle)
       .split('$PARENTS').join(p('parents.json'))
       .split('$ALL_STATES').join(p('states.json'))
       .split('$PG_BATCH').join(p('batch.json'))
-      .split('$GATES').join(gatesFile);
-    execFileSync('node', ['-e', script], { encoding: 'utf8' });
-    return JSON.parse(fs.readFileSync(gatesFile, 'utf8'));
-  };
-  // The REST fallback's composing block, executed on the same inputs (its jsonl is what the
-  // per-parent `gh api --paginate` loop appends, one row per parent).
-  fs.writeFileSync(p('sub-issues.jsonl'), '{"number":1,"subIssueNumbers":[101,102]}\n{"number":2,"subIssueNumbers":[101]}\n');
-  fs.writeFileSync(p('pg-fail.txt'), '');
-  const fallbackGates = (() => {
-    const gatesFile = p('gates-fallback.json');
-    const script = scanScript(PG, 'sub-issue REST fallback failed')
-      .split('$PARENTS').join(p('parents.json'))
-      .split('$ALL_STATES').join(p('states.json'))
       .split('$SUB_ISSUES').join(p('sub-issues.jsonl'))
       .split('$PG_FAIL').join(p('pg-fail.txt'))
       .split('$GATES').join(gatesFile);
     execFileSync('node', ['-e', script], { encoding: 'utf8' });
     return JSON.parse(fs.readFileSync(gatesFile, 'utf8'));
-  })();
-  for (const gates of [run('parseSubIssues(p.body)', 'gates-body.json'), run('batch.byParent', 'gates-native.json'), fallbackGates]) {
+  };
+  for (const gates of [run('parseSubIssues(p.body)', 'gates-body.json'), run('batch.byParent', 'gates-native.json'), run('sub-issue REST fallback failed', 'gates-fallback.json')]) {
     assert.equal(gates[0].state, 'CLOSED');
     assert.equal(gates[0].stateReason, 'COMPLETED');
     assert.equal(gates[0].belowFloorClose, true);
