@@ -19,7 +19,7 @@
 const { extractKeyFiles } = require('./grouping');
 const { normalizeLabelNames, partitionByOpenLinkedPR } = require('./record');
 const { classifyClaimBlob } = require('./claims');
-const { fencedLineMask } = require('./record-payload');
+const { findSection } = require('./record-payload');
 
 // Jaccard similarity over lowercased word tokens, at or above this
 // threshold, is the title-similarity signal (#2 below). A screen, not a
@@ -85,9 +85,6 @@ function jaccard(aTokens, bTokens) {
   return union === 0 ? 0 : intersection / union;
 }
 
-const CURRENT_STATE_HEADING_RE = /^#{2,4}[ \t]+Current State[ \t]*$/;
-const ANY_HEADING_RE = /^#{1,6}[ \t]/;
-
 // #3141: backticked spans that are generic vocabulary, not identity
 // anchors — widely cited across unrelated records, so a shared one says
 // nothing about two records describing the same work. Four shapes:
@@ -117,19 +114,14 @@ function isGenericAnchor(value) {
 // body's `## Current State` section, stopping at the next heading of any
 // level outside a fenced block. Returns a Set; empty when the body has no such
 // section. Generic vocabulary spans (isGenericAnchor) are skipped (#3141).
-// CRLF-normalized first, as extractSection does, so CURRENT_STATE_HEADING_RE's
-// `[ \t]*$` can match a CRLF body's heading line.
+// The section is read through record-payload's findSection (#4561) — the one
+// rule for what counts as a heading line and which lines are fenced.
 function extractCurrentStateAnchors(body) {
-  const lines = (body || '').replace(/\r\n/g, '\n').split('\n');
-  // A heading-shaped line inside a fenced block is quoted content, not a
-  // section boundary (#4369) — it stays section content, minus its heading role.
-  const fenced = fencedLineMask(lines);
-  const start = lines.findIndex((line, idx) => !fenced[idx] && CURRENT_STATE_HEADING_RE.test(line));
-  if (start === -1) return new Set();
+  const section = findSection(String(body || ''), 'Current State');
+  if (section === null) return new Set();
   const anchors = new Set();
-  for (let i = start + 1; i < lines.length; i += 1) {
-    if (!fenced[i] && ANY_HEADING_RE.test(lines[i])) break;
-    const matches = lines[i].match(/`([^`]+)`/g) || [];
+  for (const line of section.split('\n')) {
+    const matches = line.match(/`([^`]+)`/g) || [];
     for (const m of matches) {
       const value = m.slice(1, -1).trim();
       if (value && !isGenericAnchor(value)) anchors.add(value);

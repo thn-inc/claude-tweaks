@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans, normalizeDesignIntent,
+  shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans, normalizeDesignIntent, authoredRegion,
 } = require('../../../plugin/bin/lib/issues/materialize-format');
 const { extractSection } = require('../../../plugin/bin/lib/issues/record-payload');
 const wtDetect = require('../../../plugin/bin/lib/hooks/worktree-detect');
@@ -664,4 +664,17 @@ test('sectionText: an indented (1–3 space) fence hides quoted headings; a 4-sp
   const four = sectionText(bodyFor('    '), 'Deliverables');
   assert.notEqual(four, null);
   assert.ok(four.startsWith('quoted'));
+});
+
+test('AC3.2: shapeGate — a fenced ## Original request is not the placeholder boundary (intended change, #4561)', () => {
+  const body = SHAPED_BODY + '\n\n```markdown\n## Original request\n```\n\nTODO: a real authored marker';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['unresolved-placeholder'] });
+});
+
+test('AC3.2: authoredRegion stops at the first unfenced ## Original request, CRLF included (#4561)', () => {
+  const lf = 'a\n```\n## Original request\n```\nb\n## Original request\nc';
+  assert.equal(authoredRegion(lf), 'a\n```\n## Original request\n```\nb\n');
+  assert.equal(authoredRegion(lf.replace(/\n/g, '\r\n')), 'a\r\n```\r\n## Original request\r\n```\r\nb\r\n');
+  assert.equal(authoredRegion('a\r## Original request\rc'), 'a\r');
+  assert.equal(authoredRegion('no boundary'), 'no boundary');
 });

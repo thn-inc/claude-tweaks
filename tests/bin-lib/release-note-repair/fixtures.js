@@ -17,7 +17,8 @@ const AC_UNTERMINATED_FENCE = '## Acceptance Criteria\n\n- [ ] Lookups are cache
 // A fence indented under a list item (common in Acceptance Criteria) whose own pasted-in content
 // is NOT reindented to match — the opener carries leading whitespace the old start-of-line-only
 // FENCE regex never matched, so the unindented `## Example` inside it was mistaken for a real
-// heading (#2828 R4).
+// heading (#2828 R4). Its 2-space opener stays a fence under the shared CommonMark rule apply.js
+// now uses (0-3 leading spaces open a fence; 4+ is an indented code block) (#4561).
 const AC_INDENTED_FENCE = '## Acceptance Criteria\n\n- [ ] Lookups are cached.\n  ```markdown\n## Example\n  ```\n';
 // A longer fence (````) holding a shorter one (```) as literal content, with a `## `-looking line
 // inside the inner block — the old regex captured only the FIRST 3 characters of any run, so the

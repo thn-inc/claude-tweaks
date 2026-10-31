@@ -5,6 +5,7 @@ const {
   RepairError, applyReleaseNote, onlyReleaseNoteAdded, prepareRepair, verifyWritten,
 } = require('../../../plugin/bin/lib/release-note-repair/apply');
 const { bodySha, checkBody } = require('../../../plugin/bin/lib/release-note-repair/detect');
+const { findSection } = require('../../../plugin/bin/lib/issues/record-payload');
 const F = require('./fixtures');
 
 test('applyReleaseNote inserts the section right after Acceptance Criteria, before the next heading', () => {
@@ -67,8 +68,16 @@ test('applyReleaseNote fills the real empty Release Note heading, never a fenced
   assert.ok(out.body.includes(fencedLookalike), 'the fenced example stays byte-identical');
 });
 
+// A RepairError whose message matches `re` — each refusal pins the reason it reports.
+const refusal = (re) => (err) => err instanceof RepairError && re.test(err.message);
+
 test('applyReleaseNote refuses an unterminated fenced code block preceding the insert point', () => {
-  assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), RepairError);
+  assert.throws(() => applyReleaseNote(F.UNTERMINATED_FENCE_BODY, F.LINE), refusal(/unterminated/));
+});
+
+test('an unclosed authored fence that swallows the real ## Original request is refused as unterminated, not ambiguous (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC_UNTERMINATED_FENCE)}\n## Original request\n\nSee thread.\n`;
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/unterminated/));
 });
 
 test('applyReleaseNote never places the note inside a list-indented fence whose content is not itself reindented', () => {
@@ -87,6 +96,60 @@ test('applyReleaseNote never mistakes a shorter nested fence for the close of a 
   const outerClose = out.body.indexOf('````\n', out.body.indexOf('## Example'));
   const rnAt = out.body.indexOf('## Release Note');
   assert.ok(rnAt > outerClose, 'Release Note must land after the outer fence closes, never inside the nested block');
+});
+
+test('AC3.1: a fenced ## Original request is not the boundary — the real unfenced one later is (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n\n## Original request\n\nSee thread.\n`;
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(out.mode, 'inserted');
+  const realIn = body.lastIndexOf('## Original request');
+  const realOut = out.body.lastIndexOf('## Original request');
+  assert.ok(out.body.indexOf('## Release Note') < realOut, 'Release Note lands before the real boundary');
+  assert.ok(out.body.indexOf('## Release Note') > out.body.indexOf('```\n', out.body.indexOf('```markdown') + 1), 'and after the fenced look-alike');
+  assert.equal(out.body.slice(realOut), body.slice(realIn), 'the verbatim section is byte-identical');
+  assert.equal(checkBody(out.body).verdict, 'conforming');
+});
+
+test('AC3.1: an authored unterminated fence closed inside the verbatim section hides the real boundary — refused (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC_UNTERMINATED_FENCE)}\n## Original request\n\nSome text\n\`\`\`\n\n## Original heading\n\nmore\n`;
+  // The verbatim text's ``` closes the authored fence, so every fence is closed: ambiguous, not unterminated.
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/ambiguous/));
+});
+
+test('AC3.1: a body whose only ## Original request is inside a closed fence is refused, the boundary being ambiguous (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n\`\`\`markdown\n## Original request\n\`\`\`\n`;
+  assert.throws(() => applyReleaseNote(body, F.LINE), refusal(/ambiguous/));
+});
+
+test('a tab after ## counts as the Release Note heading — filled, not inserted, per the shared headingLine (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '##\tRelease Note\n', F.TA);
+  const out = applyReleaseNote(body, F.LINE);
+  assert.equal(out.mode, 'filled');
+  assert.equal(onlyReleaseNoteAdded(body, out.body, F.LINE), true);
+});
+
+test('a tab-indented ``` is not a fence for the repair writer, as for findSection (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] x\n\n\t```\n## Example\n\t```\n');
+  const out = applyReleaseNote(body, F.LINE);
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Example'));
+  assert.notEqual(findSection(body, 'Example', { levelPattern: '2' }), null);
+});
+
+test('AC2.1: a Release Note heading only inside a fence is absent — inserted, never filled (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, F.AC, '```markdown\n## Release Note\n```\n', F.TA);
+  assert.equal(applyReleaseNote(body, F.LINE).mode, 'inserted');
+});
+
+test('Deliverable 2: a 4-space-indented ``` is not a fence for the repair writer, as for findSection (#4561)', () => {
+  const body = F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] x\n\n    ```\n## Example\n    ```\n');
+  const out = applyReleaseNote(body, F.LINE);
+  assert.ok(out.body.indexOf('## Release Note') < out.body.indexOf('## Example'));
+  assert.notEqual(findSection(body, 'Example', { levelPattern: '2' }), null);
+});
+
+test('a fence opened after ## Original request and never closed does not refuse the repair (#4561)', () => {
+  const body = `${F.join(F.CS, F.DEL, F.AC)}\n## Original request\n\n\`\`\`\nnever closed\n`;
+  assert.equal(applyReleaseNote(body, F.LINE).mode, 'inserted');
 });
 
 test('onlyReleaseNoteAdded accepts exactly the section and rejects any other change', () => {

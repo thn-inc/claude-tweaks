@@ -18,6 +18,7 @@ const {
   deepOverlapHits,
   DEEP_OVERLAP_MIN,
 } = require('../../../plugin/bin/lib/issues/near-duplicate');
+const { findSection } = require('../../../plugin/bin/lib/issues/record-payload');
 
 function withKeyFiles(files) {
   return `## Current State\n\nn/a\n\n## Technical Approach\n\n### Key Files\n\n${files.map((f) => `- \`${f}\` — modify`).join('\n')}\n`;
@@ -266,6 +267,12 @@ test('AC3.1: extractCurrentStateAnchors keeps anchors after a fenced # comment l
 test('extractCurrentStateAnchors: a fenced ## Current State line does not start the section (#4369)', () => {
   const body = '## Summary\n```\n## Current State\n`fake.js`\n```\n';
   assert.deepStrictEqual([...extractCurrentStateAnchors(body)], []);
+});
+
+test('AC2.1: a Current State heading only inside a fence is absent, matching findSection (#4561)', () => {
+  const body = 'Intro\n\n```markdown\n## Current State\n\nSee `plugin/bin/lib/x.js`.\n```\n\n## Deliverables\n\n- y';
+  assert.equal(findSection(body, 'Current State'), null);
+  assert.equal(extractCurrentStateAnchors(body).size, 0);
 });
 
 test('extractCurrentStateAnchors: a CRLF body still finds its Current State anchors (#4369)', () => {
