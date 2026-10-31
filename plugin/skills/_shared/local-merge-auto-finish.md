@@ -52,7 +52,7 @@ Print a one-line FYI before starting — `Integration model: local-merge — mer
 #2701) — never a question: the Precondition above already establishes nobody is present to answer
 one, and `_shared/integration-model.md` has already resolved which model applies.
 
-Steps 3-5 and 7 run `_shared/local-merge-sequence.md` — the single-branch local-merge sequence
+steps 3-5 and 7 run `_shared/local-merge-sequence.md` — the single-branch local-merge sequence
 (pre-merge checks, `close-run`, guarded merge, explicit-branch push, re-protect) and why its order
 is load-bearing; read it before step 3. This file keeps its bindings, the merged-result
 verification it runs between the sequence's merge and push (step 6), and what each failure the

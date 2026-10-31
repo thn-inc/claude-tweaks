@@ -532,8 +532,8 @@ ensuring the closing keyword already exists in a commit that will reach the defa
   and its "Push and Create PR" option never calls `gh pr create` (no PR body either). A carrier
   commit on the branch itself works across every option that skill offers, because GitHub scans
   every commit reaching the default branch, not just a merge commit or PR body.
-- **Worktree path (multi-terminal parallel):** `flow/worktree-merge.md` merges directly —
-  `git merge --no-ff {branch} -F "{subject-dir}/message.txt"`, the composed message carrying one
+- **Worktree path (multi-terminal parallel):** `flow/worktree-merge.md` merges through
+  `_shared/local-merge-sequence.md` Step 3 (`git merge --no-ff {branch} -F "{subject-dir}/message.txt"`), the composed message carrying one
   `Fixes #{issue}` line per issue. The explicit `--no-ff` guarantees a real merge commit to carry
   the keyword, so no separate carrier commit is needed.
 - **Current-branch path:** no merge commit, PR, or branch finish exists — the same

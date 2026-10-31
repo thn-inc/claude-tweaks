@@ -29,8 +29,8 @@ empty in the next, so never carry a value in a shell variable across calls.
   (`_shared/pipeline-run-dir.md`). A caller with no run for this branch skips Steps 2 and 5.
 - `{subject-dir}` — resolves per `_shared/pr-first-merge.md` Step 3.
 - `{worktree-path}` — a linked worktree to push from; for a single branch, the one that has
-  `{branch}` checked out. Read it from `{run-dir}/run-state.json`'s `worktree` field **before
-  Step 2**: `close-run` nulls that field, so a later read returns nothing.
+  `{branch}` checked out. A caller that reads it from `{run-dir}/run-state.json`'s `worktree`
+  field does so **before Step 2** — `close-run` nulls that field, so a later read returns nothing.
 
 ## Why the order is load-bearing
 
@@ -107,9 +107,15 @@ composer's `[{tag}]` paragraph and `Fixes #N` lines land on.
 
 **On failure** — the guard aborted (no merge started), or `git merge` exited non-zero for any
 reason (a conflict that appeared only after Step 1's prediction, the race it cannot rule out; a
-dirty working tree; unrelated histories): if a `MERGE_HEAD` exists, run `git merge --abort` as
-its own call; otherwise the merge never started and the checkout is unchanged. Never attempt
-resolution here. `close-run` already ran, so Step 5 applies.
+dirty working tree; unrelated histories): check for a merge in progress, in the main checkout
+the merge ran in:
+
+```bash
+git rev-parse -q --verify MERGE_HEAD
+```
+
+Exit 0 means a merge is in progress — run `git merge --abort` as its own call. Non-zero means
+the merge never started and the checkout is unchanged. Never attempt resolution here. `close-run` already ran, so Step 5 applies.
 
 ## Step 4: Push — from inside the linked worktree, its own Bash call
 

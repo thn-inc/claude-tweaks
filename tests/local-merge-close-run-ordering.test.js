@@ -35,12 +35,10 @@ const WORKTREE = path.join(SCRATCH, 'fixture-worktree'); // never created: recor
 const SUBJECT_DIR = path.join(SCRATCH, 'subject');
 fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 
-// One entry per local-merge auto-merge procedure. `vars` maps each {placeholder} to its fixture value.
-// `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
-// `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
-// re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
-// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps. `preservesOwner`:
-// the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
+// The one local-merge procedure under test. `vars` maps each {placeholder} to its fixture value.
+// `readsWorktree`: whether the procedure reads the worktree from run-state.json itself. `logNeedle`: the
+// literal clause, after the re-protect fence, that tells the agent to log a re-stamp that did not print
+// "worktree recorded". `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps.
 const SITES = [
   {
     label: 'local-merge-sequence.md',
@@ -344,14 +342,6 @@ for (const site of SITES) {
   test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
     const fence = extractFence(raw, REPROTECT_NEEDLE);
     assertReprotectRestores(fence, vars, worktreeVar);
-
-    if (site.preservesOwner) {
-      assertKeepsOwner(fence, site);
-      assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
-      const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
-      assert.notStrictEqual(mutated, fence);
-      assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
-    }
   });
 
   test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
@@ -487,7 +477,7 @@ function logFenceErrors(text) {
   const flat = collapse(text);
   const at = fenceIndex(text, REPROTECT_NEEDLE);
   if (at < 0) return ['no re-protect fence'];
-  const fence =fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
+  const fence = fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
   if (!fence) return ['no log-decision.js fence after the re-protect fence'];
   const errors = [];
   if (!fence.includes('--text-file "{text-file}"')) errors.push('the log fence does not read its text from {text-file}');
@@ -501,6 +491,9 @@ test("AC3: worktree-merge.md logs a failed re-stamp through --text-file", () => 
   const quoted = live.replace('--text-file "{text-file}"', "--text 'Re-stamp of {branch}: {output line}'");
   assert.notStrictEqual(quoted, live);
   assert.ok(logFenceErrors(quoted).length > 0, 'go-red: a single-quoted --text fence must fail');
+  const noReprotect = live.split(REPROTECT_NEEDLE).join('record-worktree-zzz-removed');
+  assert.notStrictEqual(noReprotect, live, 'doctoring must change the text');
+  assert.deepStrictEqual(logFenceErrors(noReprotect), ['no re-protect fence'], 'go-red: a flow text with no re-protect fence must fail');
 });
 
 test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a quote in the path cannot break it", () => {

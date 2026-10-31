@@ -45,10 +45,10 @@ const PROSE = {
   'push once after the loop': 'A caller that merges several branches runs Step 4 once, after its last merge',
   'inserted caller step': 'A caller may run its own step between Step 3 and Step 4',
   'routing stays with the caller': 'it never decides what the caller does next',
-  'read worktree before close-run': "Read it from `{run-dir}/run-state.json`'s `worktree` field **before Step 2**",
+  'read worktree before close-run': "A caller that reads it from `{run-dir}/run-state.json`'s `worktree` field does so **before Step 2**",
   'pre-check vs conflict': 'Record it as `pre-check failed: {first stderr line}`, never as a conflict',
   'push failure keeps the merge': 'Never `git merge --abort` and never undo the local merge',
-  're-stamp output logged': 'is never ignored — the caller logs it',
+  're-protect output logged': 'is never ignored — the caller logs it',
 };
 const FACTS = {
   'pre-merge fence': (t) => fenceCount(t, (f) => PRE_MERGE.every((l) => f.includes(l))) === 1,
@@ -187,13 +187,18 @@ const SITES = [
     'single issue': '`{issues}` = `{issue}`',
     'feature-branch binding': '`{branch}` = `{feature-branch}`',
     'verification between merge and push': '6. **Verify on the merged result**',
-    're-stamp output logged': "carry it into the log call's `{text-file}`",
+    're-protect output logged': "carry it into the log call's `{text-file}`",
+    'park reason: composer failed': 'composer failed:',
+    'park reason: predicted conflict': 'predicted conflict:',
+    'park reason: pre-check failed': 'pre-check failed:',
+    'park reason: checkout switched': 'main checkout switched to',
+    'park reason: merge aborted': 'merge aborted:',
   } },
   { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', deltas: {
     'own tag': "`{tag}` = this file's own `{tag}`",
     'single issue': '`{issues}` = `{issue}`',
     'integration-branch binding': '`{base-branch}` = `{integration-branch}`',
-    're-stamp output logged': 'log its output line to `decisions.md`',
+    're-protect output logged': 'log its output line to `decisions.md`',
   } },
   { label: 'settle-and-merge.md', file: 'plugin/skills/dispatch/settle-and-merge.md', deltas: {
     'two-issue composer call': '`{issues}` = `{issue} {second-issue}`',
@@ -201,7 +206,7 @@ const SITES = [
     'integration-branch resolution': 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch',
     'remote-show fallback': "git remote show origin | sed -n '/HEAD branch/s/.*: //p'",
     'group worktree': '`{worktree-path}` = `{group-worktree}`',
-    're-stamp output logged': 'log any other line it prints to `{run-dir}/decisions.md`',
+    're-protect output logged': 'log its output line to `{run-dir}/decisions.md`',
   } },
   { label: 'worktree-merge.md', file: 'plugin/skills/flow/worktree-merge.md', deltas: {
     'no tag': '`{tag}` — none: drop `--tag {tag}`',
@@ -209,6 +214,7 @@ const SITES = [
     'no-record branch': "A branch with no record drops the sequence's composer line",
     'push once': '6. **Push the base branch once',
     'owner-preserving re-protect': 'env -u CLAUDE_CODE_SESSION_ID node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-worktree --run "{run-dir}" "{worktree-path}"',
+    're-protect output logged': 'log any other line to that run\'s `decisions.md`',
   } },
 ];
 for (const site of SITES) siteTests(site);
@@ -230,6 +236,7 @@ test("worktree-merge.md: a composer failure skips the branch and continues (AC3)
 const MENTIONS = new Map([
   ['plugin/skills/_shared/policy-schema.md', 'commit-scope row names the composer call site; runs nothing'],
   ['plugin/skills/_shared/integration-model.md', 'consumer table names the local-merge path; runs nothing'],
+  ['plugin/skills/_shared/issue-claims.md', 'Close-via-merge worktree-path bullet points at Step 3\'s merge; runs nothing'],
 ]);
 function citers(root) {
   const out = [];
