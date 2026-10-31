@@ -14,6 +14,8 @@ const ROOT = path.join(__dirname, '..');
 const CORE = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'subagent-dispatch-core.md'));
 const SCRATCH = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'scratch-worktree.md'));
 
+const LENS = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'));
+
 const HEADING = '## Discrimination checks in a scratch checkout';
 
 // Slices md from `heading` to the next `## ` heading (or the end).
@@ -140,4 +142,25 @@ test('the §7 row pin goes red on the pre-#4556 table tail and on a flipped verd
   const flipped = live.map((c) => (c[1].includes('ls "{wt}/node_modules"') ? c.map((x, i) => (i === 2 ? 'refused' : x)) : c));
   assert.notDeepStrictEqual(flipped, live, 'the mutation must change a row');
   assert.throws(() => assertScratchRows(flipped));
+});
+
+function assertLens(line) {
+  assert.ok(line.includes('**Discrimination checks in a scratch checkout**'), 'lens sentence must cite the core recipe by heading');
+  assert.ok(line.includes('3f prompt'), 'lens sentence must direct pasting the steps into the 3f prompt');
+  assert.ok(line.includes('never mutate the shared tree as a substitute'), 'lens sentence must keep the no-substitute ban');
+  assert.ok(!line.includes('a temporary `git worktree`'), 'lens sentence must drop the bare temporary worktree');
+}
+
+test('lens 3f\'s Vacuity-evidence sentence cites the core recipe and drops the bare temporary worktree (#4556)', () => {
+  const line = LENS.split('\n').find((l) => l.startsWith('- **Vacuity-evidence diagnostic'));
+  assert.ok(line, 'lens 3f must carry a Vacuity-evidence diagnostic bullet');
+  assertLens(line);
+});
+
+// Frozen: the lens 3f mutation sentence as it stood before #4556.
+const PRE_4556_LENS =
+  'Make any such mutation in a throwaway copy — under the agent\'s `SCRATCH:` directory or a temporary `git worktree` — never in the shared tree other lens agents are reading — and remove it before the status word (delete the `SCRATCH:` directory; `git worktree remove` a temporary worktree, not merely its directory). When neither can be created, the finding has no evidence: never mutate the shared tree as a substitute.';
+
+test('the lens pin goes red on the pre-#4556 sentence (go-red)', () => {
+  assert.throws(() => assertLens(PRE_4556_LENS));
 });
