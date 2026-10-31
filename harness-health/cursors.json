@@ -129,7 +129,7 @@
   },
   "skill:driver-skill-outcome-taxonomy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1792957303799
+    "lastAuditedMs": 1793446281265
   },
   "skill:release": {
     "lastAuditedSha": null,
@@ -213,7 +213,7 @@
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1792958973429
+    "lastAuditedMs": 1793446279183
   },
   "skill:verify-scope-rule-kind": {
     "lastAuditedSha": null,
