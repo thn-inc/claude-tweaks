@@ -66,6 +66,11 @@ const RECIPE_LITERALS = [
   'or the dispatcher says to take it outright',
   'a failed delete reports `DONE_WITH_CONCERNS`',
   'A failed teardown reports `DONE_WITH_CONCERNS`',
+  'Never mutate the shared worktree in place',
+  'Mutate only there',
+  'only after a control has gone red in this same checkout',
+  'making the mutated file throw at load',
+  'has no evidence: tear down and report that',
 ];
 
 // Outcome clauses: each must appear exactly once, so a reworded copy elsewhere cannot mask a mutated one.
@@ -76,6 +81,8 @@ const ONCE_LITERALS = [
   'must print `{reviewed-sha}`',
   'Tear down before the status word',
   'A failed teardown reports `DONE_WITH_CONCERNS`',
+  'only after a control has gone red in this same checkout',
+  'has no evidence: tear down and report that',
 ];
 
 // An affirmative link command (`ln -s "…"`, `ln -sfn {…}`, `mklink /J "…"`), as opposed to
@@ -142,6 +149,11 @@ test('the recipe pin goes red without the section or with a dropped step (go-red
     ['A failed teardown reports `DONE_WITH_CONCERNS`', 'A failed teardown is ignored'],
     ['already exists, report `BLOCKED`', 'already exists, reuse it'],
     ['once the unmutated checkout passes a step 4 run', 'once the checkout exists'],
+    ['Never mutate the shared worktree in place', 'Prefer not to mutate the shared worktree in place'],
+    ['Mutate only there', 'Mutate anywhere'],
+    ['only after a control has gone red in this same checkout', 'without any control'],
+    ['making the mutated file throw at load', 'making the mutated file load'],
+    ['has no evidence: tear down and report that', 'has evidence anyway'],
   ]) {
     assert.ok(flatLive.includes(from), `live section must carry ${JSON.stringify(from)} to mutate`);
     assert.throws(() => assertRecipe(flatLive.split(from).join(to)), undefined, `${from} -> ${to} must go red`);
