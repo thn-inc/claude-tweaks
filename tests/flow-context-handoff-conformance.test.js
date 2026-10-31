@@ -5,7 +5,7 @@
 // starts in a fresh agent from {run}/handoff.json. Pins the Step 4 call site,
 // context-handoff.md's two branches (a dispatched call reports
 // `OUTCOME: handoff` + `NEXT_STEPS:` — the contract Task 9's dispatcher reads;
-// a top-level run hands off to one fresh Agent), the fail-open rule, and the
+// a top-level run hands off to one fresh Agent), the fail-open rule, the
 // template's verbatim copy of dispatch/task-prompt.md's async-wait item, and its
 // worktree shell-constraint item (#4728).
 const { test } = require('node:test');
