@@ -55,6 +55,8 @@ const MERGE_MODE_FACTS = {
   'rejects-dry-run': /`merge` with `--dry-run` is rejected: report both tokens and run neither/,
   'rejects-resume': /`merge` with `resume` is rejected: report both tokens and run neither/,
   'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --spec-slug "spec-\{n\}"/,
+  'archived-fallback': /resolve-run-dir --archived --spec-slug "spec-\{n\}"/,
+  'worktree-at-close': /falls back to `worktreeAtClose` when `worktree` is null/,
   'no-create': /with no `--create`/,
   'unresolved-stops': /When nothing resolves, merge mode stops and names the record/,
   'never-mint': /never mints a run dir, because a stray `-standalone` dir could shadow the real run on retry/,
@@ -91,6 +93,17 @@ test('merge-mode.md carries every merge-mode fact before its Conflict heading', 
 
 test('merge-mode.md facts each go red when stripped', () => {
   assertEachFactGoesRed(mergeModeRegion(), MERGE_MODE_FACTS);
+});
+
+test('AC4.1: merge-mode.md no longer claims a parked run stays active', () => {
+  assert.ok(!read('plugin', 'skills', 'wrap-up', 'merge-mode.md').includes('a parked `pending-review` run stays `status: active`'));
+  assert.ok(!read('docs', 'journeys', 'merge-a-parked-unattended-pr-3784.md').includes('a parked run stays `status: active`'));
+});
+
+test('pipeline-run-dir.md documents --archived', () => {
+  const doc = read('plugin', 'skills', '_shared', 'pipeline-run-dir.md');
+  assert.match(doc, /\[--root-only\] \[--archived\]/);
+  assert.ok(doc.includes('`--archived`'), 'the doc names the --archived flag');
 });
 
 test('wrap-up grammar surfaces carry the merge token', () => {

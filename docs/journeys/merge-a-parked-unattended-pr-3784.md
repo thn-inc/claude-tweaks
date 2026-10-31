@@ -43,7 +43,7 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should feel:** immediate. One command, no prompts.
 - **Should understand:**
   - **When it routes.** The router fires only when the arguments are nothing but `merge`, at most one record reference, and wrap-up's own tokens. Free text like "fix the merge bug" stays conversation-based work.
-  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run stays `status: active`.
+  - **Run adoption.** Merge mode adopts the run the way the explicit `#{n}` re-entry does. That is not `resume`: a parked run is never `interrupted`. When wrap-up already archived it, merge mode adopts it from `archive/` through `resolve-run-dir --archived`.
   - **Whose run it adopts.** `resolve-run-dir --spec-slug "spec-{n}"` matches the slug as a whole `-`-delimited name segment, so `spec-378` adopts `…-spec-378` (or a multi-spec `…-spec-378-379`) and never a `…-spec-3784` neighbour's run (#3865).
   - **When nothing resolves,** it stops and names the record. It never mints a run dir.
 - **Red flags:**

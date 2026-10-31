@@ -11,7 +11,7 @@ Bash snippet that implements it. Read there.
 
 ## Resolving it: `resolve-run-dir` (preferred over composing `$RUN_ROOT` by hand)
 
-`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only]`
+`node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir [--spec-slug <s>] [--mode auto] [--standalone <name>] [--create] [--root-only] [--archived]`
 (`bin/lib/hooks/run-dir-resolve.js`) implements steps 1, 2, and 4 above on top of
 `bin/lib/hooks/worktree-detect.js`'s `mainCheckoutRoot()` — the same anchoring the Bash snippet
 below computes, but as a single command every citing skill step calls instead of restating that
@@ -48,6 +48,7 @@ rather than silently substituted. Never creates a directory unless `--create` is
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific
   run's directory.
+- `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
 
 ## Anchoring
 
