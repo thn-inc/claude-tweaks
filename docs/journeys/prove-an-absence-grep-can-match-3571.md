@@ -48,17 +48,18 @@ files:
   - A scoped grep that has only ever been run after the deletion.
   - A bare grep skipped because only the scoped form seemed to need the control.
 
-### 4. Exclude the run directory from a repo-root search
+### 4. Exclude the build's own bookkeeping from a wide search
 - **URL:** `spec-template.md`'s `## Acceptance Criteria` and `plan-authoring-checks.md`'s **Absence-grep control check**.
-- **Action:** When an absence search is scoped to the repo root, append `':!.claude-tweaks/pipelines'` to its pathspec (or the tool's equivalent). Then run the control on that excluded form against a tree that still holds the target, and confirm it matches.
+- **Action:** When an absence search's scope reaches the build's committed bookkeeping (no pathspec, `.`, an any-depth glob such as `'*.md'`, or a recursive grep over the root), append `':!.claude-tweaks/pipelines'`, `':!docs/superpowers/plans'` and `':!docs/plans/*-ledger.md'` to its pathspec (or the tool's equivalent). Then run the control on that excluded form against a tree that still holds the target, and confirm it matches.
 - **Should feel:** Like step 3's tombstone, one more exclusion that can quietly hide the target.
 - **Should understand:**
-  - `/flow` commits the materialized spec (`.claude-tweaks/pipelines/<run>/work/<n>-spec.md`) on the feature branch, and that spec quotes the target. An unscoped search therefore always matches the spec, and the criterion can never pass.
-  - A build that finds the exclusion missing adds it as a plan correction, not an SDD ruling.
+  - The build commits its spec (`.claude-tweaks/pipelines/<run>/work/<n>-spec.md`), its plan (`docs/superpowers/plans/`) and its open-items ledger (`docs/plans/*-ledger.md`) on the feature branch, and each can quote the target. A wide search therefore matches its own bookkeeping, and the criterion can never pass.
+  - A build that finds the exclusions missing adds them as a plan correction, not an SDD ruling.
   - A search scoped to named paths outside `.claude-tweaks/` needs no exclusion.
   - Added for #4579.
 - **Red flags:**
   - Excluding all of `.claude-tweaks/`, which hides `policy.yml`.
+  - Excluding all of `docs/` or all of `docs/plans/`, which can hold real design diagrams.
   - A pathspec substituted for the control run, rather than run in addition to it.
 
 ## Origin
