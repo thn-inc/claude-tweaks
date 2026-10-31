@@ -166,10 +166,11 @@ function newestMatch(pipelinesRoot, specSlug) {
 // and merging it would skip the newer run (#4677 review). A newer live dir whose run-state.json does
 // not parse is no evidence of a competing run and supersedes nothing.
 function closedPrMatch(pipelinesRoot, specSlug) {
+  const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
   const readState = (dir) => {
     try {
       const state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
-      return state && typeof state === 'object' && !Array.isArray(state) ? state : null;
+      return isPlainObject(state) ? state : null;
     } catch { return null; }
   };
   const archiveRoot = path.join(pipelinesRoot, 'archive');
@@ -190,11 +191,10 @@ function closedPrMatch(pipelinesRoot, specSlug) {
     return Number(a.archived) - Number(b.archived);
   });
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
-    const pr = candidates[i].state && candidates[i].state.pr;
-    if (pr && typeof pr === 'object' && !Array.isArray(pr)) {
-      if (newestOpen && newestOpen.name > candidates[i].name) return { superseded: newestOpen };
-      return { dir: candidates[i].dir };
-    }
+    const { name, dir, state } = candidates[i];
+    if (!state || !isPlainObject(state.pr)) continue;
+    if (newestOpen && newestOpen.name > name) return { superseded: newestOpen };
+    return { dir };
   }
   return null;
 }
