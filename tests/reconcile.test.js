@@ -1608,11 +1608,12 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
   return out;
 }
 
-test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between mirror and archive, handing it integration, prStates and dryRun', async () => {
+test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between mirror and archive, handing it prStates and dryRun', async () => {
   const { r, order, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['archive']);
   assert.deepEqual(order, ['prefetch', 'post-merge', 'archive']);
   assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', 'mirror still runs ahead of both');
-  assert.equal(postMergeOpts.integration, 'main');
+  // #4549: after a PR merge Step 4.0b has no default-branch check, so post-merge takes no integration branch.
+  assert.ok(!('integration' in postMergeOpts), 'post-merge is handed no integration branch');
   assert.equal(postMergeOpts.dryRun, false);
   assert.ok(postMergeOpts.prStates && typeof postMergeOpts.prStates.persist === 'function', 'the pass-shared PR-state resolver');
   assert.equal(postMergeOpts.prStates, archiveOpts.prStates, 'post-merge and archive share one resolver');
