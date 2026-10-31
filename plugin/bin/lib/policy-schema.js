@@ -57,7 +57,7 @@ const POLICY_KEYS = [
   // derives it. Tier is `advanced` only because the core tier sits at its
   // enforced cap of 12 (tests/policy-schema-metadata.test.js); by the decision
   // rule it is core-shaped (a merge default).
-  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI verification a merge into the integration branch waits for — merge once green, wait for checks, or none.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI a merge waits for — merge once green, wait for checks, or off (a derived off still waits on and parks on reported checks).", category: 'merge-safety', tier: 'advanced' },
   // merge-authorization (#715): lets a human present at the run (the /flow
   // `pre-authorize-merge` token, #2734, or a Manifesto override) pre-authorize
   // "merge once every HARD-GATE is green" for this run only.

@@ -59,6 +59,27 @@ test('ghAvailable: injected runner throws ENOENT (gh absent) -> false', () => {
   assert.equal(result, false);
 });
 
+test('ghAvailable: a timed-out probe (code ETIMEDOUT) -> true (gh is present, just slow, #4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('spawnSync gh ETIMEDOUT'), { code: 'ETIMEDOUT' }); },
+  });
+  assert.equal(result, true);
+});
+
+test('ghAvailable: a killed probe with no code -> true (#4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('killed'), { killed: true }); },
+  });
+  assert.equal(result, true);
+});
+
+test('ghAvailable: a SIGTERM-signalled probe -> true (#4554)', () => {
+  const result = ghAvailable({
+    execFileSync: () => { throw Object.assign(new Error('terminated'), { signal: 'SIGTERM' }); },
+  });
+  assert.equal(result, true);
+});
+
 test('ghAvailable: injected runner throws a generic error (non-zero exit) -> false', () => {
   const result = ghAvailable({
     execFileSync: () => { throw new Error('gh: some other failure'); },
@@ -109,6 +130,7 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
   };
   walk(binDir);
   // #2567 shifted this line by 2 (a shared-primitives require + its updated
-  // comment above GH_TIMEOUT_MS's own former definition).
-  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:38`]);
+  // comment above GH_TIMEOUT_MS's own former definition). #4554 shifted it by
+  // 2 more (the timed-out-probe note in ghAvailable's comment).
+  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:40`]);
 });

@@ -134,12 +134,13 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"
+  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR" [--resume-pr "$RESUME_PR"]
 ```
 
 `{steps}` is the resolved step list (`SKILL.md` Step 1, item 4), comma-joined. Pass `--keep-going`
 only when this run is in `keep-going` mode (below); a default-mode run (single- or multi-target)
-omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
+omits the flag. Pass `--resume-pr` only for `RESUME_PR=<url>` — exit 3's in-flight variant below
+states what it changes. The CLI implements `_shared/issue-claims.md`'s "The
 lock" steps 1-6 — read, classify, and the create-only/conditional/contested branch — via
 `bin/lib/issues/claim-store.js`, the one contents-API implementation this CLI and
 `reconcile/release-merged.js`'s release path both delegate to: the absent branch that
@@ -182,6 +183,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 On the `gh` path, `claim-targets.js` itself already writes this exact line — via `--run` on the
 invocation above — for every target in its `claimed` array (#2775), so the `log-decision.js` call
 just shown is required only for the `gh`-absent MCP procedure's own successful writes.
+
+For a target the MCP procedure reclaimed through `_shared/issue-claims.md`'s resume exception
+(`RESUME_PR`, #4588), the hand-logged `--text` carries the suffix the CLI writes for it —
+`claimed #{n} (bin/claim-targets.js, transport: mcp, resume-pr: {url})`, `{url}` being the
+`RESUME_PR` value.
 
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
@@ -260,6 +266,14 @@ stays best-effort and the claim read stays the authoritative hold check:
 
   No `AskUserQuestion` from this card itself — same as the contest card, this file never asks.
 
+  **Resume exception (#4588).** Only an invocation carrying `RESUME_PR=<url>` (`dispatch resume`)
+  forwards `--resume-pr "$RESUME_PR"`; without it this stop is unchanged (#4423). With it, a
+  `'stale'` claim whose in-flight link is exactly `<url>` is re-claimed by the ordinary conditional
+  write instead of stopping here, and the envelope gains `resumedPr: [{issue, link}]` — branch on
+  the exit code, never on `resumedPr`. A `pr-opened:` tombstone still stops (close-out owns it); a
+  `'stale'` claim whose link differs from `<url>` still stops too (another build's PR). Both
+  render the card above.
+
   **Route into the existing build's resume/merge-decision machinery (#958), when a human can act
   on it.** Skip this routing entirely when `DISPATCH_HEADLESS=1` was set on this Task call's
   invocation (`dispatch/settle-and-merge.md`'s Claim-contest special case already self-reports and
@@ -299,6 +313,9 @@ stays best-effort and the claim read stays the authoritative hold check:
   `gh repo view` timeout is retried once, then, if it still fails, reported here with every
   requested target listed in `transient` and empty `released`/`releaseFailed` (nothing was claimed
   yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
+  Also covers a `claims-registry` branch still missing after a successful bootstrap (#4495) —
+  `error: 'claims-branch-missing'`, or a bootstrap that hit a secondary rate limit,
+  `error: 'claims-branch-bootstrap-rate-limited'` — both rendered on the same transient-failure card.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -315,12 +332,24 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
+- **6** (#4495) — the `claims-registry` branch was missing on origin and could not be created
+  (also under `--keep-going`): stdout carries `{branchMissing: {branch, reason}, released,
+  releaseFailed}`, stderr carries the remedy. Render:
+
+  ```markdown
+  ## Flow: Claims branch missing
+
+  The `claims-registry` branch is missing on origin and could not be created: {reason}.
+  Next: create `claims-registry` on origin from the default branch, then re-run.
+  ```
+
+  No `AskUserQuestion` — nothing to choose between.
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
   timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
   a hard stop.
 
-**On exit 3, 4, or 5** — release nothing further (the CLI's `released`/`releaseFailed` already covers
+**On exit 3, 4, 5, or 6** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
 simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
@@ -388,8 +417,9 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 `never-started: file-overlap group partial claim` internally, per `_shared/issue-claims.md`'s
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
-**`--keep-going`** — the CLI never exits 3, 4, or 5; a per-target contest, transient failure, or
-unverified write is downgraded to a `skipped` entry in the exit-0 JSON envelope
+**`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable
+claims branch fails every target alike); a per-target contest, transient failure, or unverified
+write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open
 (#315) or a stale claim whose run marker sits on an open PR (#4423), `{issue, reason: 'in-flight',

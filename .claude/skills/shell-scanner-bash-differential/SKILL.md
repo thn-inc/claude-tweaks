@@ -29,7 +29,7 @@ When the change threads a `pathImpl` through the resolvers, run that base compar
 
 ### Fuzz differentially, then turn each divergence into a case
 
-Hand-picked cases find the bugs you already imagined. Generate commands from a small alphabet of the constructs the scanner models (quotes, `$( )`, backticks, `${ }`, `$(( ))`, groups, `&`, `|`, `&&`, `cd`, heredoc openers, redirects), run each one under both shells, and compare with the scanner's targets. A shell that writes where the scanner reports nothing is a leak: fix it and pin it. A target bash never wrote is a spurious deny: accept it only when it is the fail-closed side of a stated tradeoff.
+Hand-picked cases find the bugs you already imagined. Generate commands from a small alphabet of the constructs the scanner models (quotes, `$( )`, backticks, `${ }`, `$(( ))`, groups, `&`, `|`, `&&`, `cd`, heredoc openers, redirects), run each one under both shells, and compare with the scanner's targets. A shell that writes where the scanner reports nothing is a leak: fix it and pin it. A target bash never wrote is a spurious deny: accept it only when it is the fail-closed side of a stated tradeoff. A generated shape can fork without end, such as a function that calls itself again inside a pipeline (#4716). The driver's process cap stops it and marks the result `forkLimited`. Keep such shapes in the alphabet and set their results aside, since they have no verdict to compare.
 
 ### Time adversarial shapes through the real hook, and keep wall clock out of tests/
 
@@ -91,49 +91,98 @@ Bash decides where a word lands; the program decides what the word means. macOS'
 ## Common Operations
 
 This session's Bash guard refuses heredocs, `cd` chains and any argument containing a `git` token. Write the drivers as scratchpad node scripts and run them with `node <script>`:
-- bash verdict: `runBash(bash, cmd, { cwd, stubDir, root, guardRepo })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`.
+- bash verdict: `runBash(bash, cmd, { cwd, stubDir, root, guardRepo })` from the Bounded bash verdict block below, then read the stub's log and the files it wrote. Repeat with `/opt/homebrew/bin/bash`. After the last case, call `sweepSurvivors()` and report any pids it returns.
 - base comparison: `git worktree add --detach <scratch> <base>`, then `require(<scratch>/plugin/bin/lib/hooks/git-command.js)` beside the branch copy and diff `fileWriteTargets(cmd, cwd)`.
 - mutant: edit a copy in a scratch worktree and run `node --test tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js tests/hooks-bash-prefilter.test.js tests/teardown-gate.test.js` there.
 
 ### Bounded bash verdict
 
-Every real-bash run goes through this driver, copied from the version that passed its checks (bash 3.2 and 5; dd, cat, backgrounded dd, endless loop, unstubbed word, SIGTERM and SIGKILL of the driver; `cd -`, a bare `cd`, `~`, an inherited CDPATH and BASH_ENV, a cwd outside the tree and a write into the guarded checkout). It does five things:
+Every real-bash run goes through this driver, copied from the version that passed its checks. Earlier records checked bash 3.2 and 5 with dd, cat, backgrounded dd, an endless loop, an unstubbed word, SIGTERM and SIGKILL of the driver, `cd -`, a bare `cd`, `~`, an inherited CDPATH and BASH_ENV, a cwd outside the tree and a write into the guarded checkout. #4716 re-ran the dd, backgrounded dd, endless loop, unstubbed word and spawn-failure checks on both shells. It added its own self-calling function and a group that keeps forking, each run to the end and with the driver SIGTERMed, plus the forking group with the driver SIGKILLed. It does six things:
 
-- **Cap:** each file a child writes is capped at 4 MiB (`ulimit -f`, soft and hard, so a child cannot raise it; bash counts 1024-byte blocks).
-- **Process group, timeout, kills:** bash runs as its own process group with a 5 s timeout. The whole group is killed on timeout, 300 ms after bash exits (so a backgrounded writer has opened its target), and on driver SIGTERM/SIGINT/SIGHUP.
+- **Caps:** each file a child writes is capped at 4 MiB (`ulimit -f`; bash counts 1024-byte blocks). The case's processes are capped at 256 above the uid's process count when the case starts (`ulimit -u`). That limit counts every process the uid owns, so the cap is relative, and the count is re-read at most once a second. Both limits are set soft and hard, so a child cannot raise them. A fork refused at the cap prints `fork: Resource temporarily unavailable` (bash 5 adds `retry:`), and the result comes back `forkLimited: true`. That is not bash's verdict on the shape. Rerun the case alone, since another session's processes may have used up the headroom. A shape that hits the cap again keeps forking and has no verdict.
+- **Process group, timeout, kills:** bash runs as its own process group with a 5 s timeout. The group is reaped in these cases: on timeout, 300 ms after bash exits (so a backgrounded writer has opened its target), on a spawn error, and on driver exit or SIGTERM/SIGINT/SIGHUP. Reaping means stop, then kill, repeated until the kernel reports the group empty. A single SIGKILL races a group that keeps forking: in 11 of 60 trials here it left 44 to 167 members of such a group alive (#4716). On macOS, `kill` on a group of zombies only fails with EPERM, which counts as empty. A group still alive after 2 s rejects the run with `SURVIVORS:`.
+- **Survivor sweep:** every case's command line carries the run's tag (`runBash-<driver pid>-<random>`). A forked bash keeps its parent's command line, so `pgrep -f <tag>` finds a case's bash even after it has left the group. `sweepSurvivors()` stops and kills each one and returns their pids. The driver runs it on exit and writes any count to stderr.
 - **Stdin and output:** stdin is closed, and at most 64 KiB of each stream is kept.
 - **PATH:** PATH is the stub dir alone, so a word with no stub fails as `command not found`. Link into `stubDir` only the real tools a case checks: `cp`, `mv`, `mkdir`, `touch`, `tee`, `ln`, and `dd`/`cat`/`install` only when the case is about them (`fs.symlinkSync('/bin/dd', stubDir + '/dd')`). Redirects need no program. A stub must not need PATH itself: give it an absolute shebang (`#!/bin/sh`) and use builtins only, since `#!/usr/bin/env node` or a call to `date` fails under the stub-only PATH.
 - **Environment and escape check:** a spawn's `cwd` does not keep a case in its scratch tree. bash 5's `cd -` reads an imported OLDPWD (3.2 ignores it), a bare `cd` and `~` read HOME, `cd sub` searches CDPATH, BASH_ENV runs a file before the command, and git finds a repo by climbing from the cwd. So the child gets no inherited environment: only PATH, OLDPWD and PWD pinned to `cwd`, HOME pinned to `root` (the scratch tree, which must contain `cwd`), and GIT_CEILING_DIRECTORIES set to `root`'s parent. When `guardRepo` names the real checkout, its HEAD and `git status --porcelain` are read before and after each run, and any change rejects the run. After a fuzz run, check `git log <fix-base>..HEAD` for foreign authors too.
 
-The cap bounds disk, not CPU: `while :; do :; done` stops only at the timeout. SIGKILL cannot be handled, so after a SIGKILLed driver the cap is the backstop: an orphaned writer dies by SIGXFSZ at 4 MiB.
+The caps bound disk and process count, not CPU: `while :; do :; done` stops only at the timeout. SIGKILL cannot be handled, so a SIGKILLed driver leaves its in-flight case running. An orphaned writer dies by SIGXFSZ at 4 MiB. A forking shape stays under the process cap but keeps running until the leftover check below kills it.
 
 ```js
 'use strict';
 // Bounded real-bash verdict runner for the shell-scanner differential recipe.
-// runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) -> Promise<{ status, signal, timedOut, stdout, stderr }>
+// runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) -> Promise<{ status, signal, timedOut, forkLimited, stdout, stderr }>
+// sweepSurvivors() -> pids of this run's processes it found and killed; call it after every fuzz run and report a non-empty list.
 
 const { spawn, execFileSync } = require('child_process');
+const crypto = require('crypto');
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
 const CAP_KB = 4096; // `ulimit -f` counts 1024-byte blocks: 4 MiB per file, per child
+const PROC_HEADROOM = 256; // processes a case may add: `ulimit -u` counts every process of the uid, so the cap is the uid's count plus this
 const TIMEOUT_MS = 5000; // wall clock per shape
 const GRACE_MS = 300; // after bash exits, let a backgrounded writer open its target before the group kill
+const REAP_MS = 2000; // how long the stop-then-kill loop may take to empty a group
 const KEEP_BYTES = 64 * 1024; // retained output per stream
+// On every case's command line. A forked bash keeps its argv, so a survivor that outlived its group is still found by it.
+const RUN_TAG = 'runBash-' + process.pid + '-' + crypto.randomBytes(3).toString('hex');
+const FORK_FAILED_RE = /fork: (retry: )?Resource temporarily unavailable/; // bash 3.2 and 5, at the process cap
 
-const live = new Map(); // pgid -> true, every process group not yet killed
+const live = new Map(); // pgid -> true, every process group not yet confirmed empty
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 
-function killGroup(pgid) {
+// false once nothing in the target can run: ESRCH is gone, and EPERM on macOS is a group of zombies only.
+function sendSignal(target, sig) {
   try {
-    process.kill(-pgid, 'SIGKILL');
+    process.kill(target, sig);
+    return true;
   } catch (e) {
-    if (e.code !== 'ESRCH') throw e;
+    if (e.code === 'ESRCH' || e.code === 'EPERM') return false;
+    throw e;
   }
 }
 
+// One SIGKILL races a group that keeps forking: a child forked during the kill survives it and can regrow the
+// group. A stopped process cannot fork, so stop, then kill, and repeat until the kernel reports the group empty.
+function reapGroup(pgid) {
+  const deadline = Date.now() + REAP_MS;
+  while (sendSignal(-pgid, 'SIGSTOP')) {
+    sendSignal(-pgid, 'SIGKILL');
+    if (Date.now() > deadline) return false;
+    pause(5);
+  }
+  return true;
+}
+
+function taggedPids() {
+  try {
+    return execFileSync('/usr/bin/pgrep', ['-f', RUN_TAG], { encoding: 'utf8' }).split('\n').filter(Boolean).map(Number);
+  } catch (e) {
+    if (e.status === 1) return []; // pgrep: nothing matched
+    throw e;
+  }
+}
+
+function sweepSurvivors() {
+  const found = new Set();
+  const deadline = Date.now() + REAP_MS;
+  for (let pids = taggedPids(); pids.length > 0; pids = taggedPids()) {
+    pids.forEach((pid) => found.add(pid));
+    if (Date.now() > deadline) throw new Error(`SURVIVORS: ${pids.length} ${RUN_TAG} processes still alive after ${REAP_MS} ms`);
+    pids.forEach((pid) => sendSignal(pid, 'SIGSTOP'));
+    pids.forEach((pid) => sendSignal(pid, 'SIGKILL'));
+    pause(5);
+  }
+  return [...found];
+}
+
 function killAll() {
-  for (const pgid of live.keys()) killGroup(pgid);
+  for (const pgid of live.keys()) reapGroup(pgid);
   live.clear();
+  const survivors = sweepSurvivors();
+  if (survivors.length) fs.writeSync(2, `runBash: killed ${survivors.length} surviving ${RUN_TAG} processes\n`);
 }
 
 process.on('exit', killAll);
@@ -142,6 +191,16 @@ for (const sig of ['SIGTERM', 'SIGINT', 'SIGHUP']) {
     killAll();
     process.exit(128 + os.constants.signals[sig]);
   });
+}
+
+// The uid's process count, re-read at most once a second (ps costs ~20 ms).
+let counted = { at: 0, n: 0 };
+function procCap() {
+  if (Date.now() - counted.at > 1000) {
+    const n = execFileSync('/bin/ps', ['-U', String(process.getuid()), '-o', 'pid='], { encoding: 'utf8' }).split('\n').filter(Boolean).length;
+    counted = { at: Date.now(), n };
+  }
+  return counted.n + PROC_HEADROOM;
 }
 
 // The real checkout's HEAD and status: a case that left its scratch tree shows up as a change.
@@ -157,7 +216,8 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
       return;
     }
     const before = guardRepo ? repoState(guardRepo) : null;
-    const child = spawn(bash, ['-c', 'ulimit -f ' + CAP_KB + ' || exit 125\n' + cmd], {
+    const prefix = 'ulimit -f ' + CAP_KB + ' -u ' + procCap() + ' || exit 125 # ' + RUN_TAG + '\n';
+    const child = spawn(bash, ['-c', prefix + cmd], {
       cwd,
       // Nothing inherited: an imported OLDPWD, HOME, CDPATH or BASH_ENV sends a case outside its tree.
       env: { PATH: stubDir, OLDPWD: cwd, PWD: cwd, HOME: root, GIT_CEILING_DIRECTORIES: path.dirname(root) },
@@ -174,8 +234,23 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
       list.push(part);
       streams[key] += part.length;
     };
+    let forkLimited = false;
+    let errTail = ''; // the message can straddle two chunks
     child.stdout.on('data', (c) => collect(c, streams.out, 'outBytes'));
-    child.stderr.on('data', (c) => collect(c, streams.err, 'errBytes'));
+    child.stderr.on('data', (c) => {
+      collect(c, streams.err, 'errBytes');
+      const text = errTail + c.toString('latin1');
+      if (FORK_FAILED_RE.test(text)) forkLimited = true;
+      errTail = text.slice(-64);
+    });
+
+    // Every path out ends here: no verdict returns while a process of the case can still run.
+    const reap = () => {
+      if (pgid === undefined || !live.has(pgid)) return true;
+      if (!reapGroup(pgid)) return false; // left in `live`, so the exit handler tries again
+      live.delete(pgid);
+      return true;
+    };
 
     let settled = false;
     let timedOut = false;
@@ -185,8 +260,10 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
       settled = true;
       clearTimeout(timer);
       clearTimeout(graceTimer);
-      killGroup(pgid);
-      live.delete(pgid);
+      if (!reap()) {
+        reject(new Error(`SURVIVORS: process group ${pgid} still has live members ${REAP_MS} ms after the kill began`));
+        return;
+      }
       if (guardRepo && repoState(guardRepo) !== before) {
         reject(new Error(`ESCAPE: ${guardRepo} changed during ${bash} -c ${JSON.stringify(cmd).slice(0, 300)}`));
         return;
@@ -195,6 +272,7 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
         status,
         signal,
         timedOut,
+        forkLimited, // a fork failed at the process cap: this is not bash's verdict on the shape
         stdout: Buffer.concat(streams.out).toString(),
         stderr: Buffer.concat(streams.err).toString(),
       });
@@ -209,10 +287,7 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      if (pgid !== undefined) {
-        killGroup(pgid);
-        live.delete(pgid);
-      }
+      reap();
       reject(e);
     });
     child.on('exit', (status, signal) => {
@@ -220,9 +295,13 @@ function runBash(bash, cmd, { cwd, stubDir, root, guardRepo }) {
     });
   });
 }
+
+module.exports = { runBash, sweepSurvivors, RUN_TAG };
 ```
 
 Leftover check, after a session and after any driver run that was killed: `ps -ax -o pid=,ppid=,etime=,command= | awk '$2 == 1 && $4 ~ /(^|\/)g?(dd|cat)$/'` lists PPID-1 writers. `ps` shows the bare word (`dd if=/dev/zero …`) as argv[0], not the stub path, so match the command word. For each pid, `lsof -p <pid>` shows its open output file; if that sits under a `scratchpad/` or `agent-scratch/` path, `kill -9 <pid>`. `lsof +D <scratch dir>` lists every process whose cwd or open file is under that dir, which finds a case's bash and its children, since they inherit the cwd. Freed space can stay pinned by a Time Machine local snapshot: check `tmutil listlocalsnapshots /`.
+
+Orphaned oracle shells: `pgrep -lf '[r]unBash-'` lists every bash a driver run left behind, and `pgrep -lf 'ulimit -f [0-9]'` lists those left by an older copy of the driver, which carries no tag. The bracket stops the pattern from matching the shell that runs it. The number after `runBash-` is the driver's pid. If `ps -p <pid>` shows no driver, stop that run's processes and then kill them: `pkill -STOP -f '[r]unBash-<pid>-'`, then `pkill -KILL -f '[r]unBash-<pid>-'`. Repeat both until `pgrep` lists nothing. Kill by the run's tag, never by the bare `runBash-` pattern, which also matches a sibling session's live run. An untagged chain is orphaned when its top process has PPID 1; stop and kill its pids the same way. Whenever `ps` output in any task shows one of these, run this check and tell the user. In #4716, a subagent's `ps` listed one of about 2,940 orphans a day into the incident, and nobody acted on it.
 
 ## Anti-Patterns
 
@@ -236,6 +315,7 @@ Leftover check, after a session and after any driver run that was killed: `ps -a
 | Re-checking main only at setup on a long scanner run | #4015 landed mid-run on the same functions and needed a semantic merge at review |
 | Fuzzing only the shapes the change targets | #4281's fuzz missed three escaped-spelling leaks (`\cd`, `2\>`, an escaped newline before an assignment) in rules the change never edited but whose input it redefined |
 | Running a shape under real bash with `spawnSync`, no cap and the real PATH after the stubs | 2026-10-26: three orphaned `dd if=/dev/zero` writers from #4303's oracle tree wrote ~463 GB into deleted files over 7 h, and 30 orphaned `cat a f1` loops from #4281's fuzz scratch were still writing 17 h after that run was archived; `spawnSync` with no timeout kills nobody, and with one it kills only bash. |
+| Killing a case's process group with one SIGKILL and trusting it | #4716: a fuzz shape whose function called itself again in a pipeline kept forking through the kill. About 2,940 orphaned `bash -c ulimit -f …` processes ran for 3.5 days, with load average about 437 and swap full. The file cap never fired, because the shape only rewrote tiny files. |
 | Spawning the oracle with `{ ...process.env }` and only PATH replaced | #4303 round 5: fuzz seed 99's `(cd - && git commit -qm "work on #12")` ran under bash 5 in the session's worktree, which the imported OLDPWD named, and put four empty commits on the live branch |
 | Judging a case only under bash 3.2 and 5 | The session's Bash tool runs the user's shell, which is zsh on this host. #4481: zsh runs a pipeline's last element in the current shell, so `true \| cd ../main; echo x > f.js` writes main/f.js while the scanner's bash model reports ./f.js. Run zsh as a third oracle, as #4481's test comments do, and add each zsh-only divergence to the known gaps in `policy-schema-coverage.md`. Whether the scanner should follow zsh is still an open decision (#4455), so do not quietly side with zsh in the expected target |
 
