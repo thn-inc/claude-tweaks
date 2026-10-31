@@ -43,6 +43,7 @@ test('AC1.2: the stale-claim paragraph calls the CLI on both transports (#4596)'
   const s = claimAuditSection();
   assert.ok(s.includes('bin/stale-claim-pr.js'), 'calls the one matcher implementation');
   assert.ok(s.includes('--resume'), 'asks it for the validated Resume line');
+  assert.ok(s.includes('--repo "{owner}/{repo}"'), 'passes --repo, since an origin shape parseRepo rejects is exit 3 before the gh check');
   assert.ok(s.includes('--listing'), 'hands it the MCP listing when gh is absent');
   assert.ok(s.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool when gh is absent');
 });
@@ -55,6 +56,8 @@ test('AC1.1: the stale-claim paragraph restates neither the marker rule nor the 
     '^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$',
     'PIPELINE_RUN_DIR="{dir}/{runId}"',
     '`[a-z][a-z,-]*`',
+    'isCrossRepository',
+    'head.repo.full_name',
   ]) {
     assert.ok(!flat.includes(retired), `the paragraph must not restate ${retired} — bin/stale-claim-pr.js owns it`);
   }

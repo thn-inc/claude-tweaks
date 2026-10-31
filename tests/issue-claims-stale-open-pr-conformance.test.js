@@ -3,7 +3,7 @@
 // stale-claim in-flight check bin/claim-targets.js runs through claim-store.js's `staleClaimInFlightPr`
 // — a TTL-expired claim whose run's marker sits on an open same-repo PR is in flight, not abandoned.
 // Since #4596 step 4 calls bin/stale-claim-pr.js for that verdict instead of restating the marker-match
-// rule, so the rule lives once, in code (tests/bin-lib/stale-claim-pr/ pins it).
+// rule, so the rule lives once, in code (tests/stale-claim-pr-cli.test.js pins it).
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -32,6 +32,16 @@ test('AC1.2: The lock step 4 names the stale-claim CLI on the MCP path (#4596)',
   assert.ok(step4.includes('--listing'), 'hands it the agent-fetched MCP listing');
   assert.ok(step4.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool');
   assert.ok(step4.includes('staleClaimInFlightPr'), 'names the gh-CLI twin');
+});
+
+test('The lock step 4 runs the CLI first, lists PRs only on its exit 2 (gh absent), then re-runs with --listing (#4596)', () => {
+  const step4 = lockStep4().replace(/\s+/g, ' ');
+  const firstRun = step4.indexOf('bin/stale-claim-pr.js');
+  const listing = step4.indexOf('mcp__github__list_pull_requests');
+  assert.ok(firstRun !== -1 && listing > firstRun, 'the CLI runs before any MCP listing');
+  assert.ok(!/stale-claim-pr\.js" --claim-file[^`]*--listing/.test(step4.slice(0, listing)), 'the first run carries no --listing');
+  assert.match(step4, /Exit 2 means `gh` is absent: list the repo's open PRs/);
+  assert.match(step4, /re-run it adding `--listing "\{that path\}"`/);
 });
 
 test('AC1.1: The lock step 4 no longer restates the marker-match rule (#4596)', () => {
