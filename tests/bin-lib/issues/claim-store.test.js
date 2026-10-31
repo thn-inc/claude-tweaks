@@ -983,3 +983,14 @@ test('matchStaleClaimPr returns the matched entry, null on no match, and throws 
   assert.throws(() => matchStaleClaimPr(SC_RUN, scFiller(1000), 'acme', 'w'), /1000-entry limit/);
   assert.equal(matchStaleClaimPr(SC_RUN, scFiller(999), 'acme', 'w'), null);
 });
+
+test('matchStaleClaimPr returns a { url, body } projection, not the raw listing entry', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  const entry = scListed({ extra: 'dropped' });
+  assert.deepEqual(matchStaleClaimPr(SC_RUN, [entry], 'acme', 'w'), { url: SC_URL, body: entry.body });
+});
+
+test('matchStaleClaimPr rejects a marked non-cross-repo entry whose url is another repo (the url guard alone)', () => {
+  const { matchStaleClaimPr } = require('../../../plugin/bin/lib/issues/claim-store');
+  assert.equal(matchStaleClaimPr(SC_RUN, [scListed({ url: 'https://github.com/evil/x/pull/1' })], 'acme', 'w'), null);
+});

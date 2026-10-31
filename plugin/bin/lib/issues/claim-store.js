@@ -549,8 +549,8 @@ function staleClaimRunId(content) {
 }
 
 // The pure matcher over an already-fetched listing (gh- or MCP-sourced, the
-// latter through `normalizePrListing`). Returns the first matching entry, or
-// null for a clean no-match; throws when the listing is not an array or a
+// latter through `normalizePrListing`). Returns `{ url, body }` of the first
+// matching entry, or null for a clean no-match; throws when the listing is not an array or a
 // no-match listing hit OPEN_PR_LIST_LIMIT (not a clean "no marked PR").
 function matchStaleClaimPr(runId, prs, owner, repo) {
   if (!Array.isArray(prs)) throw new Error('open-PR listing is not an array');
@@ -558,7 +558,7 @@ function matchStaleClaimPr(runId, prs, owner, repo) {
   for (const pr of prs) {
     if (!pr || typeof pr.body !== 'string' || pr.isCrossRepository !== false) continue;
     if (!isSameRepoPrUrl(pr.url, owner, repo)) continue;
-    if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return pr;
+    if (pr.body.split('\n').some((line) => markers.includes(line.trim()))) return { url: pr.url, body: pr.body };
   }
   if (prs.length >= OPEN_PR_LIST_LIMIT) {
     throw new Error(`open-PR listing hit its ${OPEN_PR_LIST_LIMIT}-entry limit — a marked PR may lie past it`);

@@ -14,18 +14,24 @@ function isPlainObject(value) {
 
 // Returns a new array of new objects; the input is never mutated. Throws when
 // `entries` is not an array (the message matchStaleClaimPr uses, so both
-// transports report one string) or an element is not a plain object — a read
-// error the agent recorded as data must fail, never reach the matcher.
-// full_name is compared exactly, as isSameRepoPrUrl compares owner/repo; a
-// missing head repo (deleted fork) is cross-repository.
+// transports report one string), an element is not a plain object, or an
+// element is not recognisably a PR (no string url, or a gh-shaped element
+// whose isCrossRepository is not a boolean) — a read error the agent recorded
+// as data, such as {message, status}, must fail here, never normalize into an
+// entry the matcher would skip as a clean no-match. full_name is compared
+// exactly, as isSameRepoPrUrl compares owner/repo; a missing head repo
+// (deleted fork) is cross-repository.
 function normalizePrListing(entries, owner, repo) {
   if (!Array.isArray(entries)) throw new Error('open-PR listing is not an array');
   return entries.map((entry, i) => {
     if (!isPlainObject(entry)) throw new Error(`open-PR listing entry ${i} is not an object`);
+    const notAPr = () => new Error(`open-PR listing entry ${i} is not a PR`);
     if ('html_url' in entry || 'head' in entry) {
+      if (typeof entry.html_url !== 'string') throw notAPr();
       const fullName = entry.head && entry.head.repo ? entry.head.repo.full_name : undefined;
       return { url: entry.html_url, body: entry.body, isCrossRepository: fullName !== `${owner}/${repo}` };
     }
+    if (typeof entry.url !== 'string' || typeof entry.isCrossRepository !== 'boolean') throw notAPr();
     return { url: entry.url, body: entry.body, isCrossRepository: entry.isCrossRepository };
   });
 }

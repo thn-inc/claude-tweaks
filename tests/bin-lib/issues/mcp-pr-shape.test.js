@@ -34,6 +34,18 @@ test('normalizePrListing throws on a non-array or a non-object element', () => {
   assert.throws(() => normalizePrListing([[]], 'acme', 'w'), /entry 0 is not an object/);
 });
 
+test('normalizePrListing throws on an agent-recorded error element or an entry with no url (shape guard)', () => {
+  assert.throws(() => normalizePrListing([{ message: 'Bad credentials', status: '401' }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ head: { repo: { full_name: 'acme/w' } }, body: 'x' }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ url: U, body: B }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([{ url: U, body: B, isCrossRepository: 'false' }], 'acme', 'w'), /entry 0 is not a PR/);
+  assert.throws(() => normalizePrListing([mcp('acme/w'), { message: 'x' }], 'acme', 'w'), /entry 1 is not a PR/);
+});
+
+test('normalizePrListing detects an MCP entry by html_url alone (no head -> cross-repository)', () => {
+  assert.deepEqual(normalizePrListing([{ html_url: U, body: B }], 'acme', 'w'), [{ url: U, body: B, isCrossRepository: true }]);
+});
+
 test('normalizePrListing never mutates its input', () => {
   const input = [mcp('acme/w'), { url: U, body: B, isCrossRepository: false }];
   const snapshot = JSON.parse(JSON.stringify(input));
