@@ -6,6 +6,7 @@ files:
   - plugin/skills/specify/shaping-mode-readback.md
   - plugin/skills/specify/spec-template.md
   - plugin/skills/specify/design-pre-steps.md
+  - plugin/skills/specify/next-actions.md
   - plugin/bin/compose-record.js
   - plugin/bin/lib/issues/near-duplicate.js
   - plugin/bin/lib/issues/claim-store.js
@@ -45,8 +46,8 @@ files:
 - **URL:** the `## Next Actions` block at the end of the same reply
 - **Action:** Copy the bolded first line — **`/claude-tweaks:flow #701,#702,#703`** — and run it.
 - **Should feel:** No hand-assembly — the recommended command already lists every successfully shaped record, in the order given.
-- **Should understand:** The block is the "Shaping mode — multiple records shaped in place" row of the skill's Situation table; under `work-backend: local-files` the ids are bare (`/claude-tweaks:flow 701,702,703`).
-- **Red flags:** A Next Actions block naming only `#701`; an `AskUserQuestion` menu instead of plain paste-ready markdown lines.
+- **Should understand:** The block is the "Shaping mode — multiple records shaped in place" row of the skill's Situation table; under `work-backend: local-files` the ids are bare (`/claude-tweaks:flow 701,702,703`). Before the row is picked, a Blocker check reads each record's blockers with `/claude-tweaks:flow`'s own `blocked-by` reader (`bin/resolve-blockers.js` under native links). If `#702` turns out blocked by an open record outside the batch, the bolded line becomes `/claude-tweaks:flow #701,#703` and `#702`'s own line reads "once #{blocker} closes", unbolded. If every record is blocked, the bolded line is the blocker step: the blocker's `/claude-tweaks:flow` when it is ready and unclaimed, otherwise `gh issue view` on it (#4703).
+- **Red flags:** A Next Actions block naming only `#701`; an `AskUserQuestion` menu instead of plain paste-ready markdown lines; a bolded `/claude-tweaks:flow` that includes a record with an open blocker outside the batch; a failed blocker read rendered as if nothing were blocked, with no "Blocker check failed" line (#4703).
 
 ### 5. Mix in a non-record element — the honest refusal
 - **URL:** `/claude-tweaks:specify #701,docs/superpowers/specs/x-design.md`
@@ -85,6 +86,7 @@ files:
 - Step 3 updated for #3393 (claims read through `createClaimReader`; an unreadable claim, including an unresolved repo slug, is listed as `unreadable` beside the candidate table, never read as absent)
 - Step 3 updated for #1321 (generated-file grep: a shaped record's Key Files lists a generated entry's generator as primary edit target, with the entry annotated)
 - Step 3 updated for #4702 (the `**Related:**` append keeps only hits `isRelatedCandidate` accepts — 2+ signals, 2+ shared anchors, or title similarity; the table still lists every hit)
+- Step 4 updated for #4703 (Next Actions Blocker check: a record with an open blocker outside the batch drops out of the bolded `/claude-tweaks:flow`; an all-blocked batch recommends the blocker step instead)
 - Step 7 added for #1071 (parent-record guard: batch fail-all, tier-2 refuse-without-prompt, reported residue strip)
 - Step 8 added for #4142 (digest-container guard: per-element refusal, `refused — digest container` row, reported residue strip)
 - Steps 1 and 3 updated for #705 (range-form input, mandatory read-back verification after each write)
