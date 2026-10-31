@@ -170,6 +170,7 @@ function assertStep40bUsesClosingSet(step40b) {
   assert.ok(!step40b.includes('It is also a no-op unless the branch the merge landed on'), 'the PR-merge non-default no-op is gone');
   assert.ok(step40b.includes('After a PR merge there is no such gate'), 'a PR merge uses closingSet[] on either branch');
   assert.ok(step40b.includes('`base-unchecked`'), 'Step 4.0b lists base-unchecked as a reason closingSet[] is absent');
+  assert.ok(step40b.includes('a `reopen-failed` result that also carries `baseUnchecked: true`'), 'Step 4.0b lists a reopen-failed baseUnchecked envelope as lacking closingSet[]');
 }
 function assertStep40bHoldsCloseFailedParent(step40b) {
   assert.ok(
@@ -181,7 +182,7 @@ function walkFiles(dir, exts, acc = {}) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, e.name);
     if (e.isDirectory()) { if (e.name !== 'node_modules') walkFiles(full, exts, acc); }
-    else if (exts.some((x) => e.name.endsWith(x))) acc[path.relative(PLUGIN, full)] = collapse(fs.readFileSync(full, 'utf8'));
+    else if (exts.some((x) => e.name.endsWith(x))) acc[path.relative(PLUGIN, full)] = collapse(readText(full));
   }
   return acc;
 }

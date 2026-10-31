@@ -76,7 +76,7 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   subtracted; on a non-default base it is instead the `Fixes` records Step 4.0 confirmed `CLOSED`
   (closed by it, or already closed), never a `closeFailed[]` one. After a PR merge, when
   `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`,
-  `base-unchecked`, or no parseable output — skip this step entirely, never subtracting nothing,
+  `base-unchecked`, a `reopen-failed` result that also carries `baseUnchecked: true`, or no parseable output — skip this step entirely, never subtracting nothing,
   and log it (after exit 3, name it in the closing summary instead); tidy's `parent-gate` backstop
   recovers those parents:
 

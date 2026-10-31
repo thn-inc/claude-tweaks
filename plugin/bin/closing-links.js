@@ -348,7 +348,10 @@ function run(argv, overrides = {}) {
   let uncheckedReason = 'the PR view carried no base branch';
   if (base) {
     try {
-      defaultBranch = String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
+      // Not the integration-branch ladder (`_shared/integration-branch.md`): this
+      // check needs GitHub's own default branch -- where closing keywords fire --
+      // read on the PR's own host, not the project's integration branch.
+      defaultBranch =String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
       if (!defaultBranch) uncheckedReason = 'the repository returned no default branch';
     } catch (e) {
       uncheckedReason = `the default branch could not be read: ${errText(e)}`;
@@ -444,7 +447,11 @@ function run(argv, overrides = {}) {
         : 'the PR names no Fixes records, so there is nothing to close by hand');
   }
 
-  // Worst outcome wins: a reopen never hides a failure or a pending close.
+  // Worst outcome wins: a reopen never hides a failure or a pending close. An
+  // unchecked base outranks a pending close or a reopen because the Fixes set's
+  // state is unknown and `closingSet` is omitted, whereas those two concern a
+  // known set; it stays below `close-failed`, which names records that
+  // definitely need a hand close.
   let action = 'nothing-closed';
   if (failed.length) action = 'reopen-failed';
   else if (closeFailed.length) action = 'close-failed';

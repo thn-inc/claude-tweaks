@@ -922,6 +922,83 @@ test('post-merge non-default: keep-open candidates are read once, never polled, 
   assert.deepEqual(j.stillOpen, [2724]);
   assert.equal(h.issueReads().filter((c) => c.args[2] === '2724').length, 1);
   assert.equal(j.action, 'closed');
+  // A Refs record is never closed, only the Fixes one.
+  assert.ok(!h.closes().some((c) => c.args[2] === '2724'));
+  assert.deepEqual(j.closed, [3997]);
+});
+
+test('post-merge non-default: a linked non-Fixes record is never in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [2724], NON_DEFAULT)],
+    messageThrows: true,
+    issues: { 2724: [OPEN_ISSUE], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.closed, [3997]);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.ok(!j.closingSet.includes(2724));
+});
+
+test('post-merge non-default: a keep-open candidate the merge closed is reopened, outranks closed, and is not in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
+    messageThrows: true,
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closed, [3997]);
+  assert.equal(h.reopens().length, 1);
+  assert.deepEqual(h.reopens()[0].args, ['issue', 'reopen', '2724', '--comment', REOPEN_COMMENT]);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.ok(!j.closingSet.includes(2724));
+});
+
+test('post-merge: an unchecked base outranks a still-pending close in the action, and the pending close stays listed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [OPEN_ISSUE] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '6000'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.pendingClose, [2724]);
+  assert.equal(j.baseUnchecked, true);
+});
+
+test('post-merge: an unchecked base outranks a successful reopen in the action, and the reopen stays listed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge: an unreadable default branch on a default-base PR with real closing links closes nothing and omits closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [3997])],
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.ok(!('closingSet' in j));
+  assert.equal(h.closes().length, 0);
 });
 
 test('#4549 AC6.1: the default base makes no close call and keeps the existing envelope', () => {

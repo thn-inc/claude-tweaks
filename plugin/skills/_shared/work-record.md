@@ -30,7 +30,8 @@ BACKLOG ──/specify shapes──► READY ──human grants──► AUTHORI
 - **ready** — spec-shaped and agent-sized; eligible for the authorization gate's worklist.
 - **authorized** — carries a human-granted `auto:build` (optionally + `auto:merge`).
 - **building** — an agent holds the claim (`bot:in-progress` mirrors the claim blob).
-- **closed** — completed via the user's merge (close-via-merge), or not-planned (wontfix,
+- **closed** — completed via the user's merge (close-via-merge — except the two record-closing
+  exceptions `_shared/issue-claims.md`'s Close-via-merge names), or not-planned (wontfix,
   duplicate, absorbed into another record). `work-backend: github-issues` — GitHub's own issue
   state. `work-backend: local-files` — `closeRecord(path)` (`bin/lib/issues/local-store.js`)
   marks `closed: true` in place; the file stays on disk as history and drops out of
