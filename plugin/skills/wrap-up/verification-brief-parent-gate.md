@@ -61,9 +61,9 @@ nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already post
 absent, each call runs through the GitHub MCP tool its `_shared/github-write-transport.md` row names
 (that file's Detection rule). Under **Resolve the parent**, the native parent read is `issue_read`
 (`get_parent`) and the body-text read is `issue_read` (`get`), whose `body` you write with the Write
-tool to the path the `session-tmp-resolve.js --value wrapup-parent-body.md` line of the body-text
-fence under **Enumerate the parent's sub-issues** prints (run it first, as its own call), then run
-the `parseSubIssues` script against that file. Under **Enumerate
+tool to the path the `session-tmp-resolve.js` line of the body-text fence under **Enumerate the
+parent's sub-issues** prints for `$WRAPUP_PARENT_BODY` (run it first, as its own call), then run the
+`parseSubIssues` script against that file. Under **Enumerate
 the parent's sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row),
 and every `gh issue view` read (the parent body, each sub-issue, the parent's labels, and the
 comment reads in **Close the parent below the floor** and **Apply the gate**) is `issue_read`
