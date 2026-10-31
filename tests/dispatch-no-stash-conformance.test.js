@@ -81,8 +81,11 @@ function noStashParagraph(region) {
 // Every stack-mutating form must be named (#4559): the two-command wording left `drop`/`clear`
 // (which destroy the shared stack) and `store`/`save` unmentioned. One fact per entry so a
 // control can strip exactly one and see exactly that one reported missing.
+const globalOf = (pattern) => new RegExp(pattern.source, 'g');
+
 const NO_STASH_FACTS = [
   ['in any form', /in any form/],
+  ['bare `git stash`/`push`', /bare `git stash`\/`push`/],
   ['`drop`', /`drop`/],
   ['`clear`', /`clear`/],
   ['`pop`', /`pop`/],
@@ -169,9 +172,10 @@ for (const [name, region] of [...REGIONS, [BUILD_NAME, BUILD_DISPATCH]]) {
     const paragraph = noStashParagraph(region);
     assertNoStashRule(name, paragraph);
     // One fact per control: stripping exactly that fact must report exactly that fact, so no
-    // pattern is vacuous and none is satisfied by another fact's text.
+    // pattern is vacuous and none is satisfied by another fact's text. Every occurrence goes
+    // (a function replacement, so `$` in the text is literal), so a second copy cannot mask the strip.
     for (const [label, pattern] of NO_STASH_FACTS) {
-      const doctored = paragraph.replace(pattern, '');
+      const doctored = paragraph.replaceAll(globalOf(pattern), () => '');
       assert.notStrictEqual(doctored, paragraph, `${name}: pattern for ${label} matched nothing to strip`);
       assert.deepStrictEqual(missingNoStashFacts(doctored), [label], `${name}: stripping ${label} must report exactly it`);
     }
@@ -184,7 +188,7 @@ for (const [name, region] of [...REGIONS, [BUILD_NAME, BUILD_DISPATCH]]) {
     assert.notStrictEqual(reverted, region, `${name}: the revert replaced nothing`);
     assert.throws(
       () => assertNoStashRule(name, noStashParagraph(reverted)),
-      /missing: in any form, `drop`, `clear`, `pop`, `store`, `save`/,
+      /missing: in any form, bare `git stash`\/`push`, `drop`, `clear`, `pop`, `store`, `save`/,
     );
   });
 }
@@ -217,12 +221,20 @@ test('AC9.1/AC9.2: build/dispatch.md keeps low → Fast and records the no-profi
     ['AC9.1', /`low` → Fast, `medium` → Standard, `high` → Capable/],
     ['AC9.2', /No floor raises git-running implementers to Standard \(#4559\)/],
   ];
-  for (const [ac, pattern] of claims) {
-    assert.match(BUILD_DISPATCH, pattern, `build/dispatch.md lost its ${ac} claim`);
-    // Go-red control: the same text with only that claim removed must not match.
-    const stripped = BUILD_DISPATCH.replace(pattern, '');
-    assert.notStrictEqual(stripped, BUILD_DISPATCH, `${ac}: the pattern matched nothing to strip`);
-    assert.doesNotMatch(stripped, pattern, `${ac}: the pattern still matches after the claim is removed`);
+  const assertProfileClaims = (text) => {
+    for (const [ac, pattern] of claims) assert.match(text, pattern, `build/dispatch.md lost its ${ac} claim`);
+  };
+  assertProfileClaims(BUILD_DISPATCH);
+  // Go-red controls: mutate each claim and the assertion function itself must throw, naming it.
+  const mutations = [
+    ['AC9.1', '`low` → Fast, `medium` → Standard, `high` → Capable', '`low` → Standard, `medium` → Standard, `high` → Capable'],
+    ['AC9.2', 'No floor raises git-running implementers to Standard (#4559)', ''],
+  ];
+  for (const [ac, from, to] of mutations) {
+    assert.strictEqual(BUILD_DISPATCH.split(from).length, 2, `${ac}: the mutation anchor must occur exactly once`);
+    const mutated = BUILD_DISPATCH.replace(from, () => to);
+    assert.notStrictEqual(mutated, BUILD_DISPATCH, `${ac}: the mutation changed nothing`);
+    assert.throws(() => assertProfileClaims(mutated), (err) => err.message.includes(`lost its ${ac} claim`), `${ac}: the mutated claim must go red`);
   }
 });
 
@@ -254,7 +266,6 @@ function reviewerBranch(paragraph) {
   return end === -1 ? '' : paragraph.slice(start, end);
 }
 
-const globalOf = (pattern) => new RegExp(pattern.source, 'g');
 // A fact over the whole paragraph; `strip` removes every occurrence so the go-red control is real.
 const paragraphFact = (label, pattern) => ({
   label,
@@ -286,8 +297,11 @@ const STASH_GUARD_FACTS = [
   paragraphFact('AC11.2 --label fix-wave', /--label fix-wave/),
   paragraphFact('AC11.2 stash-guard-{id}.json', /stash-guard-\{id\}\.json/),
   paragraphFact('AC6.2 AUTO line', /AUTO \{time\} — Stash guard: \{who\} removed stash entr/),
-  paragraphFact('AC6.2 FAILED line with its paste-ready command', /a failed restore is logged as a `FAILED` line carrying its paste-ready `git stash store -m "<subject>" <sha>` command/),
+  paragraphFact('AC6.2 FAILED line carries the shell-escaped restoreFailed[].command', /a failed restore is logged as a `FAILED` line carrying its shell-escaped `restoreFailed\[\]\.command` \(also on stderr\)/),
+  paragraphFact('exit 0 appends nothing and logged is absent', /nothing was appended and `logged` is absent/),
   paragraphFact('AC6.2 failed restores and added entries go to the handoff', /every `restoreFailed` command and `added` entry also goes into Common Step 7's handoff/),
+  paragraphFact('I1 restored entries reach the handoff when logged is false or the build is standalone', /as does every restored entry when `logged` is false or the `\/build` is standalone/),
+  paragraphFact("T5a a reviewer's entries ride its own handoff line", /a reviewer dispatch's own restored and added entries ride its voided-verdict line, not a second slot/),
   paragraphFact('exit 3 restores every removed entry it could', /restored every removed entry it could with `git stash store`/),
   paragraphFact('alreadyPresent clause', /an entry a concurrent guard had already put back is logged as such and not stored twice/),
   paragraphFact('{worktree} is filled', /`\{worktree\}`, the worktree root `\/build` runs in \(the project root under `current-branch`\)/),
@@ -305,7 +319,8 @@ const STASH_GUARD_FACTS = [
   paragraphFact('AC12.3 restore logged and in the handoff', /reviewer's restore is logged like any other and listed in the handoff/),
   branchFact('AC13.1 no stop (reviewer-restore branch)', /no stop/),
   paragraphFact('AC13.2 dirty paths named', /with the dirty paths named/),
-  paragraphFact('AC13.2 dirty-tree log line', /Stash guard: \{role\} for task \{k\} \{left the tree dirty after restore/),
+  paragraphFact('AC13.2 dirty-tree log line names the dispatch like the CLI ({role} dispatch for task {k})', /Stash guard: \{role\} dispatch for task \{k\} \{left the tree dirty after restore/),
+  paragraphFact("M4 a whole-branch reviewer's note is {role} dispatch", /\(a whole-branch reviewer's is `\{role\} dispatch`\)/),
   paragraphFact('AC13.2 --step "Stash guard" --text-file', /--step "Stash guard" --text-file/),
   paragraphFact('AC13.3 verdict stands', /verdict stands/),
   paragraphFact('AC13.4 at most one retry per review', /at most one retry per review/),
@@ -318,6 +333,8 @@ const STASH_GUARD_FORBIDDEN = [
   ['AC13.1 report the task BLOCKED', /report the task `BLOCKED`/, ' a stash change on a reviewer dispatch means report the task `BLOCKED` naming the stash change;'],
   ['exit-2 SKIP in the pre-ruling shape', /SKIP \{time\} — Stash guard:/, ' log `SKIP {time} — Stash guard: {id} compare exited 2 → fallback: stash change undetected for this dispatch. Reversibility: n/a.`'],
   ['elided --reversibility placeholder', /--reversibility "n\/a \(…\)"/, ' --reversibility "n/a (…)"'],
+  ['FAILED line described with the unescaped command shape', /carrying its paste-ready `git stash store -m "<subject>" <sha>`/, ' a failed restore is logged as a `FAILED` line carrying its paste-ready `git stash store -m "<subject>" <sha>` command'],
+  ['dirty note names the dispatch without "dispatch"', /Stash guard: \{role\} for task \{k\}/, ' log `AUTO {time} — Stash guard: {role} for task {k} {left the tree dirty after restore}'],
   ['dirty note text taken from after the step prefix', /write the text after `Stash guard: `/, ' write the text after `Stash guard: ` with the Write tool'],
 ];
 
@@ -354,8 +371,16 @@ const HANDOFF_FACTS = [
   ['failed-restore slot carries {command}', /restore failed; recover with:\n  \{command\}/],
   ['{command} is restoreFailed[].command verbatim', /`\{command\}` is `restoreFailed\[\]\.command` verbatim/],
   ['added-entry slot', /- \{sha\} \{subject\} — left on the stack/],
+  ['I1 restored-entry slot', /- \{sha\} \{subject\} — removed by \{who\}; restored via git stash store/],
+  ['I1 restored-entry slot is rendered only for a standalone /build or when logged is false', /rendered only for a standalone `\/build` or when `logged` is false/],
+  ['I1 {who} is the CLI form', /`\{who\}` is the CLI's own form \(`implementer for task \{k\}`, `\{role\} dispatch for task \{k\}` or `\{role\} dispatch`\)/],
+  ['reviewer line names the dispatch like the CLI', /- \{role\} dispatch for task \{k\}:/],
+  ["T5b a whole-branch reviewer's line drops for task {k}", /A whole-branch reviewer's line drops `for task \{k\}`/],
   ['reviewer-restore slot fits restored and added entries', /\{change\}, review dispatched again/],
   ['{change} is each restored or added entry', /`\{change\}` is each `\{sha\} \{subject\}` restored or added/],
+  ["T5a a reviewer's entries render in its own line only", /a reviewer dispatch's restored and added entries render in its own line only/],
+  ['M1 a subject with ! needs history expansion off', /a subject containing `!` must be pasted with history expansion off \(`set \+H` in bash, `setopt nobanghist` in zsh\) or run non-interactively/],
+  ['omit rule counts a logged restore as nothing to render', /or every one that changed the stack was a restore whose line landed in decisions\.md/],
 ];
 
 // A restore command rebuilt from the raw subject breaks on `\ " $` and backtick, which the CLI escapes.
@@ -427,7 +452,7 @@ test("AC12.3/AC13.2/AC13.3: handoff-template.md's Stash guard section has a slot
   const section = handoffStashGuardSection(HANDOFF_TEMPLATE);
   assert.deepStrictEqual(missingHandoffFacts(section), []);
   for (const [label, pattern] of HANDOFF_FACTS) {
-    const doctored = section.replace(pattern, () => '');
+    const doctored = section.replaceAll(globalOf(pattern), () => '');
     assert.notStrictEqual(doctored, section, `${label}: the strip matched nothing`);
     assert.deepStrictEqual(missingHandoffFacts(doctored), [label], `${label}: stripping it must report exactly it`);
   }
