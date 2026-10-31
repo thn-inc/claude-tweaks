@@ -3,7 +3,9 @@
 // stale-claim in-flight check bin/claim-targets.js runs through claim-store.js's `staleClaimInFlightPr`
 // — a TTL-expired claim whose run's marker sits on an open same-repo PR is in flight, not abandoned.
 // Since #4596 step 4 calls bin/stale-claim-pr.js for that verdict instead of restating the marker-match
-// rule, so the rule lives once, in code (tests/stale-claim-pr-cli.test.js pins it).
+// rule, so the rule lives once, in code (tests/stale-claim-pr-cli.test.js pins it). Likewise
+// claim-targets.md's resume route reads the PR body's `### Resume` line through bin/pr-resume-line.js
+// since #4659, so that file no longer restates the line's shape.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -15,6 +17,7 @@ const { RUN_ID_SHAPE } = require('../plugin/bin/lib/issues/claim-store');
 
 const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const ISSUE_CLAIMS = readText(path.join(SKILLS, '_shared', 'issue-claims.md'));
+const CLAIM_TARGETS = path.join(SKILLS, 'flow', 'claim-targets.md');
 
 function lockStep4() {
   const start = ISSUE_CLAIMS.indexOf("  4. **`state: 'tombstone'` or `'stale'`**");
@@ -79,4 +82,36 @@ test('the run-id shape is restated only in flow/claim-targets.md (#4423, #4596)'
     .map((f) => path.relative(SKILLS, f).split(path.sep).join('/'));
   assert.deepEqual(copies, ['flow/claim-targets.md'],
     'only flow/claim-targets.md states RUN_ID_SHAPE; every other skill file must call bin/stale-claim-pr.js');
+});
+
+function inFlightSection() {
+  const text = readText(CLAIM_TARGETS);
+  const start = text.indexOf('## Flow: Claim in-flight');
+  assert.notEqual(start, -1, 'claim-targets.md must carry the in-flight card');
+  const end = text.indexOf('\n- **4** —', start);
+  assert.notEqual(end, -1, 'the in-flight section must end before the exit-4 bullet');
+  return text.slice(start, end);
+}
+
+test('AC1.1, AC1.2: claim-targets.md no longer spells out the Resume line shape; it names the CLI (#4659)', () => {
+  const text = readText(CLAIM_TARGETS).replace(/\s+/g, ' ');
+  assert.ok(!text.includes('/claude-tweaks:flow "{target}" {next-step}'), 'the composed Resume-line template must be gone');
+  const section = inFlightSection().replace(/\s+/g, ' ');
+  assert.ok(!section.includes('PIPELINE_RUN_DIR="{run-dir}"'), 'the in-flight route must not restate the Resume line');
+  assert.ok(section.includes('### Resume'), 'it still names the section it reads');
+  assert.ok(section.includes('bin/pr-resume-line.js'), 'it names the CLI that parses it');
+});
+
+test('AC2.1: only a resume verdict routes into resume-confirmation.md; resolve or failure is the terminal card (#4659)', () => {
+  const section = inFlightSection().replace(/\s+/g, ' ');
+  assert.match(section, /pr-resume-line\.js" --body-file "\{body-file\}" --run-id "\{run-id\}"/);
+  // two clauses end in the terminal card (the DISPATCH_HEADLESS skip and the verdict list); the verdict one is ours
+  const terminal = section.split(/\. |; /)
+    .filter((s) => s.includes('card above is the terminal output') && s.includes('`resolve`'));
+  assert.equal(terminal.length, 1, 'exactly one terminal-card clause names the resolve verdict');
+  assert.ok(terminal[0].includes('`failure`'), 'that clause also lists the CLI failure');
+  assert.match(section, /`resume` verdict's own `target`/);
+  // positive-only routing: every outcome the prose does not name (failed gh, non-zero exit, non-JSON stdout) keeps the card
+  assert.match(section, /Route onward only on a `resume` verdict: follow `dispatch\/resume-confirmation\.md`/);
+  assert.ok(!section.includes('Otherwise: follow'), 'routing must not be the complement of a stop list');
 });

@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const {
-  CLOSE_HEADING, composeCloseComment, closeBelowFloorParents,
+  CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
 } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
 const GATE_PROSE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'verification-brief-parent-gate.md');
@@ -432,4 +432,15 @@ test('a whitespace-only or missing title renders as no title', () => {
     const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
     assert.equal(lines[0], '- #11 — closed by PR #77', JSON.stringify(title));
   }
+});
+
+test('isCloseMarkerComment: heading line from a trusted author or the current login only', () => {
+  const body = '## Closed below the oversight floor\n\nEvery sub-issue …';
+  const by = (login, authorAssociation) => ({ body, authorAssociation, author: { login } });
+  assert.equal(isCloseMarkerComment(by('x', 'MEMBER'), ''), true, 'trusted author');
+  assert.equal(isCloseMarkerComment(by('bot-self', 'NONE'), 'bot-self'), true, 'own login');
+  assert.equal(isCloseMarkerComment(by('', 'NONE'), ''), false, 'empty login never matches an empty author login');
+  assert.equal(isCloseMarkerComment(by('stranger', 'NONE'), 'bot-self'), false, 'untrusted other login');
+  assert.equal(isCloseMarkerComment({ body: 'see ## Closed below the oversight floor', authorAssociation: 'MEMBER' }, ''), false, 'mid-line heading');
+  assert.equal(isCloseMarkerComment(null, 'bot-self'), false, 'null comment');
 });

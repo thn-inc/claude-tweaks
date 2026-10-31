@@ -56,6 +56,13 @@ const VALID_RISK_FLOORS = POLICY_KEYS.find((k) => k.key === 'risk-floor').values
 const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
 const PARENT_LINE_RE = /^Parent: #(\d+)/m;
 
+// Whether a comment is #4466's close marker: the heading on a line of its own, from a trusted
+// author or the current `gh` login. The GitHub parent-gate scan (#4600) asks the same question.
+function isCloseMarkerComment(comment, login) {
+  if (!comment || !HEADING_LINE_RE.test(String(comment.body || ''))) return false;
+  return isTrustedComment(comment) || Boolean(login && comment.author && comment.author.login === login);
+}
+
 // Thrown for a failing or unreadable gh call, so a parent skipped as
 // `gh-failed` is distinguishable from a bug in this file.
 class GhFailure extends Error {}
@@ -195,8 +202,7 @@ function closeBelowFloorParents({
         const notes = [];
         for (const comment of Array.isArray(live.comments) ? live.comments : []) {
           if (!comment || !HEADING_LINE_RE.test(String(comment.body || ''))) continue;
-          const author = comment.author && comment.author.login;
-          if (isTrustedComment(comment) || (login && author === login)) alreadyCommented = true;
+          if (isCloseMarkerComment(comment, login)) alreadyCommented = true;
           else notes.push(untrustedSkipNote(comment));
         }
 
@@ -222,4 +228,4 @@ function closeBelowFloorParents({
   return { closed, skipped };
 }
 
-module.exports = { CLOSE_HEADING, composeCloseComment, closeBelowFloorParents };
+module.exports = { CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment };
