@@ -230,14 +230,13 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
   assert.ok(s40 !== -1 && s40b > s40 && s41 > s40b, `Step 4.0 (${s40}) < Step 4.0b (${s40b}) < Step 4.1 (${s41})`);
   const body = section(pm, STEP_40B, '### Step 4.1');
   for (const lit of [
-    'closingIssuesReferences',
+    '`closingSet[]`',
     'git log -1 --format=%B',
     '**Close the parent below the floor**',
     '`merged`',
     'work-backend: github-issues',
     '$CLOSING_SUB_ISSUES',
     '$MERGING_PR',
-    'gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences',
   ]) {
     assert.ok(body.includes(lit), `Step 4.0b names ${lit}`);
   }
@@ -313,13 +312,21 @@ test('AC2.1: Step 4.0b acts only on a below-floor due gate, once per parent, and
 test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'s lists, needs parent-issue, and logs through log-decision.js', () => {
   const raw = section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
   const body = collapse(raw);
-  assert.ok(
-    raw.includes(
-      `--jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'`,
-    ),
-    'the closing-records read keeps same-repo references only',
-  );
-  assert.ok(!raw.includes("--jq '[.closingIssuesReferences[].number]'"), 'the unfiltered number read is gone');
+  // The pre-change read (#4466) that #4597 replaced with Step 4.0's closingSet[].
+  const PRE_CHANGE_STEP_40B_READ = `  Otherwise, after a PR merge, read the PR's same-repo closing records. Like \`sameRepoNumbers\`
+  (\`bin/lib/flow/closing-links.js\`), the filter drops a reference to another repository, whose
+  \`Fixes other/repo#N\` would otherwise read as this repo's #N:
+
+  \`\`\`bash
+  gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'
+  \`\`\`
+`;
+  const CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)";
+  assert.ok(!raw.includes('closingIssuesReferences'), 'AC1.1: Step 4.0b no longer reads closingIssuesReferences itself');
+  assert.ok(PRE_CHANGE_STEP_40B_READ.includes('closingIssuesReferences'), 'AC1.1 go-red: the pre-change read carries the literal');
+  assert.ok(body.includes(CLOSING_SET_READ), 'Step 4.0b reads closingSet[] from Step 4.0');
+  assert.ok(!collapse(PRE_CHANGE_STEP_40B_READ).includes(CLOSING_SET_READ), 'go-red: the pre-change read never names closingSet[]');
+  assert.ok(body.includes('When `closingSet[]` is absent'), 'Step 4.0b skips when the field is absent');
   assert.ok(
     body.includes('which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)'),
     'only an exit-0 post-merge action carries the lists',

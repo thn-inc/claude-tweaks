@@ -40,7 +40,7 @@ files:
 
 ### 2. The merge lands and Step 4.0b closes the parent with a listing comment
 - **URL:** `_shared/pr-first-merge-post-merge.md`, `### Step 4.0b`, then the gate file's `## Close the parent below the floor`
-- **Action:** Step 4.0b reads the merge's closing records: the PR's `closingIssuesReferences`, or the merge commit's `Fixes #N` lines when there was no PR. It re-runs the gate, then posts the comment and closes the parent with `--reason completed` (`"not planned"` when no sub-issue closed as completed).
+- **Action:** Step 4.0b reads the merge's closing records: Step 4.0's `closing-links.js --mode post-merge` `closingSet`, or the merge commit's `Fixes #N` lines when there was no PR. It re-runs the gate, then posts the comment and closes the parent with `--reason completed` (`"not planned"` when no sub-issue closed as completed).
 - **Should feel:** finished. The parent reads like a changelog entry, with one line per sub-issue and its PR.
 - **Should understand:**
   - The comment never cites a merge SHA, only PR numbers.

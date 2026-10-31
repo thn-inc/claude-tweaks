@@ -41,7 +41,7 @@ session sees land (an `armed` PR that GitHub merges later) never reaches it eith
 It is also a no-op unless the branch the merge landed on — the integration branch
 (`_shared/integration-branch.md`) — is the repo's default branch
 (`gh repo view --json defaultBranchRef -q .defaultBranchRef.name`). GitHub closes `Fixes #N`
-records and `closingIssuesReferences` only on the default branch, so a merge into any other branch
+records and a PR's other closing links only on the default branch, so a merge into any other branch
 leaves its sub-issues open: counting them `CLOSED` would close the parent early. Left open, they
 keep both this close and the backstop from firing early.
 
@@ -56,24 +56,21 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   state, never as `CLOSED` by this set. A `failed[]` or `pendingClose[]` record's live state may
   still read `CLOSED` — a failed reopen, an unknown state after a failed read, or a close that
   lands after Step 4.0's poll — so skip any parent whose enumerated sub-issues include one, and
-  name that parent in the closing summary: it waits on the hand reopen. After a PR merge, the
-  subtraction needs those lists, which only an exit-0 `post-merge` action carries
-  (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`). On any other Step 4.0 result
-  — a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`, or no parseable output —
-  skip this step entirely, never subtracting nothing, and log it (after exit 3, name it in the
-  closing summary instead); tidy's `parent-gate` backstop recovers those parents:
+  name that parent in the closing summary: it waits on the hand reopen. After a PR merge, the set
+  is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action
+  carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`): the PR's same-repo
+  closing records (`sameRepoNumbers`, `bin/lib/flow/closing-links.js`, which drops a
+  `Fixes other/repo#N` that would otherwise read as this repo's #N) minus those three lists, already
+  subtracted. When `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`,
+  `no-pr`, `gh-absent`, or no parseable output — skip this step entirely, never subtracting nothing,
+  and log it (after exit 3, name it in the closing summary instead); tidy's `parent-gate` backstop
+  recovers those parents:
 
   ```bash
-  node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --step "pr-first-merge Step 4.0b (skipped)" --reversibility n/a --text "condition: Step 4.0 returned {result}, not its result lists → fallback: no parent closed; the tidy parent-gate backstop recovers them"
+  node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --step "pr-first-merge Step 4.0b (skipped)" --reversibility n/a --text "condition: Step 4.0 returned {result}, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them"
   ```
 
-  Otherwise, after a PR merge, read the PR's same-repo closing records. Like `sameRepoNumbers`
-  (`bin/lib/flow/closing-links.js`), the filter drops a reference to another repository, whose
-  `Fixes other/repo#N` would otherwise read as this repo's #N:
-
-  ```bash
-  gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'
-  ```
+  Otherwise, after a PR merge, use `closingSet[]` as printed; never re-read the PR's links here.
 
   After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
   taking the union across every merge commit when a call site pushes several:
