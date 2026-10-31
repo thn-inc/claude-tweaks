@@ -9,7 +9,7 @@
 // Step 3 passes the pre-merge `keepOpen` on to compose-subject.js --keep-open.
 //
 //   node bin/closing-links.js --run <run-dir> --mode <pre-merge|post-merge>
-//     [--settle-ms <n>] [--help]
+//     [--settle-ms <n>] [--close-window-ms <n>] [--help]
 //
 // pre-merge: reads the PR, takes the same-repo closingIssuesReferences minus
 // the body's `Fixes #N` span (the unwanted links), inserts `issue ` into every
@@ -28,8 +28,13 @@
 // merge), and reopens it when it closed at or after mergedAt. An unread merge
 // message (or a merge-commit oid that is not a hex sha) makes every candidate
 // will-close. Logs `reopened` (AUTO), `could not read`, `could not reopen` and `still open`
-// (SKIP, degraded). Prints {action, pr, candidates, willClose, reopened,
+// (SKIP, degraded). With --close-window-ms <n> (post-merge only; a late run,
+// e.g. the reconciler's, passes it so a human close hours after the merge is not
+// undone), a record closed later than mergedAt + n is not reopened: it is listed
+// in closedAfterWindow and stays in closingSet (it is closed), with no decisions
+// line. Prints {action, pr, candidates, willClose, reopened,
 // failed, stillOpen, pendingClose, closedBefore, closingSet} (plus
+// closedAfterWindow: [...] when --close-window-ms was given, and
 // messageUnread: true when the merge message could not be read; closingSet is
 // the same-repo closing records minus reopened, failed and pendingClose --
 // Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
@@ -68,9 +73,10 @@ const { readRunStateWithParent } = require('./lib/hooks/context');
 const { ghAvailable } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
+const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--close-window-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
   + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
+  + '    --close-window-ms: post-merge only; a record closed later than mergedAt + n is a human close, not reopened and listed in closedAfterWindow (default: no bound)\n'
   + '  prints one JSON line; action:\n'
   + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
   + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
@@ -82,13 +88,15 @@ const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-me
   + '  gh-absent, 4 and 5 append their own SKIP line to decisions.md (## /wrap-up)\n';
 
 const MODES = ['pre-merge', 'post-merge'];
-const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
+const VALUE_FLAGS = {
+  '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs', '--close-window-ms': 'closeWindowMs',
+};
 const DEFAULT_SETTLE_MS = 15000;
 const MAX_SETTLE_MS = 60000;
 const POLL_STEP_MS = 3000;
 
 function parseArgs(argv) {
-  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, help: false };
+  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, closeWindowMs: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
@@ -100,11 +108,15 @@ function parseArgs(argv) {
       if (!/^\d+$/.test(v)) return { error: `--settle-ms takes a non-negative integer: ${v}` };
       o.settleMs = Number(v);
       if (o.settleMs > MAX_SETTLE_MS) return { error: `--settle-ms is capped at ${MAX_SETTLE_MS}: ${v}` };
+    } else if (a === '--close-window-ms') {
+      if (!/^\d+$/.test(v)) return { error: `--close-window-ms takes a non-negative integer: ${v}` };
+      o.closeWindowMs = Number(v);
     } else {
       o[VALUE_FLAGS[a]] = v;
     }
   }
   if (o.mode !== null && !MODES.includes(o.mode)) return { error: `--mode must be one of ${MODES.join(', ')}: ${o.mode}` };
+  if (o.mode === 'pre-merge' && o.closeWindowMs !== null) return { error: '--close-window-ms applies to --mode post-merge only' };
   return o;
 }
 
@@ -327,7 +339,7 @@ function run(argv, overrides = {}) {
   // after the merge.
   const maxRereads = Math.floor(o.settleMs / POLL_STEP_MS);
   const mergedAt = Date.parse(pr.mergedAt);
-  const reopened = []; const failed = []; const stillOpen = []; const closedBefore = [];
+  const reopened = []; const failed = []; const stillOpen = []; const closedBefore = []; const closedAfterWindow = [];
   for (const issue of candidates) {
     let state;
     try {
@@ -348,6 +360,9 @@ function run(argv, overrides = {}) {
     if (state.state === 'OPEN') { stillOpen.push(issue); continue; }
     // closedAt unparseable compares false: an undatable close is never reopened.
     if (!(Date.parse(state.closedAt) >= mergedAt)) { closedBefore.push(issue); continue; }
+    // --close-window-ms: a close later than the window is a human's, not the merge's;
+    // it stays closed (and in closingSet) and is reported, never reopened.
+    if (o.closeWindowMs !== null && Date.parse(state.closedAt) > mergedAt + o.closeWindowMs) { closedAfterWindow.push(issue); continue; }
     try {
       deps.gh(['issue', 'reopen', String(issue), '--comment',
         `Reopened by claude-tweaks: this record was closed after PR #${n} merged, but the run left it open (not in the PR's Fixes block).`]);
@@ -383,6 +398,7 @@ function run(argv, overrides = {}) {
 
   return done({
     action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore, closingSet,
+    ...(o.closeWindowMs !== null ? { closedAfterWindow } : {}),
     ...(messageUnread ? { messageUnread: true } : {}),
   });
 }
