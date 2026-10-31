@@ -12,8 +12,10 @@
 //
 // `run-dir-resolution.md`'s Bash snippet stays as the reference implementation
 // this module mirrors — except that step 2 here also refuses an unadoptable
-// match (`adoptionRefusal`, #1962/#4151), which the snippet does not. Every
-// call site should cite this command instead of restating that snippet.
+// match (`adoptionRefusal`, #1962/#4151), and that the opt-in `--archived`
+// fallback (`closedPrMatch`, #4677; documented in `_shared/pipeline-run-dir.md`)
+// runs after step 2, neither of which the snippet does. Every call site should
+// cite this command instead of restating that snippet.
 //
 // Deliberately loud where the shared resolution algorithm (as consumed by a
 // skill adopting $PIPELINE_RUN_DIR) is deliberately quiet: that algorithm
@@ -120,6 +122,18 @@ function hasSegment(name, slug) {
   return new RegExp(`(^|-)${escapeRegExp(slug)}(?=-|$)`).test(name);
 }
 
+// The canonical run-id directory names directly under `root` that carry `specSlug` as a whole
+// segment, sorted ascending (so the newest is last); `[]` when `root` cannot be listed. The one
+// filter both `newestMatch` and `closedPrMatch` below walk, so their candidate lists cannot drift.
+function matchingRunNames(root, specSlug) {
+  try {
+    return fs.readdirSync(root, { withFileTypes: true })
+      .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
+      .map((e) => e.name)
+      .sort();
+  } catch { return []; }
+}
+
 // Step 2 (`_shared/run-dir-resolution.md`'s resolution order): the most recent
 // directory under `{pipelinesRoot}` whose name contains `specSlug` as a whole
 // segment (`hasSegment` above, #3865), matching the reference snippet's
@@ -130,12 +144,7 @@ function hasSegment(name, slug) {
 // (`RUN_ID_RE` above) is never a candidate at all, as in the snippet: a plain
 // `sort` lets `20260911T…` outrank every `2026-MM-DDT…` name forever (#2870).
 function newestMatch(pipelinesRoot, specSlug) {
-  let entries;
-  try { entries = fs.readdirSync(pipelinesRoot, { withFileTypes: true }); } catch { return null; }
-  const names = entries
-    .filter((e) => e.isDirectory() && RUN_ID_RE.test(e.name) && hasSegment(e.name, specSlug))
-    .map((e) => e.name)
-    .sort();
+  const names = matchingRunNames(pipelinesRoot, specSlug);
   for (let i = names.length - 1; i >= 0; i -= 1) {
     const dir = path.join(pipelinesRoot, names[i]);
     if (adoptionRefusal(dir) === null) return dir;
@@ -143,7 +152,54 @@ function newestMatch(pipelinesRoot, specSlug) {
   return null;
 }
 
-// opts: { cwd, env, specSlug, mode, standalone, create, rootOnly, now }
+// #4677: `--archived`'s read-only fallback, for wrap-up/merge-mode.md. wrap-up closes and archives a
+// pr-first leave-open run before the human types `merge`, so the merge step needs a run that records
+// its `pr` but that step 2 can no longer adopt (archived, or `clean`). Candidates: every canonical
+// run-id dir for `specSlug` under archive/, plus every such dir directly under pipelines/ whose status
+// is exactly `clean` and not archived (#208). Walked newest-first; an archived dir wins a name tie,
+// which the #208 filter leaves reachable only when `archiveStatus` reads `unknown`. The first whose
+// run-state.json is a plain object recording a `pr` object is `{ dir }`. A read error on either
+// listing contributes no candidates. Read-only: nothing is created, renamed or written.
+// A newer live run of the same slug that is not closed (`interrupted`, or an `active` run step 2
+// refused) supersedes that match: `{ superseded }` names it and the caller stops. The older run's
+// leave-open PR is still `OPEN` by construction, so merge mode's `OPEN` precondition cannot refuse it,
+// and merging it would skip the newer run (#4677 review). A newer live dir whose run-state.json does
+// not parse is no evidence of a competing run and supersedes nothing.
+function closedPrMatch(pipelinesRoot, specSlug) {
+  const isPlainObject = (value) => Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+  const readState = (dir) => {
+    try {
+      const state = JSON.parse(fs.readFileSync(path.join(dir, 'run-state.json'), 'utf8'));
+      return isPlainObject(state) ? state : null;
+    } catch { return null; }
+  };
+  const archiveRoot = path.join(pipelinesRoot, 'archive');
+  const candidates = matchingRunNames(archiveRoot, specSlug).map((name) => {
+    const dir = path.join(archiveRoot, name);
+    return { name, dir, archived: true, state: readState(dir) };
+  });
+  let newestOpen = null; // names ascend, so the last open live run seen is the newest
+  for (const name of matchingRunNames(pipelinesRoot, specSlug)) {
+    const dir = path.join(pipelinesRoot, name);
+    const state = readState(dir);
+    if (!state || archiveStatus(pipelinesRoot, name) === 'archived') continue;
+    if (state.status === 'clean') candidates.push({ name, dir, archived: false, state });
+    else newestOpen = { name, status: state.status };
+  }
+  candidates.sort((a, b) => {
+    if (a.name !== b.name) return a.name < b.name ? -1 : 1;
+    return Number(a.archived) - Number(b.archived);
+  });
+  for (let i = candidates.length - 1; i >= 0; i -= 1) {
+    const { name, dir, state } = candidates[i];
+    if (!state || !isPlainObject(state.pr)) continue;
+    if (newestOpen && newestOpen.name > name) return { superseded: newestOpen };
+    return { dir };
+  }
+  return null;
+}
+
+// opts: { cwd, env, specSlug, mode, standalone, create, rootOnly, archived, now }
 function resolve(opts = {}) {
   const cwd = opts.cwd || process.cwd();
   const env = opts.env || {};
@@ -163,6 +219,19 @@ function resolve(opts = {}) {
   // backstop scoped to the whole pipelines/ tree, the wrap-up transitional
   // copy-out guard's DEST computation), not a specific run's directory.
   if (opts.rootOnly) return ok(mainRoot, false);
+
+  // #4677: `--archived` is read-only — it returns an existing run dir or fails, never mints one —
+  // and it needs a slug to name the run it looks up. Both refusals come before step 1 so a valid
+  // PIPELINE_RUN_DIR cannot mask them.
+  if (opts.archived && opts.create) {
+    return fail(
+      'archived-create',
+      '--archived is read-only and refuses --create — it returns an existing run dir or fails, never mints one.',
+    );
+  }
+  if (opts.archived && !opts.specSlug) {
+    return fail('archived-unnamed', '--archived needs --spec-slug to name the run it looks up.');
+  }
 
   const pipelinesRoot = path.join(mainRoot, '.claude-tweaks', 'pipelines');
 
@@ -225,6 +294,20 @@ function resolve(opts = {}) {
     // #208: same invariant as Step 1 — never reuse a live directory whose run-id already has
     // an archived counterpart (a resurrected copy). Fall through to create/fail below instead.
     if (match && archiveStatus(pipelinesRoot, path.basename(match)) !== 'archived') return ok(match, false);
+  }
+
+  // #4677: `--archived` only, and after step 2 so an adoptable live match always wins. Read-only —
+  // see closedPrMatch.
+  if (opts.archived) {
+    const closed = closedPrMatch(pipelinesRoot, opts.specSlug);
+    if (closed && closed.superseded) {
+      return fail(
+        'archived-superseded',
+        `--archived: ${closed.superseded.name}, a newer run for "${opts.specSlug}", is not closed ` +
+        `(status ${String(closed.superseded.status)}) — resume or close it instead of merging an older run's PR.`,
+      );
+    }
+    if (closed) return ok(closed.dir, false);
   }
 
   // Standalone-fallback-shaped creation. Never runs unless --create was
