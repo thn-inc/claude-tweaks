@@ -34,6 +34,7 @@
 Waived AC8.1: proven by Task 3 Step 5's behavior-change prose sweep (a grep with its go-red probe against the old line 13), not a committed test — the hook tests pin the behavior, and a test pinning the absence of one phrase in `docs/hooks.md` would be a byte pin on prose.
 Waived AC10.1: `npm test` is `/build`'s Common Step 5 full run and `/claude-tweaks:test`'s gate, not a plan task.
 Waived AC11.3: names which plan-review reading was chosen; AC11.1 and AC11.2 carry its behavior.
+Waived AC12.4: names which plan-review reading was chosen; AC12.1–AC12.3 carry its behavior.
 Waived plugin/skills/_shared/subagent-dispatch-core.md: read-only reference — the copies cite its "in any form" rule and the new wording needs no new citation anchor there (spec Key Files: "edit only if the copies' new wording needs a citation anchor").
 
 ## Review Focus
@@ -254,7 +255,9 @@ Expected: PASS
   - `AC11.1`: matches each dispatch kind the Decision names — `/per-task implementer dispatch/`, `/fix round/`, `/NEEDS_CONTEXT\/BLOCKED re-dispatch/`, `/fix-wave/`, `/whole-branch-fix/`, `/task reviewer/`, `/scoped re-review/`, `/final code reviewer/`;
   - `AC11.2`: matches `/--task \{k\} --label/`, `/--label fix-wave/` and `/stash-guard-\{id\}\.json/`;
   - `AC6.2`: matches `/AUTO \{time\} — Stash guard: \{who\} removed stash entr/`, `/FAILED/`, `/handoff/`, `/DONE_WITH_CONCERNS/`, `/never popped/`;
-  - `AC12.1`: matches `/verdict is void/`, `/git status --porcelain/` and `/dispatch(es)? the (same )?review again/`, and the reviewer-restore sentence names the handoff (`/reviewer.{0,400}handoff/s`);
+  - `AC12.1`: matches `/verdict is void/`;
+  - `AC12.2`: matches `/git status --porcelain/` and `/dispatch(es)? the (same )?review again/`;
+  - `AC12.3`: the reviewer-restore sentence names the log and the handoff (`/reviewer's restore is logged like any other and listed in the handoff/`), and `handoff-template.md`'s Stash guard section matches `/verdict voided/`;
   - `AC6.3`: go-red controls — the paragraph with the `snapshot` command deleted, separately with `whole-branch-fix` deleted, and separately with the `verdict is void` sentence deleted, each make `assertStashGuardInstruction` throw.
   - The paragraph sits in the same paragraph as the forbid sentence (same line of `build/dispatch.md`).
 
