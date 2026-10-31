@@ -60,7 +60,7 @@ files:
 
 ### 3. A parent the post-merge step could not close shows up in tidy
 - **URL:** `/claude-tweaks:tidy` Step 4.8, `github-pr-scan-acceptance.md`'s `parent-gate` scope (Shape 7 under `local-files`)
-- **Action:** the maintainer runs `/claude-tweaks:tidy`. An armed auto-merge that GitHub completed later is closed by the next reconcile pass (the `post-merge` check, `docs/reconcile-checks.md`'s Post-merge closes), so it normally never reaches tidy. A parent the reconciler could not close stays open: a `gh` failure, a Step 4.0 result with no closing set, or a `gh`-absent environment. It appears as `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`.
+- **Action:** the maintainer runs `/claude-tweaks:tidy`. An armed auto-merge that GitHub completed later is closed by the first reconcile pass at least 10 minutes after the merge (the `post-merge` check, `docs/reconcile-checks.md`'s Post-merge closes), so it normally never reaches tidy. A parent the reconciler could not close stays open: a `gh` failure, a Step 4.0 result with no closing set, or a `gh`-absent environment. It appears as `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`.
 - **Should feel:** a one-click cleanup, not an investigation.
 - **Should understand:**
   - The row is staged at every `tidy-aggressiveness` tier. Approving it runs the same **Close the parent below the floor** section, with the same comment and idempotence checks.

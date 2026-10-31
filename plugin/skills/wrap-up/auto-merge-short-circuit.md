@@ -123,7 +123,8 @@ Parent-Gate Procedure (the parent gets the one gate; this sub-issue gets none), 
 everything else goes through its Steps 1-4 — bootstrap, observation-plan authoring, the Step 2.5
 safety-net gate, sourcing, posting, then `demo:pending`. Do not apply `demo:pending` to this record
 independently of that routing: an `auto:merge`'d sub-issue is exactly the population
-`_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope exists to catch.
+whose below-floor parent the reconciler's `post-merge` check closes first, with
+`_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.
 
 Order is load-bearing: the merge below carries the `Fixes #{issue}` closing keyword, so once it
 lands the record is closed. Labeling before the merge is what keeps the record's acceptance state

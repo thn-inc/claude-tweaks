@@ -372,10 +372,15 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
   const body = collapse(section(pm, '### Step 4.0:', STEP_40B));
   assert.ok(
     body.includes(
-      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check runs the CLI for that run once GitHub merges the PR, with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
+      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
     ),
-    'Step 4.0 names the reconciler\'s post-merge check, no settle poll, and the 10-minute reopen bound',
+    'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
+  // The no-settle-poll claim is the argv the module actually passes, read from its source.
+  const source = fs.readFileSync(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'), 'utf8');
+  assert.match(source, /'--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String\(CLOSE_WINDOW_MS\)/, 'post-merge.js passes --settle-ms 0 and the close window');
+  const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
   assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
   assert.ok(body.includes('only a Development-sidebar link can still close a kept-open record there'), 'the --keep-open clause is kept');
   // The numbers the prose states are the module's.
@@ -387,10 +392,11 @@ test('#4599: the Step 4.2 reconcile call states that post-merge rides along as a
   const pm = collapse(read(POST_MERGE_REL));
   assert.ok(
     pm.includes(
-      '`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds; Step 4.0b\'s summary line marks this run, so `post-merge` skips it —',
+      '`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full unscoped default',
     ),
-    'the --checks sentence names the post-merge expansion',
+    'the --checks sentence names the post-merge expansion and both marker cases',
   );
+  assert.ok(!pm.includes('so `post-merge` skips it —'), 'the unconditional "marks this run, so post-merge skips it" run-on is gone');
   assert.ok(!pm.includes('scopes the sweep to exactly what this step needs'), 'the "exactly what this step needs" claim is gone');
 });
 
@@ -402,9 +408,15 @@ test('#4599: Step 4.0b writes an always-on summary line, after the per-parent li
   assert.ok(line.startsWith(SUMMARY_LINE_START), `the summary command is byte-exact: ${line}`);
   const parentLine = raw.indexOf('--reversibility "high (gh issue reopen)"');
   assert.ok(parentLine !== -1 && raw.indexOf(line) > parentLine, 'the summary line follows the per-parent line');
+  const prose = collapse(raw);
   assert.ok(
-    collapse(raw).includes('Under `local-files`, or after exit 3, there is no summary line'),
-    'the no-line cases are stated',
+    prose.includes('Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]` (the non-default-branch no-op included), or after a no-PR local merge, where `the pushed merge commit` replaces `PR #{pr-number}` in the text:'),
+    'the summary line is written only when the closing set was evaluated',
+  );
+  assert.ok(!prose.includes('whatever happened above'), 'the unconditional "whatever happened above" is gone');
+  assert.ok(
+    prose.includes('On the no-`closingSet[]` path above, the `(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and "0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.'),
+    'the no-closingSet path keeps the SKIP line as its only marker; the no-line cases are stated',
   );
   assert.ok(
     collapse(raw).includes('reconciler\'s `post-merge` check reads this line as the marker that the step already ran'),
@@ -431,6 +443,23 @@ test('#4599: the Parent-Gate Procedure says the reconciler closes a merge no ses
     'the sub-issue-side bullet names the reconciler check',
   );
   assert.ok(!below.includes('backstop catches a merge no session saw land'), 'the "backstop catches the unseen merge" claim is gone');
+});
+
+test('#4599: the auto-merge short-circuit and the journey name the reconciler before tidy', () => {
+  const shortCircuit = collapse(read('wrap-up/auto-merge-short-circuit.md'));
+  assert.ok(
+    shortCircuit.includes(
+      "an `auto:merge`'d sub-issue is exactly the population whose below-floor parent the reconciler's `post-merge` check closes first, with `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.",
+    ),
+    'the short-circuit names the reconciler check, with tidy\'s backstop as the last resort',
+  );
+  assert.ok(!shortCircuit.includes("backstop scope exists to catch"), 'the "backstop exists to catch" framing is gone');
+  const journey = collapse(fs.readFileSync(path.join(ROOT, 'docs', 'journeys', 'close-a-below-floor-decomposition-parent-4466.md'), 'utf8'));
+  assert.ok(
+    journey.includes('is closed by the first reconcile pass at least 10 minutes after the merge (the `post-merge` check'),
+    'the journey states when the reconciler closes an armed merge\'s parent',
+  );
+  assert.ok(!journey.includes('closed by the next reconcile pass'), 'the loose "next reconcile pass" is gone');
 });
 
 test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {

@@ -26,7 +26,7 @@ will-close record up to 15 s, since GitHub closes it about 2 s after the merge, 
 by hand) and each `pendingClose[]` record (the merge may still close it — re-run the step once,
 then reopen it by hand if it closed) in the closing summary, never as anything but `merged`. Exit
 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
-this step in-session: the reconciler's `post-merge` check runs the CLI for that run once GitHub merges the PR,
+this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
 with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 
@@ -109,16 +109,17 @@ Log each parent closed:
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)" --text "closed parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
 ```
 
-Then write one summary line, whatever happened above, once this step is reached after a PR merge
-(the non-default-branch no-op included):
+Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]`
+(the non-default-branch no-op included), or after a no-PR local merge, where `the pushed merge commit` replaces `PR #{pr-number}` in the text:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}'s closing records: {k} parent(s) closed"
 ```
 
 The reconciler's `post-merge` check reads this line as the marker that the step already ran, so it
-does not run Steps 4.0 and 4.0b a second time for this run. Under `local-files`, or after exit 3,
-there is no summary line.
+does not run Steps 4.0 and 4.0b a second time for this run. On the no-`closingSet[]` path above, the
+`(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and
+"0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 
@@ -176,7 +177,7 @@ auto-backgrounding on the harness's default command timeout (#1543 — a full un
 was observed taking ~2 minutes, at or past that default, twice tripping it in one dispatch
 firing and once stranding a firing whose one-shot turn ended waiting on the backgrounded call).
 
-`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds; Step 4.0b's summary line marks this run, so `post-merge` skips it — the full
+`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full
 unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
 `remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
 paragraph describes needing, and `remote-prune`'s inclusion is what forces the full
