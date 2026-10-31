@@ -104,6 +104,10 @@ test('pipeline-run-dir.md documents --archived', () => {
   const doc = read('plugin', 'skills', '_shared', 'pipeline-run-dir.md');
   assert.match(doc, /\[--root-only\] \[--archived\]/);
   assert.ok(doc.includes('`--archived`'), 'the doc names the --archived flag');
+  const bullet = /^- `--archived`[^\n]*$/m.exec(doc);
+  assert.ok(bullet, 'the doc has a `--archived` bullet');
+  assert.match(bullet[0], /is refused with `--create`/, 'the bullet states the --create refusal');
+  assert.match(bullet[0], /It is read-only/, 'the bullet states the flag is read-only');
 });
 
 test('wrap-up grammar surfaces carry the merge token', () => {
