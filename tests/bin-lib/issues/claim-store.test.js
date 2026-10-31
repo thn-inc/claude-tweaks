@@ -1233,3 +1233,21 @@ test('ensureClaimsBranch: a secondary-rate-limit POST is transient (reason verba
   }, 'acme/w');
   assert.deepEqual(refused, { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
 });
+
+// (#4495) A git-CAS rejection whose verification read finds the claims-registry
+// branch itself gone. That is not a claim someone else took, so it must surface
+// as a missing branch (the caller bootstraps it), never as a contest with no
+// holder.
+test('writeClaimBlob: a git-CAS rejection whose fresh read finds the claims-registry branch gone is branchMissing, never a contest', () => {
+  const { runner, state } = fakeGitCasRunner({ pushes: ['reject'], reads: [] });
+  const gitRunner = (args) => {
+    if (args[0] === 'fetch' && state.pushCount > 0) { const e = new Error("fatal: couldn't find remote ref claims-registry"); e.stderr = e.message; throw e; }
+    return runner(args);
+  };
+  const ghApi = () => { throw new Error('contents-API must not be called — the git re-read already named the missing branch'); };
+  const result = writeClaimBlob({ ghApi, gitRunner }, 'acme/w', 42, {
+    content: '{"runId":"me"}', message: 'Claim #42', sha: 'a'.repeat(40), expectedContent: HELD_BY_STALE,
+  });
+  assert.deepEqual(result, { ok: false, branchMissing: true, failure: null });
+  assert.equal(state.pushCount, 1, 'no retry against a branch that no longer exists');
+});

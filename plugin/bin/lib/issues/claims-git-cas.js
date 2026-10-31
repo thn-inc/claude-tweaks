@@ -69,7 +69,11 @@ function timedOutFlag(err) {
 // fetch and this push; `secondary-rate-limit` must never be folded into
 // `contested` (record-697's incident read exactly that way before
 // diagnosis) — checked before the generic rejection match since GitHub's
-// abuse-detection rejection is also a non-fast-forward-shaped push failure.
+// abuse-detection rejection is also a non-fast-forward-shaped push failure;
+// `missing-branch` (#4495) is `git fetch` naming a `claims-registry` the
+// remote never had — a pre-bootstrap state the caller creates the branch for,
+// matched before the generic rules so it can never fall to `transport-failure`
+// (a retried read) or be misread as a lost race (`contested`).
 function classifyGitError(err) {
   const text = errText(err);
   if (/secondary rate limit|abuse detection mechanism|Retry-After/i.test(text)) {

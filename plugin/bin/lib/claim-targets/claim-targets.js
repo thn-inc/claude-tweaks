@@ -59,6 +59,16 @@ function errText(e) {
   return String((e && e.message) || e);
 }
 
+// A bootstrap refusal's reason is git/forge text that travels onto stderr, the
+// exit-6 JSON, the flow card and, under a headless dispatch, a filed issue
+// body (#4495). Flatten it to one bounded line — control characters and line
+// breaks become single spaces — so it reads verbatim but cannot forge extra
+// log lines or run unbounded.
+function oneLineReason(text, max = 500) {
+  const flat = String(text).replace(/[\p{Cc}\s]+/gu, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+}
+
 // Claim blobs are remote data: an unparseable one is classified 'unreadable'
 // by classifyClaimBlob and never fatal here, so every identity read yields
 // null rather than throwing.
@@ -399,7 +409,7 @@ function run(argv, deps) {
   // `stopOrSkip()` below, which is in turn the single call site every stop
   // below shares — so this cannot drift from any of them. `exitCode` is 3 for
   // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
-  // `unverified` one.
+  // `unverified` one, 6 for a `branchMissing` one (#4495).
   function abort(envelope, exitCode, extraToRelease = []) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
@@ -479,8 +489,9 @@ function run(argv, deps) {
       return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-bootstrap-rate-limited' }) };
     }
     if (!b.ok) {
-      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${b.reason} — create it from the default branch\n`);
-      return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason: b.reason } }, 6) };
+      const reason = oneLineReason(b.reason);
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${reason} — create it from the default branch\n`);
+      return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason } }, 6) };
     }
     return { retry: true };
   }

@@ -322,11 +322,15 @@ test('settle-and-merge.md Claim-contest special case covers the exit-6 Claims br
   const content = read('plugin/skills/dispatch/settle-and-merge.md');
   const sectionStart = content.indexOf('**Claim-contest special case');
   assert.ok(sectionStart !== -1, 'Claim-contest special case section should exist');
-  const sectionEnd = content.indexOf('\n1. The CLI in step 2', sectionStart);
-  assert.ok(sectionEnd !== -1, 'special-case section should end before the numbered steps');
+  // End at the next special case, not at the numbered steps: the span to the numbered steps also
+  // holds the plan-review special case, which carries the same two phrases and would keep the
+  // assertions below green with the exit-6 sentence deleted.
+  const sectionEnd = content.indexOf('\n**Open-linked-PR enrichment', sectionStart);
+  assert.ok(sectionEnd !== -1, 'special-case section should end before the open-linked-PR enrichment paragraph');
   const section = content.slice(sectionStart, sectionEnd);
   assert.match(section, /Claims branch missing/);
   assert.match(section, /flow-step-2\.8-claims-branch-missing/);
+  assert.match(section, /claims-branch-missing stop, skip steps 3-7/);
   assert.match(section, /dispatch-retry-ceiling/);
   assert.match(section, /no failure comment/);
 });

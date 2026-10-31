@@ -560,3 +560,44 @@ test('releaseClaim against a branchless remote: nothing to release, no registry 
   assert.equal(ghCalls.some((a) => a[0] === 'issue' && a[1] === 'comment'), false, 'no false "Released by run" comment on a record this run never claimed');
   assert.equal(r.commentPosted, false);
 });
+
+// #4495: the contents API reads "no claim" and "no branch" as the same 404, so a
+// contents-API-only release (no gitRunner, or a git-side failure that fell
+// through) tells them apart with a branch lookup. Both tests drive that lookup
+// through the runner: the branch is missing -> nothing to release, no comment;
+// the branch exists -> a genuinely absent claim still posts the release comment.
+const isBranchGet = (a) => a[0] === 'api' && a[1] === 'repos/acme/w/branches/claims-registry';
+function branchRunner({ branchExists }) {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isGet(args)) throw new Error('gh: Not Found (HTTP 404)');
+    if (isBranchGet(args)) { if (branchExists) return 'claims-registry'; throw new Error('gh: Not Found (HTTP 404)'); }
+    if (isComment(args) || isEdit(args)) return '';
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+
+test('releaseClaim on the contents API against a branchless remote: nothing to release, no comment', () => {
+  const { runner, calls } = branchRunner({ branchExists: false });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'done', runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.match(r.note, /nothing to release/);
+  assert.equal(r.commentPosted, false);
+  assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
+  assert.equal(calls.some(isPut), false);
+});
+
+test('releaseClaim on the contents API with the branch present and no claim blob still posts the release comment', () => {
+  const { runner, calls } = branchRunner({ branchExists: true });
+  const r = releaseClaim({
+    owner: 'acme', repo: 'w', issueNumber: 999, runId: OWN, reason: 'done', runner, now: NOW,
+  });
+  assert.equal(r.outcome, 'already-released');
+  assert.doesNotMatch(String(r.note || ''), /nothing to release/);
+  assert.equal(r.commentPosted, true);
+  assert.equal(calls.some(isComment), true);
+});

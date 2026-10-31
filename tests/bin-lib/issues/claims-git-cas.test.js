@@ -505,3 +505,43 @@ test('bootstrapClaimsBranchGit: a timeout-shaped error is transport-failure AND 
   assert.equal(r.failure, 'transport-failure');
   assert.equal(r.timedOut, true);
 });
+
+// (#4495) Real git, no hand-typed stderr: a bare origin that has the default
+// branch but never had a claims-registry. Pins git's own "couldn't find remote
+// ref" wording against `classifyGitError`'s regex and the bootstrap against a
+// real remote, which the fake-runner tests above cannot.
+function makeBranchlessOriginAndClone() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'claims-git-cas-branchless-'));
+  const originDir = path.join(root, 'origin.git');
+  const cloneDir = path.join(root, 'clone');
+  setupGit(['init', '--bare', '-q', '-b', 'main', originDir]);
+  setupGit(['clone', '-q', originDir, cloneDir]);
+  setupGit(['-C', cloneDir, 'config', 'user.email', 'test@example.com']);
+  setupGit(['-C', cloneDir, 'config', 'user.name', 'Test']);
+  fs.writeFileSync(path.join(cloneDir, 'README.md'), 'seed\n');
+  setupGit(['-C', cloneDir, 'add', 'README.md']);
+  setupGit(['-C', cloneDir, 'commit', '-q', '-m', 'seed']);
+  setupGit(['-C', cloneDir, 'push', '-q', 'origin', 'main']);
+  return { originDir, cloneDir };
+}
+
+test('real git: a remote that never had claims-registry reads as branchMissing, then bootstraps from the default branch tip and reads as a plain absent claim', () => {
+  const { originDir, cloneDir } = makeBranchlessOriginAndClone();
+  const runner = (args, opts) => realRunner(args, { ...opts, cwd: cloneDir });
+
+  const before = readClaimBlobGit({ issueNumber: 42, remote: 'origin', runner });
+  assert.equal(before.failure, null, 'a missing branch is not a transport failure');
+  assert.equal(before.branchMissing, true);
+  assert.equal(before.absent, true);
+
+  assert.deepEqual(bootstrapClaimsBranchGit({ runner }), { ok: true, created: true });
+  const mainTip = setupGit(['-C', originDir, 'rev-parse', 'refs/heads/main']).trim();
+  const claimsTip = setupGit(['-C', originDir, 'rev-parse', `refs/heads/${CLAIMS_BRANCH}`]).trim();
+  assert.equal(claimsTip, mainTip, 'created from the default branch tip, not an orphan root');
+
+  const after = readClaimBlobGit({ issueNumber: 42, remote: 'origin', runner });
+  assert.equal(after.failure, null);
+  assert.equal(after.absent, true);
+  assert.equal('branchMissing' in after, false);
+  assert.equal(after.tipSha, claimsTip);
+});

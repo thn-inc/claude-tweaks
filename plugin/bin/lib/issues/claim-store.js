@@ -19,7 +19,9 @@
 // `ghApi(args)` is invoked as if `gh api ${args.join(' ')}` and returns a
 // non-throwing `{stdout, failure, status}` — the same object shape
 // release-merged.js's own (pre-extraction) ghApi already used, extended
-// with `status` so a 404 can be told apart from a genuine failure.
+// with `status` so a 404 can be told apart from a genuine failure. A failed
+// call may also carry `error`, the thrown error's text (optional; `defaultGhApi`
+// sets it, #4495): a bootstrap refusal is surfaced to the user verbatim.
 // `defaultGhApi` below is the real implementation; release-merged.js keeps
 // supplying its own ghApi (which never sets `status`) and no `gitRunner`,
 // so `readClaimBlob`'s `absent` branch simply never fires there and it stays
@@ -446,6 +448,9 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
       // fresh git read before deciding.
       const freshGit = readClaimBlobGit({ issueNumber, runner: deps.gitRunner });
       if (freshGit.failure) return { ok: false, failure: 'transport-failure' };
+      // (#4495) the branch vanished between the rejected push and this re-read:
+      // a missing branch, not a claim someone else took.
+      if (freshGit.branchMissing) return { ok: false, branchMissing: true, failure: null };
       const unchanged = createOnly
         ? freshGit.absent
         : (!freshGit.absent && freshGit.content === expectedContent);

@@ -2294,6 +2294,25 @@ test('(bm4) bootstrap refused on both legs: exit 6, stderr names the missing bra
   assert.deepEqual(body.releaseFailed, []);
 });
 
+test('(bm4c) a refusal reason carrying line breaks, control characters and a very long body reaches stderr and the JSON as one bounded line', () => {
+  const remote = makeBranchlessRemote();
+  const hostile = `remote: denied\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'network-failure', status: null, error: hostile },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote, { refuseBootstrapWith: 'remote: Permission denied.' });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 6);
+  const { reason } = JSON.parse(io.out[0]).branchMissing;
+  assert.doesNotMatch(reason, /[\p{Cc}]/u, 'no control characters or line breaks survive');
+  assert.ok(reason.length <= 500, `bounded, got ${reason.length}`);
+  assert.match(reason, /Permission denied\./, 'the leading, actionable text is still verbatim');
+  const stderr = io.err.join('');
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'the refusal is exactly one stderr line');
+});
+
 test('(bm4b) ruleset refusal: git push "[remote rejected] ... (push declined due to repository rule violations)", POST git/refs 422, branch still absent: exit 6, never a lost-race success and never exit 4', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({

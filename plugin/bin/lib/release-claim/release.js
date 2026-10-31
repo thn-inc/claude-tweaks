@@ -61,9 +61,14 @@ function readClaimBlob({
   };
   const result = claimStore.readClaimBlob({ ghApi, gitRunner }, `${owner}/${repo}`, issueNumber);
   if (result.failure) { const e = new Error(`claim-store read failure: ${result.failure}`); throw e; }
-  return result.absent
-    ? { content: null, sha: null, absent: true, ...(result.branchMissing ? { branchMissing: true } : {}) }
-    : { content: result.content, sha: result.sha };
+  if (!result.absent) return { content: result.content, sha: result.sha };
+  // #4495: only a git-CAS read names a missing claims-registry branch itself;
+  // a contents-API read (no `gitRunner`, or a git-side transport failure that
+  // fell through) sees the same 404 for "no claim" and "no branch", so the
+  // branch lookup tells them apart. An unanswerable lookup (null) is no signal.
+  const branchMissing = result.branchMissing
+    || (result.via !== 'git' && claimStore.claimsBranchExists(ghApi, `${owner}/${repo}`) === false);
+  return { content: null, sha: null, absent: true, ...(branchMissing ? { branchMissing: true } : {}) };
 }
 
 // Conditional overwrite (sha = the blob's current sha from the read) — now
@@ -255,6 +260,7 @@ function releaseClaim({
     // #4495: a remote with no claims-registry branch has no claim to release.
     // Report it plainly; the branch is created only by claim-targets, never here.
     // Nothing was ever claimed, so no release comment either — it would be false.
+    // `readClaimBlob` above sets `branchMissing` on either transport.
     if (blob.branchMissing) result.note = 'nothing to release — the claims-registry branch does not exist on origin';
   }
   if (!blob.branchMissing) {
