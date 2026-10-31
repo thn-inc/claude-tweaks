@@ -140,13 +140,14 @@ function acceptanceOf(names) {
 // after the pass, below) — never inferred from truthiness. Stage
 // precedence is ready > parked > backlog regardless of array order or malformed
 // combinations (e.g. both 'ready' and 'parked' present resolves to 'ready').
-// The value facets (origin/risk/priority/ceremony) are last-match-in-array-wins.
-// Two facets are exceptions, each settled after the pass so array order never decides:
-// - size: size:* always beats a pre-rename effort:* label whichever order they appear
-//   in, so the effort value is only held aside during the pass and applied afterward,
-//   and never when a size:* label was found.
+// The value facets (origin/risk/size/priority/ceremony) are last-match-in-array-wins
+// among repeats of their own label, so two size:* labels resolve to the later one.
+// Two facets also carry a rule that array order cannot override, settled after the pass:
+// - size vs effort:*: size:* always beats a pre-rename effort:* label whichever order
+//   they appear in, so the effort value is only held aside during the pass and applied
+//   afterward, and never when a size:* label was found.
 // - acceptance: changes-requested > pending > approved > null over both demo:* and
-//   accept:* spellings (acceptanceOf above).
+//   accept:* spellings (acceptanceOf above), with no last-match rule among them at all.
 // Shared-key defaults come from facet-shape.js — local-store.js's defaultFacets
 // builds on the same shape (plus its own local-only keys). Add a new shared
 // facet key there, not independently here — the sanctioned exception is a key

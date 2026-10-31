@@ -29,11 +29,16 @@ test('changes-requested wins over a stale demo:pending; pending now wins over ap
   // /demo removes demo:pending as it adds the verdict, but a partial write or a
   // concurrent edit can leave both. changes-requested must never be re-swept.
   // Human ruling at plan time (#4610): one precedence rule across both
-  // vocabularies — changes-requested > pending > approved > none. That changes two
-  // demo:*-only pairs, the deliberate exceptions to AC7 ("no demo:* behaviour
-  // changes"): demo:pending + demo:approved now resolves 'pending' (previously
-  // 'approved'), and demo:approved + demo:changes-requested now resolves
-  // 'changes-requested' (previously 'approved'; pinned in AC3.1 below).
+  // vocabularies — changes-requested > pending > approved > none. These are the
+  // deliberate exceptions to AC7 ("no demo:* behaviour changes"). For
+  // dispositionState, which used a first-match table (approved, changes-requested,
+  // pending), two demo:*-only pairs change: demo:pending + demo:approved now
+  // resolves 'pending' (previously 'approved'), and demo:approved +
+  // demo:changes-requested now resolves 'changes-requested' (previously 'approved';
+  // pinned in AC3.1 below). For parseRecordFacets, which was last-match-wins, every
+  // demo:* pair that used to depend on array order now resolves by precedence, e.g.
+  // ['demo:changes-requested', 'demo:pending'] was 'pending' and is now
+  // 'changes-requested'.
   assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'pending');
   assert.equal(dispositionState(['demo:pending', 'demo:changes-requested']), 'changes-requested');
 });
@@ -199,6 +204,26 @@ test('parentGateState is resolved once a verdict is recorded', () => {
   assert.equal(parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:approved'] }), 'resolved');
   assert.equal(
     parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:changes-requested'] }),
+    'resolved',
+  );
+});
+
+test('parentGateState reads a parent carrying demo:pending + demo:approved as gated (#4610 ruling)', () => {
+  // Consumer-level effect of the plan-time human ruling (#4610): the parent's
+  // label is the authoritative record, and pending now beats approved, so a
+  // parent left with both labels is gated again where it used to read
+  // 'resolved'. changes-requested still wins over pending, so that pair stays
+  // resolved.
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:pending', 'demo:approved'] }),
+    'gated',
+  );
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:approved', 'demo:pending'] }),
+    'gated',
+  );
+  assert.equal(
+    parentGateState({ subIssues: [CLOSED(1)], parentLabels: ['demo:pending', 'demo:changes-requested'] }),
     'resolved',
   );
 });
