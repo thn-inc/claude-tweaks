@@ -120,6 +120,7 @@ files:
   - A finding with no line number cites the path alone. It never cites `path:unknown`.
   - The fingerprint is unchanged, so a finding already filed under the old shape (#4048, for example) is still recognized and not filed again.
   - A finding the backfill splits out of a legacy decisions.md line names its whole path, even one holding `[id]`, `@scope`, `(group)`, `~`, `+`, `%` or `$` (`app/[id]/page.tsx`, never `/page.tsx`). Its item id is unchanged, so a record an interrupted earlier backfill pass filed under the truncated path is reused rather than filed again.
+  - A path the old class could not read at all, such as `app/[id].tsx:3`, was never a finding of its own before: a line naming only that path went to the digest as `no-path`. It now becomes a finding with a new item id. Nothing was filed under it before, so nothing is filed twice.
 - **Red flags:**
   - the title is cut mid-word
   - `## Current State` holds only the `Finding:` location string
