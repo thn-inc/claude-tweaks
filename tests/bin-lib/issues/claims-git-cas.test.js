@@ -2,7 +2,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, CLAIMS_BRANCH, defaultRunner,
+  classifyGitError, readClaimBlobGit, writeClaimBlobGit, readClaimBlobsGitBatch, bootstrapClaimsBranchGit,
+  CLAIMS_BRANCH, defaultRunner,
 } = require('../../../plugin/bin/lib/issues/claims-git-cas');
 
 test('classifyGitError: missing path in a git show', () => {
@@ -385,4 +386,63 @@ test('AC1.1: readClaimBlobsGitBatch with issueNumbers omitted discovers the keys
   };
   const batch = readClaimBlobsGitBatch({ tip: 'tipsha', runner });
   assert.deepEqual(Object.keys(batch.results), ['7']);
+});
+
+test('classifyGitError: a missing remote ref is missing-branch, not transport-failure', () => {
+  const err = new Error('Command failed: git fetch');
+  err.stderr = "fatal: couldn't find remote ref claims-registry";
+  assert.deepEqual(classifyGitError(err), { kind: 'missing-branch' });
+});
+
+test('readClaimBlobGit: a fetch failing with "couldn\'t find remote ref" reports branchMissing, absent, no failure', () => {
+  const runner = (args) => {
+    if (args[0] === 'fetch') { const e = new Error('git fetch failed'); e.stderr = "fatal: couldn't find remote ref claims-registry"; throw e; }
+    return '';
+  };
+  assert.deepEqual(readClaimBlobGit({ issueNumber: 42, runner }), {
+    content: null, tipSha: null, absent: true, branchMissing: true, failure: null,
+  });
+});
+
+test('readClaimBlobGit: a non-missing-ref fetch failure is still transport-failure (no branchMissing key)', () => {
+  const runner = (args) => { if (args[0] === 'fetch') throw new Error('fatal: unable to access: Could not resolve host'); return ''; };
+  const r = readClaimBlobGit({ issueNumber: 42, runner });
+  assert.equal(r.failure, 'transport-failure');
+  assert.equal('branchMissing' in r, false);
+});
+
+test('bootstrapClaimsBranchGit: creates the branch from the fetched default-branch tip with a create-only lease', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (args[0] === 'rev-parse') return 'abc123\n';
+    return '';
+  };
+  assert.deepEqual(bootstrapClaimsBranchGit({ runner }), { ok: true, created: true });
+  const fetch = calls.find((a) => a[0] === 'fetch');
+  assert.match(fetch[fetch.length - 1], /^HEAD:refs\//);
+  const push = calls.find((a) => a[0] === 'push');
+  assert.deepEqual(push, ['push', 'origin', 'abc123:refs/heads/claims-registry', '--force-with-lease=refs/heads/claims-registry:']);
+});
+
+test('bootstrapClaimsBranchGit: a rejected create whose ls-remote shows the branch is a lost race — ok, created:false', () => {
+  const runner = (args) => {
+    if (args[0] === 'rev-parse') return 'abc123\n';
+    if (args[0] === 'push') { const e = new Error('push failed'); e.stderr = '! [rejected] abc123 -> claims-registry (stale info)'; throw e; }
+    if (args[0] === 'ls-remote') return 'def456\trefs/heads/claims-registry\n';
+    return '';
+  };
+  assert.deepEqual(bootstrapClaimsBranchGit({ runner }), { ok: true, created: false });
+});
+
+test('bootstrapClaimsBranchGit: a refused push (permission) is transport-failure carrying the git text verbatim', () => {
+  const runner = (args) => {
+    if (args[0] === 'rev-parse') return 'abc123\n';
+    if (args[0] === 'push') { const e = new Error('push failed'); e.stderr = 'remote: Permission to acme/w.git denied to bot.'; throw e; }
+    return '';
+  };
+  const r = bootstrapClaimsBranchGit({ runner });
+  assert.equal(r.ok, false);
+  assert.equal(r.failure, 'transport-failure');
+  assert.match(r.reason, /Permission to acme\/w\.git denied/);
 });
