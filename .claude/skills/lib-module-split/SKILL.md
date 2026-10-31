@@ -341,7 +341,11 @@ stripper caller (`bin-source-scan-conformance`).
 Moving a module to a new home and leaving its old path as a one-line re-export is a split with one
 sub-module, and it owes the same checks. Pin the re-export with a test that the old path's
 `module.exports` is the very object the new file returns and that the old file keeps no second
-copy (`tests/helpers-strip-comments.test.js`, #3903 AC2.1). Then run all four sweep shapes against
+copy (#3903 AC2.1 in `tests/helpers-strip-comments.test.js`, as first written). When the old path
+also defines exports of its own, the object test cannot hold: pin each re-exported function's
+identity instead, and filter the old file's require list to relative paths before asserting it.
+That same test does both since #4648 moved `stripperVerdict` and its `node:vm` require out of
+`plugin/bin/lib/strip-comments.js` into the helper. Then run all four sweep shapes against
 the old path. Classify prose hits with the import-path test above, but treat journey `files:`
 entries as shape 4: keep the old path and add the new file, because edits now land there. #3903
 promoted `tests/helpers/strip-comments.js` into `plugin/bin/lib/strip-comments.js`; its plan

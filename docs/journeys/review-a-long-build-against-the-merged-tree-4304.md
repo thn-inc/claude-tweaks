@@ -2,6 +2,7 @@
 files:
   - plugin/bin/pre-review-catchup.js
   - plugin/bin/lib/worktree/pre-review-catchup.js
+  - plugin/bin/lib/branch-name.js
   - plugin/skills/_shared/pre-review-catchup.md
   - plugin/skills/build/dispatch.md
 ---
@@ -55,4 +56,4 @@ files:
 
 A long build no longer reviews a tree that `main` has already moved past on the same files. Overlapping upstream work is merged, tested and reviewed inside the build, a conflict stops the build rather than the merge, and a branch that upstream never touched pays one fetch.
 
-_Origin: record #4304 (pre-review integration catch-up), built 2026-10-28. Updated at the same record's wrap-up: the review fix wave (b4ad51a81) moved the procedure into `_shared/pre-review-catchup.md` and added the caller-owed `SKIP` on a non-zero exit (step 5)._
+_Origin: record #4304 (pre-review integration catch-up), built 2026-10-28. Updated at the same record's wrap-up: the review fix wave (b4ad51a81) moved the procedure into `_shared/pre-review-catchup.md` and added the caller-owed `SKIP` on a non-zero exit (step 5). Updated during build of #4648: the CLI's `--integration-branch` check now imports `isValidBranchName` from the shared `plugin/bin/lib/branch-name.js` instead of `lib/init/release-bootstrap`, and behaves the same._
