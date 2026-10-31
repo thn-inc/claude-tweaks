@@ -285,8 +285,9 @@ stays best-effort and the claim read stays the authoritative hold check:
   `resume-line-shape`, or a `failure`. No marker found, the marker fails that validation, `gh`
   unavailable, the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
   foreign PR, or one whose run dir was already reaped), or a `resolve` verdict or a `failure` from
-  the CLI — the card above is the terminal output; there is nothing safe to route into.
-  Otherwise: follow
+  the CLI — the card above is the terminal output; there is nothing safe to route into. A failed
+  `gh pr view`, a non-zero CLI exit, or stdout that is not one JSON line also leaves that card
+  standing. Route onward only on a `resume` verdict: follow
   `dispatch/resume-confirmation.md`'s full "Confirm before resuming" procedure now, passing the
   `resume` verdict's own `target` (the found run's actual record composition, single- or
   multi-spec, `flow/multi-spec.md`'s "Multi-spec runs share one PR" — never substitute this claim

@@ -111,4 +111,7 @@ test('AC2.1: only a resume verdict routes into resume-confirmation.md; resolve o
   assert.equal(terminal.length, 1, 'exactly one terminal-card clause names the resolve verdict');
   assert.ok(terminal[0].includes('`failure`'), 'that clause also lists the CLI failure');
   assert.match(section, /`resume` verdict's own `target`/);
+  // positive-only routing: every outcome the prose does not name (failed gh, non-zero exit, non-JSON stdout) keeps the card
+  assert.match(section, /Route onward only on a `resume` verdict: follow `dispatch\/resume-confirmation\.md`/);
+  assert.ok(!section.includes('Otherwise: follow'), 'routing must not be the complement of a stop list');
 });

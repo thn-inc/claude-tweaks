@@ -82,6 +82,8 @@ test('malformed invocations exit 1 with usage on stderr and nothing on stdout', 
     ['--body-file', BODY],
     ['--body-file'],
     ['--body-file', '--run-id', RUN],
+    ['--body-file', '', '--run-id', RUN],
+    ['--body-file', BODY, '--run-id', '  '],
     ['--body-file', BODY, '--run-id', RUN, '--bogus'],
   ];
   for (const argv of bad) {
