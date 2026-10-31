@@ -129,7 +129,8 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   // #4101: the reversal's Defer-reason is derived from the deferral gate, never a constant.
   assert.match(APPENDIX, ws('`Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant'));
   assert.match(APPENDIX, ws("run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and stamp the value of the first criterion that fails"));
-  assert.match(APPENDIX, ws('not localized, or materially expands scope → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`'));
+  // The mapping runs in the gate's own criterion order, so scope expansion (its 5th) maps last.
+  assert.match(APPENDIX, ws('not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`'));
   assert.match(APPENDIX, ws('when every criterion holds — the fix would have been fix-now, and only the closed fix wave stops it — stamp `needs-human-decision`'));
   assert.match(APPENDIX, ws('A reversal never stamps `tangential` or `pre-existing-outside-diff`'));
   assert.doesNotMatch(APPENDIX, ws('`Defer-reason: genuinely-larger`'), 'the reversal Defer-reason is no longer a fixed value');
