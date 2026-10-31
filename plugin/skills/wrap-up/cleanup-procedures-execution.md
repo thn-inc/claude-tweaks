@@ -90,7 +90,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path");let names=[];try{names=fs.readdirSync(path.join(process.argv[1],"work")).filter(f=>f.endsWith("-spec.md")&&!f.startsWith(".")).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(process.argv[1],"work",f),"utf8").match(/^record:(.*)$/m);if(m)console.log(m[1].trim())}' -- "$MIRROR") || exit 1
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>f.endsWith("-spec.md")&&!f.startsWith(".")).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(dir,f),"utf8").match(/^record:(.*)$/m);if(m)console.log(m[1].trim())}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
