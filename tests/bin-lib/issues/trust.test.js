@@ -825,17 +825,32 @@ test('AC3.2: accept:approved-batch counts as approvedBatch and batchOnly, exactl
   assert.equal(walkthroughBacked.verdict, 'clean');
 });
 
-test('AC3.2: accept:* verdicts land in the same buckets as their demo:* twins, and accept:pending is never promoted to known-good', () => {
+test('AC3.2: accept:* verdicts land in the same buckets as their demo:* twins', () => {
+  // The fixture carries operational evidence (an old closed record with a closing
+  // commit), so a label read as "no acceptance state" lands in operationalGood and
+  // is told apart from a pending one.
   const bucket = (labels) => {
-    const [row] = trustRows([{ number: 1, labels: ['by:capture', 'risk:low', ...labels], body: '', state: 'CLOSED' }]);
+    const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', ...labels] };
+    const [row] = trustRows([record], [commitFor(1)], NOW, {});
     return { approved: row.approved, changesRequested: row.changesRequested, undispositioned: row.undispositioned, operationalGood: row.operationalGood };
   };
   assert.deepEqual(bucket(['accept:approved']), bucket(['demo:approved']));
   assert.deepEqual(bucket(['accept:changes-requested']), bucket(['demo:changes-requested']));
   assert.deepEqual(bucket(['accept:pending']), bucket(['demo:pending']));
+  assert.deepEqual(bucket([]), { approved: 0, changesRequested: 0, undispositioned: 0, operationalGood: 1 });
   assert.equal(bucket(['accept:approved']).approved, 1);
   assert.equal(bucket(['accept:changes-requested']).changesRequested, 1);
   assert.equal(bucket(['accept:pending']).undispositioned, 1);
+  assert.equal(bucket(['accept:pending']).operationalGood, 0);
+});
+
+test('AC3.2: an accept:pending record is never promoted to operational known-good', () => {
+  const record = { ...operationalFixture(1, 30), labels: ['by:capture', 'risk:low', 'accept:pending'] };
+  const rows = trustRows([record], [commitFor(1)], NOW, {});
+  assert.equal(rows[0].operationalGood, 0);
+  assert.equal(rows[0].undispositioned, 1);
+  assert.equal(rows[0].approved, 0);
+  assert.equal(rows[0].changesRequested, 0);
 });
 
 test('#431: a cell resting entirely on batch sign-offs demotes from clean to mixed', () => {

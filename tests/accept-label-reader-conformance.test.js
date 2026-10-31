@@ -20,9 +20,9 @@ const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
 //   - AC3.3: no reader sees `accept:pending` (or any accept:* label) as "no
 //     acceptance state", and a NEW module that reads demo:* labels fails here
 //     until it is classified.
-//   - the guard: a demo:* verdict literal in plugin/bin code outside the four
-//     modules that must spell it (the vocabulary, the batch marker, and the two
-//     readers that report the legacy spelling back) fails.
+//   - the guard: a demo:* verdict literal in plugin/bin code outside the three
+//     modules that must spell it (the vocabulary, the batch marker, and the closure
+//     check that reports the legacy spelling back) fails.
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
 
 function walk(dir) {
@@ -59,20 +59,42 @@ function breakerAction(labels) {
   return classifyWatchedRecord({ number: 7, state: 'OPEN', labels }, [], NOW, 14);
 }
 
-// The trust cell counts one closed record under exactly one bucket.
+// The trust cell counts one closed record under exactly one bucket. The record is
+// old and has a closing commit, so a label read as "no acceptance state" would take
+// the operational path and land in operationalGood — pending is told apart from none.
+const TRUST_NOW = Date.parse('2026-08-09T00:00:00Z');
 function trustBucket(labels) {
-  const [row] = trustRows([{ number: 7, labels: ['by:capture', 'risk:low', ...labels], body: '', state: 'CLOSED' }]);
+  const record = {
+    number: 7,
+    labels: ['by:capture', 'risk:low', ...labels],
+    body: '',
+    state: 'CLOSED',
+    closedAt: new Date(TRUST_NOW - 30 * 24 * 60 * 60 * 1000).toISOString(),
+  };
+  const gitLog = [{ sha: (7).toString(16).padStart(40, '0'), message: 'refs #7' }];
+  const [row] = trustRows([record], gitLog, TRUST_NOW, {});
   assert.equal(row.total, 1);
-  return { approved: row.approved, changesRequested: row.changesRequested, undispositioned: row.undispositioned };
+  return {
+    approved: row.approved,
+    changesRequested: row.changesRequested,
+    undispositioned: row.undispositioned,
+    operationalGood: row.operationalGood,
+  };
 }
 
 const BUCKET = {
-  pending: { approved: 0, changesRequested: 0, undispositioned: 1 },
-  approved: { approved: 1, changesRequested: 0, undispositioned: 0 },
-  'changes-requested': { approved: 0, changesRequested: 1, undispositioned: 0 },
+  pending: { approved: 0, changesRequested: 0, undispositioned: 1, operationalGood: 0 },
+  approved: { approved: 1, changesRequested: 0, undispositioned: 0, operationalGood: 0 },
+  'changes-requested': { approved: 0, changesRequested: 1, undispositioned: 0, operationalGood: 0 },
 };
 
 test('AC3.1: dispositionState, parseRecordFacets, the lane breaker and the trust cell agree on every mixed pair', () => {
+  // The control: with no acceptance label the same record is operational known-good.
+  assert.deepEqual(trustBucket([]), { approved: 0, changesRequested: 0, undispositioned: 0, operationalGood: 1 });
+  for (const state of STATES) {
+    assert.deepEqual(trustBucket([`accept:${state}`]), BUCKET[state], `lone accept:${state}`);
+    assert.deepEqual(trustBucket([`demo:${state}`]), BUCKET[state], `lone demo:${state}`);
+  }
   for (const [pair, want] of MIXED_PAIRS) {
     for (const labels of [pair, [...pair].reverse()]) {
       const name = labels.join('+');
@@ -150,7 +172,10 @@ function demoLabelUse(raw) {
   const src = stripComments(raw);
   const verdict = stripperVerdict(raw, src);
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
-  const m = /\bLABELS\.DEMO_\w+|\bdemo:[\w${]/.exec(src);
+  // A bare demo: catches a startsWith / concatenation reader; the bare DEMO_ names
+  // catch a destructured LABELS member. Not DEMO_ alone: candidates-app-store-readiness.js
+  // names DEMO_CREDENTIAL_RE and DEMO_ACCOUNT.
+  const m = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/.exec(src);
   return m ? m[0] : null;
 }
 
@@ -166,8 +191,10 @@ test('AC3.3: every plugin/bin module that names a demo:* label is classified, so
   assert.deepEqual(unclassified, [],
     'classify these in DEMO_LABEL_READERS with a branch that proves they read accept:* alongside demo:*');
   assert.ok(BIN_FILES.length >= 400, `walked ${BIN_FILES.length} files, expected the whole plugin/bin tree`);
-  assert.ok(seen.length >= Object.keys(DEMO_LABEL_READERS).length,
-    `matched ${seen.length} readers, fewer than the ${Object.keys(DEMO_LABEL_READERS).length} classified — the matcher or the table is stale`);
+  // Both directions: a classified module that stopped naming a label keeps a row
+  // that proves nothing, so the table must equal what the walk found.
+  assert.deepEqual(seen.sort(), Object.keys(DEMO_LABEL_READERS).sort(),
+    'DEMO_LABEL_READERS and the modules the walk matched differ — drop a stale row or fix the matcher');
 });
 
 test('AC3.3: no reader sees accept:* as no acceptance state, and each outcome matches its demo:* twin', () => {
@@ -184,15 +211,14 @@ test('AC3.3: no reader sees accept:* as no acceptance state, and each outcome ma
 
 // --- Guard: demo:* verdict literals live only where they must ---
 
-// The four modules allowed to spell a demo:* verdict: the vocabulary and the batch
-// marker define the legacy spelling; the lane breaker and the closure check report
-// it back to a user when a record carries it. Every other reader goes through
-// acceptanceOf / dispositionState and never names a label.
+// The three modules allowed to spell a demo:* verdict: the vocabulary and the batch
+// marker define the legacy spelling; the closure check keeps it in its pinned
+// failure text. Every other reader goes through acceptanceOf / dispositionState
+// and names a label only through LABELS (the lane breaker does).
 const LITERAL_ALLOWED = new Set([
   'lib/issues/record-vocabulary.js',
   'lib/issues/acceptance.js',
   'lib/wrap-up/engine-verify.js',
-  'lib/issues/merge-lane-breaker.js',
 ]);
 const DEMO_LITERAL_RE = /demo:(?:pending|approved-batch|approved|changes-requested)/g;
 
@@ -237,11 +263,18 @@ test('guard self-test: a comment-stripper mis-parse and an uncompilable file are
 
 test('guard self-test: the reader walk names a planted mis-parse, not "no label here"', () => {
   assert.equal(demoLabelUse("const cp = 1;\nif (cp) /'/.test(cp); const b = 'p//q';"), STRIPPER_VERDICT_MESSAGES.misparsed);
-  assert.equal(demoLabelUse('const ok = LABELS.DEMO_PENDING;'), 'LABELS.DEMO_PENDING');
+  assert.equal(demoLabelUse('const ok = LABELS.DEMO_PENDING;'), 'DEMO_PENDING');
+  // The shapes a new reader could take without a `demo:` verdict literal.
+  assert.equal(demoLabelUse("const r = (l) => l.startsWith('demo:');"), 'demo:');
+  assert.equal(demoLabelUse("const r = (labels, s) => labels.includes('demo:' + s);"), 'demo:');
+  assert.equal(demoLabelUse('const { DEMO_PENDING } = LABELS;'), 'DEMO_PENDING');
+  assert.equal(demoLabelUse('const { DEMO_CHANGES_REQUESTED: bad } = LABELS;'), 'DEMO_CHANGES_REQUESTED');
+  // Unrelated DEMO_ names are not label readers.
+  assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE = /x/; const DEMO_ACCOUNT = 1;'), null);
   assert.equal(demoLabelUse("// LABELS.DEMO_PENDING and demo:pending in a comment\nconst ok = 1;"), null);
 });
 
-test('plugin/bin names a demo:* verdict literal only in the four modules that must', () => {
+test('plugin/bin names a demo:* verdict literal only in the three modules that must', () => {
   const offenders = [];
   let sites = 0;
   for (const file of BIN_FILES) {
@@ -251,7 +284,7 @@ test('plugin/bin names a demo:* verdict literal only in the four modules that mu
     }
   }
   assert.deepEqual(offenders, [],
-    'read a verdict through acceptanceOf / dispositionState, never a demo:* literal — only the vocabulary, the batch marker, the lane breaker and the closure check spell the legacy label');
+    'read a verdict through acceptanceOf / dispositionState, never a demo:* literal — only the vocabulary, the batch marker and the closure check spell the legacy label');
   assert.ok(BIN_FILES.length >= 400, `walked ${BIN_FILES.length} files, expected the whole plugin/bin tree`);
   assert.ok(sites >= 5, `matched ${sites} allowed literal sites, expected at least 5 — the matcher stopped matching`);
 });

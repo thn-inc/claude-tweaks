@@ -25,7 +25,7 @@ const MIN_SAMPLES = 8;
 // Five is the smallest run that is not an anecdote, and at roughly ten closed
 // records per class per month it is reachable in weeks rather than quarters — the
 // binding constraint on this number is that an unreachable floor makes the whole
-// table decorative, which is the failure mode that already killed the pending acceptance state.
+// table decorative, which is the failure mode that already killed the `demo:pending` label.
 const MIN_VERDICTS = 5;
 
 // provenance.js's `unstructured` kind is not a trust class — it is that
