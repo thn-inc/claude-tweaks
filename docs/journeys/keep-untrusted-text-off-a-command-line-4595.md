@@ -9,7 +9,7 @@ files:
 **Persona:** A maintainer who writes or reviews skill prose that puts text the plugin did not write into a shell command or a paste command shown to a human. That text can be a human's free-text answer, a PR or issue body or comment, a record field, or a branch name.
 **Goal:** The text reaches the command as data, never by interpolation. Any command built from untrusted parts renders only when every part matches its composer's exact grammar. Otherwise the step shows a line that is not a command.
 **Entry point:** Authoring time: `docs/skill-authoring.md`'s "Untrusted text into a shell or paste command" section, read before editing `plugin/skills/**/*.md`. Review time: `/claude-tweaks:review`'s lens 3b (Security) reading the built diff.
-**Success state:** At authoring time, the step passes the untrusted text in one of two ways: a `Write`-produced file fed on stdin or as a path argument, or `process.argv`. A rendered paste command is held to an exact grammar, with a non-command fallback. At review time, lens 3b flags any untrusted text still interpolated into a shell or paste command as a security finding.
+**Success state:** At authoring time, the step passes the untrusted text in one of two ways: a `Write`-produced file fed on stdin or as a path argument, or an argv array element passed with no shell. A rendered paste command is held to an exact grammar, with a non-command fallback. At review time, lens 3b flags any untrusted text still interpolated into a shell or paste command as a security finding.
 
 ## Steps
 
@@ -17,14 +17,14 @@ files:
 - **URL:** N/A (doc: `docs/skill-authoring.md`, section `## Untrusted text into a shell or paste command`)
 - **Action:** The author is writing a step that feeds a human's reason, a fetched body, or a branch name into a command. They read the section. It sits beside "Passing untrusted content into an inline skill invocation", which is the LLM-turn counterpart.
 - **Should feel:** Concrete. Two real incidents show the exact bad shape and its fix:
-  - #4465's single-quoted `printf` of a decline reason, fixed in 5a3494874.
-  - #4423's unconstrained `### Resume` paste line, fixed in 48d8c550e.
+  - #4465's single-quoted `printf` of a decline reason, fixed in squash commit 9d59ce045.
+  - #4423's unconstrained `### Resume` paste line, fixed in the same squash commit, 9d59ce045.
 - **Should understand:** Quoting is no defense. A single quote inside the text ends a `'…'` argument, and `"…"` still expands `$(…)` and backticks.
 - **Red flags:** The author wraps `{why}` in quotes and calls it safe.
 
 ### 2. The author passes the text as data
 - **URL:** N/A
-- **Action:** The step `Write`s the untrusted payload to a session-tmp file, then feeds it on stdin (`… < "{D}"`) or as a path argument. For a `node` program, the step hands it over through `process.argv`.
+- **Action:** The step `Write`s the untrusted payload to a session-tmp file, then feeds it on stdin (`… < "{D}"`) or as a path argument. Code that spawns a `node` program passes it as an argv array element with no shell, which the program reads through `process.argv`.
 - **Should feel:** Mechanical. A file or an argv slot never needs escaping.
 - **Should understand:** `docs/donts.md`'s `process.argv` rule is the correctness half of the same advice. This rule adds the trust half.
 - **Red flags:** A `printf '%s' '{…"reason":"{why}"…}' | …` line that still carries human text on the command line.
@@ -40,7 +40,7 @@ files:
 - **URL:** N/A (skill step: `/review` Step 3, `review/step3-lens-dispatch.md` lens 3b)
 - **Action:** The Security lens asks whether skill prose in the diff puts untrusted text on a shell command line, or into a rendered paste command, by interpolation. It flags any such case as a security finding.
 - **Should feel:** Like the backstop that caught both motivating incidents. Each passed the whole-branch review and was caught only here.
-- **Should understand:** The lens bullet points back to the skill-authoring section for the rule, rather than restating it.
+- **Should understand:** The lens bullet names the safe alternatives, because a dispatched lens agent cannot read sibling files, and cites the skill-authoring section for the rule.
 - **Red flags:** A diff that interpolates `{why}` or a fetched field into a command, and reaches merge with no lens 3b finding.
 
 ## Origin

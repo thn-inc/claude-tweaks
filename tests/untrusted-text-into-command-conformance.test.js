@@ -4,8 +4,8 @@
 // paste command" section (the class, the Write / process.argv fix, the exact-grammar rule for a
 // rendered paste command, and both worked fixes, #4465 and #4423), and
 // review/step3-lens-dispatch.md's lens 3b carries the bullet that asks whether that class reaches
-// a command. Each pin has a go-red control that runs the same assertion against text with the
-// pinned phrase removed.
+// a command. Every pin except the section-ordering check has a go-red control that runs the same
+// assertion against text with the pinned phrase removed.
 'use strict';
 
 const test = require('node:test');
@@ -34,7 +34,8 @@ const RULE_PINS = [
   { phrase: FALLBACK_PHRASE, message: `section must name the non-command fallback ${JSON.stringify(FALLBACK_PHRASE)}` },
 ];
 const RECORD_REFS = ['#4465', '#4423'];
-const FIX_SHAS = ['5a3494874', '48d8c550e'];
+// Both fixes landed in one squash commit on the integration branch (#4423's); the pre-squash branch commits do not resolve in a fresh clone.
+const FIX_SHAS = ['9d59ce045'];
 const LENS_HEADING = '### 3b: Security';
 const LENS_PHRASE = 'untrusted text interpolated into a shell or paste command';
 
