@@ -175,7 +175,7 @@ Classify from both reads, in this order:
 - Any `statusCheckRollup[]` entry with `conclusion` in `FAILURE`, `TIMED_OUT`, `ERROR`, or `STARTUP_FAILURE`
   — or any head run whose `status` is `completed` and whose `conclusion`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
   reconcile's concern). Take the **Red path** below now, before anything else. Under `off` this
-  read still runs — an explicit `off` skips the *wait*, not the read — but an explicit `off` merges anyway; a derived `off` takes the **Red path**. An explicit `off`'s red read is logged and shown, not acted on.
+  read still runs — an explicit `off` skips only the *wait* — but an explicit `off` merges anyway; a derived `off` takes the **Red path**. An explicit `off`'s red read is logged, not acted on.
 - Any entry with `status` not `COMPLETED` (or `conclusion` null while `status: IN_PROGRESS`/`QUEUED`/`PENDING`), or any head run whose `status` is not `completed`
   → **pending**. A partial rollup (some workflows reported, others not yet registered) is not green.
 - An **empty rollup** → read the merge state first: `mergeStateStatus: DIRTY` (or `mergeable: CONFLICTING`)
