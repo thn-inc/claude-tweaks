@@ -21,6 +21,16 @@ function plansAged(n, days, prefix) {
   }));
 }
 
+const UNCOMMITTED_PLAN = 'docs/superpowers/plans/uncommitted.md';
+const RECENT_PLAN = 'docs/superpowers/plans/recent.md';
+
+function uncommittedAndRecentPlans() {
+  return [
+    { plan: UNCOMMITTED_PLAN, firstAdded: UNCOMMITTED },
+    { plan: RECENT_PLAN, firstAdded: daysBeforeToday(1) },
+  ];
+}
+
 const noLookup = () => { throw new Error('lookupDecline must not be called'); };
 // A call-counting stand-in: a throw-if-called helper can be swallowed by a try around the lookup.
 function spyLookup() {
@@ -147,9 +157,7 @@ test('a lookup that throws a non-Error still keeps every plan and reports the th
 });
 
 test('AC3.1 (unit): an uncommitted plan keeps under keep-forever and ask; ask has no cutoff', () => {
-  const U = 'docs/superpowers/plans/uncommitted.md';
-  const R = 'docs/superpowers/plans/recent.md';
-  const plans = [{ plan: U, firstAdded: UNCOMMITTED }, { plan: R, firstAdded: daysBeforeToday(1) }];
+  const plans = uncommittedAndRecentPlans();
 
   const forever = routePlans({ retention: 'keep-forever', plans, today: TODAY, cited: null, lookupDecline: noLookup });
   assert.deepEqual(routes(forever), ['keep', 'keep']);
@@ -157,18 +165,16 @@ test('AC3.1 (unit): an uncommitted plan keeps under keep-forever and ask; ask ha
 
   const ask = routePlans({ retention: 'ask', plans, today: TODAY, cited: null, lookupDecline: noLookup });
   assert.deepEqual(routes(ask), ['keep', 'prune-ask']);
-  assert.deepEqual(ask.citationCandidates, [R]);
+  assert.deepEqual(ask.citationCandidates, [RECENT_PLAN]);
   assert.equal(ask.citationCheck, true);
   assert.equal(ask.decline, null);
 });
 
 test('prune-after-wrapup routes every plan delete and lists all for the citation check', () => {
-  const U = 'docs/superpowers/plans/uncommitted.md';
-  const R = 'docs/superpowers/plans/recent.md';
-  const plans = [{ plan: U, firstAdded: UNCOMMITTED }, { plan: R, firstAdded: daysBeforeToday(1) }];
+  const plans = uncommittedAndRecentPlans();
   const result = routePlans({ retention: 'prune-after-wrapup', plans, today: TODAY, cited: null, lookupDecline: noLookup });
   assert.deepEqual(routes(result), ['delete', 'delete']);
-  assert.deepEqual(result.citationCandidates, [U, R]);
+  assert.deepEqual(result.citationCandidates, [UNCOMMITTED_PLAN, RECENT_PLAN]);
   assert.equal(result.citationCheck, true);
   assert.equal(result.decline, null);
 

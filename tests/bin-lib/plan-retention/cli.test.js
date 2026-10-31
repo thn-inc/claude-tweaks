@@ -20,6 +20,10 @@ const PLANS_DIR = 'docs/superpowers/plans/';
 const P = `${PLANS_DIR}a.md`;
 const Q = `${PLANS_DIR}b.md`;
 
+function planPaths(count) {
+  return Array.from({ length: count }, (_, i) => `${PLANS_DIR}plan-${String(i).padStart(2, '0')}.md`);
+}
+
 function fakeDeps(overrides = {}) {
   const out = [];
   const err = [];
@@ -130,7 +134,7 @@ test('the output line carries the documented keys in order', () => {
 });
 
 test('--cited reaches routePlans as the cited set', () => {
-  const plans = Array.from({ length: 32 }, (_, i) => `${PLANS_DIR}plan-${String(i).padStart(2, '0')}.md`);
+  const plans = planPaths(32);
   const cited = [plans[3], plans[17]];
   const r = invoke(['--retention', 'keep-forever', '--cited', cited[0], '--cited', cited[1], ...plans]);
   assert.equal(r.code, 0);
@@ -149,7 +153,7 @@ test('--cited reaches routePlans as the cited set', () => {
 });
 
 test('the decline lookup receives the archive fingerprint and a live decline keeps every plan', () => {
-  const plans = Array.from({ length: 30 }, (_, i) => `${PLANS_DIR}plan-${String(i).padStart(2, '0')}.md`);
+  const plans = planPaths(30);
   const seen = [];
   const r = invoke(['--retention', 'keep-forever', ...plans], {
     lookupDecline: (fp) => { seen.push(fp); return { declinedAt: '2026-10-01T00:00:00.000Z' }; },
@@ -162,7 +166,7 @@ test('the decline lookup receives the archive fingerprint and a live decline kee
 });
 
 test('a throwing decline lookup is reported and keeps every plan, still exit 0', () => {
-  const plans = Array.from({ length: 30 }, (_, i) => `${PLANS_DIR}plan-${String(i).padStart(2, '0')}.md`);
+  const plans = planPaths(30);
   const r = invoke(['--retention', 'keep-forever', ...plans], {
     lookupDecline: () => { throw new Error('store unreadable'); },
   });
