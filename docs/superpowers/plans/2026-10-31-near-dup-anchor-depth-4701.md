@@ -32,7 +32,7 @@ Plan-audit Check B's other keyword hits are prose that names `findNearDuplicates
 
 ## Review Focus
 
-- Ties under the new key (equal `score + sharedAnchors.length`) must still order by score descending, then number ascending — pinned by the renamed existing sort test (expected `[20, 5, 30]`).
+- Ties under the new key (equal `score + sharedAnchors.length`) must still order by score descending, then number ascending — the score tiebreak is pinned by Task 1's equal-depth-key test, number ascending by the renamed existing sort test (expected `[20, 5, 30]`).
 - A hit with `sharedAnchors` missing or not an array (malformed shape) must not throw in `deepOverlapHits` and must not be returned — Task 1 test `deepOverlapHits ignores malformed hits`.
 - Exactly 3 shared anchors is the boundary: included; 2 is excluded — Task 1 test `deepOverlapHits includes exactly DEEP_OVERLAP_MIN anchors and excludes one fewer`.
 - The refusal path must be unaffected by reordering — the existing `shapingRefusal` tests (`tests/bin-lib/issues/near-duplicate.test.js:295-342`) must pass unchanged.
@@ -41,6 +41,8 @@ Plan-audit Check B's other keyword hits are prose that names `findNearDuplicates
 ---
 
 ### Task 1: Depth-first sort and `deepOverlapHits`
+
+**Review risk:** high (ranking decision logic; reorders the hits `shapingRefusal` scans first-match)
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/near-duplicate.js:150-200` (doc comment, sort at :199), `:207-216` region (new constant + helper beside `STRONG_NEAR_DUPLICATE_MIN`), `:267-280` (exports)
@@ -68,6 +70,14 @@ test('AC1.1: #4093/#3508 shape — a six-anchor score-1 candidate outranks four 
   assert.deepStrictEqual(deepOverlapHits(results).map((r) => r.number), [3508]);
 });
 
+test('sorting: an equal depth key breaks on score — score 2 + 1 anchor ranks above score 1 + 2 anchors', () => {
+  const subject = { number: 1, title: 'dispatch pre-build near-duplicate check', body: '## Current State\n\nUses `alpha.js` and `beta.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const twoSignalOneAnchor = { number: 40, title: 'dispatch pre-build near-duplicate check', body: '## Current State\n\nUses `alpha.js`.\n\n### Key Files\n\n- `x.js` — modify\n- `y.js` — modify\n- `z.js` — modify\n' };
+  const oneSignalTwoAnchors = { number: 10, title: 'totally unrelated', body: '## Current State\n\nUses `alpha.js` and `beta.js`.\n\n### Key Files\n\n- `w.js` — modify\n- `v.js` — modify\n- `u.js` — modify\n' };
+  const results = findNearDuplicates(subject, [oneSignalTwoAnchors, twoSignalOneAnchor]);
+  assert.deepStrictEqual(results.map((r) => [r.number, r.score, r.sharedAnchors.length]), [[40, 2, 1], [10, 1, 2]]);
+});
+
 test('deepOverlapHits includes exactly DEEP_OVERLAP_MIN anchors and excludes one fewer', () => {
   assert.strictEqual(DEEP_OVERLAP_MIN, 3);
   const three = { number: 1, sharedAnchors: ['a', 'b', 'c'] };
@@ -90,7 +100,7 @@ Expected: FAIL — `deepOverlapHits is not a function`, and the #4093/#3508 test
 
 - [ ] **Step 3: Implement in `plugin/bin/lib/issues/near-duplicate.js`**
 
-Sort at :199 becomes key `score + sharedAnchors.length` descending, then `score` descending, then `number` ascending. Update the :152-155 doc comment to state that order and why (a deep-anchor duplicate with a differently worded title scores 1 but is the likeliest true duplicate, #4701). Add `DEEP_OVERLAP_MIN = 3` with a calibration comment (#3417/#3419's conflicting pair shared 3 anchors; #4093/#3508 shared 6; one-anchor hits are routinely noise) and `deepOverlapHits(hits)` — filter, finder order kept, non-array input → `[]`, a hit whose `sharedAnchors` is not an array is skipped. Export both.
+Sort at :199 becomes key `score + sharedAnchors.length` descending, then `score` descending, then `number` ascending. Update the :152-155 doc comment to state that order and why (a deep-anchor duplicate with a differently worded title scores 1 but is the likeliest true duplicate, #4701), and that the fold is deliberate: a body-only hit with 2 anchors (key 3) now outranks a title-plus-key-files hit with none (key 2). The equal-key tiebreak test above must fail when the `score` tiebreak is dropped from the comparator (number-ascending would put #10 first). Add `DEEP_OVERLAP_MIN = 3` with a calibration comment (#3417/#3419's conflicting pair shared 3 anchors; #4093/#3508 shared 6; one-anchor hits are routinely noise) and `deepOverlapHits(hits)` — filter, finder order kept, non-array input → `[]`, a hit whose `sharedAnchors` is not an array is skipped. Export both.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -138,7 +148,7 @@ test('shaping-mode.md names deepOverlapHits candidates as likely duplicates befo
 Run: `node --test tests/specify-near-duplicate-prose.test.js`
 Expected: FAIL — the section does not mention `deepOverlapHits`.
 
-- [ ] **Step 3: Add one sentence** to `plugin/skills/specify/shaping-mode.md`, as its own sentence after the Related-append sentence ending "…even when shaping proceeds normally.": name each candidate `deepOverlapHits` (`bin/lib/issues/near-duplicate.js`, at least `DEEP_OVERLAP_MIN` shared Current State anchors, #4701) returns on a line above the table as a likely duplicate with its shared-anchor count, and read that record's body before stamping `ready` — the finder ranks such a candidate first even when its score is 1. Leave the table header and every existing sentence unchanged.
+- [ ] **Step 3: Add one sentence** to `plugin/skills/specify/shaping-mode.md`, as its own sentence after the Related-append sentence ending "…even when shaping proceeds normally.": name each candidate `deepOverlapHits` (`bin/lib/issues/near-duplicate.js`, at least `DEEP_OVERLAP_MIN` shared Current State anchors, #4701) returns on a line above the table as a likely duplicate with its shared-anchor count, and read that record's body before stamping `ready` — the finder ranks such a candidate first even when its score is 1. The call-out is surface-only: shaping still proceeds, and a deep-overlap candidate never refuses (spec's Plan Review Clarifications). Leave the table header and every existing sentence unchanged.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
