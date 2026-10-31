@@ -12,7 +12,9 @@
 const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
-const { classifyStagedItem, SHADOW_DUP_RE, SECTIONS, runIdOf, parseTiebreakLine } = require('./resolve');
+const {
+  classifyStagedItem, SHADOW_DUP_RE, SECTIONS, runIdOf, parseTiebreakLine, FINDING_PATH,
+} = require('./resolve');
 const { digestTextOf } = require('./staged-digest-text');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
 const { readRunState, isStaleClaim, RUN_ID_RE } = require('../hooks/context');
@@ -24,7 +26,10 @@ const STAGED_FINDING_RE = /^review-(unconfirmed|contested|debate)-/;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 // Reporter severities a tiebreak could file at (unknown counts as medium).
 const FILEABLE_SEVERITIES = new Set(['critical', 'high', 'medium']);
-const LOCATION_RE = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/g;
+const LOCATION_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`, 'g');
+// The narrower path class the id key was minted under. A finding's id names its location by this class
+// so ids minted before FINDING_PATH stay byte-identical; the reported path is LOCATION_RE's.
+const LEGACY_LOCATION_RE = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/g;
 const PATH_SHAPED_RE = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+/;
 // Reproduction meta describes how a finding was (not) reproduced, never the finding itself. It is
 // stripped a whole clause at a time — a parenthetical clause (split at `,` `;`) that opens with one of
@@ -193,6 +198,15 @@ function splitPoints(line) {
     else if (line[i] === ')' && depth > 0) depth -= 1;
   }
   const points = [];
+  // The legacy-class matches by end offset, each counted like LOCATION_RE's below. A widened match that a
+  // legacy match ends at keeps that legacy match's path and occurrence as its id key.
+  const legacy = new Map();
+  const legacySeen = new Map();
+  for (const m of line.matchAll(LEGACY_LOCATION_RE)) {
+    const occurrence = legacySeen.get(m[0]) || 0;
+    legacySeen.set(m[0], occurrence + 1);
+    legacy.set(m.index + m[0].length, { path: m[1], occurrence });
+  }
   // `occurrence` counts the earlier LOCATION_RE matches of the same path:line anywhere in the line
   // (inside parentheticals too), so it does not depend on which tokens are split points.
   const seen = new Map();
@@ -202,29 +216,29 @@ function splitPoints(line) {
     if (depthAt[m.index] > 0) continue;
     const end = m.index + m[0].length;
     if (points.length > 0 && /^-\d/.test(line.slice(end)) && !RANGE_STARTS_FINDING_RE.test(line.slice(0, m.index))) continue;
-    points.push({ path: m[1], line: Number(m[2]), occurrence, start: m.index, end });
+    points.push({ path: m[1], line: Number(m[2]), key: legacy.get(end) || { path: m[1], occurrence }, start: m.index, end });
   }
   return points;
 }
 
 // One legacy decisions.md line → its findings. A finding's claim is the text
 // between its location and the next split point (or the line's end).
-// `located` is every location the line names ({ lens, path, line, occurrence }), claim or not: a line whose
+// `located` is every location the line names ({ lens, path, line, key }), claim or not: a line whose
 // findings all lack a claim keeps its locations for the no-claim item that stands for it.
 function analyseLine(line) {
   const tokens = splitPoints(line);
   if (!tokens.length) {
     const m = PATH_SHAPED_RE.exec(line);
     if (!m) return { findings: [], noClaim: 'no-path', located: [] };
-    tokens.push({ path: m[0], line: null, occurrence: 0, start: m.index, end: m.index + m[0].length });
+    tokens.push({ path: m[0], line: null, key: { path: m[0], occurrence: 0 }, start: m.index, end: m.index + m[0].length });
   }
   const lensMatch = /lens\s+"?([A-Za-z0-9_-]+)/.exec(line);
   const lens = lensMatch ? lensMatch[1] : 'unknown';
   const findings = tokens.map((t, k) => {
     const cleaned = cleanSegment(line.slice(t.end, k + 1 < tokens.length ? tokens[k + 1].start : line.length));
-    return { lens, path: t.path, line: t.line, occurrence: t.occurrence, claim: wordCount(cleaned) < 4 ? '' : cleaned, severity: severityOf(cleaned) };
+    return { lens, path: t.path, line: t.line, key: t.key, claim: wordCount(cleaned) < 4 ? '' : cleaned, severity: severityOf(cleaned) };
   });
-  const located = findings.map((f) => ({ lens: f.lens, path: f.path, line: f.line, occurrence: f.occurrence }));
+  const located = findings.map((f) => ({ lens: f.lens, path: f.path, line: f.line, key: f.key }));
   if (findings.every((f) => f.claim === '')) return { findings: [], noClaim: 'claim-empty', located };
   return { findings, noClaim: null, located };
 }
@@ -239,7 +253,8 @@ const findingKindOf = (section) => (section === SECTIONS.CONTESTED ? 'contested'
 // A split item's key names its location only — lens, path:line and which occurrence of that
 // path:line in the line — never the split-point index or whether a claim came out empty, so a
 // change to the claim heuristics never moves an id (`@`, never the retired index-keyed `#k`).
-const findingKeyOf = (f) => `${f.lens}|${f.path}:${f.line}@${f.occurrence}`;
+// The location is the id key's (`f.key`, the legacy path class), not the reported path.
+const findingKeyOf = (f) => `${f.lens}|${f.key.path}:${f.line}@${f.key.occurrence}`;
 const locationOf = (f) => ({ lens: f.lens, path: f.path, line: f.line });
 
 // A new-shape coordination id (`…#{8 hex}`) may carry a `-{n}` repeat suffix
@@ -334,7 +349,7 @@ function persistedSplitItem(item, single, runId, section) {
 // The first location a text names: `{ path, line }` from a `path:line`, else `{ path, line: null }`
 // from a path-shaped token, else null.
 function firstLocation(text) {
-  const loc = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/.exec(text);
+  const loc = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`).exec(text);
   if (loc) return { path: loc[1], line: Number(loc[2]) };
   const shaped = PATH_SHAPED_RE.exec(text);
   return shaped ? { path: shaped[0], line: null } : null;
