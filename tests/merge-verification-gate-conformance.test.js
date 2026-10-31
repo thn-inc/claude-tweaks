@@ -136,3 +136,55 @@ test('pr-checklist-refresh.md carries the gh-absent-at-merge degrade row (procee
   const t = read('_shared', 'pr-checklist-refresh.md');
   assert.ok(/gh.*absent at merge time/i.test(t) && /proceed as `off`/.test(t) && /\*\*warn\*\*/.test(t));
 });
+
+// #4550: the derived-off rule is stated once (Step 2.5); the coverage block, the release path and
+// the PR-check gate point at it. Each pin is factored so its go-red control runs the same code.
+const COVERAGE_CITE = "`_shared/pr-first-merge.md` Step 2.5's derived-`off` rule — so branches 2 and 4 skip the wait only for a PR whose checks never report";
+const RELEASE_PROJECT_READ = 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification\n';
+const RELEASE_DELTA_2 = 'an explicit `off` still merges anyway; a derived `off` (Step 2.5) red is `failed`';
+const RELEASE_DELTA_3 = 'a derived `off` (Step 2.5) takes the bounded watch, an explicit one does not wait';
+const CHECK_GATE_RED = 'When it prints `off` and Step 2.5 reads it as explicit';
+
+function assertCoverageCitesDerivedOff(text) {
+  const end = text.indexOf('<!-- merge-verification-derivation:end -->');
+  assert.ok(end !== -1, 'derivation end marker present');
+  const after = text.slice(end, text.indexOf('\n## ', end));
+  assert.ok(after.includes(COVERAGE_CITE), 'sentence after the block cites Step 2.5 and names branches 2 and 4');
+  const block = text.slice(text.indexOf('<!-- merge-verification-derivation:start -->'), end);
+  assert.ok(!block.includes('derived-`off` rule'), 'the sentence sits outside the markers');
+}
+
+function assertReleaseCitesDerivedOff(text) {
+  const gate = text.slice(text.indexOf('**The PR-check gate'), text.indexOf('**Reviewed-tip comparison'));
+  for (const needle of [RELEASE_PROJECT_READ, RELEASE_DELTA_2, RELEASE_DELTA_3]) {
+    assert.ok(gate.includes(needle), `release PR-check gate missing: ${needle}`);
+  }
+  assert.ok(!gate.includes('{"value":"off","source":"default"}'), 'release cites the rule, never restates its condition');
+}
+
+function assertCheckGateCitesDerivedOff(text) {
+  const red = text.slice(text.indexOf('- **`red`**'), text.indexOf('\n- **', text.indexOf('- **`red`**') + 1));
+  assert.ok(red.includes(CHECK_GATE_RED), 'pr-check-gate passes red with a caveat only under an explicit off');
+  assert.ok(red.includes('a derived `off`'), 'pr-check-gate names a derived off among the gate-failure values');
+  assert.ok(!red.includes('{"value":"off","source":"default"}'), 'pr-check-gate cites the rule, never restates its condition');
+}
+
+test('AC5.1: the coverage block\'s follow-on sentence cites Step 2.5\'s derived-off rule', () => {
+  const text = read('_shared', 'policy-schema-coverage.md');
+  assertCoverageCitesDerivedOff(text);
+  assert.throws(() => assertCoverageCitesDerivedOff(text.replace(COVERAGE_CITE, '')));
+});
+
+test('AC6.1: the release PR-check gate carries the project-level read and cites the derived-off rule', () => {
+  const text = read('release', 'execute.md');
+  assertReleaseCitesDerivedOff(text);
+  for (const needle of [RELEASE_PROJECT_READ, RELEASE_DELTA_2, RELEASE_DELTA_3]) {
+    assert.throws(() => assertReleaseCitesDerivedOff(text.replace(needle, '')), `removing ${needle} must fail the pin`);
+  }
+});
+
+test('plan-review clarification: the PR-check gate fails a derived-off red and passes only an explicit one', () => {
+  const text = read('_shared', 'pr-check-gate.md');
+  assertCheckGateCitesDerivedOff(text);
+  assert.throws(() => assertCheckGateCitesDerivedOff(text.replace(CHECK_GATE_RED, 'When it prints `off`')));
+});
