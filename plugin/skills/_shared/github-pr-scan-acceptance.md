@@ -111,7 +111,8 @@ exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never
 A closed record whose acceptance lives on a `/claude-tweaks:specify` decomposition parent must
 not count as a gap — `needsBackstop`'s `hasParent` field exists precisely to suppress it, and its
 `isParent` field excludes every parent — its acceptance is the parent gate's: the below-floor close
-(#4466) or `/claude-tweaks:demo` above it. Resolving
+(#4466) or `/claude-tweaks:demo` above it (the `parent-gate` scope below reports a hand-closed
+one, #4600). Resolving
 which closed records are sub-issues reuses the same parent-side enumeration the `parent-gate` scope
 below already documents in full — never the sub-issue side, which works under one `work-links` mode
 and silently returns nothing under the other. This step only needs sub-issue *existence*, not
@@ -403,7 +404,7 @@ this sweep lives in `tidy/step-1-records.md` (Shape 7), reading the record store
 
 Record set: open records carrying `parent-issue` (`/claude-tweaks:specify` labels every
 decomposition parent this way — see `specify/record-creation.md`'s Parent record section),
-plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
+plus those closed in the last 30 days (#4600), plus the state map, fetched once (every issue under `body-text`, every native sub-issue under `native`).
 
 ### `work-links` resolution
 
@@ -454,8 +455,12 @@ Resolve session-scoped paths first (`_shared/session-tmp-root.md`):
 PI_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-new.json)"
 PI_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues-legacy.json)"
 ALL_STATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-all-issue-states.json)"
+GH_LOGIN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-gh-login.txt)"
+PC_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-new.json)"
+PC_LEG="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-parent-issues-legacy.json)"
 PARENTS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-issues.json)"
 : > "$PARENTS"
+gh api user --jq .login > "$GH_LOGIN"
 LIMIT="{resolved-limit}"
 export FETCH_LIMIT="$LIMIT"
 STATE_SEARCH='{state-map-search}'
@@ -466,6 +471,10 @@ gh issue list --label parent-issue --state open --json number,title,body,labels 
 # removable only at a major version dropping pre-rename repo support. [IL-85]
 gh issue list --label family:parent --state open --json number,title,body,labels --limit "$LIMIT" \
   > "$PI_LEG"
+gh issue list --label parent-issue --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_NEW"
+gh issue list --label family:parent --state closed --search "closed:>=$(node -p "new Date(Date.now() - 31 * 864e5).toISOString().slice(0, 10)")" --json number,title,body,labels,state,stateReason,closedAt,comments --limit "$LIMIT" \
+  > "$PC_LEG"
 
 gh issue list --state all --search "$STATE_SEARCH" --json number,state,labels --limit "$LIMIT" \
   > "$ALL_STATES"
@@ -474,9 +483,12 @@ node -e "
   const fs = require('fs');
   if (!['', 'has:parent-issue'].includes(process.env.STATE_SEARCH)) throw new Error('STATE_SEARCH is not a known value — the state-map-search placeholder was not substituted.');
   const LIMIT = Number(process.env.FETCH_LIMIT);
-  const fetched = ['$PI_NEW', '$PI_LEG'].map(require);
-  // Number-keyed dedup across the two label fetches — identical rows, either fetch may win.
-  const parents = [...new Map(fetched.flat().map((p) => [p.number, p])).values()];
+  const { isTrustedComment } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/comment-trust.js');
+  const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
+  const login = fs.readFileSync('$GH_LOGIN', 'utf8').trim();
+  const marks = (p) => (p.comments || []).some((c) => (isTrustedComment(c) || c.author?.login === login) && /^## Closed below the oversight floor\s*\$/m.test(c.body || ''));
+  // Number-keyed dedup across all four fetches; either may win.
+  const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || p.closedAt > new Date(Date.now() - 30 * 864e5).toISOString()).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: marks(p) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
   if (fetched.some((f) => f.length >= Math.min(LIMIT, 1000))) {
@@ -536,9 +548,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: parseSubIssues(p.body).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -587,9 +600,10 @@ node -e "
     number: p.number,
     title: p.title,
     parentLabels: p.labels.map(l => l.name),
+    state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
     subIssues: (byParent[p.number] || []).map(n => {
       const info = infoOf.get(n);
-      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+      return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
     }),
   }));
   fs.writeFileSync('$GATES', JSON.stringify(gates));
@@ -643,9 +657,10 @@ node -e "
       number,
       title: p.title,
       parentLabels: p.labels.map(l => l.name),
+      state: p.state || 'OPEN', stateReason: p.stateReason || null, belowFloorClose: p.belowFloorClose === true,
       subIssues: subIssueNumbers.map(n => {
         const info = infoOf.get(n);
-        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [] };
+        return { number: n, state: (info && info.state) || 'OPEN', labels: (info && info.labels) || [], unread: !info };
       }),
     };
   });
@@ -654,8 +669,8 @@ node -e "
 ```
 
 Both the primary path and the Fallback path converge on the same session-scoped
-`tidy-parent-gates.json` shape — `{number, title, parentLabels, subIssues:[{number,state,labels}]}`
-per parent.
+`tidy-parent-gates.json` shape — `{number, title, parentLabels, state, stateReason, belowFloorClose,
+subIssues:[{number,state,labels,unread}]}` per parent.
 
 ### Oversight-floor pre-filter
 
@@ -681,7 +696,7 @@ session-scoped paths first (`_shared/session-tmp-root.md`):
 GATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-parent-gates.json)"
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
-  const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
+  const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { parseRecordFacets, TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const gates = require('$GATES'); // [{number, title, subIssues, parentLabels}]
@@ -697,13 +712,26 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
-  gates
-    .filter(f => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach(f => console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+  const unreadable = {};
+  gates.forEach((f) => {
+    if (f.state === 'CLOSED') {
+      const v = closedParentGap({ ...f, subIssues: f.subIssues.map((s) => ({ risk: parseRecordFacets(s.labels).risk, unread: s.unread === true })), riskFloor });
+      if (v === 'gap') console.log('[acceptance-gap] #' + f.number + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo #' + f.number);
+      else if (v !== 'none') unreadable[v] = (unreadable[v] || 0) + 1;
+      return;
+    }
+    if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
+    console.log('[parent-gate] #' + f.number + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
       ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #' + f.number
-      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
+      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
+  });
+  Object.entries(unreadable).forEach(([v, n]) => console.error('WARNING: ' + n + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — their sub-issue risk cannot be read; check work-links and backlog-fetch-limit, then re-run.'));
 " -- "$RISK_FLOOR"
 ```
+
+A `CLOSED` gate's row is `closedParentGap`'s verdict: a `gap` prints `acceptance-gap`'s row, severity and
+routing, mutating nothing, recommending `/claude-tweaks:demo #{n}`. Its two `WARNING:` lines print verbatim
+beside the rows, per "Report every warning" above.
 
 Un-gated parents recommend the `Open parent gate` action (`tidy/SKILL.md`'s Action Vocabulary,
 executed for this scope's rows via `tidy/actions-github-issues.md`'s `## Open parent gate`) — never applied without

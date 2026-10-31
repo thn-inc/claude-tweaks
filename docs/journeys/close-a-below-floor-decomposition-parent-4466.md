@@ -92,7 +92,7 @@ files:
 - **URL:** `github-pr-scan-acceptance.md`, `## Scope: \`acceptance-gap\``, the `needsBackstop({…})` call's `isParent` field
 - **Action:** on the next tidy run, the closed parent appears in the closed-record fetch.
 - **Should feel:** settled. The closed parent does not come back as an "undisposed" record asking for `/claude-tweaks:demo`.
-- **Should understand:** `needsBackstop` skips every decomposition parent, because a parent's acceptance belongs to the parent gate.
+- **Should understand:** `needsBackstop` skips a decomposition parent unless the parent-gate sweep shows it closed above the floor with no #4466 close marker, because a parent's acceptance belongs to the parent gate.
 - **Red flags:** an `[acceptance-gap]` row for a parent this journey closed.
 
 ## Origin
