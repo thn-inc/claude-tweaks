@@ -52,6 +52,29 @@ node -e "
   if (raw.length === LIMIT) {
 `;
 
+// The closed-record fetch as it read before the #4469 date-slice split: one server-filtered
+// `closed:>=$SINCE` fetch, its node block, and the whole-fetch `raw.length >= CAP` warning. Copied
+// verbatim from the live fence (github-pr-scan-acceptance.md, acceptance-gap) before the split.
+const PRE_CHANGE_SLICED_FETCH = String.raw`gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
+  --json number,title,state,labels,closedAt,stateReason \
+  > "$RAW"
+node -e "
+  const fs = require('fs');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
+  const raw = require('$RAW');
+  const LIMIT = $LIMIT;
+  const CAP = Math.min(LIMIT, 1000);
+  if (raw.length >= CAP) {
+    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. Below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at 1000 or above, the 30-day undisposed set itself reaches or exceeds the search ceiling and this scope cannot be complete.');
+  }
+  const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
+"`;
+
+// The `--search` exclusions every closed-record slice shares (needsBackstop's dispositions and reasons).
+const EXCLUSIONS = '-reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending';
+
 // The trust-table.md parenthetical as it read before #4469.
 const PRE_CHANGE_TRUST = `(\`acceptance-gap\`'s own *closed-record* fetch is bounded by the same \`{resolved-limit}\` and
 carries the same truncation-warning discipline — a 30-day window does not bound it, per that
@@ -69,11 +92,12 @@ function closedFetchBlock(gap) {
   return gap.slice(start, end);
 }
 
-// The `--search "…"` argument of the closed-record fetch, unescaped quotes left as written.
-function closedSearchString(gap) {
-  const m = /gh issue list --state closed[^\n]*\\\n\s+--search "((?:[^"\\]|\\.)*)"/.exec(gap);
-  assert.ok(m, 'the closed-record fetch must carry a --search "…" argument on the line after --limit');
-  return m[1];
+// The `--search "…"` argument of every closed-record fetch (one per date slice), in file order,
+// unescaped quotes left as written.
+function closedSearchStrings(gap) {
+  const found = [...gap.matchAll(/gh issue list --state closed[^\n]*\\\n\s+--search "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+  assert.ok(found.length > 0, 'the closed-record fetch must carry a --search "…" argument on the line after --limit');
+  return found;
 }
 
 // Offsets of every `gh issue list --state closed` in `text` with no `--search` within 120 chars.
@@ -96,11 +120,22 @@ test('closed-record fetch is server-filtered', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,
-    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>=\$SINCE -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
-    'the closed-record fetch must narrow on the server through --search'
+    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:\$SINCE\.\.\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
+    'the older date slice must narrow on the server through --search'
+  );
+  assertClaimPinned(
+    GAP,
+    PRE_CHANGE_GAP_FETCH,
+    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
+    'the newer date slice must narrow on the server through --search'
+  );
+  assert.deepEqual(
+    closedSearchStrings(GAP),
+    [`closed:$SINCE..$MID ${EXCLUSIONS}`, `closed:>$MID ${EXCLUSIONS}`],
+    'the closed-record fetch must be exactly the two date slices, each carrying the shared exclusions'
   );
   const occurrences = [...GAP.matchAll(/gh issue list --state closed/g)];
-  assert.ok(occurrences.length >= 1, 'the anchor `gh issue list --state closed` must be present in the scope');
+  assert.equal(occurrences.length, 2, 'the scope must issue exactly one fetch per date slice');
   assert.deepEqual(closedFetchesWithoutSearch(GAP), [], 'every closed-record fetch must carry --search within 120 chars');
 });
 
@@ -115,19 +150,21 @@ test('the unsearched-fetch detector rejects a fetch with no --search within 120 
 });
 
 test('negated labels are exactly needsBackstop dispositions', () => {
-  const search = closedSearchString(GAP);
-  const negated = [...search.matchAll(/-label:(\S+?)(?=\s|$)/g)].map((m) => m[1]).sort();
-  assert.deepEqual(negated, ['demo:approved', 'demo:changes-requested', 'demo:pending']);
-  for (const label of negated) {
+  for (const search of closedSearchStrings(GAP)) {
+    const negated = [...search.matchAll(/-label:(\S+?)(?=\s|$)/g)].map((m) => m[1]).sort();
+    assert.deepEqual(negated, ['demo:approved', 'demo:changes-requested', 'demo:pending'], `every slice negates exactly the dispositions: ${search}`);
+  }
+  for (const label of ['demo:approved', 'demo:changes-requested', 'demo:pending']) {
     assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
   }
 });
 
 test('never filters on a positive reason', () => {
-  const search = closedSearchString(GAP);
-  assert.ok(!hasPositiveReason(search), `a positive reason: qualifier would drop null-stateReason records: ${search}`);
-  // The negated forms are what keep a null stateReason in; guard that they are really there.
-  assert.ok(/-reason:\\"not planned\\"/.test(search) && /-reason:duplicate/.test(search));
+  for (const search of closedSearchStrings(GAP)) {
+    assert.ok(!hasPositiveReason(search), `a positive reason: qualifier would drop null-stateReason records: ${search}`);
+    // The negated forms are what keep a null stateReason in; guard that they are really there.
+    assert.ok(/-reason:\\"not planned\\"/.test(search) && /-reason:duplicate/.test(search), `negated reasons missing: ${search}`);
+  }
   // Controls: the predicate rejects a positive reason and accepts the negated forms.
   assert.ok(hasPositiveReason('closed:>=$SINCE reason:completed'));
   assert.ok(hasPositiveReason('-reason:duplicate reason:completed'));
@@ -135,11 +172,10 @@ test('never filters on a positive reason', () => {
 });
 
 test('negated reasons are exactly needsBackstop exclusions', () => {
-  const search = closedSearchString(GAP);
-  const negated = [...search.matchAll(/-reason:(?:\\"([^\\]+)\\"|(\S+))/g)]
-    .map((m) => (m[1] || m[2]).toUpperCase().replace(/ /g, '_')).sort();
-  assert.deepEqual(negated, ['DUPLICATE', 'NOT_PLANNED']);
-  for (const stateReason of negated) {
+  const negated = closedSearchStrings(GAP).map((search) => [...search.matchAll(/-reason:(?:\\"([^\\]+)\\"|(\S+))/g)]
+    .map((m) => (m[1] || m[2]).toUpperCase().replace(/ /g, '_')).sort());
+  for (const reasons of negated) assert.deepEqual(reasons, ['DUPLICATE', 'NOT_PLANNED'], 'every slice excludes exactly the not-planned and duplicate reasons');
+  for (const stateReason of negated[0]) {
     assert.equal(needsBackstop({ state: 'CLOSED', stateReason, labels: [] }), false, `${stateReason} must be a reason needsBackstop excludes`);
   }
   // Control: a completed closure with no disposition is a gap, so the check above can fail.
@@ -147,8 +183,9 @@ test('negated reasons are exactly needsBackstop exclusions', () => {
 });
 
 test('oversight floor is not in the search string', () => {
-  const search = closedSearchString(GAP);
-  assert.ok(!hasOversightFloor(search), `the oversight floor stays client-side: ${search}`);
+  for (const search of closedSearchStrings(GAP)) {
+    assert.ok(!hasOversightFloor(search), `the oversight floor stays client-side: ${search}`);
+  }
   // Controls: negated and positive risk/size qualifiers are both caught; a disposition label is not.
   assert.ok(hasOversightFloor('closed:>=$SINCE -label:risk:high'));
   assert.ok(hasOversightFloor('closed:>=$SINCE -label:size:small'));
@@ -156,17 +193,27 @@ test('oversight floor is not in the search string', () => {
   assert.ok(!hasOversightFloor('-label:demo:approved'));
 });
 
-test('searched fetches warn at the search ceiling', () => {
+test('searched fetches warn at the search ceiling, per date slice', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,
-    /const CAP = Math\.min\(LIMIT, 1000\);\s*if \(raw\.length >= CAP\)/,
+    /const CAP = Math\.min\(LIMIT, 1000\);/,
     'the closed-record warning must compare against min(LIMIT, 1000)'
+  );
+  // Each slice is compared against the cap on its own, in a loop over the slices, so the warning can
+  // name the slice that reached it. The whole-fetch `raw.length >= CAP` test is gone: a comparison over
+  // the combined rows cannot tell which slice is full.
+  assertClaimPinned(
+    GAP,
+    PRE_CHANGE_SLICED_FETCH,
+    /for \(const \[\w+, (\w+)\] of slices\) \{\s*if \(\1\.length >= CAP\)/,
+    'each date slice must be compared against the cap on its own'
   );
   assert.ok(
     !closedFetchBlock(GAP).includes('raw.length === LIMIT'),
     'the exact-equality truncation test must be gone from the closed-record block'
   );
+  assert.ok(!/raw\.length >= CAP/.test(GAP), 'the whole-fetch raw.length >= CAP comparison must be gone');
 });
 
 test('since-date is validated', () => {
@@ -209,6 +256,10 @@ test('since-date guard failure stops the scope', () => {
   assert.ok(!stops.test(PRE_CHANGE_GAP_FETCH));
   // Control for the control: the same sentences adjacent do match, so the window is what rejects the far one.
   assert.ok(stops.test(`${sentence}${outcome}`));
+  // The same guard-failure sentence covers the mid-date guard: a failing MID stops the scope with no rows too.
+  const midStops = /mid-date[^\n]*throws[\s\S]{0,300}report\s+no\s+`\[acceptance-gap\]`\s+rows\s+at\s+all/;
+  assert.ok(midStops.test(GAP), 'the guard-failure sentence must cover the mid-date guard');
+  assert.ok(!midStops.test(PRE_CHANGE_SLICED_FETCH));
 });
 
 test('trust-table no longer says the window does not bound the closed fetch', () => {
@@ -361,6 +412,114 @@ test('both placeholder guards throw on bad values and pass good ones', () => {
   const invert = (line) => line.replace('if (!', 'if (');
   assert.equal(guardThrows(invert(since), { SINCE: day(31) }), true);
   assert.equal(guardThrows(invert(state), { STATE_SEARCH: '' }), true);
+});
+
+// ---- date-sliced closed-record fetch (#4469 slice split) --------------------------------------------
+
+// The acceptance-gap "Record set" paragraph's opening sentences as they read before the slice split.
+const PRE_CHANGE_RECORD_SET = `Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
+not-planned and duplicate exclusions server-side through \`--search\`; the client-side \`closedAt\``;
+
+// The per-slice warning lines: the console.error lines that name a closed-record slice.
+const sliceWarnings = (text) => text.split('\n').filter((l) => l.includes('console.error') && /closed-record\s+slice/.test(l));
+const sliceWarnParts = (line) => ({
+  count: /returned\s+'\s*\+\s*rows\.length/.test(line),
+  cap: /reaching\s+its\s+cap\s+of\s+'\s*\+\s*CAP/.test(line),
+  range: /slice\s+'\s*\+\s*qualifier/.test(line),
+  remedy: /raise\s+backlog-fetch-limit\s+in\s+\.claude-tweaks\/policy\.yml/.test(line),
+  ceiling: /cannot\s+be\s+complete/.test(line),
+});
+
+test('the frozen sliced-fetch excerpt carries the anchors the discrimination checks rely on', () => {
+  assert.ok(PRE_CHANGE_SLICED_FETCH.includes('--search "closed:>=$SINCE '));
+  assert.ok(PRE_CHANGE_SLICED_FETCH.includes('  if (raw.length >= CAP) {'));
+  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('$MID'), 'the frozen fence predates the mid-date placeholder');
+  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('of slices'), 'the frozen fence has no loop over slices');
+  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('byNumber'), 'the frozen fence has no number-keyed merge');
+});
+
+test('the closed-record fetch splits into an inclusive dated older slice and a newer slice', () => {
+  // SINCE..MID is inclusive on both ends and >MID is strictly after: together they partition the
+  // single closed:>=SINCE set (probed on this repo: 226 + 551 = 777).
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, /--search "closed:\$SINCE\.\.\$MID /, 'the older slice must be the inclusive closed:$SINCE..$MID range');
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, /--search "closed:>\$MID /, 'the newer slice must be closed:>$MID');
+  // Each slice writes its own raw file, and each raw path resolves through session-tmp-resolve like $RAW.
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, /  > "\$RAW_OLD"\n/, 'the older slice must write its own raw file');
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, /  > "\$RAW_NEW"\n/, 'the newer slice must write its own raw file');
+  assertClaimPinned(
+    GAP,
+    PRE_CHANGE_SLICED_FETCH,
+    /RAW_OLD="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value tidy-closed-records-raw-old\.json\)"/,
+    'the older raw path must resolve through session-tmp-resolve'
+  );
+  assertClaimPinned(
+    GAP,
+    PRE_CHANGE_SLICED_FETCH,
+    /RAW_NEW="\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value tidy-closed-records-raw-new\.json\)"/,
+    'the newer raw path must resolve through session-tmp-resolve'
+  );
+  // The mid-date placeholder is substituted literally and exported, so the node block can read it.
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, /MID="\{mid-date\}"\nexport SINCE MID/, 'the fence must substitute {mid-date} literally and export it');
+  // The split point resolves the same way as {since-date}, 15 days back instead of 31.
+  const midOneLiner = 'new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)';
+  assert.ok(GAP.includes(midOneLiner), 'the scope must name the 15-day one-liner that resolves {mid-date}');
+  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes(midOneLiner));
+  assert.ok(!GAP.includes('closed:>=$SINCE'), 'the single closed:>=$SINCE fetch must be gone');
+});
+
+test('the closed-record fetch is described as two date slices in the record set and fetch-limit prose', () => {
+  assertClaimPinned(GAP, PRE_CHANGE_RECORD_SET, /splits\s+that\s+window\s+into\s+two\s+date\s+slices/, 'the record-set paragraph must say the window is split into two date slices');
+  assertClaimPinned(GAP, PRE_CHANGE_CLOSED_PARAGRAPH, /closed-record\s+fetch\s+is\s+split\s+into\s+two\s+date\s+slices/, 'the fetch-limit paragraph must say the closed-record fetch is split into two date slices');
+});
+
+test('a date slice that reaches its own cap warns with its range, count, cap and remedy', () => {
+  const lines = sliceWarnings(GAP);
+  assert.equal(lines.length, 1, 'exactly one per-slice warning, run inside the loop over the slices');
+  assert.deepEqual(sliceWarnParts(lines[0]), { count: true, cap: true, range: true, remedy: true, ceiling: true });
+  // Controls: the frozen whole-fetch warning names neither the slice's range nor its own row count; a
+  // bare cap is not enough; a rewrapped phrase still counts.
+  const frozenWarning = PRE_CHANGE_SLICED_FETCH.split('\n').find((l) => l.includes('console.error'));
+  assert.deepEqual(sliceWarnParts(frozenWarning), { count: false, cap: true, range: false, remedy: true, ceiling: true });
+  assert.deepEqual(sliceWarnParts("console.error('WARNING: the closed-record slice ' + qualifier + ' returned ' + rows.length + ' records');"), { count: true, cap: false, range: true, remedy: false, ceiling: false });
+  assert.equal(sliceWarnParts("console.error('the closed-record slice ' + qualifier + ' reaching its\n cap of ' + CAP);").cap, true);
+});
+
+test('the two slices merge number-keyed, before the closedAt cutoff', () => {
+  const MERGE = /const byNumber = new Map\(slices\.flatMap\(\(\[, (\w+)\]\) => \1\)\.map\(\(r\) => \[r\.number, r\]\)\);/;
+  assertClaimPinned(GAP, PRE_CHANGE_SLICED_FETCH, MERGE, 'the slices must merge into a Map keyed on number');
+  // Behavioural: a record seen in both slices counts once, and the later slice's copy wins.
+  const merge = GAP.split('\n').find((l) => MERGE.test(l));
+  assert.ok(merge, 'the merge line must be present');
+  const byNumber = new Function('slices', `${merge.trim()} return byNumber;`)([
+    ['closed:older', [{ number: 1, closedAt: 'a' }, { number: 2, closedAt: 'a' }]],
+    ['closed:newer', [{ number: 2, closedAt: 'b' }]],
+  ]);
+  assert.deepEqual([...byNumber.keys()], [1, 2], 'a record in both slices must appear once');
+  assert.equal(byNumber.get(2).closedAt, 'b', 'the newer slice copy wins');
+  // The merge runs before the 30-day cutoff, and the cutoff filters the merged set.
+  assert.ok(
+    GAP.indexOf('const byNumber = ') < GAP.indexOf('const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)'),
+    'the merge must precede the closedAt cutoff'
+  );
+  assert.ok(GAP.includes('JSON.stringify([...byNumber.values()].filter((r) => r.closedAt > cutoff))'), 'the cutoff must filter the merged set');
+});
+
+test('the mid-date guard throws on bad values and passes a good one, sitting right after the since-date guard', () => {
+  const day = (n) => new Date(Date.now() - n * 864e5).toISOString().slice(0, 10);
+  const block = closedFetchBlock(GAP);
+  const since = guardLine(block, 'SINCE');
+  const mid = guardLine(block, 'MID');
+  assert.equal(since, guardLine(PRE_CHANGE_SLICED_FETCH, 'SINCE'), 'the SINCE guard line must stay byte-identical');
+  const lines = block.split('\n').map((l) => l.trim());
+  assert.equal(lines[lines.indexOf(since) + 1], mid, 'the MID guard must be the line right after the SINCE guard');
+  const env = (m) => ({ SINCE: day(31), MID: m });
+  assert.equal(guardThrows(mid, env(day(15))), false, 'a 15-day MID inside a 31-day SINCE must pass');
+  for (const bad of ['', '{mid-date}', day(31), day(40), day(0)]) {
+    assert.equal(guardThrows(mid, env(bad)), true, `MID=${bad} must throw`);
+  }
+  // Control: the polarity-inverted guard comes out the other way on the good value.
+  const invert = (line) => line.replace('if (!', 'if (');
+  assert.equal(guardThrows(invert(mid), env(day(15))), true);
 });
 
 test('an empty searched state map warns', () => {

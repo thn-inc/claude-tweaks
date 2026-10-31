@@ -50,44 +50,55 @@ the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at 
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
 
-Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
-not-planned and duplicate exclusions server-side through `--search`; the client-side `closedAt`
-cutoff, `needsBackstop` and the oversight floor still run on that narrowed set, unchanged. Negated
+Record set: closed records from the last 30 days. The fetch splits that window into two date slices — `closed:$SINCE..$MID` and `closed:>$MID` — and applies the disposition, not-planned and duplicate exclusions server-side through `--search` on each slice; the client-side `closedAt` cutoff, `needsBackstop` and the oversight floor still run on the merged set, unchanged. Negated
 `-reason:` qualifiers are used rather than `reason:completed`, so a closed record with a null
 `stateReason` stays in. The oversight floor stays client-side: it passes a record meeting either
 the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers
 cannot express.
 
-Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset.
+Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset. Resolve `{mid-date}` the same way, as its own call, with `node -e "console.log(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"`, and substitute its `YYYY-MM-DD` output literally: it is the split point between the two date slices below, 15 days back and so inside the window.
 
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
 ```bash
-RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
+RAW_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-old.json)"
+RAW_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-new.json)"
 CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
 : > "$CLOSED"
 LIMIT="{resolved-limit}"
 SINCE="{since-date}"
-export SINCE
+MID="{mid-date}"
+export SINCE MID
 gh issue list --state closed --limit "$LIMIT" \
-  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
+  --search "closed:$SINCE..$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
   --json number,title,state,labels,closedAt,stateReason \
-  > "$RAW"
+  > "$RAW_OLD"
+gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:>$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
+  --json number,title,state,labels,closedAt,stateReason \
+  > "$RAW_NEW"
 node -e "
   const fs = require('fs');
   if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
-  const raw = require('$RAW');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.MID || '') || process.env.MID <= process.env.SINCE || process.env.MID >= new Date().toISOString().slice(0, 10)) throw new Error('MID is not a YYYY-MM-DD date later than SINCE and earlier than today — the mid-date placeholder was not substituted or was resolved wrong; an empty or inverted slice silently drops its records.');
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
-  if (raw.length >= CAP) {
-    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. Below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at 1000 or above, the 30-day undisposed set itself reaches or exceeds the search ceiling and this scope cannot be complete.');
+  const slices = [
+    ['closed:$SINCE..$MID', require('$RAW_OLD')],
+    ['closed:>$MID', require('$RAW_NEW')],
+  ];
+  for (const [qualifier, rows] of slices) {
+    if (rows.length >= CAP) {
+      console.error('WARNING: the closed-record slice ' + qualifier + ' returned ' + rows.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. With a cap below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at a cap of 1000, that slice alone reaches the search ceiling and the scope cannot be complete.');
+    }
   }
+  const byNumber = new Map(slices.flatMap(([, rows]) => rows).map((r) => [r.number, r]));
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
+  fs.writeFileSync('$CLOSED', JSON.stringify([...byNumber.values()].filter((r) => r.closedAt > cutoff)));
 "
 ```
 
-When this block fails — the since-date guard throws, or a failed `gh` call leaves `$RAW` unreadable —
+When this block fails — the since-date or mid-date guard throws, or a failed `gh` call leaves `$RAW_OLD` or `$RAW_NEW` unreadable —
 the scope stops: report no `[acceptance-gap]` rows at all and quote the error verbatim, as for an
 exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never reads a stale one.
 
@@ -139,9 +150,12 @@ The closed-record fetch is bounded on the server by the window (one date wider t
 which is why it no longer fills the cap with already-dispositioned records: a busy repo can close
 far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
 observed on this repo alone), and a cap on that unfiltered stream silently dropped the **oldest**
-closed records first — exactly the quiet-failure a backstop scope must never have, so the cap (the
-smaller of the limit and GitHub search's 1000-result ceiling) and its warning still apply to the
-narrowed set. The closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
+closed records first — exactly the quiet-failure a backstop scope must never have. The closed-record
+fetch is split into two date slices, `closed:$SINCE..$MID` and `closed:>$MID`, because one query is
+capped at GitHub search's 1000 results and the undisposed set can exceed that: each slice is capped
+at the smaller of the limit and 1000 and warns on its own when it reaches that cap (naming its date
+range, row count and remedy), and the two slices merge number-keyed before the cutoff. The
+closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
