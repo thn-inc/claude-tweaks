@@ -241,7 +241,6 @@ test('AC1.1: every gate composer carries the parent\'s closed state and the unre
 // ---- local-files Shape 7 ----
 
 const LOCAL = section(read('tidy/step-1-records.md'), '### Shape 7 — decomposition parent gate due', '### Shape 8 —');
-const MARKER_SECTION = '## Closed below the oversight floor\n\nEvery sub-issue …';
 
 // A temp cwd holding `specs/`, with helpers that write parents and sub-issues through the real
 // local store (the same driver the fence reads).
@@ -298,7 +297,7 @@ test('AC1.1: Shape 7 prints an acceptance-gap row for a hand-closed above-floor 
 
 test('AC2.1: Shape 7 prints no row for a #4466-closed or below-floor local parent', () => {
   const t = localFixture();
-  t.parent(7, 'Closed below floor, relabelled', { closed: true, body: 'Parent body.\n\n' + MARKER_SECTION });
+  t.parent(7, 'Closed below floor, relabelled', { closed: true, body: 'Parent body.\n\n' + MARKER });
   t.subIssue(71, 7, 'high');
   t.parent(8, 'Hand-closed below floor', { closed: true });
   t.subIssue(81, 8, 'medium');
