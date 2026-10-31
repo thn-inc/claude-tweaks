@@ -23,6 +23,12 @@
 // before wrap-up, after which the worktree-path match finds nothing (#2783).
 // Each dir is read once even when both lookups return it.
 //
+// #4704: from the main checkout, every main-checkout session's ad-hoc run dir
+// records that same worktree path, so the path union above would pull in other
+// sessions' friction. There it keeps only this session's ad-hoc dirs (owned by
+// the current session id; with no session id, none). A linked worktree's path
+// identifies one session's work, so its union is unchanged.
+//
 // Usage: friction-events.js --run <run-dir> [--worktree <path>] [--session <id>] [--help]
 // `--worktree` defaults to process.cwd() — the caller (reflect, running
 // inside the worktree it's evaluating) does not usually need to pass it
@@ -54,6 +60,7 @@
 const fs = require('fs');
 const path = require('path');
 const ctxLib = require('./lib/hooks/context');
+const wtDetect = require('./lib/hooks/worktree-detect');
 const { FRICTION_EVENT_TYPES } = require('./lib/friction-lens-vocab');
 
 const FRICTION_TYPES = new Set(FRICTION_EVENT_TYPES);
@@ -202,6 +209,7 @@ const realDeps = {
   readEvents,
   findRunsByWorktreePath: ctxLib.findRunsByWorktreePath,
   sessionId: () => process.env.CLAUDE_CODE_SESSION_ID || null,
+  repoInfo: wtDetect.repoInfo,
   findAdHocRunsBySessionId: ctxLib.findAdHocRunsBySessionId,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -220,10 +228,18 @@ function run(argv, deps = realDeps) {
   const worktreePath = opts.worktree ? path.resolve(opts.worktree) : deps.cwd();
   const events = deps.readEvents(runDir, 'primary');
   const seen = new Set();
-  const siblings = deps.findRunsByWorktreePath(worktreePath, worktreePath, runDir) || [];
-  // #2783: after ExitWorktree(remove) the worktree path above matches nothing;
+  // #2783: after ExitWorktree(remove) the worktree path below matches nothing;
   // the owning session id still finds the ad-hoc dir.
   const sessionId = opts.session || deps.sessionId();
+  let siblings = deps.findRunsByWorktreePath(worktreePath, worktreePath, runDir) || [];
+  // #4704: from the main checkout the recorded worktree path is shared by every
+  // main-checkout session, so keep only this session's ad-hoc dirs there.
+  const info = deps.repoInfo(worktreePath) || {};
+  const inMainCheckout = !info.indeterminate && Boolean(info.repoRoot) && !info.isLinkedWorktree;
+  if (inMainCheckout) {
+    siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isAdHocRunDir(siblingDir)
+      && Boolean(sessionId) && Boolean(state) && state.sessionId === sessionId);
+  }
   const bySession = sessionId ? (deps.findAdHocRunsBySessionId(deps.cwd(), sessionId, runDir) || []) : [];
   for (const { runDir: siblingDir } of [...siblings, ...bySession]) {
     if (seen.has(siblingDir)) continue;
