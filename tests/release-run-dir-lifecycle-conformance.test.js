@@ -735,6 +735,7 @@ const ROSTER_PROSE = [
   [/`review-\{n\}` means `review-` followed by a number, so a `review-foo\.md` matches no row/, 'the roster says review-{n} is review- then a number, so review-foo.md matches no row'],
   [/matched against the review staging roster below by its longest matching prefix/, 'the Inventory matches every other staged file against the roster by its longest matching prefix'],
   [/A producer that starts staging a new prefix adds its roster row in the same change/, 'a producer that starts staging a new prefix adds its roster row in the same change'],
+  [/Every row's Example names at least one `staged\/` file/, 'every roster row names at least one staged/ file in its Example'],
 ];
 
 test('roster-vs-routing: the roster prose clauses the checks rely on are stated (with go-red)', () => {
@@ -804,6 +805,11 @@ function exampleNames(cell) {
   ));
 }
 
+// Prefixes of rows whose Example yields no name — a check reading the Example passes over such a row vacuously.
+function namelessExampleRows(roster) {
+  return roster.filter((row) => exampleNames(row.example).length === 0).map((row) => row.prefix);
+}
+
 // Example names, on a row a review producer stages, that the console would refuse as an unmapped prefix.
 function unstageableRosterNames(roster) {
   return roster
@@ -833,6 +839,18 @@ test('AC3.1: every review-* SECTION_MAP prefix has a roster row — deleting the
   const text = readDisposition();
   assertRosterMatchesSectionMap(text);
   assert.throws(() => assertRosterMatchesSectionMap(withoutRosterRow(text, 'review-followup-')), /review-followup-/);
+});
+
+test('every roster row\'s Example yields at least one staged/ name (#4647)', () => {
+  assert.deepEqual(namelessExampleRows(parseRoster(readDisposition())), []);
+});
+
+test('go-red: a roster row whose Example names no staged/ file is reported (#4647)', () => {
+  const text = readDisposition();
+  const line = rosterLine(text, 'review-followup-');
+  const doctored = text.replace(line, line.replace('`staged/review-followup-{n}.md`', '—'));
+  assert.notEqual(doctored, text, 'anchor: the review-followup- Example cell is not `staged/review-followup-{n}.md` — proof cannot discriminate');
+  assert.deepEqual(namelessExampleRows(parseRoster(doctored)), ['review-followup-']);
 });
 
 test('exampleNames expands every brace group as a cross product', () => {

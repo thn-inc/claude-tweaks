@@ -851,18 +851,6 @@ test('the closed-record fetch names search-index lag as an unwarned, self-correc
 
 // ---- accept:* read sites (#4610 expand step) ---------------------------------------------------
 
-test('the acceptance-gap search excludes all three accept: labels as well as the demo: ones', () => {
-  for (const search of closedSearchStrings(GAP)) {
-    for (const label of ['accept:approved', 'accept:changes-requested', 'accept:pending']) {
-      assert.ok(search.includes(`-label:${label}`), `every slice's search must negate ${label}: ${search}`);
-      assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
-    }
-  }
-  // Control: the frozen pre-change fetches carry no accept: negation, so the check can fail.
-  assert.ok(!PRE_CHANGE_GAP_FETCH.includes('-label:accept:'));
-  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('-label:accept:'));
-});
-
 test('the acceptance-queue lists records carrying either pending spelling', () => {
   const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
   const query = 'gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200';

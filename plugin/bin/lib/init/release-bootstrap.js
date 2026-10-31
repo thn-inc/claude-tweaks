@@ -22,6 +22,7 @@ const { execFileSync } = require('child_process');
 const { compareVersions } = require('../changelog');
 const { isPathContained } = require('../shared-primitives');
 const { lstatType } = require('../path-guard');
+const { isValidBranchName } = require('../branch-name');
 
 const SEMVER_RE = /^(\d+)\.(\d+)\.(\d+)$/;
 // Pre-release/build-metadata tags (e.g. `v2.0.0-rc.1`) are not full releases
@@ -263,21 +264,6 @@ function seedManifestVersion({ tags, manifestVersion } = {}) {
   return '0.1.0';
 }
 
-// The practical subset of `git check-ref-format --branch`: a non-empty
-// string, no whitespace or control characters, none of the ref-forbidding
-// characters, no "..", no leading "-", no trailing "/" or ".lock", no "//".
-const INVALID_BRANCH_CHARS_RE = /[~^:?*[\\]/;
-function isValidBranchName(name) {
-  if (typeof name !== 'string' || name.length === 0) return false;
-  if (/[\s\x00-\x1f\x7f]/.test(name)) return false;
-  if (INVALID_BRANCH_CHARS_RE.test(name)) return false;
-  if (name.includes('..')) return false;
-  if (name.includes('//')) return false;
-  if (name.startsWith('-')) return false;
-  if (name.endsWith('/') || name.endsWith('.lock')) return false;
-  return true;
-}
-
 function renderWorkflowYaml({ branch } = {}) {
   if (!isValidBranchName(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
   const b = branch;
@@ -484,6 +470,6 @@ function assertSafeWriteTarget(root, rel, { pathImpl = path, fsImpl = fs } = {})
 module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
-  isValidBranchName, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
+  renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
   defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf, assertSafeWriteTarget,
 };

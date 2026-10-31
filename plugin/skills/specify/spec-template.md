@@ -191,6 +191,16 @@ When a spec's technical approach rests on an assumption about how an external sy
 
 When a spec's plan adds a new gate — a PreToolUse/PostToolUse hook check, a permission rule, or a teardown/cleanup guard — read `gate-authoring-deliverables.md` in this skill's directory and write the plan-time caller trace it describes as a deliverable.
 
+## State-Classification Deliverables
+
+When a deliverable classifies inputs into named states — an eligibility verdict, a refusal ladder, a status classifier — write a **Closed rule** bullet beside the state list. It states three parts:
+
+- **Exhaustive** — the listed states are the complete set; no state outside the list is eligible or classified by implication.
+- **Refused with a named remedy** — an unlisted state is refused with one line naming the state and its remedy.
+- **Amendment, not escalation** — a plan review that finds another unlisted state applies this rule as a plan amendment (it adds that state's refusal line), never as a `needs-human` gap.
+
+Without it, every state the list leaves out is a gap whose settlement alters an observable contract, which `build/plan-review.md` classifies `needs-human` — so each review pass finds new ones and stops the build. #4588's eligibility verdict stopped four times on the `plan-review-needs-human` HARD-GATE until its spec added this rule; the next pass applied it to a newly found state and the build proceeded.
+
 ## Why Each Section Matters for `/superpowers:writing-plans`
 
 | Section | What `/superpowers:writing-plans` does with it |
