@@ -118,7 +118,7 @@ function pluginRoot() {
 // lines rather than a second, driftable copy of the same text.
 const VERBS = {
   'record-worktree': { usage: 'record-worktree --run <dir> <worktree-path> [--dispatch]', run: runRecordWorktree },
-  'resolve-run-dir': { usage: 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only]', run: runResolveRunDir },
+  'resolve-run-dir': { usage: 'resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only] [--archived]', run: runResolveRunDir },
   'sweep-shadow': { usage: 'sweep-shadow [--run <dir>] [--worktree <path>]', run: runSweepShadow },
   'adopt-run-dir': { usage: 'adopt-run-dir --run <main-checkout-run-dir> --worktree <worktree-path>', run: runAdoptRunDir },
   'record-pr': { usage: 'record-pr [--run <dir>] <number> <url>', run: runRecordPr },
@@ -769,6 +769,7 @@ async function runResolveRunDir(argv) {
       standalone: flagVal(args, '--standalone'),
       create: args.includes('--create'),
       rootOnly: args.includes('--root-only'),
+      archived: args.includes('--archived'),
     });
   } catch (e) {
     process.stderr.write(`claude-tweaks: resolve-run-dir: unexpected error — ${e && e.message ? e.message : e}\n`);

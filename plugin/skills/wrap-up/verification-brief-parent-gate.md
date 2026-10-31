@@ -277,7 +277,7 @@ translation of its `facets.acceptance` (`parent.facets.acceptance ? ['demo:' + p
 
 - `incomplete` — a sibling sub-issue is still open. No-op; this sub-issue's own closing proceeds
   with no acceptance labeling of any kind, neither its own nor the parent's.
-- `gated` or `resolved` — the parent already carries a `demo:*` disposition. No-op.
+- `gated` or `resolved` — the parent already carries an acceptance disposition, in either label spelling (`_shared/work-record.md`). No-op.
 - `due` — every sub-issue is closed and the parent carries no disposition yet. **Continue to the
   oversight-floor check below before composing anything** — `due` alone no longer opens the gate
   (`#367`).
@@ -506,16 +506,20 @@ not to the parent, so it is present exactly when that run produced one.
 
 ## Apply the gate
 
-`work-backend: github-issues` — bootstrap `demo:pending` first, per `_shared/label-bootstrap.md`'s
+`work-backend: github-issues` — bootstrap the acceptance labels below first, per `_shared/label-bootstrap.md`'s
 check-then-create loop:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"]
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
+  ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
+  ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
+  ["accept:changes-requested", "Acceptance: a human found a gap — see the linked follow-up record", "006B75"]
 ]
 ```
 
-The same pair Step 1 (`verification-brief.md`) bootstraps for the default (non-parent-gate) path —
+The same rows Step 1 (`verification-brief.md`) bootstraps for the default (non-parent-gate) path —
 this procedure runs **in place of, not alongside** Step 1 (see the top of this section), so on a
 repo where every `demo:pending` application has ever gone through this procedure, the label may
 not exist yet at all. Both entry shapes need this — a sub-issue-side caller skips Step 1 exactly

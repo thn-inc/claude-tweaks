@@ -47,7 +47,7 @@ This last script reads `session-scoped backlog-overview-faceted.json`'s github-o
 *(Narration allowance: no "running"/"passed" line for this step — only the run's one opening line and any failure/degradation line.)*
 
 *(Omit this entire step under `work-backend: local-files` — see `_shared/trust-table.md`'s
-framing note; `demo:approved`/`demo:changes-requested` are a `github-issues` concept and there is
+framing note; the approved and changes-requested acceptance labels (`_shared/work-record.md`) are a `github-issues` concept and there is
 nothing to fetch.)*
 
 The trust fetch/computation still runs **once per invocation**, independent of which lens (or
