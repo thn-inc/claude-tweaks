@@ -166,16 +166,16 @@ edit there would be lost. One plain command per Bash call, literal absolute path
 5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
    never fall back to the shared tree.
 6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
-   `git -C "{worktree}" worktree list` then shows no `disc-` entry. A failed teardown reports
-   `DONE_WITH_CONCERNS` naming the leftover path.
+   `git -C "{worktree}" worktree list` then shows no entry for `{disc-path}`. A failed teardown
+   reports `DONE_WITH_CONCERNS` naming the leftover path.
 
 **No-git fallback** — when step 2's create is refused: write each file the test loads at its
 repo-relative path under `{disc-path}` (Read for unchanged files; for base content, the read-only
 `git -C "{worktree}" show {base-sha}:{path}`, written with Write), run the test there, and delete
-the copies before the status word.
+the copies before the status word: `rm -r "{disc-path}"`.
 
-Every shape above passed the worktree guard from a worktree-isolated dispatched agent (#4556,
-2026-10-31; `_shared/scratch-worktree.md` §7).
+The create, checkout, test-run and teardown shapes passed the worktree guard from a
+worktree-isolated dispatched agent (#4556, 2026-10-31); `_shared/scratch-worktree.md` §7 records them.
 
 ## Model Selection
 

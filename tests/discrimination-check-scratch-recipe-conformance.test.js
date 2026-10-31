@@ -45,6 +45,8 @@ const RECIPE_LITERALS = [
   'substitutes',
   'its own',
   'never under the run directory',
+  'shows no entry for `{disc-path}`',
+  'rm -r "{disc-path}"',
 ];
 
 function assertRecipe(section) {
@@ -107,9 +109,7 @@ function section7Rows() {
   return rows;
 }
 
-test('§7 records the scratch-checkout shapes as passes and the node_modules listing as permission-rule (#4556)', () => {
-  const rows = section7Rows();
-
+function assertScratchRows(rows) {
   const passes = rows.filter((c) => c[0].includes('worktree add --detach') && c[2] === 'passes');
   assert.strictEqual(passes.length, 1, `expected one passes row for the scratch checkout, found ${passes.length}`);
   assert.strictEqual(passes[0][3], '—');
@@ -120,4 +120,24 @@ test('§7 records the scratch-checkout shapes as passes and the node_modules lis
   assert.strictEqual(listing[0][2], 'permission-rule');
   assert.ok(listing[0][3].includes('has been denied'), `bad refusal wording: ${listing[0][3]}`);
   assert.ok(listing[0][4].includes('NODE_PATH'), `workaround must name NODE_PATH: ${listing[0][4]}`);
+}
+
+test('§7 records the scratch-checkout shapes as passes and the node_modules listing as permission-rule (#4556)', () => {
+  assertScratchRows(section7Rows());
+});
+
+// Frozen: the last two section 7 rows as they stood before #4556 (git show
+// 79382337e:plugin/skills/_shared/scratch-worktree.md). The row pin must reject them.
+const PRE_4556_ROWS = [
+  '| `test a = b` (`[ a = b ]` and `test -f package.json` pass) | `test a = b` | refused | "is too complex to verify that it stays inside the worktree" | Use `[ a = b ]` | 2026-10-20 (#3340); first #3340 |',
+  '| Backslash-escaped space in a path argument (the same path double-quoted passes) | `ls /Users/me/Code\\ Workspaces/repo/README.md` | refused | "is too complex to verify that it stays inside the worktree" | Double-quote the path: `ls "/Users/me/Code Workspaces/repo/README.md"` | 2026-10-21 (#3783); first #3712 |',
+].map(splitRow);
+
+test('the §7 row pin goes red on the pre-#4556 table tail and on a flipped verdict (go-red)', () => {
+  assert.strictEqual(PRE_4556_ROWS.every((c) => c.length === 6), true, 'frozen rows must parse to 6 cells');
+  assert.throws(() => assertScratchRows(PRE_4556_ROWS));
+  const live = section7Rows();
+  const flipped = live.map((c) => (c[1].includes('ls "{wt}/node_modules"') ? c.map((x, i) => (i === 2 ? 'refused' : x)) : c));
+  assert.notDeepStrictEqual(flipped, live, 'the mutation must change a row');
+  assert.throws(() => assertScratchRows(flipped));
 });
