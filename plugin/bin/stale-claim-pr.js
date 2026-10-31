@@ -21,7 +21,8 @@
 //                 shape` — one is there but is not exactly the line
 //                 composeResumeLine emits for this run). A Resume line is
 //                 untrusted input rendered as a paste command, so only a line
-//                 parseResumeLine accepts is ever printed as `resume`.
+//                 resumeVerdict (parseResumeLine's gate) accepts is ever printed
+//                 as `resume`.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"match":false,"link":null,"failure":null}                     no match
 //   {"match":true,"link":"<url>","failure":null}                   match
@@ -53,7 +54,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
-const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
+const { resumeVerdict } = require('./lib/flow/pr-body');
 const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
@@ -99,9 +100,8 @@ const realDeps = {
 
 // The Resume half of a --resume verdict for a matched PR body.
 function resumeFields(body, runId) {
-  const line = resumeLineUnder(body);
-  if (line === null) return { resolve: 'no-resume-line' };
-  return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
+  const v = resumeVerdict(body, runId);
+  return v.resolve ? { resolve: v.resolve } : { resume: v.resume };
 }
 
 function noMatch(failure = null) {
