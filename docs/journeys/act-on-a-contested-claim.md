@@ -7,6 +7,8 @@ files:
   - plugin/skills/_shared/issue-claims.md
   - plugin/bin/stale-claim-pr.js
   - plugin/bin/lib/issues/mcp-pr-shape.js
+  - plugin/bin/pr-resume-line.js
+  - plugin/bin/lib/flow/pr-body.js
 ---
 
 # Act on a Contested Claim at the Start of a Run
@@ -73,6 +75,7 @@ files:
 - Extended during build of #958 (in-flight claim routing) — the in-flight card's next step now routes into a resume confirmation when a human is present, instead of always requiring manual PR resolution.
 - Extended during build of #4423 (stale-claim open-PR check) — a TTL-expired `'stale'` claim whose run marker sits on an open same-repo PR now stops with the same in-flight card and resume routing as the `pr-opened:` tombstone case (`claim-store.js`'s `staleClaimInFlightPr`); Step 3b's Should understand and Red flags name the second trigger.
 - Extended during build of #4596 (one stale-claim matcher CLI) — Step 3b names the gh-absent MCP path's `bin/stale-claim-pr.js` call and its loud fail-open; `stale-claim-pr.js` and `mcp-pr-shape.js` added to `files:`.
+- Extended during build of #4659 (tombstone Resume-line read through the shared parser): Step 3b's resume routing now reads the PR body's `### Resume` line through `bin/pr-resume-line.js`. A Resume line that is missing or fails `parseResumeLine`, for example one carrying `!`, leaves the card terminal. A new red flag pins that case. `pr-resume-line.js` and `pr-body.js` were added to `files:`.
 - Extended during wrap-up of record #2073 (post-write claim verification in `claim-targets.js`) — added step 3c documenting the new `## Flow: Claim unverified` card, and updated the Success state to name it as a third possible stop alongside the contest and in-flight cards.
 - Extended during wrap-up of record #3131 (MCP `bot:in-progress` read-back in `flow/claim-targets.md`) — added a Step 1 red flag: a label that never lands is traced and retried once, never a reason to stop or release the claim.
 - Extended during build of #4183 (post-write read-back retry and release-on-abort for #2329 in `claim-targets.js`) — step 3c now describes the contents-API read-back retry that runs before the card renders, and that the default all-or-abort path releases this target's own unconfirmed write, with `--keep-going` skipping that release.
