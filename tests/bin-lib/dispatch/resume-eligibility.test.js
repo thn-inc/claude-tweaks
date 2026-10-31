@@ -273,6 +273,7 @@ test('foreign-pr and live-sibling lines equal openPrLine and never name dispatch
 
 // ---- the refusal table: exact line, reason and a remedy for every refusal ----
 
+const invalidLine = (what, kind) => `#4589's ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #4589 again, and report it if it repeats`;
 const REFUSALS = [
   ['no PR', { prs: [] }, 'no-pr',
     '#4589 has no open PR on worktree-dispatch-record-4589 — nothing to resume; run /claude-tweaks:dispatch #4589'],
@@ -338,6 +339,14 @@ const REFUSALS = [
     "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589"],
   ['local branch diverged', { worktreeBranch: null, localBranchSha: 'b'.repeat(40) }, 'branch-diverged',
     "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589"],
+  // A guard input the gatherer forgot or mistyped is a refusal, never "nothing to refuse" (Closed rule).
+  ['siblingLive omitted', { siblingLive: undefined }, 'invalid-input', invalidLine('sibling-session check', 'undefined')],
+  ['siblingLive not a boolean', { siblingLive: 'false' }, 'invalid-input', invalidLine('sibling-session check', 'string')],
+  ['openBlockers omitted', { openBlockers: undefined }, 'invalid-input', invalidLine('open-blocker list', 'undefined')],
+  ['openBlockers a bare number', { openBlockers: 4500 }, 'invalid-input', invalidLine('open-blocker list', 'number')],
+  ['worktreeDirty omitted', { worktreeDirty: undefined }, 'invalid-input', invalidLine('dirty-path list', 'undefined')],
+  ['worktreeDirty raw porcelain text', { worktreeDirty: 'plugin/x.js' }, 'invalid-input', invalidLine('dirty-path list', 'string')],
+  ['worktreeDirty null', { worktreeDirty: null }, 'invalid-input', invalidLine('dirty-path list', 'null')],
 ];
 
 for (const [name, over, reason, line] of REFUSALS) {
@@ -356,7 +365,7 @@ test('every refusal reason except concurrent-resume is produced by the table abo
   assert.deepStrictEqual(missing, []);
   assert.ok(REFUSAL_REASONS.includes('concurrent-resume'));
   assert.equal(new Set(REFUSAL_REASONS).size, REFUSAL_REASONS.length);
-  assert.equal(REFUSAL_REASONS.length, 22);
+  assert.equal(REFUSAL_REASONS.length, 23);
   assert.ok(Object.isFrozen(REFUSAL_REASONS));
 });
 
@@ -399,6 +408,25 @@ test('branch-diverged does not fire when the worktree exists, nor when the tips 
   // the checked-out/diverged reads belong to a missing worktree only
   const present = verdict({ worktreeBranch: HEAD, branchCheckedOutAt: '/repo/.claude/worktrees/other' });
   assert.equal(present.eligible, true);
+});
+
+test('an omitted worktreeBranch fails closed; only an explicit null means the worktree is missing', () => {
+  const omitted = input();
+  delete omitted.worktreeBranch;
+  const v = resumeEligibility(omitted);
+  assert.equal(v.reason, 'worktree-branch');
+  assert.ok(v.line.includes('undefined'), v.line);
+  assert.equal(verdict({ worktreeBranch: undefined }).reason, 'worktree-branch');
+  assert.equal(verdict({ worktreeBranch: null }).eligible, true);
+});
+
+test('a malformed guard input yields to the earlier refusal that precedes its rule', () => {
+  // each invalid-input check sits at its own rule's position, so valid-input ordering is unchanged
+  assert.equal(verdict({ prs: [], siblingLive: undefined }).reason, 'no-pr');
+  assert.equal(verdict({ siblingLive: true, openBlockers: undefined }).reason, 'live-sibling');
+  assert.equal(verdict({ issueState: 'CLOSED', openBlockers: undefined }).reason, 'record-closed');
+  assert.equal(verdict({ labels: [], openBlockers: undefined }).reason, 'invalid-input');
+  assert.equal(verdict({ priorRunDir: 'live-owner', worktreeDirty: undefined }).reason, 'prior-run-live');
 });
 
 test('a closed issue whose state is lower-case or unknown is still refused, named in lower case', () => {
@@ -467,6 +495,16 @@ test('resumeContext: the last pipeline section heading in the file decides lastP
     '## /build', '- AUTO 10:30:00 — Step 9: rebuilt. Reversibility: n/a.',
   ].join('\n');
   assert.deepStrictEqual(resumeContext(text).lastPhase, { section: '/build', step: 'Step 9' });
+});
+
+test('resumeContext: a later pipeline heading with no entry resets lastPhase rather than mixing two sections', () => {
+  const text = [
+    '## /build', '- AUTO 10:00:00 — Step 1: built. Reversibility: n/a.',
+    '## /test',
+  ].join('\n');
+  assert.equal(resumeContext(text).lastPhase, null);
+  // a non-pipeline heading after it changes nothing
+  assert.equal(resumeContext(`${text}\n## /dispatch\n- AUTO 10:30:00 — Settle: x. Reversibility: n/a.`).lastPhase, null);
 });
 
 test('resumeContext: a note line or non-entry line never becomes the step', () => {

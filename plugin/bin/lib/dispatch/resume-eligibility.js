@@ -19,7 +19,7 @@ const REFUSAL_REASONS = Object.freeze([
   'no-pr', 'multiple-prs', 'foreign-pr', 'not-draft', 'live-sibling', 'pr-opened', 'live-claim',
   'claim-not-resumable', 'run-mismatch', 'record-closed', 'blocked-by', 'not-granted', 'label-drift',
   'unlisted-label', 'unlisted-state', 'prior-run-live', 'prior-run-other-host', 'dirty-worktree',
-  'worktree-branch', 'branch-diverged', 'branch-checked-out', 'concurrent-resume',
+  'worktree-branch', 'branch-diverged', 'branch-checked-out', 'concurrent-resume', 'invalid-input',
 ]);
 
 const PRIOR_RUN_DIR_CLASSES = Object.freeze([
@@ -95,6 +95,13 @@ function parseClaim(content) {
   }
 }
 
+// The three inputs that guard a refusal (siblingLive, openBlockers, worktreeDirty) must be the
+// type the gatherer promises: a missing or mistyped one is never read as "nothing to refuse".
+function invalidInput(n, what, value) {
+  const kind = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
+  return refuse('invalid-input', `#${n}'s ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #${n} again, and report it if it repeats`);
+}
+
 function sha7(sha) {
   return typeof sha === 'string' && sha !== '' ? sha.slice(0, 7) : 'unknown';
 }
@@ -119,6 +126,7 @@ function resumeEligibility(input) {
   if (pr.isDraft !== true) {
     return refuse('not-draft', `#${n}'s PR #${prNo} is not a draft — dispatch resume only restarts a stalled build's draft PR; if it awaits review, run /claude-tweaks:dispatch close-out #${n}`);
   }
+  if (typeof siblingLive !== 'boolean') return invalidInput(n, 'sibling-session check', siblingLive);
   if (siblingLive) return refuse('live-sibling', openPrLine(n, prNo));
 
   const claimState = classifyClaimBlob(claimContent, now).state;
@@ -148,7 +156,8 @@ function resumeEligibility(input) {
   if (issueState !== 'OPEN') {
     return refuse('record-closed', `#${n} is ${String(issueState).toLowerCase()} — not resumable; reopen it first if the work is still wanted, or close PR #${prNo}`);
   }
-  if (Array.isArray(openBlockers) && openBlockers.length > 0) {
+  if (!Array.isArray(openBlockers)) return invalidInput(n, 'open-blocker list', openBlockers);
+  if (openBlockers.length > 0) {
     return refuse('blocked-by', `#${n} is blocked by open ${openBlockers.map((b) => `#${b}`).join(', ')} — not resumable until they close; then run ${resumeCmd}`);
   }
 
@@ -177,7 +186,8 @@ function resumeEligibility(input) {
     return refuse('prior-run-other-host', `#${n}'s prior run ${runId} is owned by a session on another host (${host}) — its death cannot be proven from this machine; run ${resumeCmd} on ${host}`);
   }
 
-  if (Array.isArray(worktreeDirty) && worktreeDirty.length > 0) {
+  if (!Array.isArray(worktreeDirty)) return invalidInput(n, 'dirty-path list', worktreeDirty);
+  if (worktreeDirty.length > 0) {
     return refuse('dirty-worktree', `#${n}'s stalled worktree ${worktreePath} has uncommitted edits: ${worktreeDirty.join(', ')} — commit or discard them, then run ${resumeCmd}; resume never commits or pushes them`);
   }
   if (worktreeBranch !== null && worktreeBranch !== pr.headRefName) {
