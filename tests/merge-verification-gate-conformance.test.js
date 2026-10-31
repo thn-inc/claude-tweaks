@@ -237,8 +237,12 @@ test('plan-review clarification: the PR-check gate fails a derived-off red and p
   assert.throws(() => assertCheckGateCitesDerivedOff(text.replace(CHECK_GATE_RUN_READ, 'its project-level read')), 'dropping the run-the-read instruction must fail the pin');
 });
 
+function manifestoOffRow(text) {
+  return text.split('\n').find((l) => l.startsWith('| Merge verification | `off` |'));
+}
+
 function assertManifestoCitesDerivedOff(text) {
-  const row = text.split('\n').find((l) => l.startsWith('| Merge verification | `off` |'));
+  const row = manifestoOffRow(text);
   assert.ok(row, 'Manifesto override table carries the Merge verification off row');
   assert.ok(row.includes('An explicit `off`') && row.includes('merges without waiting on CI'), 'the off row scopes the no-wait merge to an explicit off');
   assert.ok(row.includes(MANIFESTO_OFF_ROW_RULE), 'the off row says a derived off still waits on and parks on reported checks, citing Step 2.5');
@@ -248,7 +252,7 @@ function assertManifestoCitesDerivedOff(text) {
 test('the Manifesto off override row tells an explicit off from a derived one (#4550)', () => {
   const text = read('flow', 'manifesto-overrides.md');
   assertManifestoCitesDerivedOff(text);
-  const row = text.split('\n').find((l) => l.startsWith('| Merge verification | `off` |'));
+  const row = manifestoOffRow(text);
   assert.throws(() => assertManifestoCitesDerivedOff(text.replace(row, PRE_4550_MANIFESTO_OFF_ROW)), 'the pre-#4550 row must fail the pin');
   assert.throws(() => assertManifestoCitesDerivedOff(text.replace(MANIFESTO_OFF_ROW_RULE, '')), 'dropping the derived-off clause must fail the pin');
 });
