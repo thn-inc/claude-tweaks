@@ -68,6 +68,16 @@ Working directory: you inherit this run's checkout, {worktree}. Do NOT create, e
 switch worktrees. Run `pwd` and `git rev-parse --show-toplevel` before any commit and verify
 both resolve to {worktree}; if either does not, STOP and report BLOCKED rather than committing.
 
+Worktree shell constraint: this worktree is harness-isolated, and the harness refuses Bash calls by
+shape: one plain command per Bash call, with no `&&` or `;` chain, no `cd ... &&`, no heredoc, no
+loop, no `$(...)` substitution, and no shell variable that must survive to the next call. Use
+`Write`, `Edit` and `Read` for file content, and literal absolute paths (double-quoted, never
+backslash-escaped) for everything else. The refused shapes and their workarounds are in
+`{plugin-root}/skills/_shared/scratch-worktree.md` §7 ("Shell constraint"), and the rule is "One
+plain command per Bash call" in `{plugin-root}/skills/_shared/subagent-dispatch-core.md`. Forward
+this constraint to any agent you dispatch: a nested Agent call, a subagent-driven-development
+implementer or reviewer, or a review lens.
+
 Plugin root: {plugin-root} -- use this literal path wherever an instruction names
 ${CLAUDE_PLUGIN_ROOT}; your shell may not carry that variable.
 
