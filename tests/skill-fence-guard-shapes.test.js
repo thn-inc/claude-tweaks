@@ -154,7 +154,6 @@ const ALLOWLIST = [
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" rm "$LEDGER_FILE"'),
   ratchet('wrap-up/auto-merge-short-circuit.md', 'git-var-operand', 'git -C "$WORKTREE_PATH" push origin {branch}'),
   ratchet('wrap-up/cleanup-procedures-execution.md', 'git-var-operand', 'PACK="${RUN_DIR}/wrap-up-pack.json"'),
-  ratchet('wrap-up/verification-brief-parent-gate.md', 'gh-computed-input', '# work-links: native'),
   ratchet('wrap-up/verification-brief-parent-gate.md', 'gh-computed-input', 'PARENT_VERIFICATION_BRIEF="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --val'),
 ];
 

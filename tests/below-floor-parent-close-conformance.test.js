@@ -127,30 +127,32 @@ test('AC1.1: the close section excludes pre-merge github entries, lists sub-issu
 test('AC5.1: the close section is idempotent on a closed parent, a human reopen and a counted heading comment', () => {
   const close = collapse(closeSection(read(GATE_REL)));
   assert.match(close, /already `CLOSED`/);
-  assert.ok(close.includes('gh issue view $PARENT_NUM --json state,stateReason,comments'), 'reads stateReason with the comments');
+  // #4603: the stateReason+comments read and the login read are the CLI's now, pinned by
+  // tests/bin-lib/issues/parent-gate.test.js's `gatherIdempotenceFacts reads the login only for an
+  // open, non-reopened parent` and tests/bin-lib/issues/below-floor-parent-close.test.js's fake gh.
   assert.ok(
     close.includes('An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and never re-closed'),
     'a human reopen is never re-closed',
   );
-  assert.ok(close.includes('gh api user --jq .login'), 'reads the current gh identity');
   assert.ok(
     close.includes(
-      "counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the login printed above)",
+      "counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the CLI reads its login)",
     ),
     'a trusted or own-identity heading comment counts',
   );
   assert.ok(close.includes('Any other comment carrying the heading reads as no comment posted'), 'any other heading comment reads as absent');
 });
 
-test('AC1.1: the close reason follows the sub-issues\' stateReason, and the enumeration is paginated', () => {
+test('AC1.1: the close reason follows the sub-issues\' stateReason', () => {
   const gate = read(GATE_REL);
   const close = collapse(closeSection(gate));
   assert.ok(close.includes('Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`'), 'completed only with a completed sub-issue');
   assert.ok(close.includes('gh issue close $PARENT_NUM --reason "not planned"'), 'not planned otherwise');
   assert.ok(close.includes('No sub-issue closed as completed, so this parent closes as not planned.'), 'the comment says so');
-  const enumerate = section(gate, "## Enumerate the parent's sub-issues", '## Self-inclusion rule');
-  assert.ok(enumerate.includes('gh issue view {n} --json state,stateReason,labels,title,closedByPullRequestsReferences'), 'fetches stateReason');
-  assert.ok(enumerate.includes('gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"'), 'native enumeration is paginated');
+  // #4603: the per-sub-issue read and the paginated native enumeration are the CLI's now, pinned by
+  // tests/bin-lib/issues/parent-gate.test.js's `gatherGateFacts (native, from a sub-issue) makes the
+  // call shapes in order` and `AC1.1: a parent past the 100 page size goes through the --paginate
+  // ladder`, and tests/parent-gate-cli.test.js's two AC1.1 enumeration tests.
 });
 
 test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side entry', () => {
@@ -195,17 +197,19 @@ test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
 // Go-red controls: the pre-change files carry the literals the absence assertions above reject, so
 // those assertions can fail. Guarded so an unreachable commit skips only the control tests.
 const PRE_CHANGE_SHA = '1ab4e17d9';
+// #4603's base on main, before the Parent-Gate Procedure ran through bin/parent-gate.js.
+const PRE_4603_SHA = '0baad513d';
 
-// The skill file as of PRE_CHANGE_SHA: { text, skip } where skip is false or the skip reason.
-function preChangeSkillFile(rel) {
+// The skill file as of `sha`: { text, skip } where skip is false or the skip reason.
+function preChangeSkillFile(rel, sha = PRE_CHANGE_SHA) {
   try {
-    const text = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${rel}`], {
+    const text = execFileSync('git', ['show', `${sha}:plugin/skills/${rel}`], {
       cwd: ROOT,
       encoding: 'utf8',
     }).replace(/\r\n/g, '\n');
     return { text, skip: false };
   } catch (err) {
-    const skip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+    const skip = `commit ${sha} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
     return { text: null, skip };
   }
 }
@@ -276,7 +280,7 @@ test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs
   assert.ok(!body.includes('minus any record Step 4.0 reopened'), 'the reopened-only subtraction is gone');
   assert.ok(
     body.includes(
-      "Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
+      "Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
     ),
     'Step 4.0b honours the Worklist rule',
   );
@@ -440,7 +444,7 @@ test('#4599: the Parent-Gate Procedure says the reconciler closes a merge no ses
   const below = collapse(belowFloorBullet(read(GATE_REL)));
   assert.ok(
     below.includes(
-      "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
+      "A merge no session saw land is closed by the reconciler's `post-merge` check, which runs this gate's own code (`bin/lib/issues/parent-gate.js`, through `bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
     ),
     'the sub-issue-side bullet names the reconciler check and its one divergence',
   );
@@ -971,7 +975,11 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
 
 test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
   const close = section(read(GATE_REL), '## Close the parent below the floor', '## Compose the parent brief');
-  for (const lit of ['`_shared/github-write-transport.md`', '`get_me`', '`get_comments`', '`state_reason`', '`not_planned`', '`reopened` → `REOPENED`', '`user.login`', 'never pass `labels`']) {
+  // #4603: step 1's MCP sentence went with its reads. `get_me` and `get_comments` stay pinned in the
+  // Transport paragraph (#4602 AC2.1's pairings); the `reopened` → `REOPENED` and `user.login`
+  // normalization is the CLI's, pinned by tests/bin-lib/issues/mcp-parent-gate-shape.test.js's
+  // `normalizes the MCP shape`.
+  for (const lit of ['`_shared/github-write-transport.md`', '`state_reason`', '`not_planned`', 'never pass `labels`']) {
     assert.ok(close.includes(lit), `close section names ${lit}`);
   }
   const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
@@ -991,4 +999,149 @@ test('#4602: settle-and-merge\'s #205 paragraph lists the calls the Parent-Gate 
   for (const call of ghCalls(read(GATE_REL))) assert.ok(parentGate.includes(named(call)), `names ${named(call)} (gate call: ${call})`);
   assert.ok(!p.includes('No separate mapping table entry is needed'), 'the stale no-row claim is gone');
   assert.ok(!p.includes('is one of the three standard shapes'), 'the stale three-shapes claim is gone');
+});
+
+// ---- #4603: the Parent-Gate Procedure runs its gather and evaluate through bin/parent-gate.js ----
+
+const RUN_CLI = '## Run the gate CLI';
+const runCliSection = (gate) => section(gate, RUN_CLI, '## Evaluate the gate');
+const step40bOf = () => section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+const SUB_ISSUES_PATH = 'issues/$PARENT_NUM/sub_issues';
+const preChange4603Gate = preChangeSkillFile(GATE_REL, PRE_4603_SHA);
+
+test('AC2.1 (#4603): the gate file no longer composes the sub-issue enumeration', () => {
+  const gate = read(GATE_REL);
+  assert.ok(!gate.includes(SUB_ISSUES_PATH), 'the raw gate text carries no sub_issues REST path');
+  assert.ok(!collapse(gate).includes(collapse(SUB_ISSUES_PATH)), 'nor does the whitespace-collapsed text');
+  assert.ok(runCliSection(gate).includes('bin/parent-gate.js'), 'the Run the gate CLI section runs the CLI');
+});
+
+test('AC2.1 (#4603) go-red control: the pre-#4603 gate composes the sub-issue enumeration', { skip: preChange4603Gate.skip }, () => {
+  assert.ok(preChange4603Gate.text.includes(SUB_ISSUES_PATH));
+  assert.ok(collapse(preChange4603Gate.text).includes(collapse(SUB_ISSUES_PATH)));
+});
+
+// The command lines that run the CLI, fenced or inline: only these are flag-checked, so a prose
+// mention of a flag (`--risk-floor` in Evaluate, `--facts-json` in the Transport paragraph) is not.
+const CLI_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js"';
+const cliLines = (text) => text.split('\n').filter((l) => l.includes(CLI_COMMAND));
+
+// The facts each invocation region must state: [name, region key, literal], matched over the
+// collapsed `## Run the gate CLI` section (`cli`) or Step 4.0b (`pm`).
+const INVOCATION_FACTS = [
+  ['sub-issue-side line', 'cli', 'bin/parent-gate.js" --sub-issue {n} --closing'],
+  ['parent-side line', 'cli', 'bin/parent-gate.js" --parent {parent-number} --idempotence'],
+  ['facts file', 'cli', '--facts-json'],
+  ['local-files backend', 'cli', '--backend local-files'],
+  [
+    'facts-json exit 2 fails open',
+    'cli',
+    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
+  ],
+  [
+    'local-files exit is a reported failure',
+    'cli',
+    '**Under `work-backend: local-files`, any non-zero exit** — report the failure and stop that entry; never fail open.',
+  ],
+  ['Step 4.0b line', 'pm', 'bin/parent-gate.js" --sub-issue {n}'],
+  ['Step 4.0b idempotence', 'pm', '--idempotence'],
+  ['Step 4.0b held', 'pm', '--held'],
+  ['Step 4.0b merging PR', 'pm', '--merging-pr'],
+];
+const missingInvocationFacts = (regions) =>
+  INVOCATION_FACTS.filter(([, key, lit]) => !regions[key].includes(lit)).map(([name]) => name);
+
+// Exactly one sub-issue-side github-issues line (no --backend), and it reads no comments or login.
+function assertSubIssueLineWithoutIdempotence(cli) {
+  const lines = cliLines(cli).filter((l) => l.includes('--sub-issue') && !l.includes('--backend'));
+  assert.equal(lines.length, 1, 'exactly one sub-issue-side github-issues command line');
+  assert.ok(!lines[0].includes('--idempotence'), 'the pre-merge sub-issue-side line passes no --idempotence');
+}
+
+// Every ordered pair of markers appears, in order.
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const m of markers) {
+    const at = text.indexOf(m);
+    assert.notStrictEqual(at, -1, `marker missing: ${m}`);
+    assert.ok(at > last, `${m} must come after the marker before it`);
+    last = at;
+  }
+}
+const CLI_ORDER = ['## Self-inclusion rule', RUN_CLI, '## Evaluate the gate'];
+
+test('#4603: the gate file and Step 4.0b invoke bin/parent-gate.js', () => {
+  const gate = read(GATE_REL);
+  const regions = { cli: collapse(runCliSection(gate)), pm: collapse(step40bOf()) };
+  assert.deepEqual(missingInvocationFacts(regions), [], 'every invocation fact is stated');
+  // Each fact can go red: removing its literal from its own region reports it.
+  for (const [name, key, lit] of INVOCATION_FACTS) {
+    const doctored = { ...regions, [key]: regions[key].split(lit).join('') };
+    assert.notEqual(doctored[key], regions[key], `go-red: the doctored ${key} text differs (${name})`);
+    assert.ok(missingInvocationFacts(doctored).includes(name), `go-red: stripping the literal reports ${name}`);
+  }
+  const cli = runCliSection(gate);
+  assertSubIssueLineWithoutIdempotence(cli);
+  const line = cliLines(cli).find((l) => l.includes('--sub-issue') && !l.includes('--backend'));
+  const doctored = cli.replace(line, `${line} --idempotence`);
+  assert.notEqual(doctored, cli);
+  assert.throws(() => assertSubIssueLineWithoutIdempotence(doctored), /passes no --idempotence/, 'go-red: an --idempotence on the pre-merge line fails');
+  requireOrder(gate, CLI_ORDER);
+  const runAt = gate.indexOf(RUN_CLI);
+  const evalAt = gate.indexOf('## Evaluate the gate');
+  const selfAt = gate.indexOf('## Self-inclusion rule');
+  const swapped = gate.slice(0, selfAt) + gate.slice(runAt, evalAt) + gate.slice(selfAt, runAt) + gate.slice(evalAt);
+  assert.notEqual(swapped, gate);
+  assert.throws(() => requireOrder(swapped, CLI_ORDER), /must come after/, 'go-red: the section above Self-inclusion fails the order');
+  const absent = gate.split(RUN_CLI).join('## Run it');
+  assert.notEqual(absent, gate);
+  assert.throws(() => requireOrder(absent, CLI_ORDER), /marker missing/, 'go-red: a missing section fails the existence half');
+});
+
+// Every --flag on a CLI command line, minus the flags USAGE names.
+function unknownCliFlags(lines) {
+  const { USAGE } = require('../plugin/bin/parent-gate');
+  const known = new Set(USAGE.match(/--[a-z][a-z-]*/g));
+  return lines.flatMap((l) => (l.match(/--[a-z][a-z-]*/g) || []).filter((f) => !known.has(f)));
+}
+const missingSpans = (text, names) => names.filter((n) => !text.includes('`' + n + '`'));
+
+test('#4603: the prose names only the CLI\'s own flags, verdict fields and facts keys', () => {
+  const { VERDICT_FIELDS } = require('../plugin/bin/lib/issues/parent-gate');
+  const { FACTS_KEYS } = require('../plugin/bin/lib/issues/mcp-parent-gate-shape');
+  const cli = runCliSection(read(GATE_REL));
+  const lines = [...cliLines(cli), ...cliLines(step40bOf())];
+  assert.ok(lines.length >= 3, `found ${lines.length} bin/parent-gate.js command lines`);
+  assert.deepEqual(unknownCliFlags(lines), [], 'every flag on a command line is one USAGE names');
+  // go-red: a doctored command line with a flag the CLI lacks fails; the same flag in prose does not.
+  const withRepo = cli.replace(lines[0], `${lines[0]} --repo o/r`);
+  assert.notEqual(withRepo, cli);
+  assert.deepEqual(unknownCliFlags(cliLines(withRepo)), ['--repo'], 'go-red: --repo on a command line is unknown');
+  const proseRepo = `${cli}\nThere is no \`--repo\` flag.\n`;
+  assert.deepEqual(unknownCliFlags(cliLines(proseRepo)), [], 'a prose line naming --repo is not a command line');
+  assert.equal(VERDICT_FIELDS.length, 12);
+  assert.equal(FACTS_KEYS.length, 7);
+  assert.deepEqual(missingSpans(cli, [...VERDICT_FIELDS, ...FACTS_KEYS]), [], 'every verdict field and facts key is a code span in the section');
+  for (const name of ['skipped', 'parentComments']) {
+    const stripped = cli.split('`' + name + '`').join(name);
+    assert.notEqual(stripped, cli);
+    assert.deepEqual(missingSpans(stripped, [...VERDICT_FIELDS, ...FACTS_KEYS]), [name], `go-red: dropping the ${name} span reports it`);
+  }
+});
+
+const closeStep1 = (gate) => section(closeSection(gate), '**1. Idempotence', '**2. Compose the closing comment:**');
+
+function assertStep1RoutesOnIdempotence(step1) {
+  const { IDEMPOTENCE_VALUES } = require('../plugin/bin/lib/issues/parent-gate');
+  for (const v of IDEMPOTENCE_VALUES) assert.ok(step1.includes('`' + v + '`'), `step 1 names ${v}`);
+  assert.ok(!collapse(step1).includes('gh api user'), 'step 1 makes no login read of its own');
+}
+
+test('#4603: Close step 1 routes on the CLI\'s idempotence values', () => {
+  assertStep1RoutesOnIdempotence(closeStep1(read(GATE_REL)));
+});
+
+test('#4603 go-red control: the pre-#4603 Close step 1 reads the login itself', { skip: preChange4603Gate.skip }, () => {
+  assert.throws(() => assertStep1RoutesOnIdempotence(closeStep1(preChange4603Gate.text)), /step 1 names already-closed/);
+  assert.ok(collapse(closeStep1(preChange4603Gate.text)).includes('gh api user'));
 });

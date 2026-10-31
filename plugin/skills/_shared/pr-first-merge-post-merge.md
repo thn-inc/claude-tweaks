@@ -101,20 +101,32 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   which holds no per-spec pack.
 
 For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
-**Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
-With `gh` absent, every call the procedure makes runs through `_shared/github-write-transport.md`'s
-MCP rows (the procedure's **Transport (#4602).** paragraph), so a gh-absent run with the GitHub MCP
-server closes the parent the same way after a no-PR local merge; after a PR merge, Step 4.0's
-`gh-absent` result skips this step, as above. Every other outcome is a no-op; a record with no
-resolvable parent follows **Resolve the parent**'s no-parent branch. A parent whose labels lack
+**Evaluate the gate**, which its **Run the gate CLI** section makes one call. `{closing-sub-issues}`
+is `$CLOSING_SUB_ISSUES` comma-joined, and `{held}` lists every number in Step 4.0's `reopened[]`
+and `pendingClose[]` and each `failed[]` and `closeFailed[]` entry's `issue`, comma-joined. Omit
+`--merging-pr {pr-number}` after a no-PR local merge, and `--held {held}` when `{held}` is empty:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {closing-sub-issues} --idempotence --merging-pr {pr-number} --held {held}
+```
+
+Route the verdict in the reconciler's order. A parent whose labels lack
 `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in
-the closing summary. Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the
-parent's sub-issues** fetches) and name it in the closing summary, per
-`_shared/work-record.md`'s Worklist rule. Evaluate each parent once: skip a record whose parent
-this step already handled, so a parent with several sub-issues in the set is closed once. The
-procedure's **Return to the Try it post** and **Fail open on every `gh` call** paragraphs state
-what this entry does not do (no Try it block, no fallback to the no-parent path) and how it skips
-on a failing `gh` call — never a stop, and never a reason to report anything other than `merged`.
+the closing summary. The verdict reports it as `parentIssue: false`. Skip a parent whose verdict
+lists `needs` (its `needs:*` labels) and name it in the closing summary, per
+`_shared/work-record.md`'s Worklist rule. A non-empty `held` is the skip the inputs paragraph
+above names: name the parent in the closing summary. On `due` with `exceeds: false`, run
+**Close the parent below the floor**. With `gh` absent, every call the procedure makes runs
+through `_shared/github-write-transport.md`'s MCP rows (the procedure's **Transport (#4602).**
+paragraph), so a gh-absent run with the GitHub MCP server closes the parent the same way after a
+no-PR local merge; after a PR merge, Step 4.0's `gh-absent` result skips this step, as above.
+Every other outcome is a no-op; a record with no resolvable parent follows **Resolve the
+parent**'s no-parent branch. Evaluate each parent once: skip a record whose parent this step
+already handled, so a parent with several sub-issues in the set is closed once. The verdict's
+`parent` names it. The procedure's **Return to the Try it post** and **Fail open on every `gh`
+call** paragraphs state what this entry does not do (no Try it block, no fallback to the no-parent
+path) and how it skips on a failing `gh` call — never a stop, and never a reason to report
+anything other than `merged`. A non-zero CLI exit is a failing `gh` call.
 
 Log each parent closed:
 
