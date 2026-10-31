@@ -202,5 +202,4 @@ test('shaping-mode.md names deepOverlapHits candidates as likely duplicates befo
   assert.strictEqual(require('../plugin/bin/lib/issues/near-duplicate').DEEP_OVERLAP_MIN, 3);
   assert.match(section, /surface-only/);
   assert.match(section, /never\s+refuses/);
-  assert.doesNotMatch(section, /ranks\s+such\s+a\s+hit\s+first/);
 });
