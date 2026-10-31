@@ -642,8 +642,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /blockedBy\(first:25\)/);
-  assert.match(q, /state/);
+  assert.match(q, /i39: issue\(number:39\)\{ number blockedBy\(first:25\)\{ nodes\{ number state \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
