@@ -154,6 +154,13 @@ function assertStep40ReportsCloseFailed(step40) {
 }
 function assertStep40ReportsBaseUnchecked(step40) {
   assert.ok(step40.includes('A `baseUnchecked: true` envelope'), 'Step 4.0 names the baseUnchecked envelope');
+  assert.ok(step40.includes("name the envelope's `unchecked[]` records in the closing summary"), 'Step 4.0 points at the envelope\'s unchecked[] list');
+}
+function assertStep40NamesArmedGap(step40) {
+  assert.ok(
+    step40.includes("On a non-default base an `armed` merge's `Fixes` records also stay open, since this step never runs for it (#4599"),
+    'Step 4.0 states the armed non-default gap',
+  );
 }
 function assertStep40bUsesClosingSet(step40b) {
   assert.ok(
@@ -203,7 +210,7 @@ test('#4549 AC1.3: no plugin file still carries the any-integration-branch claim
     'go-red: the pre-change sentence is found',
   );
   assert.throws(
-    () => assertNoOldClaimAnywhere({ 'skills/x.md': collapse('a keyword that works on any\nintegration branch') }),
+    () => assertNoOldClaimAnywhere({ 'skills/x.md': 'a keyword that works on any\nintegration branch' }),
     /skills\/x\.md/,
     'go-red: the broader any-integration-branch wording across a line wrap is found',
   );
@@ -219,6 +226,17 @@ test('#4549 AC7.1b: Step 4.0 names the baseUnchecked envelope', () => {
   const step40 = step40Of(read('pr-first-merge-post-merge.md'));
   assertStep40ReportsBaseUnchecked(step40);
   assert.throws(() => assertStep40ReportsBaseUnchecked(PRE_CHANGE_STEP40_REPORT), /baseUnchecked/, 'go-red: the pre-change text fails the check');
+  const withoutList = step40.replace("name the envelope's `unchecked[]` records in the closing summary", 'name them in the closing summary');
+  assert.notEqual(withoutList, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40ReportsBaseUnchecked(withoutList), /unchecked\[\] list/, 'go-red: the pre-fix "name them" sentence fails the check');
+});
+
+test('#4549 final review: Step 4.0 states that an armed merge into a non-default base leaves its Fixes records open', () => {
+  const step40 = step40Of(read('pr-first-merge-post-merge.md'));
+  assertStep40NamesArmedGap(step40);
+  const withoutClause = step40.replace(/ On a non-default base an `armed` merge's.*$/, '');
+  assert.notEqual(withoutClause, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40NamesArmedGap(withoutClause), /armed non-default gap/, 'go-red: dropping the clause fails the check');
 });
 
 test('#4549 AC7.2: Step 4.0b lists close-failed and closed and uses closingSet[] on a non-default branch', () => {

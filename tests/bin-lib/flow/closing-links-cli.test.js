@@ -843,6 +843,7 @@ test('#4549 AC5.1: an unreadable default branch closes nothing and omits closing
   assert.equal(h.closes().length, 0);
   assert.equal(j.baseUnchecked, true);
   assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, [3997]);
   assert.ok(!('closingSet' in j));
   assert.ok(!h.issueReads().some((c) => c.args[2] === '3997'));
   const lines = h.log(runDir).split('\n').filter((l) => /^- SKIP .*Closing links \(degraded\)/.test(l));
@@ -862,6 +863,7 @@ test('post-merge: a missing baseRefName is treated as unchecked', () => {
   assert.equal(h.closes().length, 0);
   assert.equal(j.baseUnchecked, true);
   assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, [3997]);
   assert.ok(!('closingSet' in j));
   assert.equal(h.calls.filter((c) => c.args[0] === 'repo').length, 0);
   assert.ok(!h.issueReads().some((c) => c.args[2] === '3997'));
@@ -877,6 +879,7 @@ test('post-merge: an unreadable default branch with no Fixes records is base-unc
   const j = h.json();
   assert.equal(j.baseUnchecked, true);
   assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, []);
   assert.ok(!('closingSet' in j));
   assert.equal(h.closes().length, 0);
   assert.equal(h.issueReads().length, 0);
@@ -926,7 +929,7 @@ test('#4549 AC6.1: the default base makes no close call and keeps the existing e
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   const j = h.json();
   assert.equal(h.closes().length, 0);
-  for (const key of ['nonDefaultBase', 'closed', 'closeFailed', 'baseUnchecked']) assert.ok(!(key in j), key);
+  for (const key of ['nonDefaultBase', 'closed', 'closeFailed', 'baseUnchecked', 'unchecked']) assert.ok(!(key in j), key);
   assert.deepEqual(j.closingSet, [3997]);
   assert.equal(j.action, 'nothing-closed');
 });

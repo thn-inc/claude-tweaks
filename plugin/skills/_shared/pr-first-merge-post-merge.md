@@ -29,10 +29,12 @@ none of the PR's closing keywords, so the CLI also closes each still-open `Fixes
 `pendingClose[]` record (the merge may still close it — re-run the step once, then reopen it by
 hand if it closed) in the closing summary, never as anything but `merged`. A `baseUnchecked: true`
 envelope means the PR's base or the default branch could not be read, so nothing was closed and the
-`Fixes` records were not checked: name them in the closing summary. Exit
+`Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit
 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
 this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
+On a non-default base an `armed` merge's `Fixes` records also stay open, since this step never runs
+for it (#4599 tracks running it for an armed PR).
 
 ### Step 4.0b: Close below-floor parents (#4466)
 

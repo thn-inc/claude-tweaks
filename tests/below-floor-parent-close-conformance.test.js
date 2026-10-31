@@ -354,12 +354,46 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   assert.ok(!body.includes('AUTO {time} — pr-first-merge Step 4.0b'), 'no hand-composed decisions.md line');
 });
 
-test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
-  const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
+// #4549: the pre-change wordings, kept as the go-red controls for the pins below.
+const PRE_4549_CVM_COUNT = "except for the one record-closing exception that contract's Never-reversible list names:";
+const PRE_4549_NETWORK_SENTENCE = "The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet's restore contract";
+const PRE_4549_NEVER_TAIL = "`/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged";
+
+function assertCvmNamesTwoExceptions(cvm) {
+  const c = collapse(cvm);
   assert.ok(
-    collapse(cvm).includes("except for the one record-closing exception that contract's Never-reversible list names:"),
-    'Close-via-merge points at the one named exception',
+    c.includes("except for the two record-closing exceptions that contract's Never-reversible list names:"),
+    'Close-via-merge points at the two named exceptions',
   );
+  assert.ok(
+    c.includes("`_shared/pr-first-merge-post-merge.md` Step 4.0's post-merge pass, which closes a PR's `Fixes` records after a confirmed PR merge into a base that is not the default branch"),
+    'Close-via-merge names the Step 4.0 post-merge close as the second exception',
+  );
+}
+function assertNeverNamesPostMergeClose(never) {
+  for (const lit of [
+    "The second exception is the post-merge close of a PR's `Fixes` records: `_shared/pr-first-merge-post-merge.md` Step 4.0's `closing-links.js --mode post-merge` pass, after a confirmed PR merge into a base that is not the repo's default branch, closes each still-open `Fixes`-span record with a close comment (#4549).",
+    'It reproduces what GitHub does itself on the default branch, where the closing keyword fires; it never closes a `Refs` record or any record the PR does not name.',
+    "a human runs `gh issue reopen {record}`, and the close comment plus the pass's `AUTO` line in `decisions.md` stay as the audit trail",
+    "satisfies the Reversibility floor's `high` for this one write, and only for that pass",
+  ]) {
+    assert.ok(never.includes(lit), `the Never-reversible list's second exception carries: ${lit}`);
+  }
+}
+function assertNeverNetworkSentence(never) {
+  assert.ok(
+    never.includes("The two record closes the first bullet names are the other exceptions: each one's comment and close are its two writes, under that bullet's restore contract"),
+    'the network-calls bullet names both record closes as exceptions',
+  );
+}
+
+test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close and the Step 4.0 post-merge close as its two exceptions', () => {
+  const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
+  assertCvmNamesTwoExceptions(cvm);
+  // go-red: the same assertion function, run on the pre-#4549 wording, fails.
+  const preCvm = cvm.replace(/except for the two record-closing exceptions[\s\S]*?each under the restore contract/, `${PRE_4549_CVM_COUNT} the Parent-Gate Procedure's **Close the parent below the floor** under the restore contract`);
+  assert.notEqual(preCvm, cvm, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertCvmNamesTwoExceptions(preCvm), /two named exceptions/, 'go-red: the pre-change "one exception" wording fails the check');
   assert.ok(!collapse(cvm).includes('except where a procedure names its own exception'), 'the open-ended exception wording is gone');
   assert.ok(cvm.includes('**Close the parent below the floor**'));
   assert.ok(collapse(cvm).includes('under the restore contract that `_shared/auto-mode-contract.md` exception states'), 'points at the contract for the restore');
@@ -373,11 +407,16 @@ test('AC2.1: the auto-mode contract names the below-floor parent close as an exc
     "- Closing or deleting work records — except the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) on a sub-issue-side entry: `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry under `work-backend: github-issues`, or, under `work-backend: local-files`, wrap-up's execution step, the auto-merge short-circuit and dispatch's group auto-merge gate.",
     'Its restore contract — the pipeline never restores automatically: under `github-issues` a human runs `gh issue reopen {parent}` and the comment stays as the audit trail; a reopen deletes nothing, so it restores the parent whatever else has landed on it since, as long as this close is still its latest.',
     'Under `local-files` the close is an ordinary commit on the run\'s branch and `bin/lib/issues/local-store.js` has no reopen primitive, so a human clears the parent record\'s `closed`/`closedAt` facets',
-    'The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet\'s restore contract',
     "This restore contract is what satisfies the Reversibility floor's `high` for this one write, and only for those sub-issue-side entries: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged",
   ]) {
     assert.ok(never.includes(lit), `Never-reversible list carries: ${lit}`);
   }
+  assertNeverNamesPostMergeClose(never);
+  assertNeverNetworkSentence(never);
+  // go-red: the same assertion functions, run on the pre-#4549 text, fail.
+  assert.throws(() => assertNeverNamesPostMergeClose(PRE_4549_NEVER_TAIL), /second exception carries/, 'go-red: the pre-change bullet has no second exception');
+  assert.throws(() => assertNeverNetworkSentence(PRE_4549_NETWORK_SENTENCE), /both record closes/, 'go-red: the pre-change network-calls sentence fails the check');
+  assert.ok(!never.includes(PRE_4549_NETWORK_SENTENCE), 'the one-exception network-calls sentence is gone');
   assert.ok(!never.includes('may delete that comment'), 'the restore no longer deletes the audit-trail comment');
   assert.ok(!never.includes("and only for Step 4.0b's entry"), 'the exception is no longer scoped to Step 4.0b alone');
 });

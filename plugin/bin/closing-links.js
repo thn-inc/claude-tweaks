@@ -50,8 +50,9 @@
 // stage 'read' for a failed state read), and closingSet is closed[] plus the
 // Fixes records read already CLOSED, never a closeFailed one. A base or default
 // branch that cannot be read closes nothing: the envelope adds
-// baseUnchecked: true and omits closingSet. The default base keeps the
-// envelope above unchanged.
+// baseUnchecked: true and unchecked[] (the Fixes records it did not check,
+// sorted -- the numbers a caller names for a hand close) and omits closingSet.
+// The default base keeps the envelope above unchanged.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
@@ -464,7 +465,7 @@ function run(argv, overrides = {}) {
     ...(baseUnchecked ? {} : { closingSet }),
     ...(messageUnread ? { messageUnread: true } : {}),
     ...(nonDefaultBase ? { nonDefaultBase: true, closed, closeFailed } : {}),
-    ...(baseUnchecked ? { baseUnchecked: true } : {}),
+    ...(baseUnchecked ? { baseUnchecked: true, unchecked: uniqueSorted(expected) } : {}),
   });
 }
 

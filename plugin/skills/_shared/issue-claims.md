@@ -517,12 +517,15 @@ tombstone) — `bin/release-claim.js` appends its own line; claim-side entries g
 ## Close-via-merge
 
 The agent never runs `gh issue close` (non-reversible network write — see
-`_shared/auto-mode-contract.md`), except for the one record-closing exception that contract's
+`_shared/auto-mode-contract.md`), except for the two record-closing exceptions that contract's
 Never-reversible list names: the Parent-Gate Procedure's **Close the parent below the floor**
 (`wrap-up/verification-brief-parent-gate.md`), which closes a decomposition parent after its
-sub-issues' merge has landed, under the restore contract that `_shared/auto-mode-contract.md`
-exception states. Issues close through the user's own merge action instead, by
-ensuring the closing keyword already exists in a commit that will reach the default branch:
+sub-issues' merge has landed, and `_shared/pr-first-merge-post-merge.md` Step 4.0's post-merge
+pass, which closes a PR's `Fixes` records after a confirmed PR merge into a base that is not the
+default branch (GitHub does not act on the keywords there), each under the restore contract that
+`_shared/auto-mode-contract.md` exception states. Every other issue closes through the user's own
+merge action instead, by ensuring the closing keyword already exists in a commit that will reach
+the default branch:
 
 - **Worktree path (single-spec, the common case):** before handing off to
   `/superpowers:finishing-a-development-branch`, `/wrap-up` cleanup Section C commits an empty

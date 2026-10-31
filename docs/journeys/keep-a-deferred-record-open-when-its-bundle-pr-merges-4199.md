@@ -45,11 +45,14 @@ files:
 - **URL:** `https://github.com/{owner}/{repo}/issues/{n}`
 - **Action:** The CLI polls each candidate that could have closed for a short settle window. It reopens any candidate closed at or after the merge, with a comment naming the PR. It prints the worst outcome as `action`, and logs each reopen, failure, and pending close to `decisions.md`:
   - `reopen-failed`
+  - `close-failed`
+  - `base-unchecked`
   - `close-pending`
   - `reopened`
+  - `closed`
   - `nothing-closed`
 - **Should feel:** Reassuring. Even if GitHub closed the record, it is back open within seconds, and the comment says why.
-- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. The armed-merge (`--auto`) path merges later and is a known gap.
+- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. The armed-merge (`--auto`) path merges later and is a known gap. On a base that is not the repo's default branch GitHub acts on none of the PR's closing keywords, so this step closes the merge's `Fixes` records itself (`closed`); a record listed in `closeFailed[]` needs a hand close, and `base-unchecked` means the base could not be read, so the envelope's `unchecked[]` records were not checked.
 - **Red flags:** The deferred record closed with no `reopened` or `reopen-failed` entry; a reopen of a record the run actually finished.
 
 ## Origin
