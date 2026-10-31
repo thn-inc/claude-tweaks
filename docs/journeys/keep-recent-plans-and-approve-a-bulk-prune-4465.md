@@ -8,6 +8,7 @@ files:
   - plugin/skills/tidy/plan-citation-check.md
   - plugin/skills/_shared/policy-schema.md
   - plugin/bin/declined-learning.js
+  - plugin/bin/plan-retention.js
 ---
 
 # Keep Recent Plans and Approve a Bulk Prune
@@ -42,11 +43,11 @@ files:
 
 ### 2. Recent and uncommitted plans stay put
 - **URL:** the same paragraph's cutoff sentence
-- **Action:** Under `keep-forever`, each would-be Delete's age is read from its first-add commit: `git -C "{REPO_ROOT}" log --diff-filter=A --format=%cs -1 -- {plan}`.
+- **Action:** Under `keep-forever`, each would-be Delete's age comes from `bin/plan-retention.js`, which reads the plan's first-add commit date and reports it as `firstAdded` (a date, or `uncommitted`).
 - **Should feel:** last week's work is safe, even if its record already closed.
 - **Should understand:**
   - Plans younger than 7 days are Keep.
-  - Empty output or a non-zero exit (an uncommitted plan) counts as within the cutoff, so the plan is Keep. This also holds under `ask`.
+  - `firstAdded: "uncommitted"` (no first-add commit, or a git probe that failed) counts as within the cutoff, so the plan is Keep. This also holds under `ask`.
   - Below 30 past-cutoff candidates, tidy does not even run the citation check. Every such plan is a plain Keep, counted under **Clean:**.
 - **Red flags:**
   - A plan created this week staged or deleted.
@@ -59,7 +60,7 @@ files:
 - **Should feel:** a single deliberate maintenance decision, in line with ADR-0007's "explicit user direction", not a drip of deletions.
 - **Should understand:**
   - The row is **Stage** at every tier, `aggressive` included.
-  - Before staging, tidy looks the decline up from `{REPO_ROOT}` with `declined-learning.js lookup --source tidy`. A non-null `decline`, or a lookup that exits non-zero, routes the plans back to Keep.
+  - Before staging, `bin/plan-retention.js` (run from `{REPO_ROOT}`) looks the decline up itself. A live decline, or a lookup that fails, routes the plans back to Keep.
   - The citation check runs before the list is built, so a cited plan is never listed.
 - **Red flags:**
   - A `Prune plan` auto-applied at any tier.
