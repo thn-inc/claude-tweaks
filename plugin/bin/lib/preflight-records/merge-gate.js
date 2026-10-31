@@ -11,7 +11,7 @@
 'use strict';
 
 const { escapeRegExp } = require('../shared-primitives');
-const { fencedLineMask } = require('../issues/record-payload');
+const { fencedLineMask } = require('../markdown-blocks');
 
 // integrationBranch (default 'main') -> the strict merge-state RegExp. A demand
 // that a prerequisite be "actually merged", or merged/landed to/into/on the

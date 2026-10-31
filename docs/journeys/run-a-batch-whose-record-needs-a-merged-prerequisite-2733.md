@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/preflight-records/merge-gate.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/preflight-records.js
   - plugin/skills/flow/multispec-merge-gate.md
   - plugin/skills/flow/multispec-preflight-failure.md

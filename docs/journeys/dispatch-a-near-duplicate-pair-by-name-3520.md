@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/issues/near-duplicate.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/lib/dispatch/near-dup-pairs.js
   - plugin/skills/dispatch/queue-pull-script.md
   - plugin/skills/dispatch/near-duplicate-pairs.md
