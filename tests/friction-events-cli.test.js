@@ -13,6 +13,7 @@ const os = require('os');
 const path = require('path');
 const { run, readEvents } = require('../plugin/bin/friction-events');
 const { formatEntry, appendEntry } = require('../plugin/bin/lib/log-decision/append');
+const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
 function fakeDeps(overrides = {}) {
   const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], repoInfo: [], stdout: [], stderr: [] };
@@ -573,6 +574,23 @@ test('#4704: from the main checkout with no session id, no path sibling is union
   assert.ok(!out.some((e) => e._source === 'adhoc'));
 });
 
+test('#4704: from the main checkout with no session id, the skipped path sibling is named on stderr; with a session id it is not', () => {
+  const mainCheckoutDeps = () => fakeDeps({
+    repoInfo: () => MAIN_CHECKOUT,
+    cwd: () => '/main',
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    findRunsByWorktreePath: pathSiblings,
+  });
+  const noSession = mainCheckoutDeps();
+  assert.strictEqual(run(['--run', '/run/primary'], noSession), 0);
+  assert.deepStrictEqual(JSON.parse(noSession.calls.stdout.join('')).map((e) => e._runDir), ['/run/primary']);
+  assert.match(noSession.calls.stderr.join(''), /^friction-events\.js: main-checkout ad-hoc run dirs skipped .*no session id resolvable.*--session.*CLAUDE_CODE_SESSION_ID\)\n$/);
+
+  const withSession = mainCheckoutDeps();
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], withSession), 0);
+  assert.deepStrictEqual(withSession.calls.stderr, []);
+});
+
 test('#4704: an indeterminate repoInfo keeps the path-only union', () => {
   const deps = fakeDeps({
     repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: true }),
@@ -645,9 +663,8 @@ test('#4704: with no path siblings to filter, repoInfo (a git spawn) is not call
 // Initialises `repo` as a real main checkout holding two ad-hoc run dirs (sessions
 // S1 and S2, one friction event each) and a formal primary run dir.
 function initMainCheckoutWithTwoSessions(repo) {
-  const { execFileSync } = require('child_process');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
-  execFileSync('git', ['init', '-q'], { cwd: repo, windowsHide: true });
+  fixtureGit(['init', '-q'], { cwd: repo, windowsHide: true });
   const root = fs.realpathSync(repo);
   const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   const mk = (name) => { const d = path.join(pipelines, name); fs.mkdirSync(d, { recursive: true }); return d; };
@@ -669,6 +686,7 @@ function realCliRunDirsAsS1(root, primary, extraArgs = []) {
     env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' },
     encoding: 'utf8',
     windowsHide: true,
+    timeout: FIXTURE_TIMEOUT_MS,
   });
   return JSON.parse(stdout).map((e) => path.basename(e._runDir));
 }

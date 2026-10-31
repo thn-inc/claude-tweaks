@@ -240,7 +240,12 @@ function run(argv, deps = realDeps) {
   // nearest existing ancestor, so a removed linked worktree would otherwise read
   // as the main checkout); an unresolvable path or indeterminate git answer
   // keeps the path-only union. Skipped when there is nothing to filter: repoInfo
-  // spawns git.
+  // spawns git. Failing open is the pre-#4704 behavior; failing closed would drop a
+  // linked worktree's legitimate siblings on a transient git failure, and
+  // over-reporting friction is the safer error here. The main-checkout branch
+  // filters rather than drops: bySession below skips dirs whose recorded worktree
+  // still exists, and the main checkout always does, so this is the only route to
+  // this session's own main-checkout dirs.
   if (siblings.length > 0) {
     const info = deps.repoInfo(worktreePath) || {};
     // Both sides go through the same canonicalizer (on-disk case), as
@@ -250,8 +255,11 @@ function run(argv, deps = realDeps) {
     const inMainCheckout = Boolean(repoRoot) && !info.isLinkedWorktree
       && repoRoot === deps.realpath(worktreePath);
     if (inMainCheckout) {
-      siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isAdHocRunDir(siblingDir)
-        && Boolean(sessionId) && state?.sessionId === sessionId);
+      const before = siblings.length;
+      siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isSessionOwnedAdHocRun(siblingDir, state, sessionId));
+      if (!sessionId && siblings.length < before) {
+        deps.stderr('friction-events.js: main-checkout ad-hoc run dirs skipped — no session id resolvable (pass --session or set CLAUDE_CODE_SESSION_ID)\n');
+      }
     }
   }
   const bySession = sessionId ? (deps.findAdHocRunsBySessionId(deps.cwd(), sessionId, runDir) || []) : [];
