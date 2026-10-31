@@ -545,6 +545,14 @@ When mechanizing a prose heuristic into a deterministic check:
     truncate alike. Run the extractor on an out-of-class input before stating its failure direction.
     Assert the extracted value directly, and pin two inputs that differ only in the part it would
     drop (`tests/bin-lib/console/resolve.test.js`).
+    Widening the class also moves every stored id hashed from the extracted value. #4582 left
+    `plugin/bin/lib/console/backfill.js`'s copy of the narrow class alone for that reason, since
+    `backfillItemId` hashes the finding key and a re-run could file a re-id'd item twice. #4631
+    split the two: the reported path comes from `FINDING_PATH` (exported by `resolve.js`), while
+    `findingKeyOf` keys the id on the `LEGACY_LOCATION_RE` (old class) match ending at the same
+    offset. When a fix widens an extractor whose value feeds a stored id, keep the old extraction
+    for the key, and pin a stored legacy-keyed item surviving a re-run without a second filing
+    (`tests/bin-lib/console/backfill.test.js`'s AC2 cases).
 
 ## When to use
 
