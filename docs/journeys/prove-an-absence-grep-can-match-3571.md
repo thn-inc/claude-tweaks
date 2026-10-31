@@ -48,8 +48,22 @@ files:
   - A scoped grep that has only ever been run after the deletion.
   - A bare grep skipped because only the scoped form seemed to need the control.
 
+### 4. Exclude the run directory from a repo-root search
+- **URL:** `spec-template.md`'s `## Acceptance Criteria` and `plan-authoring-checks.md`'s **Absence-grep control check**.
+- **Action:** When an absence search is scoped to the repo root, append `':!.claude-tweaks/pipelines'` to its pathspec (or the tool's equivalent). Then run the control on that excluded form against a tree that still holds the target, and confirm it matches.
+- **Should feel:** Like step 3's tombstone, one more exclusion that can quietly hide the target.
+- **Should understand:**
+  - `/flow` commits the materialized spec (`.claude-tweaks/pipelines/<run>/work/<n>-spec.md`) on the feature branch, and that spec quotes the target. An unscoped search therefore always matches the spec, and the criterion can never pass.
+  - A build that finds the exclusion missing adds it as a plan correction, not an SDD ruling.
+  - A search scoped to named paths outside `.claude-tweaks/` needs no exclusion.
+  - Added for #4579.
+- **Red flags:**
+  - Excluding all of `.claude-tweaks/`, which hides `policy.yml`.
+  - A pathspec substituted for the control run, rather than run in addition to it.
+
 ## Origin
 - Created during build of #3571, a reflect-light finding from #3536. #3536's AC1.1 could never fail. Its plan copied it into Global Constraints and Task 2, plan audit passed it, and only the Task 2 implementer caught it at dispatch.
 - Updated during wrap-up of #3571: Steps 2-3 brought in line with the review fixes in d9746b834, the recipe for running the control against a commit and the bare tombstone grep.
+- Updated during build of #4579: Step 4, the run-directory exclusion for a repo-root-scoped search.
 - Pinned by `tests/absence-grep-control-check-prose.test.js`.
 - Related: `derive-a-reader-inventory-from-read-call-sites-3397.md`, another plan-authoring check that `/claude-tweaks:build` applies before a plan is finalized.
