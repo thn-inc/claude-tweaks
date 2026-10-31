@@ -17,14 +17,20 @@ Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
 One cheap list for the dashboard's Acceptance Queue section — deliberately `--state all`, unlike
-every other count in this file, since `demo:pending` persists independent of open/closed state
+every other count in this file, since a pending acceptance persists independent of open/closed state
 (an `auto:merge`'d record's issue can already be closed while still awaiting sign-off). `/demo`
 no longer sweeps this backlog itself (it resolves only the items you name — a bare ref or an
 explicit `#N,#M` list, never a scan), so this is the sole place the outstanding set is enumerated.
 
 ```bash
-gh issue list --label demo:pending --state all --json number,title --limit 200
+gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200
 ```
+
+The comma is an OR across the two pending spellings (`_shared/work-record.md`, Acceptance axis).
+A record carrying a pending label is listed regardless of any resolution label it also carries;
+this scope enumerates pending labels and does not apply the precedence rule. The query is a search,
+so a record labelled seconds before the run can be missing while the search index lags — unwarned,
+and picked up by the next run.
 
 Render as one line listing every matching record: `Awaiting sign-off: **{N} records** — #{n1}
 ({title1}), #{n2} ({title2}), ... — run /demo #{n1},#{n2},... to review them all` (a single ref
@@ -33,8 +39,8 @@ when `{N}` is 1: `run /demo #{n1}`) — omit entirely when the count is 0.
 ## Scope: `acceptance-gap` (consumed by /tidy Step 4.8)
 
 Finds closed records that carry no acceptance label at all — the case `acceptance-queue` above
-cannot see, since that scope only lists records already flagged `demo:pending`. A record closed
-without ever receiving a `demo:*` label is invisible to `acceptance-queue` and would otherwise
+cannot see, since that scope only lists records already flagged pending. A record closed
+without ever receiving an acceptance label is invisible to `acceptance-queue` and would otherwise
 disappear from the backlog with no disposition on record. A record closed with GitHub's own
 `stateReason` of `NOT_PLANNED` or `DUPLICATE` is excluded from this scope entirely — a not-planned
 or duplicate closure has nothing to accept, so it is never a gap. Classification is entirely
@@ -50,44 +56,55 @@ the same `needsBackstop` call. It emits the identical `[acceptance-gap]` row at 
 severity and recommends the identical `/claude-tweaks:demo` invocation, so no consumer
 distinguishes the two.
 
-Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
-not-planned and duplicate exclusions server-side through `--search`; the client-side `closedAt`
-cutoff, `needsBackstop` and the oversight floor still run on that narrowed set, unchanged. Negated
+Record set: closed records from the last 30 days. The fetch splits that window into two date slices — `closed:$SINCE..$MID` and `closed:>$MID` — and applies the disposition, not-planned and duplicate exclusions server-side through `--search` on each slice; the client-side `closedAt` cutoff, `needsBackstop` and the oversight floor still run on the merged set, unchanged. Negated
 `-reason:` qualifiers are used rather than `reason:completed`, so a closed record with a null
 `stateReason` stays in. The oversight floor stays client-side: it passes a record meeting either
 the risk or the size axis and fails closed on unscored records, which negated `-label:` qualifiers
 cannot express.
 
-Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset.
+Resolve `{since-date}` first, as its own call, with `node -e "console.log(new Date(Date.now() - 31 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"` (cross-platform, no shell `date` variant needed), and substitute its `YYYY-MM-DD` output literally. The server date is one date wider than the 30-day client cutoff below, on purpose: the `closed:` qualifier's timezone is unprobed, so the extra day keeps the server set a superset. Resolve `{mid-date}` the same way, as its own call, with `node -e "console.log(new Date(Date.now() - 15 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10))"`, and substitute its `YYYY-MM-DD` output literally: it is the split point between the two date slices below, 15 days back and so inside the window.
 
 Resolve session-scoped paths first (`_shared/session-tmp-root.md`, cited throughout this file rather than restated), then resolve `backlog-fetch-limit` and substitute it into the fetch below (per this file's "Fetch limit" section):
 
 ```bash
-RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw.json)"
+RAW_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-old.json)"
+RAW_NEW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records-raw-new.json)"
 CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-closed-records.json)"
 : > "$CLOSED"
 LIMIT="{resolved-limit}"
 SINCE="{since-date}"
-export SINCE
+MID="{mid-date}"
+export SINCE MID
 gh issue list --state closed --limit "$LIMIT" \
-  --search "closed:>=$SINCE -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending" \
+  --search "closed:$SINCE..$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending" \
   --json number,title,state,labels,closedAt,stateReason \
-  > "$RAW"
+  > "$RAW_OLD"
+gh issue list --state closed --limit "$LIMIT" \
+  --search "closed:>$MID -reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending" \
+  --json number,title,state,labels,closedAt,stateReason \
+  > "$RAW_NEW"
 node -e "
   const fs = require('fs');
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
-  const raw = require('$RAW');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.SINCE || '') || Number.isNaN(Date.parse(process.env.SINCE)) || new Date(process.env.SINCE).toISOString().slice(0, 10) !== process.env.SINCE || new Date(process.env.SINCE) > new Date(Date.now() - 30 * 864e5)) throw new Error('SINCE is not a YYYY-MM-DD date over 30 days back — the since-date placeholder was not substituted or was resolved wrong; an empty date returns zero rows, a later one drops records.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(process.env.MID || '') || Number.isNaN(Date.parse(process.env.MID)) || new Date(process.env.MID).toISOString().slice(0, 10) !== process.env.MID || process.env.MID <= process.env.SINCE || process.env.MID >= new Date().toISOString().slice(0, 10)) throw new Error('MID is not a YYYY-MM-DD date later than SINCE and earlier than today — the mid-date placeholder was not substituted or was resolved wrong; an empty or inverted slice silently drops its records.');
   const LIMIT = $LIMIT;
   const CAP = Math.min(LIMIT, 1000);
-  if (raw.length >= CAP) {
-    console.error('WARNING: the server-filtered closed-record fetch returned ' + raw.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. Below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at 1000 or above, the 30-day undisposed set itself reaches or exceeds the search ceiling and this scope cannot be complete.');
+  const slices = [
+    ['closed:' + process.env.SINCE + '..' + process.env.MID, require('$RAW_OLD')],
+    ['closed:>' + process.env.MID, require('$RAW_NEW')],
+  ];
+  for (const [qualifier, rows] of slices) {
+    if (rows.length >= CAP) {
+      console.error('WARNING: the closed-record slice ' + qualifier + ' returned ' + rows.length + ' records, reaching its cap of ' + CAP + ' (the smaller of backlog-fetch-limit and the 1000-result search ceiling) — records past it are invisible to this scope. With a cap below 1000, raise backlog-fetch-limit in .claude-tweaks/policy.yml and re-run; at a cap of 1000, that slice alone reaches the search ceiling and the scope cannot be complete.');
+    }
   }
+  const byNumber = new Map(slices.flatMap(([, rows]) => rows).map((r) => [r.number, r]));
   const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-  fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
+  fs.writeFileSync('$CLOSED', JSON.stringify([...byNumber.values()].filter((r) => r.closedAt > cutoff)));
 "
 ```
 
-When this block fails — the since-date guard throws, or a failed `gh` call leaves `$RAW` unreadable —
+When this block fails — the since-date or mid-date guard throws, or a failed `gh` call leaves `$RAW_OLD` or `$RAW_NEW` unreadable —
 the scope stops: report no `[acceptance-gap]` rows at all and quote the error verbatim, as for an
 exit-3 sub-issue fetch below. `$CLOSED` is emptied first, so a later block never reads a stale one.
 
@@ -139,9 +156,12 @@ The closed-record fetch is bounded on the server by the window (one date wider t
 which is why it no longer fills the cap with already-dispositioned records: a busy repo can close
 far more than any reasonable hardcoded cap within 30 days (971 closed issues in 30 days was
 observed on this repo alone), and a cap on that unfiltered stream silently dropped the **oldest**
-closed records first — exactly the quiet-failure a backstop scope must never have, so the cap (the
-smaller of the limit and GitHub search's 1000-result ceiling) and its warning still apply to the
-narrowed set. The closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
+closed records first — exactly the quiet-failure a backstop scope must never have. The closed-record
+fetch is split into two date slices, `closed:$SINCE..$MID` and `closed:>$MID`, because one query is
+capped at GitHub search's 1000 results and the undisposed set can exceed that: each slice is capped
+at the smaller of the limit and 1000 and warns on its own when it reaches that cap (naming its date
+range, row count and remedy), and the two slices merge number-keyed before the cutoff. The
+closed-record fetch is a search too: a record closed or relabelled seconds before the run can be missing while the search index lags — unwarned, and picked up by the next run. The parent fetches share the same
 exposure for a different reason — they are `--state all` over the repo's entire history, and
 `gh issue list` returns newest-first, so a fixed cap drops the **oldest** parents first. Those are
 precisely the parents whose sub-issues have already closed, so truncation silently re-floods this
@@ -698,8 +718,8 @@ this write, however mechanical or precondition-only it is; `/claude-tweaks:wrap-
 identical write with zero staging is not a counter-example, since that write is an unconditional
 step of a pipeline a human already launched against one named record and sits in no tier table at
 all, unlike this action. Separately, and independent of the write-level reasoning above, this
-scope and the `Open parent gate` action it feeds never write `demo:approved` or
-`demo:changes-requested` under any circumstance — that disposition stays exclusively
+scope and the `Open parent gate` action it feeds never write an approved or changes-requested
+Acceptance label (`_shared/work-record.md`) under any circumstance — that disposition stays exclusively
 `/claude-tweaks:demo`'s job, staged and human-only, which is why an above-floor recommendation still
 ends with "then `/claude-tweaks:demo #{n}`" even once the gate is open. Approving a below-floor row
 closes the parent through `wrap-up/verification-brief-parent-gate.md`'s **Close the parent below the

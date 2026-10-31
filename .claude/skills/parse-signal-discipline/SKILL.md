@@ -298,7 +298,7 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `stripComments` (implemented in
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
-    callers, by test-file stem: `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
+    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
     `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
@@ -553,6 +553,25 @@ When mechanizing a prose heuristic into a deterministic check:
     offset. When a fix widens an extractor whose value feeds a stored id, keep the old extraction
     for the key, and pin a stored legacy-keyed item surviving a re-run without a second filing
     (`tests/bin-lib/console/backfill.test.js`'s AC2 cases).
+26. **A recogniser that must ignore a marker shown as code owes a rule the host format
+    guarantees, not a home-made model of that format.** A model that drifts from the real parser
+    fails toward accepting the marker. `plugin/bin/lib/issues/accept-verdict.js`'s
+    `parseVerdictMarker` (#4610) reads a verdict marker from a GitHub comment, and a marker inside
+    a code block must never count. Its first version masked inline code spans and tracked fences
+    line by line. Review found the tracker drifting from GitHub's renderer on list items, HTML
+    blocks and a leading BOM. The blanking could also create an opener that defeated the
+    one-marker count, so fenced bodies parsed as verdicts. `1ff12329a` replaced the model with two
+    rules by position: the marker sits alone on its line at column 0, and no run of three or more
+    backticks or tildes comes before it. A fence cannot enclose a marker without opening earlier,
+    and column 0 excludes indented code, inline spans, blockquotes and list items. The cost is
+    some false rejections: a closed code block before the marker rejects too. So the contract
+    (`_shared/pr-run-comments.md`) states the rule, and the module header tells writers to put the
+    marker first. Check such a rule against the real renderer, never against your own model.
+    The writer closes the delimiter channel item 24 names: `renderVerdictMarker` escapes `<`
+    and `>` in the JSON as `\u003c` and `\u003e`, so a note can never carry the `-->`
+    that ends the comment, and the parser rejects a raw `<` or `>`. Pin each hiding place with its
+    own case (`tests/bin-lib/issues/accept-verdict.test.js`: a block that does not own its line,
+    fence text before the block, and a note holding `-->`).
 
 ## When to use
 
