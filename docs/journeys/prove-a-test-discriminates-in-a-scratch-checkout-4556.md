@@ -24,7 +24,7 @@ files:
   - The run directory is in the main checkout, and a worktree-isolated session cannot write there with its file tools.
 - **Red flags:**
   - A `"$VAR"` operand on a later `git -C` or `node` call. §7 refuses runtime-variable operands.
-  - Two agents sharing one `{id}`, which makes the second create collide.
+  - Two agents sharing one `{id}`, which makes the second create collide. A `{disc-path}` that already exists is reported `BLOCKED`, never written into or deleted.
 
 ### 2. Create the checkout and confirm the commit
 - **URL:** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`, then `git -C "{disc-path}" rev-parse HEAD`.
@@ -37,12 +37,12 @@ files:
   - A `git checkout --` or an edit-then-restore in the shared worktree as a substitute.
 
 ### 3. Mutate and run inside the scratch checkout
-- **URL:** `git -C "{disc-path}" checkout {base-sha} -- {path}`, or an Edit under `{disc-path}`. Then `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`.
-- **Action:** First run a control: make the mutated file throw at load and confirm the run goes red. Then run the real check.
+- **URL:** `git -C "{disc-path}" checkout {base-sha} -- {path}`, or a rewrite under `{disc-path}` with one `node -e` call (never Write/Edit: the path is outside the agent's worktree). Then `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`.
+- **Action:** First run the unmutated checkout and confirm it passes. A red there means the checkout lacks an input the test needs, so nothing counts. Then run a control: make the mutated file throw at load and confirm the run goes red. Then run the real check.
 - **Should feel:** Like an ordinary red/green cycle in a throwaway tree.
 - **Should understand:**
   - A control that stays green means the run did not load the scratch copy. The run read the shared tree, or the test never loads the mutated file. Either way there is no evidence.
-  - Dependencies come through the search-path variable, never a link (`ln -s`, `mklink /J`). Listing the shared worktree's `node_modules` is denied by a settings rule (§7).
+  - Dependencies come through the search-path variable, never a link (`ln -s`, `mklink /J`): a link leaves a path into the shared tree. Listing the shared worktree's `node_modules` is denied by a settings rule (§7).
   - A module or binary resolution failure is also no evidence. `NODE_PATH` covers CommonJS `require` only.
 - **Red flags:**
   - A green run reported without a red control before it.
@@ -59,7 +59,7 @@ files:
 
 ### 5. Fall back when the checkout cannot be created
 - **URL:** the recipe's **No-git fallback**.
-- **Action:** Write each file the test loads at its repo-relative path under `{disc-path}`. Use Read for unchanged files and the read-only `git -C "{worktree}" show {base-sha}:{path}` for base content. Run the test per step 3, then `rm -r "{disc-path}"`.
+- **Action:** Write each file the test loads at its repo-relative path under `{disc-path}`. Use Read for unchanged files and the read-only `git -C "{worktree}" show {base-sha}:{path}` for base content. Run the test per step 3, then `rm -r "{disc-path}"`. A failed delete reports `DONE_WITH_CONCERNS` naming the path.
 - **Should feel:** Slower, but still never touching the shared tree.
 - **Red flags:**
   - Copying only the touched file, so the test's relative requires miss.

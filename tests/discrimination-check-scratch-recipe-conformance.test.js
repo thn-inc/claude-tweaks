@@ -55,6 +55,16 @@ const RECIPE_LITERALS = [
   'never fall back to the shared tree',
   'no evidence, tear down',
   'otherwise tear down (step 6): the check has no evidence',
+  'must print `{reviewed-sha}`',
+  'Tear down before the status word',
+  "READ-ONLY REVIEW line's Vacuity-evidence exception",
+  'never Write/Edit',
+  'already exists, report `BLOCKED`',
+  'never write into or delete a path you did not create',
+  'once the unmutated checkout passes a step 4 run',
+  'a link leaves a path into the shared tree',
+  'or the dispatcher says to take it outright',
+  'a failed delete reports `DONE_WITH_CONCERNS`',
 ];
 
 // Outcome clauses: each must appear exactly once, so a reworded copy elsewhere cannot mask a mutated one.
@@ -62,7 +72,13 @@ const ONCE_LITERALS = [
   'never fall back to the shared tree',
   'no evidence, tear down',
   'otherwise tear down (step 6): the check has no evidence',
+  'must print `{reviewed-sha}`',
+  'Tear down before the status word',
 ];
+
+// An affirmative link command (`ln -s "…"`, `ln -sfn {…}`, `mklink /J "…"`), as opposed to
+// the prose ban, which names each form in backticks.
+const LINK_COMMAND = /(?:^|[\s(])(?:ln -s\w*|mklink \/[JD])\s+["'{/]/;
 
 function assertRecipe(section) {
   const flat = section.replace(/\s+/g, ' ');
@@ -72,7 +88,7 @@ function assertRecipe(section) {
   for (const literal of ONCE_LITERALS) {
     assert.strictEqual(flat.split(literal).length - 1, 1, `${JSON.stringify(literal)} must appear exactly once`);
   }
-  assert.ok(!flat.includes('ln -s "'), 'recipe must not carry an affirmative link command');
+  assert.ok(!LINK_COMMAND.test(flat), 'recipe must not carry an affirmative link command');
 }
 
 test('core carries the scratch-checkout recipe section after Read-only Reviewer Discipline (#4556)', () => {
@@ -119,9 +135,21 @@ test('the recipe pin goes red without the section or with a dropped step (go-red
     ['never fall back to the shared tree', 'fall back to the shared tree'],
     ['no evidence, tear down', 'proceed'],
     ['otherwise tear down (step 6): the check has no evidence', 'otherwise proceed anyway'],
+    ['must print `{reviewed-sha}`', 'must print a SHA'],
+    ['Tear down before the status word', 'Tear down when convenient'],
+    ['already exists, report `BLOCKED`', 'already exists, reuse it'],
+    ['once the unmutated checkout passes a step 4 run', 'once the checkout exists'],
   ]) {
     assert.ok(flatLive.includes(from), `live section must carry ${JSON.stringify(from)} to mutate`);
     assert.throws(() => assertRecipe(flatLive.split(from).join(to)), undefined, `${from} -> ${to} must go red`);
+  }
+  // Any affirmative link command added to the section, quoted or not, goes red.
+  for (const added of [
+    'Also run: ln -s "{worktree}/node_modules" "{disc-path}/node_modules".',
+    'Also run: ln -sfn {worktree}/node_modules {disc-path}/node_modules.',
+    'On Windows: mklink /J "{disc-path}\\node_modules" "{worktree}\\node_modules".',
+  ]) {
+    assert.throws(() => assertRecipe(`${live}\n${added}\n`), undefined, `${added} must go red`);
   }
 });
 
@@ -211,7 +239,7 @@ function assertLensDispatcher(md) {
     'No-git fallback',
     '`git merge-base {base} HEAD`',
     'HEAD when the scope is uncommitted work',
-    "put the No-git fallback instruction into 3f's prompt yourself",
+    'tell 3f to skip steps 2–3 and take the No-git fallback outright',
   ]) {
     assert.ok(line.includes(literal), `dispatcher paragraph lost ${JSON.stringify(literal)}`);
   }
@@ -229,7 +257,7 @@ test('the dispatcher-paragraph pin goes red without the paragraph or without the
   for (const [from, to] of [
     ['`git merge-base {base} HEAD`', "this review's `{base}`"],
     ['HEAD when the scope is uncommitted work', 'the same'],
-    ["put the No-git fallback instruction into 3f's prompt yourself", 'nothing more is needed'],
+    ['tell 3f to skip steps 2–3 and take the No-git fallback outright', 'put the No-git fallback instruction into 3f\'s prompt yourself'],
   ]) {
     assert.ok(LENS.includes(from), `live lens file must carry ${JSON.stringify(from)} to mutate`);
     assert.throws(() => assertLensDispatcher(LENS.split(from).join(to)), undefined, `${from} -> ${to} must go red`);

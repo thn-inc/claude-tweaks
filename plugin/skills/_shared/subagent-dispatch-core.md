@@ -151,21 +151,26 @@ never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{revie
 `{base-sha}` literally (a caller that pastes before the commit under review exists substitutes
 the first two and leaves the rest to the per-dispatch composer); each agent builds `{id}` from its
 own distinct token (lens and pair member, or task, reviewer role and round). Never mutate the
-shared worktree in place: a sibling agent's in-flight edit there would be lost. One plain command
-per Bash call, literal absolute paths:
+shared worktree in place: a sibling agent's in-flight edit there would be lost. For lens 3f these
+steps are the READ-ONLY REVIEW line's Vacuity-evidence exception. One plain command per Bash call,
+literal absolute paths; `{disc-path}` is outside your worktree, so write files there with one
+`node -e` call, never Write/Edit:
 
 1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
    (`_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under the run
-   directory or inside the shared worktree.
+   directory or inside the shared worktree. If it already exists, report `BLOCKED` naming it: never
+   write into or delete a path you did not create.
 2. **Create.** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`, then
    `git -C "{disc-path}" rev-parse HEAD` must print `{reviewed-sha}`; otherwise tear down (step 6):
    the check has no evidence.
-3. **Mutate only there.** `git -C "{disc-path}" checkout {base-sha} -- {path}`, or Edit the file
-   under `{disc-path}`.
+3. **Mutate only there**, once the unmutated checkout passes a step 4 run (red there means it lacks
+   an input the test needs: report that; nothing counts):
+   `git -C "{disc-path}" checkout {base-sha} -- {path}`, or rewrite the file under `{disc-path}`.
 4. **Run the one targeted test there**, reaching dependencies through the language's search-path
-   variable, never a link (`ln -s`, `mklink /J`) — for Node (CommonJS `require` only):
+   variable, never a link (`ln -s`, `mklink /J`): a link leaves a path into the shared tree for a
+   mutation or teardown to reach through — for Node (CommonJS `require` only):
    `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`. A green run counts
-   as evidence only after a control has gone red in this same checkout (an Edit under `{disc-path}`
+   as evidence only after a control has gone red in this same checkout (a rewrite under `{disc-path}`
    making the mutated file throw at load); a control that stays green means the run did not load the
    scratch copy (the code ran from the shared tree, or the test never loads the mutated file):
    no evidence, tear down.
@@ -175,10 +180,11 @@ per Bash call, literal absolute paths:
    `git -C "{worktree}" worktree list` then shows no entry for `{disc-path}`. A failed teardown
    reports `DONE_WITH_CONCERNS` naming the leftover path.
 
-**No-git fallback** — when step 2's create is refused: write each file the test loads at its
-repo-relative path under `{disc-path}` (Read for unchanged files; for base content, the read-only
-`git -C "{worktree}" show {base-sha}:{path}`, written with Write), run it per step 4, and delete
-the copies before the status word: `rm -r "{disc-path}"`.
+**No-git fallback** — when the guard refuses step 2's create, or the dispatcher says to take it
+outright: write each file the test loads at its repo-relative path under `{disc-path}` (Read for
+unchanged files; for base content, the read-only `git -C "{worktree}" show {base-sha}:{path}`),
+run it per step 4, and delete the copies before the status word: `rm -r "{disc-path}"`; a failed
+delete reports `DONE_WITH_CONCERNS` naming it.
 
 The create, checkout, test-run and teardown shapes passed the worktree guard from a
 worktree-isolated dispatched agent (#4556, 2026-10-31); `_shared/scratch-worktree.md` §7 records them.

@@ -66,6 +66,10 @@ function assert2740(text) {
     text.includes('SDD fills `{reviewed-sha}`, the commit under review, `{base-sha}`, the task\'s base, and `{id}`, task plus reviewer role plus round, per dispatch'),
     'dispatch.md must give SDD the per-dispatch placeholders: reviewed-sha, base-sha, and id with the round (#4556).'
   );
+  assert.ok(
+    !text.includes('scratch `git worktree add`'),
+    'dispatch.md must not carry a bare scratch `git worktree add` beside the recipe citation (#4556).'
+  );
 }
 
 test('dispatch.md: the tree-immutability directive cites the core scratch-checkout recipe (#4556)', () => {
@@ -85,4 +89,6 @@ test('the #2740 pin goes red on the pre-#4556 sentence (go-red)', () => {
   assert.throws(() => assert2740(DISPATCH.split(sddHalf).join('SDD fills nothing')));
   assert.throws(() => assert2740(DISPATCH.split('and `{id}`, task plus reviewer role plus round,').join('and `{id}`,')));
   assert.throws(() => assert2740(DISPATCH.split('`{base-sha}`, the task\'s base,').join('')));
+  // A bare scratch worktree re-added beside the citation.
+  assert.throws(() => assert2740(`${DISPATCH}\nA discrimination check runs in a scratch \`git worktree add\`.\n`));
 });
