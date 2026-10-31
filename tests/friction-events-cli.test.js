@@ -624,6 +624,18 @@ test('#4704: a worktree path that does not resolve (realpath fails) keeps the pa
   );
 });
 
+test('#4704: repoRoot and the worktree path are compared through the same canonicalizer (case-folding fake: /Main vs /main is the main checkout)', () => {
+  const deps = fakeDeps({
+    repoInfo: () => ({ repoRoot: '/Main', isLinkedWorktree: false, indeterminate: false }),
+    realpath: (p) => (p ? p.toLowerCase() : null),
+    readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
+    findRunsByWorktreePath: pathSiblings,
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', '--worktree', '/main'], deps), 0);
+  const out = JSON.parse(deps.calls.stdout.join(''));
+  assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
+});
+
 test('#4704: with no path siblings to filter, repoInfo (a git spawn) is not called', () => {
   const deps = fakeDeps();
   assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
