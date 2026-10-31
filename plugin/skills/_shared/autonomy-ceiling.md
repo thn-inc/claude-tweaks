@@ -39,8 +39,8 @@ whichever records arrived born-`ready`.
 
 Two modules implement it. `bin/lib/issues/autonomy.js` resolves the ceiling and maps
 `(ceiling, trust row)` to a permission set; `bin/lib/issues/trust.js` supplies the evidence those
-rows carry, from **two** sources — a closed record's `demo:*` disposition (demo-descent), and, when
-no `demo:*` verdict exists, whether it was merged and stayed unreverted for at least
+rows carry, from **two** sources — a closed record's acceptance disposition (demo-descent), and, when
+no acceptance verdict exists, whether it was merged and stayed unreverted for at least
 `trust-revert-window-days` (default 14, `_shared/policy-schema.md`) — **operational** evidence,
 evaluated lazily against the record's tracker `closedAt` and an injected integration-branch git
 log. Neither source is exclusive: a class's `dispositioned` count and the `MIN_VERDICTS` floor it
@@ -73,9 +73,9 @@ outcomes it also holds — one known-bad outcome in the sample is disqualifying,
 therefore `MIN_VERDICTS`) exactly like every other real outcome signal — a known-bad record is not
 an unknown one.
 
-**Scope: applies only where no `demo:*` disposition already exists on the record** (the same
+**Scope: applies only where no acceptance disposition already exists on the record** (the same
 `disposition === 'none'` branch the operational-good path already used) — a record that reached
-`demo:approved` keeps that disposition; an earlier failed attempt on the way to an eventual
+approved keeps that disposition; an earlier failed attempt on the way to an eventual
 approval is not read as contradicting it. Changing dispatch's failure classification itself, its
 retry ceilings, or its `auto:merge` revocation-on-retry is out of scope here — those are documented
 in full in `dispatch/settle-and-merge.md` and unchanged; this section only makes that classification
@@ -109,7 +109,7 @@ to, trips the breaker:
   `discoverClosingCommits`/`isClosingCommitReverted` — the same detector the class-scoped mechanism
   above uses, not a second implementation of the same git-log parsing);
 - the record reopened after having been observed closed;
-- the record carries `demo:changes-requested`.
+- the record's acceptance facet reads `changes-requested` (`_shared/work-record.md`).
 
 **Machine-granted scope is load-bearing.** Only records the machine-grant unit itself granted
 `auto:merge` to are ever watched (`merge-lane/watched.json`, seeded exclusively at that grant —
@@ -287,7 +287,7 @@ A class earns nothing unless `permittedGrants` says so, which requires **all** o
   humans generated. This is the load-bearing half of the check rather than a corner case:
   `human:human` is this repo's largest provenance and the first that will clear both floors.
 - The class's verdict is `clean`. That in turn requires `total >= MIN_SAMPLES`, **and**
-  `dispositioned >= MIN_VERDICTS` — a floor counted on real outcome evidence (a `demo:*`
+  `dispositioned >= MIN_VERDICTS` — a floor counted on real outcome evidence (an acceptance
   disposition, or a merged-and-unreverted operational close), not on how many records the class has
   closed — **and** no `changes-requested` and no corrective follow-ups. A `mixed` verdict earns
   nothing; neither does `insufficient-evidence`.

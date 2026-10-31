@@ -163,7 +163,7 @@ An empty `{}` means nothing to sweep — skip straight to Step 1. Otherwise, for
    #   gitLog: [{ sha, message }] — trust.js's parseGitLog shape (parsed from bullet 2's raw fetch)
    #   now: epoch ms.  windowDays: bullet 2's resolved trust-revert-window-days value.
    #   Returns exactly one of:
-   #     { action: 'trip', reason: 'demo:changes-requested' | 'revert' | 'reopened' }
+   #     { action: 'trip', reason: 'demo:changes-requested' | 'accept:changes-requested' | 'revert' | 'reopened' }
    #     { action: 'prune' }
    #     { action: 'update', newState: 'OPEN' | 'CLOSED' }
    node -e "
@@ -206,7 +206,7 @@ mid-sweep must block that same firing's own remaining grants, not only the next 
 `decisions.md` entry for a trip:
 
 ```
-AUTO {time} — Backlog grant: merge-lane circuit breaker TRIPPED by #{n} (reason: {revert|reopened|demo:changes-requested}) — auto:merge origination halted repo-wide until an explicit reset via /claude-tweaks:backlog refine.
+AUTO {time} — Backlog grant: merge-lane circuit breaker TRIPPED by #{n} (reason: {revert|reopened|demo:changes-requested|accept:changes-requested}) — auto:merge origination halted repo-wide until an explicit reset via /claude-tweaks:backlog refine.
 ```
 
 ## Step 1 + Step 2 Phase A: fetch candidates and evaluate gates 1-3 (one invocation)

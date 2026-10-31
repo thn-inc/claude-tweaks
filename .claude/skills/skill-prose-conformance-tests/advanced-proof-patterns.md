@@ -1,6 +1,6 @@
 # Advanced Proof Patterns — skill-prose-conformance-tests
 
-Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, or a new detection signal needs corpus validation before it's trusted.
+Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, or a suite builds throwaway git repos.
 
 ## Proving discrimination without editing the tree
 
@@ -50,6 +50,23 @@ Rows *reworded in place* change no count and need no bump — but they still bel
 
 When a test or a skill procedure must *detect* a document class (a heading, a marker, a body shape), run a corpus scan over the live population before committing to the signal: count exactly which documents each candidate signal matches, and reject any candidate that matches a document it must not. Record #1071's scan of all 234 open records proved the line-anchored `## Leaves` heading matched exactly the four real legacy parents — while the plausible alternatives ("decomposition parent" phrase, "(parent)" title/body match) false-positived on the very bug report describing the defect. The scan result belongs in the record/spec as evidence, so the accepted residual risk is grounded rather than guessed.
 
+## An allowlist entry owes a stale-check of its own
+
+A sweep with an exemption list has a failure mode `SKILL.md`'s empty-extraction rule does not
+cover: the exemptions rot. The condition that justified an entry goes away — the gap gets closed,
+the citation moves, the prose is reworded — and the entry silently starts covering something new,
+or covers nothing at all while reading as a live carve-out. `tests/dispatch-prompt-bundle-citations.test.js`
+(#1995) is the shape to copy. Its `GAPS` array names two `_shared/` citations with no compose step
+behind them yet; alongside the offender sweep it ships a `gapStatus(text, gap)` returning
+`ok` | `fallback-shaped` | `missing`, one test asserting every gap is still `ok`, and — the part
+that makes it discriminate — a proof that doctors each gap **both** ways in memory and asserts the
+status flips: rewrite the citation line into a fallback clause and it must read `fallback-shaped`;
+replace the path with a composed-bundle path and it must read `missing`. Write the stale-check in
+the same change as the allowlist, and make its failure message say *shrink the list*, not *fix the
+sweep* — the entry going stale is the success case for the work the exemption was waiting on.
+
+When the list holds both permanent carve-outs and offenders left for a follow-up record, split it into `exempt` and `ratchet` classes, each entry keyed by a content anchor that must match exactly one offender — "Two-class allowlists: exempt and ratchet" below.
+
 ## Two-class allowlists: exempt and ratchet
 
 A corpus sweep that lands while known offenders remain (the convention is new, and migrating every site is a record of its own) carries two kinds of carve-out that rot differently. `tests/skill-fence-guard-shapes.test.js` (#4028) is the instance:
@@ -64,6 +81,12 @@ Prove each class rule with go-red inputs to `badEntries()` (a ratchet under an o
 ## Negative-exclusion tests for a resolver's source-exclusion special case
 
 When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
+
+## Fixture repos come from the shared helper
+
+`tests/helpers/git-fixtures.js` exports `gitRepo`, `linkedWorktreeOf`, `harnessWorktreeOf`, `fixtureGit`, and `FIXTURE_TIMEOUT_MS`. Adoption is partial, not universal — many suites under `tests/` still build their throwaway repo from a local `git init` ladder of their own (`tests/bin-lib/reconcile/archive-merged.test.js`'s `makeRepo()` among them), so never assume the suite you are editing already imports the helper: read its requires first, and when you factor a fixture helper out inside such a suite, build it on `gitRepo` rather than on the local ladder you found there. Build throwaway repos from the helper rather than hand-rolling another `spawnSync('git', ['init'])` ladder, and take `FIXTURE_TIMEOUT_MS` from it too so one machine-speed knob governs the suite.
+
+A named base branch or a suite-owned scratch directory is not a reason to hand-roll the ladder: `gitRepo({ parent, branch })` creates the repo's temp dir under `parent` (default `os.tmpdir()`) and runs `git init -b {branch}` when `branch` is given (default: git's own initial branch). `tests/local-merge-close-run-ordering.test.js`'s `makeRepo()` builds on `gitRepo({ parent: SCRATCH, branch: 'main' })`, so every fixture lands under the one `SCRATCH` dir its `process.on('exit')` removes; commit identity for its later commits still comes from a suite-local wrapper that passes `-c user.email=… -c user.name=…` to `fixtureGit` (#3762).
 
 ## Reference instances
 
