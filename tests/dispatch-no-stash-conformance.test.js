@@ -380,12 +380,14 @@ const HANDOFF_FACTS = [
   ['{change} is each restored or added entry', /`\{change\}` is each `\{sha\} \{subject\}` restored or added/],
   ["T5a a reviewer's entries render in its own line only", /a reviewer dispatch's restored and added entries render in its own line only/],
   ['M1 a subject with ! needs history expansion off', /a subject containing `!` must be pasted with history expansion off \(`set \+H` in bash, `setopt nobanghist` in zsh\) or run non-interactively/],
-  ['omit rule counts a logged restore as nothing to render', /or every one that changed the stack was a restore whose line landed in decisions\.md/],
+  ["omit rule counts only an implementer or fix dispatch's logged restore as nothing to render", /or every one that changed the stack was an implementer or fix dispatch's restore whose line landed in decisions\.md — a reviewer dispatch's voided-verdict line is always listed/],
 ];
 
 // A restore command rebuilt from the raw subject breaks on `\ " $` and backtick, which the CLI escapes.
 const HANDOFF_FORBIDDEN = [
   ['command rebuilt from the raw subject', /-m "\{subject\}"/, '\n  git stash store -m "{subject}" {sha}'],
+  // Decision 2: a reviewer's restore is always listed, so a landed restore must not let the section drop its line.
+  ['omit rule that lets a reviewer dispatch\'s landed restore drop its line', /was a restore whose line landed/, '\n(or omit this section: every stash-guard compare exited 0, or every one that changed the stack was a restore whose line landed in decisions.md.)'],
 ];
 
 function missingHandoffFacts(section) {
