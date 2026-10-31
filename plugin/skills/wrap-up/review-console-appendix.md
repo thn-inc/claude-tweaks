@@ -95,9 +95,12 @@ procedure — no row is left unrouted:
   `blocked-external`; materially expands scope → `genuinely-larger`; when every criterion
   holds — the fix would have been fix-now, and only the closed fix wave stops it — stamp
   `needs-human-decision`, since a human's reversal of an agent ruling is what makes this work
-  exist and scheduling it is a human call. A reversal never stamps `tangential` or
-  `pre-existing-outside-diff`: neither is a Fix-now criterion's value, so the derivation
-  cannot reach them — a reversal files the fix the ruling declined, not a new idea),
+  exist and scheduling it is a human call. When the staged ruling carries too little to judge
+  a criterion — no finding text, or a ruling that settled a design choice rather than a
+  defect — stamp `needs-human-decision` too, and say in Current State that the criteria could
+  not be evaluated: the all-hold stamp is never a silent fallthrough. A reversal never stamps
+  `tangential` or `pre-existing-outside-diff`: neither is a Fix-now criterion's value, so the
+  derivation cannot reach them — a reversal files the fix the ruling declined, not a new idea),
   stages it as `staged/ledger-record-sdd-ruling-{N}.md`,
   routes it through step 7 in the same pass, and — once step 7 has created the record —
   writes the row back to `deferred`, Resolution `reversed → #{new record}`; when step 7
