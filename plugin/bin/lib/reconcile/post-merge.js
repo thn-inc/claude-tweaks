@@ -2,9 +2,11 @@
 // _shared/pr-first-merge-post-merge.md's Step 4.0 (closing-links post-merge
 // verification) and Step 4.0b (below-floor parent close) once for a PR GitHub
 // merged AFTER its session ended — an armed auto-merge, a merge-queue merge —
-// so no session ever ran the steps (#4599). Step 4.0 runs bin/closing-links.js;
-// Step 4.0b runs lib/issues/below-floor-parent-close.js. Both stay the prose's
-// mirrors; this file only decides WHEN they run and records that they did.
+// so no session ever ran the steps (#4599). Step 4.0b runs
+// lib/issues/below-floor-parent-close.js over lib/issues/parent-gate.js, the
+// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 stays a
+// bin/closing-links.js run. This file only decides WHEN they run and records
+// that they did.
 //
 // Exactly once per run: a `decisions.md` entry (the marker) is the done-signal,
 // whether the merging session's own Step 4.0b wrote it or this check did. Two

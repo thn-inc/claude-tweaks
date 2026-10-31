@@ -887,6 +887,8 @@ function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {})
       return '';
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      if (args[3].includes('subIssues(first:100)')) return JSON.stringify({ data: { repository: { i100: { number: 100, subIssues: { nodes: [{ number: 101 }, { number: 102 }], pageInfo: { hasNextPage: false } } } } } });
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: { number: 100 } } } } });
     }

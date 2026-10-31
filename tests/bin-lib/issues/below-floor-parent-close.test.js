@@ -95,6 +95,11 @@ function makeGh(world) {
     const key = args.join(' ');
     if (world.throwWhen && world.throwWhen(key)) throw new Error(`boom: ${key}`);
     if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      if (args[3].includes('subIssues(first:100)')) {
+        const p = Number(/i(\d+):/.exec(args[3])[1]);
+        return JSON.stringify({ data: { repository: { [`i${p}`]: { number: p, subIssues: { nodes: (world.subs[p] || []).map((number) => ({ number })), pageInfo: { hasNextPage: false } } } } } });
+      }
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       const parent = (world.parentOf || {})[n];
       return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: parent ? { number: parent } : null } } } });
@@ -295,7 +300,7 @@ test('two closing records sharing a parent evaluate that parent once', () => {
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
   assert.equal(calls.filter((c) => c.args.join(' ') === 'issue close 10 --reason completed').length, 1);
   assert.equal(calls.filter((c) => c.args.join(' ') === 'issue comment 10 --body-file -').length, 1);
-  assert.equal(calls.filter((c) => c.args[0] === 'api' && c.args[1] === 'graphql').length, 2);
+  assert.equal(calls.filter((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && c.args[3].includes('parent{')).length, 2);
 });
 
 test('a failing gh call skips that parent as gh-failed and the next closing record still runs', () => {

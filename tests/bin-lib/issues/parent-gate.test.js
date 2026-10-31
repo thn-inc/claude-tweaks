@@ -479,3 +479,16 @@ test('gatherIdempotenceFacts reads the login only for an open, non-reopened pare
   assert.deepEqual(reopened.comments, []);
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
 });
+
+test('closeBelowFloorParents composes the shared core (one implementation)', () => {
+  const file = require.resolve('../../../plugin/bin/lib/issues/below-floor-parent-close');
+  const closer = require(file);
+  const core = require('../../../plugin/bin/lib/issues/parent-gate');
+  assert.strictEqual(closer.isCloseMarkerComment, core.isCloseMarkerComment);
+  assert.equal(closer.CLOSE_HEADING, core.CLOSE_HEADING);
+  const source = require('fs').readFileSync(file, 'utf8');
+  assert.ok(source.includes("require('./parent-gate')"), 'requires the shared core');
+  for (const gone of ["require('./acceptance')", "require('./oversight-floor')", "require('./native-dependencies')", "require('./comment-trust')", 'sub_issues']) {
+    assert.ok(!source.includes(gone), `no longer carries ${gone}`);
+  }
+});
