@@ -4,7 +4,7 @@
 
 **Goal:** Fix four of the five `issues`-area digest findings #4645 promoted, and close out the fifth. The four fixes are one shared aliased-query wrapper, a dedupe test, a neutral home for the markdown fence/section primitives, and an accurate `scanFences` comment. Deliverable 3 (the uncapped MCP stale-claim listing) is closed out in the PR body under the maintainer's Reading B.
 
-**Architecture:** Three tasks, each one independently reviewable change. Task 1 is a pure in-file refactor of `record-dependencies.js`. Task 2 is test-only. Task 3 moves the fence/section helpers out of `issues/record-payload.js` into a new builtins-only module, `plugin/bin/lib/markdown-blocks.js`, and migrates every direct importer, leaving no re-export at the old path. `record.js` still re-exports `fenceFor`/`fencedBlock`/`extractSection`, so its facade surface is unchanged. Task 3 also rewrites the `scanFences` comment as part of the move, because finding 5 sits on the moved block.
+**Architecture:** Four tasks, each one independently reviewable change. Task 4 writes the per-Deliverable close-out into the draft PR body once Tasks 1–3 have commits to cite. Task 1 is a pure in-file refactor of `record-dependencies.js`. Task 2 is test-only. Task 3 moves the fence/section helpers out of `issues/record-payload.js` into a new builtins-only module, `plugin/bin/lib/markdown-blocks.js`, and migrates every direct importer, leaving no re-export at the old path. `record.js` still re-exports `fenceFor`/`fencedBlock`/`extractSection`, so its facade surface is unchanged. Task 3 also rewrites the `scanFences` comment as part of the move, because finding 5 sits on the moved block.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
@@ -118,7 +118,7 @@ test('AC1.1: findInFlightNeighbours collapses an in-flight id listed twice into 
 });
 ```
 
-Before relying on `{ hubPathMinCount: Infinity }`, check its option name against `directOverlaps` in `grouping.js`. If the hub guard cannot drop `a.js` with three holders and no option, drop the third argument. Either way the assertion stays.
+The third argument `{ hubPathMinCount: Infinity }` is required (option name confirmed at `grouping.js:239`). Without it, the mutated run has three holders of `a.js`, `computeHubPaths`' threshold `max(3, ceil(3 × 0.1)) = 3` marks `a.js` a hub, and the mutation would fail on an empty result instead of on the duplicated `files`.
 
 - [ ] **Step 2: Run and prove it discriminates**
 
@@ -232,8 +232,8 @@ Run: `git -C "<worktree>" grep -n "record-payload')" -- plugin tests` and confir
 
 - [ ] **Step 6: Pure-move proof**
 
-Write `lib-module-split`'s `pure-move.js` to the scratchpad. Make one change to it: check 2's `lines` read `plugin/bin/lib/issues/record-payload.js` from the base root rather than the facade, because the split file here is record-payload.js and not the facade. Archive `plugin/bin/lib` for head too, into `{scratch}/t3-head`, so that `../markdown-blocks` resolves. Then run:
-`node {scratch}/pure-move.js {scratch}/t3-base {scratch}/t3-head plugin/bin/lib/issues/record.js plugin/bin/lib/issues/record-payload.js plugin/bin/lib/markdown-blocks.js`
+Write `lib-module-split`'s `pure-move.js` to the scratchpad. Make one change to it: check 2's `lines` read `plugin/bin/lib/issues/record-payload.js` from the base root rather than the facade, because the split file here is record-payload.js and not the facade. Use the worktree root itself as `<headRoot>`. Task 3's edits are still uncommitted at this step, so a `git archive … HEAD` head would capture the pre-Task-3 tree with no `markdown-blocks.js`, and the script would throw ENOENT. The live worktree resolves `../markdown-blocks` against the edits. Then run:
+`node {scratch}/pure-move.js {scratch}/t3-base "<worktree>" plugin/bin/lib/issues/record.js plugin/bin/lib/issues/record-payload.js plugin/bin/lib/markdown-blocks.js`
 
 Expected:
 - check 1 reports the same keys and the same source.
@@ -255,14 +255,49 @@ git -C "<worktree>" add plugin/bin/lib/markdown-blocks.js plugin/bin/lib/issues/
 git -C "<worktree>" commit -m "Move the markdown fence and section primitives to lib/markdown-blocks.js — out of the record-payload builder, scanFences' return documented, refs #4645" -m "Claude-Session: https://claude.ai/code/session_01Ngy9oWy7YXGEHfPcd1vtBN"
 ```
 
+### Task 4: Close out every Deliverable in the draft PR body
+
+**Role:** transcription
+
+**Files:**
+- No repository file. The task edits the body of draft PR #4784 on GitHub.
+
+The pipeline composes the PR body mechanically, through `composePrEarlyBody` (`plugin/bin/lib/flow/pr-body.js:104`): a run marker, then `### Spec summary`, `### Phases` and `### Resume`, then the fixes span. Neither `bin/pr-checklist.js` (it rewrites only the phases span) nor `repairPrBody` (it appends only missing spans and keeps freeform prose) nor `reviseSpecSummary` (it rewrites only the lines between `### Spec summary` and the next level 1-3 heading) touches a separate `###` section. So AC1's per-bullet close-out lives in its own `### Deliverables close-out` section, appended at the end of the body.
+
+**Interfaces:**
+- Consumes: the commit SHAs of Tasks 1–3 (`git -C "<worktree>" log --format='%h %s' origin/main..HEAD`).
+
+- [ ] **Step 1: Read the live body**
+
+Run `gh pr view 4784 --json body --jq .body` and redirect it to `{scratch}/pr-4784-body.md`.
+
+- [ ] **Step 2: Append the close-out section**
+
+Use the Write tool to write `{scratch}/pr-4784-body-new.md`: the Step 1 body unchanged, a blank line, then exactly this, with each `{sha}` replaced by that task's short commit SHA:
+
+```markdown
+### Deliverables close-out
+
+- Four near-identical aliased-GraphQL builders: fixed in {task-1-sha}. One module-private `buildAliasedIssueQuery(numbers, fieldExpr)` in `record-dependencies.js`, with byte-identical query output (no behaviour change, so no new test).
+- No test for a duplicate in-flight id: fixed in {task-2-sha}. New `grouping.test.js` case; deleting the `liveIds` dedupe turns it red.
+- MCP stale-claim path pages until exhausted: closed out, not changed (Reading B). Uncapped is strictly more accurate, and the matcher already returns `failure` on a no-match listing of `>= OPEN_PR_LIST_LIMIT` entries, so uncapped never yields a false clean no-match. A cap would turn a beyond-1,000 match into a fail-open claim write.
+- Fence/section primitives in the record-payload builder, imported across domains by `merge-gate.js`: fixed in {task-3-sha}. Moved to `plugin/bin/lib/markdown-blocks.js`, with every importer migrated (pure-move proof in the run's evidence).
+- `scanFences` comment omits `unclosed`: fixed in {task-3-sha}. The comment now states the `{ ranges, unclosed }` return.
+```
+
+- [ ] **Step 3: Write and read back**
+
+Run `gh pr edit 4784 --body-file {scratch}/pr-4784-body-new.md`. Then run `gh pr view 4784 --json body --jq .body` and confirm two things: the output contains `### Deliverables close-out` with all five bullets, and the run marker, `### Phases` span and fixes span from Step 1 are still present. When `gh` is absent, use MCP `update_pull_request` and `pull_request_read` instead.
+Expected: both checks hold. Record the read-back's `### Deliverables close-out` section in your report.
+
 ## Spec coverage map
 
 | Deliverable / AC | Task |
 |---|---|
 | Four near-identical aliased builders | Task 1 (no behaviour change, so a byte-identity scratch check and no new test) |
 | No test for duplicate in-flight id | Task 2 (AC1.1) |
-| MCP stale-claim path uncapped | No task. Closed out in the PR body with the Reading B rationale (AC1.1) |
+| MCP stale-claim path uncapped | Task 4 (closed out in the PR body's `### Deliverables close-out` with the Reading B rationale; AC1.1) |
 | Fence/section primitives in the record-payload builder, imported by merge-gate.js | Task 3 |
 | `scanFences` comment omits `unclosed` | Task 3 Step 3 (comment only) |
-| AC1.1 each bullet fixed or closed out in the PR body | Tasks 1–3, plus the PR-body close-out for Deliverable 3 |
+| AC1.1 each bullet fixed or closed out in the PR body | Tasks 1–3 fix four bullets; Task 4 Step 3 verifies all five close-out lines in the PR body |
 | AC2.1 digest lines carry `→ #4645` | Verified above; no task |
