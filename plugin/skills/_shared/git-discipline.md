@@ -218,7 +218,9 @@ first verification run — a re-run after a fix does not repeat it; a base that 
 the residual case the Post-push merge-state check above catches. Every `log-decision.js` call
 below takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verification catch-up"`.
 
-Only a `pr-first` worktree run catches up (a `MULTISPEC_PARALLEL_WAVE=1` member in its own worktree included, as with the Pre-review catch-up). Resolve the model per `_shared/integration-model.md`:
+Only a `pr-first` worktree run catches up (a `MULTISPEC_PARALLEL_WAVE=1` member in its own
+worktree included, as with the Pre-review catch-up). Resolve the model per
+`_shared/integration-model.md`:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-model --run "$PIPELINE_RUN_DIR"`
 (drop `--run` with no run dir). Any other run merges nothing, fetches nothing, and logs one
 `SKIP` (`--reversibility n/a`) naming why:
@@ -253,15 +255,15 @@ is that list's own numbering and "difference N" is this list's.
    untracked files to get past it.
 5. A resolved conflict is committed before HEAD is compared, as in Catch-up step 4 above; Common
    Step 5's own run is the verification after resolving. Then compare `git -C "{worktree-path}"
-   rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log `--status SKIP
-   --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding
+   rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log
+   `--status SKIP --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding
    `condition: branch already contains origin/{integration-branch} → fallback: nothing merged`.
    Advanced: log `--status AUTO --reversibility high --text-file "{text-file}"`, `{text-file}`
    holding
    `merged origin/{integration-branch} before the verification run ({before short} → {after short})`.
-   A failed `rev-parse` logs `--status SKIP --reversibility n/a --text "condition: rev-parse failed →
-   fallback: catch-up outcome not compared; verifying the tree as it stands"`, and the verification
-   run follows.
+   A failed `rev-parse` logs `--status SKIP --reversibility n/a --text "condition: rev-parse
+   failed → fallback: catch-up outcome not compared; verifying the tree as it stands"`, and the
+   verification run follows.
 
 Every `{text-file}` above is written per `_shared/auto-decision-log.md`'s Text from git or a user
 paragraph (the integration branch name is git-supplied). With no run dir (a design-mode build)

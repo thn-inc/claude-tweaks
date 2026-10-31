@@ -233,6 +233,7 @@ function assertHandoffLine(text) {
 }
 
 const MATCH_NOTE = "build's Pre-verification catch-up (`_shared/git-discipline.md`) merges the integration branch in before its own run";
+const MATCH_SHA_NOTE = '`VERIFICATION_SHA` already names the merged HEAD';
 const MISMATCH_NOTE = 'a later bookkeeping-only commit takes the Mismatch branch below, which runs no suite either';
 
 function assertMatchBullet(text) {
@@ -244,6 +245,7 @@ function assertMatchBullet(text) {
   assert.ok(line, 'marker missing: - **Match**');
   const s = collapse(line);
   assert.ok(s.includes(MATCH_NOTE), 'Match bullet does not name the pre-verification catch-up');
+  assert.ok(s.includes(MATCH_SHA_NOTE), 'Match bullet does not say VERIFICATION_SHA names the merged HEAD');
   assert.ok(s.includes(MISMATCH_NOTE), 'Match bullet does not name the bookkeeping-only Mismatch path');
 }
 
@@ -274,6 +276,23 @@ test('AC6.1 go-red: the catch-up paragraph spliced above the verification senten
   assert.throws(() => assertCatchupBeforeVerify(spliced), /\*\*Catch up before verifying \(#4343\)\.\*\* must come after the previous marker/);
 });
 
+test('AC6.1 go-red: the catch-up paragraph drifted after the Note paragraph fails the order check', () => {
+  const from = BUILD.indexOf(CATCHUP);
+  assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
+  const end = BUILD.indexOf('\n\n', from);
+  const paragraph = BUILD.slice(from, end + 2);
+  const without = BUILD.slice(0, from) + BUILD.slice(end + 2);
+  const note = without.indexOf('**Note:**');
+  assert.notStrictEqual(note, -1, 'Note paragraph missing from the live text');
+  const noteEnd = without.indexOf('\n\n', note);
+  assert.notStrictEqual(noteEnd, -1, 'Note paragraph end missing from the live text');
+  const drifted = without.slice(0, noteEnd + 2) + paragraph + without.slice(noteEnd + 2);
+  assert.notEqual(drifted, BUILD);
+  // The drifted paragraph must still sit inside Common Step 5, so the failure is the order check.
+  assert.ok(step5(drifted).includes(CATCHUP), 'drifted paragraph left Common Step 5');
+  assert.throws(() => assertCatchupBeforeVerify(drifted), /\*\*Note:\*\* must come after the previous marker/);
+});
+
 test('AC1.1 go-red: each Common Step 5 fact goes red alone', () => {
   const s = collapse(step5(BUILD));
   for (const f of BUILD_FACTS) {
@@ -296,6 +315,9 @@ test("AC3.1: /test's Skip-if-recent Match branch is the expected path after the 
   const noMatch = VERIFICATION.replace(MATCH_NOTE, '');
   assert.notEqual(noMatch, VERIFICATION);
   assert.throws(() => assertMatchBullet(noMatch), /Match bullet does not name the pre-verification catch-up/);
+  const noSha = VERIFICATION.replace(MATCH_SHA_NOTE, '');
+  assert.notEqual(noSha, VERIFICATION);
+  assert.throws(() => assertMatchBullet(noSha), /Match bullet does not say VERIFICATION_SHA names the merged HEAD/);
   const noMismatch = VERIFICATION.replace(MISMATCH_NOTE, '');
   assert.notEqual(noMismatch, VERIFICATION);
   assert.throws(() => assertMatchBullet(noMismatch), /Match bullet does not name the bookkeeping-only Mismatch path/);
