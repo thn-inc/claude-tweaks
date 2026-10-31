@@ -2304,6 +2304,9 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['LOOKD', 'case $x in $p) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (p is unset; the walk also keeps wt/f, failing closed)
     ['INNER', 'case $x in a) cd /w; case $y in *) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], ['/w/f']], // bash 3.2 and 5: x=a q/f, x=b r/f (the inner `*` is the inner case's catch-all, never the outer's)
     ['SEQ', 'case $x in a) cd /wt;; esac; case $y in b) cd /q;; esac; echo x > f', ['/r/f', '/wt/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c wt/f, y=b q/f, x=b y=c r/f
+    ['CLOSEDA', 'case $x in $(echo a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],     // bash 3.2 and 5: x=a wt/f, x=b r/f (a `*` after a closed `$( )` is no catch-all)
+    ['CLOSEDB', 'shopt -s extglob\ncase $x in @(a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []], // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['ORFAIL','case $x in a) cd /wt; false;; esac || echo x > f', ['/wt/f'], []],               // bash 3.2 and 5: x=a wt/f (the arm's last command fails, so the `||` runs under /wt)
     ['ZSHBAR', 'case $x in a) cd /wt ;| b) echo y > g;; esac', ['/r/g'], []],                   // zsh 5: x=b r/g (`;|` keeps testing patterns; bash rejects it)
     ['ZSHBAR2', 'case $x in a) cd /wt ;| a|b) echo y > g;; esac', ['/r/g', '/wt/g'], []],       // zsh 5: x=a wt/g, x=b r/g
   ]) {

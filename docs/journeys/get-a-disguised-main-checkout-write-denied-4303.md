@@ -50,7 +50,7 @@ files:
   - An `&` inside arithmetic parentheses is not a background.
   - A `case … esac` that is the first element of a pipeline runs in a subshell, so its arm's cd does not reach the next command. The walk checks the write under both the pipeline's start and the arm's cwd, and keeps a separate record per nested case.
   - A redirect on a `case … esac` opens before any arm runs, so it resolves under the case's start (and, failing closed, the arm's cwd too).
-  - A case arm may not run. Every arm starts where the case began, and the write after `esac` is checked under each arm's end. When no pattern of bare `*`s (`*)`, `a|*)`, `(*)`) guarantees that some arm runs, it is also checked under the case's start.
+  - A case arm may not run. Every arm starts where the case began, and the write after `esac` is checked under each arm's end. When no pattern of bare `*`s (`*)`, `a|*)`, `(*)`) guarantees that some arm runs, it is also checked under the case's start. An arm that ends in `;&` or `;;&` (bash 4 and later; bash 3.2 rejects both) or zsh's `;|` runs on into the next arm, so that arm also starts where the one before it left the cwd.
   - `x=()` is an empty array assignment, not a function definition, so the word after it is a command.
 - **Red flags:**
   - One of these runs while its plain form is denied.

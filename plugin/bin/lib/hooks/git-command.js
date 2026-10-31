@@ -2239,11 +2239,12 @@ function groupEventsWith(seg, g, spans, undo) {
     lastWord = plain ? w : '';
     // #4486: a case's subject ends at its `in`, and a pattern of bare `*`s after it (`*)`, `a|*)`, `(*)`)
     // matches any subject, so one of the case's arms always runs. A quoted or escaped `*`, a `$` word and an
-    // extglob (`*(a)`) are no catch-all: the walk then keeps the case's start after its `esac`.
+    // extglob (`*(a)`) are no catch-all: the walk then keeps the case's start after its `esac`. Neither is a `*`
+    // glued to a closed group (`$(echo a)*)`, `@(a)*)`): the word starts right after that `)`.
     const pc = patternCase();
     if (pc && plain) {
       if (!pc.inSeen) { if (w === 'in') setField(pc, 'inSeen', true); }
-      else if (/^\*+$/.test(w) && /^[ \t]*(\)|$)/.test(seg.slice(i))) setField(pc, 'catchAll', true);
+      else if (/^\*+$/.test(w) && seg[wStart - 1] !== ')' && /^[ \t]*(\)|$)/.test(seg.slice(i))) setField(pc, 'catchAll', true);
     }
     if (fnName) { fnName = false; atCmd = true; continue; }
     // A case with no arm (`case x in esac`) ends at the `esac` right after its `in`, which is no command
@@ -2577,6 +2578,9 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     const closed = closeCases(L, openCases, popped);
     if (closed) {
       at = afterCases(popped, at);
+      // The case command may have failed under any cwd it ended in, so a `||` after its `esac` runs there too
+      // (#4486: the arm's `;;` moved `spanStart` back to the case's start).
+      L.spanStart = joinCwds(L.spanStart, at, overflow);
       L.skipOk = joinCwds(L.skipOk, closed.skipOk, overflow);
       L.skipFail = joinCwds(L.skipFail, closed.skipFail, overflow);
     }
