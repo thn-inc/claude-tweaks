@@ -555,7 +555,7 @@ test('AC3.1: the Step 7 checklist verifies a below-floor close on both drivers',
   const local = forms.find((l) => l.includes('`local-files`'));
   assert.ok(gh && local, 'both drivers');
   assert.ok(gh.includes('re-queried as `CLOSED`') && gh.includes('## Closed below the oversight floor') && gh.includes('Trusted authors'));
-  assert.ok(gh.includes('no `demo:*` label'));
+  assert.ok(gh.includes('no acceptance label (`_shared/work-record.md`, either spelling)'));
   assert.ok(local.includes('`facets.closed`') && local.includes('## Closed below the oversight floor'));
   assert.ok(local.includes('no `acceptance` facet'));
   assert.ok(gh.includes('A parent re-queried as `CLOSED` with no such comment also passes, as the no-op case'), 'github: already-closed no-op passes');

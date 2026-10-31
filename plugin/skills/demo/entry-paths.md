@@ -53,7 +53,7 @@ never carry the `risk:*`/`size:*` data a pre-fill would need.
 gh issue view {n} --json number,title,body,labels,url,state
 ```
 
-If the record's acceptance facet reads `pending` (`parseRecordFacets` over the labels just fetched:
+If the record's acceptance facet reads `pending` (over the labels just fetched:
 `demo:pending` or `accept:pending`, most-conservative-wins per `_shared/work-record.md`), fetch its
 Verification Brief: the last issue
 comment **containing** `## Verification Brief`. Fetch every comment (`gh issue view {n} --json
