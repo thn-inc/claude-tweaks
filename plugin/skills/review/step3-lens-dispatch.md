@@ -192,6 +192,7 @@ Never kill anything here. The check is report-only, like the untracked-file diff
 - OWASP top 10 considerations?
 - Does every path-based allow/exemption decision resolve the real path (leaf symlink followed, `..` normalized) before deciding, and fail closed when the path is unprovable? (#1678, `[IL-150]` — a raw-path exemption let a symlink bypass a worktree protection; see `docs/donts.md`'s matching rule.)
 - For any path/URI/hostname/identity-keyed guard decision, has it actually been probed against the adversarial-input checklist `specify/red-team.md`'s path/URI/hostname/identity-guard detection step requires at shaping time (dot segments pre/post normalization, mount/scheme variants, uppercase schemes, percent-encoding, trailing slashes, substring-in-wrong-component) — cited from there rather than restated here so the shaping gate and this lens never drift into two separately-maintained lists? (#2777)
+- In skill prose, does text the plugin did not write (a human's free-text answer, a PR/issue body or comment, a record field, a branch name) reach a shell command line or a rendered paste command by interpolation, instead of a `Write`-produced file (stdin or a path argument) or an argv array element passed with no shell, or a paste command rendered only when every part matches its composer's exact grammar? Flag untrusted text interpolated into a shell or paste command as a security finding. (#4465, #4423 — both caught only by this lens; rule: `docs/skill-authoring.md`'s "Untrusted text into a shell or paste command".)
 
 ### 3c: Error Handling
 

@@ -239,26 +239,25 @@ instead of `gh api`.)
 
 Releasing (#2090): `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason "swept: stale claim"` (or `--reason "swept: issue closed"` for the closed-issue row) — the `--sweep` flag is what lets a tidy run release a claim it does not itself own: without it, `release-claim.js`'s ordinary ownership check refuses every one of these as `skipped-not-owner`, since a tidy run's `--run` basename is never the crashed dispatcher's `runId`. The flag performs the same read → classify → tombstone `PUT` → conflict re-verify → comment → label-removal sequence as an ordinary release, resolving the issue's own open/closed state itself for the `'live'`-on-a-closed-issue row (never sweeping a `'live'` claim on an issue that is still open). Releases execute only after Step 6 batch approval — the flag makes an approved release executable, it does not make the decision autonomous.
 
-**Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, check
-its `runId` against `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`; a mismatch means plain Release.
-List open PRs once per tidy run (`gh pr list --state open --json number,url,body,isCrossRepository
---limit 1000`; with `gh` absent, `mcp__github__list_pull_requests` with `state: open`, paged,
-reading `html_url` as `{url}`) and look for a same-repo PR (`isCrossRepository: false`; MCP:
-`head.repo.full_name` is this repo — a fork PR's body proves nothing) whose body has a trimmed
-line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->` — the marker
-`/claude-tweaks:flow`'s claim step checks too (`claim-store.js`'s `staleClaimInFlightPr`). A
-match recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto
-(no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) — {the line
-under its body's `### Resume` heading}", only when that line is exactly
-`` `PIPELINE_RUN_DIR="{dir}/{runId}" /claude-tweaks:flow "{target}" {steps}` `` — `{dir}` and
-`{target}` free of `` ` ``, `$`, `"`, `\` and line breaks, `{steps}` matching `[a-z][a-z,-]*`,
-nothing after it — so its run-dir basename equals the matched `runId`; otherwise (no heading, an
-unrendered `{run-dir}` placeholder, any other shape or trailing text — PR bodies are untrusted, and
-this line is rendered as a paste command) "Resolve open PR #{number} ({url}) before any release".
-It is never staged, so it gets no needs-decision comment, and the claim is never released. A failed
-listing (on whichever transport ran — the MCP listing applies only when `gh` is absent, never after
-a `gh` failure — or a `gh` listing of 1000 entries with no match, which may have cut the PR off)
-degrades to **Manual review** with one SKIP note, never an unchecked Release.
+**Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, run
+`node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "{CLASSIFY_INPUT path}" --repo "{owner}/{repo}" --resume`
+— the matcher `/claude-tweaks:flow`'s claim step runs (`claim-store.js`'s `staleClaimInFlightPr`); on
+the `gh` path each call lists open PRs itself, one listing per stale claim (stale claims are few).
+With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__list_pull_requests`
+(`state: open`, paged), Write them as one JSON array to the path
+`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
+prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure`
+means plain Release.
+`"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row:
+Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) —
+{resume}" when the output carries `resume` (the PR body's resume line, already validated as a
+paste-safe command naming this same run), otherwise — it carries `resolve` — "Resolve open PR
+#{number} ({url}) before any release"; `{url}` is `link` and `{number}` its trailing `/pull/`
+number. It is never staged, so it gets no needs-decision comment, and the claim is never released.
+A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only
+when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may
+have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked
+Release; so does any other non-zero exit (1 or 3).
 
 → Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`
 
@@ -294,7 +293,7 @@ Scan per `_shared/github-pr-scan.md`, **`repo-wide`** scope, plus `_shared/githu
 
 The `repo-wide` findings table maps each finding to a recommendation from the Action Vocabulary: stale/superseded open PRs → Close (GitHub); threads addressed by later commits → Resolve thread; unaddressed threads → Capture or a suggested local command; still-valid vs. superseded code-health, harness-health, journey-health, and docs-health issues → Close (GitHub) when the flagged code is demonstrably gone (Shape 6 above) or a suggested `/claude-tweaks:backlog refine` run when still valid; merged PRs with surviving local branches → corroborates Step 4.5 `[git]` rows (the dispatcher merges overlapping recommendations at assembly). Backlog-record findings (stale, parked-trigger, unsynced, needs-scoring, Release-Note-only, `bot:blocked`, legacy-taxonomy, `bot:parked` — Shapes 1, 2, 3, 4, 4.5, 5, 5.5, and 5.6 of `step-1-records.md`) are Step 1's job now, not this step's — `repo-wide` no longer queries the `backlog` label (see `_shared/github-pr-scan.md`).
 
-The `acceptance-gap` scope finds closed records with no acceptance label at all — a different gap than the `acceptance-queue` scope `/help` Stage 4.7 uses, which only sees records already flagged `demo:pending`. Its recommendation is always "run `/claude-tweaks:demo #{n}`" — never one of the Action Vocabulary's atomic actions, since disposing a closed record is a judgment call for a human, not this step. It covers `work-backend: github-issues` only; under `local-files` the same finding comes from Step 1's **Shape 8** (`step-1-records.md`), exactly as `parent-gate` comes from Shape 7 there.
+The `acceptance-gap` scope finds closed records with no acceptance label — unlike the `acceptance-queue` scope `/help` Stage 4.7 uses, which only sees records already flagged pending (`_shared/work-record.md`). Its recommendation is always "run `/claude-tweaks:demo #{n}`" — never one of the Action Vocabulary's atomic actions, since disposing a closed record is a judgment call for a human, not this step. It covers `work-backend: github-issues` only; under `local-files` the same finding comes from Step 1's **Shape 8** (`step-1-records.md`), exactly as `parent-gate` comes from Shape 7 there.
 
 The `parent-gate` scope finds decomposition parents whose every sub-issue has closed but which carry no acceptance disposition — the backstop for a parent that missed `/claude-tweaks:wrap-up`'s eager gate (a sub-issue closed via `auto:merge`, by hand, or by a dispatch run that ended early never reaches that eager path). Unlike `acceptance-gap`, its recommendation **is** one of the Action Vocabulary's atomic actions — `Open parent gate` — which, above the oversight floor, composes and posts the parent's Verification Brief and applies `demo:pending`, reusing `wrap-up/verification-brief.md`'s Parent-Gate Procedure rather than a second copy of that logic (`tidy/actions-github-issues.md`'s `## Open parent gate`). It never applies `demo:approved`/`demo:changes-requested` — that verdict stays exclusively `/claude-tweaks:demo`'s job, so an above-floor finding still ends with "then run `/claude-tweaks:demo #{n}`" even once approved. Below the oversight floor the action closes the parent instead (**Close the parent below the floor**, no brief).
 

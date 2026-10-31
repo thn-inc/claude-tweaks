@@ -1,6 +1,8 @@
 // tests/tidy-stale-claim-open-pr-conformance.test.js
 // Pins /tidy Step 4.7's stale-claim routing (record #4423): a 'stale' claim blob whose run still has an
 // open PR carrying the run marker is a Yours Resume no-op naming the PR, never a Release.
+// Since #4596 the paragraph calls bin/stale-claim-pr.js for the match and the Resume line instead of
+// restating the marker rule and the Resume grammar, so the rule lives once, in code.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -37,36 +39,41 @@ test('the stale-blob row offers Resume when an open PR carries the run marker (#
   assert.match(row, /Resume/);
 });
 
-test('the stale-claim paragraph lists open PRs on both transports and matches the run marker (#4423)', () => {
+test('AC1.2: the stale-claim paragraph calls the CLI on both transports (#4596)', () => {
   const s = claimAuditSection();
-  assert.match(s, /gh pr list --state open --json number,url,body,isCrossRepository/);
-  assert.match(s, /mcp__github__list_pull_requests/);
-  assert.match(s, /claude-tweaks-run: \{runId\}/);
-  const flat = s.replace(/\s+/g, ' '); // prose wraps at ~98 columns
-  assert.ok(
-    flat.includes('trimmed line equal to `claude-tweaks-run: {runId}` or `<!-- claude-tweaks-run: {runId} -->`'),
-    'the marker match is exact-line, as claim-store.js\'s',
-  );
-  assert.match(flat, /`isCrossRepository: false`; MCP: `head\.repo\.full_name` is this repo/);
-  assert.ok(
-    s.includes('^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$'),
-    'the run-id shape regex is stated literally',
-  );
+  assert.ok(s.includes('bin/stale-claim-pr.js'), 'calls the one matcher implementation');
+  assert.ok(s.includes('--resume'), 'asks it for the validated Resume line');
+  assert.ok(s.includes('--repo "{owner}/{repo}"'), 'passes --repo, since an origin shape parseRepo rejects is exit 3 before the gh check');
+  assert.ok(s.includes('--listing'), 'hands it the MCP listing when gh is absent');
+  assert.ok(s.includes('mcp__github__list_pull_requests'), 'lists open PRs through the MCP tool when gh is absent');
+});
+
+test('AC1.1: the stale-claim paragraph restates neither the marker rule nor the Resume grammar (#4596)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  for (const retired of [
+    'trimmed line equal to',
+    'claude-tweaks-run: {runId}',
+    '^\\d{4}-\\d{2}-\\d{2}T\\d{6}-[a-z0-9][a-z0-9-]*$',
+    'PIPELINE_RUN_DIR="{dir}/{runId}"',
+    '`[a-z][a-z,-]*`',
+    'isCrossRepository',
+    'head.repo.full_name',
+  ]) {
+    assert.ok(!flat.includes(retired), `the paragraph must not restate ${retired} — bin/stale-claim-pr.js owns it`);
+  }
 });
 
 test('a matching PR routes as the Yours Unsettled run no-op, never staged and never released (#4423)', () => {
   const s = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
-  assert.match(s, /`### Resume` heading/);
+  assert.match(s, /`resume`/);
+  assert.match(s, /`resolve`/);
   assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
   assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
-  assert.match(s, /basename equals\s+the matched `runId`/);
   // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
   // failed-listing sentence itself.
   assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
-  assert.match(s, /a `gh` listing of 1000 entries with no match[^.]*Manual review/);
-  // The Resume line is rendered as a paste command, so its untrusted tail is held to the composer's exact shape.
-  assert.ok(s.includes('`` `PIPELINE_RUN_DIR="{dir}/{runId}" /claude-tweaks:flow "{target}" {steps}` ``'));
-  assert.match(s, /free of `` ` ``, `\$`, `"`, `\\` and line breaks, `\{steps\}` matching `\[a-z\]\[a-z,-\]\*`, nothing after it/);
+  assert.match(s, /1000-entry listing with no match[^.]*Manual review/);
+  assert.match(s, /Manual review[^.]*any other non-zero exit/);
   assert.match(s, /\*\*Unsettled run\*\*/);
   assert.match(s, /Yours/);
   assert.match(s, /never staged/);

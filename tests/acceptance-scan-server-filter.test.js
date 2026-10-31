@@ -76,8 +76,9 @@ node -e "
   fs.writeFileSync('$CLOSED', JSON.stringify(raw.filter((r) => r.closedAt > cutoff)));
 "`;
 
-// The `--search` exclusions every closed-record slice shares (needsBackstop's dispositions and reasons).
-const EXCLUSIONS = '-reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending';
+// The `--search` exclusions every closed-record slice shares (needsBackstop's dispositions, in both
+// acceptance-label spellings, and reasons).
+const EXCLUSIONS = '-reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending';
 
 // The trust-table.md parenthetical as it read before #4469.
 const PRE_CHANGE_TRUST = `(\`acceptance-gap\`'s own *closed-record* fetch is bounded by the same \`{resolved-limit}\` and
@@ -124,13 +125,13 @@ test('closed-record fetch is server-filtered', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_SLICED_FETCH,
-    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:\$SINCE\.\.\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
+    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:\$SINCE\.\.\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending"/,
     'the older date slice must narrow on the server through --search'
   );
   assertClaimPinned(
     GAP,
     PRE_CHANGE_SLICED_FETCH,
-    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
+    /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending"/,
     'the newer date slice must narrow on the server through --search'
   );
   assert.deepEqual(
@@ -154,7 +155,7 @@ test('the unsearched-fetch detector rejects a fetch with no --search within 120 
 });
 
 test('negated labels are exactly needsBackstop dispositions', () => {
-  const dispositionLabels = ['demo:approved', 'demo:changes-requested', 'demo:pending'];
+  const dispositionLabels = ['accept:approved', 'accept:changes-requested', 'accept:pending', 'demo:approved', 'demo:changes-requested', 'demo:pending'];
   for (const search of closedSearchStrings(GAP)) {
     const negated = [...search.matchAll(/-label:(\S+?)(?=\s|$)/g)].map((m) => m[1]).sort();
     assert.deepEqual(negated, dispositionLabels, `every slice negates exactly the dispositions: ${search}`);
@@ -847,3 +848,31 @@ test('the closed-record fetch names search-index lag as an unwarned, self-correc
   // Control: the lag named without the closed-record anchor is not enough.
   assert.ok(!lag.test('the state map may miss a just-linked sub-issue while the search index lags — unwarned'));
 });
+
+// ---- accept:* read sites (#4610 expand step) ---------------------------------------------------
+
+test('the acceptance-gap search excludes all three accept: labels as well as the demo: ones', () => {
+  for (const search of closedSearchStrings(GAP)) {
+    for (const label of ['accept:approved', 'accept:changes-requested', 'accept:pending']) {
+      assert.ok(search.includes(`-label:${label}`), `every slice's search must negate ${label}: ${search}`);
+      assert.notEqual(dispositionState([label]), 'none', `${label} must be a disposition label recognised by dispositionState`);
+    }
+  }
+  // Control: the frozen pre-change fetches carry no accept: negation, so the check can fail.
+  assert.ok(!PRE_CHANGE_GAP_FETCH.includes('-label:accept:'));
+  assert.ok(!PRE_CHANGE_SLICED_FETCH.includes('-label:accept:'));
+});
+
+test('the acceptance-queue lists records carrying either pending spelling', () => {
+  const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
+  const query = 'gh issue list --search "label:demo:pending,accept:pending" --state all --json number,title --limit 200';
+  assert.ok(QUEUE.includes(query), 'the queue query must read both pending spellings in one search');
+  // The single-spelling form it replaced is gone.
+  assert.ok(!QUEUE.includes('gh issue list --label demo:pending'));
+});
+
+test('the acceptance-queue names its search-index lag as an unwarned, self-correcting gap', () => {
+  const QUEUE = section(LIVE, '## Scope: `acceptance-queue`', '## Scope: `acceptance-gap`');
+  assert.match(QUEUE, /query\s+is\s+a\s+search[\s\S]{0,120}index\s+lags[\s\S]{0,40}unwarned[\s\S]{0,40}next\s+run/);
+});
+

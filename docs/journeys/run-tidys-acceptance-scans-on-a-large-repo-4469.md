@@ -22,7 +22,7 @@ files:
 - **Action:**
   - The scan agent resolves three placeholders as literals: `{since-date}` (now minus 31 days), `{mid-date}` (now minus 15 days) and `{resolved-limit}`.
   - It then runs two fetches: an older slice `closed:$SINCE..$MID` and a newer slice `closed:>$MID`.
-  - Both slices filter server-side with the same exclusions: `-reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending`.
+  - Both slices filter server-side with the same exclusions: `-reason:\"not planned\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending -label:accept:approved -label:accept:changes-requested -label:accept:pending` — both acceptance-label spellings (`_shared/work-record.md`), since `dispositionState` reads either as a disposition.
   - The node block merges the two slices by issue number, then applies the 30-day cutoff.
 - **Should feel:** proportionate: the scan asks GitHub only for what `needsBackstop` could ever flag, in pieces small enough that each one fits under the search ceiling.
 - **Should understand:**
@@ -71,3 +71,5 @@ files:
 ## Origin
 
 Built by `/claude-tweaks:flow` record #4469 (run `2026-10-30T045550-spec-4469-4466`). Updated by record #4598 (run `2026-10-31T061110-record-4598`), which split the closed-record fetch into two date slices.
+
+Step 1's quoted search updated during build of #4610: it also excludes the three `accept:*` labels.

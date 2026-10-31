@@ -33,9 +33,9 @@ files:
 - **Should feel:** checked against evidence, not assumed from a green rollup.
 - **Should understand:**
   - Landed means every file's `acceptance-labeling` row is `pass`/`skip`.
-  - If it isn't landed, or no run dir resolves, the action falls back to the contract's live-state tier (`_shared/acceptance-labeling-landed.md`; an unreadable `verify.json` is not rescued by it). If every `Fixes` record carries `demo:pending`, or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
+  - If it isn't landed, or no run dir resolves, the action falls back to the contract's live-state tier (`_shared/acceptance-labeling-landed.md`; an unreadable `verify.json` is not rescued by it). If every `Fixes` record carries a pending acceptance label in either spelling (`demo:pending` or `accept:pending`, `_shared/work-record.md`), or a trusted `brief`/`try-it` run comment exists, labeling still counts as landed.
   - On the no-run-dir branch tidy deliberately departs from close-out. Close-out stops that candidate; tidy needs no run dir, because it never runs labeling itself.
-  - A marker whose run-id fails `flow/claim-targets.md`'s validation counts as no marker. The `demo:pending` check needs at least one `Fixes` record and a successful label read for each. A failed `verify.json` read holds the PR and never passes it. An empty `Fixes` set, or a failed label or run-comment read, never passes it on its own: the PR is held unless the other live check lands.
+  - A marker whose run-id fails `flow/claim-targets.md`'s validation counts as no marker. The pending-label check needs at least one `Fixes` record and a successful label read for each. A failed `verify.json` read holds the PR and never passes it. An empty `Fixes` set, or a failed label or run-comment read, never passes it on its own: the PR is held unless the other live check lands.
 - **Red flags:** an untrusted comment counted as landed; a housekeeping-marker PR put through this check (it links no record).
 
 ### 3. Read the held outcome
@@ -47,7 +47,7 @@ files:
   - The recommendation is `/claude-tweaks:dispatch close-out #{record}`, which runs `_shared/pr-first-merge.md` Step 1 before it merges.
   - For `no run dir`, the recommendation is to run close-out from the checkout that holds the run a validated marker names. If no validated marker names one, run `/claude-tweaks:demo #{record}` and merge by hand.
   - When the tidy run has a run dir, its own `decisions.md` (not the PR's run) gains a `SKIP` line for `Step 7 Arm ready PR (skipped)`, naming the reason and the recommended command.
-- **Red flags:** an armed PR with no labeling evidence (no `pass`/`skip` row, no `demo:pending` on every `Fixes` record, no trusted `brief`/`try-it` run comment); a PR armed after a failed `verify.json` read, or on an empty `Fixes` set or a failed label or run-comment read with no other live check landing; a bare `close-out` with no target; a no-run-dir hold that recommends close-out from the same environment (close-out stops there too); a report or `SKIP` line that echoes an unvalidated marker value or a `verify.json` string that is not a bare word.
+- **Red flags:** an armed PR with no labeling evidence (no `pass`/`skip` row, no pending acceptance label on every `Fixes` record, no trusted `brief`/`try-it` run comment); a PR armed after a failed `verify.json` read, or on an empty `Fixes` set or a failed label or run-comment read with no other live check landing; a bare `close-out` with no target; a no-run-dir hold that recommends close-out from the same environment (close-out stops there too); a report or `SKIP` line that echoes an unvalidated marker value or a `verify.json` string that is not a bare word.
 
 ### 4. Expect the row again until labeling lands
 - **URL:** the next tidy sweep
@@ -59,3 +59,4 @@ files:
 ## Origin
 - Created during build of #3877, which guards tidy's Arm ready PR on acceptance labeling. It is the third caller of the landed rule that began in `pr-first-merge.md` Step 1 and `dispatch/close-out.md` step 3 (#3783), now the `_shared/acceptance-labeling-landed.md` contract.
 - Updated during build of #4045: the landed rule now lives in _shared/acceptance-labeling-landed.md, cited by pr-first-merge Step 1, close-out step 3 and tidy.
+- Updated during build of #4610: the live-state tier's pending-label check accepts either spelling, `demo:pending` or `accept:pending`.
