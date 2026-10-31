@@ -30,7 +30,8 @@ this run's labeling step ran, while a readable-but-malformed one (`acceptance-la
 shows the run reached verify. `wrap-up/verification-brief.md`'s issue pointer comment is a plain post
 that duplicates on a re-run, so labeling still counts as landed when either holds:
 
-- every record in the PR's `Fixes` lines carries `demo:pending` — at least one record, and every
+- every record in the PR's `Fixes` lines carries `demo:pending` or its twin `accept:pending`
+  (`_shared/work-record.md`) — at least one record, and every
   label read succeeded; an empty `Fixes` set or a failed read shows nothing;
 - the PR carries a trusted `<!-- run-comment: brief -->` or `<!-- run-comment: try-it -->` run
   comment (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted per

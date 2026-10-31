@@ -249,7 +249,7 @@ translation of its `facets.acceptance` (`parent.facets.acceptance ? ['demo:' + p
 
 - `incomplete` — a sibling sub-issue is still open. No-op; this sub-issue's own closing proceeds
   with no acceptance labeling of any kind, neither its own nor the parent's.
-- `gated` or `resolved` — the parent already carries a `demo:*` disposition. No-op.
+- `gated` or `resolved` — the parent already carries an acceptance disposition, in either label spelling (`_shared/work-record.md`). No-op.
 - `due` — every sub-issue is closed and the parent carries no disposition yet. **Continue to the
   oversight-floor check below before composing anything** — `due` alone no longer opens the gate
   (`#367`).

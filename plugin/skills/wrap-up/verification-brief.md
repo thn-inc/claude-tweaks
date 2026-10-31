@@ -115,10 +115,10 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
 - **`exceeds: false`** — this record does not clear the oversight floor. **Skip Step 1 through
   Step 4 entirely** — no `demo:pending` bootstrap, no observation plan, no brief composed or
   posted. The walkthrough is not skipped: the Try it block composed above posts alone
-  (**Posting it alone**), and the Pipeline Summary renders it. The record closes with no `demo:*` label and no ceremony (this is the *not required*
+  (**Posting it alone**), and the Pipeline Summary renders it. The record closes with no acceptance label and no ceremony (this is the *not required*
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
   request: `/claude-tweaks:demo #N`'s existing closing-commit-reconstruction fallback already
-  resolves a record carrying no `demo:pending` label, unchanged by this gate.
+  resolves a record carrying no pending acceptance label, unchanged by this gate.
 
   Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
   this record was deliberately skipped, not silently missed: add `N` to
