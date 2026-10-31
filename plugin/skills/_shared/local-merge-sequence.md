@@ -107,15 +107,16 @@ composer's `[{tag}]` paragraph and `Fixes #N` lines land on.
 
 **On failure** — the guard aborted (no merge started), or `git merge` exited non-zero for any
 reason (a conflict that appeared only after Step 1's prediction, the race it cannot rule out; a
-dirty working tree; unrelated histories): check for a merge in progress, in the main checkout
-the merge ran in:
+dirty working tree; unrelated histories): check for a merge in progress, from the main checkout
+where the merge ran:
 
 ```bash
 git rev-parse -q --verify MERGE_HEAD
 ```
 
 Exit 0 means a merge is in progress — run `git merge --abort` as its own call. Non-zero means
-the merge never started and the checkout is unchanged. Never attempt resolution here. `close-run` already ran, so Step 5 applies.
+the merge never started and the checkout is unchanged. Never attempt resolution here.
+`close-run` already ran, so Step 5 applies.
 
 ## Step 4: Push — from inside the linked worktree, its own Bash call
 
