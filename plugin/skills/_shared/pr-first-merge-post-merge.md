@@ -44,8 +44,8 @@ It is also a no-op unless the branch the merge landed on — the integration bra
 `git remote show origin`'s `HEAD branch:` line (`_shared/github-write-transport.md`'s
 default-branch row). GitHub closes `Fixes #N` records and a PR's other closing links only on the
 default branch, so a merge into any other branch leaves its sub-issues open: counting them `CLOSED`
-would close the parent early.
-Left open, they keep both this close and the backstop from firing early.
+would close the parent early. Left open, they keep both this close and the backstop from firing
+early.
 
 This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 (`wrap-up/verification-brief-parent-gate.md`'s **Two entry shapes**). Set its two inputs:

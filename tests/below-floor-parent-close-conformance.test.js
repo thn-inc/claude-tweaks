@@ -708,14 +708,18 @@ test('AC5.2: a sub-issue-side local-files close logs its auto-resolution through
 test('#4602: the transport mapping carries every row the parent close needs', () => {
   const t = read('_shared/github-write-transport.md');
   const row = (op) => t.split('\n').find((l) => l.startsWith(`| ${op} |`)) || '';
-  assert.match(row('Close'), /`issue_write`/);
-  for (const lit of ['state_reason', '`completed`', '`not_planned`']) assert.ok(row('Close').includes(lit), `Close row: ${lit}`);
-  for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(row('Get a single issue by number').includes(lit), `Get row: ${lit}`);
-  assert.ok(row("List an issue's native sub-issues").includes('`get_sub_issues`'));
-  assert.ok(row("List an issue's native sub-issues").includes('perPage: 100'));
+  const close = row('Close');
+  assert.match(close, /`issue_write`/);
+  for (const lit of ['state_reason', '`completed`', '`not_planned`']) assert.ok(close.includes(lit), `Close row: ${lit}`);
+  const get = row('Get a single issue by number');
+  for (const lit of ['state_reason', 'closed_by_pull_requests']) assert.ok(get.includes(lit), `Get row: ${lit}`);
+  const subIssues = row("List an issue's native sub-issues");
+  assert.ok(subIssues.includes('`get_sub_issues`'));
+  assert.ok(subIssues.includes('perPage: 100'));
   assert.ok(row("List an issue's comments").includes('perPage: 100'), 'comment reads are paged');
   assert.ok(row("Get an issue's native parent").includes('`get_parent`'));
-  assert.ok(row("Read the current identity's login").includes('gh api user') && row("Read the current identity's login").includes('`get_me`'));
+  const login = row("Read the current identity's login");
+  assert.ok(login.includes('gh api user') && login.includes('`get_me`'));
   const db = row("Read the repo's default branch");
   assert.ok(db.includes('defaultBranchRef') && db.includes('git remote show origin') && db.includes('_shared/integration-branch.md'));
 });
