@@ -53,6 +53,16 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.158.1](https://github.com/thn-inc/claude-tweaks/compare/v6.158.0...v6.158.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* claim-targets: a missing claims-registry branch is… ([#4495](https://github.com/thn-inc/claude-tweaks/issues/4495)) ([4b0d124](https://github.com/thn-inc/claude-tweaks/commit/4b0d12438c6158fd2b297aee7022609cd331793f))
+* friction-events.js unions every main-checkout session's… ([#4704](https://github.com/thn-inc/claude-tweaks/issues/4704)) ([ba69ced](https://github.com/thn-inc/claude-tweaks/commit/ba69ced992d524663f37d4a5631fd30325949458))
+* pr-first-merge: Fixes lines in the squash commit message… ([#4549](https://github.com/thn-inc/claude-tweaks/issues/4549)) ([22d287f](https://github.com/thn-inc/claude-tweaks/commit/22d287f46cf2c473782deceea59a6b0c73ca76cc)), closes [#4550](https://github.com/thn-inc/claude-tweaks/issues/4550) [#4556](https://github.com/thn-inc/claude-tweaks/issues/4556)
+* wrap-up Section C step 2's worktree-mirror fallback… ([#4740](https://github.com/thn-inc/claude-tweaks/issues/4740)) ([281847b](https://github.com/thn-inc/claude-tweaks/commit/281847b09d5cc1ef61909852bda886f76c4ea24b))
+
 ## [6.158.0](https://github.com/thn-inc/claude-tweaks/compare/v6.157.2...v6.158.0) (2026-10-31)
 
 
