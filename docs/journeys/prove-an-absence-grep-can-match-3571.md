@@ -53,9 +53,9 @@ files:
 - **Action:** When an absence search's scope reaches the build's committed bookkeeping (no pathspec, `.`, an any-depth glob such as `'*.md'`, or a recursive grep over the root), append `':!.claude-tweaks/pipelines'`, `':!docs/superpowers/plans'` and `':!docs/plans/*-ledger.md'` to its pathspec (or the tool's equivalent). Then run the control on that excluded form against a tree that still holds the target, and confirm it matches.
 - **Should feel:** Like step 3's tombstone, one more exclusion that can quietly hide the target.
 - **Should understand:**
-  - The build commits its spec (`.claude-tweaks/pipelines/<run>/work/<n>-spec.md`), its plan (`docs/superpowers/plans/`) and its open-items ledger (`docs/plans/*-ledger.md`) on the feature branch, and each can quote the target. A wide search therefore matches its own bookkeeping, and the criterion can never pass.
+  - `/flow` commits the materialized spec (`.claude-tweaks/pipelines/<run>/work/<n>-spec.md`), and `/build` commits its plan (`docs/superpowers/plans/`) and its open-items ledger (`docs/plans/*-ledger.md`), on the feature branch, and each can quote the target. A wide search therefore matches its own bookkeeping, and the criterion can never pass.
   - A build that finds the exclusions missing adds them as a plan correction, not an SDD ruling.
-  - A search scoped to named paths outside `.claude-tweaks/` needs no exclusion.
+  - A search scoped to named paths outside `.claude-tweaks/` needs no exclusion, unless a named path reaches `docs/`: then it still takes the plan and ledger exclusions.
   - Added for #4579.
 - **Red flags:**
   - Excluding all of `.claude-tweaks/`, which hides `policy.yml`.
@@ -65,6 +65,6 @@ files:
 ## Origin
 - Created during build of #3571, a reflect-light finding from #3536. #3536's AC1.1 could never fail. Its plan copied it into Global Constraints and Task 2, plan audit passed it, and only the Task 2 implementer caught it at dispatch.
 - Updated during wrap-up of #3571: Steps 2-3 brought in line with the review fixes in d9746b834, the recipe for running the control against a commit and the bare tombstone grep.
-- Updated during build of #4579: Step 4, the run-directory exclusion for a repo-root-scoped search.
+- Updated during build of #4579: Step 4, excluding the build's own committed spec, plan and ledger from a wide absence search.
 - Pinned by `tests/absence-grep-control-check-prose.test.js`.
 - Related: `derive-a-reader-inventory-from-read-call-sites-3397.md`, another plan-authoring check that `/claude-tweaks:build` applies before a plan is finalized.

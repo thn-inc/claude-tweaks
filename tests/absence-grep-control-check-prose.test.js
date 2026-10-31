@@ -67,6 +67,7 @@ test('the control check adds the run-directory exclusion as a plan correction (#
   assert.ok(paragraph.includes(":!docs/plans/*-ledger.md"), 'the paragraph must name the ledger pathspec');
   assert.ok(paragraph.includes('#4579'), 'the paragraph must cite #4579');
   assert.ok(paragraph.includes('run the control on the excluded form'), 'the control run applies to the excluded form');
+  assert.ok(paragraph.includes('that the exclusion was added per #4579'), 'the match note must say the exclusion was added per #4579');
   assert.ok(paragraph.includes('a plan correction, never an SDD ruling'), 'the exclusion is a plan correction, not an SDD ruling');
   assert.ok(paragraph.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
 });
