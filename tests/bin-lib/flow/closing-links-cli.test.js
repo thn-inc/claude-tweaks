@@ -617,6 +617,8 @@ test('post-merge reopen failure is data', () => {
   assert.equal(j.failed[0].issue, 2724);
   assert.match(j.failed[0].error, /forbidden/);
   assert.deepEqual(j.reopened, []);
+  // A failed reopen leaves the record closed: it is unsettled, never in the closing set.
+  assert.deepEqual(j.closingSet, [3997]);
   assert.match(h.log(runDir), /could not reopen #2724 after PR #7's merge/);
   assert.match(h.log(runDir), /reopen it by hand/);
   assert.match(h.log(runDir), /^- SKIP \d{2}:\d{2}:\d{2} — Closing links \(degraded\): condition: could not reopen #2724 .*Reversibility: n\/a\.$/m);

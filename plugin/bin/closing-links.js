@@ -375,8 +375,9 @@ function run(argv, overrides = {}) {
   else if (pendingClose.length) action = 'close-pending';
   else if (reopened.length) action = 'reopened';
 
-  // The same-repo records this merge closed and kept closed: `linked` minus
-  // whatever the guard reopened, could not settle, or has yet to see close.
+  // The same-repo records the merge closing links name: `linked` minus whatever the
+  // guard reopened, could not settle, or has yet to see close. A Fixes-block record
+  // is never read, and a record closed before the merge stays in -- both count as closed.
   const unsettled = new Set([...reopened, ...pendingClose, ...failed.map((f) => f.issue)]);
   const closingSet = linked.filter((x) => !unsettled.has(x));
 
