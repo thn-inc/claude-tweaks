@@ -60,24 +60,25 @@ nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already post
 **Transport (#4602).** With `gh` present, every call in this section runs as written. With `gh`
 absent, each call runs through the GitHub MCP tool its `_shared/github-write-transport.md` row names
 (that file's Detection rule). Under **Resolve the parent**, the native parent read is `issue_read`
-(`get_parent`) and the body-text read is `issue_read` (`get`). Under **Enumerate the parent's
-sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row), and every `gh
-issue view` read (the parent body, each sub-issue, the parent's labels, and the comment reads in
-**Close the parent below the floor** and **Apply the gate**) is `issue_read` (`get`, plus
-`get_comments` for comments, paged per its row). `gh api user` is `get_me`; `gh issue comment` is
-`add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are `issue_write` (update
-mode), the latter under the Full-replace hazard's read-merge-write. `_shared/label-bootstrap.md`'s
-check-then-create loop has no MCP row: on the MCP path skip it, and a label write that then fails is
-a failing call under the paragraph below. Normalize the MCP shape before any rule below reads it:
-uppercase `state` and `state_reason` (`closed` → `CLOSED`, `completed` → `COMPLETED`,
-`not_planned` → `NOT_PLANNED`, `reopened` → `REOPENED`) before `subIssues` is built for
-`parentGateState` (which matches `CLOSED` exactly), before the close-reason test, and before the
-idempotence check; pass `parentLabels` as label names; and take `{pr}` from the last of the
-references `closed_by_pull_requests` returns (at most 5 — a deterministic truncation). On the MCP
-path a "`gh` call" in the paragraphs below means the tool its row names. The default-branch read in
-Step 4.0b is `git remote show origin` on that path (`_shared/integration-branch.md`'s rank-5 git
-read); when it fails, it is a failing call under the paragraph below, which skips the whole of Step
-4.0b.
+(`get_parent`) and the body-text read is `issue_read` (`get`), whose `body` you write with the Write
+tool to `$WRAPUP_PARENT_BODY`'s path before running the `parseSubIssues` script. Under **Enumerate
+the parent's sub-issues**, the native list is `issue_read` (`get_sub_issues`, paged per its row),
+and every `gh issue view` read (the parent body, each sub-issue, the parent's labels, and the
+comment reads in **Close the parent below the floor** and **Apply the gate**) is `issue_read`
+(`get`, plus `get_comments` for comments, paged per its row). `gh api user` is `get_me`;
+`gh issue comment` is `add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are
+`issue_write` (update mode), the latter under the Full-replace hazard's read-merge-write.
+`_shared/label-bootstrap.md`'s check-then-create loop has no MCP row: on the MCP path skip it, and a
+label write that then fails is a failing call under the paragraph below. Normalize the MCP shape
+before any rule below reads it: uppercase `state` and `state_reason` (`closed` → `CLOSED`,
+`completed` → `COMPLETED`, `not_planned` → `NOT_PLANNED`, `reopened` → `REOPENED`) before
+`subIssues` is built for `parentGateState` (which matches `CLOSED` exactly), before the close-reason
+test, and before the idempotence check; pass `parentLabels` as label names; and take `{pr}` from the
+last of the references `closed_by_pull_requests` returns (at most 5 — a deterministic truncation).
+On the MCP path a "`gh` call" in the paragraphs below means the tool its row names. The
+default-branch read in Step 4.0b is `git remote show origin` on that path
+(`_shared/integration-branch.md`'s rank-5 git read); when it fails, it is a failing call under the
+paragraph below, which skips the whole of Step 4.0b.
 
 **Fail open on every `gh` call in this section.** If neither `gh` nor the GitHub MCP server is
 available, `gh` is unauthenticated, the repo has no GitHub remote, or any parent-gate `gh` call
@@ -345,7 +346,8 @@ gh api user --jq .login
 With `gh` absent these are `issue_read` (`get`, then `get_comments`, paged per its row) and
 `get_me`, per `_shared/github-write-transport.md`; the **Transport (#4602).** paragraph's uppercase
 normalization applies (`reopened` → `REOPENED`), and the Trusted-authors test reads
-`author_association` on that shape.
+`author_association` on that shape. A comment's author login there is `user.login`, compared
+against `get_me`'s `login`.
 
 - A parent already `CLOSED` is a no-op: an earlier entry, or a human, closed it.
 - An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and
@@ -370,8 +372,9 @@ Every sub-issue of this decomposition is closed, and the highest sub-issue risk,
 - #{n} {title} — closed by PR #{pr}
 ```
 
-When step 3 closes with `"not planned"`, add the line `No sub-issue closed as completed, so this
-parent closes as not planned.` after the template's first paragraph.
+When step 3 closes with `"not planned"`, add the line
+`No sub-issue closed as completed, so this parent closes as not planned.` after the template's
+first paragraph.
 
 One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
 `{title}` comes from that section's per-sub-issue fetch. For a `$CLOSING_SUB_ISSUES` member,
