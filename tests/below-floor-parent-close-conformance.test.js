@@ -748,7 +748,7 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   assert.ok(transport.includes('`_shared/github-write-transport.md`'));
   assert.ok(transport.includes('`get_parent`'), 'native parent resolution');
   assert.ok(transport.includes('`_shared/label-bootstrap.md`'), 'the label bootstrap states its MCP-path behavior');
-  assert.ok(transport.includes('`get_comments`') && transport.includes('paged'), 'comment reads are paged per the comments row');
+  assert.ok(transport.includes('`get_comments` for comments, paged per its row'), 'comment reads are paged per the comments row');
   assert.ok(transport.includes('`gh api user` is `get_me`'), 'explicit pairing: gh api user is get_me');
   assert.ok(transport.includes('`gh issue comment` is `add_issue_comment`'), 'explicit pairing: gh issue comment is add_issue_comment');
   assert.ok(
