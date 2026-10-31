@@ -330,7 +330,7 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   const SCOPED_SKIP = 'After a PR merge, when `closingSet[]` is absent';
   const checkScopedSkip = (text) => assert.ok(text.includes(SCOPED_SKIP), 'Step 4.0b skips when the field is absent, after a PR merge only');
   checkScopedSkip(body);
-  const unscopedBody = body.replace('After a PR merge, when `closingSet[]` is absent', 'When `closingSet[]` is absent');
+  const unscopedBody = body.replace(SCOPED_SKIP, 'When `closingSet[]` is absent');
   assert.notEqual(unscopedBody, body, 'go-red: the doctored text differs from the live section');
   assert.throws(() => checkScopedSkip(unscopedBody), /Step 4\.0b skips when the field is absent, after a PR merge only/, 'go-red: an unscoped skip sentence fails the check');
   assert.ok(
