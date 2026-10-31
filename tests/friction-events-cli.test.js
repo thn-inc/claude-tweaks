@@ -642,30 +642,42 @@ test('#4704: with no path siblings to filter, repoInfo (a git spawn) is not call
   assert.deepStrictEqual(deps.calls.repoInfo, []);
 });
 
-test('#4704: the real CLI from a real main checkout drops another session\'s ad-hoc dir (real writer)', () => {
+// Initialises `repo` as a real main checkout holding two ad-hoc run dirs (sessions
+// S1 and S2, one friction event each) and a formal primary run dir.
+function initMainCheckoutWithTwoSessions(repo) {
   const { execFileSync } = require('child_process');
   const { writeRunState } = require('../plugin/bin/lib/hooks/context');
+  execFileSync('git', ['init', '-q'], { cwd: repo, windowsHide: true });
+  const root = fs.realpathSync(repo);
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const mk = (name) => { const d = path.join(pipelines, name); fs.mkdirSync(d, { recursive: true }); return d; };
+  const mine = mk('2026-10-31T100000-adhoc-standalone');
+  const other = mk('2026-10-31T110000-adhoc-standalone');
+  const primary = mk('2026-10-31T120000-spec-9');
+  for (const [dir, sessionId] of [[mine, 'S1'], [other, 'S2']]) {
+    writeRunState(dir, { worktree: root, status: 'active', sessionId });
+    fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"wd-deny","ts":"2026-10-31T13:00:00.000Z"}\n');
+  }
+  return { root, primary };
+}
+
+// Runs the real CLI as session S1 from `root`; returns the basenames of the run dirs the events came from.
+function realCliRunDirsAsS1(root, primary, extraArgs = []) {
+  const { execFileSync } = require('child_process');
+  const stdout = execFileSync(process.execPath, [path.join(__dirname, '..', 'plugin', 'bin', 'friction-events.js'), '--run', primary, ...extraArgs], {
+    cwd: root,
+    env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' },
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  return JSON.parse(stdout).map((e) => path.basename(e._runDir));
+}
+
+test('#4704: the real CLI from a real main checkout drops another session\'s ad-hoc dir (real writer)', () => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-main-'));
   try {
-    execFileSync('git', ['init', '-q'], { cwd: repo, windowsHide: true });
-    const root = fs.realpathSync(repo);
-    const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
-    const mk = (name) => { const d = path.join(pipelines, name); fs.mkdirSync(d, { recursive: true }); return d; };
-    const mine = mk('2026-10-31T100000-adhoc-standalone');
-    const other = mk('2026-10-31T110000-adhoc-standalone');
-    const primary = mk('2026-10-31T120000-spec-9');
-    for (const [dir, sessionId] of [[mine, 'S1'], [other, 'S2']]) {
-      writeRunState(dir, { worktree: root, status: 'active', sessionId });
-      fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"wd-deny","ts":"2026-10-31T13:00:00.000Z"}\n');
-    }
-    const stdout = execFileSync(process.execPath, [path.join(__dirname, '..', 'plugin', 'bin', 'friction-events.js'), '--run', primary], {
-      cwd: root,
-      env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' },
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    const out = JSON.parse(stdout);
-    assert.deepStrictEqual(out.map((e) => path.basename(e._runDir)), ['2026-10-31T100000-adhoc-standalone']);
+    const { root, primary } = initMainCheckoutWithTwoSessions(repo);
+    assert.deepStrictEqual(realCliRunDirsAsS1(root, primary), ['2026-10-31T100000-adhoc-standalone']);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
@@ -676,31 +688,12 @@ test('#4704: the real CLI from a real main checkout drops another session\'s ad-
 // matches the main checkout's siblings, so it must still be recognised as the
 // main checkout and scoped. Needs a case-insensitive volume to be reachable.
 test('#4704: a miscased --worktree spelling of the main checkout is still scoped to this session (real writer)', (t) => {
-  const { execFileSync } = require('child_process');
-  const { writeRunState } = require('../plugin/bin/lib/hooks/context');
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-fe-MixedCase-'));
   try {
-    execFileSync('git', ['init', '-q'], { cwd: repo, windowsHide: true });
-    const root = fs.realpathSync(repo);
+    const { root, primary } = initMainCheckoutWithTwoSessions(repo);
     const miscased = root.toLowerCase();
     if (miscased === root || !fs.existsSync(miscased)) { t.skip('case-sensitive filesystem'); return; }
-    const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
-    const mk = (name) => { const d = path.join(pipelines, name); fs.mkdirSync(d, { recursive: true }); return d; };
-    const mine = mk('2026-10-31T100000-adhoc-standalone');
-    const other = mk('2026-10-31T110000-adhoc-standalone');
-    const primary = mk('2026-10-31T120000-spec-9');
-    for (const [dir, sessionId] of [[mine, 'S1'], [other, 'S2']]) {
-      writeRunState(dir, { worktree: root, status: 'active', sessionId });
-      fs.writeFileSync(path.join(dir, 'events.jsonl'), '{"type":"wd-deny","ts":"2026-10-31T13:00:00.000Z"}\n');
-    }
-    const stdout = execFileSync(process.execPath, [path.join(__dirname, '..', 'plugin', 'bin', 'friction-events.js'), '--run', primary, '--worktree', miscased], {
-      cwd: root,
-      env: { ...process.env, CLAUDE_CODE_SESSION_ID: 'S1' },
-      encoding: 'utf8',
-      windowsHide: true,
-    });
-    const out = JSON.parse(stdout);
-    assert.deepStrictEqual(out.map((e) => path.basename(e._runDir)), ['2026-10-31T100000-adhoc-standalone']);
+    assert.deepStrictEqual(realCliRunDirsAsS1(root, primary, ['--worktree', miscased]), ['2026-10-31T100000-adhoc-standalone']);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
