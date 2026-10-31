@@ -227,7 +227,10 @@ test("worktree-merge.md: a composer failure skips the branch and continues (AC3)
 // Roster, both directions: every plugin/skills file citing the sequence is a SITES entry or a MENTIONS
 // entry (a file that names the sequence without running it), and every entry still cites it.
 // Task 4 adds the two mention-only files its sweep creates; an entry that stops citing fails with "shrink the list".
-const MENTIONS = new Map();
+const MENTIONS = new Map([
+  ['plugin/skills/_shared/policy-schema.md', 'commit-scope row names the composer call site; runs nothing'],
+  ['plugin/skills/_shared/integration-model.md', 'consumer table names the local-merge path; runs nothing'],
+]);
 function citers(root) {
   const out = [];
   const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) {
@@ -251,4 +254,21 @@ test('the SITES roster is exactly the files citing the sequence', () => {
     assert.equal(found.length, 1, 'go-red: the walk must find exactly the one stray citer');
     assert.ok(found[0].endsWith('stray.md'));
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
+});
+
+test('docs register the new _shared file (AC5)', () => {
+  const graph = readText(path.join(ROOT, 'docs/skill-graph.md'));
+  const rowOf = (g, key) => g.split('\n').find((l) => l.startsWith(key));
+  const KEY = '| `_shared/local-merge-sequence.md` |';
+  const row = rowOf(graph, KEY);
+  assert.ok(row, 'skill-graph.md has no row for _shared/local-merge-sequence.md');
+  for (const s of ['/flow', '/wrap-up', 'local-merge-auto-finish.md', 'auto-merge-short-circuit.md', 'worktree-merge.md']) assert.ok(row.includes(s), `row names ${s}`);
+  const autoFinish = rowOf(graph, '| `_shared/local-merge-auto-finish.md` |');
+  assert.ok(autoFinish.includes('`_shared/local-merge-sequence.md`'), 'the auto-finish row cites the sequence');
+  assert.ok(!collapse(autoFinish).includes("Reuses `wrap-up/auto-merge-short-circuit.md`'s own local-merge git mechanics"), 'the retired reuse clause is gone');
+  // go-red: a renamed row is not found.
+  assert.equal(rowOf(graph.replace(KEY, '| `_shared/zzz-4073.md` |'), KEY), undefined, 'go-red: a missing row must fail the lookup');
+  const structure = readText(path.join(ROOT, 'docs/plugin-structure.md'));
+  const shared = structure.split('\n').find((l) => l.startsWith('| _shared |'));
+  assert.ok(shared.split(' | ')[1].includes('local-merge-sequence.md'), 'plugin-structure.md curated _shared row lists it');
 });

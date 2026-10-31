@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/_shared/local-merge-auto-finish.md
+  - plugin/skills/_shared/local-merge-sequence.md
   - plugin/bin/compose-subject.js
   - plugin/bin/lib/commit-scope.js
   - plugin/skills/wrap-up/cleanup-procedures-execution.md
