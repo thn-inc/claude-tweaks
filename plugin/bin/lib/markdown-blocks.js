@@ -6,8 +6,8 @@
 // record.js's re-exports of fenceFor/fencedBlock/extractSection) console/,
 // compose-subject.js and the health-sweep issue-payload.js builders. Moved out
 // of issues/record-payload.js (#4645) so a consumer that needs only the fence
-// rule no longer reaches through the record-payload builder. Builtins only: it
-// requires no module, so any lib module can import it without a cycle. No I/O.
+// rule no longer reaches through the record-payload builder. It requires no
+// module, so any lib module can import it without a cycle. No I/O.
 'use strict';
 
 // Returns a backtick fence at least one character longer than the longest run
