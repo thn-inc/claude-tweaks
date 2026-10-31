@@ -101,9 +101,9 @@ line if the record doesn't already carry one). A candidate surfaced here is wort
 attention even when shaping proceeds normally.
 A candidate in `deepOverlapHits` (`bin/lib/issues/near-duplicate.js`) has at least 3 shared Current State
 anchors (`DEEP_OVERLAP_MIN`, #4701) and is a likely duplicate, so name it in the shaping output with its
-shared-anchor count and read that record's body before stamping `ready`; the finder ranks deeper overlap
-higher, but a deep hit need not be the table's first row, so check every hit against `deepOverlapHits` rather
-than reading only the top row. This call-out is in addition to the table and the `**Related:**` line and is
+shared-anchor count and read that record's body before stamping `ready`. The refusal call below prints every
+such hit as `deep` (number and shared-anchor count); the finder ranks deeper overlap higher, but a deep hit
+need not be the table's first row, so name every `deep` entry rather than reading only the top row. This call-out is in addition to the table and the `**Related:**` line and is
 surface-only: shaping still proceeds, and a deep-overlap hit never refuses on its own.
 
 Then decide refusal with `shapingRefusal` (`bin/lib/issues/near-duplicate.js`, #3141). It refuses
@@ -122,7 +122,7 @@ Then run the call below; its first line re-resolves the same two paths:
 NEAR_DUP_HITS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-hits.json)"
 NEAR_DUP_SNAPSHOT="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-near-dup-snapshot.json)"
 node -e "
-const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
+const { shapingRefusal, buildShapingState, MIN_REFUSAL_SCORE, deepOverlapHits } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/near-duplicate.js');
 const { createClaimReader } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claim-store.js');
 const { buildLinkedPRQuery, normalizeLabelNames } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
 const { execFileSync } = require('child_process');
@@ -151,6 +151,8 @@ const state = buildShapingState({ numbers, labelsByNumber, claimContentByNumber,
 const hit = shapingRefusal(hits, state);
 const result = hit ? { refuse: true, hit, evidence: state[hit.number] } : { refuse: false };
 if (unreadable.length) result.unreadable = unreadable;
+const deep = deepOverlapHits(hits).map((h) => ({ number: h.number, sharedAnchors: h.sharedAnchors.length }));
+if (deep.length) result.deep = deep;
 console.log(JSON.stringify(result));
 " -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"
 ```

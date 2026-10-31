@@ -186,7 +186,7 @@ test('jaccard of two empty token sets is 0, never throws', () => {
   assert.strictEqual(jaccard([], []), 0);
 });
 
-test('sorting: candidates sort by score + shared anchors descending, then score, then number', () => {
+test('sorting: a two-signal hit ranks first, and one-signal hits of equal depth order by number', () => {
   const subject = {
     number: 1,
     title: 'dispatch pre-build near-duplicate check',
@@ -365,6 +365,16 @@ test('a non-ready candidate is not refused even with a live claim', () => {
 
 test('a candidate missing from stateByNumber is not refused', () => {
   assert.strictEqual(shapingRefusal([{ number: 9, signals: ['title-similarity', 'key-files-overlap'] }], {}), null);
+});
+
+test('shapingRefusal over finder output names the deeper-overlap candidate when two qualify (#4701)', () => {
+  const title = 'dispatch pre-build near-duplicate check';
+  const subject = { number: 1, title, body: '## Current State\n\nUses `alpha.js`, `beta.js` and `gamma.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const deep = { number: 50, title, body: '## Current State\n\nUses `alpha.js`, `beta.js` and `gamma.js`.\n\n### Key Files\n\n- `q.js` — modify\n- `r.js` — modify\n- `s.js` — modify\n' };
+  const wide = { number: 10, title, body: '## Current State\n\nUses `alpha.js`.\n\n### Key Files\n\n- `a.js` — modify\n' };
+  const hits = findNearDuplicates(subject, [wide, deep]);
+  assert.deepStrictEqual(hits.map((h) => [h.number, h.score, h.sharedAnchors.length]), [[50, 2, 3], [10, 3, 1]]);
+  assert.strictEqual(shapingRefusal(hits, { 10: LIVE, 50: LIVE }).number, 50);
 });
 
 test('shapingRefusal returns the first qualifying hit in the given order', () => {
