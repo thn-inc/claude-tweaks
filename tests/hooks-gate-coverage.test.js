@@ -1885,27 +1885,30 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
 // the current shell and its cd reaches the commands after it, as base d9aa6b82d read it. Bash 3.2
 // and 5 (M = /main, start = /r) write the file each row names; bash 3.2 cannot parse `;&`, `;;&` or
 // an unparenthesized pattern inside `$( )`, and bash 5 writes M/f for each (the pins side with 5).
+// A case with no catch-all pattern, or an arm that starts where the case began and moves no cwd (`*) true`),
+// also ends where the case began, since the walk does not evaluate a literal subject against its patterns
+// (#4486): `./f` on those rows is that fail-closed superset; bash writes M/f only.
 {
   const here = path.resolve('/r/f.js');
   const files = (cmd) => fileWriteTargets(cmd, '/r').map((t) => t.file).sort();
   for (const [cmd, expected] of [
-    ['case x in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
+    ['case x in a|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],                   // bash: M/f
     ['case x in x|y) cd /main; echo x > f.js;; esac', [MAIN_F]],                                // bash: M/f
     ['case x in *|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                                // bash: M/f
-    ['case x in x|a) cd /main;; *) true;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
-    ['for i in 1; do case x in a|x) cd /main;; esac; done; echo x > f.js', [MAIN_F]],           // bash: M/f
-    ['if true; then case x in a|x) cd /main;; esac; fi; echo x > f.js', [MAIN_F]],              // bash: M/f
+    ['case x in x|a) cd /main;; *) true;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash: M/f
+    ['for i in 1; do case x in a|x) cd /main;; esac; done; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
+    ['if true; then case x in a|x) cd /main;; esac; fi; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
     ['case x in a|x) cd /main && echo x > f.js;; esac', [MAIN_F]],                              // bash: M/f
-    ['case x in a|x) cd /main\n;; esac; echo x > f.js', [MAIN_F]],                              // bash: M/f
+    ['case x in a|x) cd /main\n;; esac; echo x > f.js', [MAIN_F, here].sort()],                 // bash: M/f
     ['case x in a|x) cd /main\n echo x > f.js;; esac', [MAIN_F]],                               // bash: M/f
-    ['case $(echo a | cat) in a|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                  // bash: M/f
-    ['case x in a|x) case y in b|y) cd /main;; esac;; esac; echo x > f.js', [MAIN_F]],          // bash: M/f
-    ['( case x in a|x) cd /main;; esac; echo x > f.js )', [MAIN_F]],                            // bash: M/f
+    ['case $(echo a | cat) in a|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],     // bash: M/f
+    ['case x in a|x) case y in b|y) cd /main;; esac;; esac; echo x > f.js', [MAIN_F, here].sort()], // bash: M/f
+    ['( case x in a|x) cd /main;; esac; echo x > f.js )', [MAIN_F, here].sort()],               // bash: M/f
     // A `;;`, `;&` or `;;&` opens the next arm's pattern list.
-    ['case x in a) true;; b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash: M/f
-    ['case x in a) true;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                      // bash 5: M/f
-    ['case x in a) true;;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F]],                     // bash 5: M/f
-    ['x=$(case x in a|x) cd /main;; esac; echo x > f.js)', [MAIN_F]],                           // bash 5: M/f
+    ['case x in a) true;; b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash: M/f
+    ['case x in a) true;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],         // bash 5: M/f
+    ['case x in a) true;;& b|x) cd /main;; esac; echo x > f.js', [MAIN_F, here].sort()],        // bash 5: M/f
+    ['x=$(case x in a|x) cd /main;; esac; echo x > f.js)', [MAIN_F, here].sort()],              // bash 5: M/f
     // A pipe is still a pipe: in an arm, after `esac`, around the case, and where `case` is no
     // command word.
     ['cd /main | true; echo x > f.js', [here]],                                                 // bash: ./f
@@ -1921,7 +1924,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['g() { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
     ['function g { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
   ]) {
-    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves where bash writes`, () => {
+    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves the cwds bash writes under (plus the case's start, failing closed since #4486)`, () => {
       assert.deepStrictEqual(files(cmd), expected);
     });
   }
@@ -2247,7 +2250,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   });
   // #4481 characterization: the shapes the first-element and `a=()` fixes must leave as they are.
   for (const [cmd, expected] of [
-    ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/wt/f')]],                          // bash: /wt/f
+    ['case a in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /wt/f; /r/f kept, failing closed (#4486)
     ['cat | case x in a) cd /wt;; esac; echo x > f', [path.resolve('/r/f'), path.resolve('/wt/f')].sort()], // bash: /r/f only; /wt/f kept, failing closed
     ['a=(); echo hi > f.js', [here]],                                                              // bash: ./f.js
     ['a=(x y); echo hi > f.js', [here]],                                                           // bash: ./f.js
@@ -2266,9 +2269,69 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     assert.deepStrictEqual(files('echo `case x in a|x) cd /main; echo x > f.js;; esac`'), [MAIN_F, here].sort());
     assert.ok(files('case `true; cd /main | echo x > f.js; true` in x) true;; esac').includes(here));
   });
-  // bash: git runs in M.
+  // bash: git runs in M; the walk keeps the case's start too (#4486).
   test('#4303 case: gitTargets reads a pattern-list | the same way', () => {
-    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main')]);
+    assert.deepStrictEqual(gitTargets('case x in a|x) cd /main;; esac; git commit -m x', '/r').map((t) => t.dir), [path.resolve('/main'), path.resolve('/r')]);
+  });
+  // #4486: an arm runs only when its pattern matches, so every arm starts where the case began, and the
+  // commands after `esac` run under each arm's end and, unless a pattern of bare `*`s makes some arm run,
+  // under the case's start too. A quoted or escaped `*`, the subject and an extglob are no catch-all. Each
+  // row is [label, cmd, includes, excludes], with the files bash 3.2 and 5 write for each subject value
+  // (start = /r); a row bash 3.2 cannot parse (`;&`, `;;&`, an unparenthesized pattern inside `$( )`) is
+  // decided by bash 5, and zsh's `;|` rows by zsh.
+  test("AC1.1 #4486: fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r') includes /r/f and /wt/f", () => {
+    const got = fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r').map((t) => t.file);
+    for (const want of ['/r/f', '/wt/f']) assert.ok(got.includes(path.resolve(want)), `bash 3.2 and 5: ${want}`);
+  });
+  for (const [label, cmd, includes, excludes] of [
+    ['A', 'case $x in a) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],                   // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['B', 'case $x in a) cd /wt;; *) cd /q;; esac; echo x > f', ['/wt/f', '/q/f'], ['/r/f']],  // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['C', 'case $x in a) cd /wt;; b) echo y > g;; esac', ['/r/g'], ['/wt/g']],                  // bash 3.2 and 5: x=a none, x=b r/g
+    ['D', 'case $x in a) cd /wt;; *) true;; esac; echo x > f', ['/r/f', '/wt/f'], []],          // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['E', 'case $x in a|*) cd /wt;; esac; echo x > f', ['/wt/f'], ['/r/f']],                    // bash 3.2 and 5: x=b wt/f
+    ['F', 'case $x in (*) cd /wt;; esac; echo x > f', ['/wt/f'], ['/r/f']],                     // bash 3.2 and 5: x=b wt/f
+    ['G', 'case $x in "*") cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: x=b r/f
+    ['H', 'case $x in \\*) cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: x=b r/f
+    ['I', 'case $x in a) cd /wt;; *) { cd /q; } esac; echo x > f', ['/wt/f', '/q/f'], []],      // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['J', '{ case $x in a) cd /wt;; esac }; echo x > f', ['/wt/f', '/r/f'], []],                // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['N', 'case $x in a) cd /wt;; b) cd /q;; esac; echo x > f', ['/wt/f', '/q/f', '/r/f'], []], // bash 3.2 and 5: x=a wt/f, x=b q/f, x=c r/f
+    ['O', 'case $x in\n  a) cd /wt ;;\n  *) cd /q ;;\nesac\necho x > f', ['/wt/f', '/q/f'], ['/r/f']], // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['Q', 'case $x in a) cd /wt;; esac && echo x > f', ['/r/f', '/wt/f'], []],                  // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['R', 'case $x in a) case $y in b) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c r/f (y=b: q/f)
+    ['T', 'case $x in a) cd /wt;; *) true; esac; echo x > f', ['/r/f', '/wt/f'], []],           // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['U', 'case $x in a) cd wt;; *) cd q;; esac; echo x > f', ['/r/wt/f', '/r/q/f'], ['/r/wt/q/f', '/r/f']], // bash 3.2 and 5: x=a wt/f, x=b q/f
+    ['X', 'cd /m && case $x in a) cd /wt;; esac; echo x > f', ['/m/f', '/wt/f'], []],           // bash 3.2 and 5: x=a wt/f, x=b m/f (and r/f if the cd fails)
+    ['SUBJ', 'case * in a) cd /wt;; esac; echo x > f', ['/r/f'], []],                           // bash 3.2 and 5: r/f
+    ['SUBJNL', 'case *\nin a) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f
+    ['EXTG', 'shopt -s extglob\ncase $x in *(a)) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []], // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['FALL', 'case $x in a) cd /wt;& b) echo y > g;; esac', ['/wt/g', '/r/g'], []],              // bash 5: x=a wt/g, x=b r/g (3.2 cannot parse `;&`)
+    ['FALL3', 'case $x in a) cd /wt;;& *) cd /q;; esac; echo x > f', ['/q/f'], ['/r/f']],       // bash 5: q/f for x=a and b
+    ['SUBST', 'echo $(case $x in a) cd /wt;; esac; echo x > f)', ['/r/f', '/wt/f'], []],        // bash 5: x=a wt/f, x=b r/f (3.2 cannot parse)
+    ['SUBC', 'echo $(case $x in a) cd /wt;; b) echo y > g;; esac)', ['/r/g'], []],              // bash 5: x=b r/g
+    ['SUBT', 'echo $(case $x in a) cd /wt;; *) true; esac; echo x > f)', ['/r/f', '/wt/f'], []], // bash 5: x=a wt/f, x=b r/f
+    ['SUBJ2', 'echo $({ case $x in a) cd /wt;; esac }; echo x > f)', ['/r/f', '/wt/f'], []],    // bash 5: x=a wt/f, x=b r/f
+    ['LOOKA', 'case $x in *a) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f (`*a` matches only a subject ending in a)
+    ['LOOKB', 'case $x in a*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['LOOKC', 'case $x in $*) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (`$*` is empty here; the walk also keeps wt/f, failing closed)
+    ['LOOKD', 'case $x in $p) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (p is unset; the walk also keeps wt/f, failing closed)
+    ['INNER', 'case $x in a) cd /w; case $y in *) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], ['/w/f']], // bash 3.2 and 5: x=a q/f, x=b r/f (the inner `*` is the inner case's catch-all, never the outer's)
+    ['SEQ', 'case $x in a) cd /wt;; esac; case $y in b) cd /q;; esac; echo x > f', ['/r/f', '/wt/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c wt/f, y=b q/f, x=b y=c r/f
+    ['CLOSEDA', 'case $x in $(echo a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],     // bash 3.2 and 5: x=a wt/f, x=b r/f (a `*` after a closed `$( )` is no catch-all)
+    ['CLOSEDB', 'shopt -s extglob\ncase $x in @(a)*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []], // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['ORFAIL','case $x in a) cd /wt; false;; esac || echo x > f', ['/wt/f'], []],               // bash 3.2 and 5: x=a wt/f (the arm's last command fails, so the `||` runs under /wt)
+    ['ZSHBAR', 'case $x in a) cd /wt ;| b) echo y > g;; esac', ['/r/g'], []],                   // zsh 5: x=b r/g (`;|` keeps testing patterns; bash rejects it)
+    ['ZSHBAR2', 'case $x in a) cd /wt ;| a|b) echo y > g;; esac', ['/r/g', '/wt/g'], []],       // zsh 5: x=a wt/g, x=b r/g
+  ]) {
+    test(`#4486 case: \`${cmd}\` ends under every arm and the start without a catch-all`, () => {
+      const got = files(cmd);
+      for (const want of includes) assert.ok(got.includes(path.resolve(want)), `${label}: bash writes ${want}; got ${JSON.stringify(got)}`);
+      for (const not of excludes) assert.ok(!got.includes(path.resolve(not)), `${label}: bash never writes ${not}; got ${JSON.stringify(got)}`);
+    });
+  }
+  test('AC2.3 #4486: policy-schema-coverage.md no longer lists an unmatched case arm as a known gap', () => {
+    const text = readText(SCHEMA);
+    assert.ok(!text.includes('a case arm whose pattern does not match'), 'the known-gap clause is gone');
+    assert.ok(text.includes('a pattern of bare `*`s'), 'the coverage prose states the catch-all rule');
   });
 }
 
