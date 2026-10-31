@@ -603,6 +603,13 @@ test('#4704: git saying "not a repo" keeps the path-only union', () => {
   );
 });
 
+test('#4704: a worktree path that does not exist (no repo root AND no realpath: null === null) keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: false }), realpath: () => null }),
+    [OTHER],
+  );
+});
+
 test('#4704: a --worktree that is not the main checkout\'s root keeps the path-only union even when repoInfo (walking up) reports the main checkout', () => {
   assert.deepStrictEqual(
     otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT }, ['--worktree', '/main/.claude/worktrees/removed']),
