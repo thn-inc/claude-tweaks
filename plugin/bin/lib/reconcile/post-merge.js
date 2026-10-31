@@ -266,7 +266,9 @@ async function postMerge({
     if (prState.state !== 'MERGED') continue;
 
     const mergedAt = Date.parse(prState.mergedAt);
-    if (Number.isNaN(mergedAt) || now() - mergedAt < MERGE_GRACE_MS) {
+    // `<=`: a run is processed only strictly past the grace, so strictly past CLOSE_WINDOW_MS too
+    // (closing-links settles a still-open will-close record only once the clock is past mergedAt + window).
+    if (Number.isNaN(mergedAt) || now() - mergedAt <= MERGE_GRACE_MS) {
       entries.push({ runDir: dir, pr, action: 'skipped', reason: 'merge-grace' });
       deferred.push(dir);
       continue;
@@ -367,7 +369,7 @@ function processRun({
     ...numbers(envelope.reopened), ...numbers(envelope.pendingClose),
     ...(Array.isArray(envelope.failed) ? envelope.failed : []).map((f) => f && f.issue).filter(Number.isInteger),
   ];
-  // selfInclude: false — this runs at least MERGE_GRACE_MS after the merge, so every closing record's live
+  // selfInclude: false — this runs more than MERGE_GRACE_MS after the merge, so every closing record's live
   // state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
   const { closed, skipped } = closeParents({
     closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, integrationBranch: integration, gh: timedGh,

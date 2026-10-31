@@ -262,6 +262,29 @@ test('merge grace: a merge 2 minutes old, or with no mergedAt, is skipped, untou
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
 });
 
+test('merge grace boundary: a merge exactly MERGE_GRACE_MS old is still in grace; 1 ms later runs, strictly past the close window', async () => {
+  const root = mainCheckout();
+  const edge = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
+  const past = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
+  const links = fakeClosingLinks(ENVELOPE);
+  const r = await run(root, {
+    prs: {
+      11: merged(new Date(NOW - MERGE_GRACE_MS).toISOString()),
+      12: merged(new Date(NOW - MERGE_GRACE_MS - 1).toISOString()),
+    },
+    links,
+    close: fakeCloseParents(),
+  });
+  const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
+  assert.deepEqual([byPr[11].action, byPr[11].reason], ['skipped', 'merge-grace']);
+  assert.deepEqual(r.deferred, [edge]);
+  assert.equal(byPr[12].action, 'ran');
+  assert.deepEqual(links.calls.map((c) => c.argv[1]), [past]);
+  // closing-links settles a still-open record only once now > mergedAt + window, so the window must
+  // never outlast the grace: every run that gets here is strictly past it.
+  assert.ok(CLOSE_WINDOW_MS <= MERGE_GRACE_MS);
+});
+
 test('deferred holds in-flight, claim-failed and network-failure runs only; marker-write-failed, gh-absent, dry-run, marked and OPEN are not', async () => {
   const root = mainCheckout();
   const inFlight = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
@@ -472,7 +495,7 @@ test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions
   fs.mkdirSync(path.join(dir, 'spec-2'));
   const marker = formatEntry({ status: 'AUTO', now: NOW, step: 'pr-first-merge Step 4.0b', spec: 2, text: 'closed parent #9', reversibility: 'high' });
   fs.writeFileSync(path.join(dir, 'spec-2', 'decisions.md'), `${marker}\n`);
-  // A spec-* file (not a directory) and a non-spec directory never count.
+  // A non-spec directory beside it carries the same marker; root2 below shows that one alone never counts.
   fs.mkdirSync(path.join(dir, 'staged'));
   fs.writeFileSync(path.join(dir, 'staged', 'decisions.md'), `${marker}\n`);
   const looked = [];
