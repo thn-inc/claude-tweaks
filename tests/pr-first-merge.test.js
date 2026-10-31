@@ -500,3 +500,86 @@ test('#3607: a clean update-from-base entered from Step 2.5 re-enters Step 2.5, 
   assert.ok(conflict.includes('entered from Step 2.5'), 'Conflict path must name its Step 2.5 entry');
   assert.ok(conflict.includes('re-enter Step 2.5 from the top'), 'a pushed head from a Step 2.5 entry needs its own CI read before any merge');
 });
+
+// #4550: a derived merge-verification `off` (no policy.yml key) waits on a PR's own observed
+// pending checks and parks on a red one; an explicit `off` keeps Step 3 as written. Frozen
+// pre-change `off` row below proves the pins can go red [IL-105].
+const PRE_4550_OFF_ROW = "| `off` | Step 3 as written (today's behavior, unchanged) | Step 3 as written (today's behavior — this is the #540-shaped race the lever exists to close; a repo derives `off` only when it has no PR CI or a non-default integration branch, `_shared/policy-schema-coverage.md`'s coverage block) | Step 3 as written; the red read is logged for the summary |";
+
+const DERIVED_OFF_NEEDLES = [
+  ['project-level read (no --run)', 'node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" merge-verification\n'],
+  ['derived entry literal', '`{"value":"off","source":"default"}`'],
+  ['read failure counts as derived', 'or the read fails'],
+  ['explicit: policy source', '`source: policy`'],
+  ['explicit: run-level off over another project value', 'a run-level `off` over another project value'],
+  ['verdict: explicit only when policy-sourced', 'explicit only when its `merge-verification` entry shows `source: policy`'],
+  ['verdict: everything else is derived, an unparseable read included', 'derived otherwise — `{"value":"off","source":"default"}`, or the read fails or is unparseable'],
+  ['a derived read never merges blind', '— a wait, never a blind merge.'],
+  ['park comment names derived off', "Under a derived `off`, the comment's `{value}`/`$VALUE` is `derived off`."],
+  ['off row pending → watch', 'Derived `off` → **Bounded watch** below'],
+  ['off row pending explicit → Step 3', 'Explicit `off` → Step 3 as written |'],
+  ['off row red split', '| Derived `off` → **Red path**. Explicit `off` → Step 3 as written; the red read is logged for the summary |'],
+  ['red bullet: explicit merges, derived parks', 'but an explicit `off` merges anyway; a derived `off` takes the **Red path**'],
+  ['AUTO line', 'derived off with pending checks on PR #{n} — bounded watch'],
+  ['watch heading names derived off', 'and a derived `off` with pending checks)'],
+  ['AUTO lever field', 'bounded watch. Reversibility: n/a. [lever: merge-verification=off (default)]'],
+];
+
+// Frozen pre-#4550 text (git show 47f5ad905) — go-red controls for the heading and the red bullet.
+const PRE_4550_WATCH_HEADING = '**Bounded watch (`wait`, and `merge-when-green` when arming would not hold) — 15 minutes, fixed.**';
+const PRE_4550_RED_BULLET = `- Any \`statusCheckRollup[]\` entry with \`conclusion\` in \`FAILURE\`, \`TIMED_OUT\`, \`ERROR\`, or \`STARTUP_FAILURE\`
+  — or any head run whose \`status\` is \`completed\` and whose \`conclusion\`, compared case-insensitively (run conclusions are lowercase), is in that same list → **red** (the *PR being merged* has a failing check — distinct from #561's red *tip*, which is
+  reconcile's concern). Take the **Red path** below now, before anything else. Under \`off\` this
+  read still runs — \`off\` skips the *wait*, not the read — but the value \`off\` merges anyway
+  (today's behavior); the red classification is logged and shown, not acted on.`;
+
+function assertDerivedOffRule(section) {
+  for (const [label, needle] of DERIVED_OFF_NEEDLES) {
+    assert.ok(section.includes(needle), `Step 2.5 missing ${label}: ${needle}`);
+  }
+}
+
+test('AC1.1 AC3.1 AC4.1: Step 2.5 carries the derived-off pending and red rule', () => {
+  assertDerivedOffRule(step25Section());
+});
+
+test('AC7.1: each derived-off pin goes red when its clause is removed, and on the pre-#4550 off row', () => {
+  const section = step25Section();
+  assertDerivedOffRule(section); // the unmutated text passes, so each throw below is the mutation's doing
+  for (const [label, needle] of DERIVED_OFF_NEEDLES) {
+    assert.throws(() => assertDerivedOffRule(section.replace(needle, '')), `removing ${label} must fail the pin`);
+  }
+  const currentRow = section.split('\n').find((l) => l.startsWith('| `off` |'));
+  assert.throws(() => assertDerivedOffRule(section.replace(currentRow, PRE_4550_OFF_ROW)));
+  const currentHeading = section.split('\n').find((l) => l.startsWith('**Bounded watch ('));
+  assert.ok(currentHeading, 'Step 2.5 must carry the bounded-watch heading');
+  assert.throws(() => assertDerivedOffRule(section.replace(currentHeading, PRE_4550_WATCH_HEADING)), 'the pre-change heading must fail the pin');
+  const redStart = section.indexOf('- Any `statusCheckRollup[]` entry');
+  assert.ok(redStart !== -1, 'Step 2.5 must carry the red classification bullet');
+  const currentRedBullet = section.slice(redStart, section.indexOf('\n- Any entry with `status`', redStart));
+  assert.throws(() => assertDerivedOffRule(section.replace(currentRedBullet, PRE_4550_RED_BULLET)), 'the pre-change red bullet must fail the pin');
+  const inverted = section.replace('explicit only when', 'derived only when').replace('derived otherwise', 'explicit otherwise');
+  assert.notStrictEqual(inverted, section, 'live text carries both verdict words the inversion swaps');
+  assert.throws(() => assertDerivedOffRule(inverted), 'swapping which off counts as derived must fail the pin');
+});
+
+// Frozen pre-#4550 empty-rollup bullet (git show 316a1fa3e^) — the AC2.1 go-red control [IL-105].
+const PRE_4550_EMPTY_ROLLUP = `- An **empty rollup** → read the merge state first: \`mergeStateStatus: DIRTY\` (or \`mergeable: CONFLICTING\`)
+  → **conflict** — take the **Conflict path** below now, under every lever value, with no bounded
+  watch. A branch that conflicts with its base gets no \`pull_request\` workflow runs, so its rollup
+  stays empty and waiting only parks it as \`checks-pending-timeout\` (#3607). Any other merge state
+  depends on the lever: under \`merge-when-green\` or \`wait\` the repo has PR CI
+  by construction (\`_shared/policy-schema-coverage.md\`'s coverage block derives those values only when a
+  \`pull_request\`-triggered workflow exists, and an explicit value is a statement that CI is
+  expected), so an empty rollup means the checks have not *reported yet* — GitHub populates it
+  seconds after a push, not instantly — and reads as **pending**, never green; under \`off\` it is
+  simply "no CI" and proceeds as green.`;
+
+function assertEmptyRollupNeverWaits(bullet) {
+  assert.ok(bullet.includes('proceeds as green — derived `off` too, so a PR with no checks never waits'), 'empty-rollup bullet must state a derived off never waits');
+}
+
+test('AC2.1 AC2.2: a derived off with an empty rollup still proceeds green', () => {
+  assertEmptyRollupNeverWaits(emptyRollupBullet());
+  assert.throws(() => assertEmptyRollupNeverWaits(PRE_4550_EMPTY_ROLLUP), 'the pre-#4550 bullet fails the same pin (go-red) [IL-105]');
+});
