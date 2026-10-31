@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** `detectIntegrationModel` bounds its `gh repo view` probe with the repo's resolved `gh` timeout, retries once on a timeout, and reports a degraded detection (through an opt-in callback) that `resolve-policy.js` surfaces on stderr and in its JSON — for the `integration-model` key and for a `merge-verification` request that runs its own forge detection; both lifecycle hooks (PreToolUse and SessionStart) pass an explicit hook bound instead, and the PreToolUse PR-stamp gate never caches a degraded detection as `prExempt`.
+**Goal:** `detectIntegrationModel` bounds its `gh repo view` probe with the repo's resolved `gh` timeout, retries once on a timeout, and reports a degraded detection (through an opt-in callback) that `resolve-policy.js` surfaces on stderr and in its JSON — for the `integration-model` key and for a `merge-verification` request that runs its own forge detection (which now honours the run's `--run` `integration-model` pin first); both lifecycle hooks (PreToolUse and SessionStart) pass an explicit hook bound instead, and the PreToolUse PR-stamp gate never caches a degraded detection as `prExempt`.
 
-**Architecture:** All detection logic stays in `plugin/bin/lib/policy-schema.js`: a new `resolveForgeProbeTimeoutMs(repoRoot, opts)` (explicit `opts.timeoutMs` > valid `CLAUDE_TWEAKS_GH_TIMEOUT_MS` > `{repoRoot}/.claude-tweaks/policy.yml`'s `gh-timeout-ms` > 5000), error classification, one retry after a timeout, and `opts.onDegrade(degrade)` when the retry fails too. The string return is unchanged for every caller. `policy-derived-defaults.js` threads the callback into an additive `degraded` field — on the `integration-model` entry, and on the `merge-verification` entry when its fallback ran detection itself — and `resolve-policy.js` prints one stderr line per degraded key. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` takes `{ timeoutMs, onDegrade }` as a parameter (the hook passes `HOOK_FORGE_PROBE_TIMEOUT_MS` and a degrade flag; `precondition.js` passes nothing), the gate treats a degraded result like its catch branch (no `prExempt` cached), and `session-start.js` passes the same bound into `reconcile()`, which forwards it.
+**Architecture:** All detection logic stays in `plugin/bin/lib/policy-schema.js`: a new `resolveForgeProbeTimeoutMs(repoRoot, opts)` (explicit `opts.timeoutMs` > valid `CLAUDE_TWEAKS_GH_TIMEOUT_MS` > `{repoRoot}/.claude-tweaks/policy.yml`'s `gh-timeout-ms` > 5000), error classification, one retry after a timeout, and `opts.onDegrade(degrade)` when the retry fails too. The string return is unchanged for every caller. `policy-derived-defaults.js` threads the callback into an additive `degraded` field — on the `integration-model` entry, and on the `merge-verification` entry when its fallback ran detection itself — and `resolve-policy.js` prints one stderr line per degraded key. The merge-verification fallback reads the run's `config.yml` `integration-model` pin (handed in as `deps.runConfigRaw`) before it ever calls `resolveIntegrationModel`. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` takes `{ timeoutMs, onDegrade }` as a parameter (the hook passes `HOOK_FORGE_PROBE_TIMEOUT_MS` and a degrade flag; `precondition.js` passes nothing), the gate treats a degraded result like its catch branch (no `prExempt` cached), and `session-start.js` passes the same bound into `reconcile()`, which forwards it.
 
 **Tech Stack:** Node 18+ CommonJS, `child_process.execFileSync`, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T153223-record-4578/work/4578-spec.md` (record #4578, including its seven `Decision (plan review, 2026-10-31)` bullets, Q1–Q7)
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T175200-record-4578/work/4578-spec.md` (record #4578, including its nine `Decision (plan review, 2026-10-31)` bullets, Q1–Q9)
 
 **Scope keywords:** detectIntegrationModel, resolveRunPinnedIntegrationModel, gh-timeout-ms
 
@@ -26,10 +26,12 @@
 - Stderr line (exact): `resolve-policy: degraded — integration-model: {formatForgeDegrade text}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`, printed once per process, in every output mode.
 - JSON entry on a degraded detection: `{ value: 'local-merge', source: 'default', degraded: '{formatForgeDegrade text}' }`. Non-degraded entries keep exactly `{ value, source }`. `--values` stdout unchanged.
 - Decision Q6: each degrade reason has its own text and its own CLI test — `timeout` (two timeouts) keeps "(x2)"; `timeout-then-exit` prints "…, then gh failed on retry".
-- Decision Q7: when `merge-verification` is requested WITHOUT `integration-model`, `computeDerivedDefaults`'s fallback passes `onDegrade` into `resolveIntegrationModel`; a reported degrade adds `degraded: '{formatForgeDegrade text}'` to the `merge-verification` entry (its value stays whatever `deriveMergeVerification` derives from the degraded `local-merge`, i.e. `off`), and `resolve-policy.js` prints, once per process: `resolve-policy: degraded — merge-verification: {formatForgeDegrade text}; derived from integration-model local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`. When both keys are requested, merge-verification reuses the integration-model value (no second detection), so only the `integration-model` entry and line report the degrade.
+- Decision Q7: whenever `computeDerivedDefaults`'s merge-verification fallback actually calls `resolveIntegrationModel` — `merge-verification` requested WITHOUT `integration-model`, OR requested WITH an `integration-model` entry that is `invalid` (its value is not a reusable string, so the fallback re-detects) — it passes `onDegrade`; a reported degrade adds `degraded: '{formatForgeDegrade text}'` to the `merge-verification` entry (its value stays whatever `deriveMergeVerification` derives from the degraded `local-merge`, i.e. `off`), and `resolve-policy.js` prints the merge-verification stderr line below once per process. When both keys are requested and `integration-model` resolved to a valid value, merge-verification reuses it (no second detection), so only the `integration-model` entry and line report the degrade.
+- Decision Q8: the merge-verification fallback honours the run's pinned `integration-model` before any forge detection. `resolve-policy.js` passes `runConfigRaw` (already returned by `resolvePolicyConfig`) into `computeDerivedDefaults` as `deps.runConfigRaw`; the fallback resolves `resolvePolicyKeys(['integration-model'], { policyRaw: null, runConfigRaw: deps.runConfigRaw })` and, when that entry's `source === 'run-config'` and it is not `invalid`, derives from that value (`integrationModel: () => pinned`) and never calls `resolveIntegrationModel` (so never `gh` for forge detection, never `onDegrade`). No run pin → `resolveIntegrationModel(r, { mcpReachable, onDegrade })` as before, which already honours a `policy.yml` pin. `deps.runConfigRaw` absent (tests, other callers) → treated as no run pin. Note: `deriveMergeVerification`'s branch (3) `readDefaultBranch` is a separate `gh repo view` (defaultBranchRef) lookup outside forge detection, reached only for a `pr-first` model with PR-triggered CI under `.github/workflows`; the Q8 pin tests use a fixture repo with no `.github/workflows`, so ladder branch (2) returns `off` before it, and any `gh` invocation counted there is forge detection.
+- Decision Q9: the merge-verification stderr line reuses Deliverable 4's shape with only the key name swapped — exact: `resolve-policy: degraded — merge-verification: {formatForgeDegrade text}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`. Its `{formatForgeDegrade text}` is the same two texts the `integration-model` key prints ("(x2)" / "…, then gh failed on retry"); no new wording anywhere.
 - Decision Q5: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})` forwards `opts.timeoutMs` and `opts.onDegrade` to `detectIntegrationModel` (each only when set). The PR-stamp gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade }`, where `onDegrade` sets a local `degraded` flag; after resolution, `degraded` → `modelResolved = false`, so no `prExempt` is written and the next covered call detects again. The test-only `deps.resolveIntegrationModel` override receives the same `{ onDegrade }` as a second argument (existing one-argument overrides ignore it).
 - Decision Q2: `HOOK_FORGE_PROBE_TIMEOUT_MS = 5000` (per gh attempt). Hook worst case `GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS = 15000` ms — "the hook budget" is that 15 s bound. One constant, exported from `policy-schema.js`, imported by both hooks.
-- Decision Q3: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})`; the PreToolUse gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS }`; `plugin/bin/lib/pr-bookkeeping/precondition.js` keeps its two-argument call and follows the ladder.
+- Decision Q3: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})`; the PreToolUse gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade }` (the Q5 shape); `plugin/bin/lib/pr-bookkeeping/precondition.js` keeps its two-argument call and follows the ladder.
 - Decision Q1: `session-start.js`'s inline `reconcile()` call passes `forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`; `reconcile()` forwards it as `timeoutMs` to `resolveIntegrationModel` only when set (an unset option adds no key, so `{ mcpReachable }` stays the exact forwarded shape).
 - No top-level `require('./policy')` or `require('./shared-primitives')` in `policy-schema.js` (require cycle / cwd-anchored getter). Use the module's own `readFileSafe`, `parseFlatLines`, `isValidValue`, `resolveValue`, `SCHEMA_BY_KEY`.
 - Every real spawn keeps `windowsHide: true` in an options object literal `tests/windows-hide-spawn-conformance.test.js` can see (governing skill `gh-api-module-pattern`: "it accepts a literal `windowsHide` key there, or a bare identifier as the whole options argument whose own `const X = { … }` literal names it ... A spread ... satisfies neither and fails the full suite").
@@ -41,7 +43,8 @@
 
 - A fake `gh` killed on timeout must not leave an orphaned `sleep` holding the stdout pipe — `execFileSync` would then block for the full sleep. The fake's hang/slow modes `exec` or trap-kill their sleep; Task 1 Step 4 checks the file's wall time.
 - A caller requesting `integration-model` twice (`resolve-policy.js integration-model integration-model`) still prints exactly one degrade line — Task 2 test.
-- A pin (policy.yml or `--run` config.yml) short-circuits before any `gh` spawn — Task 1 and Task 2 each count fake-`gh` invocations under a pin and assert 0.
+- A pin (policy.yml or `--run` config.yml) short-circuits before any `gh` spawn — Task 1 and Task 2 each count fake-`gh` invocations under a pin and assert 0, for `integration-model` AND for a merge-verification-only request (Decision Q8).
+- The merge-verification degrade line is Deliverable 4's line with the key swapped (Decision Q9) — no "derived from" wording anywhere in code, tests, or docs.
 - `CLAUDE_TWEAKS_GH_TIMEOUT_MS` set to a non-integer or out-of-range value falls through to policy, not to 5000 and not a throw — Task 1 test.
 - A degraded detection in the PR-stamp gate must leave `run-state.json` without `prExempt` (Decision Q5), while a clean `local-merge` still persists it — Task 3 tests both via the `deps.resolveIntegrationModel` override.
 - `reconcile()` callers that never set `forgeProbeTimeoutMs` (CLI verb, background pass, tests) keep the forwarded shape `{ mcpReachable }` exactly — the existing `#1558` test in `tests/reconcile.test.js` stays green and Task 4 adds the set case.
@@ -67,7 +70,10 @@
 | AC14.1, AC14.2 | Task 1 — `timeout then non-zero exit on retry -> degraded, two invocations, one degrade` |
 | AC15.1, AC15.2 | Task 3 — `resolveRunPinnedIntegrationModel forwards opts.onDegrade`; `bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt` |
 | AC16.1, AC16.2 | Task 1 — `formatForgeDegrade renders both exact degraded strings`; Task 2 — `degraded detection: timeout then a failed retry prints its own text (Q6)` |
-| AC17.1 | Task 2 — `computeDerivedDefaults: a merge-verification-only request reports a degraded fallback detection (Q7)` and `degraded detection: a merge-verification-only request prints its own degraded line and field (Q7)` |
+| AC17.1 | Task 2 — `computeDerivedDefaults: a merge-verification-only request reports a degraded fallback detection (Q7)`, `computeDerivedDefaults: an invalid integration-model entry requested with merge-verification re-detects with onDegrade attached (Q7)` and `degraded detection: a merge-verification-only request prints its own degraded line and field (Q7)` |
+| AC18.1, AC18.2 | Task 2 — `computeDerivedDefaults: a merge-verification-only request honours the run's config.yml integration-model pin before forge detection (Q8)` |
+| AC18.3 | Task 2 — `merge-verification-only request: a --run config.yml integration-model pin never invokes gh (Q8, AC18.3)` |
+| AC19.1, AC19.2 | Task 2 — `degraded detection: a merge-verification-only request prints its own degraded line and field (Q7, AC17.1, AC19.1)` and `degraded detection: merge-verification timeout then a failed retry prints the integration-model key's text (Q9, AC19.1, AC19.2)` |
 
 Waived AC11.3: provenance tag "(Plan-review Q1: Reading B.)" — no behavior to test.
 Waived AC12.3: provenance tag "(Q2: Reading B.)" — no behavior to test.
@@ -76,6 +82,8 @@ Waived AC14.3: provenance tag "(Q4: Reading B.)" — no behavior to test.
 Waived AC15.3: provenance tag "(Plan-review Q5: Reading B.)" — no behavior to test.
 Waived AC16.3: provenance tag "(Q6: Reading B.)" — no behavior to test.
 Waived AC17.2: provenance tag "(Q7: Reading B.)" — no behavior to test.
+Waived AC18.4: provenance tag "(Plan-review Q8.)" — no behavior to test.
+Waived AC19.3: provenance tag "(Q9.)" — no behavior to test.
 
 Waived bin/verify-run-bookends.js: read-only style reference for the `degraded —` line.
 Waived plugin/bin/lib/shared-primitives.js: read-only reference for the env > policy > default ladder; not changed.
@@ -173,7 +181,10 @@ git add tests/helpers/fake-gh.js plugin/bin/lib/policy-schema.js plugin/skills/_
 git commit -m "Honour gh-timeout-ms in detectIntegrationModel — retry once on timeout, report degrade via onDegrade, refs #4578"
 ```
 
-### Task 2: Surface a degraded detection in `computeDerivedDefaults` and `resolve-policy.js`
+### Task 2: Surface a degraded detection in `computeDerivedDefaults` and `resolve-policy.js`; the merge-verification fallback honours the run pin
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/policy-derived-defaults.js` (integration-model block 41-47, header comment)
@@ -183,8 +194,9 @@ git commit -m "Honour gh-timeout-ms in detectIntegrationModel — retry once on 
 - Test: `tests/resolve-policy-cli.test.js`
 
 **Interfaces:**
-- Consumes: `detectIntegrationModel(root, { mcpReachable, onDegrade })`, `formatForgeDegrade(degrade)` from Task 1; `fakeGh` from `tests/helpers/fake-gh.js`.
-- Produces: `result['integration-model']` and (merge-verification-only requests) `result['merge-verification']` per Global Constraints (additive `degraded` field only on a degraded detection).
+- Consumes: `detectIntegrationModel(root, { mcpReachable, onDegrade })`, `formatForgeDegrade(degrade)` from Task 1; `resolvePolicyKeys` (already exported by `policy-schema.js`); `fakeGh` from `tests/helpers/fake-gh.js`.
+- Produces: `computeDerivedDefaults(result, keys, root, deps)` accepts an additive `deps.runConfigRaw?: string | null` (Decision Q8); `result['integration-model']` and (whenever the merge-verification fallback ran detection) `result['merge-verification']` per Global Constraints (additive `degraded` field only on a degraded detection).
+- Return-shape widening check (done while authoring): `tests/merge-verification.test.js` and `tests/resolve-policy-cli.test.js` assert these entries with `deepStrictEqual` / exact-JSON comparisons on non-degraded paths; the field is added only on a degraded detection, so those assertions keep their exact `{ value, source }` shape — the new non-degraded-shape test below pins that.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -201,6 +213,17 @@ test('computeDerivedDefaults: a merge-verification-only request reports a degrad
   // (real deriveMergeVerification: local-merge -> 'off')
   // deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'forge detection timed out after 1000 ms, then gh failed on retry' })
   // and a second call whose resolveIntegrationModel never calls onDegrade keeps exactly { value: 'off', source: 'default' }
+test('computeDerivedDefaults: an invalid integration-model entry requested with merge-verification re-detects with onDegrade attached (Q7)', ...)
+  // keys ['integration-model', 'merge-verification']; result['integration-model'] = { value: null, source: 'default', invalid: true }
+  // deps.resolveIntegrationModel = (root, opts) => { opts.onDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }); return 'local-merge'; }
+  // the invalid integration-model entry is left untouched (still invalid: true, no degraded field);
+  // deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'forge detection timed out after 1000 ms (x2)' })
+test('computeDerivedDefaults: a merge-verification-only request honours the run\'s config.yml integration-model pin before forge detection (Q8, AC18.1, AC18.2)', ...)
+  // keys ['merge-verification']; deps.runConfigRaw = 'integration-model: pr-first\n'
+  // deps.resolveIntegrationModel = () => { calls++; return 'local-merge'; }
+  // deps.deriveMergeVerification = (root, d) => { seenModel = d.integrationModel(root); return 'merge-when-green'; }
+  // strictEqual(calls, 0); strictEqual(seenModel, 'pr-first'); deepEqual(out['merge-verification'], { value: 'merge-when-green', source: 'default' })
+  // control: same call with deps.runConfigRaw = 'integration-model: bogus\n' (invalid) and with runConfigRaw absent -> calls === 1 each
 ```
 
 `tests/resolve-policy-cli.test.js` (`{ skip: STUB_SKIP }`): a temp git repo under `os.tmpdir()` with `origin` = `https://github.com/o/n.git`, `fakeGh({ first: 'hang' })`, spawn the CLI from that repo with env `{ ...process.env, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000' }`:
@@ -218,13 +241,27 @@ test('degraded detection: timeout then a failed retry prints its own text (Q6, A
   // fakeGh({ first: 'hang', rest: 'fail' }); args ['integration-model']
   // parsed['integration-model'].degraded === 'forge detection timed out after 1000 ms, then gh failed on retry'
   // exactly one stderr line, equal to the Global Constraints line with that text; gh.count() === 2
-test('degraded detection: a merge-verification-only request prints its own degraded line and field (Q7, AC17.1)', ...)
+test('degraded detection: a merge-verification-only request prints its own degraded line and field (Q7, AC17.1, AC19.1)', ...)
   // fakeGh({ first: 'hang' }); args ['merge-verification']
   // parsed['merge-verification'] deepEqual { value: 'off', source: 'default', degraded: 'forge detection timed out after 1000 ms (x2)' }
-  // exactly one stderr line matching /degraded — /, equal to the Global Constraints merge-verification line
+  // exactly one stderr line matching /degraded — /, equal to the Decision Q9 merge-verification line:
+  //   'resolve-policy: degraded — merge-verification: forge detection timed out after 1000 ms (x2); resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms'
+test('degraded detection: merge-verification timeout then a failed retry prints the integration-model key\'s text (Q9, AC19.1, AC19.2)', ...)
+  // fakeGh({ first: 'hang', rest: 'fail' }); args ['merge-verification']
+  // parsed['merge-verification'].degraded === 'forge detection timed out after 1000 ms, then gh failed on retry'
+  // exactly one stderr line, equal to the Decision Q9 line with that text; assert.doesNotMatch(stderr, /derived from/); gh.count() === 2
 test('a policy.yml pin or a --run config.yml pin never invokes gh (AC7.1)', ...)
   // policy 'integration-model: pr-first\n' -> --values stdout 'pr-first\n', gh.count() 0;
   // no policy + --run {tmp run dir}/config.yml 'integration-model: pr-first\n' -> 'pr-first\n', gh.count() 0
+test('merge-verification-only request: a --run config.yml integration-model pin never invokes gh (Q8, AC18.3)', ...)
+  // fakeGh({ first: 'hang' }); no policy.yml; the fixture repo has NO .github/workflows (ladder branch (2) -> off, so
+  //   deriveMergeVerification's separate readDefaultBranch gh lookup is never reached — see Decision Q8's note)
+  // for pin of 'pr-first' and of 'local-merge': --run {tmp run dir} whose config.yml is 'integration-model: {pin}\n'
+  //   (and no merge-verification line); args ['--run', runDir, 'merge-verification']
+  //   status 0; parsed['merge-verification'] deepEqual { value: 'off', source: 'default' } (no degraded field);
+  //   no stderr line matching /degraded — /; gh.count() === 0
+  // control (same test, counted as a delta of gh.count()): the same call with no --run -> +2 invocations and the Q9 degraded line printed — proves the
+  //   fixture reaches forge detection when unpinned, so the pinned zero is not vacuous
 ```
 
 The `--run` fixture dir must be outside every checkout (`os.tmpdir()`), which the anchored-or-outside guard accepts.
@@ -232,13 +269,13 @@ The `--run` fixture dir must be outside every checkout (`os.tmpdir()`), which th
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/merge-verification.test.js tests/resolve-policy-cli.test.js`
-Expected: FAIL — no `degraded` field, no stderr line.
+Expected: FAIL — no `degraded` field, no stderr line; the Q8 pin tests see the fallback call `resolveIntegrationModel` (unit) / two fake-`gh` invocations (CLI).
 
 - [ ] **Step 3: Implement**
 
-- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: formatForgeDegrade(degrade)` only when one was reported. Do the same in the merge-verification fallback (`resolveModel(r, { mcpReachable, onDegrade })`, only on the branch where `integration-model` was not requested) and add `degraded` to the `merge-verification` entry. Update the header comment.
-- `resolve-policy.js`: after `computeDerivedDefaults`, for `integration-model` then `merge-verification`, when that entry's `degraded` is set, write its Global Constraints stderr line once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade lines and the additive `degraded` field.
-- `docs/plugin-structure.md` line 234: add one clause naming the degraded stderr line and the additive `degraded` JSON field, for `integration-model` and a merge-verification-only request (#4578).
+- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: formatForgeDegrade(degrade)` only when one was reported. In the merge-verification fallback (every branch that does not reuse a valid `integration-model` string — not requested, or requested but invalid): first resolve the run pin per Decision Q8 from `deps.runConfigRaw`; a valid `run-config` pin → `integrationModel: () => pinned`, no `resolveModel` call; otherwise `resolveModel(r, { mcpReachable, onDegrade })`, and add `degraded` to the `merge-verification` entry when a degrade was reported. Update the header comment (name `deps.runConfigRaw` and the Q8 pin-first rule beside the existing #1421 note).
+- `resolve-policy.js`: pass `runConfigRaw` from `resolvePolicyConfig`'s return into `computeDerivedDefaults(result, keys, root, { mcpReachable, runConfigRaw })`. After `computeDerivedDefaults`, for `integration-model` then `merge-verification`, when that entry's `degraded` is set, write its stderr line (Global Constraints / Decision Q9) once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade lines and the additive `degraded` field.
+- `docs/plugin-structure.md` line 234: add one clause naming the degraded stderr line and the additive `degraded` JSON field, for `integration-model` and a merge-verification request that runs its own detection, and that the merge-verification fallback honours a `--run` `integration-model` pin first (#4578).
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -249,7 +286,7 @@ Expected: PASS
 
 ```bash
 git add plugin/bin/lib/policy-derived-defaults.js plugin/bin/resolve-policy.js docs/plugin-structure.md tests/merge-verification.test.js tests/resolve-policy-cli.test.js
-git commit -m "Surface degraded integration-model detection in resolve-policy — stderr line plus JSON degraded field, refs #4578"
+git commit -m "Surface degraded integration-model detection in resolve-policy — stderr line plus JSON degraded field, merge-verification honours the run pin, refs #4578"
 ```
 
 ### Task 3: Timeout and degrade parameters on `resolveRunPinnedIntegrationModel`; the PreToolUse gate passes the hook bound and never caches a degrade
@@ -258,7 +295,7 @@ git commit -m "Surface degraded integration-model detection in resolve-policy �
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (import line 37, `resolveRunPinnedIntegrationModel` 1621-1660, gate model resolution 2063-2077 and the `prExempt` write 2137-2148)
+- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (import line 37, `resolveRunPinnedIntegrationModel` ~1648, gate model resolution ~2073 and the `prExempt` write after it)
 - Test: `tests/hooks-pre-tool-use.test.js` (beside the existing `resolveRunPinnedIntegrationModel: exported …` test, ~1249)
 - Test: `tests/hooks-bookkeeping-stamps-gate.test.js` (beside the `#1258` `prExempt` tests, ~1752)
 - Modify: `docs/hooks.md` (the "The run's pin, not a fresh detection." bullet, line 45: its "Never persisted when the resolution itself threw" sentence gains the degraded-detection case — Decision Q5's behavior change)
@@ -282,7 +319,8 @@ test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hoo
   // const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
   // strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000)
   // assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000)
-  // source scan of pre-tool-use.js: match /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS\s*\}\)/
+  // source scan of pre-tool-use.js: match /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/
+  // (the Q5 call shape; Decision Q3 Global Constraint)
 });
 test('precondition.js keeps the two-argument resolveRunPinnedIntegrationModel call — it follows the gh-timeout-ms ladder (#4578 AC13.2, AC13.3)', () => {
   // source scan of plugin/bin/lib/pr-bookkeeping/precondition.js:
