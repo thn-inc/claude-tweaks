@@ -1629,18 +1629,7 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
 });
 
 test('AC1.1: accept:pending satisfies the pending-label check', () => {
-  const runDir = makeTmpDir('verify-acceptance-accept-pass-');
-  writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: [{ name: 'accept:pending' }], comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
-    }
-    return '';
-  };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
-  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  const row = acceptanceLabelingRow(['accept:pending'], 'verify-acceptance-accept-pass-');
   assert.strictEqual(row.result, 'pass', row.detail);
 });
 
