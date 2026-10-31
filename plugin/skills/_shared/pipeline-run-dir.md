@@ -48,7 +48,7 @@ rather than silently substituted. Never creates a directory unless `--create` is
   call site that only ever needed the main-checkout root (a `find` backstop scoped to the whole
   `pipelines/` tree, the transitional copy-out guard's destination computation), never a specific
   run's directory.
-- `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
+- `--archived` (#4677): needs `--spec-slug <s>`, and is refused with `--create` or without `--spec-slug`, both checked before step 1. It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr` object: an `archive/` dir, or a live `clean` dir that `archive-run` refused (a live dir whose run-id also exists under `archive/` is never adopted). That match is refused, exit 1, when a newer live run of the same slug is not closed (`interrupted`, or an `active` run step 2 refused), because merging the older run's still-open PR would skip it. It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
 
 ## Anchoring
 

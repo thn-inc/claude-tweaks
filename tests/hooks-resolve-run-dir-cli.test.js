@@ -89,4 +89,5 @@ test('AC3.1 #4677: CLI --archived prints the archived run path, exit 0; the same
   assert.strictEqual(out.stdout.trim(), archived);
   const plain = run(['--spec-slug', 'spec-48'], main, { PIPELINE_RUN_DIR: '' });
   assert.notStrictEqual(plain.code, 0);
+  assert.match(plain.stderr, /no pipeline run directory resolved/);
 });

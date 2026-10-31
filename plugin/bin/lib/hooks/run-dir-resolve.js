@@ -12,8 +12,10 @@
 //
 // `run-dir-resolution.md`'s Bash snippet stays as the reference implementation
 // this module mirrors — except that step 2 here also refuses an unadoptable
-// match (`adoptionRefusal`, #1962/#4151), which the snippet does not. Every
-// call site should cite this command instead of restating that snippet.
+// match (`adoptionRefusal`, #1962/#4151), and that the opt-in `--archived`
+// fallback (`closedPrMatch`, #4677; documented in `_shared/pipeline-run-dir.md`)
+// runs after step 2, neither of which the snippet does. Every call site should
+// cite this command instead of restating that snippet.
 //
 // Deliberately loud where the shared resolution algorithm (as consumed by a
 // skill adopting $PIPELINE_RUN_DIR) is deliberately quiet: that algorithm
@@ -154,12 +156,15 @@ function newestMatch(pipelinesRoot, specSlug) {
 // pr-first leave-open run before the human types `merge`, so the merge step needs a run that records
 // its `pr` but that step 2 can no longer adopt (archived, or `clean`). Candidates: every canonical
 // run-id dir for `specSlug` under archive/, plus every such dir directly under pipelines/ whose status
-// is exactly `clean` and not archived (#208). Walked newest-first, an archived dir winning a name tie;
-// the first whose run-state.json is a plain object recording a `pr` object is returned. A read error
-// on either listing contributes no candidates. Read-only: nothing is created, renamed or written.
-// Newest-with-a-pr is deliberate even when a newer live non-`clean` run (say `interrupted`, PR #2)
-// sits beside an older archived run (PR #1): `--archived` returns the archived one (PR #1), and the
-// caller's `OPEN` precondition on the PR is what makes that safe — a stale PR is refused there.
+// is exactly `clean` and not archived (#208). Walked newest-first; an archived dir wins a name tie,
+// which the #208 filter leaves reachable only when `archiveStatus` reads `unknown`. The first whose
+// run-state.json is a plain object recording a `pr` object is `{ dir }`. A read error on either
+// listing contributes no candidates. Read-only: nothing is created, renamed or written.
+// A newer live run of the same slug that is not closed (`interrupted`, or an `active` run step 2
+// refused) supersedes that match: `{ superseded }` names it and the caller stops. The older run's
+// leave-open PR is still `OPEN` by construction, so merge mode's `OPEN` precondition cannot refuse it,
+// and merging it would skip the newer run (#4677 review). A newer live dir whose run-state.json does
+// not parse is no evidence of a competing run and supersedes nothing.
 function closedPrMatch(pipelinesRoot, specSlug) {
   const readState = (dir) => {
     try {
@@ -172,12 +177,13 @@ function closedPrMatch(pipelinesRoot, specSlug) {
     const dir = path.join(archiveRoot, name);
     return { name, dir, archived: true, state: readState(dir) };
   });
+  let newestOpen = null; // names ascend, so the last open live run seen is the newest
   for (const name of matchingRunNames(pipelinesRoot, specSlug)) {
     const dir = path.join(pipelinesRoot, name);
     const state = readState(dir);
-    if (state && state.status === 'clean' && archiveStatus(pipelinesRoot, name) !== 'archived') {
-      candidates.push({ name, dir, archived: false, state });
-    }
+    if (!state || archiveStatus(pipelinesRoot, name) === 'archived') continue;
+    if (state.status === 'clean') candidates.push({ name, dir, archived: false, state });
+    else newestOpen = { name, status: state.status };
   }
   candidates.sort((a, b) => {
     if (a.name !== b.name) return a.name < b.name ? -1 : 1;
@@ -185,7 +191,10 @@ function closedPrMatch(pipelinesRoot, specSlug) {
   });
   for (let i = candidates.length - 1; i >= 0; i -= 1) {
     const pr = candidates[i].state && candidates[i].state.pr;
-    if (pr && typeof pr === 'object' && !Array.isArray(pr)) return candidates[i].dir;
+    if (pr && typeof pr === 'object' && !Array.isArray(pr)) {
+      if (newestOpen && newestOpen.name > candidates[i].name) return { superseded: newestOpen };
+      return { dir: candidates[i].dir };
+    }
   }
   return null;
 }
@@ -291,7 +300,14 @@ function resolve(opts = {}) {
   // see closedPrMatch.
   if (opts.archived) {
     const closed = closedPrMatch(pipelinesRoot, opts.specSlug);
-    if (closed) return ok(closed, false);
+    if (closed && closed.superseded) {
+      return fail(
+        'archived-superseded',
+        `--archived: ${closed.superseded.name}, a newer run for "${opts.specSlug}", is not closed ` +
+        `(status ${String(closed.superseded.status)}) — resume or close it instead of merging an older run's PR.`,
+      );
+    }
+    if (closed) return ok(closed.dir, false);
   }
 
   // Standalone-fallback-shaped creation. Never runs unless --create was
