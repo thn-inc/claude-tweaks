@@ -29,8 +29,8 @@ function normalizePrListing(entries, owner, repo) {
     if (!isPlainObject(entry)) throw new Error(`open-PR listing entry ${i} is not an object`);
     const notAPr = () => new Error(`open-PR listing entry ${i} is not a PR`);
     // body: a string, or null (REST returns null for an empty body); a missing
-    // key is a malformed entry, never an unmarked PR.
-    if (!('body' in entry) || (typeof entry.body !== 'string' && entry.body !== null)) throw notAPr();
+    // key reads undefined here, so it is a malformed entry, never an unmarked PR.
+    if (typeof entry.body !== 'string' && entry.body !== null) throw notAPr();
     if ('html_url' in entry || 'head' in entry) {
       if (typeof entry.html_url !== 'string') throw notAPr();
       // head.repo === null is a deleted fork (cross-repository); a missing head
