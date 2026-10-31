@@ -38,9 +38,11 @@ const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on t
 const BOT_IN_PROGRESS_COLOR = '6A737D';
 const ABORT_REASON = 'never-started: file-overlap group partial claim';
 
-const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--help]\n'
+const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep-going] [--run <run-dir>] [--steps <step,step,...>] [--resume-pr <url>] [--help]\n'
   + '  --steps <step,step,...>: the resolved /flow step list; one with neither build nor test claims\n'
   + '           nothing and exits 0 with {claimed:[],alreadyOwned:[],skipped:[],skipGuard:"no-build-or-test"}\n'
+  + '  --resume-pr <url>: re-claims a stale claim whose in-flight PR is exactly <url> (dispatch resume, #4588);\n'
+  + '           the envelope then carries resumedPr:[{issue,link}] and the claim-log line names the PR\n'
   + '  --run <run-dir>: writes the Step 2.8 claim-log line to that run dir\'s decisions.md for every claimed target\n'
   + '  exit 0 = all claimed (or, with --keep-going, partial; or the --steps skip-guard)\n'
   + '  exit 2 = malformed invocation or missing dependency\n'
@@ -66,7 +68,7 @@ function parseJsonOrNull(text) {
 
 function parseArgs(argv) {
   const opts = {
-    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null,
+    runId: null, targetsRaw: null, keepGoing: false, help: false, runDir: null, stepsRaw: null, resumePr: null,
   };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -77,6 +79,7 @@ function parseArgs(argv) {
     else if (a === '--keep-going') opts.keepGoing = true;
     else if (a === '--run') opts.runDir = next();
     else if (a === '--steps') opts.stepsRaw = next();
+    else if (a === '--resume-pr') opts.resumePr = next();
     else return { error: `unknown argument: ${a}` };
   }
   return opts;
@@ -141,7 +144,7 @@ function parseSteps(raw) {
 // decisions.md the main-checkout bookkeeping-stamps gate never reads. A
 // refusal throws — the caller's existing try/catch (see `run()` below)
 // records it in `claimLogFailures` and never un-claims the target.
-function defaultAppendClaimLog({ runDir, issue, transport }) {
+function defaultAppendClaimLog({ runDir, issue, transport, resumePr }) {
   const target = resolveTarget({ runDir });
   if (!target.ok) {
     throw new Error(`run dir not usable for the claim log (${target.reason})`);
@@ -153,7 +156,7 @@ function defaultAppendClaimLog({ runDir, issue, transport }) {
       status: 'AUTO',
       now: Date.now(),
       step: CLAIM_LOG_STEP,
-      text: claimLogText(issue, transport),
+      text: claimLogText(issue, transport, resumePr),
       reversibility: 'high',
     }),
   });
@@ -287,6 +290,15 @@ function run(argv, deps) {
     return 2;
   }
 
+  // #4588: `--resume-pr` takes a PR url. A bare trailing flag (`undefined`), a
+  // blank value, or a value that is itself another flag (`--resume-pr
+  // --keep-going`) is malformed — never silently read as "no resume".
+  if (opts.resumePr !== null
+    && (typeof opts.resumePr !== 'string' || opts.resumePr.trim() === '' || opts.resumePr.startsWith('--'))) {
+    deps.stderr(USAGE);
+    return 2;
+  }
+
   // #4027: `flow/claim-targets.md`'s skip-guard — a step list with neither
   // `build` nor `test` (a dispatched group's second call, any wrap-up-only
   // resume) has nothing left to build, so nothing to lock. Checked after all
@@ -348,6 +360,8 @@ function run(argv, deps) {
   const skipped = [];
   const labelFailures = [];
   const transportByIssue = {};
+  // #4588: stale claims `--resume-pr` re-claimed instead of stopping in-flight.
+  const resumedPr = [];
 
   // #1467: amortizes this loop's git-CAS fetch across the whole batch instead
   // of one `git fetch` per issue. `null` means "no trusted tip — fetch fresh
@@ -494,6 +508,7 @@ function run(argv, deps) {
 
     const content = read.absent ? null : read.content;
     const classified = classifyClaimBlob(content, deps.now());
+    let resumeLink = null; // #4588: set only by the 'stale' branch below when `--resume-pr` matches
 
     // A `pr-opened:` tombstone whose linked PR is still open means a build
     // already completed for this issue and is awaiting merge — reclaiming
@@ -547,7 +562,14 @@ function run(argv, deps) {
       const inFlight = claimStore.staleClaimInFlightPr(content, cachedPrReadGh, repoOwner, repoName, (e) => {
         deps.stderr(`claim-targets: stale-claim open-PR check failed for #${issue} (reclaiming) — ${errText(e)}\n`);
       });
-      if (inFlight) {
+      if (inFlight && opts.resumePr !== null && inFlight.link === opts.resumePr) {
+        // #4588: the one exception — the caller is resuming exactly this PR
+        // (`/dispatch resume`), so the stale claim is re-claimed below instead
+        // of stopping in flight. Exact string equality with the link
+        // `staleClaimInFlightPr` returns; a pr-opened tombstone never reaches here.
+        // Recorded in `resumedPr` only once the claim lands (below).
+        resumeLink = inFlight.link;
+      } else if (inFlight) {
         const stop = stopOrSkip(issue, 'in-flight', 'inFlight', 3, { link: inFlight.link });
         if (stop !== null) return stop;
         continue;
@@ -656,6 +678,7 @@ function run(argv, deps) {
     }
 
     claimedThisRun.push(issue);
+    if (resumeLink !== null) resumedPr.push({ issue, link: resumeLink });
 
     try {
       ensureAndAddLabel(deps.gh, issue);
@@ -686,7 +709,12 @@ function run(argv, deps) {
   if (opts.runDir !== null) {
     for (const issue of claimedThisRun) {
       try {
-        deps.appendClaimLog({ runDir: opts.runDir, issue, transport: transportByIssue[issue] });
+        // `resumePr` rides along only for an issue `--resume-pr` re-claimed, so
+        // every other call keeps its existing `{runDir, issue, transport}` shape.
+        const resumed = resumedPr.find((r) => r.issue === issue);
+        deps.appendClaimLog({
+          runDir: opts.runDir, issue, transport: transportByIssue[issue], ...(resumed ? { resumePr: resumed.link } : {}),
+        });
       } catch (e) {
         const error = errText(e);
         claimLogFailures.push({ issue, error });
@@ -698,6 +726,7 @@ function run(argv, deps) {
   deps.stdout(JSON.stringify({
     claimed: claimedThisRun, alreadyOwned, skipped, labelFailures, transportByIssue,
     ...(opts.runDir !== null ? { claimLogFailures } : {}),
+    ...(opts.resumePr !== null ? { resumedPr } : {}),
   }));
   return 0;
 }

@@ -134,12 +134,13 @@ to Step 3 for any of them. One invocation claims the whole list:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" \
-  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR"
+  --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR" [--resume-pr "$RESUME_PR"]
 ```
 
 `{steps}` is the resolved step list (`SKILL.md` Step 1, item 4), comma-joined. Pass `--keep-going`
 only when this run is in `keep-going` mode (below); a default-mode run (single- or multi-target)
-omits the flag. The CLI implements `_shared/issue-claims.md`'s "The
+omits the flag. Pass `--resume-pr` only for `RESUME_PR=<url>` — exit 3's in-flight variant below
+states what it changes. The CLI implements `_shared/issue-claims.md`'s "The
 lock" steps 1-6 — read, classify, and the create-only/conditional/contested branch — via
 `bin/lib/issues/claim-store.js`, the one contents-API implementation this CLI and
 `reconcile/release-merged.js`'s release path both delegate to: the absent branch that
@@ -182,6 +183,11 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 On the `gh` path, `claim-targets.js` itself already writes this exact line — via `--run` on the
 invocation above — for every target in its `claimed` array (#2775), so the `log-decision.js` call
 just shown is required only for the `gh`-absent MCP procedure's own successful writes.
+
+For a target the MCP procedure reclaimed through `_shared/issue-claims.md`'s resume exception
+(`RESUME_PR`, #4588), the hand-logged `--text` carries the suffix the CLI writes for it —
+`claimed #{n} (bin/claim-targets.js, transport: mcp, resume-pr: {url})`, `{url}` being the
+`RESUME_PR` value.
 
 This does not itself guarantee the CLI/procedure was invoked — an agent that skips the claim call
 above skips this log line too, for the same reason. It exists so a **later** phase (`/wrap-up`'s
@@ -259,6 +265,14 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` from this card itself — same as the contest card, this file never asks.
+
+  **Resume exception (#4588).** Only an invocation carrying `RESUME_PR=<url>` (`dispatch resume`)
+  forwards `--resume-pr "$RESUME_PR"`; without it this stop is unchanged (#4423). With it, a
+  `'stale'` claim whose in-flight link is exactly `<url>` is re-claimed by the ordinary conditional
+  write instead of stopping here, and the envelope gains `resumedPr: [{issue, link}]` — branch on
+  the exit code, never on `resumedPr`. A `pr-opened:` tombstone still stops (close-out owns it); a
+  `'stale'` claim whose link differs from `<url>` still stops too (another build's PR). Both
+  render the card above.
 
   **Route into the existing build's resume/merge-decision machinery (#958), when a human can act
   on it.** Skip this routing entirely when `DISPATCH_HEADLESS=1` was set on this Task call's
