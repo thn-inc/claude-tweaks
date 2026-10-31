@@ -305,6 +305,7 @@ module.exports = {
   VERDICT_FIELDS,
   IDEMPOTENCE_VALUES,
   isCloseMarkerComment,
+  distinctAscending,
   GhFailure,
   ghCaller,
   resolveParent,

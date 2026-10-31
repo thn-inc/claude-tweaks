@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  FACTS_KEYS, FactsError, normalizeMcpFacts, requireIdempotenceReads,
+  FACTS_KEYS, FactsError, normalizeMcpFacts, withIdempotenceReads,
 } = require('../../../plugin/bin/lib/issues/mcp-parent-gate-shape');
 
 // One MCP `issue_read` get result, written unreshaped: lowercase enums, label objects, snake_case.
@@ -61,7 +61,9 @@ test('normalizes the MCP shape', () => {
       },
     ],
   });
-  assert.deepEqual(idempotence, {
+  // The two idempotence reads are not touched here: withIdempotenceReads completes them.
+  assert.deepEqual(idempotence, { state: 'OPEN', stateReason: '' });
+  assert.deepEqual(withIdempotenceReads(mcpFacts(), idempotence), {
     state: 'OPEN',
     stateReason: '',
     comments: [{
@@ -79,7 +81,10 @@ test('normalizes the MCP shape', () => {
 });
 
 test('is a no-op on a gh-shaped entry', () => {
-  assert.deepEqual(normalizeMcpFacts(ghTwin(), NATIVE_PARENT), normalizeMcpFacts(mcpFacts(), NATIVE_PARENT));
+  const viaGh = normalizeMcpFacts(ghTwin(), NATIVE_PARENT);
+  const viaMcp = normalizeMcpFacts(mcpFacts(), NATIVE_PARENT);
+  assert.deepEqual(viaGh, viaMcp);
+  assert.deepEqual(withIdempotenceReads(ghTwin(), viaGh.idempotence), withIdempotenceReads(mcpFacts(), viaMcp.idempotence));
 });
 
 test('a sub-issue entry resolves its parent natively or from the body', () => {
@@ -112,9 +117,8 @@ test('an error object recorded as data is exit 3, named', () => {
     ['parentGet', (f) => { f.parentGet = { message: 'Not Found', status: '404' }; }],
     ['subIssueList.1', (f) => { f.subIssueList = [{ number: 11 }, { message: 'Not Found' }]; }],
     ['subIssueList', (f) => { f.subIssueList = { message: 'Not Found' }; }],
-    ['parentComments', (f) => { f.parentComments = { message: 'Not Found' }; }],
-    ['parentComments.0', (f) => { f.parentComments = [{ message: 'Not Found' }]; }],
-    ['me', (f) => { f.me = { message: 'Bad credentials' }; }],
+    ['subIssueGets.11', (f) => { f.subIssueGets[11].title = 7; }],
+    ['subIssueGets.11', (f) => { f.subIssueGets[11].body = 7; }],
     ['subIssueGets.11', (f) => { f.subIssueGets[11].labels = [{ id: 1 }]; }],
     ['subIssueGets.11', (f) => { f.subIssueGets[11].closed_by_pull_requests = 'none'; }],
     ['subIssueGets.11', (f) => { f.subIssueGets[11].closed_by_pull_requests = [{ id: 7 }]; }],
@@ -131,9 +135,52 @@ test('an error object recorded as data is exit 3, named', () => {
     assert.equal(err.key, key);
     assert.ok(err.message.length > 0, key);
   }
-  const body = factsError(() => normalizeMcpFacts({ subIssueGet: issue(11) }, { subIssue: 11, workLinks: 'body-text' }));
+  // A present body of the wrong type fails; an error object has no number.
+  const body = factsError(() => normalizeMcpFacts({ subIssueGet: issue(11, { body: 7 }) }, { subIssue: 11, workLinks: 'body-text' }));
   assert.equal(body.exit, 3);
   assert.equal(body.key, 'subIssueGet');
+  const parentBody = mcpFacts();
+  parentBody.parentGet.body = ['- [ ] #11'];
+  const wrongParentBody = factsError(() => normalizeMcpFacts(parentBody, { parent: 10, workLinks: 'body-text' }));
+  assert.equal(wrongParentBody.exit, 3);
+  assert.equal(wrongParentBody.key, 'parentGet');
+  assert.equal(factsError(() => normalizeMcpFacts({ subIssueGet: { message: 'Not Found' } }, { subIssue: 11, workLinks: 'body-text' })).exit, 3);
+});
+
+test('an absent or null body, labels, title or closed_by_pull_requests normalizes to empty', () => {
+  for (const missing of [undefined, null]) {
+    const facts = mcpFacts();
+    facts.parentGet.labels = missing;
+    facts.subIssueGets[11].labels = missing;
+    facts.subIssueGets[11].title = missing;
+    facts.subIssueGets[11].closed_by_pull_requests = missing;
+    facts.subIssueGets[12].closedByPullRequestsReferences = missing;
+    delete facts.subIssueGets[12].closed_by_pull_requests;
+    const { gate } = normalizeMcpFacts(facts, NATIVE_PARENT);
+    assert.deepEqual(gate.parentLabels, []);
+    assert.deepEqual(gate.subIssues[0], {
+      number: 11, title: '', state: 'CLOSED', stateReason: 'COMPLETED', labels: [], closedBy: [],
+    });
+    assert.deepEqual(gate.subIssues[1].closedBy, []);
+  }
+  // REST returns body: null for an empty issue: no parent line, no task list.
+  for (const body of [undefined, null, '']) {
+    const sub = normalizeMcpFacts({ subIssueGet: issue(11, { body }) }, { subIssue: 11, workLinks: 'body-text' });
+    assert.equal(sub.gate.parent, null);
+    const facts = { parentGet: issue(10, { state: 'open', body }), subIssueGets: {} };
+    const parent = normalizeMcpFacts(facts, { parent: 10, workLinks: 'body-text' });
+    assert.deepEqual(parent.gate.subIssues, []);
+  }
+});
+
+test('a task list enumerates positive integers only, as the gh path does', () => {
+  const facts = mcpFacts();
+  facts.parentGet.body = '- [ ] #0\n- [x] #11\n- [ ] #12\n- [ ] #11\n';
+  const { gate } = normalizeMcpFacts(facts, { parent: 10, workLinks: 'body-text' });
+  assert.deepEqual(gate.subIssues.map((s) => s.number), [11, 12]);
+  const nativeFacts = mcpFacts();
+  nativeFacts.subIssueList = [{ number: 11 }, { number: 12 }];
+  assert.deepEqual(normalizeMcpFacts(nativeFacts, NATIVE_PARENT).gate.subIssues.map((s) => s.number), [11, 12]);
 });
 
 test('a missing or unrequested key is exit 1', () => {
@@ -164,19 +211,34 @@ test('a missing or unrequested key is exit 1', () => {
   assert.equal(noBody.key, 'subIssueGet');
 });
 
-test('comments and me are optional until an open parent needs them', () => {
-  const facts = mcpFacts();
-  delete facts.parentComments;
-  delete facts.me;
-  const { idempotence } = normalizeMcpFacts(facts, NATIVE_PARENT);
-  assert.equal(idempotence.comments, undefined);
-  assert.equal(idempotence.login, undefined);
-  assert.equal(factsError(() => requireIdempotenceReads(idempotence)).key, 'parentComments');
-  assert.equal(factsError(() => requireIdempotenceReads({ ...idempotence, comments: [] })).key, 'me');
-  assert.equal(factsError(() => requireIdempotenceReads(idempotence)).exit, 1);
-  assert.doesNotThrow(() => requireIdempotenceReads({ ...idempotence, comments: [], login: 'bot' }));
-  assert.doesNotThrow(() => requireIdempotenceReads({ state: 'CLOSED', stateReason: 'COMPLETED' }));
-  assert.doesNotThrow(() => requireIdempotenceReads({ state: 'OPEN', stateReason: 'REOPENED' }));
+test('comments and me are required and guarded only for an open, non-reopened parent', () => {
+  const open = { state: 'OPEN', stateReason: '' };
+  // Absent -> exit 1, naming the key.
+  const noComments = factsError(() => withIdempotenceReads({ me: { login: 'bot' } }, open));
+  assert.equal(noComments.exit, 1);
+  assert.equal(noComments.key, 'parentComments');
+  const noMe = factsError(() => withIdempotenceReads({ parentComments: [] }, open));
+  assert.equal(noMe.exit, 1);
+  assert.equal(noMe.key, 'me');
+  // Present but failing its guard -> exit 3.
+  const guards = [
+    ['parentComments', { parentComments: { message: 'Not Found' }, me: { login: 'bot' } }],
+    ['parentComments.0', { parentComments: [{ message: 'Not Found' }], me: { login: 'bot' } }],
+    ['me', { parentComments: [], me: { message: 'Bad credentials' } }],
+    ['me', { parentComments: [], me: { login: '' } }],
+  ];
+  for (const [key, raw] of guards) {
+    const err = factsError(() => withIdempotenceReads(raw, open));
+    assert.equal(err.exit, 3, key);
+    assert.equal(err.key, key);
+  }
+  // A CLOSED or REOPENED parent never reads them: even an error object there is ignored.
+  const junk = { parentComments: { message: 'Not Found' }, me: { message: 'x' } };
+  assert.deepEqual(withIdempotenceReads(junk, { state: 'CLOSED', stateReason: 'COMPLETED' }), { state: 'CLOSED', stateReason: 'COMPLETED' });
+  assert.deepEqual(withIdempotenceReads({}, { state: 'OPEN', stateReason: 'REOPENED' }), { state: 'OPEN', stateReason: 'REOPENED' });
+  // Complete -> the gh idempotence shape.
+  const done = withIdempotenceReads({ parentComments: [], me: { login: 'bot' } }, open);
+  assert.deepEqual(done, { state: 'OPEN', stateReason: '', comments: [], login: 'bot' });
 });
 
 test('FACTS_KEYS lists the seven keys', () => {

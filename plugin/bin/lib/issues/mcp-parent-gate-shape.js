@@ -12,15 +12,32 @@
 // Found'}`) or a wrapper written as data fails its guard with a FactsError of exit
 // 3 and is never read as content. A required key that is absent, or a
 // `subIssueGets` key set that is not the enumerated numbers, is exit 1: the read
-// never happened. Normalization (rules 9 and 10): `state`/`stateReason` are
-// uppercased, label objects become names, `closedBy` is taken from either
-// `closedByPullRequestsReferences` or MCP's `closed_by_pull_requests`
+// never happened. An absent or null `body`, `labels`, `title` or
+// `closed_by_pull_requests` is not an error: GitHub REST returns `body: null` for an
+// empty issue and omits empty lists, so they normalize to '', [], '' and []; only a
+// present value of the wrong type fails. Normalization (rules 9 and 10):
+// `state`/`stateReason` are uppercased, label objects become names, `closedBy` is
+// taken from either `closedByPullRequestsReferences` or MCP's `closed_by_pull_requests`
 // (`_shared/github-write-transport.md`), and each comment is reshaped to gh's.
+//
+// The order the checks run in, which interleaves presence (exit 1) and guards (exit 3):
+//   1. the top level is a plain object (1);
+//   2. the sub-issue's own resolution entry, when only a sub-issue is in hand:
+//      `parentLink` present (1) then guarded (3), or, under body-text, `subIssueGet`;
+//   3. `parentGet` present (1) then guarded (3);
+//   4. the enumeration source: `subIssueList` present (1), then guarded (3), or, under
+//      body-text, `parentGet`'s body;
+//   5. `subIssueGets` present (1), an object (3), its key set equal to the enumerated
+//      numbers (1), then each entry guarded in ascending order (3).
+// normalizeMcpFacts stops there. `parentComments` and `me` are read by
+// `withIdempotenceReads`, which the CLI calls only where evaluateIdempotence reads them
+// (the parent due below the floor and neither CLOSED nor REOPENED): presence (1), then
+// guards (3). A gh-path verdict that never reads them must not depend on them.
 'use strict';
 
 const { parseSubIssues } = require('./record');
 const { normalizeLabelNames } = require('./record-vocabulary');
-const { PARENT_LINE_RE } = require('./parent-gate');
+const { PARENT_LINE_RE, distinctAscending } = require('./parent-gate');
 
 // The agent's seven fact keys, each one MCP result written unreshaped:
 //   parentLink    `get_parent` of the sub-issue in hand, or null when it has none (native).
@@ -66,18 +83,20 @@ function need(raw, key) {
 }
 
 // An `issue_read` get entry: a plain object whose number is the one asked for and whose
-// state is a string. `labels` and `body` are checked only where the caller reads them.
-function guardIssue(entry, key, number, { labels = false, body = false } = {}) {
+// state is a string. `title`, `body` and `labels` may be absent or null (see the header),
+// but a present value of the wrong type fails.
+function guardIssue(entry, key, number) {
   if (!isPlainObject(entry)) throw invalid(key, 'is not an issue object');
   if (entry.number !== number) throw invalid(key, `is not issue #${number} (number ${JSON.stringify(entry.number)})`);
   if (typeof entry.state !== 'string') throw invalid(key, 'has no string state');
   const reason = entry.stateReason ?? entry.state_reason;
-  if (reason !== undefined && reason !== null && typeof reason !== 'string') throw invalid(key, 'has a non-string state reason');
-  if (body && typeof entry.body !== 'string') throw invalid(key, 'has no string body');
-  if (labels) {
+  if (reason != null && typeof reason !== 'string') throw invalid(key, 'has a non-string state reason');
+  if (entry.title != null && typeof entry.title !== 'string') throw invalid(key, 'has a non-string title');
+  if (entry.body != null && typeof entry.body !== 'string') throw invalid(key, 'has a non-string body');
+  if (entry.labels != null) {
     const ok = Array.isArray(entry.labels)
       && entry.labels.every((l) => typeof l === 'string' || (isPlainObject(l) && typeof l.name === 'string'));
-    if (!ok) throw invalid(key, 'has no labels array of names or { name } objects');
+    if (!ok) throw invalid(key, 'has labels that are not an array of names or { name } objects');
   }
 }
 
@@ -87,10 +106,10 @@ function upper(value) {
 }
 
 // The PR numbers that closed an issue: gh's `closedByPullRequestsReferences`, or MCP's
-// `closed_by_pull_requests` as an array or as `{ references: [...] }`. [] when absent.
+// `closed_by_pull_requests` as an array or as `{ references: [...] }`. [] when absent or null.
 function closedByNumbers(entry, key) {
-  const raw = entry.closedByPullRequestsReferences !== undefined ? entry.closedByPullRequestsReferences : entry.closed_by_pull_requests;
-  if (raw === undefined) return [];
+  const raw = entry.closedByPullRequestsReferences ?? entry.closed_by_pull_requests;
+  if (raw == null) return [];
   const refs = Array.isArray(raw) ? raw : isPlainObject(raw) && Array.isArray(raw.references) ? raw.references : null;
   if (refs === null || !refs.every((ref) => isPlainObject(ref) && isPositiveInteger(ref.number))) {
     throw invalid(key, 'closed_by_pull_requests is not a list of { number } references');
@@ -98,16 +117,12 @@ function closedByNumbers(entry, key) {
   return refs.map((ref) => ref.number);
 }
 
-function distinctAscending(numbers) {
-  return [...new Set(numbers)].sort((a, b) => a - b);
-}
-
 // The sub-issue in hand -> its parent number, or null (shape 1 or 2 of the gate's resolution).
 function resolveParent(raw, subIssue, workLinks) {
   if (workLinks === 'body-text') {
     const entry = need(raw, 'subIssueGet');
-    guardIssue(entry, 'subIssueGet', subIssue, { body: true });
-    const match = PARENT_LINE_RE.exec(entry.body);
+    guardIssue(entry, 'subIssueGet', subIssue);
+    const match = PARENT_LINE_RE.exec(entry.body ?? '');
     return match ? Number(match[1]) : null;
   }
   const link = need(raw, 'parentLink');
@@ -118,7 +133,7 @@ function resolveParent(raw, subIssue, workLinks) {
 
 // The parent's sub-issue numbers, ascending: the task list (body-text) or `get_sub_issues` (native).
 function enumerate(raw, parentEntry, workLinks) {
-  if (workLinks === 'body-text') return distinctAscending(parseSubIssues(parentEntry.body));
+  if (workLinks === 'body-text') return distinctAscending(parseSubIssues(parentEntry.body ?? ''));
   const list = need(raw, 'subIssueList');
   if (!Array.isArray(list)) throw invalid('subIssueList', 'is not an array');
   list.forEach((entry, i) => {
@@ -140,8 +155,8 @@ function normalizeComment(c) {
 // raw facts + { subIssue | parent, workLinks } -> { gate, idempotence }.
 //   gate         { parent, parentLabels, subIssues: [{ number, title, state, stateReason, labels, closedBy }] }
 //                (the facts shape gatherGateFacts returns; with no parent, { parent: null, parentLabels: [], subIssues: [] }).
-//   idempotence  { state, stateReason, comments, login } for the parent, or null with no parent;
-//                `comments` and `login` are undefined when their keys are absent.
+//   idempotence  { state, stateReason } of the parent, or null with no parent; withIdempotenceReads
+//                adds `comments` and `login`.
 // Throws FactsError.
 function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   if (!isPlainObject(raw)) throw absent('(top level)', 'must be a JSON object');
@@ -152,7 +167,7 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   }
 
   const parentEntry = need(raw, 'parentGet');
-  guardIssue(parentEntry, 'parentGet', resolved, { labels: true, body: workLinks === 'body-text' });
+  guardIssue(parentEntry, 'parentGet', resolved);
   const numbers = enumerate(raw, parentEntry, workLinks);
 
   const gets = need(raw, 'subIssueGets');
@@ -164,7 +179,7 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   const subIssues = numbers.map((n) => {
     const key = `subIssueGets.${n}`;
     const entry = gets[String(n)];
-    guardIssue(entry, key, n, { labels: true });
+    guardIssue(entry, key, n);
     return {
       number: n,
       title: String(entry.title || '').trim(),
@@ -175,36 +190,29 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
     };
   });
 
-  let comments;
-  if (has(raw, 'parentComments')) {
-    if (!Array.isArray(raw.parentComments)) throw invalid('parentComments', 'is not an array');
-    comments = raw.parentComments.map((c, i) => {
-      if (!isPlainObject(c) || typeof c.body !== 'string') throw invalid(`parentComments.${i}`, 'is not a comment with a string body');
-      return normalizeComment(c);
-    });
-  }
-  let login;
-  if (has(raw, 'me')) {
-    if (!isPlainObject(raw.me) || typeof raw.me.login !== 'string' || raw.me.login === '') throw invalid('me', 'has no login');
-    login = raw.me.login;
-  }
-
   return {
     gate: { parent: resolved, parentLabels: normalizeLabelNames(parentEntry.labels), subIssues },
-    idempotence: {
-      state: upper(parentEntry.state), stateReason: upper(parentEntry.stateReason ?? parentEntry.state_reason), comments, login,
-    },
+    idempotence: { state: upper(parentEntry.state), stateReason: upper(parentEntry.stateReason ?? parentEntry.state_reason) },
   };
 }
 
-// The idempotence reads (`parentComments`, `me`) are optional in the file until the parent is
-// open and not reopened: only then does evaluateIdempotence read them. A missing one is exit 1.
-function requireIdempotenceReads(facts) {
-  if (facts.state === 'CLOSED' || facts.stateReason === 'REOPENED') return;
-  if (facts.comments === undefined) throw absent('parentComments', 'is required under --idempotence for an open parent below the floor');
-  if (facts.login === undefined) throw absent('me', 'is required under --idempotence for an open parent below the floor');
+// The gh idempotence facts for the parent: `idempotence` (from normalizeMcpFacts) plus the
+// guarded `parentComments` and `me`. Only an open, non-reopened parent reads them
+// (evaluateIdempotence), so any other parent returns `idempotence` unchanged without looking at
+// the file's two keys. A missing key is exit 1, a present one that fails its guard exit 3.
+function withIdempotenceReads(raw, idempotence) {
+  if (idempotence.state === 'CLOSED' || idempotence.stateReason === 'REOPENED') return idempotence;
+  const list = need(raw, 'parentComments');
+  if (!Array.isArray(list)) throw invalid('parentComments', 'is not an array');
+  const comments = list.map((c, i) => {
+    if (!isPlainObject(c) || typeof c.body !== 'string') throw invalid(`parentComments.${i}`, 'is not a comment with a string body');
+    return normalizeComment(c);
+  });
+  const me = need(raw, 'me');
+  if (!isPlainObject(me) || typeof me.login !== 'string' || me.login === '') throw invalid('me', 'has no login');
+  return { ...idempotence, comments, login: me.login };
 }
 
 module.exports = {
-  FACTS_KEYS, FactsError, normalizeMcpFacts, requireIdempotenceReads,
+  FACTS_KEYS, FactsError, normalizeMcpFacts, withIdempotenceReads,
 };

@@ -53,7 +53,7 @@ function makeGh(world) {
       return JSON.stringify({
         state: i.state || 'CLOSED', stateReason: 'stateReason' in i ? i.stateReason : 'COMPLETED', title: `Title ${m[1]}`,
         labels: (i.labels || ['risk:low']).map((name) => ({ name })),
-        closedByPullRequestsReferences: [],
+        closedByPullRequestsReferences: (i.closedBy || []).map((number) => ({ number })),
       });
     }
     m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
@@ -381,30 +381,44 @@ const boom = () => { throw new Error('gh was reached'); };
 const NO_GH = { ghAvailable: boom, runner: boom };
 
 // One MCP issue_read `get` result, unreshaped: lowercase enums, label objects, snake_case.
-const mcpIssue = (n, { state = 'CLOSED', stateReason = 'COMPLETED', labels = ['risk:low'] } = {}) => ({
+const mcpIssue = (n, {
+  state = 'CLOSED', stateReason = 'COMPLETED', labels = ['risk:low'], closedBy = [],
+} = {}) => ({
   number: n,
   title: `Title ${n}`,
   state: state.toLowerCase(),
   state_reason: stateReason ? stateReason.toLowerCase() : null,
   labels: labels.map((name) => ({ name, id: 1 })),
-  closed_by_pull_requests: { references: [] },
+  closed_by_pull_requests: { references: closedBy.map((number) => ({ number })) },
 });
 
 // A fake-gh `world` rendered as the file the agent would write for the record in hand.
-function worldAsMcp(world, subIssue) {
+// `workLinks: 'body-text'` writes the bodies the world holds instead of the native reads.
+function worldAsMcp(world, subIssue, workLinks = 'native') {
   const w = { parentOf: { 11: 10, 12: 10 }, subs: { 10: [11, 12] }, ...world };
-  const parent = subIssue ? w.parentOf[subIssue] : 10;
-  if (!parent) return { parentLink: null };
+  const bodyText = workLinks === 'body-text';
+  const bodyOf = (n) => (w.bodies || {})[n] || '';
+  let parent = 10;
+  if (subIssue) parent = bodyText ? Number((/^Parent: #(\d+)/m.exec(bodyOf(subIssue)) || [])[1]) || null : w.parentOf[subIssue];
+  if (!parent) return bodyText ? { subIssueGet: { ...mcpIssue(subIssue), body: bodyOf(subIssue) } } : { parentLink: null };
   const live = (w.parentLive || {})[parent] || { state: 'OPEN', stateReason: '', comments: [] };
-  return {
-    parentLink: { number: parent },
-    subIssueList: w.subs[parent].map((number) => ({ number })),
-    parentGet: mcpIssue(parent, { state: live.state, stateReason: live.stateReason, labels: (w.parentLabels || {})[parent] || ['parent-issue'] }),
+  const parentGet = mcpIssue(parent, { state: live.state, stateReason: live.stateReason, labels: (w.parentLabels || {})[parent] || ['parent-issue'] });
+  const facts = {
     subIssueGets: Object.fromEntries(w.subs[parent].map((n) => [n, mcpIssue(n, (w.issues || {})[n] || {})])),
     parentComments: live.comments.map((c) => ({
       body: c.body, user: { login: c.author.login }, author_association: c.authorAssociation, html_url: c.url,
     })),
     me: { login: w.login || 'bot' },
+  };
+  if (bodyText) {
+    return {
+      ...facts,
+      subIssueGet: { ...mcpIssue(subIssue, (w.issues || {})[subIssue] || {}), body: bodyOf(subIssue) },
+      parentGet: { ...parentGet, body: bodyOf(parent) },
+    };
+  }
+  return {
+    ...facts, parentLink: { number: parent }, parentGet, subIssueList: w.subs[parent].map((number) => ({ number })),
   };
 }
 
@@ -443,21 +457,31 @@ test('AC1.6: the gh path and the facts-json path give the same verdict', (t) => 
     [['--parent', '10'], { parentLabels: { 10: [] } }],
     [['--parent', '10'], { issues: { 12: { labels: ['risk:high'] } } }],
     [['--sub-issue', '11'], { parentOf: {} }],
+    // A closing PR: the last reference is the sub-issue's pr, and --merging-pr overrides it for a closing-set member.
+    [['--parent', '10'], { issues: { 11: { closedBy: [40] }, 12: { closedBy: [41, 42] } } }],
+    [['--sub-issue', '11', '--closing', '11', '--merging-pr', '50'], { issues: { 11: { ...OPEN, closedBy: [40] } } }],
+    // work-links: body-text, with a #0 in the task list that both paths skip.
+    [['--sub-issue', '11', '--work-links', 'body-text'], { bodies: { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #0\n- [x] #11\n- [ ] #12\n' } }],
+    [['--sub-issue', '11', '--work-links', 'body-text'], { bodies: { 11: 'no parent line' } }],
   ];
   const seenIdempotence = new Set();
+  const seenPr = new Set();
   for (const [argv, world] of worlds) {
     const label = JSON.stringify([argv, world]);
     const viaGh = go([...argv, '--idempotence'], world);
     const subIssue = argv[0] === '--sub-issue' ? Number(argv[1]) : null;
-    const file = writeFacts(t, worldAsMcp(world, subIssue));
+    const workLinks = argv.includes('body-text') ? 'body-text' : 'native';
+    const file = writeFacts(t, worldAsMcp(world, subIssue, workLinks));
     const viaFacts = go([...argv, '--idempotence', '--facts-json', file], world, NO_GH);
-    assert.equal(viaGh.code, 0, label);
+    assert.equal(viaGh.code, 0, `${label}: ${viaGh.stderr}`);
     assert.equal(viaFacts.code, 0, `${label}: ${viaFacts.stderr}`);
     assert.deepEqual(viaFacts.verdict, viaGh.verdict, label);
     seenIdempotence.add(viaGh.verdict.idempotence);
+    for (const s of viaGh.verdict.subIssues) seenPr.add(s.pr);
   }
-  // The worlds reach every idempotence value, so the equality above is not vacuous.
+  // The worlds reach every idempotence value and several pr values, so the equality above is not vacuous.
   assert.deepEqual([...seenIdempotence].map(String).sort(), ['already-closed', 'close-only', 'comment-and-close', 'null', 'reopened']);
+  assert.deepEqual([...seenPr].map(String).sort(), ['40', '42', '50', 'null']);
 });
 
 test('--facts-json makes no gh call and never probes gh', (t) => {
@@ -500,6 +524,36 @@ test('an open below-floor parent without comments or me is exit 1 under --idempo
   assert.equal(meless.code, 1);
   assert.equal(meless.stdout, '');
   assert.match(meless.stderr, /facts file me: /);
+});
+
+test('--idempotence guards parentComments and me only where the verdict reads them', (t) => {
+  const errored = { parentComments: { message: 'Not Found' }, me: { message: 'Bad credentials' } };
+  const argv = (file) => ['--parent', '10', '--idempotence', '--facts-json', file];
+  // An incomplete parent never reaches the idempotence check: the gh verdict, exit 0.
+  const incomplete = { ...worldAsMcp({ issues: { 12: OPEN } }, null), ...errored };
+  const viaGh = go(['--parent', '10', '--idempotence'], { issues: { 12: OPEN } });
+  const r = go(argv(writeFacts(t, incomplete)), {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'incomplete');
+  assert.deepEqual(r.verdict, viaGh.verdict);
+  // So do a gated parent, one above the floor, and an already-closed parent.
+  const above = go(argv(writeFacts(t, { ...worldAsMcp({ issues: { 12: { labels: ['risk:high'] } } }, null), ...errored })), {}, NO_GH);
+  assert.equal(above.code, 0, above.stderr);
+  assert.equal(above.verdict.exceeds, true);
+  const closedParent = { parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } };
+  const closed = go(argv(writeFacts(t, { ...worldAsMcp(closedParent, null), ...errored })), {}, NO_GH);
+  assert.equal(closed.code, 0, closed.stderr);
+  assert.equal(closed.verdict.idempotence, 'already-closed');
+  const reopened = { parentLive: { 10: { state: 'OPEN', stateReason: 'REOPENED', comments: [] } } };
+  assert.equal(go(argv(writeFacts(t, { ...worldAsMcp(reopened, null), ...errored })), {}, NO_GH).verdict.idempotence, 'reopened');
+  // Where the verdict does read them, an error object is exit 3, named.
+  const due = go(argv(writeFacts(t, { ...worldAsMcp({}, null), ...errored })), {}, NO_GH);
+  assert.equal(due.code, 3);
+  assert.equal(due.stdout, '');
+  assert.match(due.stderr, /^parent-gate\.js: facts file parentComments: /);
+  const noLogin = go(argv(writeFacts(t, { ...worldAsMcp({}, null), me: { message: 'Bad credentials' } })), {}, NO_GH);
+  assert.equal(noLogin.code, 3);
+  assert.match(noLogin.stderr, /^parent-gate\.js: facts file me: /);
 });
 
 test('without --idempotence the facts file needs no comments or me', (t) => {

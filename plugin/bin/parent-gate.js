@@ -23,8 +23,10 @@
 //                fetched, written unreshaped (bin/lib/issues/mcp-parent-gate-shape.js's
 //                FACTS_KEYS), normalized in Node and then evaluated by the same functions
 //                the gh path runs. This path makes zero gh calls and never probes for gh.
-//                `parentComments` and `me` are read only under --idempotence, and only for
-//                an open, non-reopened parent that is due below the floor. owner/repo are
+//                `parentComments` and `me` are required and guarded only under --idempotence,
+//                and only for an open, non-reopened parent that is due below the floor (where
+//                the gh path makes its two reads); any other verdict never looks at them.
+//                owner/repo are
 //                read from the origin remote (a git read) only when a --closing token is
 //                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
@@ -43,12 +45,13 @@
 // 1 a facts file that will not read, parse or hold a JSON object, a required key that is
 // absent, or a subIssueGets key set that is not the enumerated numbers (the fetch never
 // happened); 3 a present entry that fails its shape guard (an MCP error or a wrapper the
-// agent wrote as data). 2 can only mean no GitHub remote for a qualified --closing token. This
-// deliberately departs from cli-wrapper-contract.md's gh-absent rule (every problem with the
-// file on the malformed-invocation code, as materialize.js and preflight-records.js do): a
-// file problem and a guard failure are different recoveries for the prose that branches on
-// them, and mcp-agent-fetch-node-compute rule 3 maps a guard failure to a failed read, never
-// to content, which is this CLI's 3.
+// agent wrote as data). 2 can only mean no GitHub remote for a qualified --closing token, or an
+// undeterminable repository root and working directory. This deliberately departs from
+// cli-wrapper-contract.md's gh-absent rule (every problem with the file on the
+// malformed-invocation code, as materialize.js and preflight-records.js do): a file problem and
+// a guard failure are different recoveries for the prose that branches on them, and
+// mcp-agent-fetch-node-compute rule 3 maps a guard failure to a failed read, never to content,
+// which is this CLI's 3.
 //
 // There is no `--repo` flag. Owner/repo come from the origin remote, because shapes 1, 3,
 // 6 and 7 of the gate's gh calls carry no `--repo` and read the repo of gh's own cwd; an
@@ -66,7 +69,7 @@ const {
   VALID_RISK_FLOORS, VERDICT_FIELDS, GhFailure, ghCaller, gatherGateFacts, gatherIdempotenceFacts,
   evaluateParentGate, evaluateIdempotence, parseClosingTokens,
 } = require('./lib/issues/parent-gate');
-const { FactsError, normalizeMcpFacts, requireIdempotenceReads } = require('./lib/issues/mcp-parent-gate-shape');
+const { FactsError, normalizeMcpFacts, withIdempotenceReads } = require('./lib/issues/mcp-parent-gate-shape');
 
 const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--help]\n';
 
@@ -259,14 +262,9 @@ function run(argv, deps = realDeps) {
       deps.stderr(`parent-gate.js: facts file ${opts.factsJson}: not valid JSON (${err.message})\n`);
       return 1;
     }
-    // Without --idempotence the two idempotence reads are neither required nor looked at.
-    if (!opts.idempotence && raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
-      raw = { ...raw };
-      delete raw.parentComments;
-      delete raw.me;
-    }
     try {
       mcp = normalizeMcpFacts(raw, { subIssue: opts.subIssue, parent: opts.parent, workLinks });
+      mcp.raw = raw;
     } catch (err) {
       if (!(err instanceof FactsError)) throw err;
       deps.stderr(`parent-gate.js: facts file ${err.key}: ${err.message}\n`);
@@ -284,8 +282,9 @@ function run(argv, deps = realDeps) {
       ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
     });
     if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
-      if (mcp) requireIdempotenceReads(mcp.idempotence);
-      const idempotenceFacts = mcp ? mcp.idempotence : gatherIdempotenceFacts({ parent: verdict.parent, caller });
+      // The facts file's two idempotence reads are guarded here and nowhere earlier: a verdict that
+      // never reads them (the gh path makes no such call) must not depend on them.
+      const idempotenceFacts = mcp ? withIdempotenceReads(mcp.raw, mcp.idempotence) : gatherIdempotenceFacts({ parent: verdict.parent, caller });
       const { idempotence, skipped } = evaluateIdempotence(idempotenceFacts);
       verdict = { ...verdict, idempotence, skipped };
     }
