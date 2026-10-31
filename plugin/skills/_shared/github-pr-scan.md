@@ -467,7 +467,7 @@ issue-backed (`gh issue list`, `gh api .../sub_issues`), so on `gh`-absent they 
 
 ## Output Contract
 
-Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope only), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
+Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope, and `parent-gate`'s hand-closed-parent branch), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
 
 - `[pr]` — pull-request findings: `[pr] PR #{n}: {title} — {issue} — {recommendation}`
 - `[gh-issue]` — code-health/harness-health/journey-health/docs-health issue findings: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
