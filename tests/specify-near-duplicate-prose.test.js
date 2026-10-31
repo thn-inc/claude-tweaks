@@ -196,4 +196,9 @@ test('shaping-mode.md names deepOverlapHits candidates as likely duplicates befo
   assert.match(section, /`deepOverlapHits`/);
   assert.match(section, /likely\s+duplicate/);
   assert.match(section, /before\s+stamping\s+`ready`/);
+  assert.match(section, /at\s+least\s+3\s+shared\s+Current\s+State\s+anchors\s+\(`DEEP_OVERLAP_MIN`/);
+  assert.strictEqual(require('../plugin/bin/lib/issues/near-duplicate').DEEP_OVERLAP_MIN, 3);
+  assert.match(section, /surface-only/);
+  assert.match(section, /never\s+refuses/);
+  assert.doesNotMatch(section, /ranks\s+such\s+a\s+hit\s+first/);
 });
