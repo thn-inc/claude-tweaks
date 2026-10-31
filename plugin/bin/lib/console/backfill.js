@@ -30,6 +30,7 @@ const LOCATION_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`, 'g');
 // The narrower path class the id key was minted under. A finding's id names its location by this class
 // so ids minted before FINDING_PATH stay byte-identical; the reported path is LOCATION_RE's.
 const LEGACY_LOCATION_RE = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/g;
+const FIRST_LOCATION_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
 const PATH_SHAPED_RE = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+/;
 // Reproduction meta describes how a finding was (not) reproduced, never the finding itself. It is
 // stripped a whole clause at a time — a parenthetical clause (split at `,` `;`) that opens with one of
@@ -349,7 +350,7 @@ function persistedSplitItem(item, single, runId, section) {
 // The first location a text names: `{ path, line }` from a `path:line`, else `{ path, line: null }`
 // from a path-shaped token, else null.
 function firstLocation(text) {
-  const loc = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`).exec(text);
+  const loc = FIRST_LOCATION_RE.exec(text);
   if (loc) return { path: loc[1], line: Number(loc[2]) };
   const shaped = PATH_SHAPED_RE.exec(text);
   return shaped ? { path: shaped[0], line: null } : null;
