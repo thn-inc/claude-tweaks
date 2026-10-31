@@ -44,6 +44,7 @@ Waived plugin/bin/lib/reconcile/archive-merged.js: only read — it calls `ownEv
 ### Task 1: Single `events.jsonl` pass in `ownEventAt`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/run-liveness/probes.js` (`ownEventRecency`, `ownEventAt`, and the header comment above `ownEventRecency` that says `ownEventAt` reads `readable`)
@@ -110,7 +111,7 @@ git commit -m "Read events.jsonl once in ownEventAt — fold the session-end sca
 
 ### Task 2: Rationale for the death-witness conjunctions and `LEGACY_DEAD_MS`
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/run-liveness/index.js` (the `witnesses.push('session-end')` and `witnesses.push('legacy')` blocks in `gatherEvidence`, currently lines 161-174 — locate by the `witnesses.push` calls)
@@ -157,4 +158,4 @@ Run by the `/build` orchestrator, not dispatched to an implementer (it writes Gi
   - D1 fixed — rationale comments in `index.js` (session-end and legacy conjunctions) and `constants.js` (`LEGACY_DEAD_MS`), sourced from #3973 and the 2026-10-22 run-directory-cleanup design; the 72 h value has no recorded measurement, and the comment says so.
   - D2 dropped — `runLiveness` deliberately consults every probe with no short-circuit (#3973) so its evidence stays complete; after D3 the resume paths' extra cost is one `events.jsonl` parse plus a `ps` spawn only when the owner pid is alive on this host with a stored start time, and short-circuiting through the `probes` seam would put fabricated `error` entries and an `unknown` verdict into the evidence these callers return; #4471 reshapes both callers next.
   - D3 fixed — `ownEventAt` reads `events.jsonl` once; the third parse (`classifyRunDir`'s own `ownEventRecency` before `runVerdict`) is left as is, as the spec allows.
-- [ ] **Step 2:** Record AC evidence: write the posted comment URL and the #1426 check (`gh api repos/thn-inc/claude-tweaks/issues/1426/comments --paginate` filtered to `run-liveness` lines, all three promoted lines ending `→ #4560`) to `$PIPELINE_RUN_DIR/evidence/ac-4560.txt` with a plain Bash redirect, and log one `log-decision.js --section "/build" --status AUTO --step "AC evidence" --text-file {file}` entry naming AC1.1 and AC2.1 and that path.
+- [ ] **Step 2:** Record AC evidence: write the posted comment URL and the #1426 check (`gh api repos/thn-inc/claude-tweaks/issues/1426/comments --paginate` filtered to `run-liveness` lines, all three promoted lines ending `→ #4560`) to `$PIPELINE_RUN_DIR/evidence/ac-4560.txt` (the main-checkout run dir, `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-10-31T095333-record-4560`; run `mkdir -p` on its `evidence/` first, as its own call) with a plain Bash redirect, and log one `log-decision.js --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence" --text-file {file}` entry naming AC1.1 and AC2.1 and that path.
