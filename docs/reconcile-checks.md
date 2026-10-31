@@ -626,11 +626,10 @@ the source of truth; the module only decides when the steps run and records that
   compared, in both the main loop and the clean-status sweep. That skip is never fed to the
   stuck-skip tracker: it is transient, and must never escalate as residue. A run that post-merge
   failed or did not run leaves `deferred` empty, so a failed check never holds archive back.
-- **Why the guard is bounded.** Exactly four reasons defer a run: `merge-grace`, `in-flight`,
-  `claim-failed` and `network-failure` (the transient PR-state failure). Each is cleared by a later
-  pass: a run leaves the set once `post-merge` acts on it, which for `merge-grace` is within one
-  grace window. Nothing else defers. Each reason is normally cleared by a later pass, but two cases
-  are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
+- **How the guard clears.** Exactly four reasons defer a run: `merge-grace`, `in-flight`,
+  `claim-failed` and `network-failure` (the transient PR-state failure). A run leaves the set once
+  `post-merge` acts on it, which for `merge-grace` is within one grace window. Nothing else defers.
+  Each reason is normally cleared by a later pass, but two cases are not: a persistent `claim-failed` (an `EACCES` or `EROFS` on the run dir every pass) and a
   deterministic per-PR throw (the lookup maps any throw to `network-failure`) defer the run on
   every pass, untracked, so archive never moves it. That is the residual risk of the guard, kept
   because the alternative is archiving a run the reconciler still owes its steps:
@@ -668,10 +667,15 @@ the source of truth; the module only decides when the steps run and records that
   accepted rather than closed by a cross-writer lock.
 
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `postMergeRan` (runs whose
-  steps this pass ran, `action: 'ran'`) and `postMergeParentsClosed` (the parents those runs closed
-  below the floor). The next SessionStart renders both in its prior-pass line (`post-merge steps ran
-  for N merged run(s), closing M parent record(s) below the oversight floor`); without them a
-  background parent close would never be visible outside GitHub and `decisions.md`.
+  steps this pass ran, `action: 'ran'` without `step40Failed`), `postMergeParentsClosed` (the parents
+  those runs closed below the floor) and `postMergeFailed` (runs whose Step 4.0 itself failed: the
+  entry carries `step40Failed: true` for a non-zero `closing-links` exit or an unreadable envelope,
+  a SKIP marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an
+  envelope that merely carries no closing set, such as `not-merged`, is not a failure). A failure is
+  never counted in `postMergeRan`. The next SessionStart renders them in its prior-pass line (`post-merge
+  steps ran for N merged run(s), closing M parent record(s) below the oversight floor`; `post-merge
+  Step 4.0 failed for N merged run(s) (tidy's parent-gate backstop recovers them)`); without them a
+  background parent close, or a failed attempt, would never be visible outside GitHub and `decisions.md`.
 
 ## Timing contract (#4032)
 

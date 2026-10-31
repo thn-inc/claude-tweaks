@@ -390,7 +390,7 @@ async function reconcileInner(opts, state) {
   const loadedResidueIndex = readCache(root).residueIssueIndex;
   const loadedResidueIndexJson = JSON.stringify(loadedResidueIndex || {});
   const issueListCache = createIssueListCache({ index: loadedResidueIndex });
-  // #4032 — one PR-state resolver per pass, shared by release, archive and
+  // #4032 — one PR-state resolver per pass, shared by release, post-merge, archive and
   // reap (they ask `gh` about the same PRs). Created here, after the preflight
   // narrowing, and through the module object so a test's
   // `require('./pr-state-cache').createPrStateResolver = fn` monkeypatch

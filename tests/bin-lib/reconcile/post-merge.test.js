@@ -369,13 +369,31 @@ test('closing-links exit 5 writes a SKIP marker naming exit 5 and never calls cl
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const close = fakeCloseParents();
   const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close });
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0 }]);
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true }]);
   assert.equal(close.calls.length, 0);
   const entry = parseEntry(decisionsOf(dir).trim());
   assert.equal(entry.status, 'SKIP');
   assert.equal(entry.location, MARKER_STEP);
   assert.match(entry.action, /^condition: Step 4\.0 returned exit 5, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them\./);
   assert.ok(hasPostMergeMarker(decisionsOf(dir)));
+});
+
+test('step40Failed marks a non-zero exit and an unreadable exit-0 envelope, never a readable envelope without a closing set', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const unreadable = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 0), close: fakeCloseParents() });
+  assert.deepEqual(unreadable.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true,
+  }]);
+  const root2 = mainCheckout();
+  const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
+  const notMerged = await run(root2, { prs: { 11: merged() }, links: fakeClosingLinks({ action: 'not-merged', state: 'OPEN' }), close: fakeCloseParents() });
+  assert.deepEqual(notMerged.entries, [{ runDir: dir2, pr: 11, action: 'ran', closingLinks: 'not-merged', parentsClosed: 0 }]);
+  // A fully successful run carries no flag either.
+  const root3 = mainCheckout();
+  addRun(root3, '2026-10-30T090000-spec-1');
+  const ok = await run(root3, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.ok(!('step40Failed' in ok.entries[0]));
 });
 
 test('an exit-0 envelope with no closingSet (not-merged) is a SKIP marker naming its action', async () => {

@@ -248,13 +248,17 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
       { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'reopened', parentsClosed: 0 },
       { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
       { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
+      { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true },
     ],
   });
-  assert.equal(summary.postMergeRan, 2);
+  assert.equal(summary.postMergeRan, 2, 'a Step 4.0 failure is not a run that ran');
+  assert.equal(summary.postMergeFailed, 2);
   assert.equal(summary.postMergeParentsClosed, 2);
   for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
     const none = await backgroundSummaryFor(result);
     assert.equal(none.postMergeRan, 0);
+    assert.equal(none.postMergeFailed, 0);
     assert.equal(none.postMergeParentsClosed, 0);
   }
 });

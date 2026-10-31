@@ -337,6 +337,9 @@ async function run(ctx) {
           const closed = s.postMergeParentsClosed;
           lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${closed ? `, closing ${closed} parent record(s) below the oversight floor` : ''}`);
         }
+        // Step 4.0 failed for these (counted apart from `postMergeRan`): no parent was closed, so tidy's
+        // parent-gate backstop is the recovery.
+        if (s.postMergeFailed) lines.push(`post-merge Step 4.0 failed for ${s.postMergeFailed} merged run(s) (tidy's parent-gate backstop recovers them)`);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

@@ -284,7 +284,11 @@ function processRun({
   if (!envelope || !Array.isArray(envelope.closingSet)) {
     const returned = code !== 0 ? `exit ${code}` : (envelope && envelope.action) || 'an unreadable envelope';
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
-    return write([item], { runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0 });
+    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit or an unreadable
+    // envelope), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
+    return write([item], {
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(envelope ? {} : { step40Failed: true }),
+    });
   }
 
   // A record a human closed after the close window is closed by their hand: it counts by its live

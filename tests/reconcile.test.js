@@ -1470,7 +1470,7 @@ test('reconcile(): without a red-tip PREREQUISITES entry the no-fetch-this-pass 
   }
 });
 
-test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens nothing else', () => {
+test('expandChecks (#3630): adds mirror ahead of archive and red-tip, post-merge ahead of archive, and widens nothing else', () => {
   const { expandChecks, ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
   assert.deepEqual(expandChecks(['archive']), ['mirror', 'post-merge', 'archive']);
   assert.deepEqual(expandChecks(['red-tip']), ['mirror', 'red-tip']);

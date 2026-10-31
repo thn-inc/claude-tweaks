@@ -716,6 +716,17 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   const noClose = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(noClose.json.hookSpecificOutput.additionalContext, /background reconcile \(from a prior session\) — post-merge steps ran for 1 merged run\(s\)\./);
 
+  seed({ postMergeRan: 1, postMergeFailed: 2, postMergeParentsClosed: 0 });
+  const failed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    failed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 1 merged run\(s\); post-merge Step 4\.0 failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers them\)\./,
+  );
+  seed({ postMergeRan: 0, postMergeFailed: 1 });
+  const onlyFailed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge Step 4\.0 failed for 1 merged run\(s\)/);
+
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
