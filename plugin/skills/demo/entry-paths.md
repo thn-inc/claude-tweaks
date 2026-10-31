@@ -53,7 +53,10 @@ never carry the `risk:*`/`size:*` data a pre-fill would need.
 gh issue view {n} --json number,title,body,labels,url,state
 ```
 
-If the result carries the `demo:pending` label, fetch its Verification Brief: the last issue
+If the labels just fetched carry a pending acceptance label in either spelling
+(`_shared/work-record.md`), even one a verdict outranks so the acceptance facet reads otherwise
+(a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show), fetch
+its Verification Brief: the last issue
 comment **containing** `## Verification Brief`. Fetch every comment (`gh issue view {n} --json
 comments`) and take the last one carrying that heading — test the heading, never assume the
 position. A `.comments[-1]` shortcut holds only when the brief happens to be the most recent
@@ -92,13 +95,13 @@ that gate: `/claude-tweaks:wrap-up`'s own eager path (closing the parent's last 
 `tidy/step-1-records.md`'s Shape 7 under `local-files`) — all of them write the identical
 `demo:pending` + brief, so this branch never needs to know or care which one ran.
 
-If the result does **not** carry `demo:pending` (e.g. it was built ad hoc in some other session
+If the record carries **no** pending acceptance label (e.g. it was built ad hoc in some other session
 and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Phase 4 execution step
 — **or it reached Phase 4 and simply didn't clear the oversight floor, per `#367`** — a normal,
 common case now, not an anomaly), recover that **closing
 commit** before reaching for session recall. This is the population `/claude-tweaks:tidy`'s
 `acceptance-gap` sweep surfaces — its `github-pr-scan-acceptance.md` scope under `work-backend:
-github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files` — and it is by construction
+github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent — and it is by construction
 *other* sessions' work. Recall will have nothing, but the commit that closed the record is still
 on disk, and this recovery reads git rather than the backend, so it is identical on both drivers:
 
@@ -192,14 +195,14 @@ applies to this block specifically.
 
 **`work-backend: local-files`:** `readRecord(filePath)` for the single record
 (`bin/lib/issues/local-store.js`); the Verification Brief is the record's own `## Verification
-Brief` body section. Same `demo:pending` → closing-commit → session-recall fallback order as
-above, keyed on `facets.acceptance === 'pending'` instead of the label. The closing-commit step is
+Brief` body section. Same pending-facet → closing-commit → session-recall fallback order as
+above, keyed on `facets.acceptance === 'pending'` read straight off the record. The closing-commit step is
 identical — it reads git, not the backend, so a local record closed by a `Fixes #N` commit
 reconstructs the same way.
 
 ### PR run-comment lookup (`pr-first` records)
 
-Cited by the `demo:pending` pointer case and the closing-commit reconstruction's Try it step, both
+Cited by the pending-label pointer case and the closing-commit reconstruction's Try it step, both
 above — stated once, run from either. `work-backend: github-issues` only; a `local-files` record
 has no PR and skips it.
 
