@@ -596,8 +596,10 @@ the source of truth; the module only decides when the steps run and records that
   resolver fails as `no-pr-states` (a programming error, handled like the other two).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
   location `reconcile post-merge` (this check's own summary entry) or one ending in `pr-first-merge
-  Step 4.0b` (the merging session's own marker, `(skipped)` form included). A heading or a hand-written
-  note never matches. The check appends its marker last, after one `AUTO … reconcile post-merge
+  Step 4.0b` (the merging session's own marker, `(skipped)` form included, and the per-parent
+  `closed parent #N …` line a build that logged no summary wrote: it closed a parent there, so its run is
+  done; a session that died after its first parent but before its summary is skipped the same way, and
+  tidy's backstop recovers the rest). A heading or a hand-written note never matches. The check appends its marker last, after one `AUTO … reconcile post-merge
   parent-close` line per parent it closed (a different location, so it is not a marker), or a single
   `SKIP` marker when Step 4.0 produced no closing set. The marker is read from the top-level
   `decisions.md` and from every `spec-*/decisions.md`: a multi-spec run exports `{parent}/spec-{N}/`
@@ -704,9 +706,9 @@ the source of truth; the module only decides when the steps run and records that
 
 - **Surfacing.** `bin/hooks.js`'s `reconcile-background` summary records `postMergeRan` (runs whose
   steps this pass ran, `action: 'ran'` without `step40Failed`), `postMergeParentsClosed` (the
-  parents closed below the floor, by those runs and by `marker-write-failed` ones;
-  `postMergeUnmarkedParentsClosed` is the `marker-write-failed` part) and `postMergeFailed` (runs
-  whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero
+  parents closed below the floor by those runs), `postMergeUnmarkedParentsClosed` (the parents
+  closed by `marker-write-failed` runs, a disjoint count) and `postMergeFailed` (runs
+  whose check threw (`skipped` / `error`: no marker, the run is not deferred), or whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero
   `closing-links` exit, exit 5 or a `base-unchecked` envelope only once its retries are spent, or
   an unreadable envelope, a SKIP marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
   that merely carries no closing set, such as `not-merged`, is not a failure). A failure is never
@@ -714,7 +716,7 @@ the source of truth; the module only decides when the steps run and records that
   SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
   closing M parent record(s) below the oversight floor`, counting only those runs' closes, then
   `post-merge steps closed M parent record(s) below the oversight floor in run(s) whose decisions.md
-  marker could not be written` for the rest; `post-merge Step 4.0 failed for N merged run(s) (tidy's
+  marker could not be written` for the rest; `post-merge steps failed for N merged run(s) (tidy's
   parent-gate backstop recovers them)`); without them a background parent close, or a failed
   attempt, would never be visible outside GitHub and `decisions.md`.
 

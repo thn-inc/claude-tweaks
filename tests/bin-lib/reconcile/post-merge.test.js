@@ -12,6 +12,9 @@ const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decisio
 
 // The real clock at load: claim-file mtimes the code writes are real, so `now` must agree with them.
 const NOW = Date.now();
+// Every temp checkout this file makes, removed once the file's tests are done.
+const tempRoots = [];
+test.after(() => { for (const dir of tempRoots) fs.rmSync(dir, { recursive: true, force: true }); });
 const now = () => NOW;
 const MERGED_AT = new Date(NOW - 60 * 60 * 1000).toISOString();
 const merged = (mergedAt = MERGED_AT) => ({ number: 0, state: 'MERGED', mergedAt });
@@ -23,6 +26,7 @@ function git(root, ...args) {
 // A temp main checkout: a real git repo with an origin, a CLAUDE.md, and no run dirs yet.
 function mainCheckout({ claudeMd = '## Work records\n\nwork-backend: github-issues\n', origin = true } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-')));
+  tempRoots.push(root);
   git(root, 'init', '-q');
   if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
   if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
@@ -140,6 +144,17 @@ test('summary marker names every closed parent untrusted-comment note and a step
   await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
   const marker = decisionsOf(dir).trim().split('\n').map(parseEntry).find((e) => e.location === MARKER_STEP);
   assert.match(marker.action, /; notes on #77: skipped untrusted comment by mallory; skipped step \(invalid-risk-floor\)\./);
+});
+
+test('summary marker bounds a skip detail that carries a whole gh stderr', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents({ closed: [], skipped: [{ parent: 5, reason: 'gh-failed', detail: `gh issue view 5: ${'502 Bad Gateway '.repeat(200)}` }] });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  const marker = decisionsOf(dir).trim().split('\n').map(parseEntry).find((e) => e.location === MARKER_STEP);
+  assert.ok(marker.action.length < 700, `the marker line stays short (${marker.action.length} chars)`);
+  assert.match(marker.action, /skipped #5 \(gh-failed: gh issue view 5: 502 Bad Gateway/);
+  assert.match(marker.action, /…\)/);
 });
 
 test('#4549: a closeFailed[] record holds its parent — it reaches Step 4.0b in unsettled, beside reopened, pendingClose and failed', async () => {

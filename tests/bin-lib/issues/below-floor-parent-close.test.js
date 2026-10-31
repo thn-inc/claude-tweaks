@@ -321,6 +321,17 @@ test('a failing close after a posted comment is reported gh-failed (the rerun cl
   assert.equal(calls.filter((c) => c.args[1] === 'comment').length, 1);
 });
 
+test('a gh read that returns non-JSON fails closed as gh-failed, never internal-error', () => {
+  const { gh, calls } = makeGh(happyWorld());
+  const garbled = (args, input) => (args.join(' ').startsWith('issue view 11 --repo') ? '<html>502 Bad Gateway</html>' : gh(args, input));
+  const out = closeBelowFloorParents(base({ gh: garbled }));
+  assert.deepEqual(out.closed, []);
+  assert.equal(out.skipped.length, 1);
+  assert.equal(out.skipped[0].reason, 'gh-failed');
+  assert.match(out.skipped[0].detail, /unparseable output/);
+  assert.equal(calls.filter((c) => c.args[0] === 'issue' && (c.args[1] === 'comment' || c.args[1] === 'close')).length, 0, 'nothing is written on a read it could not parse');
+});
+
 test('a failing parent resolution is named by the closing record', () => {
   const { gh } = makeGh(happyWorld({ throwWhen: (k) => k.startsWith('api graphql') }));
   const out = closeBelowFloorParents(base({ gh }));

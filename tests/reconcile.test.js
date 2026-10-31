@@ -1639,10 +1639,6 @@ test('AC1 (#4599): the pass-shared PR-state resolver is warmed with the main che
 test('AC1 (#4599): the dispatch order is release, post-merge, archive when all three are requested', async () => {
   const { order } = await reconcileWithAsyncMerge(['reap', 'archive', 'post-merge', 'release']);
   assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
-  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
-  const at = (needle) => src.indexOf(needle);
-  assert.ok(at("checks.includes('release')") < at("checks.includes('post-merge')"), 'post-merge dispatches after release');
-  assert.ok(at("checks.includes('post-merge')") < at("checks.includes('archive')"), 'post-merge dispatches before archive');
 });
 
 test('M4 (#4599): post-merge is handed a live predicate over the pass\'s own wall-clock budget', async () => {

@@ -154,6 +154,8 @@ const realDeps = {
 };
 
 const ERR_TEXT_MAX = 300;
+// The one exit a caller may retry: `gh` (or its transport) failed. lib/reconcile/post-merge.js keys its bounded retry on it.
+const EXIT_GH_FAILURE = 5;
 
 // Bounded: errText lands in decisions.md, which the Review Console reads line by line.
 function errText(e) {
@@ -226,8 +228,8 @@ function run(argv, overrides = {}) {
   // Exit 5: the stderr line, then a SKIP carrying its first line.
   const ghFailed = (message) => {
     deps.stderr(`closing-links.js: ${message}\n`);
-    unchecked(`exit 5 gh failure: ${message.split('\n')[0]}`);
-    return 5;
+    unchecked(`exit ${EXIT_GH_FAILURE} gh failure: ${message.split('\n')[0]}`);
+    return EXIT_GH_FAILURE;
   };
 
   // 4. No gh: status as data, never a failure.
@@ -502,6 +504,6 @@ function run(argv, overrides = {}) {
   });
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, EXIT_GH_FAILURE, ERR_TEXT_MAX };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

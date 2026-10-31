@@ -378,9 +378,7 @@ test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for a
     ),
     'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
-  // The no-settle-poll claim is the argv the module actually passes, read from its source.
-  const source = readText(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'));
-  assert.match(source, /'--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String\(CLOSE_WINDOW_MS\)/, 'post-merge.js passes --settle-ms 0 and the close window');
+  // The no-settle-poll claim is the argv the module actually passes: tests/bin-lib/reconcile/post-merge.test.js pins it by running the check.
   const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
   assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
@@ -457,9 +455,8 @@ test('#4599: the Self-inclusion rule names the reconciler as the one caller that
     ),
     'the Self-inclusion rule states the reconciler exception',
   );
-  // The clause's claims are the code's: post-merge passes selfInclude: false, and its 10 minutes is MERGE_GRACE_MS.
-  const source = readText(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'));
-  assert.match(source, /\n {4}selfInclude: false,\n {2}\}\);/, 'post-merge.js passes selfInclude: false to closeParents');
+  // The clause's claims are the code's: post-merge passes selfInclude: false (pinned by running the check in
+  // tests/bin-lib/reconcile/post-merge.test.js), and its 10 minutes is MERGE_GRACE_MS.
   const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
 });

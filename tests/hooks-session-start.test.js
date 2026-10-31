@@ -720,21 +720,21 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   const failed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     failed.json.hookSpecificOutput.additionalContext,
-    /post-merge steps ran for 1 merged run\(s\); post-merge Step 4\.0 failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers them\)\./,
+    /post-merge steps ran for 1 merged run\(s\); post-merge steps failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers them\)\./,
   );
   seed({ postMergeRan: 0, postMergeFailed: 1 });
   const onlyFailed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
-  assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge Step 4\.0 failed for 1 merged run\(s\)/);
+  assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge steps failed for 1 merged run\(s\)/);
 
   // Closes from runs whose marker write failed alone: no run counted as ran, the closes still render.
-  seed({ postMergeRan: 0, postMergeParentsClosed: 3, postMergeUnmarkedParentsClosed: 3 });
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeUnmarkedParentsClosed: 3 });
   const closedOnly = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(closedOnly.json.hookSpecificOutput.additionalContext, /steps ran for/);
   assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
 
   // Both kinds in one pass: each close is credited to its own kind of run, never all to the runs that ran.
-  seed({ postMergeRan: 2, postMergeParentsClosed: 3, postMergeUnmarkedParentsClosed: 1 });
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1 });
   const mixed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     mixed.json.hookSpecificOutput.additionalContext,

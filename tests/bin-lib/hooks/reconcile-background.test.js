@@ -250,13 +250,13 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
       { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
       { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
       { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/g', pr: 7, action: 'skipped', reason: 'error', detail: 'boom' },
     ],
   });
   assert.equal(summary.postMergeRan, 2, 'a Step 4.0 failure is not a run that ran');
-  assert.equal(summary.postMergeFailed, 2);
-  // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted.
-  assert.equal(summary.postMergeParentsClosed, 7);
-  // ...of which /r/d's 5 came from the run whose marker write failed, so SessionStart can credit them apart.
+  assert.equal(summary.postMergeFailed, 3, 'a thrown check counts as failed too');
+  assert.equal(summary.postMergeParentsClosed, 2, 'only the runs that wrote their marker');
+  // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted, apart from the 2.
   assert.equal(summary.postMergeUnmarkedParentsClosed, 5);
   for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
     const none = await backgroundSummaryFor(result);

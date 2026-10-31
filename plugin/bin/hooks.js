@@ -1859,13 +1859,14 @@ async function runReconcileBackground(argv) {
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
       postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose Step 4.0 itself failed (non-zero exit, unreadable envelope): a SKIP marker was written,
-      // Step 4.0b never ran, and the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: postMergeEntries.filter((e) => e.action === 'ran' && e.step40Failed).length,
-      // A `marker-write-failed` entry counts too: its parents are closed on GitHub, only the marker is missing.
-      postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran' || e.reason === 'marker-write-failed'),
-      // The part of postMergeParentsClosed that marker-write-failed runs closed, so SessionStart credits
-      // each close to the right kind of run rather than to the runs counted in postMergeRan.
+      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
+      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
+      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
+      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
+      // closed by runs that wrote their marker, and those closed by runs whose marker write failed
+      // (closed on GitHub all the same, only the decisions.md marker is missing).
+      postMergeParentsClosed: parentsClosedBy((e) => e.action === 'ran'),
       postMergeUnmarkedParentsClosed: parentsClosedBy((e) => e.reason === 'marker-write-failed'),
       archived: (r.runs || []).filter((x) => x.action === 'archived').length,
       archivedBranches: (r.branches || []).filter((b) => b.kind === 'branch' && (b.action === 'delete' || b.action === 'tag-and-delete')).length,

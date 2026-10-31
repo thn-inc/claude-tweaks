@@ -64,7 +64,7 @@ const { resolvePolicyKeys } = require('../policy-schema');
 const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { closeBelowFloorParents } = require('../issues/below-floor-parent-close');
-const { run: closingLinksRun } = require('../../closing-links');
+const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
 const PARENT_STEP = 'reconcile post-merge parent-close';
@@ -72,7 +72,7 @@ const PARENT_STEP = 'reconcile post-merge parent-close';
 const ATTEMPT_STEP = 'reconcile post-merge attempt';
 const MAX_ATTEMPTS = 3;
 // closing-links.js's one transient exit: `gh pr view` / `gh pr edit` failed, or a required read was malformed.
-const TRANSIENT_CLOSING_LINKS_EXIT = 5;
+const TRANSIENT_CLOSING_LINKS_EXIT = EXIT_GH_FAILURE;
 const TRANSIENT_REASON = 'transient-failure';
 const CLOSE_WINDOW_MS = 10 * 60 * 1000;
 const MERGE_GRACE_MS = 10 * 60 * 1000;
@@ -84,6 +84,10 @@ const TRANSIENT_PR_FAILURE = 'network-failure';
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
 const STEP_4_0B_LOCATION_RE = /(?:^|— )pr-first-merge Step 4\.0b\b/;
+// Any entry at that location counts, the per-parent `closed parent #N …` line included: a build that logged
+// no summary line (every released build before #4599) still closed a parent there, so its run is done. The
+// cost is a session that died after closing its first parent but before the summary: the reconciler skips
+// that run and tidy's parent-gate backstop recovers the rest (the docs/reconcile-checks.md marker rule).
 
 // Pure: does this decisions.md text already hold a post-merge marker? Entries
 // are read through parseEntry, so a heading or a hand-written note never matches.
@@ -96,6 +100,8 @@ function hasPostMergeMarker(decisionsText) {
 }
 
 const oneLine = (text) => String(text).replace(/\s+/g, ' ').trim();
+// A skip's detail can be a raw gh error with its whole stderr; bounded like closing-links.js's own error text.
+const boundDetail = (text) => (text.length > ERR_TEXT_MAX ? `${text.slice(0, ERR_TEXT_MAX)}…` : text);
 
 // Pure: the SKIP marker's text for a Step 4.0 that produced no closing set.
 function composeSkipText(returned) {
@@ -117,7 +123,7 @@ function composeSummaryText({ pr, action, closed, skipped }) {
     if (Array.isArray(c.notes) && c.notes.length) text += `; notes on #${c.parent}: ${c.notes.join(' / ')}`;
   }
   for (const s of skipped) {
-    text += `; skipped ${skipTarget(s)} (${s.reason}${s.detail ? `: ${s.detail}` : ''})`;
+    text += `; skipped ${skipTarget(s)} (${s.reason}${s.detail ? `: ${boundDetail(oneLine(s.detail))}` : ''})`;
   }
   return oneLine(text);
 }
