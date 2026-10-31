@@ -177,6 +177,16 @@ for (const shell of SHELLS) {
     assert.strictEqual(r.status, 0, r.stderr);
     assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
   });
+  test(`${shell.name}: live block with no pack reads a CRLF spec header as exactly 101 (#4740)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101).replace(/\n/g, '\r\n') });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+  });
+  test(`${shell.name}: live block with no pack skips a hidden .303-spec.md the old glob never matched (#4740)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101), '.303-spec.md': specHeader(303) });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+  });
 }
 
 // Go-red control: the pre-change fallback loop (PRE_CHANGE_BLOCK's else branch) on an empty work/.

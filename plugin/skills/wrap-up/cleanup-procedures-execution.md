@@ -76,8 +76,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
    rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
    closing-keyword reader cites this field rather than restating the rule. Only when the pack
-   could not be produced (Section E's production step failed) or lacks that field, glob the
-   worktree mirror instead —
+   could not be produced (Section E's production step failed) or lacks that field, list the
+   worktree mirror's spec headers instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
@@ -90,7 +90,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path");let names=[];try{names=fs.readdirSync(path.join(process.argv[1],"work")).filter(f=>f.endsWith("-spec.md")).sort()}catch(e){}for(const f of names){const m=fs.readFileSync(path.join(process.argv[1],"work",f),"utf8").match(/^record:(.*)$/m);if(m)console.log(m[1].trim())}' -- "$MIRROR")
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path");let names=[];try{names=fs.readdirSync(path.join(process.argv[1],"work")).filter(f=>f.endsWith("-spec.md")&&!f.startsWith(".")).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(process.argv[1],"work",f),"utf8").match(/^record:(.*)$/m);if(m)console.log(m[1].trim())}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
