@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793444202678
+    "lastAuditedMs": 1793447424245
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -221,7 +221,7 @@
   },
   "skill:review-console-section-addition": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793369265658
+    "lastAuditedMs": 1793447428885
   },
   "skill:lib-module-split": {
     "lastAuditedSha": null,
