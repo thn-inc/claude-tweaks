@@ -298,7 +298,7 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `stripComments` (implemented in
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
-    callers, by test-file stem: `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
+    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
     `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
     `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
