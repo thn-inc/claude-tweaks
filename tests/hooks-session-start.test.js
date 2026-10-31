@@ -699,6 +699,53 @@ test('SessionStart surfaces a prior background pass\'s residue errors with the l
   );
 });
 
+test('SessionStart renders a prior background pass\'s post-merge runs and parent closes (#4599)', async () => {
+  const project = gitProject();
+  fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
+  const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
+  const seed = (summary) => fs.writeFileSync(statusPath, JSON.stringify({ completedAt: Date.now(), surfaced: false, summary }));
+
+  seed({ released: 1, postMergeRan: 2, postMergeParentsClosed: 1 });
+  const closing = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    closing.json.hookSpecificOutput.additionalContext,
+    /1 issue claim\(s\) released; post-merge steps ran for 2 merged run\(s\), closing 1 parent record\(s\) below the oversight floor\./,
+  );
+
+  seed({ postMergeRan: 1, postMergeParentsClosed: 0 });
+  const noClose = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(noClose.json.hookSpecificOutput.additionalContext, /background reconcile \(from a prior session\) — post-merge steps ran for 1 merged run\(s\)\./);
+
+  seed({ postMergeRan: 1, postMergeFailed: 2, postMergeParentsClosed: 0 });
+  const failed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    failed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 1 merged run\(s\); post-merge steps failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers them\)\./,
+  );
+  seed({ postMergeRan: 0, postMergeFailed: 1 });
+  const onlyFailed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(onlyFailed.json.hookSpecificOutput.additionalContext, /post-merge steps failed for 1 merged run\(s\)/);
+
+  // Closes from runs whose marker write failed alone: no run counted as ran, the closes still render.
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0, postMergeUnmarkedParentsClosed: 3 });
+  const closedOnly = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(closedOnly.json.hookSpecificOutput.additionalContext, /steps ran for/);
+  assert.match(closedOnly.json.hookSpecificOutput.additionalContext, /post-merge steps closed 3 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written/);
+
+  // Both kinds in one pass: each close is credited to its own kind of run, never all to the runs that ran.
+  seed({ postMergeRan: 2, postMergeParentsClosed: 2, postMergeUnmarkedParentsClosed: 1 });
+  const mixed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.match(
+    mixed.json.hookSpecificOutput.additionalContext,
+    /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
+  );
+
+  seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
+  const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
+  assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
+});
+
 test('SessionStart renders a prior background pass\'s ledger-residue PR count and notable residue (#3812)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });

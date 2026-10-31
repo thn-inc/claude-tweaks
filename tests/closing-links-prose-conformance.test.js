@@ -156,11 +156,15 @@ function assertStep40ReportsBaseUnchecked(step40) {
   assert.ok(step40.includes('A `baseUnchecked: true` envelope'), 'Step 4.0 names the baseUnchecked envelope');
   assert.ok(step40.includes("name the envelope's `unchecked[]` records in the closing summary"), 'Step 4.0 points at the envelope\'s unchecked[] list');
 }
+// #4549 named an armed merge into a non-default base as a gap #4599 would close; #4599's reconciler
+// runs Step 4.0 for it, so the step now states that the late run closes those records.
+const PRE_4599_ARMED_GAP = "On a non-default base an `armed` merge's `Fixes` records also stay open, since this step never runs for it (#4599 tracks running it for an armed PR).";
 function assertStep40NamesArmedGap(step40) {
   assert.ok(
-    step40.includes("On a non-default base an `armed` merge's `Fixes` records also stay open, since this step never runs for it (#4599"),
+    step40.includes("On a non-default base that late run closes an `armed` merge's still-open `Fixes` records the same way, so they no longer wait for a human (#4599)."),
     'Step 4.0 states the armed non-default gap',
   );
+  assert.ok(!step40.includes(PRE_4599_ARMED_GAP), 'the pre-#4599 "stay open" gap sentence is gone');
 }
 function assertStep40bUsesClosingSet(step40b) {
   assert.ok(
@@ -232,12 +236,14 @@ test('#4549 AC7.1b: Step 4.0 names the baseUnchecked envelope', () => {
   assert.throws(() => assertStep40ReportsBaseUnchecked(withoutList), /unchecked\[\] list/, 'go-red: the pre-fix "name them" sentence fails the check');
 });
 
-test('#4549 final review: Step 4.0 states that an armed merge into a non-default base leaves its Fixes records open', () => {
+test('#4549 final review, #4599: Step 4.0 states that the late run closes an armed merge\'s Fixes records on a non-default base', () => {
   const step40 = step40Of(read('pr-first-merge-post-merge.md'));
   assertStep40NamesArmedGap(step40);
-  const withoutClause = step40.replace(/ On a non-default base an `armed` merge's.*$/, '');
+  const withoutClause = step40.replace(/ On a non-default base that late run closes.*$/, '');
   assert.notEqual(withoutClause, step40, 'go-red: the doctored text differs from the live section');
   assert.throws(() => assertStep40NamesArmedGap(withoutClause), /armed non-default gap/, 'go-red: dropping the clause fails the check');
+  const preChange = step40.replace(/ On a non-default base that late run closes.*$/, ` ${PRE_4599_ARMED_GAP}`);
+  assert.throws(() => assertStep40NamesArmedGap(preChange), /armed non-default gap/, 'go-red: the pre-#4599 gap sentence fails the check');
 });
 
 test('#4549 AC7.2: Step 4.0b lists close-failed and closed and uses closingSet[] on a non-default branch', () => {
