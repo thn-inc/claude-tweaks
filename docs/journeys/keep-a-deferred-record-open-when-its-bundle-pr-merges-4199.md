@@ -58,4 +58,5 @@ files:
 ## Origin
 - Created during build of #4199 (pr-first: rewriting Fixes #N to Refs #N before merge does not stop GitHub closing #N)
 - Steps 1-4 built in this session; mechanism probed live on throwaway PR #4234 / issue #4233
+- Updated by #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a merge into a non-default base, Step 4.0 closes the PR's still-open `Fixes` records itself and reports `closed[]`, `closeFailed[]`, or `base-unchecked` with `unchecked[]`
 - Related: #3412 (reconciler keeps an unfinished record's claim when its bundle PR merges early), #2724 (the record PR #4144 closed by mistake)
