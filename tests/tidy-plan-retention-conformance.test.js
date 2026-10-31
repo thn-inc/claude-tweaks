@@ -154,6 +154,8 @@ test('tidy Step 4 states the --cited second pass (#4594)', () => {
   pinned(/re-run[^.]*--cited \{plan\}/, PRE_CHANGE_CITATION);
   pinned(/re-run the same call — every plan again — adding one `--cited \{plan\}`/, PRE_CHANGE_CITATION);
   pinned(/with no cited candidate, the first call's routes stand/, PRE_CHANGE_CITATION);
+  pinned(/- \*\*Compute\.\*\*[^\n]*Under `ask` and `prune-after-wrapup`, `citationCheck: true` means apply `plan-citation-check\.md`'s outcome directly — no `--cited` re-run, the CLI rejects it/, PRE_CHANGE_CITATION);
+  assert.doesNotMatch(step4Section(), /\*\*Citation check\*\*[^\n]*Under `ask` and `prune-after-wrapup`/, 'the ask/prune-after-wrapup clause belongs in Compute, not under the keep-forever-only Citation check label');
 });
 
 test('tidy Step 4 collects the recommendation after retention routing, not before it (#4465)', () => {

@@ -69,6 +69,15 @@ test('malformed invocations exit 2 with usage on stderr and no stdout', () => {
   }
 });
 
+test('a call without --retention exits 2 naming the required flag, not the unknown-value check', () => {
+  for (const argv of [[], [P]]) {
+    const r = invoke(argv);
+    assert.equal(r.code, 2, `argv ${JSON.stringify(argv)} exits 2`);
+    assert.match(r.stderr, /--retention is required/, `argv ${JSON.stringify(argv)} names the required flag`);
+    assert.equal(r.stdout, '');
+  }
+});
+
 test('--help prints usage and calls no deps', () => {
   const boom = () => { throw new Error('deps must not be called'); };
   const out = [];
