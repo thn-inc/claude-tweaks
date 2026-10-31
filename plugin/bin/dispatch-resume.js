@@ -22,7 +22,9 @@
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
-//      `git status`, branch reads); nothing is read as clean on failure
+//      `git status`, branch reads); no failed read is taken as clean, with one exception by design:
+//      the sibling-session check fails open (findConflictingSession returns null when `git worktree
+//      list` cannot be read, so `siblingLive` is then false)
 // Order: list the PRs, then selectResumePr — a refusal there prints and exits 3 before any run-dir,
 // sibling, claim or worktree read (the prior run id comes from the chosen PR's marker). The only git
 // call against the stalled worktree is the --no-optional-locks `status`.
@@ -85,7 +87,7 @@ function nativeGh(args) {
 // `resolve-policy.js --values work-links`, in process: the same resolvePolicyConfig that CLI runs.
 function resolveWorkLinks() {
   const git = (args) => execFileSync('git', args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   });
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
   const { result } = resolvePolicyConfig({ git, readFile, keys: ['work-links'] });
@@ -224,21 +226,36 @@ function readJsonFile(deps, file) {
   }
 }
 
-// The prior run's directory class (the verdict's PRIOR_RUN_DIR_CLASSES), checked archive-first, and
-// the parsed run-state.json the owner probe / own-lock entry read. The owner probe is the only
-// liveness evidence: only a proven death is `dead-owner`.
+// The prior run's directory class (the verdict's PRIOR_RUN_DIR_CLASSES), and the parsed run-state.json
+// the owner probe / own-lock entry read. The owner probe is the only liveness evidence: only a proven
+// death is `dead-owner`. `readsDir` is the one directory the run-state and decisions.md reads follow.
+//
+// `archived` is archive-first but not existence-only (#1103 removed that check as a bug): archiveRunDir
+// mkdirs archive/{runId} and writes `status: 'archiving'` there before moving anything, so a failed
+// attempt leaves the marker beside the real root dir. It wins when archive/{runId}/run-state.json parses
+// as an object whose status is not 'archiving' (archive-merged.js's own real-prior-archive test), or when
+// the root dir is absent or holds no run-state.json (a late-write `work/` stub, Review Focus 6). Any other
+// state falls through to the root classification, so a live root owner is still probed.
 function classifyPriorRun(ctx, runId) {
   const { deps } = ctx;
   const archiveDir = path.join(ctx.root, 'archive', runId);
   const rootDir = path.join(ctx.root, runId);
   const rootPresent = deps.exists(rootDir);
   const priorRunPath = rootPresent ? rootDir : null;
-  const base = { priorRunPath, priorRunOpen: false, priorRunOwnerHost: null, state: null };
+  const base = {
+    priorRunPath, priorRunOpen: false, priorRunOwnerHost: null, state: null, readsDir: rootPresent ? rootDir : null,
+  };
 
   if (deps.exists(archiveDir)) {
-    const statePath = path.join(archiveDir, 'run-state.json');
-    const archived = deps.exists(statePath) ? readJsonFile(deps, statePath) : { ok: false };
-    return { ...base, priorRunDir: 'archived', state: archived.ok ? archived.value : null };
+    const archiveStatePath = path.join(archiveDir, 'run-state.json');
+    const archived = deps.exists(archiveStatePath) ? readJsonFile(deps, archiveStatePath) : { ok: false };
+    const realArchive = archived.ok && archived.value.status !== 'archiving';
+    const rootHasState = rootPresent && deps.exists(path.join(rootDir, 'run-state.json'));
+    if (realArchive || !rootHasState) {
+      return {
+        ...base, priorRunDir: 'archived', state: archived.ok ? archived.value : null, readsDir: archiveDir,
+      };
+    }
   }
   if (!rootPresent) return { ...base, priorRunDir: 'absent' };
 
@@ -305,16 +322,17 @@ function parseBranchHeader(header) {
 // `status --porcelain -b -z` → { branch, dirty }. First record is the `## ` branch header; every later
 // `XY path` record is a dirty path, a rename/copy being followed by its original-path record.
 function parseStatus(out) {
-  if (typeof out !== 'string') return null;
+  const fail = (why) => new Exit(4, `git status (stalled worktree): ${why}`);
+  if (typeof out !== 'string') throw fail('output was not text');
   const records = out.split('\0');
-  if (!records[0].startsWith('## ')) return null;
+  if (!records[0].startsWith('## ')) throw fail('output did not start with a "## " branch header');
   const branch = parseBranchHeader(records[0].slice(3));
-  if (branch === null) return null;
+  if (branch === null) throw fail('the "## " branch header named no branch');
   const dirty = [];
   for (let i = 1; i < records.length; i++) {
     const rec = records[i];
     if (rec === '') continue;
-    if (rec.length < 4) return null;
+    if (rec.length < 4) throw fail(`a status record was shorter than "XY path" (${JSON.stringify(rec)})`);
     dirty.push(rec.slice(3));
     if (rec[0] === 'R' || rec[0] === 'C' || rec[1] === 'R' || rec[1] === 'C') i++;
   }
@@ -328,7 +346,6 @@ function readWorktreeState(ctx) {
     '-C', ctx.worktreePath, '--no-optional-locks', 'status', '--porcelain', '-b', '-z',
   ]));
   const parsed = parseStatus(out);
-  if (parsed === null) throw new Exit(4, 'git status (stalled worktree): output did not start with a "## " branch header');
   return { exists: true, worktreeDirty: parsed.dirty, worktreeBranch: parsed.branch };
 }
 
@@ -350,10 +367,11 @@ function readLocalBranch(ctx, head) {
   return { localBranchSha, branchCheckedOutAt: holder ? holder.path : null };
 }
 
-function readContext(ctx, runId) {
+// decisions.md from the same directory the prior-run classification chose (`readsDir`).
+function readContext(ctx, prior) {
   const { deps } = ctx;
-  for (const dir of [path.join(ctx.root, 'archive', runId), path.join(ctx.root, runId)]) {
-    const file = path.join(dir, 'decisions.md');
+  if (prior.readsDir !== null) {
+    const file = path.join(prior.readsDir, 'decisions.md');
     try {
       if (deps.exists(file)) return resumeContext(deps.readFile(file));
     } catch { /* unreadable decisions.md: the context is advisory, fall through to the empty one */ }
@@ -433,7 +451,7 @@ function runVerdict(ctx) {
     closePriorRun: verdict.closePriorRun,
     localBranchExists: verdict.localBranchExists,
     worktreePath: ctx.worktreePath,
-    context: readContext(ctx, runId),
+    context: readContext(ctx, prior),
   });
   return 0;
 }
@@ -456,7 +474,7 @@ function runBound(ctx, boundRun) {
     emit(ctx, {
       concurrent: true,
       reason: 'live-sibling',
-      line: `#${issue}'s stalled worktree ${ctx.worktreePath} is held by another live session (${conflict.path}) — stop this resume, then run /claude-tweaks:dispatch resume #${issue} once that session ends`,
+      line: `#${issue} has another worktree in use by a live session (${conflict.path}) — stop this resume, then run /claude-tweaks:dispatch resume #${issue} once that session ends`,
     });
     return 3;
   }

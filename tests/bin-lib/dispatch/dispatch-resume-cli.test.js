@@ -10,6 +10,7 @@ const path = require('node:path');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
+const { resumeEligibility } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { MAX_PID } = require('../../../plugin/bin/lib/run-liveness/owner-pid-probe');
 
 const N = 4589;
@@ -520,6 +521,111 @@ test('archive-first: archive/{runId} plus a work/-only root dir reads archived (
   assert.equal(r.json.priorRunPath, RUNDIR, 'priorRunPath is the root dir when present');
 });
 
+// archiveRunDir mkdirs archive/{runId} and stamps status 'archiving' before moving anything, so a
+// failed attempt leaves the marker next to the real root dir (#1103 removed the existence-only check).
+const ARCHIVING = JSON.stringify({ status: 'archiving', worktree: null });
+function archivingMarkerPlusRoot(env, rootState, rootFiles = ['run-state.json', 'work', 'decisions.md']) {
+  env.cfg.files[`${ARCH}/run-state.json`] = ARCHIVING;
+  env.cfg.dirs[RUNDIR] = rootFiles;
+  if (rootState !== undefined) env.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify(rootState);
+}
+
+test('an archiving marker in archive/{runId} plus a root dir with a live owner -> exit 3 prior-run-live, owner probed', () => {
+  const env = makeEnv();
+  archivingMarkerPlusRoot(env, { status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'prior-run-live');
+  assert.match(r.json.line, /\(live\)/);
+  assert.equal(env.calls.pidAlive, 1);
+});
+
+test('an archiving marker plus a root dir with a dead owner -> eligible, archivePriorRun true, priorRunPath set', () => {
+  const env = makeEnv();
+  archivingMarkerPlusRoot(env, { status: 'active', owner: OWNER });
+  env.cfg.alive = () => false;
+  const r = exec(env);
+  assert.equal(r.code, 0, JSON.stringify(r.json));
+  assert.equal(r.json.priorRunDir, 'dead-owner');
+  assert.equal(r.json.archivePriorRun, true);
+  assert.equal(r.json.closePriorRun, true);
+  assert.equal(r.json.priorRunPath, RUNDIR);
+});
+
+test('an archiving marker plus an owner on another host -> prior-run-other-host (the root owner ladder still runs)', () => {
+  const env = makeEnv();
+  archivingMarkerPlusRoot(env, { status: 'active', owner: { ...OWNER, host: 'elsewhere.local' } });
+  assert.equal(exec(env).json.reason, 'prior-run-other-host');
+});
+
+test('an archiving marker plus a root dir holding only work/ or nothing -> archived (nothing real left to probe)', () => {
+  const stub = makeEnv();
+  archivingMarkerPlusRoot(stub, undefined, ['work']);
+  const r = exec(stub);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.priorRunDir, 'archived');
+  assert.equal(r.json.archivePriorRun, false);
+  const gone = makeEnv();
+  gone.cfg.files[`${ARCH}/run-state.json`] = ARCHIVING;
+  assert.equal(exec(gone).json.priorRunDir, 'archived');
+});
+
+test('an archiving marker plus a root dir with no run-state.json but other entries -> archived (no state to probe, archive dir exists)', () => {
+  const env = makeEnv();
+  archivingMarkerPlusRoot(env, undefined, ['events.jsonl', 'work']);
+  assert.equal(exec(env).json.priorRunDir, 'archived');
+});
+
+test('a real archive (status clean) wins even when the root dir holds a run-state.json', () => {
+  const env = makeEnv();
+  env.cfg.dirs[RUNDIR] = ['run-state.json', 'work'];
+  env.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.priorRunDir, 'archived');
+  assert.equal(env.calls.pidAlive, undefined);
+});
+
+test('an archive dir with no run-state.json, or an unparseable or non-object one, plus a root run-state.json -> root classification', () => {
+  for (const [label, arrange] of [
+    ['no run-state.json', (env) => { delete env.cfg.files[`${ARCH}/run-state.json`]; }],
+    ['unparseable', (env) => { env.cfg.files[`${ARCH}/run-state.json`] = '{nope'; }],
+    ['non-object', (env) => { env.cfg.files[`${ARCH}/run-state.json`] = '[]'; }],
+  ]) {
+    const live = makeEnv();
+    arrange(live);
+    live.cfg.dirs[RUNDIR] = ['run-state.json', 'work'];
+    live.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active', owner: OWNER });
+    assert.equal(exec(live).json.reason, 'prior-run-live', label);
+    const noOwner = makeEnv();
+    arrange(noOwner);
+    noOwner.cfg.dirs[RUNDIR] = ['run-state.json'];
+    noOwner.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active' });
+    const r = exec(noOwner);
+    assert.equal(r.json.priorRunDir, 'dead-owner', label);
+    assert.equal(r.json.archivePriorRun, true, label);
+  }
+});
+
+test('the context read and the own-lock state follow the chosen directory: root when the archive is only a marker, archive when it is real', () => {
+  const marker = makeEnv();
+  archivingMarkerPlusRoot(marker, { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } });
+  marker.cfg.files[`${ARCH}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: archive stub. Reversibility: n/a.\n';
+  marker.cfg.dirs[ARCH] = ['run-state.json', 'decisions.md'];
+  marker.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 8: real root. Reversibility: n/a.\n';
+  const r = exec(marker);
+  assert.equal(r.code, 0, JSON.stringify(r.json));
+  assert.deepStrictEqual(r.json.context.lastPhase, { section: '/build', step: 'Step 8' });
+  const entry = marker.calls.findSibling[0].opts.listRunDirsWithState(MAIN).find(({ state }) => state.sessionId === SESSION);
+  assert.equal(entry.dir, RUNDIR);
+
+  // archived with a root stub: only the archive's decisions.md is read, never the stub's
+  const real = makeEnv();
+  real.cfg.dirs[RUNDIR] = ['work', 'decisions.md'];
+  real.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: stub. Reversibility: n/a.\n';
+  assert.deepStrictEqual(exec(real).json.context, { lastPhase: null, openDefects: [] });
+});
+
 test('a root dir absent and not archived -> absent, eligible, priorRunPath null', () => {
   const env = makeEnv();
   delete env.cfg.dirs[ARCH];
@@ -785,6 +891,18 @@ test('status output with no ## header -> exit 4; git status throwing -> exit 4; 
   assert.equal(exec(thrown).code, 4);
 });
 
+test('a status record shorter than "XY path" -> exit 4 with a message about the record, not the header', () => {
+  const env = makeEnv();
+  env.cfg.status = `## ${HEAD}\0 M\0`;
+  const r = exec(env);
+  assert.equal(r.code, 4);
+  assert.match(r.err, /shorter than "XY path"/);
+  assert.doesNotMatch(r.err, /did not start with/);
+  const noHeader = makeEnv();
+  noHeader.cfg.status = ' M a.js\0';
+  assert.match(exec(noHeader).err, /did not start with a "## " branch header/);
+});
+
 test('missing worktree: no status call, eligible, worktreePath still reported', () => {
   const env = makeEnv();
   delete env.cfg.dirs[WT];
@@ -958,13 +1076,6 @@ test('own kept lock plus a second in-use #N worktree: the real findConflictingSe
 
 // ---- verdict type contract (Task 2 fails closed on malformed input) ----
 
-test('the gatherer passes real booleans/arrays: a clean run never refuses invalid-input', () => {
-  const env = makeEnv();
-  const r = exec(env);
-  assert.notEqual(r.json.reason, 'invalid-input');
-  assert.equal(r.code, 0);
-});
-
 test('the PRs reach the verdict with headRefOid: a reaped worktree whose local branch equals the PR head is eligible, not branch-diverged', () => {
   const env = makeEnv();
   delete env.cfg.dirs[WT];
@@ -972,14 +1083,51 @@ test('the PRs reach the verdict with headRefOid: a reaped worktree whose local b
   assert.equal(exec(env).json.localBranchExists, true);
 });
 
-test('the refusal line is printed verbatim for every verdict refusal, invalid-input included', () => {
-  const env = makeEnv();
-  env.cfg.issue.state = 'CLOSED';
-  const r = exec(env);
-  assert.equal(r.lines.length, 1);
-  assert.equal(typeof r.json.line, 'string');
-  assert.equal(r.json.eligible, false);
-  assert.equal(r.json.issue, N);
+// The verdict input the gatherer should build for the default world (archived run, clean worktree),
+// so a refusal's printed line can be compared with resumeEligibility's own line for the same input.
+function verdictInput(over = {}) {
+  return {
+    issue: N,
+    prs: [prEntry()],
+    claimContent: FAILED(),
+    labels: ['ready', 'auto:build'],
+    now: NOW,
+    priorRunDir: 'archived',
+    priorRunOpen: false,
+    priorRunOwnerHost: null,
+    siblingLive: false,
+    worktreePath: WT,
+    worktreeDirty: [],
+    worktreeBranch: HEAD,
+    issueState: 'OPEN',
+    openBlockers: [],
+    localBranchSha: null,
+    branchCheckedOutAt: null,
+    ...over,
+  };
+}
+
+// invalid-input is not reachable through the gatherer (it always supplies a boolean and arrays), so it
+// is not driven here; the verdict's own tests pin it.
+test('the printed refusal line equals the line of the verdict for the same input, across refusal reasons', () => {
+  const cases = [
+    ['record-closed', (env) => { env.cfg.issue.state = 'CLOSED'; }, { issueState: 'CLOSED' }],
+    ['blocked-by', (env) => { env.cfg.issue.body = 'Blocked by #4500\n'; env.cfg.depStates[4500] = 'OPEN'; }, { openBlockers: [4500] }],
+    ['not-granted', (env) => { env.cfg.issue.labels.push({ name: 'bot:blocked' }); }, { labels: ['ready', 'auto:build', 'bot:blocked'] }],
+    ['dirty-worktree', (env) => { env.cfg.status = `## ${HEAD}\0 M a.js\0`; }, { worktreeDirty: ['a.js'] }],
+    ['live-sibling', (env) => { env.cfg.sibling = () => ({ path: '/x' }); }, { siblingLive: true }],
+    ['worktree-branch', (env) => { env.cfg.status = '## main\0'; }, { worktreeBranch: 'main' }],
+  ];
+  for (const [reason, arrange, over] of cases) {
+    const env = makeEnv();
+    arrange(env);
+    const r = exec(env);
+    const expected = resumeEligibility(verdictInput(over));
+    assert.equal(expected.reason, reason, `fixture drift: ${reason}`);
+    assert.equal(r.code, 3, reason);
+    assert.equal(r.lines.length, 1, reason);
+    assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason, line: expected.line }, reason);
+  }
 });
 
 // ---- --bound-run ----
@@ -1057,7 +1205,7 @@ test('--bound-run: a live sibling on the lock check -> exit 3 live-sibling (chec
   assert.equal(r.code, 3);
   assert.equal(r.json.concurrent, true);
   assert.equal(r.json.reason, 'live-sibling');
-  assert.equal(typeof r.json.line, 'string');
+  assert.equal(r.json.line, `#${N} has another worktree in use by a live session (${WT}) — stop this resume, then run /claude-tweaks:dispatch resume #${N} once that session ends`);
   assert.equal(env.calls.findSibling[0].opts.cwd, MAIN);
   assert.equal(env.calls.findSibling[0].opts.sessionId, SESSION);
 });
