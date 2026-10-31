@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-10-30T21:02:59.549Z",
+  "computedAt": "2026-10-31T06:08:48.314Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -115,17 +115,17 @@
       },
       {
         "number": 4597,
-        "updatedAt": "2026-10-30T16:08:08Z",
+        "updatedAt": "2026-10-31T03:31:14Z",
         "state": "OPEN"
       },
       {
         "number": 4596,
-        "updatedAt": "2026-10-30T16:08:03Z",
+        "updatedAt": "2026-10-31T02:21:07Z",
         "state": "OPEN"
       },
       {
         "number": 4595,
-        "updatedAt": "2026-10-30T16:07:58Z",
+        "updatedAt": "2026-10-31T00:58:35Z",
         "state": "OPEN"
       },
       {
@@ -135,7 +135,7 @@
       },
       {
         "number": 4590,
-        "updatedAt": "2026-10-30T16:07:54Z",
+        "updatedAt": "2026-10-31T00:16:25Z",
         "state": "OPEN"
       },
       {
@@ -145,7 +145,7 @@
       },
       {
         "number": 4588,
-        "updatedAt": "2026-10-30T21:02:17Z",
+        "updatedAt": "2026-10-31T06:08:31Z",
         "state": "OPEN"
       },
       {
@@ -179,18 +179,13 @@
         "state": "OPEN"
       },
       {
-        "number": 4568,
-        "updatedAt": "2026-10-30T16:07:43Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4566,
-        "updatedAt": "2026-10-30T16:07:38Z",
+        "updatedAt": "2026-10-30T22:47:47Z",
         "state": "OPEN"
       },
       {
         "number": 4565,
-        "updatedAt": "2026-10-30T16:07:33Z",
+        "updatedAt": "2026-10-30T21:49:18Z",
         "state": "OPEN"
       },
       {
@@ -200,7 +195,7 @@
       },
       {
         "number": 4561,
-        "updatedAt": "2026-10-30T16:07:21Z",
+        "updatedAt": "2026-10-30T21:32:57Z",
         "state": "OPEN"
       },
       {
@@ -485,7 +480,7 @@
       },
       {
         "number": 4343,
-        "updatedAt": "2026-10-30T20:02:22Z",
+        "updatedAt": "2026-10-30T21:18:47Z",
         "state": "OPEN"
       },
       {
@@ -1611,294 +1606,6 @@
     ],
     [
       {
-        "body": "Origin: spec #4466 review hindsight (structural debt)\nDefer-reason: genuinely-larger\n\n## Current State\n\n`plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.0b builds `$CLOSING_SUB_ISSUES` with its own `gh pr view {pr} --json closingIssuesReferences --jq` call. The jq has a same-repo `select(...)` that copies `sameRepoNumbers` (`plugin/bin/lib/flow/closing-links.js`). A prose rule then subtracts Step 4.0's reopened, failed and pendingClose lists, and skips Step 4.0b when Step 4.0 returned none. `closing-links.js post-merge` already reads those references and computes those lists, but prints only the unwanted-closure `candidates`, not the full same-repo closing set. The #4466 review found two medium defects in the hand-written copy (cross-repo numbers, the missing no-result hold).\n\n## Deliverables\n\n- [ ] `closing-links.js post-merge` prints the merge's same-repo closing records minus reopened, failed and pendingClose, as one new JSON field, covered by unit tests in `tests/bin-lib/flow/`.\n- [ ] Step 4.0b reads that field from Step 4.0's output instead of calling `gh pr view` itself, and skips when the field is absent.\n\n## Acceptance Criteria\n\n- [ ] `grep -F \"closingIssuesReferences\" plugin/skills/_shared/pr-first-merge-post-merge.md` no longer matches inside Step 4.0b.\n- [ ] A unit test shows that a cross-repo `Fixes other/repo#N` and a reopened record are both missing from the new field.\n\n## Release Note\n\nClosing a below-floor parent after a merge now relies on the same tested code that settles the merge's closing links.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/closing-links.js` — post-merge output\n- `plugin/bin/lib/flow/closing-links.js` — `sameRepoNumbers`\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — Step 4.0b\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T10:12:28Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4597,
-        "state": "OPEN",
-        "title": "Emit Step 4.0b's closing set from closing-links.js post-merge instead of a hand-written jq",
-        "updatedAt": "2026-10-30T16:08:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect hindsight from #4423\n\nDefer-reason: tangential\n\n## Current State\n\n#4423's stale-claim in-flight match — the run-id shape, both marker forms as exact trimmed lines, a same-repo non-fork PR, the 1000-entry cap as a failure, and in /tidy the `### Resume` line grammar — exists as code in `plugin/bin/lib/issues/claim-store.js`'s `staleClaimInFlightPr` and is restated as agent-executed prose in `plugin/skills/_shared/issue-claims.md` \"The lock\" step 4 (the gh-absent MCP path) and `plugin/skills/tidy/scan-procedures.md` Step 4.7. The prose copies validate untrusted PR bodies by an agent reading prose; the tests pin their wording, and the regex to `RUN_ID_SHAPE.source`, never their behavior. Review tiebreak verdicts #1 and #13 on #4423 recommended routing both through the function over agent-fetched JSON (the repo's agent-fetch / Node-compute pattern). refs #4423\n\nProbe: `git grep -n -F -e 'claude-tweaks-run: {runId}' origin/main -- plugin/bin plugin/skills/tidy plugin/skills/_shared/issue-claims.md` exits 1 — no such matcher on origin/main (729a5ae5e..f0b6f24cb fetched); the #4423 matcher itself ships with PR #4518.\n\n## Deliverables\n\n- A `plugin/bin/` CLI that runs `staleClaimInFlightPr` over `gh`, or over an agent-fetched listing file (MCP `list_pull_requests` pages normalized to `{url, body, isCrossRepository}` from `head.repo.full_name`), and, for /tidy, validates the matched PR's `### Resume` line against `pr-body.js`'s `composeResumeLine` shape — printing JSON `{match, link, resume | resolve, failure}`.\n- `_shared/issue-claims.md` step 4's MCP path and `tidy/scan-procedures.md` Step 4.7 call the CLI instead of restating the rule.\n\n## Acceptance Criteria\n\n- Neither prose file restates the marker-match rule or the Resume-line grammar; each names the CLI.\n- A test feeds the CLI a gh-shaped and an MCP-shaped listing and gets the same verdict for a matching same-repo PR, a fork PR, an inline marker mention, a 1000-entry no-match (failure), and a malformed listing (failure).\n- A Resume line whose tail carries `; rm -rf ~` or a `$(…)` in its target yields `resolve`, never `resume`.\n\n## Release Note\n\n/tidy and the gh-absent claim path decide whether a stale claim's run still has an open PR with the same code /flow uses.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/claim-store.js` — staleClaimInFlightPr over an injected listing\n- `plugin/skills/_shared/issue-claims.md` — step 4 MCP path calls the CLI\n- `plugin/skills/tidy/scan-procedures.md` — Step 4.7 calls the CLI\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T09:52:39Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4596,
-        "state": "OPEN",
-        "title": "Route the tidy and MCP stale-claim checks through one Node matcher over agent-fetched PR JSON",
-        "updatedAt": "2026-10-30T16:08:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full (multi-spec batch) from #4423\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nTwo of the three records in flow run spec-4468-4465-4423 shipped a shell-injection surface in skill prose, each caught only by `/claude-tweaks:review` lens 3b after the SDD whole-branch review had passed: #4465's tidy `record-decline` interpolated a human free-text `{why}` into a single-quoted `printf` (fixed in 5a3494874 — the payload is now a `Write`-produced file fed on stdin), and #4423's tidy Step 4.7 rendered an open PR's untrusted `### Resume` line as a paste command with an unconstrained tail (fixed in 48d8c550e — held to `pr-body.js`'s `composeResumeLine` shape with no shell metacharacters). refs #4465, refs #4423\n\n`docs/skill-authoring.md` covers untrusted content in two other places only: \"Passing untrusted content into an inline skill invocation\" (fetched text steering an LLM turn) and the trusted-author rule for marker comments. Its shell-fence rules (quoting temp paths, guard-accepted shapes, `process.argv` over interpolation in `docs/donts.md`) are about correctness, not trust. Probes on origin/main (729a5ae5e..f0b6f24cb fetched): `git grep -n -i -F -e 'shell' origin/main -- docs/skill-authoring.md` matches only those correctness rules; `git grep -n -i -e 'interpolat' origin/main -- docs/skill-authoring.md docs/donts.md` matches only the `node -e` path rule.\n\n## Deliverables\n\n- A `docs/skill-authoring.md` section stating the rule: text the plugin did not write (a human's free-text answer, a PR/issue body or comment, a record field, a branch name) never reaches a shell command line or a rendered paste command by interpolation — pass it as a file (`Write`, then stdin or a path argument) or through `process.argv`, and render a command built from untrusted parts only when every part matches the composer's exact grammar, else a non-command fallback. Cite the two worked fixes above.\n- A review lens 3b calibration line (`_shared/criteria-review-quality.md` or the lens's own row) naming \"untrusted text interpolated into a shell or paste command\" as a security finding to look for in skill prose.\n\n## Acceptance Criteria\n\n- `docs/skill-authoring.md` carries the rule with both worked examples (#4465, #4423).\n- Lens 3b's calibration names the untrusted-text-into-command class.\n- A conformance test pins the rule's presence in both files.\n\n## Release Note\n\nSkill authors get an explicit rule for keeping untrusted text out of shell and paste commands, and review now looks for it.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-authoring.md` — untrusted-text-into-command rule\n- `plugin/skills/_shared/criteria-review-quality.md` — lens 3b calibration line\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T09:52:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4595,
-        "state": "OPEN",
-        "title": "Add an untrusted-text-into-command rule to skill authoring and review lens 3b",
-        "updatedAt": "2026-10-30T16:07:58Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "# Reflect — staged finding 1\n\n**Category:** tangential\n\nOrigin: reflect full from #4484 (batch-scope pass, flow run 2026-10-28T172259-spec-4488-4484)\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/flow/artifact-overwrite-check.js` lets a later spec's edit to an earlier spec's journey pass only through three extension tests: same-spec self-edit (blame `refs #N` match), list reflow (`- ` entries, count not shrinking), and step-markup reformat (`normalizeStepMarkup` equality per hunk). A hunk that fails all three trips the multi-spec artifact-overwrite HARD-GATE.\n\nIn flow run `2026-10-28T172259-spec-4488-4484`, #4484's commit 4706f21db inserted a new step 3 into #4488's `docs/journeys/route-a-review-finding-the-release-gate-can-see-4488.md` (24 insertions, 3 deletions). The two later step headings were renumbered with their text unchanged, and the `Origin:` bookkeeping line was rewritten to name both specs. A renumbered heading is not a list entry, and a step-markup reformat compares a deleted heading with its matching added heading, number included. The `Origin:` line is plain text, not a `- ` bullet. So no test matched: the check exited 1, the run stopped at the HARD-GATE, and the user ruled it an extension. No #4488 content was lost.\n\nIntegration-branch probe: `git grep -n -i -e 'renumber' origin/main -- plugin/bin/lib/flow/artifact-overwrite-check.js` exited 1 (no match) after `git fetch origin main`.\n\n## Deliverables\n\n- A fourth extension test, step renumber: a hunk whose deleted lines are numbered step headings, each reappearing among the hunk's added lines with identical normalized text under a different number, is an extension.\n\n- A fifth extension test, reference-preserving bookkeeping line: a deleted `Origin:` line whose every `#N` reference is still present in its replacement line is an extension. A replacement that drops a reference stays an overwrite.\n\n- The header comment's test list, and `plugin/skills/flow/multispec-artifact-namespacing.md` where it names the extension tests, updated to five.\n\n## Acceptance Criteria\n\n- [ ] A fixture where a later spec inserts a step ahead of two existing `### N.` steps (headings renumbered, text unchanged) reports `clean: true`.\n\n- [ ] A fixture where a renumbered heading's text also changes still reports an overwrite.\n\n- [ ] A fixture where the `Origin:` line gains a `#N` reference and keeps the existing one reports `clean: true`; a fixture that drops the existing reference reports an overwrite.\n\n- [ ] Each new test goes red with its extension test removed.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a later spec inserts a journey step that renumbers an earlier spec's steps, or adds itself to a journey's Origin line.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — add the step-renumber and reference-preserving-line extension tests\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — fixtures and go-red tests for both\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — name the two new extension tests\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-10-30T08:50:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4590,
-        "state": "OPEN",
-        "title": "Treat a renumbered journey step and an extended Origin line as extensions in the artifact-overwrite check",
-        "updatedAt": "2026-10-30T16:07:54Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md` is about 48 KB. Its Step 5 instructions require the dispatching session to copy each fenced template verbatim and substitute `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}` (eight items, three resolved by CLIs) and `[Use: …]` by hand. One #3903 resume needed three such prompts of about 10 KB each (first call, second call, handoff continuation). Hand substitution let small drift in: context-pack items were condensed rather than copied, and `Selected at:` was written as free text. Nothing checks a dispatched prompt against the template.\n\n## Deliverables\n\n1. A `plugin/bin/` CLI (e.g. `dispatch-prompt.js --call first|second|continuation --run {run-dir} --issues N[,M] [--next-steps …] [--headless]`) that resolves the context pack (plugin root, policy values, profile, Selected-at), fills the template from `task-prompt.md`'s fenced blocks, and prints the finished prompt or writes it to a file.\n2. `task-prompt.md`/`SKILL.md` Step 5 point the dispatching session at the CLI; the fenced blocks stay the single source the CLI reads.\n3. A test that the rendered prompt contains every fixed sentence of its template and no unsubstituted `{…}` placeholder.\n\n## Acceptance Criteria\n\n- [ ] A dispatch firing builds each Task prompt with one CLI call and no manual placeholder substitution.\n- [ ] Editing a sentence in a `task-prompt.md` fenced block changes the CLI's output with no code change.\n- [ ] The test fails when a placeholder is left unsubstituted.\n\n## Release Note\n\nNo user-visible change: dispatched build agents receive prompts generated from the template rather than hand-copied.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/task-prompt.md` — modify\n- `plugin/skills/dispatch/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-10-30T08:37:07Z",
         "labels": [
@@ -2055,174 +1762,6 @@
     ],
     [
       {
-        "body": "**Doc:** docs/decisions/0026-ledger-residue-converges-in-reconcile.md | **Id:** decisions/0026-ledger-residue-converges-in-reconcile | **Section:** Decision | **Category:** staleness | **Misleads:** human engineer + coding agent | **Classification:** additive | **Confidence:** high\n\nVerified-as-of: 84e33527b384ce3438a614a20a4ce5f89338e96f\n\n## Current State\n\nThe doc's bullet lists exactly four kept-reasons: `not-a-ledger`, `ledger-has-open-rows`, `ledger-status-unrecognized`, `run-live`. The live implementation (plugin/bin/lib/reconcile/ledger-residue.js, lines 166 and 418, and its own header comment lines 24-28) has a fifth, actively-checked reason: a candidate is also kept when an open work record references it (`referenced-by-open-record`, which carries the referencing record numbers). A reader using this ADR to understand or debug why a given ledger was or wasn't flagged as residue would miss this fifth condition entirely.\n\n## Deliverables\n\n**Current:**\n```\nA candidate\n  is kept, and reported as a per-path skip, when it lacks the ledger signature (`not-a-ledger`),\n  has an `open` row (`ledger-has-open-rows`) or an unrecognized status\n  (`ledger-status-unrecognized`), or a non-archived run directory is attributed to it\n  (`run-live`). Rows are parsed by `wrap-up/pack.js`'s `parseLedger`.\n```\n\n**Proposed:**\n```\nA candidate\n  is kept, and reported as a per-path skip, when it lacks the ledger signature (`not-a-ledger`),\n  has an `open` row (`ledger-has-open-rows`) or an unrecognized status\n  (`ledger-status-unrecognized`), a non-archived run directory is attributed to it\n  (`run-live`), or an open work record references it (`referenced-by-open-record`, carrying the\n  referencing record numbers). Rows are parsed by `wrap-up/pack.js`'s `parseLedger`.\n```\n\n## Acceptance Criteria\n\nThe 'Removable residue is what tidy would delete' bullet in the Decision section must enumerate all five of the check's current kept/skip reasons, including `referenced-by-open-record`, matching `plugin/bin/lib/reconcile/ledger-residue.js`.\n\n## Release Note\n\nNo user-visible change — documentation accuracy fix.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` — apply the proposed documentation edit\n\n_Filed by `/claude-tweaks:docs-health`. Close to resolve; label `wontfix` to suppress future reports of this finding._\n\n<!-- work-fingerprint: docshealth-6d952ccb -->\nwork-fingerprint: docshealth-6d952ccb",
-        "createdAt": "2026-10-30T06:17:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRqw",
-            "name": "by:docs-health",
-            "description": "",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACverRrA",
-            "name": "docs-health:additive",
-            "description": "",
-            "color": "ededed"
-          }
-        ],
-        "number": 4568,
-        "state": "OPEN",
-        "title": "Doc staleness: docs/decisions/0026-ledger-residue-converges-in-reconcile.md — Decision",
-        "updatedAt": "2026-10-30T16:07:43Z",
-        "facets": {
-          "origin": "docs-health",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/closing-tally/closing-tally.js:13` defines `FIELDS` as priority, related, granted, flaggedBack, dependencyRepair, needsDecision, skipped and failed. `plugin/skills/backlog/refine-record.md` Step 4 resolves Resolve-lane rows (grant anyway, build it myself, keep, park, close, re-authorize). `plugin/skills/backlog/refine-closing-summary.md`'s log templates have no line for a resolved decision, and the tally has no field to count one. So a `refine #N` run whose only writes are resolves renders a tally of all zeros and lists every resolve line under `unclassified`.\n\nObserved 2026-10-30 on `2026-10-30T043043-backlog-standalone`. Resolving #3944 and #4456 as `keep` produced `0 priority set · 0 Related updated · 0 granted · 0 flagged back · 0 dependency-repair · 0 needs-decision · 0 skipped · 0 failed`, with both resolve lines unclassified.\n\n## Deliverables\n\n1. Add a Resolve-lane log template to `refine-closing-summary.md`, e.g. `AUTO {time} — Backlog refine: resolved decision on #{n} as {choice}.`, and cite it from `refine-record.md` Step 4.\n2. Add a `resolved` field to `closing-tally.js`'s `FIELDS`/`LABELS` that counts that template, keeping the per-record max-of-two-forms rule unchanged.\n3. A test with a decisions.md holding two resolve lines.\n\n## Acceptance Criteria\n\n- For a decisions.md with two resolve lines, `closing-tally.js --run` reports `2 resolved` and an empty `unclassified` array.\n- Every existing closing-tally test passes unchanged apart from the added field.\n\n## Release Note\n\nThe closing tally from `/claude-tweaks:backlog refine #N` now counts resolved decisions instead of leaving them unclassified.\n\n### Key Files\n\n- `plugin/bin/lib/closing-tally/closing-tally.js` (modify)\n- `plugin/skills/backlog/refine-closing-summary.md` (modify)\n- `plugin/skills/backlog/refine-record.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-10-30T05:17:44Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4566,
-        "state": "OPEN",
-        "title": "closing-tally.js has no Resolve-lane field, so a refine #N run that resolves decisions reports an all-zero tally",
-        "updatedAt": "2026-10-30T16:07:38Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item not yet applied is still listed by both readers.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-30T05:17:39Z",
         "labels": [
@@ -2272,7 +1811,7 @@
         "number": 4565,
         "state": "OPEN",
         "title": "tidy --approve leaves a forge-only approval run unarchivable, so its applied staged/ keeps raising the unapproved-proposals notice",
-        "updatedAt": "2026-10-30T16:07:33Z",
+        "updatedAt": "2026-10-30T21:49:18Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -2434,7 +1973,7 @@
         "number": 4561,
         "state": "OPEN",
         "title": "Unify the line-anchored section-heading rule across release-note-repair, near-duplicate and compose-record",
-        "updatedAt": "2026-10-30T16:07:21Z",
+        "updatedAt": "2026-10-30T21:32:57Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -5950,7 +5489,7 @@
         "number": 4343,
         "state": "OPEN",
         "title": "Catch the run branch up with the integration branch before build's final verification, not after it",
-        "updatedAt": "2026-10-30T20:02:22Z",
+        "updatedAt": "2026-10-30T21:18:47Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
