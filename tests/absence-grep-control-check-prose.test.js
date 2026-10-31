@@ -54,7 +54,16 @@ test('the AC template excludes the run directory from a repo-root absence search
   assert.ok(ac.includes(":!.claude-tweaks/pipelines"), 'the AC section must name the run-directory pathspec');
   assert.ok(ac.includes('#4579'), 'the AC section must cite #4579');
   assert.ok(ac.includes('the control run applies to the excluded form'), 'the excluded search still gets the control run');
-  assert.ok(ac.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'));
+  assert.ok(ac.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
+});
+
+test('the control check adds the run-directory exclusion as a plan correction (#4579)', () => {
+  const start = CHECKS.indexOf('**Absence-grep control check');
+  const paragraph = CHECKS.slice(start, CHECKS.indexOf('\n\n', start));
+  assert.ok(paragraph.includes(":!.claude-tweaks/pipelines"), 'the paragraph must name the run-directory pathspec');
+  assert.ok(paragraph.includes('#4579'), 'the paragraph must cite #4579');
+  assert.ok(paragraph.includes('a plan correction, never an SDD ruling'), 'the exclusion is a plan correction, not an SDD ruling');
+  assert.ok(paragraph.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
 });
 
 test('the tombstone section treats its scoped grep as an absence grep', () => {
