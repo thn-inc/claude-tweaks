@@ -2,3 +2,5 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
+| 1 | build | SDD ruling — three task-review Minors left unchanged as non-defects: ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
+| 2 | build | SDD ruling — final-review residue left unchanged as non-defects: ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
