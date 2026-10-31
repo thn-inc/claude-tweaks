@@ -26,7 +26,7 @@
 ## Review Focus
 
 - An MCP entry whose `head.repo` is `null` (a deleted fork) → `isCrossRepository: true`, never a match. Test in Task 1.
-- `head.repo.full_name` differing from the resolved repo only in letter case (`Acme/W` vs `acme/w`) → same repo (GitHub names are case-insensitive). Test in Task 1.
+- Repo-name letter case: every same-repo comparison stays exact-case, as the existing gh twin's `isSameRepoPrUrl` is (its regex has no `i` flag) — `normalizePrListing` compares `head.repo.full_name` exactly too, so the URL check and the fork check never disagree. Test in Task 1 (`Acme/W` against `acme/w` → cross-repository).
 - A Resume line ending in `\r` (CRLF body) or trailing spaces still parses as `resume`; a second command after the closing backtick does not. Tests in Task 2.
 - A listing file that is valid JSON but holds non-object entries (`[42]`, `[null]`) or is an object (`{}`) → `failure`, never a no-match. Test in Task 3 (AC2.1 malformed rows).
 - An invalid `runId` in the claim blob → `{match:false, link:null, failure:null}` with no `gh` call and no listing read (the plain-Release path tidy depends on). Test in Task 3.
@@ -36,6 +36,7 @@
 ### Task 1: Split the stale-claim matcher out of `claim-store.js`; add the MCP listing normalizer
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/claim-store.js` (lines 526-579 and `module.exports`)
@@ -46,9 +47,9 @@
 - Produces (from `claim-store.js`, all exported):
   - `openPrListArgs(owner: string, repo: string) => string[]` — exactly `['pr','list','--repo',`${owner}/${repo}`,'--state','open','--json','url,body,isCrossRepository','--limit',String(OPEN_PR_LIST_LIMIT)]`.
   - `staleClaimRunId(content: string) => string | null` — `JSON.parse(content)` (throws on malformed JSON); returns `runId` when it is a string matching `RUN_ID_SHAPE`, else `null`.
-  - `matchStaleClaimPr(runId: string, prs: unknown, owner: string, repo: string) => { url: string, body: string } | null` — throws `Error` when `prs` is not an array, or when no entry matches and `prs.length >= OPEN_PR_LIST_LIMIT`; otherwise the first entry that is an object with a string `body`, `isCrossRepository === false`, `isSameRepoPrUrl(url, owner, repo)`, and a body line whose `.trim()` equals `claude-tweaks-run: ${runId}` or `<!-- claude-tweaks-run: ${runId} -->`.
+  - `matchStaleClaimPr(runId: string, prs: unknown, owner: string, repo: string) => { url: string, body: string } | null` — throws `Error('open-PR listing is not an array')` (the existing message, kept) when `prs` is not an array, or when no entry matches and `prs.length >= OPEN_PR_LIST_LIMIT`; otherwise the first entry that is an object with a string `body`, `isCrossRepository === false`, `isSameRepoPrUrl(url, owner, repo)`, and a body line whose `.trim()` equals `claude-tweaks-run: ${runId}` or `<!-- claude-tweaks-run: ${runId} -->`.
   - `staleClaimInFlightPr` — unchanged contract; body becomes: `staleClaimRunId` → `null` return before any `gh` call → `JSON.parse(gh(openPrListArgs(owner, repo)))` → `matchStaleClaimPr` → `{ link: m.url }`; same catch/`onError` block.
-- Produces (from `mcp-pr-shape.js`): `normalizePrListing(entries: unknown, owner: string, repo: string) => Array<{url, body, isCrossRepository}>` — throws `Error` when `entries` is not an array or any element is not a plain object; an element carrying an `html_url` or `head` key is MCP-shaped → `{ url: html_url, body, isCrossRepository: !(head?.repo?.full_name is a string && its lowercase === `${owner}/${repo}`.toLowerCase()) }`; any other element is gh-shaped → `{ url, body, isCrossRepository }` copied unchanged. Never mutates its input.
+- Produces (from `mcp-pr-shape.js`): `normalizePrListing(entries: unknown, owner: string, repo: string) => Array<{url, body, isCrossRepository}>` — throws `Error('open-PR listing is not an array')` when `entries` is not an array (the same message `matchStaleClaimPr` uses, so both transports report one string) and `Error('open-PR listing entry {i} is not an object')` when element `i` is not a plain object; an element carrying an `html_url` or `head` key is MCP-shaped → `{ url: html_url, body, isCrossRepository: head?.repo?.full_name !== `${owner}/${repo}` }` (exact case — see Review Focus); any other element is gh-shaped → `{ url, body, isCrossRepository }` copied unchanged. Never mutates its input.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -59,7 +60,7 @@ In `tests/bin-lib/issues/claim-store.test.js` add (use `'2026-10-31T005940-recor
 
 Create `tests/bin-lib/issues/mcp-pr-shape.test.js`:
 - `normalizePrListing maps an MCP entry to the gh shape` — `{html_url: U, body: B, head: {repo: {full_name: 'acme/w'}}}` with `('acme','w')` → `[{url: U, body: B, isCrossRepository: false}]`.
-- `normalizePrListing compares full_name case-insensitively` — `full_name: 'Acme/W'` → `isCrossRepository: false`.
+- `normalizePrListing compares full_name exactly, as isSameRepoPrUrl does` — `full_name: 'Acme/W'` with `('acme','w')` → `isCrossRepository: true`.
 - `normalizePrListing marks a fork or a deleted head repo cross-repository` — `full_name: 'evil/w'` → `true`; `head: {repo: null}` → `true`.
 - `normalizePrListing passes a gh-shaped entry through unchanged` — `{url, body, isCrossRepository: false}` → `deepEqual` copy.
 - `normalizePrListing throws on a non-array or a non-object element` — `{}`, `[42]`, `[null]`, `[[]]` each `assert.throws`.
@@ -130,6 +131,7 @@ git commit -m "Add parseResumeLine beside composeResumeLine — the PR body's Re
 ### Task 3: `plugin/bin/stale-claim-pr.js` CLI
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/stale-claim-pr.js`
@@ -140,7 +142,7 @@ git commit -m "Add parseResumeLine beside composeResumeLine — the PR body's Re
 - Consumes: Task 1's `openPrListArgs`, `staleClaimRunId`, `matchStaleClaimPr`, `normalizePrListing`; Task 2's `resumeLineUnder`, `parseResumeLine`.
 - Produces: `node plugin/bin/stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]`; exports `{ run, parseArgs, realDeps }`. `deps`: `ghAvailable, remoteUrl, parseRepo, repoSlug, gh(args) => stdout, readFile(path) => string, stdout, stderr`.
   - Exit 0 with one JSON line for every verdict, failure included: `{"match":false,"link":null,"failure":null}` · `{"match":true,"link":U,"failure":null}` · under `--resume` on a match, `"resume": "<line>"` or `"resolve": "no-resume-line" | "resume-line-shape"` between `link` and `failure` · on any failure `{"match":false,"link":null,"failure":"<message>"}`.
-  - Exit 1: malformed invocation (unknown flag, a flag missing its value, no `--claim-file`) — usage on stderr. Exit 2: repo unresolved, or no `--listing` and `gh` absent (stderr names `--listing`).
+  - Exit 1: malformed invocation (unknown flag, a flag missing its value, no `--claim-file`) — usage on stderr. Exit 2: no `--listing` and `gh` absent — and only that (stderr names `--listing`), so a caller can route exit 2 to its MCP listing path. Exit 3: owner/repo unresolved (no `--repo`, no parseable `origin` remote) — stderr names `--repo`. No JSON on exits 1-3.
   - Order: parse → repo → read claim file + `staleClaimRunId` (null → no-match verdict, no listing read, no `gh` call) → listing (`--listing`: `readFile` + `JSON.parse`; else `ghAvailable` check then `JSON.parse(deps.gh(openPrListArgs(owner, repo)))`) → `normalizePrListing` on both paths (rule 1: one code path) → `matchStaleClaimPr`. Every throw from claim read, listing read/parse, `gh`, normalize or match becomes the failure verdict.
   - `realDeps.gh`: `execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore','pipe','pipe'], timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })` (`shared-primitives`, as `plugin/bin/claim-targets.js`'s `defaultGh`).
 
@@ -153,11 +155,13 @@ Fixture helpers: `ghEntry({url, body, isCrossRepository})` and `mcpEntry({url, b
   - fork PR (gh `isCrossRepository: true`; MCP `fullName: 'evil/w'`) with the marker → `{match:false, link:null, failure:null}`;
   - inline marker mention only → `{match:false, link:null, failure:null}`;
   - 1000 entries, none marked → `match:false`, `failure` matches `/1000-entry limit/`;
-  - malformed listing (gh stdout `{}`; MCP file `[42]`) → `match:false`, `failure` non-null.
+  - malformed listing (both transports fed the same `{}`) → `{match:false, link:null, failure:'open-PR listing is not an array'}`.
+- `a listing file with a non-object entry is a failure, never a no-match` — `--listing` file `[42]` → `failure` matches `/entry 0 is not an object/`; `[null]` likewise.
 - `AC3.1: a Resume line with a shell tail or a $( ) target yields resolve, never resume` — `--resume`, matching PR whose body is `composePrEarlyBody({runId: RUN, target, nextStep:'review', runDir: DIR})` with the Resume line edited to (a) append `; rm -rf ~`, (b) target `#1$(touch x)` → each verdict has `resolve: 'resume-line-shape'` and no `resume` key.
 - `--resume with the composed body yields resume equal to composeResumeLine` — unedited composed body → `resume` equals `composeResumeLine({runDir: DIR, target:'#4596', nextStep:'review'})`; a body with no `### Resume` heading but the marker → `resolve: 'no-resume-line'`; without `--resume` the verdict has neither key.
 - `an invalid runId is a clean no-match and never lists PRs` — claim `{runId: '../etc'}`, `deps.gh` and listing `readFile` both throw → `{match:false, link:null, failure:null}`, exit 0.
 - `gh absent without --listing exits 2; with --listing it never probes gh` — `ghAvailable: () => false` → exit 2, stderr mentions `--listing`; same deps plus `--listing` → exit 0.
+- `an unresolved repo exits 3` — `remoteUrl` throws and no `--repo` → exit 3, stderr mentions `--repo`, no stdout; with `--repo acme/w` → exit 0.
 - `malformed invocations exit 1` — no `--claim-file`; `--bogus`; `--listing` with no value.
 - `--help prints usage and probes nothing` — exit 0, stdout matches `/usage: stale-claim-pr\.js/`, `ghAvailable` throws if called.
 
@@ -195,20 +199,20 @@ git commit -m "Add stale-claim-pr.js — one stale-claim open-PR verdict over gh
 - Waived `docs/journeys/act-on-a-contested-claim.md`, `docs/journeys/tidy-standalone-auto-report.md`: they describe outcomes (stop / Resume row / Manual review), which this change keeps; no wording names the prose rule.
 
 **Interfaces:**
-- Consumes: Task 3's CLI command line and JSON verdict (`match`, `link`, `resume`/`resolve`, `failure`; exit 2 on gh absent without `--listing`).
+- Consumes: Task 3's CLI command line and JSON verdict (`match`, `link`, `resume`/`resolve`, `failure`; exit 2 = `gh` absent without `--listing`, exit 1/3 = invocation or repo failure, no JSON).
 
 - [ ] **Step 1: Rewrite the conformance tests first** (the moved-prose pins: `git grep -n -F -e 'head.repo.full_name' -e 'trimmed line equal to' -e 'claude-tweaks-run: {runId}' -- tests plugin` hits only these two test files and the two prose files)
 
 `tests/issue-claims-stale-open-pr-conformance.test.js`:
 - Keep `lockStep4()`. Test 1 → `AC1.2: The lock step 4 names the stale-claim CLI on the MCP path` — includes `` `'stale'` blob ``, `bin/stale-claim-pr.js`, `--claim-file`, `--listing`, `mcp__github__list_pull_requests`, `staleClaimInFlightPr`.
 - New `AC1.1: The lock step 4 no longer restates the marker-match rule` — step 4 does not include `claude-tweaks-run: {runId}`, `<!-- claude-tweaks-run: {runId} -->`, `head.repo.full_name`, or `RUN_ID_SHAPE.source`.
-- Test 2 (fail-open) keeps its two `assert.match`es, re-worded to the new sentence: `/failure[^.]*falls through to the write/` and `/after one line saying the check failed — never silently/`.
+- Test 2 (fail-open) keeps its two `assert.match`es, re-worded to the new sentence: `/failure[^.]*non-zero exit[^.]*falls through to the write/` and `/after one line saying the check failed — never silently/`.
 - Test 3 → `the run-id shape is restated only in flow/claim-targets.md (#4423, #4596)` — `flow/claim-targets.md` includes `RUN_ID_SHAPE.source`; `_shared/issue-claims.md` and `tidy/scan-procedures.md` do not.
 
 `tests/tidy-stale-claim-open-pr-conformance.test.js`:
 - Test 2 → `AC1.2: the stale-claim paragraph calls the CLI on both transports` — `claimAuditSection()` includes `bin/stale-claim-pr.js`, `--resume`, `--listing`, `mcp__github__list_pull_requests`.
 - New `AC1.1: the stale-claim paragraph restates neither the marker rule nor the Resume grammar` — section does not include `trimmed line equal to`, `claude-tweaks-run: {runId}`, the regex source `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$`, `` PIPELINE_RUN_DIR="{dir}/{runId}" ``, or `` `[a-z][a-z,-]*` ``.
-- Test 3 drops lines 62, 68, 69 (basename / grammar pins) and adds: flat section matches `/`resume`/` and `/`resolve`/`; `failed listing`/`Manual review`/`never an unchecked Release` match is kept; the 1000-entry pin becomes `/1000-entry listing with no match[^.]*Manual review/`. Tests 1, 4, 5, 6 unchanged.
+- Test 3 drops lines 59, 62, 68, 69 (the `### Resume` heading, basename and grammar pins — the CLI owns all four now) and adds: flat section matches `/`resume`/` and `/`resolve`/`; `failed listing`/`Manual review`/`never an unchecked Release` match is kept; the 1000-entry pin becomes `/1000-entry listing with no match[^.]*Manual review/`; and `/Manual review[^.]*any other non-zero exit/`. Tests 1, 4, 5, 6 unchanged.
 
 - [ ] **Step 2: Run the two tests to verify they fail**
 
@@ -219,11 +223,11 @@ Expected: FAIL — `bin/stale-claim-pr.js` absent from both sections; the AC1.1 
 
 `_shared/issue-claims.md` step 4, replacing from "For a `'stale'` blob, the counterpart" through "…so it is not read as no marked PR.", keeping "Otherwise, write **conditionally**" after it:
 
-> For a `'stale'` blob, the counterpart (#4423): list the repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging until exhausted), Write every page's entries as one JSON array to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json` prints, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --listing "{that path}"` — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s `staleClaimInFlightPr`); it validates the run id and normalizes the MCP entries itself. `"match": true` stops the claim and writes nothing, as the tombstone case does. A non-null `failure`, or a listing that could not be fetched or written, falls through to the write (fail open), after one line saying the check failed — never silently, so it is not read as no marked PR.
+> For a `'stale'` blob, the counterpart (#4423): list the repo's open PRs once per claim run via `mcp__github__list_pull_requests` (`state: open`, `perPage: 100`, paging until exhausted), Write every page's entries as one JSON array to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json` prints, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --listing "{that path}" --repo "{owner}/{repo}"` — the matcher `bin/claim-targets.js` runs on the `gh` path (`claim-store.js`'s `staleClaimInFlightPr`); it validates the run id and normalizes the MCP entries itself. `"match": true` stops the claim and writes nothing, as the tombstone case does. A non-null `failure`, a non-zero exit, or a listing that could not be fetched or written, falls through to the write (fail open), after one line saying the check failed — never silently, so it is not read as no marked PR.
 
 `tidy/scan-procedures.md`, replacing the whole "**Stale claim with an open PR (#4423).**" paragraph:
 
-> **Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, run `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --resume` — the matcher `/claude-tweaks:flow`'s claim step runs (`claim-store.js`'s `staleClaimInFlightPr`). With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__list_pull_requests` (`state: open`, paged), Write them as one JSON array to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json` prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure` means plain Release. `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) — {resume}" when the output carries `resume` (the PR body's resume line, already validated as a paste-safe command naming this same run), otherwise — it carries `resolve` — "Resolve open PR #{number} ({url}) before any release"; `{url}` is `link` and `{number}` its trailing `/pull/` number. It is never staged, so it gets no needs-decision comment, and the claim is never released. A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked Release.
+> **Stale claim with an open PR (#4423).** Before recommending Release for a `'stale'` blob, run `node "${CLAUDE_PLUGIN_ROOT}/bin/stale-claim-pr.js" --claim-file "${CLASSIFY_INPUT}" --resume` — the matcher `/claude-tweaks:flow`'s claim step runs (`claim-store.js`'s `staleClaimInFlightPr`); on the `gh` path each call lists open PRs itself, one listing per stale claim (stale claims are few). With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__list_pull_requests` (`state: open`, paged), Write them as one JSON array to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json` prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure` means plain Release. `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row: Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) — {resume}" when the output carries `resume` (the PR body's resume line, already validated as a paste-safe command naming this same run), otherwise — it carries `resolve` — "Resolve open PR #{number} ({url}) before any release"; `{url}` is `link` and `{number}` its trailing `/pull/` number. It is never staged, so it gets no needs-decision comment, and the claim is never released. A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked Release; so does any other non-zero exit (1 or 3, or 2 again after `--listing` was added).
 
 Then update `.claude/skills/prose-code-twin-pin/SKILL.md` lines 208-213 to say the regex is restated in one skill file (`flow/claim-targets.md`), the gh-absent MCP path and `/tidy` now call `bin/stale-claim-pr.js` instead (#4596), and the test asserts the copy list both ways.
 
