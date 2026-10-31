@@ -33,7 +33,8 @@
 - **Why not reuse `bin/pre-review-catchup.js`:** that CLI (#4304) is overlap-gated because, before SDD's review, a merge forces an extra suite run. At Common Step 5 the full suite runs anyway, so an unconditional merge when behind costs no run — and AC1 requires merging whenever the branch is behind.
 - **Once per build:** the catch-up runs before the first verification run only; a verification re-run after a fix does not repeat it. A base that moves after it is the residual case the Post-push merge-state check catches (the prior plan review's open point).
 - **No PR conflict line at Common Step 5:** Catch-up step 1's "Surface the conflict line" has nothing to surface here — the subsection says so (the prior plan review's open point).
-- **`MULTISPEC_PARALLEL_WAVE=1`:** a wave member never pushes (it merges back into the shared branch, `flow/multispec-parallel-waves.md`), so it has no post-push catch-up to move ahead: it logs a `SKIP` naming the marker.
+- **`MULTISPEC_PARALLEL_WAVE=1`:** a wave member is a `pr-first` worktree run, so AC1 as written covers it (plan review, 2026-10-31: Reading A kept AC1 unchanged; no exemption). It catches up in its own worktree, as the Pre-review catch-up already does for wave members (`_shared/pre-review-catchup.md`'s Scope).
+- **Every exit before the comparison skips it:** the dirty-tree and failed-fetch `SKIP`s, an aborted conflict, and a merge that fails without a conflict (git refusing to overwrite untracked files — the realistic failure `_shared/pre-review-catchup.md` names) all leave HEAD unchanged, so the before/after comparison never runs after them (else it would log a false "already contains" `SKIP` beside the real line).
 - **Resolving the model (verbatim-command probe, run 2026-10-31 in this worktree):** `node plugin/bin/resolve-policy.js --values integration-model --run "{this run dir}"` printed `pr-first`; without `--run` it printed `pr-first`.
 
 Waived plugin/bin/pr-merge-state.js: the spec offers it "or a fetch-and-behind probe"; it reads only DIRTY/CONFLICTING (never BEHIND), so the procedure uses the Catch-up steps' own fetch plus a before/after HEAD comparison instead; nothing in this plan reads or changes the CLI.
@@ -80,7 +81,7 @@ Create `tests/build-pre-verify-catchup-conformance.test.js` with a header commen
 | `resolves the run's model` | `` --values integration-model --run "$PIPELINE_RUN_DIR" `` |
 | `local-merge SKIP names the model` | `condition: integration-model local-merge → fallback: no pre-verification catch-up` |
 | `current-branch SKIP` | `condition: current-branch strategy → fallback: no pre-verification catch-up` |
-| `wave member SKIP` | `condition: MULTISPEC_PARALLEL_WAVE=1 → fallback: no pre-verification catch-up` |
+| `wave member catches up` | `` a `MULTISPEC_PARALLEL_WAVE=1` member in its own worktree included `` |
 | `every mode, no stop` | `` in every mode — `auto`, `confirm`, `interactive` and `hybrid` alike, and a standalone `/claude-tweaks:build` — and adds no stop `` |
 | `cites Catch-up steps 1-4` | `` Run the Catch-up (`auto`) steps 1-4 above `` |
 | `merge never rebase` | `merge, never rebase` |
@@ -89,8 +90,12 @@ Create `tests/build-pre-verify-catchup-conformance.test.js` with a header commen
 | `no conflict line` | `There is no PR conflict line to surface` |
 | `dirty tree SKIP` | `condition: uncommitted changes in the worktree → fallback: catch-up not run; verifying the un-merged tree` |
 | `fetch failure fails open` | `condition: fetch failed → fallback: catch-up not run; verifying the un-merged tree` |
+| `no comparison after a SKIP exit` | `Either way the comparison in 5 does not run` |
 | `never asks` | `"ask the user" fallback never applies, in any mode` |
 | `abort verifies un-merged` | `aborted on a conflict it could not resolve confidently — verifying the un-merged tree` |
+| `no comparison after an abort` | `skip the comparison in 5, and run the verification on the un-merged tree` |
+| `non-conflict merge failure` | `condition: merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree` |
+| `no comparison after a merge failure` | `skip the comparison in 5 as well` |
 | `resolved conflict committed first` | `A resolved conflict is committed before HEAD is compared` |
 | `already current is a SKIP` | `condition: branch already contains origin/{integration-branch} → fallback: nothing merged` |
 | `advanced logs before and after` | `merged origin/{integration-branch} before the verification run ({before short} → {after short})` |
@@ -138,15 +143,12 @@ Common Step 5 runs the full suite anyway, so the merge adds no run. It runs once
 first verification run — a re-run after a fix does not repeat it; a base that moves after it is
 the residual case the Post-push merge-state check above catches.
 
-Only a `pr-first` worktree run catches up — the one shape whose phase exit merges after the
-suite. Resolve the model per `_shared/integration-model.md`:
+Only a `pr-first` worktree run catches up (a `MULTISPEC_PARALLEL_WAVE=1` member in its own worktree included, as with the Pre-review catch-up). Resolve the model per `_shared/integration-model.md`:
 `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-model --run "$PIPELINE_RUN_DIR"`
-(drop `--run` with no run dir). Any other shape merges nothing, fetches nothing, and logs one
+(drop `--run` with no run dir). Any other run merges nothing, fetches nothing, and logs one
 `SKIP` (`--reversibility n/a`) naming why:
-`--text "condition: integration-model local-merge → fallback: no pre-verification catch-up"`,
-`--text "condition: current-branch strategy → fallback: no pre-verification catch-up"`, or
-`--text "condition: MULTISPEC_PARALLEL_WAVE=1 → fallback: no pre-verification catch-up"` (a wave
-member merges back into the shared branch and never pushes).
+`--text "condition: integration-model local-merge → fallback: no pre-verification catch-up"` or
+`--text "condition: current-branch strategy → fallback: no pre-verification catch-up"`.
 
 A `pr-first` worktree run catches up in every mode — `auto`, `confirm`, `interactive` and
 `hybrid` alike, and a standalone `/claude-tweaks:build` — and adds no stop. Run the Catch-up
@@ -160,14 +162,21 @@ call takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verificatio
    --reversibility n/a --text "condition: uncommitted changes in the worktree → fallback: catch-up
    not run; verifying the un-merged tree"`; a failed fetch logs the same with `--text "condition:
    fetch failed → fallback: catch-up not run; verifying the un-merged tree"`. Either way the
-   verification run follows.
+   comparison in 5 does not run, and the verification run follows.
 3. Merge conflict resolution's "ask the user" fallback never applies, in any mode. A conflict it
    cannot resolve confidently: run `merge --abort` (its own Bash call), log `--status AUTO
    --reversibility high --text-file "{text-file}"`, `{text-file}` holding
    `pre-verification catch-up with origin/{integration-branch} aborted on a conflict it could not resolve confidently — verifying the un-merged tree`,
-   and run the verification on the un-merged tree; the build phase exit's Post-push merge-state
-   check and, past it, the merge path own the conflict.
-4. A resolved conflict is committed before HEAD is compared, as in step 4 above; Common Step 5's
+   skip the comparison in 5, and run the verification on the un-merged tree; the build phase
+   exit's Post-push merge-state check and, past it, the merge path own the conflict.
+4. A merge that fails without a conflict (git refusing to overwrite untracked working tree
+   files, say): run `merge --abort` (its own Bash call; a no-op error when no merge is in
+   progress is fine), log `--status SKIP --reversibility n/a --text-file "{text-file}"`,
+   `{text-file}` holding
+   `condition: merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree`,
+   skip the comparison in 5 as well, and run the verification. Never move or delete the
+   untracked files to get past it.
+5. A resolved conflict is committed before HEAD is compared, as in step 4 above; Common Step 5's
    own run is the verification after resolving. Then compare `git -C "{worktree-path}" rev-parse
    --short HEAD` with step 3's `{before short}`. Unchanged: log `--status SKIP --reversibility n/a
    --text-file "{text-file}"`, `{text-file}` holding
@@ -237,7 +246,7 @@ Append to `tests/build-pre-verify-catchup-conformance.test.js`. Read `plugin/ski
 | `abort verifies un-merged` | `aborts the merge, and the run verifies the un-merged tree` |
 
 - `assertCatchupBeforeVerify(text)`: `const s = step5(text); requireOrder(s, ['run the shared verification procedure', '**Operational fixes first (#3489).**', CATCHUP, '**Note:**']); assert.deepEqual(missingFacts(BUILD_FACTS, collapse(s)), [], 'Common Step 5 catch-up facts');`
-- `HANDOFF_LINE = '- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | skipped — {condition}}'`; `assertHandoffLine(text)`: the slice from `'### Verification'` to `'### What was built'` includes `HANDOFF_LINE`, message `handoff Verification list lacks the pre-verification catch-up line`.
+- `HANDOFF_LINE = '- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | aborted on a conflict — verified the un-merged tree | skipped — {condition}}'`; `assertHandoffLine(text)`: the slice from `'### Verification'` to `'### What was built'` includes `HANDOFF_LINE`, message `handoff Verification list lacks the pre-verification catch-up line`.
 - `MATCH_NOTE = "build's Pre-verification catch-up (`_shared/git-discipline.md`) merges the integration branch in before its own run"`; `MISMATCH_NOTE = 'a later bookkeeping-only commit takes the Mismatch branch below, which runs no suite either'`; `assertMatchBullet(text)`: the collapsed line starting `- **Match**` within `### Skip-if-recent (for /flow pipelines)` includes `MATCH_NOTE` (message `Match bullet does not name the pre-verification catch-up`) and `MISMATCH_NOTE` (message `Match bullet does not name the bookkeeping-only Mismatch path`).
 
 Tests:
@@ -266,7 +275,7 @@ In `plugin/skills/build/SKILL.md` Common Step 5, after the `**Operational fixes 
 In `plugin/skills/build/handoff-template.md`, append to the `### Verification` list (after `- Tests: {pass/fail}`):
 
 ```markdown
-- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | skipped — {condition}}
+- Pre-verification catch-up: {merged origin/{integration-branch} ({before short} → {after short}) | already current | aborted on a conflict — verified the un-merged tree | skipped — {condition}}
 ```
 
 In `plugin/skills/test/verification.md`, append to the end of the `- **Match**` bullet (same line, after `when \`/flow\` chains build → test.`):
@@ -278,7 +287,7 @@ In `plugin/skills/test/verification.md`, append to the end of the `- **Match**` 
 In `docs/skill-graph.md`'s `## build` table, after the `` `bin/pre-review-catchup.js` `` row:
 
 ```markdown
-| `_shared/git-discipline.md` | Common Step 5 runs its Pre-verification catch-up (#4343) immediately before the verification run, after any Category A fix commit: a `pr-first` worktree run merges a moved integration branch in, in every mode, so `VERIFICATION_SHA` is the post-merge HEAD and `/test`'s Skip-if-recent takes its Match branch; `local-merge`, `current-branch` and a `MULTISPEC_PARALLEL_WAVE=1` member log one `SKIP`. The Post-push merge-state check at the build phase exit stays for a base that moves during verification. |
+| `_shared/git-discipline.md` | Common Step 5 runs its Pre-verification catch-up (#4343) immediately before the verification run, after any Category A fix commit: a `pr-first` worktree run merges a moved integration branch in, in every mode, so `VERIFICATION_SHA` is the post-merge HEAD and `/test`'s Skip-if-recent takes its Match branch; `local-merge` and `current-branch` runs log one `SKIP`; a `MULTISPEC_PARALLEL_WAVE=1` member catches up in its own worktree. The Post-push merge-state check at the build phase exit stays for a base that moves during verification. |
 ```
 
 Measure: `wc -c plugin/skills/build/SKILL.md` must print below 52500.
