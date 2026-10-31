@@ -209,6 +209,14 @@ When mechanizing a prose heuristic into a deterministic check:
    exits 0 with no output, so an exit-code branch alone cannot call that one.
    `tests/reflect-integration-branch-probe.test.js` pins the clause, and removing either the fetch
    clause or the `-e` form turns it red.
+   Naming the failure arms is not enough when the acting branch is the complement of a stop list.
+   `plugin/skills/flow/claim-targets.md`'s in-flight route (#4659) listed its stop outcomes, then
+   said "Otherwise: follow `dispatch/resume-confirmation.md`", so a failed `gh pr view`, a non-zero
+   `bin/pr-resume-line.js` exit, or stdout that was not one JSON line fell through to resuming.
+   Review caught it (`d78eb3940`). Name the one verdict that acts ("Route onward only on a `resume`
+   verdict") and let every other outcome keep the stop: item 19's positive recogniser, in prose.
+   `tests/issue-claims-stale-open-pr-conformance.test.js` pins that clause and the absence of
+   `Otherwise: follow`.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
