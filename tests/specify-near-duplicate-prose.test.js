@@ -143,25 +143,22 @@ test('next-mode-shape.md describes the same refusal condition (#3141)', () => {
   assert.match(section, /at least 2 signals/);
 });
 
-function refusalFenceBody(text = SHAPING_MODE) {
+// Close first, then the nearest open before it: the Related-split fence (#4702) and the refusal fence both open with `node -e "`.
+function fenceBefore(text, close, label) {
   const lf = text.replace(/\r\n/g, '\n');
   const open = 'node -e "\n';
-  const close = '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n';
-  // Close first, then the nearest open before it: the Related-split fence (#4702) also opens with `node -e "`.
   const end = lf.indexOf(close);
   const start = end === -1 ? -1 : lf.lastIndexOf(open, end);
-  assert.ok(start !== -1 && end !== -1, 'refusal fence anchors must exist');
+  assert.ok(start !== -1 && end !== -1, `${label} fence anchors must exist`);
   return { fence: lf.slice(start + open.length, end), end };
 }
 
+function refusalFenceBody(text = SHAPING_MODE) {
+  return fenceBefore(text, '" -- "$NEAR_DUP_HITS" "$NEAR_DUP_SNAPSHOT"\n', 'refusal');
+}
+
 function relatedSplitFenceBody(text = SHAPING_MODE) {
-  const lf = text.replace(/\r\n/g, '\n');
-  const open = 'node -e "\n';
-  const close = '" -- "$NEAR_DUP_HITS"\n';
-  const end = lf.indexOf(close);
-  const start = end === -1 ? -1 : lf.lastIndexOf(open, end);
-  assert.ok(start !== -1 && end !== -1, 'Related-split fence anchors must exist');
-  return lf.slice(start + open.length, end);
+  return fenceBefore(text, '" -- "$NEAR_DUP_HITS"\n', 'Related-split').fence;
 }
 
 test('the Related-split fence runs isRelatedCandidate over the hits file and splits related from rest (#4702)', () => {
