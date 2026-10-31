@@ -66,6 +66,12 @@ test('AC4.1: the note limit is 2000 characters, inclusive', () => {
   assertRejected(parseOwner(block({ v: 1, verdict: 'approved', note: `${note}n` })), /note/, '2001');
 });
 
+test('AC4.1: the note limit counts UTF-16 code units, so an astral character counts twice', () => {
+  const note = '\u{1F600}'.repeat(1000);
+  assert.strictEqual(parseOwner(block({ v: 1, verdict: 'approved', note })).ok, true, '2000 units');
+  assertRejected(parseOwner(block({ v: 1, verdict: 'approved', note: `${note}n` })), /note/, '2001 units');
+});
+
 test('AC4.1: each malformed block is { ok: false }, never an exception', () => {
   assertAllRejected([
     ['an empty body', '', /no verdict marker/],
@@ -249,7 +255,7 @@ test('AC4.1: a <!-- in prose opens no comment', () => {
   assert.deepStrictEqual(parseOwner(`    <!-- in indented code\n\n${good}`), ok, 'four spaces is indented code');
 });
 
-test('AC4.1: pathological bodies stay fast and never throw', () => {
+test('AC4.1: pathological bodies are rejected without throwing', () => {
   const big = [
     '`'.repeat(200000),
     '` '.repeat(100000),

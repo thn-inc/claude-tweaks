@@ -68,6 +68,9 @@ rejected with a reason, never half-read.
   `fix-forward` or `revert-now`, required with `changes-requested` and rejected with
   `approved`. `note` is optional, a string of at most 2000 UTF-16 code units (`String.length`).
   Unknown fields and repeated keys are rejected.
+- **Choice.** `fix-forward` files a follow-up record carrying the original's context, the note
+  and a regression-test requirement. `revert-now` (dev target only) opens and merges a revert PR
+  immediately, then files that follow-up record. #4614 acts on both.
 - **Escaping.** The JSON escapes `<` as `\u003c` and `>` as `\u003e` (a backslash, then `u003c` /
   `u003e`); a raw `<` or `>` anywhere in the JSON is rejected, so the line can never close its own
   comment early.

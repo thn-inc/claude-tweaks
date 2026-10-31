@@ -58,8 +58,8 @@ function dispositionState(labels) {
 // promoting an unlabeled historical approval to 'batch' would understate
 // coverage rather than overstate it (bin/lib/issues/trust.js's sole consumer).
 const APPROVAL_PROVENANCE_LABEL = 'demo:approved-batch';
-// Both spellings of the batch marker are read; skill prose still requires the
-// singular export above until the contract step retires demo:*.
+// Both spellings of the batch marker are read until the contract step (#4625)
+// retires demo:*, on the condition #4613 records.
 const APPROVAL_PROVENANCE_LABELS = [APPROVAL_PROVENANCE_LABEL, 'accept:approved-batch'];
 
 function approvalProvenance(labels) {

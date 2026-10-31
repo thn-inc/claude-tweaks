@@ -1,9 +1,10 @@
 'use strict';
 
 // Pure: the machine-readable verdict comment, a cross-repository contract with
-// Dispatch, which writes this exact format. One HTML comment, alone on its line
-// and starting at column 0, with no run of 3 or more backticks or tildes anywhere
-// before it (write the marker first when a comment also holds code):
+// Dispatch, which writes this exact format (_shared/pr-run-comments.md holds the
+// contract). One HTML comment, alone on its line and starting at column 0, with no
+// run of 3 or more backticks or tildes anywhere before it (write the marker first
+// when a comment also holds code):
 //
 //   <!-- accept-verdict: {"v":1,"verdict":"changes-requested","choice":"fix-forward","note":"text"} -->
 //
@@ -158,7 +159,8 @@ function parseVerdictMarker(input) {
 // verdict is parseVerdictMarker's result.verdict. The marker counts only when its
 // word equals the record's current disposition. Without a marker nothing disagreed,
 // so that case takes no action and carries no note. labels may be strings or gh's
-// { name } objects.
+// { name } objects. No caller yet: #4614's verdict handler is the consumer, acting
+// only on 'proceed' and showing the note.
 function verdictAgreement(input) {
   const { labels, verdict } = input || {};
   const word = verdict && verdict.verdict;

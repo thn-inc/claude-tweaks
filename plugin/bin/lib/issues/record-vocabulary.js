@@ -37,7 +37,7 @@ const LABELS = {
   DEMO_CHANGES_REQUESTED: 'demo:changes-requested',
   // accept:* is the successor vocabulary for demo:* (#4610) — read alongside it
   // by acceptanceOf below; the demo:* spellings stay read-supported until the
-  // contract step removes them.
+  // contract step (#4625) removes them, on the condition #4613 records.
   ACCEPT_PENDING: 'accept:pending',
   ACCEPT_APPROVED: 'accept:approved',
   ACCEPT_CHANGES_REQUESTED: 'accept:changes-requested',
