@@ -19,7 +19,8 @@
 - Concurrency (two guards, both in Task 3):
   - **Merging-session race.** A session that sees its own merge runs Steps 4.0 and 4.0b within seconds of `mergedAt` (Step 4.0's poll is at most 15 s) and then writes the marker. The reconciler skips a run whose PR `mergedAt` is less than `MERGE_GRACE_MS` (10 minutes) before `now`, with entry `skipped`/`merge-grace` and nothing written, so it never races that session. A later pass picks the run up. A missing or unparseable `mergedAt` is treated as inside the grace window (skip, retry later), never as old.
   - **Pass-versus-pass race.** Background passes already serialize on `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's explicit list) do not. Before running Step 4.0 for a run, take a per-run claim by creating `{runDir}/.post-merge.lock` with `fs.openSync(path, 'wx')`. On `EEXIST`, if the lock file's mtime is under `CLAIM_STALE_MS` (10 minutes) old, skip with entry `skipped`/`in-flight`; otherwise remove it and retry the create once. Any other I/O error skips with `claim-failed`. Remove the lock in a `finally` after the marker write. A dotfile name keeps it out of archive's non-dotfile `staged/` checks.
-- Marker-write failure: when the marker append fails, the entry is `skipped`/`marker-write-failed`. The same pass's `archive` still archives the run (there is no archive guard), and archived runs are never walked again, so Steps 4.0 and 4.0b do not run twice. If archive leaves the run in place, the next pass retries, which is safe because Task 2 is idempotent. Either way, any parent left open falls to tidy's backstop.
+- Archive defers what post-merge deferred. Archived runs are never walked again, so a run that `post-merge` skipped with a retryable reason must not be archived in the same pass, or the "later pass" never comes. `postMerge` returns `deferred`: the run dirs it skipped for `merge-grace`, `in-flight`, `claim-failed`, or a transient `prStates` failure (any failure string other than `gh-absent`). `reconcile/index.js` passes that set to `archiveMerged` as `postMergeDeferred`. `archiveMerged` skips each listed run with reason `post-merge-pending`, without calling its stuck-skip `track`, because the skip is transient and must never escalate as residue. The guard is per-pass and bounded by construction: a run leaves the set once `post-merge` acts on it, which happens within one grace window for `merge-grace`. Reasons that are not retryable (`marker-write-failed`, `gh-absent`, `dry-run`) are not deferred, so they never hold a run back from archiving.
+- Marker-write failure: when the marker append fails, the entry is `skipped`/`marker-write-failed` and the run is not deferred. The same pass's `archive` archives it, and archived runs are never walked again, so Steps 4.0 and 4.0b do not run twice. If archive leaves the run in place for its own reasons, the next pass retries, which is safe because Task 2 is idempotent. Either way, any parent left open falls to tidy's backstop.
 - `gh` absent: the check is `gh`-only. The `#4602` MCP transport covers in-session calls, not the reconciler. When `prStates` or the `gh` runner reports `gh` absent, the run gets entry `skipped`/`gh-absent`, no marker is written, and tidy's backstop stays the recovery.
 - Tidy's `parent-gate` backstop is unchanged and stays the last resort: every fail-open path below leaves the parent open for it.
 - Comment copy is the prose template in `verification-brief-parent-gate.md`'s **Close the parent below the floor** step 2, byte-for-byte (heading `## Closed below the oversight floor`).
@@ -45,6 +46,8 @@
 ---
 
 ### Task 1: Bounded reopen window for a late Step 4.0
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/closing-links.js` (`parseArgs`, `USAGE`, header comment, step 8b)
@@ -110,7 +113,7 @@
 - Produces:
   - `MARKER_STEP = 'reconcile post-merge'`, `CLOSE_WINDOW_MS = 600000`, `MERGE_GRACE_MS = 600000`, `CLAIM_STALE_MS = 600000`, `CLAIM_FILENAME = '.post-merge.lock'`.
   - `hasPostMergeMarker(decisionsText) -> boolean` (the Global Constraints rule).
-  - `async postMerge({ cwd, integration, prStates, dryRun, now, deps }) -> { entries: [{ runDir, pr, action: 'ran' | 'skipped', reason?, closingLinks?, parentsClosed? }], failure? }`. `deps` overrides `{ gh, closingLinksRun, closeParents }` for tests. `failure` is `'no-remote'` or `'not-github-issues'`. `now` is a function returning epoch ms (default `Date.now`).
+  - `async postMerge({ cwd, integration, prStates, dryRun, now, deps }) -> { entries: [{ runDir, pr, action: 'ran' | 'skipped', reason?, closingLinks?, parentsClosed? }], deferred: string[], failure? }`. `deferred` holds the absolute run dirs skipped with a retryable reason (Global Constraints' archive rule). It is always an array, empty on `failure`. `deps` overrides `{ gh, closingLinksRun, closeParents }` for tests. `failure` is `'no-remote'` or `'not-github-issues'`. `now` is a function returning epoch ms (default `Date.now`).
   - Per run, in this order: skip silently when `pr.number` is absent, the marker is present, or the PR is `OPEN`/`CLOSED`. A failure string from `prStates.byNumberAsync` gives an entry `skipped` with that reason (`gh-absent` included). A `MERGED` PR whose `mergedAt` is missing, unparseable, or less than `MERGE_GRACE_MS` before `now()` gives `skipped: 'merge-grace'`. Under `dryRun` a merged, unmarked run past the grace window gives `skipped: 'dry-run'` and nothing is written, the claim file included. Otherwise take the per-run claim (Global Constraints): a live claim gives `skipped: 'in-flight'`, a create error other than `EEXIST` gives `skipped: 'claim-failed'`, and the claim is removed in a `finally`. Re-read `decisions.md` for the marker after taking the claim, so a pass that finished between the first read and the claim is seen.
   - Otherwise: call `closingLinksRun(['--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS)], { cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stdout, stderr })` and parse its JSON.
     - No `closingSet` (non-zero exit or any other action): append `SKIP` `MARKER_STEP` with the text `condition: Step 4.0 returned {action or exit N}, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them`. Entry `ran`.
@@ -123,7 +126,8 @@
   - A run whose `decisions.md` already holds a line written by `formatEntry({ status: 'AUTO', step: 'pr-first-merge Step 4.0b', ... })`, and a separate run holding only the `SKIP` `pr-first-merge Step 4.0b (skipped)` line → no fake is called.
   - A clean-status run (`status: 'clean'`) is processed too.
   - `OPEN` PR → no entry, no call. `prStates` returning `'network-failure'` → entry `skipped`/`network-failure`, no marker.
-  - Merge grace: `mergedAt` 2 minutes before `now()` → `skipped`/`merge-grace`, no fake called, `decisions.md` unchanged. `mergedAt` absent → `merge-grace` too. `mergedAt` 11 minutes before → runs.
+  - Merge grace: `mergedAt` 2 minutes before `now()` → `skipped`/`merge-grace`, no fake called, `decisions.md` unchanged, and the run dir is in `deferred`. `mergedAt` absent → `merge-grace` too. `mergedAt` 11 minutes before → runs, not in `deferred`.
+  - `deferred` membership: `in-flight` and `network-failure` runs are listed; `marker-write-failed`, `gh-absent`, `dry-run`, marked, and `OPEN` runs are not.
   - Claim: a fresh `.post-merge.lock` already in the run dir → `skipped`/`in-flight`, no fake called, the lock file left in place. A lock file with mtime 11 minutes old → taken over, the run proceeds, and no lock file remains afterwards. After a normal run no `.post-merge.lock` remains. A `closingLinksRun` that throws still leaves no lock file.
   - Marker re-read under the claim: a fake `closingLinksRun` is never reached when the marker line is appended to `decisions.md` between the first read and the claim. Simulate it with a `deps.beforeClaim` hook that appends the marker; the hook exists for tests only.
   - `closingLinksRun` returning exit 5 → `SKIP` marker naming `exit 5`, `closeParents` not called.
@@ -140,7 +144,8 @@
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/index.js`. Add `'post-merge'` to `ALL_CHECKS`; insert it into `DISPATCH_ORDER` between `release` and `archive` and shift every later `DISPATCH_ORDER.slice(k)` index by one. `PREREQUISITES.archive` becomes an array `[{ check: 'mirror', satisfiedBy: ['remote-prune'] }, { check: 'post-merge', satisfiedBy: [] }]`; `expandChecks` accepts an entry or an array of entries. Add `postMerge: null` to the result literal and the header comment's shape line. Add the dispatch block (`timePhase('post-merge', …)`; `failure` goes to `skipped`; otherwise `result.postMerge = r.entries`), passing `integration`, `prStates`, `dryRun`. Add `post-merge` to the `local-merge-model` skip list string.
+- Modify: `plugin/bin/lib/reconcile/index.js`. Add `'post-merge'` to `ALL_CHECKS`; insert it into `DISPATCH_ORDER` between `release` and `archive` and shift every later `DISPATCH_ORDER.slice(k)` index by one. `PREREQUISITES.archive` becomes an array `[{ check: 'mirror', satisfiedBy: ['remote-prune'] }, { check: 'post-merge', satisfiedBy: [] }]`; `expandChecks` accepts an entry or an array of entries. Add `postMerge: null` to the result literal and the header comment's shape line. Add the dispatch block (`timePhase('post-merge', …)`; `failure` goes to `skipped`; otherwise `result.postMerge = r.entries`), passing `integration`, `prStates`, `dryRun`. Keep `r.deferred` in a pass-local variable (empty array when post-merge did not run or failed) and pass it to the `archiveMerged` call as `postMergeDeferred`. Add `post-merge` to the `local-merge-model` skip list string.
+- Modify: `plugin/bin/lib/reconcile/archive-merged.js`. `archiveMerged` accepts `postMergeDeferred = []`. Inside its run-dir loop, before any other per-run work, a dir whose resolved path is in that set is pushed to `skipped` as `{ runDir, reason: 'post-merge-pending' }`, with no `track` call, and the loop continues. Name the reason in the function's header comment.
 - Modify: `plugin/bin/hooks.js`. Add `'post-merge'` to `BACKGROUND_CHECKS` (not `CLI_DEFERRED_CHECKS`) and `postMerge: null` to the `reconcile-threw` fallback literal.
 - Modify: `plugin/bin/lib/reconcile/format-summary.js`. Add the `CATEGORIES` row `{ key: 'postMerge', unit: 'merged run', verb: 'post-merge steps run', takenActions: ['ran'], skipActions: ['skipped'] }`.
 - Modify: `plugin/skills/tidy/scan-procedures.md`'s explicit reconcile `--checks` list; add `post-merge`.
@@ -148,11 +153,11 @@
   - the population (Reading B: every top-level run whose recorded PR is `MERGED` with no Step 4.0b marker, keyed on the recorded PR, exactly once);
   - the marker rule;
   - the one-time catch-up: on the first reconcile after this ships, legacy runs and runs merged in-session by an older installed build (which writes no summary marker) get a late Step 4.0 and Step 4.0b pass once, bounded by the 10-minute reopen window after `mergedAt` and by Step 4.0b's idempotence checks (parent already `CLOSED` means no-op; an existing trusted heading comment means close only);
-  - the two concurrency guards (merge grace window, per-run claim file);
+  - the two concurrency guards (merge grace window, per-run claim file), and archive's `post-merge-pending` skip for runs post-merge deferred in the same pass;
   - the `gh`-absent skip and the fail-open-to-tidy posture;
-  - why there is no archive guard: archive's prerequisite is the ordering guarantee, and a marker-write failure cannot cause a second run.
+  - why the archive guard is bounded: only same-pass retryable skips defer archiving, and a marker-write failure cannot cause a second run.
 - Modify: `docs/hooks.md` (the Background convergence bullet's two check lists) and `docs/plugin-structure.md` (the `plugin/bin/lib/reconcile/` and `issues/` inventory lines).
-- Test: `tests/reconcile.test.js` (expandChecks expectations, `INLINE_UNSCOPED_CHECKS` gains `post-merge`, the `local-merge-model` skip string, dispatch-order assertions), `tests/bin-lib/hooks/reconcile-background.test.js` and `tests/hooks-session-start.test.js` partition, and the `format-summary` test.
+- Test: `tests/bin-lib/reconcile/archive-merged.test.js` (the direct `archiveMerged` guard test) and `tests/reconcile.test.js` (expandChecks expectations, the same-pass archive-guard test, `INLINE_UNSCOPED_CHECKS` gains `post-merge`, the `local-merge-model` skip string, dispatch-order assertions), `tests/bin-lib/hooks/reconcile-background.test.js` and `tests/hooks-session-start.test.js` partition, and the `format-summary` test.
 
 - [ ] **Step 1: Write the failing tests.**
   - `expandChecks(['release','archive','reap'])` deepEquals `['release','mirror','post-merge','archive','reap']`.
@@ -160,8 +165,10 @@
   - `expandChecks(ALL_CHECKS)` deepEquals `ALL_CHECKS`.
   - A `reconcile({ checks: ['archive'], … })` fixture with a stubbed `post-merge` module records that `post-merge` ran before `archive` (monkeypatch through `require.cache`, as the tests near line 2100 do).
   - `formatReconcileSummary` renders `1 merged run post-merge steps run`.
+  - Archive guard, as a same-pass test: a `reconcile({ checks: ['archive'], … })` fixture whose stubbed `post-merge` returns `deferred: [runDir]` gives `result.runs` an entry `{ runDir, action: 'skipped', reason: 'post-merge-pending' }`, and the run dir still exists at its top-level path. With `deferred: []`, the same merged run is archived.
+  - `archiveMerged({ postMergeDeferred: [dir], … })` directly: the dir is skipped `post-merge-pending`, and the stuck-skip cache gains no entry for it.
   - Run `git grep -n "remote-prune', 'ledger-residue', 'reap'\|'release', 'archive'" tests plugin docs` first and update every hard-coded order you find.
-- [ ] **Step 2: Run** `node --test tests/reconcile.test.js tests/bin-lib/hooks/reconcile-background.test.js tests/hooks-session-start.test.js tests/bin-lib/reconcile/` with output redirected to a scratch `.txt` file. Expected: the new assertions FAIL.
+- [ ] **Step 2: Run** `node --test tests/reconcile.test.js tests/bin-lib/hooks/reconcile-background.test.js tests/hooks-session-start.test.js "tests/bin-lib/reconcile/*.test.js"` with output redirected to a scratch `.txt` file. Expected: the new assertions FAIL.
 - [ ] **Step 3: Implement** every registration site above.
 - [ ] **Step 4: Run** the Step 2 command. Expected: PASS. Any pre-existing archive or reconcile fixture that now fails: confirm its cause is the new check (a fixture with no `CLAUDE.md` skips `not-github-issues` and must stay unaffected) before changing the fixture.
 - [ ] **Step 5: Commit** `Register the post-merge check before archive and as its prerequisite (refs #4599)`.
