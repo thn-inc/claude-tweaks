@@ -38,6 +38,16 @@ the target file's own blob sha, so a rejection there really is per-file and stay
 The MCP transport (`gh` absent) runs the contents-API algorithm as written below, over the MCP
 tools — git-CAS requires a git push credential the MCP-only case doesn't have.
 
+**Missing branch (#4495).** A remote with no `claims-registry` branch is its own outcome on both
+transports — git: the fetch fails `couldn't find remote ref`; contents API: a rejected create-only
+PUT whose re-read is absent and whose `GET repos/{owner}/{repo}/branches/claims-registry` is 404 —
+never contested, never a generic transport failure. `claim-targets.js` bootstraps it once per run
+from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-only git push, else
+`POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
+retries; a refused creation exits `6` naming the branch and the reason verbatim. The MCP transport
+bootstraps via the **Bootstrap the branch** bullet below. `release-claim.js` never creates it: a
+branchless remote is exit `3` (a "nothing to release" note, no comment, on either `gh` transport).
+
 **One keyspace, one classifier, both transports.** `claims/issue-<number>.json`, a blob on the
 `claims-registry` branch, is the *only* lock — checked and written identically whether this run
 has `gh` on PATH or is going through the MCP bridge. `bin/lib/issues/claims.js`'s
@@ -69,7 +79,7 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   - **gh CLI:** `gh api "repos/{owner}/{repo}/git/refs/heads/${CLAIMS_BRANCH}"` to check;
     `DEFAULT_SHA=$(gh api "repos/{owner}/{repo}/commits/$(gh api "repos/{owner}/{repo}" -q .default_branch)" -q .sha)`
     then `gh api "repos/{owner}/{repo}/git/refs" -f "ref=refs/heads/${CLAIMS_BRANCH}" -f "sha=${DEFAULT_SHA}"`
-    to create.
+    to create. `claim-targets.js` (so flow Step 2.8) runs this itself — do not hand-run it as well.
 <!-- /when -->
 <!-- when: transport=mcp -->
   - **MCP:** call `create_branch` with name = `CLAIMS_BRANCH` (`claims-registry`,
@@ -226,7 +236,8 @@ node -e "const c=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/claims.js');
   label step, #1631 — `--remove-in-progress` is still accepted, now a no-op, and
   `--keep-in-progress-label` is the only way to suppress it); `--remove-grants` (stripping
   `auto:build`/`auto:merge-pending`/`auto:merge`) stays opt-in — see "Grant revocation" below.
-  Exit `0` released / `3` already released or swept / `4` held by another run / `5` claim blob is
+  Exit `0` released / `3` already released or swept (a branchless remote is `3`, with a
+  nothing-to-release note on either `gh` transport) / `4` held by another run / `5` claim blob is
   corrupt/unreadable (nothing written — distinct from `4`, since a corrupt blob can never
   self-resolve the way a live holder's claim eventually expires; do not retry-and-wait on `5` the
   way `4` permits) / `1` failed / `2` malformed or `gh` absent. The MCP path stays the manual

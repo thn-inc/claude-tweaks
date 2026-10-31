@@ -21,7 +21,9 @@
 
 const path = require('path');
 const claimStore = require('../issues/claim-store');
-const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
+const {
+  classifyClaimBlob, claimPayload, releasePayload, CLAIMS_BRANCH,
+} = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
@@ -47,12 +49,24 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure\n'
+  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap rate-limited by GitHub)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
-  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n';
+  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and could not be created —\n'
+  + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
   return String((e && e.message) || e);
+}
+
+// A bootstrap refusal's reason is git/forge text that travels onto stderr, the
+// exit-6 JSON, the flow card and, under a headless dispatch, a filed issue
+// body (#4495). Flatten it to one bounded line — control characters and line
+// breaks become single spaces — so it reads verbatim but cannot forge extra
+// log lines or run unbounded.
+function oneLineReason(text, max = 500) {
+  const flat = String(text).replace(/[\p{Cc}\s]+/gu, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
 // Claim blobs are remote data: an unparseable one is classified 'unreadable'
@@ -395,7 +409,7 @@ function run(argv, deps) {
   // `stopOrSkip()` below, which is in turn the single call site every stop
   // below shares — so this cannot drift from any of them. `exitCode` is 3 for
   // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
-  // `unverified` one.
+  // `unverified` one, 6 for a `branchMissing` one (#4495).
   function abort(envelope, exitCode, extraToRelease = []) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
@@ -407,7 +421,7 @@ function run(argv, deps) {
   // The one shape every stop site below shares: with `--keep-going`, record
   // `{issue, reason: skipReason, ...extra}` in `skipped` and keep looping
   // (signaled by returning `null` — `abort()`'s exit codes are always 3, 4,
-  // or 5, never null/0, so callers can tell the two outcomes apart with
+  // 5, or 6, never null/0, so callers can tell the two outcomes apart with
   // `!== null`); otherwise abort the whole run via the envelope
   // `{[envelopeKey]: [{issue, ...extra}]}`. `extra` is exactly what differs
   // between call sites (an `error`, a `link`, or a `holder`) and is identical
@@ -450,12 +464,51 @@ function run(argv, deps) {
     return hit.result;
   }
 
-  for (const issue of targets) {
+  // #4495: a remote with no `claims-registry` branch makes every target's read
+  // or create-only write look absent/rejected, which used to read as a
+  // contest. The branch is created at most once per run: a second sighting
+  // after a bootstrap that reported success is transient (the remote has not
+  // caught up yet), never a second bootstrap. A refused bootstrap is
+  // run-level — every target would hit it — so it exits 6 even under
+  // `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
+  // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
+  // `null` means skipped under `--keep-going`, else the exit code to return).
+  let bootstrapAttempted = false;
+  function handleBranchMissing(issue) {
+    // Whatever tip this run believed is untrustworthy once the branch is
+    // known missing — discard the chain on every path out, a skip included.
+    knownTip = null;
+    if (bootstrapAttempted) {
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-missing' }) };
+    }
+    bootstrapAttempted = true;
+    const b = claimStore.ensureClaimsBranch(deps, repoSlug);
+    // A secondary rate limit on the create is transient, not a refusal: a later
+    // run's bootstrap may succeed, so it is exit 4 (or a --keep-going skip).
+    if (!b.ok && b.transient) {
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-bootstrap-rate-limited' }) };
+    }
+    if (!b.ok) {
+      const reason = oneLineReason(b.reason);
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${reason} — create it from the default branch\n`);
+      return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason } }, 6) };
+    }
+    return { retry: true };
+  }
+
+  for (let i = 0; i < targets.length; i += 1) {
+    const issue = targets[i];
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (read.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     // A git-CAS success carries a chainable commit-sha tip; anything else
@@ -576,6 +629,12 @@ function run(argv, deps) {
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (write.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     if (!write.ok) {

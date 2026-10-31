@@ -4,6 +4,7 @@ files:
   - plugin/bin/claim-targets.js
   - plugin/bin/lib/claim-targets/claim-targets.js
   - plugin/bin/lib/issues/claim-store.js
+  - plugin/bin/lib/issues/claims-git-cas.js
   - plugin/skills/_shared/issue-claims.md
   - plugin/bin/stale-claim-pr.js
   - plugin/bin/lib/issues/mcp-pr-shape.js
@@ -14,7 +15,7 @@ files:
 **Persona:** claude-tweaks user typing `/claude-tweaks:flow #{n}` on a repo where another session — their own second terminal, a teammate's machine, or a scheduled dispatch firing — may already be building the same record.
 **Goal:** When the run stops before it starts because the record is already claimed, learn within one screen whether the holder is actually alive, and take the one next step that fits — rather than guessing between waiting, reclaiming, and re-running.
 **Entry point:** Typing `/claude-tweaks:flow #{n}` (or `/claude-tweaks:flow "#{n},#{m}"`) in a project whose work records live on GitHub.
-**Success state:** The run either claims every named target and proceeds to the Config Manifesto, or stops with a card that names why — a contest card carrying the holder and a live / stale / remote verdict, an in-flight card carrying the open PR a prior build already produced, or a claim-unverified card when this run's own write reported success but the post-write read-back didn't confirm it (#2073) — and in either case gives exactly one next step, leaving no worktree and no empty run directory behind.
+**Success state:** The run either claims every named target and proceeds to the Config Manifesto, or stops with a card that names why — a contest card carrying the holder and a live / stale / remote verdict, an in-flight card carrying the open PR a prior build already produced, a claim-unverified card when this run's own write reported success but the post-write read-back didn't confirm it (#2073), or a claims-branch-missing card when the repository has no `claims-registry` branch and this run was not allowed to create it (#4495) — and in either case gives exactly one next step, leaving no worktree and no empty run directory behind.
 
 ## Steps
 
@@ -22,7 +23,7 @@ files:
 - **URL:** `/claude-tweaks:flow #{n}` (or `/claude-tweaks:flow "#{n},#{m}"`)
 - **Action:** Name the record(s) to build. The claim happens before any policy questions, so nothing has been configured or created yet when it decides.
 - **Should feel:** Instant and quiet on the happy path — claiming is not something the user should have to think about.
-- **Should understand:** Every named target is claimed together or none is — a partial claim is released before the run stops, so a second target is never left locked by a run that never started.
+- **Should understand:** Every named target is claimed together or none is — a partial claim is released before the run stops, so a second target is never left locked by a run that never started. On a repository's very first run, when its remote has no `claims-registry` branch yet, the claim step creates that branch once from the default branch's tip and then claims — silently, with no card (#4495).
 - **Red flags:** The Config Manifesto rendering before the claim outcome is known; a multi-target run proceeding with one of its targets unclaimed; on a `gh`-absent (MCP) run, a claim stopped or released because its `bot:in-progress` label did not land — the label is best-effort, retried once through `mergeLabelNames`, and a second absence is a `SKIP` degrade line in `decisions.md`, never a stop (#3131).
 
 ### 2. Read the overlap note, if one appears — terminal
@@ -53,6 +54,13 @@ files:
 - **Should understand:** The claim store's write and its post-write read-back can disagree (a slow-to-replicate contents-API read, or a genuine loss) — `claim-targets.js` (#2073) never proceeds on an unconfirmed write. On the contents-API path the read-back is retried a bounded number of times with backoff (#2329) before this card renders, so a transient replication lag does not surface here; the git-CAS path reads at the exact commit it pushed and is checked once. On the default all-or-abort path the run also attempts to release this target's own unconfirmed write — tombstoned when a fresh read still finds its blob, named in `releaseFailed` when that read fails or finds nothing, or the tombstone write itself fails — so a landed-but-unconfirmed claim never silently rides out its TTL. Under `--keep-going` the per-target skip does not attempt that release. `Next:` re-run the claim step (a lag that outlasted the retry window usually clears on a fresh attempt), or use `/claude-tweaks:tidy` to inspect the blob directly and repair it if warranted.
 - **Red flags:** This card rendering with a `holder` line (there is no holder to report — that's the contest card's shape, not this one); the abort path leaving this target's own write neither released nor named in `releaseFailed`; the same target failing verification on every retry with no escalation path offered.
 
+### 3d. Recognize a missing claims branch the run could not create — terminal
+- **URL:** the `## Flow: Claims branch missing` block, rendered in place of the Config Manifesto
+- **Action:** Read the quoted reason (the git push and contents-API refusal text, verbatim), then create `claims-registry` on origin from the default branch — the card's `Next:` — and re-run.
+- **Should feel:** Like a setup step the repository is missing, named precisely — never like someone else is building the record.
+- **Should understand:** The claim step already tried to create the branch once (`claim-targets.js` exit 6, #4495) and was refused — a permission error or a ruleset blocking ref creation — so retrying the run unchanged will stop the same way. The card names no holder because there is none. A branch that is still missing right after a creation that reported success, or a rate-limited creation, is instead a transient retry (the `## Flow: Claim failed` card), not this card. Under `/claude-tweaks:dispatch` this is a pre-flight stop: no retry attempt is counted and no failure comment is posted, and the drain moves on to its next record.
+- **Red flags:** This card rendering with a `holder` line; the run reporting `contested` (exit 3) for a repository that simply has no claims branch — the false first-run contest this card replaced; the card recommending a retry with nothing changed; a "Released by run" comment appearing on the record after this stop.
+
 ### 4. Follow the verdict's own next step — terminal, or another session
 - **URL:** the `Next:` clause of whichever verdict rendered
 - **Action:** Live sibling — wait for that session to finish or release. Remote holder — inspect the session on the named host, or wait for the claim to expire. Stale holder — run `/claude-tweaks:tidy` to sweep and reclaim, unless the card pointed at a worktree that still exists, in which case inspect that worktree first.
@@ -77,4 +85,5 @@ files:
 - Extended during wrap-up of record #2073 (post-write claim verification in `claim-targets.js`) — added step 3c documenting the new `## Flow: Claim unverified` card, and updated the Success state to name it as a third possible stop alongside the contest and in-flight cards.
 - Extended during wrap-up of record #3131 (MCP `bot:in-progress` read-back in `flow/claim-targets.md`) — added a Step 1 red flag: a label that never lands is traced and retried once, never a reason to stop or release the claim.
 - Extended during build of #4183 (post-write read-back retry and release-on-abort for #2329 in `claim-targets.js`) — step 3c now describes the contents-API read-back retry that runs before the card renders, and that the default all-or-abort path releases this target's own unconfirmed write, with `--keep-going` skipping that release.
-- Related specs: #720, #721, #722, #723, #315, #958, #2073, #2329
+- Extended during build of #4495 (claims-registry bootstrap) — Step 1 notes the first-run branch creation, step 3d documents the new `## Flow: Claims branch missing` card (`claim-targets.js` exit 6), and the Success state names it as a fourth stop; `claims-git-cas.js` added to `files:`.
+- Related specs: #720, #721, #722, #723, #315, #958, #2073, #2329, #4495
