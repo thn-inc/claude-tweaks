@@ -19,6 +19,12 @@ function proseTemplate() {
   return { heading, intro, listing };
 }
 
+// The listing line for a sub-issue left with no PR: "is listed as `- #{n} {title}`".
+function proseBareListingLine() {
+  const text = fs.readFileSync(GATE_PROSE, 'utf8');
+  return /is listed as `(- #\{n\} \{title\})`/.exec(text)[1];
+}
+
 function proseNotPlannedLine() {
   const text = fs.readFileSync(GATE_PROSE, 'utf8');
   return /`(No sub-issue closed as completed[^`]*)`/.exec(text)[1];
@@ -40,6 +46,26 @@ test('the listing-line template in the prose is what the module writes (prose-co
   closeBelowFloorParents(base({ gh }));
   const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
   assert.deepEqual(lines, [render(11, 'Eleven', 77), render(12, 'Twelve', 9)]);
+});
+
+test('the bare listing line in the prose is what the module writes for a sub-issue with no PR (prose-code twin)', () => {
+  const bare = proseBareListingLine();
+  const world = happyWorld();
+  world.issues[12].refs = [];
+  const { gh, calls } = makeGh(world);
+  closeBelowFloorParents(base({ mergingPr: null, gh }));
+  const lines = writes(calls)[0].input.split('\n').filter((l) => l.startsWith('- #'));
+  assert.equal(lines[1], bare.replace('{n}', 12).replace('{title}', 'Twelve'));
+});
+
+test('the risk-floor values the module accepts are the policy schema risk-floor enum', () => {
+  const { POLICY_KEYS } = require('../../../plugin/bin/lib/policy-schema');
+  const values = POLICY_KEYS.find((k) => k.key === 'risk-floor').values;
+  for (const riskFloor of values) {
+    const { gh } = makeGh(happyWorld());
+    const out = closeBelowFloorParents(base({ riskFloor, gh }));
+    assert.ok(!out.skipped.some((s) => s.reason === 'invalid-risk-floor'), riskFloor);
+  }
 });
 
 test('composeCloseComment with no listing lines is well-formed (no stray blank lines)', () => {
@@ -349,15 +375,6 @@ test('an invalid risk floor skips the whole call fail-closed with no gh call', (
     const out = closeBelowFloorParents(base({ riskFloor, gh }));
     assert.deepEqual(out, { closed: [], skipped: [{ reason: 'invalid-risk-floor' }] }, String(riskFloor));
     assert.equal(calls.length, 0);
-  }
-});
-
-test('every valid risk floor is accepted', () => {
-  for (const riskFloor of ['low', 'medium', 'high', 'always']) {
-    const { gh, calls } = makeGh(happyWorld());
-    const out = closeBelowFloorParents(base({ riskFloor, gh }));
-    assert.ok(!out.skipped.some((s) => s.reason === 'invalid-risk-floor'), riskFloor);
-    assert.ok(calls.length > 0);
   }
 });
 

@@ -30,13 +30,15 @@ const { parseRecordFacets, normalizeLabelNames, LABELS } = require('./record-voc
 const { parentGateState } = require('./acceptance');
 const { maxRiskTier, exceedsOversightFloor } = require('./oversight-floor');
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
+const { POLICY_KEYS } = require('../policy-schema');
 
 const CLOSE_HEADING = '## Closed below the oversight floor';
 const NOT_PLANNED_LINE = 'No sub-issue closed as completed, so this parent closes as not planned.';
-// The floor values `exceedsOversightFloor` evaluates. `null` (and undefined) must not
+// The floor values `exceedsOversightFloor` evaluates, read from the policy schema's
+// `risk-floor` enum so a new value there is never rejected here. `null` (and undefined) must not
 // reach it: a null floor switches the unscored check off too, which would close a
 // parent whose sub-issues carry no risk label.
-const VALID_RISK_FLOORS = ['low', 'medium', 'high', 'always'];
+const VALID_RISK_FLOORS = POLICY_KEYS.find((k) => k.key === 'risk-floor').values;
 const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
 const PARENT_LINE_RE = /^Parent: #(\d+)/m;
 
