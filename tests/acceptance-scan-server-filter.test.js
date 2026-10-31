@@ -52,7 +52,7 @@ node -e "
   if (raw.length === LIMIT) {
 `;
 
-// The closed-record fetch as it read before the #4469 date-slice split: one server-filtered
+// The closed-record fetch as it read before the #4598 date-slice split: one server-filtered
 // `closed:>=$SINCE` fetch, its node block, and the whole-fetch `raw.length >= CAP` warning. Copied
 // verbatim from the live fence (github-pr-scan-acceptance.md, acceptance-gap) before the split.
 const PRE_CHANGE_SLICED_FETCH = String.raw`gh issue list --state closed --limit "$LIMIT" \
@@ -119,13 +119,13 @@ test('the frozen excerpt carries the anchors the discrimination checks rely on',
 test('closed-record fetch is server-filtered', () => {
   assertClaimPinned(
     GAP,
-    PRE_CHANGE_GAP_FETCH,
+    PRE_CHANGE_SLICED_FETCH,
     /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:\$SINCE\.\.\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
     'the older date slice must narrow on the server through --search'
   );
   assertClaimPinned(
     GAP,
-    PRE_CHANGE_GAP_FETCH,
+    PRE_CHANGE_SLICED_FETCH,
     /gh issue list --state closed --limit "\$LIMIT" \\\n\s+--search "closed:>\$MID -reason:\\"not planned\\" -reason:duplicate -label:demo:approved -label:demo:changes-requested -label:demo:pending"/,
     'the newer date slice must narrow on the server through --search'
   );
@@ -258,8 +258,7 @@ test('since-date guard failure stops the scope', () => {
   assert.ok(stops.test(`${sentence}${outcome}`));
   // The same guard-failure sentence covers the mid-date guard: a failing MID stops the scope with no rows too.
   const midStops = /mid-date[^\n]*throws[\s\S]{0,300}report\s+no\s+`\[acceptance-gap\]`\s+rows\s+at\s+all/;
-  assert.ok(midStops.test(GAP), 'the guard-failure sentence must cover the mid-date guard');
-  assert.ok(!midStops.test(PRE_CHANGE_SLICED_FETCH));
+  assertClaimPinned(GAP, PRE_CHANGE_GUARD_SENTENCE, midStops, 'the guard-failure sentence must cover the mid-date guard');
 });
 
 test('trust-table no longer says the window does not bound the closed fetch', () => {
@@ -414,11 +413,17 @@ test('both placeholder guards throw on bad values and pass good ones', () => {
   assert.equal(guardThrows(invert(state), { STATE_SEARCH: '' }), true);
 });
 
-// ---- date-sliced closed-record fetch (#4469 slice split) --------------------------------------------
+// ---- date-sliced closed-record fetch (#4598 slice split) --------------------------------------------
 
 // The acceptance-gap "Record set" paragraph's opening sentences as they read before the slice split.
 const PRE_CHANGE_RECORD_SET = `Record set: closed records from the last 30 days. The fetch applies the window and the disposition,
 not-planned and duplicate exclusions server-side through \`--search\`; the client-side \`closedAt\``;
+
+// The acceptance-gap guard-failure sentence as it read at base e5b8b8160, before the mid-date guard:
+// it names the since-date guard only.
+const PRE_CHANGE_GUARD_SENTENCE = `When this block fails — the since-date guard throws, or a failed \`gh\` call leaves \`$RAW\` unreadable —
+the scope stops: report no \`[acceptance-gap]\` rows at all and quote the error verbatim, as for an
+exit-3 sub-issue fetch below. \`$CLOSED\` is emptied first, so a later block never reads a stale one.`;
 
 // The per-slice warning lines: the console.error lines that name a closed-record slice.
 const sliceWarnings = (text) => text.split('\n').filter((l) => l.includes('console.error') && /closed-record\s+slice/.test(l));
@@ -514,7 +519,7 @@ test('the mid-date guard throws on bad values and passes a good one, sitting rig
   assert.equal(lines[lines.indexOf(since) + 1], mid, 'the MID guard must be the line right after the SINCE guard');
   const env = (m) => ({ SINCE: day(31), MID: m });
   assert.equal(guardThrows(mid, env(day(15))), false, 'a 15-day MID inside a 31-day SINCE must pass');
-  for (const bad of ['', '{mid-date}', day(31), day(40), day(0)]) {
+  for (const bad of ['', '{mid-date}', '2026-13-45', day(31), day(40), day(0), day(-1)]) {
     assert.equal(guardThrows(mid, env(bad)), true, `MID=${bad} must throw`);
   }
   // Control: the polarity-inverted guard comes out the other way on the good value.
