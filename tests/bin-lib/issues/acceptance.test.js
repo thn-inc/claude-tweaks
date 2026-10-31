@@ -9,7 +9,9 @@ const {
   parentGateState,
   approvalProvenance,
   APPROVAL_PROVENANCE_LABEL,
-} = require('../../../plugin/bin/lib/issues/acceptance.js');
+  APPROVAL_PROVENANCE_LABELS,
+} =require('../../../plugin/bin/lib/issues/acceptance.js');
+const { parseRecordFacets } = require('../../../plugin/bin/lib/issues/record-vocabulary.js');
 
 test('dispositionState reads each acceptance label', () => {
   assert.equal(dispositionState(['demo:pending']), 'pending');
@@ -23,11 +25,47 @@ test('dispositionState returns none when no acceptance label is present', () => 
   assert.equal(dispositionState(undefined), 'none');
 });
 
-test('a resolved verdict wins over a stale demo:pending', () => {
+test('changes-requested wins over a stale demo:pending; pending now wins over approved', () => {
   // /demo removes demo:pending as it adds the verdict, but a partial write or a
-  // concurrent edit can leave both. A resolved record must never be re-swept.
-  assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'approved');
+  // concurrent edit can leave both. changes-requested must never be re-swept.
+  // Human ruling at plan time (#4610): one precedence rule across both
+  // vocabularies — changes-requested > pending > approved > none — so
+  // demo:pending + demo:approved now resolves 'pending' (previously 'approved').
+  // This is the one deliberate exception to AC7 ("no demo:* behaviour changes").
+  assert.equal(dispositionState(['demo:pending', 'demo:approved']), 'pending');
   assert.equal(dispositionState(['demo:pending', 'demo:changes-requested']), 'changes-requested');
+});
+
+for (const x of ['pending', 'approved', 'changes-requested']) {
+  test(`AC1.1: accept:${x} resolves the same disposition and facet as demo:${x}`, () => {
+    assert.equal(dispositionState([`accept:${x}`]), x);
+    assert.equal(dispositionState([`demo:${x}`]), x);
+    assert.equal(parseRecordFacets([`accept:${x}`]).acceptance, x);
+    assert.equal(parseRecordFacets([`demo:${x}`]).acceptance, x);
+  });
+}
+
+test('AC3.1: mixed labels resolve to one disposition, most conservative first', () => {
+  for (const [labels, want] of [
+    [['accept:pending', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'demo:changes-requested'], 'changes-requested'],
+    [['accept:approved', 'demo:pending'], 'pending'],
+    [['accept:approved', 'demo:approved'], 'approved'],
+    [['accept:pending', 'accept:approved'], 'pending'],
+    [['demo:pending', 'demo:approved'], 'pending'],
+  ]) {
+    assert.equal(dispositionState(labels), want, labels.join('+'));
+    assert.equal(dispositionState([...labels].reverse()), want, `reversed ${labels.join('+')}`);
+    assert.equal(parseRecordFacets(labels).acceptance, want, labels.join('+'));
+  }
+});
+
+test('AC3.2: accept:approved-batch is batch provenance, like demo:approved-batch', () => {
+  assert.equal(approvalProvenance(['accept:approved', 'accept:approved-batch']), 'batch');
+  assert.equal(approvalProvenance(['demo:approved', 'accept:approved-batch']), 'batch');
+  assert.equal(approvalProvenance(['accept:approved']), 'walkthrough');
+  assert.equal(approvalProvenance(['accept:pending', 'accept:approved-batch']), null);
+  assert.deepEqual(APPROVAL_PROVENANCE_LABELS, ['demo:approved-batch', 'accept:approved-batch']);
 });
 
 test('verificationSurface treats docs, skills, bin and config as non-interactive', () => {

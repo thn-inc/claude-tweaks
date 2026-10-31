@@ -35,6 +35,12 @@ const LABELS = {
   DEMO_PENDING: 'demo:pending',
   DEMO_APPROVED: 'demo:approved',
   DEMO_CHANGES_REQUESTED: 'demo:changes-requested',
+  // accept:* is the successor vocabulary for demo:* (#4610) — read alongside it
+  // by acceptanceOf below; the demo:* spellings stay read-supported until the
+  // contract step removes them.
+  ACCEPT_PENDING: 'accept:pending',
+  ACCEPT_APPROVED: 'accept:approved',
+  ACCEPT_CHANGES_REQUESTED: 'accept:changes-requested',
   PARENT_ISSUE: 'parent-issue',
   SHAPED_HEADLESS: 'shaped:headless',
 };
@@ -110,14 +116,31 @@ function typeOf(record) {
   return null;
 }
 
+// names (string[]) -> 'changes-requested' | 'pending' | 'approved' | null. The one
+// acceptance precedence rule, over both label vocabularies (demo:* and accept:*):
+// changes-requested beats pending beats approved beats no verdict, whatever the
+// array order. A leftover label from a partial write or concurrent edit therefore
+// resolves to the more conservative verdict, never the permissive one.
+const ACCEPTANCE_PRECEDENCE = [
+  ['changes-requested', [LABELS.DEMO_CHANGES_REQUESTED, LABELS.ACCEPT_CHANGES_REQUESTED]],
+  ['pending', [LABELS.DEMO_PENDING, LABELS.ACCEPT_PENDING]],
+  ['approved', [LABELS.DEMO_APPROVED, LABELS.ACCEPT_APPROVED]],
+];
+
+function acceptanceOf(names) {
+  for (const [state, spellings] of ACCEPTANCE_PRECEDENCE) {
+    if (spellings.some((label) => names.includes(label))) return state;
+  }
+  return null;
+}
+
 // labels (string[] | {name}[]) -> the full record-facet shape. Explicit false/null
 // defaults are set first and only ever flipped/assigned as matching labels are found
 // in a single pass over the normalized names — never inferred from truthiness. Stage
 // precedence is ready > parked > backlog regardless of array order or malformed
 // combinations (e.g. both 'ready' and 'parked' present resolves to 'ready').
-// Acceptance has no such precedence — the three demo:* labels are mutually exclusive
-// by construction, so a plain last-match-in-array-wins assignment (same style as
-// origin/risk/size/priority below) is enough.
+// Acceptance has its own precedence — changes-requested > pending > approved > null
+// over both demo:* and accept:* spellings, whatever the array order (acceptanceOf above).
 // The size facet is the one exception to last-match-in-array-wins: size:* always
 // beats a pre-rename effort:* label whichever order they appear in, so the effort
 // value is only held aside during the pass and applied afterward, and never when a
@@ -168,18 +191,6 @@ function parseRecordFacets(labels) {
       facets.notPlanned = true;
       continue;
     }
-    if (name === LABELS.DEMO_PENDING) {
-      facets.acceptance = 'pending';
-      continue;
-    }
-    if (name === LABELS.DEMO_APPROVED) {
-      facets.acceptance = 'approved';
-      continue;
-    }
-    if (name === LABELS.DEMO_CHANGES_REQUESTED) {
-      facets.acceptance = 'changes-requested';
-      continue;
-    }
     // solution:unjustified — or its pre-rename spelling framing:baked (permanent read-side fallback, [IL-85]).
     if (name === LABELS.SOLUTION_UNJUSTIFIED || name === LABELS.FRAMING_BAKED) {
       facets.solutionUnjustified = true;
@@ -225,11 +236,14 @@ function parseRecordFacets(labels) {
   }
 
   if (facets.size === null) facets.size = effortFallback;
+  // No acceptance label leaves facet-shape.js's null default in place.
+  const acceptance = acceptanceOf(names);
+  if (acceptance !== null) facets.acceptance = acceptance;
 
   return facets;
 }
 
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, CEREMONY_TIERS, LABELS, TYPE_LABELS,
-  CLASSIFICATION_SCORING, normalizeLabelNames, parseRecordFacets, typeOf,
+  CLASSIFICATION_SCORING, normalizeLabelNames, parseRecordFacets, typeOf, acceptanceOf,
 };
