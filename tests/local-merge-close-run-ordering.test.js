@@ -11,6 +11,7 @@
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
 // behavior matters. Go-red proof [IL-105]: the ordering check also runs against a frozen pre-change
 // excerpt. Whitespace collapsed on haystack and needle [IL-66].
+// #4073 moved the sequence into plugin/skills/_shared/local-merge-sequence.md; the four callers cite it, so the ordering, extract-and-run and re-protect pins run there.
 
 const { test } = require('node:test');
 const assert = require('node:assert');
@@ -97,6 +98,21 @@ const SITES = [
       branch: 'feat',
       issue: '1',
       'second-issue': '2',
+      'subject-dir': posix(SUBJECT_DIR),
+      'worktree-path': posix(WORKTREE),
+    },
+  },
+  {
+    label: 'local-merge-sequence.md',
+    file: 'plugin/skills/_shared/local-merge-sequence.md',
+    readsWorktree: false,
+    logNeedle: 'any other line',
+    worktreeVar: 'worktree-path',
+    vars: {
+      'base-branch': 'main',
+      branch: 'feat',
+      issues: '1 2',
+      tag: 'fast-lane',
       'subject-dir': posix(SUBJECT_DIR),
       'worktree-path': posix(WORKTREE),
     },
@@ -516,4 +532,23 @@ test('no plugin/ file still carries "Not fixed here; there is no"', () => {
     .filter((rel) => String(rel).endsWith('.md'))
     .filter((rel) => collapse(readText(path.join(PLUGIN_DIR, String(rel)))).includes('Not fixed here; there is no'));
   assert.deepStrictEqual(hits, []);
+});
+
+// #4073 AC4: the shared sequence runs close-run as its own Bash call — one command line, never
+// chained onto the merge or the push (the worktree-always gate inspects the whole command string).
+function closeRunChainErrors(text) {
+  const body = extractFence(text, CLOSE_RUN_NEEDLE).trim();
+  const errors = [];
+  if (body.includes('\n')) errors.push('the close-run fence holds more than one line');
+  if (/&&|\|\||;/.test(body)) errors.push('the close-run command is chained');
+  if (body.includes('git push') || body.includes(MERGE_NEEDLE)) errors.push('the close-run fence also merges or pushes');
+  return errors;
+}
+
+test('#4073 AC4: local-merge-sequence.md runs close-run as its own one-command Bash call, never chained onto the push', () => {
+  const text = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'local-merge-sequence.md'));
+  assert.deepStrictEqual(closeRunChainErrors(text), []);
+  const chained = text.replace(/(bin\/hooks\.js" close-run --run [^\n]*)/, '$1 && git -C "{worktree-path}" push origin {base-branch}');
+  assert.notStrictEqual(chained, text, 'doctoring must change the text');
+  assert.ok(closeRunChainErrors(chained).length > 0, 'a close-run chained onto the push must fail the check');
 });
