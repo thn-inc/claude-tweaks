@@ -26,9 +26,9 @@
 // never an exit code: every `state`, `no-parent` included, is exit 0.
 //
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
-// 1 a malformed invocation; 2 `gh` is absent, or owner/repo cannot be resolved; 3 a gh
-// call failed (the message goes to stderr). On every non-zero exit nothing goes to
-// stdout. Only a GhFailure maps to 3: any other throw is a bug and propagates.
+// 1 a malformed invocation; 2 `gh` is absent, or owner/repo or the repo root cannot be
+// resolved; 3 a gh call failed (the message goes to stderr). On every non-zero exit nothing
+// goes to stdout. Only a GhFailure maps to 3: any other throw is a bug and propagates.
 //
 // There is no `--repo` flag. Owner/repo come from the origin remote, because shapes 1, 3,
 // 6 and 7 of the gate's gh calls carry no `--repo` and read the repo of gh's own cwd; an
@@ -155,8 +155,15 @@ function run(argv, deps = realDeps) {
   if (opts.error) { deps.stderr(`parent-gate.js: ${opts.error}\n${USAGE}`); return 1; }
   if (opts.help) { deps.stdout(USAGE); return 0; }
 
+  // The policy and CLAUDE.md reads need a root: the repo root, else the cwd. With neither, a
+  // policy read would silently fall to the schema defaults, so this is an environment failure.
   let root;
-  try { root = deps.repoRoot(); } catch { root = deps.cwd ? deps.cwd() : process.cwd(); }
+  try {
+    try { root = deps.repoRoot(); } catch { root = deps.cwd ? deps.cwd() : process.cwd(); }
+  } catch {
+    deps.stderr('parent-gate.js: could not determine the repository root or the working directory\n');
+    return 2;
+  }
 
   let backend = opts.backend;
   if (!backend) {

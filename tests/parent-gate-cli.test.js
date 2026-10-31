@@ -305,6 +305,31 @@ test('exit 1: --facts-json is not implemented yet and local-files is refused', (
   assert.equal(other.code, 0);
 });
 
+test('a throwing readWorkBackend reads as github-issues', () => {
+  const r = go(['--parent', '10'], {}, { readWorkBackend: () => { throw new Error('boom'); } });
+  assert.equal(r.code, 0);
+  assert.equal(r.verdict.state, 'due');
+});
+
+test('a throwing ghAvailable reads as gh absent', () => {
+  const r = go(['--sub-issue', '11'], {}, { ghAvailable: () => { throw new Error('boom'); } });
+  assert.equal(r.code, 2);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /--facts-json/);
+  assert.equal(r.calls.length, 0);
+});
+
+test('exit 2: neither the repo root nor the cwd can be determined', () => {
+  const boom = () => { throw new Error('boom'); };
+  const r = go(['--sub-issue', '11'], {}, { repoRoot: boom, cwd: boom });
+  assert.equal(r.code, 2);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /repository root/);
+  assert.equal(r.calls.length, 0);
+  // A working cwd still carries the run when only repoRoot fails.
+  assert.equal(go(['--parent', '10'], {}, { repoRoot: boom, cwd: () => '/elsewhere' }).code, 0);
+});
+
 test('exit 2: gh is absent, naming --facts-json', () => {
   const r = go(['--sub-issue', '11'], {}, { ghAvailable: () => false });
   assert.equal(r.code, 2);
