@@ -35,7 +35,7 @@ function isSampleOrdinal(ordinal, every) {
 //
 // Returns [{ number, ordinal }] for every machine-granted merge whose
 // position lands on a sampling boundary — the caller is responsible for
-// narrowing that down to records still awaiting a verdict (demo:pending)
+// narrowing that down to records still awaiting a verdict (a pending acceptance state)
 // before rendering a call to action; this function has no opinion on
 // acceptance state, only on ordinal position in the machine-granted-merge
 // history.
