@@ -2806,14 +2806,15 @@ function walkShellChunk(text, cwds, vars, handler, depth, plan, overflow, baseLi
     // never reads the backtick's first command, so once a `case` word shows in the backtick run, a
     // `|` in it is read both ways (endCommand's `maybePattern`), failing closed.
     // The arm terminator this separator starts, when it starts one (#4486): `;;` ends the arm, and `;&` or
-    // `;;&` falls through to the next arm's commands or patterns. The second `;` of a `;;` starts none.
+    // `;;&` falls through to the next arm's commands or patterns, as zsh's `;|` does (its `|` is no pipe: the
+    // case-pattern `continue` below skips it). The second `;` of a `;;` starts none.
     let armEnd = null;
     if (span.endsInSub) btCase = btCase || CASE_WORD_RE.test(span.text);
     else {
       if (op === '|' && (frame.casePattern || frame.leadParen)) continue;
-      if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&')) {
+      if (frame.caseDepth > 0 && outer[span.end] === ';' && (outer[span.end + 1] === ';' || outer[span.end + 1] === '&' || outer[span.end + 1] === '|')) {
         frame.casePattern = true;
-        if (span.text !== '' || outer[span.end - 1] !== ';') armEnd = outer[span.end + 1] === '&' || outer[span.end + 2] === '&' ? 'fall' : 'end';
+        if (span.text !== '' || outer[span.end - 1] !== ';') armEnd = outer[span.end + 1] === '&' || outer[span.end + 1] === '|' || outer[span.end + 2] === '&' ? 'fall' : 'end';
       }
     }
     const maybePattern = span.endsInSub && btCase;

@@ -1912,7 +1912,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['g() { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
     ['function g { cd /main; }; g; echo x > f.js', [MAIN_F, here].sort()],
   ]) {
-    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves where bash writes`, () => {
+    test(`#4303 case: \`${cmd}\` reads a pattern-list | as no pipe and resolves the cwds bash writes under (plus the case's start, failing closed since #4486)`, () => {
       assert.deepStrictEqual(files(cmd), expected);
     });
   }
@@ -2266,8 +2266,8 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
   // under the case's start too. A quoted or escaped `*`, the subject and an extglob are no catch-all. Each
   // row is [label, cmd, includes, excludes], with the files bash 3.2 and 5 write for each subject value
   // (start = /r); a row bash 3.2 cannot parse (`;&`, `;;&`, an unparenthesized pattern inside `$( )`) is
-  // decided by bash 5.
-  test("AC1.1: fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r') includes /r/f and /wt/f", () => {
+  // decided by bash 5, and zsh's `;|` rows by zsh.
+  test("AC1.1 #4486: fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r') includes /r/f and /wt/f", () => {
     const got = fileWriteTargets('case $x in a) cd /wt;; esac; echo x > f', '/r').map((t) => t.file);
     for (const want of ['/r/f', '/wt/f']) assert.ok(got.includes(path.resolve(want)), `bash 3.2 and 5: ${want}`);
   });
@@ -2298,6 +2298,14 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
     ['SUBC', 'echo $(case $x in a) cd /wt;; b) echo y > g;; esac)', ['/r/g'], []],              // bash 5: x=b r/g
     ['SUBT', 'echo $(case $x in a) cd /wt;; *) true; esac; echo x > f)', ['/r/f', '/wt/f'], []], // bash 5: x=a wt/f, x=b r/f
     ['SUBJ2', 'echo $({ case $x in a) cd /wt;; esac }; echo x > f)', ['/r/f', '/wt/f'], []],    // bash 5: x=a wt/f, x=b r/f
+    ['LOOKA', 'case $x in *a) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f (`*a` matches only a subject ending in a)
+    ['LOOKB', 'case $x in a*) cd /wt;; esac; echo x > f', ['/r/f', '/wt/f'], []],               // bash 3.2 and 5: x=a wt/f, x=b r/f
+    ['LOOKC', 'case $x in $*) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (`$*` is empty here; the walk also keeps wt/f, failing closed)
+    ['LOOKD', 'case $x in $p) cd /wt;; esac; echo x > f', ['/r/f'], []],                        // bash 3.2 and 5: r/f (p is unset; the walk also keeps wt/f, failing closed)
+    ['INNER', 'case $x in a) cd /w; case $y in *) cd /q;; esac;; esac; echo x > f', ['/r/f', '/q/f'], ['/w/f']], // bash 3.2 and 5: x=a q/f, x=b r/f (the inner `*` is the inner case's catch-all, never the outer's)
+    ['SEQ', 'case $x in a) cd /wt;; esac; case $y in b) cd /q;; esac; echo x > f', ['/r/f', '/wt/f', '/q/f'], []], // bash 3.2 and 5: x=a y=c wt/f, y=b q/f, x=b y=c r/f
+    ['ZSHBAR', 'case $x in a) cd /wt ;| b) echo y > g;; esac', ['/r/g'], []],                   // zsh 5: x=b r/g (`;|` keeps testing patterns; bash rejects it)
+    ['ZSHBAR2', 'case $x in a) cd /wt ;| a|b) echo y > g;; esac', ['/r/g', '/wt/g'], []],       // zsh 5: x=a wt/g, x=b r/g
   ]) {
     test(`#4486 case: \`${cmd}\` ends under every arm and the start without a catch-all`, () => {
       const got = files(cmd);
@@ -2305,7 +2313,7 @@ test('#4303: an & inside a top-level backtick does not undo the outer cd', () =>
       for (const not of excludes) assert.ok(!got.includes(path.resolve(not)), `${label}: bash never writes ${not}; got ${JSON.stringify(got)}`);
     });
   }
-  test('AC2.3: policy-schema-coverage.md no longer lists an unmatched case arm as a known gap', () => {
+  test('AC2.3 #4486: policy-schema-coverage.md no longer lists an unmatched case arm as a known gap', () => {
     const text = readText(SCHEMA);
     assert.ok(!text.includes('a case arm whose pattern does not match'), 'the known-gap clause is gone');
     assert.ok(text.includes('a pattern of bare `*`s'), 'the coverage prose states the catch-all rule');
