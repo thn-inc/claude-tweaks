@@ -20,15 +20,26 @@
 // Output: one JSON line on stdout, keys in this order: retention, today,
 // cutoffDays, threshold, citationCheck, citationCandidates, decline, plans —
 // `plans` carries `{plan, firstAdded, pastCutoff, cited, route}` per plan.
+// `citationCheck` is true when the caller owes the citation check, and
+// `citationCandidates` names the plans to check. Under keep-forever that is the
+// first pass only (its routes are provisional until the --cited re-run); under
+// ask and prune-after-wrapup it is true whenever any plan is a candidate, and
+// the routes are final (the check's outcome applies directly). `decline` is null
+// unless the decline lookup ran (keep-forever, 30 or more uncited past-cutoff
+// plans); then it is `{live, error}`.
 // Exit codes (the residue.js vocabulary): 0 for any successful render,
 // including a degraded one — a git probe that fails reads as `uncommitted` and
-// keeps, a decline lookup that throws is `decline.error` and keeps every plan, never
-// a non-zero exit; 2 only for a malformed invocation (usage on stderr, nothing
-// on stdout). `--help` prints usage and exits 0 before anything else is read.
+// keeps (and names the count in one stderr line, since the JSON cannot tell it
+// from a plan that is truly uncommitted), a decline lookup that throws is
+// `decline.error` and keeps every plan, never a non-zero exit; 2 only for a
+// malformed invocation (usage on stderr, nothing on stdout). `--help` prints
+// usage and exits 0 before anything else is read.
 //
 // Run it from {REPO_ROOT}: the git first-add probe uses the process cwd, and so
 // does the declined-learning store (`.claude-tweaks/declined-learning/`), which
-// the decline lookup reads in-process rather than through `declined-learning.js`.
+// the decline lookup reads in-process rather than through `declined-learning.js`
+// (one process instead of a spawn per run; the fingerprint is pinned equal to
+// the verb's by tests/bin-lib/plan-retention/cli.test.js).
 'use strict';
 
 const { execFileSync } = require('node:child_process');
@@ -76,6 +87,11 @@ function parseArgs(argv) {
   return o;
 }
 
+// Today's calendar date in the process's timezone. A plan's first-add date is
+// git's `%cs`, the committer date in that commit's own timezone, so the two
+// can differ by a day across timezones: a plan exactly on the 7-day line may
+// read one day younger or older. Accepted — the effect is one day on one plan,
+// and routes only ever feed an approval-gated proposal.
 function localDate() {
   const d = new Date();
   const pad = (n) => String(n).padStart(2, '0');
@@ -102,7 +118,19 @@ function run(argv, deps) {
   if (opts.error) { deps.stderr.write(`plan-retention.js: ${opts.error}\n${USAGE}`); return 2; }
 
   const today = deps.today();
-  const plans = opts.plans.map((plan) => ({ plan, firstAdded: firstAddedDate(plan, deps.git) }));
+  // A failed git run (null, or a throw) and a plan git has no add commit for both read as
+  // `uncommitted`; count the failures so a broken probe (git missing, wrong cwd) is not silent.
+  let probeFailures = 0;
+  const git = (args) => {
+    let out;
+    try { out = deps.git(args); } catch (err) { probeFailures += 1; throw err; }
+    if (out === null) probeFailures += 1;
+    return out;
+  };
+  const plans = opts.plans.map((plan) => ({ plan, firstAdded: firstAddedDate(plan, git) }));
+  if (probeFailures > 0) {
+    deps.stderr.write(`plan-retention.js: git failed for ${probeFailures} of ${plans.length} plan(s); read as uncommitted and kept\n`);
+  }
   const routed = routePlans({
     retention: opts.retention,
     plans,

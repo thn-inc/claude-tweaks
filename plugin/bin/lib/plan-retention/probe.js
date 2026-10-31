@@ -20,8 +20,10 @@ function archiveDeclineFingerprint() {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-// The calendar date (`%cs`) of the commit that most recently added `plan`, or
-// 'uncommitted' when git has none (untracked, never committed) or cannot say.
+// The calendar date (`%cs`) of the commit that added `plan` — its first add,
+// except for a plan deleted and re-added, where `-1` takes the latest add and
+// the cutoff counts from the re-add (the conservative reading: younger, so Keep)
+// — or 'uncommitted' when git has none (untracked, never committed) or cannot say.
 // `git(args)` returns the output string or null; a throw reads the same as null.
 // `--literal-pathspecs` makes the plan a path, never a glob.
 function firstAddedDate(plan, git) {

@@ -9,6 +9,8 @@ files:
   - plugin/skills/_shared/policy-schema.md
   - plugin/bin/declined-learning.js
   - plugin/bin/plan-retention.js
+  - plugin/bin/lib/plan-retention/route.js
+  - plugin/bin/lib/plan-retention/probe.js
 ---
 
 # Keep Recent Plans and Approve a Bulk Prune

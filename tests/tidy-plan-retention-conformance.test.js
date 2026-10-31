@@ -24,6 +24,10 @@ const PRE_CHANGE_LOOKUP = "  - Before staging a `Prune plan (archive)`, look up 
 // The Citation check bullet as it stood before the --cited second pass was added: the control for those pins,
 // the pre-change text of the same region.
 const PRE_CHANGE_CITATION = "- **Citation check** (`keep-forever` only). Run it on past-cutoff candidates only once their pre-check count reaches 30; below 30 the count can never yield 30 uncited, so a cited plan is a plain Keep, never a Yours row. At 30 or more, a cited candidate renders per `plan-citation-check.md` and does not count toward the 30.";
+// The Compute bullet at 382a26559, before the ask/prune-after-wrapup clause and the failed-run clause were added:
+// the control for the pins on those two clauses. Unlike PRE_CHANGE_CITATION it carries the `- **Compute.**` anchor,
+// so a doesNotMatch against it can only pass because the clause itself is absent.
+const PRE_CHANGE_COMPUTE = "- **Compute.** From `{REPO_ROOT}`, run `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\" --retention {value} {plan} …` with every would-be-Delete plan under `docs/superpowers/plans/` as a repo-relative path. It prints one JSON line: each plan's `route` (`delete`, `keep`, `prune-ask` = `Prune plan (ask)`, `prune-archive` = `Prune plan (archive)`) and `firstAdded` (a date or `uncommitted`), plus `citationCheck` and `citationCandidates`. Exit 2 is a malformed call — fix and re-run, never route by hand.";
 
 function read(rel) {
   return readText(path.join(REPO_ROOT, rel));
@@ -100,9 +104,10 @@ test('tidy Step 4 keeps the human decline reason off the command line (#4465)', 
 });
 
 // Executes the prose's own record payload against the real record-decline CLI, in a sandbox cwd (the store is
-// cwd-relative), then reads it back through the lookup plan-retention.js makes (the shared fingerprint and store),
-// so a drift between the prose's description, the verb, the CLI's stdin contract and the CLI's lookup fails here.
-test("tidy Step 4's decline record payload round-trips through plan-retention's lookup (#4594)", () => {
+// cwd-relative), then reads it back through the same fingerprint and store lookup plan-retention.js makes, so a
+// drift between the prose's description, the verb, the CLI's stdin contract and that lookup fails here. The CLI's
+// own wiring of the lookup is pinned separately, in tests/bin-lib/plan-retention/cli.test.js's spawned test.
+test("tidy Step 4's decline record payload round-trips through the fingerprint and store lookup plan-retention uses (#4594)", () => {
   const s = step4Section();
   const payload = s.match(/`Write` `(\{"description":[^`]*\})`/);
   const record = s.match(/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" (record-decline) --source (\w+) < "\{D\}"`/);
@@ -154,7 +159,8 @@ test('tidy Step 4 states the --cited second pass (#4594)', () => {
   pinned(/re-run[^.]*--cited \{plan\}/, PRE_CHANGE_CITATION);
   pinned(/re-run the same call — every plan again — adding one `--cited \{plan\}`/, PRE_CHANGE_CITATION);
   pinned(/with no cited candidate, the first call's routes stand/, PRE_CHANGE_CITATION);
-  pinned(/- \*\*Compute\.\*\*[^\n]*Under `ask` and `prune-after-wrapup`, `citationCheck: true` means apply `plan-citation-check\.md`'s outcome directly — no `--cited` re-run, the CLI rejects it/, PRE_CHANGE_CITATION);
+  pinned(/- \*\*Compute\.\*\*[^\n]*Under `ask` and `prune-after-wrapup`, `citationCheck: true` means apply `plan-citation-check\.md`'s outcome directly — no `--cited` re-run, the CLI rejects it/, PRE_CHANGE_COMPUTE);
+  pinned(/- \*\*Compute\.\*\*[^\n]*Any other exit, or stdout that is not one JSON line, is a failed run: Keep every plan\. Never route by hand/, PRE_CHANGE_COMPUTE);
   assert.doesNotMatch(step4Section(), /\*\*Citation check\*\*[^\n]*Under `ask` and `prune-after-wrapup`/, 'the ask/prune-after-wrapup clause belongs in Compute, not under the keep-forever-only Citation check label');
 });
 

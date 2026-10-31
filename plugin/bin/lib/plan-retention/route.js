@@ -31,6 +31,12 @@ function isPastCutoff(firstAdded, today) {
   return ageInDays(firstAdded, today) >= CUTOFF_DAYS;
 }
 
+// `cited` is the two-pass input (keep-forever only): `null` on the first pass, a Set of plans the model-judged
+// citation check found cited on the second. `citationCheck` in the result means "the caller owes that check"
+// and is retention-dependent: under keep-forever it is true on the first pass only, and the first pass's
+// `prune-archive` routes are provisional until the second pass recounts with the cited set; under `ask` and
+// `prune-after-wrapup` the returned routes are final (`cited` is never consulted) and `citationCheck: true`
+// tells the caller to apply the check's outcome directly, with no second pass.
 function routePlans({ retention, plans, today, cited, lookupDecline }) {
   if (!RETENTION_VALUES.includes(retention)) {
     throw new Error(`unknown retention value: ${retention}`);
@@ -63,7 +69,11 @@ function routePlans({ retention, plans, today, cited, lookupDecline }) {
   if (uncited.length < ARCHIVE_THRESHOLD) return result(false, [], null);
 
   // The citation check is requested once the pre-check count reaches the
-  // threshold, before and regardless of the decline lookup.
+  // threshold, before and regardless of the decline lookup: a cited candidate
+  // must still render per `plan-citation-check.md` while a decline is live, so
+  // running the lookup first and skipping the check would change what the
+  // caller shows. The lookup itself is a thunk so it runs only here, at 30 or
+  // more uncited plans, and the fail-closed handling below lives in one place.
   const firstPass = cited === null;
   const citationCandidates = firstPass ? uncited.map((row) => row.plan) : [];
 
@@ -74,7 +84,10 @@ function routePlans({ retention, plans, today, cited, lookupDecline }) {
     decline = { live: false, error: err instanceof Error ? err.message : String(err) };
   }
 
-  // Fail closed: a live decline or a lookup that throws keeps every plan.
+  // Fail closed: a live decline or a lookup that throws keeps every plan. The
+  // production store never throws (a missing or corrupt store reads as no
+  // decline, an accepted degrade-open), so the throw arm guards the injected
+  // seam.
   if (!decline.live && decline.error === null) {
     uncited.forEach((row) => { row.route = 'prune-archive'; });
   }

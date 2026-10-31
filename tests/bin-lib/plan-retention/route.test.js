@@ -170,6 +170,24 @@ test('AC3.1 (unit): an uncommitted plan keeps under keep-forever and ask; ask ha
   assert.equal(ask.decline, null);
 });
 
+test('an uncommitted plan never counts toward the 30 or joins the archive, at and below the threshold', () => {
+  const uncommitted = { plan: UNCOMMITTED_PLAN, firstAdded: UNCOMMITTED };
+  // 29 past-cutoff plus 1 uncommitted: counting the uncommitted plan would reach 30 and archive them all.
+  const belowThreshold = routePlans({
+    retention: 'keep-forever', plans: [...plansAged(29, 30, 'old'), uncommitted], today: TODAY, cited: null, lookupDecline: noLookup,
+  });
+  assert.ok(routes(belowThreshold).every((r) => r === 'keep'));
+  assert.equal(belowThreshold.citationCheck, false);
+
+  // 30 past-cutoff plus 1 uncommitted: the 30 archive, the uncommitted plan stays out of the archive and of the check.
+  const old = plansAged(30, 30, 'old');
+  const atThreshold = routePlans({
+    retention: 'keep-forever', plans: [...old, uncommitted], today: TODAY, cited: null, lookupDecline: () => null,
+  });
+  assert.deepEqual(routes(atThreshold), [...old.map(() => 'prune-archive'), 'keep']);
+  assert.deepEqual(atThreshold.citationCandidates, old.map((p) => p.plan));
+});
+
 test('prune-after-wrapup routes every plan delete and lists all for the citation check', () => {
   const plans = uncommittedAndRecentPlans();
   const result = routePlans({ retention: 'prune-after-wrapup', plans, today: TODAY, cited: null, lookupDecline: noLookup });

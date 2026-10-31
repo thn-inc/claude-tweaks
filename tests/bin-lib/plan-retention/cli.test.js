@@ -109,6 +109,22 @@ test('a git probe that fails or prints a non-date reads as uncommitted and keeps
   }
 });
 
+test('a failed git run is named on stderr, a plan git has no add commit for is not', () => {
+  for (const git of [() => null, () => { throw new Error('git exploded'); }]) {
+    const r = invoke(['--retention', 'keep-forever', P, Q], { git });
+    assert.equal(r.code, 0);
+    assert.match(r.stderr, /git failed for 2 of 2 plan\(s\); read as uncommitted and kept/);
+    assert.equal(r.stdout.trim().split('\n').length, 1, 'stdout stays one JSON line');
+  }
+  for (const git of [() => '', () => 'not a date']) {
+    const r = invoke(['--retention', 'keep-forever', P], { git });
+    assert.equal(r.code, 0);
+    assert.equal(r.stderr, '', 'an empty or non-date answer is not a git failure');
+  }
+  const mixed = invoke(['--retention', 'keep-forever', P, Q], { git: (args) => (args.includes(P) ? null : '2026-09-01') });
+  assert.match(mixed.stderr, /git failed for 1 of 2 plan\(s\)/);
+});
+
 test('firstAddedDate passes the plan literally after --literal-pathspecs', () => {
   const calls = [];
   const date = firstAddedDate(`${PLANS_DIR}*.md`, (args) => { calls.push(args); return '2026-09-01\n'; });
@@ -238,6 +254,27 @@ test('AC1.1: 30 past-cutoff plans and 1 within-cutoff plan under keep-forever', 
     assert.equal(parsed.plans.find((row) => row.plan === recentPlans[0]).route, 'keep');
     assert.equal(parsed.citationCheck, true);
     assert.equal(parsed.citationCandidates.length, 30);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// The only test that runs realDeps.lookupDecline against a store on disk: record-decline writes the entry
+// into the fixture repo's cwd-relative store, and the spawned CLI must read it back.
+test('a decline recorded in the real store keeps all 30 past-cutoff plans, and an empty store archives them', () => {
+  const { repo, oldPlans } = planRepo({ old: 30 });
+  try {
+    const before = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
+    assert.deepEqual(before.decline, { live: false, error: null });
+    assert.equal(before.plans.filter((row) => row.route === 'prune-archive').length, 30);
+
+    execFileSync(process.execPath, [DECLINED_LEARNING, 'record-decline', '--source', DECLINE_SOURCE], {
+      cwd: repo, encoding: 'utf8', input: JSON.stringify({ description: DECLINE_DESCRIPTION, reason: 'noise' }),
+    });
+    const after = spawnCli(repo, ['--retention', 'keep-forever', ...oldPlans]);
+    assert.deepEqual(after.decline, { live: true, error: null });
+    assert.ok(after.plans.every((row) => row.route === 'keep'));
+    assert.equal(after.citationCheck, true, 'the citation check is still requested while a decline is live');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
