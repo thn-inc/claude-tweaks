@@ -174,7 +174,7 @@ const ORDER = [
   ['mint', 'resolve-run-dir --create'],
   ['bind command', 'record-worktree --run "$GROUP_RUN_DIR"'],
   ['concurrency recheck', '--bound-run "{new run dir}"'],
-  ['stateless log', 'log-decision.js'],
+  ['stateless log', 'log-decision.js" --run "{new run dir}" --status AUTO'],
   ['dispatch', 'RESUME_PR="{prUrl}" '],
 ];
 
@@ -240,12 +240,57 @@ test('resume.md: {main} and {root} are defined before first use', () => {
   assert.ok(stripped.indexOf('{main}') !== -1, 'control: placeholders are still used after stripping');
 });
 
-test('resume.md Step 6a: close-run runs before ExitWorktree on a stop', () => {
+// Step 6a's stop sequence: every clause is pinned, in order, and each clause on its own.
+const STOP_SEQUENCE = [
+  ['print the line', 'print `line` verbatim (the stderr for exit 2/4)'],
+  ['close-run', 'close-run --run "$GROUP_RUN_DIR"'],
+  ['ExitWorktree keep', 'ExitWorktree(action: "keep")'],
+  ['log-decision call', 'log-decision.js" --run "$GROUP_RUN_DIR" --status SKIP'],
+  ['stop without dispatching', 'stop without dispatching either call'],
+];
+const STOP_MARKERS = STOP_SEQUENCE.map((s) => s[1]);
+
+test('resume.md Step 6a: the stop runs line, close-run, ExitWorktree, log-decision, stop — in that order', () => {
+  requireOrder(stepParagraph(RESUME, '6a'), STOP_MARKERS);
+});
+
+for (let i = 0; i < STOP_SEQUENCE.length - 1; i += 1) {
+  test(`resume.md Step 6a order control: "${STOP_SEQUENCE[i][0]}" before "${STOP_SEQUENCE[i + 1][0]}" goes red when reversed`, () => {
+    const par = stepParagraph(RESUME, '6a');
+    assert.throws(() => requireOrder(par, [STOP_MARKERS[i + 1], STOP_MARKERS[i]]), /must come after/);
+  });
+}
+
+for (const [label, marker] of STOP_SEQUENCE) {
+  test(`resume.md Step 6a order control: deleting "${label}" goes red`, () => {
+    const par = stepParagraph(RESUME, '6a');
+    const mutated = par.replace(marker, 'zzz');
+    assert.notStrictEqual(mutated, par);
+    assert.throws(() => requireOrder(mutated, STOP_MARKERS), /marker missing/);
+  });
+}
+
+// The stop is a stop: the paragraph must not tell the executor to carry on instead.
+const STOP_CLAIMS = [
+  ['log-decision call carries --run "$GROUP_RUN_DIR"', /log-decision\.js" --run "\$GROUP_RUN_DIR" --status SKIP/],
+  ['log-decision call carries --status', /--status SKIP/],
+  ['log-decision call carries --section "/dispatch"', /--section "\/dispatch"/],
+  ['log-decision call carries --step "resume"', /--step "resume"/],
+  ['log-decision call carries --reversibility n/a', /--reversibility n\/a/],
+  ['log-decision text goes through --text-file', /--text-file "\{path\}"/],
+  ['the temp path comes from session-tmp-resolve.js', /session-tmp-resolve\.js" DECISION_TEXT=decision-text-\{run-id\}-resume-stop\.md/],
+  ['the log text is one line from the line or stderr', /one-line text `Step 6a stop: \{the line, or the stderr with line breaks collapsed\}`/],
+  ['the stop dispatches neither call', /then stop without dispatching either call\./],
+];
+for (const [label, re] of STOP_CLAIMS) {
+  test(`resume.md Step 6a: ${label}`, () => assertPinned(stepParagraph(RESUME, '6a'), re, label));
+}
+
+test('resume.md Step 6a: the stop sequence never tells the executor to continue', () => {
   const par = stepParagraph(RESUME, '6a');
-  const markers = ['close-run --run "$GROUP_RUN_DIR"', 'ExitWorktree(action: "keep")'];
-  requireOrder(par, markers);
-  assert.throws(() => requireOrder(par, [...markers].reverse()), /must come after/);
-  assert.throws(() => requireOrder(par.replace(markers[0], 'zzz'), markers), /marker missing/);
+  const continues = (t) => /then continue|continue to Step 7|proceed to Step 7/i.test(t);
+  assert.strictEqual(continues(par), false);
+  assert.strictEqual(continues(par.replace('then stop without dispatching either call.', 'then continue to Step 7.')), true);
 });
 
 // ---- resume.md: things it must not say ------------------------------------------------------
