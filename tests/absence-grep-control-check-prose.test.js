@@ -49,27 +49,34 @@ test('the AC template asks for a matching run before any returns-nothing criteri
   assert.ok(ac.includes('prefer `grep -F` for literal code text'));
 });
 
+const EXCLUDED_PATHSPECS = [
+  [':!.claude-tweaks/pipelines', 'run-directory'],
+  [':!docs/superpowers/plans', 'plan'],
+  [':!docs/plans/*-ledger.md', 'ledger'],
+];
+const NAMED_PATHS_NEED_NO_EXCLUSION = 'A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.';
+
 test('the AC template excludes the run directory from a repo-root absence search (#4579)', () => {
   const ac = acSection();
-  assert.ok(ac.includes(":!.claude-tweaks/pipelines"), 'the AC section must name the run-directory pathspec');
-  assert.ok(ac.includes(":!docs/superpowers/plans"), 'the AC section must name the plan pathspec');
-  assert.ok(ac.includes(":!docs/plans/*-ledger.md"), 'the AC section must name the ledger pathspec');
+  for (const [pathspec, name] of EXCLUDED_PATHSPECS) {
+    assert.ok(ac.includes(pathspec), `the AC section must name the ${name} pathspec`);
+  }
   assert.ok(ac.includes('#4579'), 'the AC section must cite #4579');
   assert.ok(ac.includes('the control run applies to the excluded form'), 'the excluded search still gets the control run');
-  assert.ok(ac.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
+  assert.ok(ac.includes(NAMED_PATHS_NEED_NO_EXCLUSION), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
 });
 
 test('the control check adds the run-directory exclusion as a plan correction (#4579)', () => {
   const start = CHECKS.indexOf('**Absence-grep control check');
   const paragraph = CHECKS.slice(start, CHECKS.indexOf('\n\n', start));
-  assert.ok(paragraph.includes(":!.claude-tweaks/pipelines"), 'the paragraph must name the run-directory pathspec');
-  assert.ok(paragraph.includes(":!docs/superpowers/plans"), 'the paragraph must name the plan pathspec');
-  assert.ok(paragraph.includes(":!docs/plans/*-ledger.md"), 'the paragraph must name the ledger pathspec');
+  for (const [pathspec, name] of EXCLUDED_PATHSPECS) {
+    assert.ok(paragraph.includes(pathspec), `the paragraph must name the ${name} pathspec`);
+  }
   assert.ok(paragraph.includes('#4579'), 'the paragraph must cite #4579');
   assert.ok(paragraph.includes('run the control on the excluded form'), 'the control run applies to the excluded form');
   assert.ok(paragraph.includes('that the exclusion was added per #4579'), 'the match note must say the exclusion was added per #4579');
   assert.ok(paragraph.includes('a plan correction, never an SDD ruling'), 'the exclusion is a plan correction, not an SDD ruling');
-  assert.ok(paragraph.includes('A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.'), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
+  assert.ok(paragraph.includes(NAMED_PATHS_NEED_NO_EXCLUSION), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
 });
 
 test('the tombstone section treats its scoped grep as an absence grep', () => {
