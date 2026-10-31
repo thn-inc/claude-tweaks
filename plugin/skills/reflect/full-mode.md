@@ -113,7 +113,8 @@ a session can leave behind more than one such stamp before it finally reaches wr
 its events into the output alongside this run's own. From the main checkout, where every
 main-checkout session's ad-hoc dir records that same path, the path match keeps only ad-hoc dirs
 owned by the current session id; a linked worktree's match is unchanged (#4704). A genuinely
-frictionless ad-hoc session still returns `[]` — nothing is manufactured. "Owns no run dir" excludes `resolveRun`'s `fallback` guess —
+frictionless ad-hoc session still returns `[]` — nothing is manufactured. "Owns no run dir"
+excludes `resolveRun`'s `fallback` guess —
 the newest unowned run, routinely a sibling session's — which every friction write path treats as
 not owned (#2783; before that fix the guess silently suppressed the mint and absorbed the session's
 events). A formal `/claude-tweaks:build`/`/claude-tweaks:flow` run is unaffected: once

@@ -210,6 +210,7 @@ const realDeps = {
   findRunsByWorktreePath: ctxLib.findRunsByWorktreePath,
   sessionId: () => process.env.CLAUDE_CODE_SESSION_ID || null,
   repoInfo: wtDetect.repoInfo,
+  realpath: wtDetect.safeReal,
   findAdHocRunsBySessionId: ctxLib.findAdHocRunsBySessionId,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -233,12 +234,20 @@ function run(argv, deps = realDeps) {
   const sessionId = opts.session || deps.sessionId();
   let siblings = deps.findRunsByWorktreePath(worktreePath, worktreePath, runDir) || [];
   // #4704: from the main checkout the recorded worktree path is shared by every
-  // main-checkout session, so keep only this session's ad-hoc dirs there.
-  const info = deps.repoInfo(worktreePath) || {};
-  const inMainCheckout = !info.indeterminate && Boolean(info.repoRoot) && !info.isLinkedWorktree;
-  if (inMainCheckout) {
-    siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isAdHocRunDir(siblingDir)
-      && Boolean(sessionId) && Boolean(state) && state.sessionId === sessionId);
+  // main-checkout session, so keep only this session's ad-hoc dirs there. The
+  // worktree path must BE the main checkout's root (repoInfo walks up to the
+  // nearest existing ancestor, so a removed linked worktree would otherwise read
+  // as the main checkout); an unresolvable path or indeterminate git answer
+  // keeps the path-only union. Skipped when there is nothing to filter: repoInfo
+  // spawns git.
+  if (siblings.length > 0) {
+    const info = deps.repoInfo(worktreePath) || {};
+    const inMainCheckout = Boolean(info.repoRoot) && !info.isLinkedWorktree
+      && info.repoRoot === deps.realpath(worktreePath);
+    if (inMainCheckout) {
+      siblings = siblings.filter(({ runDir: siblingDir, state }) => ctxLib.isAdHocRunDir(siblingDir)
+        && Boolean(sessionId) && state?.sessionId === sessionId);
+    }
   }
   const bySession = sessionId ? (deps.findAdHocRunsBySessionId(deps.cwd(), sessionId, runDir) || []) : [];
   for (const { runDir: siblingDir } of [...siblings, ...bySession]) {

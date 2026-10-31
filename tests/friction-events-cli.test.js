@@ -24,6 +24,7 @@ function fakeDeps(overrides = {}) {
     findRunsByWorktreePath: (cwd, target, excludeDir) => { calls.findRunsByWorktreePath.push({ cwd, target, excludeDir }); return []; },
     sessionId: () => null,
     repoInfo: (p) => { calls.repoInfo.push(p); return { repoRoot: '/wt/current', isLinkedWorktree: true, indeterminate: false }; },
+    realpath: (p) => p,
     findAdHocRunsBySessionId: (cwd, sessionId, excludeDir) => { calls.findAdHocRunsBySessionId.push({ cwd, sessionId, excludeDir }); return []; },
     stdout: (s) => calls.stdout.push(s),
     stderr: (s) => calls.stderr.push(s),
@@ -581,6 +582,45 @@ test('#4704: an indeterminate repoInfo keeps the path-only union', () => {
   assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
   const out = JSON.parse(deps.calls.stdout.join(''));
   assert.deepStrictEqual(out.map((e) => e._runDir), [OTHER]);
+});
+
+// The path-only union is kept whenever the worktree path is not positively the
+// main checkout's root. Each case below gets the other-session sibling back.
+function otherSessionUnioned(overrides, extraArgv = []) {
+  const deps = fakeDeps({
+    readEvents: (runDir, source) => (runDir === OTHER ? [{ type: 'wd-deny', ts: 't0', _source: source, _runDir: runDir }] : []),
+    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: '/main', sessionId: 'S2' } }],
+    ...overrides,
+  });
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', ...extraArgv], deps), 0);
+  return JSON.parse(deps.calls.stdout.join('')).map((e) => e._runDir);
+}
+
+test('#4704: git saying "not a repo" keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => ({ repoRoot: null, isLinkedWorktree: false, indeterminate: false }) }),
+    [OTHER],
+  );
+});
+
+test('#4704: a --worktree that is not the main checkout\'s root keeps the path-only union even when repoInfo (walking up) reports the main checkout', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT }, ['--worktree', '/main/.claude/worktrees/removed']),
+    [OTHER],
+  );
+});
+
+test('#4704: a worktree path that does not resolve (realpath fails) keeps the path-only union', () => {
+  assert.deepStrictEqual(
+    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT, realpath: () => null }, ['--worktree', '/main']),
+    [OTHER],
+  );
+});
+
+test('#4704: with no path siblings to filter, repoInfo (a git spawn) is not called', () => {
+  const deps = fakeDeps();
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
+  assert.deepStrictEqual(deps.calls.repoInfo, []);
 });
 
 test('#4704: the real CLI from a real main checkout drops another session\'s ad-hoc dir (real writer)', () => {
