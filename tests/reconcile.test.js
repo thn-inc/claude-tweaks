@@ -1941,6 +1941,25 @@ test('formatSummary: post-merge entries render as "merged run" taken and skipped
   assert.strictEqual(formatSummary({ ...result, postMerge: null }), 'reconcile: nothing to do');
 });
 
+test('formatSummary: a post-merge entry whose Step 4.0 failed is reported on its own line, never under "post-merge steps run" (#4599)', () => {
+  const base = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  const ran = { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 };
+  const failed = { runDir: 'r2', pr: 12, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [ran, failed, { ...failed, runDir: 'r3', pr: 13 }] }), [
+    'post-merge steps run: 1 merged run',
+    'post-merge Step 4.0 failed: 2 merged runs',
+  ].join('\n'));
+  // Only failures: no "steps run" line at all.
+  assert.strictEqual(formatSummary({ ...base, postMerge: [failed] }), 'post-merge Step 4.0 failed: 1 merged run');
+  // A failed entry never lands in the aggregated skip line.
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [failed, { runDir: 'r4', pr: 14, action: 'skipped', reason: 'in-flight' }] }),
+    ['post-merge Step 4.0 failed: 1 merged run', 'skipped: 1 merged run (in-flight 1)'].join('\n'),
+  );
+});
+
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
