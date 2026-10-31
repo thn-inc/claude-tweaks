@@ -87,8 +87,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    ISSUES=()
    PACK="${RUN_DIR}/wrap-up-pack.json"
    MIRROR="{worktree}/.claude-tweaks/pipelines/{run-id}"
-   if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join(" "))' -- "$PACK" 2>/dev/null); then
-     ISSUES=($CLOSING)
+   if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
+     while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
      for f in "${MIRROR}"/work/*-spec.md; do
        [ -e "$f" ] || continue

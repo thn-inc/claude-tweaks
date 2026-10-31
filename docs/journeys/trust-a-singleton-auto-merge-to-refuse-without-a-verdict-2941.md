@@ -5,6 +5,7 @@ files:
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/log-decision.js
+  - plugin/skills/_shared/local-merge-sequence.md
 ---
 
 # Trust a Singleton Auto-Merge to Refuse Without a Verdict
