@@ -4,7 +4,7 @@
 
 **Goal:** `/claude-tweaks:wrap-up #N merge` adopts a parked run that wrap-up already closed and archived, instead of stopping with "no pipeline run directory resolved".
 
-**Architecture:** `resolve-run-dir` gains an opt-in `--archived` flag (`opts.archived` in `plugin/bin/lib/hooks/run-dir-resolve.js`): only when steps 1-2 resolve nothing, it returns the newest `pipelines/archive/` match for `--spec-slug` whose `run-state.json` records a PR. It is read-only, and is refused with `--create`. `merge-mode.md` calls it as a fallback and drops the false "stays `status: active`" claim.
+**Architecture:** `resolve-run-dir` gains an opt-in `--archived` flag (`opts.archived` in `plugin/bin/lib/hooks/run-dir-resolve.js`). Only when steps 1-2 resolve nothing, it returns the newest closed match for `--spec-slug` whose `run-state.json` records a PR. A closed match is either an archived run under `pipelines/archive/`, or a live run with status `clean` that `archive-run` refused (plan-review ruling, spec's Plan Review Clarifications). It is read-only, and is refused with `--create`. `merge-mode.md` calls it as a fallback and drops the false "stays `status: active`" claim.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
@@ -35,13 +35,15 @@ Scope ruling: the other hits of that phrase (`plugin/skills/wrap-up/resume-halte
 
 ### Task 1: `--archived` fallback in the resolver and CLI
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/hooks/run-dir-resolve.js` (add `archivedMatch`, wire it into `resolve` after step 2, add the `archived-create` refusal)
 - Modify: `plugin/bin/hooks.js:121` (VERBS usage string) and `plugin/bin/hooks.js` `runResolveRunDir` (pass `archived: args.includes('--archived')`)
 - Test: `tests/hooks-run-dir-resolve.test.js`, `tests/hooks-resolve-run-dir-cli.test.js`
 
 **Interfaces:**
-- Produces: `resolve({ ..., archived: true })`, returning `{ ok: true, path: <pipelinesRoot>/archive/<name>, created: false }` or the existing `fail('unresolved', …)`. With `archived && create` it returns `fail('archived-create', <message naming that an archived run is terminal and --archived is read-only>)` before any mkdir. CLI: `hooks.js resolve-run-dir --archived --spec-slug <s>` prints that path and exits 0. Usage string: `resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only] [--archived]`.
+- Produces: `resolve({ ..., archived: true })`, returning `{ ok: true, path: <pipelinesRoot>/archive/<name> or <pipelinesRoot>/<name>, created: false }` or the existing `fail('unresolved', …)`. Two refusals come first, before step 1 runs, so a valid `PIPELINE_RUN_DIR` cannot mask them: `archived && create` returns `fail('archived-create', <message naming that --archived is read-only and refuses --create>)`, and `archived` without `specSlug` returns `fail('archived-unnamed', <message naming that --archived needs --spec-slug>)`. CLI: `hooks.js resolve-run-dir --archived --spec-slug <s>` prints that path and exits 0. Usage string: `resolve-run-dir [--spec-slug <slug>] [--mode <mode>] [--standalone <value>] [--create] [--root-only] [--archived]`.
 
 - [ ] **Step 1: Write the failing tests** in `tests/hooks-run-dir-resolve.test.js`, using its `gitRepo`/`mkRunDir`/`writeRunState` helpers. Add a local `mkArchived(main, name)` that creates `.claude-tweaks/pipelines/archive/<name>`.
   - `AC1.1: --archived resolves an archived-only spec run carrying a pr object`: create `archive/2026-01-01T000000-spec-42` with `writeRunState(dir, { status: 'clean', worktree: null, worktreeAtClose: '/gone', pr: { number: 7, url: 'u', branch: 'b' } })` and `config.yml` `spec: 42\n`. Then `resolve({ cwd: main, env: {}, specSlug: 'spec-42', archived: true })` deep-equals `{ ok: true, path: <that dir>, created: false }` on `ok/path/created`.
@@ -49,7 +51,11 @@ Scope ruling: the other hits of that phrase (`plugin/skills/wrap-up/resume-halte
   - `AC1.2: --archived skips an archived match with no pr object`: archived `…-spec-44` with `{ status: 'clean' }` → `ok:false`, `reason: 'unresolved'`.
   - `AC2.1: a live match still wins over an archived one under --archived`: live `2026-01-01T000000-spec-45` (no run-state) and archived `2026-02-01T000000-spec-45` with a `pr`. The result path is the live dir.
   - `without --archived an archived-only fixture stays unresolved`: the AC1.1 fixture without `archived` → `ok:false`, `reason: 'unresolved'`.
-  - `--archived with --create is refused before any mkdir`: `resolve({ … specSlug: 'spec-46', archived: true, create: true })` → `ok:false`, `reason: 'archived-create'`, and `fs.readdirSync(pipelines)` contains no `-spec-46` entry.
+  - `--archived with --create is refused before any mkdir`: `resolve({ … specSlug: 'spec-46', archived: true, create: true })` → `ok:false`, `reason: 'archived-create'`, and `fs.readdirSync(pipelines)` contains no `-spec-46` entry. Repeat with `env: { PIPELINE_RUN_DIR: <a valid live run dir> }`: still `archived-create`.
+  - `--archived without --spec-slug is refused`: `resolve({ cwd: main, env: {}, archived: true })` → `ok:false`, `reason: 'archived-unnamed'`.
+  - `AC1.1 clarification: --archived adopts a live clean run that archive-run refused`: live `2026-01-03T000000-spec-49` with `{ status: 'clean', worktree: null, pr: { number: 9, url: 'u' } }` and nothing under `archive/` → result path is that live dir. Without `archived` → `unresolved` (the #4151 terminal refusal is unchanged).
+  - `newest closed match wins across live-clean and archived`: archived `2026-01-01T000000-spec-50` and live clean `2026-02-01T000000-spec-50`, both with `pr` → the live clean one (newer name). Swap the dates → the archived one.
+  - `a live clean dir whose run-id also exists under archive/ is never adopted` (#208 resurrection): the same name `2026-01-04T000000-spec-51` both live-clean-with-pr and under `archive/` with `pr` → the result path is the `archive/` one.
   - The five Review Focus tests named above. Malformed: write `'{'` as the archived `run-state.json` alongside an older valid archived match; the older one wins. Newest-with-pr: the older one has `pr`, the newer does not. Segment: archived `…-spec-3784` with `pr`, query `spec-378` → `unresolved`. Non-canonical: `archive/20260101T000000-spec-47` with `pr` → `unresolved`. Missing archive dir: `pipelines/` exists with no `archive/` → `unresolved`.
   - In `tests/hooks-resolve-run-dir-cli.test.js`: `AC3.1: CLI --archived prints the archived run path, exit 0`. Create an archived `…-spec-48` with a `pr` run-state, then run `['--archived', '--spec-slug', 'spec-48']` with `PIPELINE_RUN_DIR: ''` → code 0 and stdout trimmed equals the archived path. The same args without `--archived` → non-zero.
 
@@ -58,7 +64,16 @@ Scope ruling: the other hits of that phrase (`plugin/skills/wrap-up/resume-halte
 Run: `node --test tests/hooks-run-dir-resolve.test.js tests/hooks-resolve-run-dir-cli.test.js`
 Expected: FAIL. The new `archived: true` cases return `ok:false` with `unresolved`, and `archived-create` is not a known reason.
 
-- [ ] **Step 3: Implement `archivedMatch(pipelinesRoot: string, specSlug: string): string|null`** in `run-dir-resolve.js`, beside `newestMatch`. It reads `path.join(pipelinesRoot, 'archive')` with `withFileTypes` (return null on any read error). It filters to directories with `RUN_ID_RE` and `hasSegment(name, specSlug)`, sorts, and walks newest-first. It returns the first dir whose `run-state.json` parses (in try/catch) to a plain non-array object whose `pr` is a non-null, non-array object. In `resolve`, right after the step-2 block and before `if (opts.create)`: if `opts.archived && opts.create` return `fail('archived-create', …)`; else if `opts.archived && opts.specSlug`, return `ok(match, false)` when `archivedMatch` finds one. Add a short header comment citing #4677. It should say this exists for `wrap-up/merge-mode.md`, because wrap-up archives a pr-first leave-open run before the human types `merge`. Thread `archived: args.includes('--archived')` in `hooks.js` and append ` [--archived]` to the usage string.
+- [ ] **Step 3: Implement `closedPrMatch(pipelinesRoot: string, specSlug: string): string|null`** in `run-dir-resolve.js`, beside `newestMatch`.
+  - **Candidates:**
+    - (a) every `RUN_ID_RE` + `hasSegment(name, specSlug)` directory under `path.join(pipelinesRoot, 'archive')`;
+    - (b) every such directory directly under `pipelinesRoot` whose `run-state.json` `status` is exactly `'clean'` and whose `archiveStatus(...)` is not `'archived'`.
+    
+    Read each listing with `withFileTypes`; a read error yields no candidates from that listing.
+  - **Selection:** sort all candidates by name, walk them newest-first (on a name tie the archived one wins), and return the first whose `run-state.json` parses (in try/catch) to a plain non-array object whose `pr` is a non-null, non-array object.
+  - **Wiring in `resolve`:**
+    - Put the two refusals (`archived-create`, `archived-unnamed`) immediately after the `rootOnly` early return, before step 1.
+    - After the step-2 block and before `if (opts.create)`, if `opts.archived`, return `ok(match, false)` when `closedPrMatch` finds one. Add a short header comment citing #4677. It should say this exists for `wrap-up/merge-mode.md`, because wrap-up archives a pr-first leave-open run before the human types `merge`. Thread `archived: args.includes('--archived')` in `hooks.js` and append ` [--archived]` to the usage string.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -75,7 +90,7 @@ git commit -m "Add resolve-run-dir --archived — read-only fallback to the newe
 ### Task 2: Merge-mode prose, flag docs, journey and conformance pins
 
 **Files:**
-- Modify: `plugin/skills/wrap-up/merge-mode.md:11-13` ("Resolve the run")
+- Modify: `plugin/skills/wrap-up/merge-mode.md:11-13` ("Resolve the run") and `:43` (the Conflict section's `no-worktree` condition)
 - Modify: `plugin/skills/_shared/pipeline-run-dir.md:14` (usage line), plus a new `--archived` bullet after the `--root-only` bullet (`:47-50`)
 - Modify: `docs/journeys/merge-a-parked-unattended-pr-3784.md:46` ("Run adoption" bullet)
 - Test: `tests/wrap-up-merge-mode-conformance.test.js`
@@ -98,8 +113,13 @@ Expected: FAIL. The fact table is missing `archived-fallback` and `worktree-at-c
   - Keep "merge mode stops and names the record" for when both calls resolve nothing.
   - Replace "a parked `pending-review` run stays `status: active`, so `resume`'s `status: interrupted` precondition never holds for it" with: a parked run is `active` or already closed (`clean`, often archived), never `interrupted`, so `resume`'s precondition never holds for it.
   - In the binding paragraph: "`{worktree-path}` below is that run's `run-state.json` `worktree`; it falls back to `worktreeAtClose` when `worktree` is null (close-run keeps the prior path there)".
-  - Add one sentence: an adopted archived run takes every later `decisions.md` write at that archived path, and Step 4.2's reconcile finds it already archived.
-  - `pipeline-run-dir.md`: append `[--archived]` to the usage line. Add a bullet: `--archived` with `--spec-slug` and no `--create` falls back, after steps 1-2 resolve nothing, to the newest `archive/` match whose `run-state.json` records a `pr`. It is read-only, a live match always wins, it is refused with `--create`, and its only caller is `wrap-up/merge-mode.md`.
+  - Add one sentence: an adopted closed run takes every later `decisions.md` write at the path it was adopted from. Step 4.2's reconcile leaves it untouched, because `iterRunDirsWithState` (`plugin/bin/lib/hooks/context.js:255-258`) enumerates only top-level run-id dirs and skips `clean` ones by default.
+  - Conflict section (`:43`): replace "when `run-state.json` carries no `worktree`, the path no longer exists" with "when `{worktree-path}` resolves to nothing (no `worktree` and no `worktreeAtClose`), the path no longer exists". Keep the trailing ATTENDED_FACTS `no-worktree` text, "report `pending-review`, reason `no-worktree`, and run no merge in any checkout", byte-identical.
+  - `pipeline-run-dir.md`: append `[--archived]` to the usage line. Add a bullet covering `--archived`:
+    - It needs `--spec-slug`, and is refused with `--create` or without `--spec-slug`, both checked before step 1.
+    - It falls back, only after steps 1-2 resolve nothing, to the newest closed match that records a `pr`: an `archive/` dir, or a live `clean` dir `archive-run` refused.
+    - It is read-only, an adoptable step-2 match always wins, and its only caller is `wrap-up/merge-mode.md`.
+  - Merge-mode's fallback sentence names both closed shapes: archived, or closed but un-archived.
   - Journey line 46: replace "That is not `resume`: a parked run stays `status: active`." with "That is not `resume`: a parked run is never `interrupted`. When wrap-up already archived it, merge mode adopts it from `archive/` through `resolve-run-dir --archived`."
 
 - [ ] **Step 4: Run the tests to verify they pass**
@@ -120,7 +140,8 @@ git commit -m "Teach merge mode to adopt an archived parked run — fallback to 
 | Clause | Covered by |
 |---|---|
 | AC1.1 | Task 1 `AC1.1` tests, including the real-writer one |
-| AC1.2 | Task 1 `AC1.2` (no pr). The `spec: 43` half is the existing `record-binding` fact in `MERGE_MODE_FACTS`: the binding check is merge-mode prose, not resolver code |
+| AC1.2 | Task 1 `AC1.2` (no pr). The `spec: 43` half is the existing `record-binding` fact in `MERGE_MODE_FACTS`, per the human plan-review ruling in the spec's Plan Review Clarifications |
+| Deliverable 3 (reconcile no-op) | Cited reading: `context.js:255-258` enumerates only top-level `RUN_ID_RE` dirs and skips `clean` ones by default, so an adopted archive/ or clean run is never visited |
 | AC2.1 | Task 1 `AC2.1` |
 | AC3.1 | Task 1 CLI `AC3.1`, plus Task 2 `archived-fallback` fact (the prose calls the flag) |
 | AC4.1 | Task 2 `AC4.1` |
