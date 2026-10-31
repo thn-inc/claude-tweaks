@@ -410,9 +410,10 @@ function run(argv, overrides = {}) {
   // open, so close each one still open (#4549). Records already CLOSED are left
   // alone and count as closed; a failed read or close is reported, never
   // counted. An unchecked base closes nothing.
+  const fixesRecords = uniqueSorted(expected);
   const closed = []; const closeFailed = []; const alreadyClosed = [];
   if (nonDefaultBase) {
-    for (const issue of uniqueSorted(expected)) {
+    for (const issue of fixesRecords) {
       let state;
       try {
         state = readIssueState(issue);
@@ -439,7 +440,7 @@ function run(argv, overrides = {}) {
   } else if (baseUnchecked) {
     degraded(`could not tell whether PR #${n} merged into the default branch (${uncheckedReason})`,
       expected.length
-        ? `Fixes records #${uniqueSorted(expected).join(', #')} not checked — close any still open by hand if the base is not the default branch`
+        ? `Fixes records #${fixesRecords.join(', #')} not checked — close any still open by hand if the base is not the default branch`
         : 'the PR names no Fixes records, so there is nothing to close by hand');
   }
 
@@ -465,7 +466,7 @@ function run(argv, overrides = {}) {
     ...(baseUnchecked ? {} : { closingSet }),
     ...(messageUnread ? { messageUnread: true } : {}),
     ...(nonDefaultBase ? { nonDefaultBase: true, closed, closeFailed } : {}),
-    ...(baseUnchecked ? { baseUnchecked: true, unchecked: uniqueSorted(expected) } : {}),
+    ...(baseUnchecked ? { baseUnchecked: true, unchecked: fixesRecords } : {}),
   });
 }
 

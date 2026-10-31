@@ -5,6 +5,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -106,7 +107,6 @@ test('deferred-closure section states the keyword neutralization', () => {
 });
 
 // ---- #4549: the closing-keyword contract is "default branch only"; Step 4.0 closes on a non-default base ----
-const fs = require('node:fs');
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const collapse = (s) => s.replace(/\s+/g, ' ');
 const stepOf = (text, start, end) => {

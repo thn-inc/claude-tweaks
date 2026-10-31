@@ -774,6 +774,7 @@ test('post-merge no-fixes-span carries no closingSet', () => {
 
 // ---- #4549: a merge into a non-default base closes the Fixes records itself ----
 
+const OPEN_ISSUE = { state: 'OPEN', closedAt: null };
 const NON_DEFAULT = { baseRefName: 'develop' };
 const CLOSE_COMMENT = 'Closed by claude-tweaks: PR #7 merged into develop, which is not the default branch, so GitHub does not act on its closing keywords.';
 const FIXES_ONLY = ['Fixes #3997'];
@@ -782,7 +783,7 @@ test('#4549 AC2.1: non-default base closes an open Fixes record, AUTO logged, ac
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   const j = h.json();
@@ -802,7 +803,7 @@ test('#4549 AC3.1: a failing close lands in closeFailed, not closingSet, degrade
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
     closeThrows: { 3997: 'HTTP 403' },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
@@ -835,7 +836,7 @@ test('#4549 AC5.1: an unreadable default branch closes nothing and omits closing
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
     defaultBranchThrows: true,
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
@@ -856,7 +857,7 @@ test('post-merge: a missing baseRefName is treated as unchecked', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: FIXES_ONLY }), [], { baseRefName: undefined })],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   const j = h.json();
@@ -894,7 +895,7 @@ test('post-merge: a GitHub Enterprise PR reads the default branch from its own h
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: FIXES_ONLY }), [], { ...NON_DEFAULT, url: 'https://acme.ghe.com/acme/app/pull/7' })],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   const repoViews = h.calls.filter((c) => c.args[0] === 'repo' && c.args[1] === 'view');
@@ -911,7 +912,7 @@ test('post-merge non-default: keep-open candidates are read once, never polled, 
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
     messageThrows: true,
-    issues: { 2724: [{ state: 'OPEN', closedAt: null }], 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 2724: [OPEN_ISSUE], 3997: [OPEN_ISSUE] },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   const j = h.json();
@@ -938,7 +939,7 @@ test('post-merge non-default: a duplicated Fixes line closes the record once', (
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: ['Fixes #3997', 'Fixes #3997'] }), [], NON_DEFAULT)],
-    issues: { 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 3997: [OPEN_ISSUE] },
   });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   assert.equal(h.closes().length, 1);
@@ -949,7 +950,7 @@ test('post-merge: reopen-failed outranks close-failed', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
     prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
-    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [{ state: 'OPEN', closedAt: null }] },
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
     reopenThrows: 'forbidden',
     closeThrows: { 3997: 'HTTP 403' },
   });
