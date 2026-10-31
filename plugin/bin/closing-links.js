@@ -362,19 +362,20 @@ function run(argv, overrides = {}) {
   // after the merge.
   const maxRereads = Math.floor(o.settleMs / POLL_STEP_MS);
   const mergedAt = Date.parse(pr.mergedAt);
+  // One issue-state read for both passes: the parsed {state, closedAt}, or a throw.
+  const readIssueState = (issue) => {
+    const j = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
+    if (!j || typeof j.state !== 'string') throw new Error('no state field');
+    return j;
+  };
   const reopened = []; const failed = []; const stillOpen = []; const closedBefore = [];
   for (const issue of candidates) {
     let state;
     try {
-      const read = () => {
-        const j = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
-        if (!j || typeof j.state !== 'string') throw new Error('no state field');
-        return j;
-      };
-      state = read();
+      state = readIssueState(issue);
       for (let i = 0; i < maxRereads && state.state === 'OPEN' && willClose.includes(issue); i++) {
         deps.sleep(POLL_STEP_MS);
-        state = read();
+        state = readIssueState(issue);
       }
     } catch (e) {
       failed.push({ issue, error: errText(e), stage: 'read' });
@@ -413,8 +414,7 @@ function run(argv, overrides = {}) {
     for (const issue of uniqueSorted(expected)) {
       let state;
       try {
-        state = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
-        if (!state || typeof state.state !== 'string') throw new Error('no state field');
+        state = readIssueState(issue);
       } catch (e) {
         closeFailed.push({ issue, error: errText(e), stage: 'read' });
         continue;

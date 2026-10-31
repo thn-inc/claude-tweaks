@@ -867,6 +867,26 @@ test('post-merge: a missing baseRefName is treated as unchecked', () => {
   assert.ok(!h.issueReads().some((c) => c.args[2] === '3997'));
 });
 
+test('post-merge: an unreadable default branch with no Fixes records is base-unchecked and says there is nothing to close', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: [] }), [], NON_DEFAULT)],
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.ok(!('closingSet' in j));
+  assert.equal(h.closes().length, 0);
+  assert.equal(h.issueReads().length, 0);
+  const lines = h.log(runDir).split('\n').filter((l) => /^- SKIP .*Closing links \(degraded\)/.test(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /could not tell whether PR #7 merged into the default branch/);
+  assert.match(lines[0], /→ fallback: the PR names no Fixes records, so there is nothing to close by hand\./);
+  assert.doesNotMatch(lines[0], /Fixes records #/);
+});
+
 test('post-merge: a GitHub Enterprise PR reads the default branch from its own host', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, {
