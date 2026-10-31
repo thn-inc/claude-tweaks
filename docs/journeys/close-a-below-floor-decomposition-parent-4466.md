@@ -102,3 +102,5 @@ Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-44
 The success state and the tidy step's checklist clause updated during build of #4610: the Step 7.5 checklist checks for no acceptance label in either spelling.
 
 Updated by record #4599 (run `2026-10-31T135734-record-4599`): step 3 added. A merge no session saw land, such as an armed auto-merge, is closed by the reconciler's `post-merge` check, and tidy's backstop became step 4.
+
+Updated by record #4600 (run `2026-10-31T190944-record-4600`): step 5's `needsBackstop` line. The parent-gate sweep reports a hand-closed parent above the floor itself, and this journey's #4466 close marker keeps the parent it closed out of that row (`catch-a-hand-closed-parent-with-no-sign-off-4600.md`).
