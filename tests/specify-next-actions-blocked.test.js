@@ -15,7 +15,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const NEXT_ACTIONS = readText(path.join(ROOT, 'plugin/skills/specify/next-actions.md'));
 
-const BLOCKED_ROW = '| Any shaped or produced record has an open blocker (Blocker check above) | 1. `gh issue view #{blocker}` — see what #{N} is waiting on **(Recommended)**, or, when the blocker carries `ready` and no `bot:in-progress` claim, `/claude-tweaks:flow #{blocker}` — clear the blocker first **(Recommended)** instead<br>2. `/claude-tweaks:flow #{N}` — once #{blocker} closes (never bolded)<br>3. for a multi-record run, `/claude-tweaks:flow #{unblocked Ns}` — pipeline only the unblocked records<br>4. `/claude-tweaks:help` — pipeline dashboard |';
+const BLOCKED_ROW = '| Any shaped or produced record has an open blocker (Blocker check above) | 1. `/claude-tweaks:flow #{unblocked Ns}` — pipeline only the unblocked records **(Recommended)** when some record is unblocked and the run has more than one record; omitted otherwise<br>2. `/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view #{blocker}` — clear the blocker first **(Recommended)** when every record is blocked; unmarked otherwise<br>3. `/claude-tweaks:flow #{N}` — once #{blocker} closes<br>4. `/claude-tweaks:help` — pipeline dashboard |';
 
 const ROW_SHAPING_ONE = '| Shaping mode — one record shaped in place | 1. `/claude-tweaks:flow #{N}` — automated pipeline for record #{N}: "{title}" **(Recommended)**<br>2. `/claude-tweaks:build #{N}` — build only (no test/review/wrap-up)<br>3. `/claude-tweaks:help` — pipeline dashboard |';
 const ROW_SHAPING_MULTI = '| Shaping mode — multiple records shaped in place (a comma-separated list) | 1. `/claude-tweaks:flow #{N1},#{N2},...` — sequential pipeline for every record shaped this run **(Recommended)**<br>2. `/claude-tweaks:flow #{N1}` — pipeline just the first shaped record<br>3. `/claude-tweaks:help` — pipeline dashboard |';
@@ -32,6 +32,15 @@ function optionWith(row, needle) {
   return row.split('<br>').find((option) => option.includes(needle)) || '';
 }
 
+const MARKER = '**(Recommended)**';
+
+function blockerParagraph(text) {
+  const start = text.indexOf('**Blocker check.**');
+  const end = text.indexOf('| Situation | Options |');
+  assert.ok(start !== -1 && end !== -1 && start < end, 'Blocker check paragraph must sit before the Situation table');
+  return text.slice(start, end);
+}
+
 function assertBlockedRow(text) {
   const row = blockedRowLine(text);
   assert.ok(row, 'Next Actions has no blocked-record row');
@@ -40,15 +49,31 @@ function assertBlockedRow(text) {
   assert.ok(flat.includes('`skills/flow/materialize.md`\'s `blocked-by`'), "the Blocker check must cite materialize.md's `blocked-by` reader as the one it reuses");
   assert.ok(flat.includes('parseDependencies'), 'the Blocker check must name parseDependencies for the body-text leg');
   assert.ok(flat.includes('facets.blockedBy'), 'the Blocker check must name facets.blockedBy for the local-files leg');
-  const ghOption = optionWith(row, '`gh issue view #{blocker}`');
-  assert.ok(ghOption.includes('**(Recommended)**'), 'the blocked-record row must bold **(Recommended)** on the gh issue view #{blocker} option');
+  // Exactly one (Recommended) per branch: the unblocked-records option in the some-unblocked branch, the blocker option in the every-blocked branch.
+  assert.strictEqual(row.split(MARKER).length - 1, 2, 'the blocked-record row must carry exactly two (Recommended) markers, one per branch');
+  const unblockedOption = optionWith(row, '`/claude-tweaks:flow #{unblocked Ns}`');
+  assert.ok(unblockedOption.includes(`${MARKER} when some record is unblocked`), 'the unblocked-records option must be (Recommended) only when some record is unblocked');
+  assert.ok(unblockedOption.includes('omitted otherwise'), 'the unblocked-records option must be omitted when no record is unblocked or the run has a single record');
+  const blockerOption = optionWith(row, '`gh issue view #{blocker}`');
+  assert.ok(blockerOption.includes(`${MARKER} when every record is blocked`), 'the blocker option must be (Recommended) only when every record is blocked');
+  assert.ok(blockerOption.includes('`/claude-tweaks:flow #{blocker}` when the blocker carries `ready` and no `bot:in-progress` claim, otherwise `gh issue view #{blocker}`'), 'the blocker step must be one conditional command: /flow when ready and unclaimed, else gh issue view');
+  assert.ok(row.indexOf('`/claude-tweaks:flow #{unblocked Ns}`') < row.indexOf('`gh issue view #{blocker}`'), 'the blocker step must follow the unblocked-records option');
   const flowOption = optionWith(row, '`/claude-tweaks:flow #{N}`');
   assert.ok(flowOption.includes('once #{blocker} closes'), 'the /flow #{N} option must read "once #{blocker} closes"');
-  assert.ok(!flowOption.includes('**(Recommended)**'), 'the /flow #{N} option for a blocked record must never be **(Recommended)**');
+  assert.ok(!flowOption.includes(MARKER), 'the /flow #{N} option for a blocked record must never be (Recommended)');
+  assert.ok(!row.includes('never bolded'), 'the never-bolded rule must live in the Blocker check prose, not in a rendered option');
+  assert.ok(blockerParagraph(text).includes('never bolded'), 'the Blocker check must state that the blocked record /flow line is never bolded');
 }
 
-test('Next Actions carries a blocker-aware row that reuses the blocked-by reader and never bolds /flow for a blocked record (#4703)', () => {
+test('Next Actions carries a blocker-aware row that reuses the blocked-by reader and carries one (Recommended) per branch (#4703)', () => {
   assertBlockedRow(NEXT_ACTIONS);
+});
+
+test('the Blocker check fails closed: a non-zero exit or unparseable output never reads as unblocked, and names the failure line (#4703)', () => {
+  const flat = blockerParagraph(NEXT_ACTIONS).replace(/\s+/g, ' ');
+  assert.ok(flat.includes('A non-zero exit or unparseable output never reads as unblocked'), 'the fail-closed rule must be stated');
+  assert.ok(flat.includes('render the matching mode row unchanged, then one line under it naming the failure'), 'the failure must keep the mode row and add one line under it');
+  assert.ok(flat.includes('`Blocker check failed ({reason}) — confirm with gh issue view #{N} before running /claude-tweaks:flow (under work-backend: local-files, read the record file instead).`'), 'the Blocker check failed line must carry the local-files override');
 });
 
 test('the six pre-existing Next Actions rows stay byte-identical (#4703 AC3)', () => {
