@@ -7,11 +7,12 @@
 // #3809 extends this to the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's
 // run closes only after that branch's own pre-merge checks.
 //
-// SITES holds the one procedure, _shared/local-merge-sequence.md (#4073); CITING_SITES holds its callers' read-order anchors. Live-corpus read (skill-prose-conformance-tests:
+// #4073 moved the sequence into plugin/skills/_shared/local-merge-sequence.md; the four callers cite it.
+// SITES holds that one procedure, where the ordering, extract-and-run and re-protect pins run;
+// CITING_SITES holds its callers' read-order anchors. Live-corpus read (skill-prose-conformance-tests:
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
 // behavior matters. Go-red proof [IL-105]: the ordering check also runs against a frozen pre-change
 // excerpt. Whitespace collapsed on haystack and needle [IL-66].
-// #4073 moved the sequence into plugin/skills/_shared/local-merge-sequence.md; the four callers cite it, so the ordering, extract-and-run and re-protect pins run there.
 
 const { test } = require('node:test');
 const assert = require('node:assert');

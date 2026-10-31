@@ -9,6 +9,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -252,7 +253,7 @@ test('the SITES roster is exactly the files citing the sequence', () => {
   assert.deepEqual(citers(path.join(ROOT, 'plugin/skills')).filter((f) => f !== SEQUENCE && !MENTIONS.has(f)), SITES.map((s) => s.file).sort());
   for (const m of MENTIONS.keys()) assert.ok(collapse(read(m)).includes(CITATION), `stale MENTIONS entry ${m}: shrink the list`);
   // go-red: a stray citing file under a scratch tree is found by the walk.
-  const tmp = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'lms-roster-'));
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lms-roster-'));
   try {
     fs.mkdirSync(path.join(tmp, 'sub'));
     fs.writeFileSync(path.join(tmp, 'sub', 'stray.md'), `cites ${CITATION}\n`);
