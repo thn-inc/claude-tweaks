@@ -222,6 +222,18 @@ test('a prStates call that throws is a transient network-failure, never a crash'
   assert.deepEqual(r.deferred, [dir]);
 });
 
+test('a missing or malformed prStates is a caller bug: failure no-pr-states up front, never a per-run network-failure', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  for (const prStates of [undefined, null, {}, { byNumberAsync: 'nope' }]) {
+    const r = await postMerge({ cwd: root, integration: 'main', now, prStates, deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() } });
+    assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-pr-states' });
+  }
+  assert.equal(links.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+});
+
 test('merge grace: a merge 2 minutes old, or with no mergedAt, is skipped, untouched and deferred; 11 minutes runs', async () => {
   const root = mainCheckout();
   const fresh = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
@@ -259,20 +271,26 @@ test('deferred holds in-flight and network-failure runs only; marker-write-faile
   const ghAbsent = addRun(root, '2026-10-30T090003-spec-4', { pr: 14 });
   const marked = addRun(root, '2026-10-30T090004-spec-5', { pr: 15, decisions: `${formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran', reversibility: 'n/a' })}\n` });
   const open = addRun(root, '2026-10-30T090005-spec-6', { pr: 16 });
+  // Definitive lookup failures stay visible to archive's stuck-run surfacing: skipped, never deferred (R5).
+  const notFound = addRun(root, '2026-10-30T090006-spec-7', { pr: 17 });
+  const invalidArgs = addRun(root, '2026-10-30T090007-spec-8', { pr: 18 });
+  const noState = addRun(root, '2026-10-30T090008-spec-9', { pr: 19 });
   const failingWrite = (args) => {
     if (args.runDir === markerFail) throw new Error('disk full');
     return { file: '', created: false };
   };
   const r = await run(root, {
-    prs: { 11: merged(), 12: 'network-failure', 13: merged(), 14: 'gh-absent', 15: merged(), 16: { number: 16, state: 'OPEN' } },
+    prs: { 11: merged(), 12: 'network-failure', 13: merged(), 14: 'gh-absent', 15: merged(), 16: { number: 16, state: 'OPEN' }, 17: 'pr-not-found', 18: 'invalid-arguments' },
     links: fakeClosingLinks(ENVELOPE),
     close: fakeCloseParents(),
     extra: { appendEntries: failingWrite },
   });
   const reasons = Object.fromEntries(r.entries.map((e) => [e.pr, e.reason || e.action]));
-  assert.deepEqual(reasons, { 11: 'in-flight', 12: 'network-failure', 13: 'marker-write-failed', 14: 'gh-absent' });
+  assert.deepEqual(reasons, {
+    11: 'in-flight', 12: 'network-failure', 13: 'marker-write-failed', 14: 'gh-absent', 17: 'pr-not-found', 18: 'invalid-arguments', 19: 'no-pr-state',
+  });
   assert.deepEqual(new Set(r.deferred), new Set([inFlight, network]));
-  assert.ok(![ghAbsent, marked, open].some((d) => r.deferred.includes(d)));
+  assert.ok(![ghAbsent, marked, open, notFound, invalidArgs, noState].some((d) => r.deferred.includes(d)));
 
   const dry = await run(root, { prs: { 12: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(), dryRun: true });
   assert.deepEqual(dry.entries.find((e) => e.runDir === network).reason, 'dry-run');
@@ -529,6 +547,24 @@ test('R3 two takeovers: a taker whose retry create hits EEXIST skips in-flight a
   const r = takeClaim(dir, NOW, fsApi);
   assert.deepEqual(r, { ok: false, reason: 'in-flight' });
   assert.ok(fs.existsSync(lockOf(dir)));
+});
+
+test('R3: another taker renamed the stale lock aside but has not recreated it yet: our rename hits ENOENT, in-flight', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  staleLock(dir);
+  const elsewhere = path.join(dir, 'taken.aside');
+  const fsApi = racingFs({ renameSync: (from) => fs.renameSync(from, elsewhere) });
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'in-flight' });
+  assert.ok(!fs.existsSync(lockOf(dir)), 'we created nothing of our own');
+});
+
+test('takeClaim: the holder released the lock between our create and our stat: in-flight', () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  fs.writeFileSync(lockOf(dir), '');
+  const fsApi = racingFs({ statSync: (p) => { if (p === lockOf(dir)) fs.unlinkSync(p); } });
+  assert.deepEqual(takeClaim(dir, NOW, fsApi), { ok: false, reason: 'in-flight' });
 });
 
 test('takeClaim: a non-EEXIST create error is claim-failed', () => {

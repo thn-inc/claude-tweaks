@@ -17,7 +17,16 @@
 //
 // Returns { entries, deferred, failure? }. `deferred` lists the run dirs skipped
 // for a RETRYABLE reason — archive must not archive them in this pass, or the
-// retry never comes (archive-merged.js's `postMergeDeferred`).
+// retry never comes (archive-merged.js's `postMergeDeferred`). Exactly four
+// reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, and the
+// transient PR lookup failure `network-failure`. Every other skip is NOT
+// deferred: `gh-absent`, `dry-run`, `marker-write-failed`, `integration-unknown`
+// and the definitive lookup failures (`pr-not-found` — confirmed by pr-state.js
+// before it answers, and one of archive's own structurally-stuck reasons —
+// `invalid-arguments`, `no-pr-state`), so archive's stuck-run surfacing for
+// them stays on. `failure` is `not-github-issues`, `no-remote`, or
+// `no-pr-states` (the caller passed no usable PR-state resolver: a bug, never
+// a transient answer).
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -38,6 +47,8 @@ const CLOSE_WINDOW_MS = 10 * 60 * 1000;
 const MERGE_GRACE_MS = 10 * 60 * 1000;
 const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIM_FILENAME = '.post-merge.lock';
+// The one prStates failure string worth retrying; every other string is final (see the header).
+const TRANSIENT_PR_FAILURE = 'network-failure';
 
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
@@ -116,6 +127,9 @@ function takeClaim(runDir, nowMs, fsApi = fs) {
   let asideMtimeMs = mtimeMs;
   try { asideMtimeMs = fsApi.statSync(aside).mtimeMs; } catch { /* keep the stale reading */ }
   if (nowMs - asideMtimeMs < CLAIM_STALE_MS) {
+    // Residual window, bounded: the holder may release between our rename and this link, and the
+    // link then re-creates a lock nobody holds. The run reads `in-flight` and defers until that
+    // lock ages past CLAIM_STALE_MS, then the next pass takes it over.
     try { fsApi.linkSync(aside, lock); } catch { /* a third taker already created one */ }
     try { fsApi.unlinkSync(aside); } catch { /* an orphaned .stale- file is harmless */ }
     return { ok: false, reason: 'in-flight' };
@@ -159,6 +173,8 @@ async function postMerge({
   if (readWorkBackend(root) !== 'github-issues') return { entries, deferred, failure: 'not-github-issues' };
   const slug = repoSlugOf(root);
   if (!slug) return { entries, deferred, failure: 'no-remote' };
+  // A missing resolver is a caller bug; the per-run catch below must never relabel it a transient network failure.
+  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
   const [owner, repo] = slug.split('/');
 
   const policy = resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw: readPolicyRaw(root), runConfigRaw: null });
@@ -178,11 +194,11 @@ async function postMerge({
     if (hasPostMergeMarker(readDecisions(dir))) continue;
 
     let prState;
-    try { prState = await prStates.byNumberAsync(pr); } catch { prState = 'network-failure'; }
+    try { prState = await prStates.byNumberAsync(pr); } catch { prState = TRANSIENT_PR_FAILURE; } // a real throw from the lookup is a transport failure
     if (!prState || typeof prState !== 'object') {
       const reason = typeof prState === 'string' ? prState : 'no-pr-state';
       entries.push({ runDir: dir, pr, action: 'skipped', reason });
-      if (reason !== 'gh-absent') deferred.push(dir);
+      if (reason === TRANSIENT_PR_FAILURE) deferred.push(dir);
       continue;
     }
     if (prState.state !== 'MERGED') continue;
@@ -249,7 +265,7 @@ function processRun({
   if (!envelope || !Array.isArray(envelope.closingSet)) {
     const returned = code !== 0 ? `exit ${code}` : (envelope && envelope.action) || 'an unreadable envelope';
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
-    return write([item], { runDir: dir, pr, action: 'ran', closingLinks: code !== 0 ? `exit ${code}` : returned, parentsClosed: 0 });
+    return write([item], { runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0 });
   }
 
   // A record a human closed after the close window is closed by their hand: it counts by its live
