@@ -454,6 +454,15 @@ test('#4599: the auto-merge short-circuit and the journey name the reconciler be
     'the short-circuit names the reconciler check, with tidy\'s backstop as the last resort',
   );
   assert.ok(!shortCircuit.includes("backstop scope exists to catch"), 'the "backstop exists to catch" framing is gone');
+  // Dispatch's group auto-merge gate states the same population the same way (K6).
+  const settle = collapse(read('dispatch/settle-and-merge.md'));
+  assert.ok(
+    settle.includes(
+      "an `auto:merge`'d sub-issue is exactly the population whose below-floor parent the reconciler's `post-merge` check closes first, with `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.",
+    ),
+    'settle-and-merge names the reconciler check, with tidy\'s backstop as the last resort',
+  );
+  assert.ok(!settle.includes('backstop scope exists to catch'), 'settle-and-merge drops the "backstop exists to catch" framing');
   const journey = collapse(readText(path.join(ROOT, 'docs', 'journeys', 'close-a-below-floor-decomposition-parent-4466.md')));
   assert.ok(
     journey.includes('is closed by the first reconcile pass at least 10 minutes after the merge (the `post-merge` check'),
