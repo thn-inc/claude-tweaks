@@ -265,9 +265,26 @@ test('parseResumeLine: the run id must be a whole final path segment of the dir'
   assert.equal(parseResumeLine(resume({ runDir: '/repo/pipelines/X' + RUN }), RUN), null);
 });
 
-test('parseResumeLine: an empty or missing run id never matches', () => {
+test('parseResumeLine: an empty or non-string run id never matches', () => {
   assert.equal(parseResumeLine(resume({ runDir: '/repo/pipelines/' }), ''), null);
   assert.equal(parseResumeLine(resume(), undefined), null);
+  // A non-string id would otherwise coerce into the suffix and match.
+  assert.equal(parseResumeLine(resume({ runDir: '/x/undefined' }), undefined), null);
+  assert.equal(parseResumeLine(resume({ runDir: '/x/null' }), null), null);
+});
+
+test('parseResumeLine: a dir with a space passes (real checkouts have them)', () => {
+  const dir = '/Users/a b/.claude-tweaks/pipelines/' + RUN;
+  assert.deepEqual(parseResumeLine(resume({ runDir: dir }), RUN), { runDir: dir, target: '#4596', steps: 'review,polish,wrap-up' });
+});
+
+test('parseResumeLine: the dir and target classes are allowlists — `!` and control bytes never pass', () => {
+  // bash history expansion runs inside double quotes: `!#` re-reads the line.
+  assert.equal(parseResumeLine(resume({ runDir: '/x/!# ; touch pwned1 #/' + RUN }), RUN), null, 'history-expansion payload in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/x/a!b/' + RUN }), RUN), null, 'bang in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/x/a\x1bb/' + RUN }), RUN), null, 'ESC in dir');
+  assert.equal(parseResumeLine(resume({ target: '#1!x' }), RUN), null, 'bang in target');
+  assert.equal(parseResumeLine(resume({ target: '#1\x1bx' }), RUN), null, 'ESC in target');
 });
 
 test('parseResumeLine: each excluded character in the dir or target decides rejection alone', () => {
@@ -275,11 +292,12 @@ test('parseResumeLine: each excluded character in the dir or target decides reje
   // one excluded character rejects it.
   assert.equal(parseResumeLine(resume({ runDir: '/repo/a`b/' + RUN }), RUN), null, 'backtick in dir');
   assert.equal(parseResumeLine(resume({ runDir: '/repo/$HOME/' + RUN }), RUN), null, 'dollar in dir');
-  assert.equal(parseResumeLine(resume({ runDir: '/repo/x" FOO="bar/' + RUN }), RUN), null, 'quote in dir');
+  assert.equal(parseResumeLine(resume({ runDir: '/repo/x"y/' + RUN }), RUN), null, 'quote in dir');
   assert.equal(parseResumeLine(resume({ runDir: '/repo/a\nb/' + RUN }), RUN), null, 'newline in dir');
   assert.equal(parseResumeLine(resume({ runDir: '/repo/a\rb/' + RUN }), RUN), null, 'CR in dir');
   assert.equal(parseResumeLine(resume({ target: '#1`id`' }), RUN), null, 'backtick in target');
-  assert.equal(parseResumeLine(resume({ target: '#1" ; rm -rf ~ "' }), RUN), null, 'quote in target');
+  assert.equal(parseResumeLine(resume({ target: '#1"x' }), RUN), null, 'quote in target');
+  assert.equal(parseResumeLine(resume({ target: '#1$X' }), RUN), null, 'dollar in target');
   assert.equal(parseResumeLine(resume({ target: '#1\\x' }), RUN), null, 'backslash in target');
   assert.equal(parseResumeLine(resume({ target: '#1\n#2' }), RUN), null, 'newline in target');
   assert.equal(parseResumeLine(resume({ target: '#1\r#2' }), RUN), null, 'CR in target');
@@ -303,4 +321,12 @@ test('resumeLineUnder reads the line under ### Resume in a composed body', () =>
   assert.equal(resumeLineUnder(body.replace('### Resume', '### Other')), null);
   assert.equal(resumeLineUnder('### Spec summary\n\nx\n\n### Resume'), null);
   assert.equal(resumeLineUnder('### Resume\n\n   \n'), null);
+});
+
+test('resumeLineUnder reads the LAST ### Resume, so a Spec summary quoting the heading cannot shadow it', () => {
+  const body = composePrEarlyBody({
+    runId: RUN, target: '#4596', nextStep: 'review', runDir: DIR,
+    specSummary: 'Quoted below.\n\n### Resume\n\n`PIPELINE_RUN_DIR="/evil/' + RUN + '" /claude-tweaks:flow "#1" build`',
+  });
+  assert.equal(resumeLineUnder(body), composeResumeLine({ runDir: DIR, target: '#4596', nextStep: 'review' }));
 });

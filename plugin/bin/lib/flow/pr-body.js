@@ -56,24 +56,30 @@ function composeResumeLine({ runDir, target, nextStep }) {
 
 // composeResumeLine's parser twin, pinned by the round-trip test. Its untrusted
 // input is a PR body whose Resume line /tidy renders as a paste command, so
-// only the exact emitted shape passes (#4596).
-const RESUME_LINE_RE = /^`PIPELINE_RUN_DIR="([^`$"\\\r\n]+)" \/claude-tweaks:flow "([^`$"\\\r\n]+)" ([a-z][a-z,-]*)`$/;
+// only the exact emitted shape passes (#4596). The dir and target classes are
+// allowlists, not exclusions, because the line is rendered as a paste command:
+// bash `!` history expansion runs inside double quotes, and a control byte
+// reaches the terminal as an escape sequence.
+const RESUME_LINE_RE = /^`PIPELINE_RUN_DIR="([A-Za-z0-9._~\/:@+, -]+)" \/claude-tweaks:flow "([A-Za-z0-9#,._ -]+)" ([a-z][a-z,-]*)`$/;
 
 // (line, runId) -> { runDir, target, steps } | null. The dir must also end in
 // `/{runId}` — a Resume line for another run is never this run's.
 function parseResumeLine(line, runId) {
-  if (runId === '') return null; // an empty id would let any dir ending in `/` pass
+  // A non-string id would coerce into the suffix ('/undefined', '/null'); an
+  // empty one would let any dir ending in `/` pass.
+  if (typeof runId !== 'string' || runId === '') return null;
   const m = RESUME_LINE_RE.exec(line);
   if (!m || !m[1].endsWith('/' + runId)) return null;
   return { runDir: m[1], target: m[2], steps: m[3] };
 }
 
-// body -> the first non-blank line after the first `### Resume` heading, its
+// body -> the first non-blank line after the last `### Resume` heading, its
 // trailing whitespace (a CRLF body's `\r`) removed; null without a heading or
-// a line under it.
+// a line under it. The last heading, not the first: composePrEarlyBody writes
+// Resume after the Spec summary, so a summary quoting the heading can't shadow it.
 function resumeLineUnder(body) {
   const lines = String(body || '').split('\n');
-  const at = lines.findIndex((l) => l.trim() === '### Resume');
+  const at = lines.findLastIndex((l) => l.trim() === '### Resume');
   if (at === -1) return null;
   const line = lines.slice(at + 1).find((l) => l.trim() !== '');
   return line === undefined ? null : line.trimEnd();
