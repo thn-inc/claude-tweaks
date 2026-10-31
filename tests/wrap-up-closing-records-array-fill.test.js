@@ -13,6 +13,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { chmodDenialSkip } = require('./helpers/root');
 
 const SKILL = path.join(__dirname, '..', 'plugin/skills/wrap-up/cleanup-procedures-execution.md');
 const ANCHOR = '2. **Stamp the closing-keyword carrier commit';
@@ -208,8 +209,7 @@ for (const shell of SHELLS) {
 }
 
 // chmod 000 cannot deny access on win32, nor to root: skip visibly there.
-const denyUnsupported = process.platform === 'win32' ? 'win32: chmod cannot deny access'
-  : process.getuid && process.getuid() === 0 ? 'running as root: chmod cannot deny access' : false;
+const denyUnsupported = chmodDenialSkip('running as root: chmod cannot deny access').skip;
 for (const shell of SHELLS) {
   const skip = denyUnsupported || skipFor(shell);
   test(`${shell.name}: live block with no pack and an unreadable mirror work/ fails loud — non-zero exit, EACCES, no count line (#4740)`, { skip }, () => {
