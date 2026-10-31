@@ -303,22 +303,24 @@ test('AC1.1/AC6.1: Common Step 5 places the catch-up before the verification run
   assertCatchupBeforeVerify(BUILD);
 });
 
-test('AC6.1 go-red: Common Step 5 without the catch-up paragraph fails', () => {
+// BUILD split around the catch-up paragraph: the paragraph (with its trailing blank line) and the
+// text without it.
+function splitOutCatchupParagraph() {
   const from = BUILD.indexOf(CATCHUP);
   assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
   const end = BUILD.indexOf('\n\n', from);
   assert.notStrictEqual(end, -1);
-  const mutated = BUILD.slice(0, from) + BUILD.slice(end + 2);
-  assert.notEqual(mutated, BUILD);
-  assert.throws(() => assertCatchupBeforeVerify(mutated), /marker missing: \*\*Catch up before verifying \(#4343\)\.\*\*/);
+  return { paragraph: BUILD.slice(from, end + 2), without: BUILD.slice(0, from) + BUILD.slice(end + 2) };
+}
+
+test('AC6.1 go-red: Common Step 5 without the catch-up paragraph fails', () => {
+  const { without } = splitOutCatchupParagraph();
+  assert.notEqual(without, BUILD);
+  assert.throws(() => assertCatchupBeforeVerify(without), /marker missing: \*\*Catch up before verifying \(#4343\)\.\*\*/);
 });
 
 test('AC6.1 go-red: the catch-up paragraph spliced above the verification sentence fails the order check', () => {
-  const from = BUILD.indexOf(CATCHUP);
-  assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
-  const end = BUILD.indexOf('\n\n', from);
-  const paragraph = BUILD.slice(from, end + 2);
-  const without = BUILD.slice(0, from) + BUILD.slice(end + 2);
+  const { paragraph, without } = splitOutCatchupParagraph();
   const at = without.indexOf('After Common Steps 6 and 6.5, so the verified tree');
   assert.notStrictEqual(at, -1, 'verification sentence missing from the live text');
   const spliced = without.slice(0, at) + paragraph + without.slice(at);
@@ -327,11 +329,7 @@ test('AC6.1 go-red: the catch-up paragraph spliced above the verification senten
 });
 
 test('AC6.1 go-red: the catch-up paragraph drifted after the Note paragraph fails the order check', () => {
-  const from = BUILD.indexOf(CATCHUP);
-  assert.notStrictEqual(from, -1, 'catch-up paragraph missing from the live text');
-  const end = BUILD.indexOf('\n\n', from);
-  const paragraph = BUILD.slice(from, end + 2);
-  const without = BUILD.slice(0, from) + BUILD.slice(end + 2);
+  const { paragraph, without } = splitOutCatchupParagraph();
   const note = without.indexOf('**Note:**');
   assert.notStrictEqual(note, -1, 'Note paragraph missing from the live text');
   const noteEnd = without.indexOf('\n\n', note);
