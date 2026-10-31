@@ -107,11 +107,14 @@ function parseArgs(argv) {
   const need = (...keys) => keys.filter((k) => o[k] === null).map((k) => `--${k}`);
   const refuse = (...keys) => keys.filter(given).map((k) => `--${k}`);
   if (o.verb === 'snapshot') {
-    if (need('repo', 'out').length) return { error: `snapshot needs ${need('repo', 'out').join(' and ')}` };
-    if (refuse('baseline', 'restore', 'run', 'task', 'label').length) return { error: `snapshot does not take ${refuse('baseline', 'restore', 'run', 'task', 'label').join(', ')}` };
+    const missing = need('repo', 'out');
+    if (missing.length) return { error: `snapshot needs ${missing.join(' and ')}` };
+    const refused = refuse('baseline', 'restore', 'run', 'task', 'label');
+    if (refused.length) return { error: `snapshot does not take ${refused.join(', ')}` };
     return o;
   }
-  if (need('repo', 'baseline').length) return { error: `compare needs ${need('repo', 'baseline').join(' and ')}` };
+  const missing = need('repo', 'baseline');
+  if (missing.length) return { error: `compare needs ${missing.join(' and ')}` };
   if (given('out')) return { error: 'compare does not take --out' };
   if (o.run !== null && !o.restore) return { error: '--run needs --restore' };
   if (o.run !== null && o.task === null && o.label === null) return { error: '--run needs --task and/or --label' };
