@@ -123,7 +123,8 @@ test('local-merge: the backstop precedes the merge, and the dispatch-call relay'
     'dispatch-call local-merge relay ordering',
   );
   const backstop = FLAT.indexOf('**Verdict backstop — re-read before any merge (#2941).**');
-  const merge = FLAT.indexOf('git merge --no-ff {branch} -F "{subject-dir}/message.txt"');
+  // #4073: the merge fence moved into _shared/local-merge-sequence.md; this file's merge call is now the sequence invocation.
+  const merge = FLAT.indexOf("Run the sequence's Steps 1-4 in order");
   const prFirst = FLAT.indexOf("run `_shared/pr-first-merge.md`'s procedure now");
   assert.ok(backstop > -1 && backstop < merge && backstop < prFirst, 'backstop paragraph must precede both merge calls');
 });
