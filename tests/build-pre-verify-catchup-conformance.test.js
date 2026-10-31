@@ -254,15 +254,17 @@ const CATCH_UP_STEPS = [
   '5. `git -C "{worktree-path}" rev-parse --short HEAD`',
 ];
 
+const NEXT_SECTION = '## Catching a branch up with `main`';
+
 function assertCatchUpStepOrder(text) {
   const from = text.indexOf(CATCH_UP);
   assert.notStrictEqual(from, -1, `marker missing: ${CATCH_UP}`);
-  const to = text.indexOf('## Catching a branch up with `main`', from);
-  assert.notStrictEqual(to, -1, 'marker missing: ## Catching a branch up with `main`');
+  const to = text.indexOf(NEXT_SECTION, from);
+  assert.notStrictEqual(to, -1, `marker missing: ${NEXT_SECTION}`);
   requireOrder(text.slice(from, to), CATCH_UP_STEPS);
 }
 
-test('AC5.1: git-discipline.md\'s Catch-up (auto) steps 1-4 are still status, fetch, rev-parse, merge', () => {
+test("AC5.1: git-discipline.md's Catch-up (auto) steps 1-4 are still status, fetch, rev-parse, merge", () => {
   assertCatchUpStepOrder(GD);
   // Swapping the fetch and the pre-merge rev-parse renumbers what "Catch-up step 3" means here.
   const [fetch, before] = [CATCH_UP_STEPS[1], CATCH_UP_STEPS[2]];
