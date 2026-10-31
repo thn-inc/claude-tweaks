@@ -30,6 +30,7 @@ const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { firstLineRunId } = require('../flow/pr-checklist');
 const { prClosesIssue } = require('../reconcile/release-merged');
+const { isValidBranchName } = require('../branch-name');
 
 // Throws on a non-zero exit; the thrown error carries `.status`.
 function defaultGit(args) {
@@ -46,17 +47,6 @@ function defaultGh(args) {
 }
 
 const SHA_RE = /^[0-9a-f]{40,64}$/;
-
-// A branch name this module will put into a `refs/heads/...` argument. Rejects
-// anything that could not be a branch anyway, so a malformed name degrades to
-// `unreachable` rather than reaching git.
-function isSafeBranchName(branch) {
-  return typeof branch === 'string'
-    && branch.length > 0
-    && !branch.startsWith('-')
-    && !/[\s~^:?*[\\\x00-\x1f\x7f]/.test(branch)
-    && !branch.includes('..');
-}
 
 // Reads origin's tip for exactly `refs/heads/{branch}`. The full ref is passed
 // (never the bare name) because `ls-remote` tail-matches a bare pattern, so
@@ -98,7 +88,8 @@ function isAncestorOfHead({ sha, git }) {
 // `unreachable` is never folded into `absent`: "could not look" and "looked,
 // nothing there" must stay distinguishable in the caller's log.
 function classifyRemoteBranch({ branch, git = defaultGit }) {
-  if (!isSafeBranchName(branch)) {
+  // A malformed name degrades to `unreachable` rather than reaching git.
+  if (!isValidBranchName(branch)) {
     return { state: 'unreachable', reason: 'invalid-branch-name' };
   }
 
@@ -198,7 +189,6 @@ function formatStopCard({ branch, remoteSha, prLookup, reason }) {
 }
 
 module.exports = {
-  isSafeBranchName,
   readRemoteTip,
   classifyRemoteBranch,
   findPrsForBranch,
