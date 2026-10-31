@@ -813,6 +813,18 @@ test('CLI: a gh timeout exits 1 with the timeout hint, never the gh-absent messa
   assert.doesNotMatch(h.err.join(''), /gh is not available/);
 });
 
+test('CLI: a git timeout exits 1 without the gh timeout hint (#4554)', async () => {
+  const fx = cliFixture();
+  const h = cliDeps(fx);
+  h.deps.git = ((inner) => (args, opts) => {
+    if (args[0] === 'branch') throw Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+    return inner(args, opts);
+  })(h.deps.git);
+  assert.equal(await run(cliArgv(fx), h.deps), 1);
+  assert.doesNotMatch(h.err.join(''), /gh-timeout-ms/);
+  assert.doesNotMatch(h.err.join(''), /CLAUDE_TWEAKS_GH_TIMEOUT_MS/);
+});
+
 test('CLI: --help prints usage and exits 0 before any probe', async () => {
   const h = cliDeps(cliFixture(), { ghAvailable: false });
   assert.equal(await run(['--help'], h.deps), 0);
