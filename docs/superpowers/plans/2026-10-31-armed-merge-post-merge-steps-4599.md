@@ -8,12 +8,19 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, `gh` CLI via injectable runners.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T072031-record-4599/work/4599-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T135734-record-4599/work/4599-spec.md`
+
+**Population (spec's Plan Review Decisions, Reading B):** every top-level run whose recorded PR is `MERGED` and whose `decisions.md` carries no Step 4.0b marker line, keyed on the run's recorded PR, exactly once. No separate canonical `armed` marker is added. The one-time catch-up of legacy and older-build runs on the first reconcile after deploy is intended and documented (Task 4), bounded by the 10-minute reopen window (Task 1) and Step 4.0b's idempotence checks (Task 2).
 
 ## Global Constraints
 
 - Only under `work-backend: github-issues` (`readWorkBackend(root) === 'github-issues'`, `plugin/bin/lib/work-backend.js`); any other value or null skips the whole check (`not-github-issues`) and writes nothing.
 - Exactly once per run: a run is done when `decisions.md` has an entry (parsed with `parseEntry`, `plugin/bin/lib/log-decision/append.js`) whose location matches `/(?:^|— )pr-first-merge Step 4\.0b\b/` or equals `reconcile post-merge`.
+- Concurrency (two guards, both in Task 3):
+  - **Merging-session race.** A session that sees its own merge runs Steps 4.0 and 4.0b within seconds of `mergedAt` (Step 4.0's poll is at most 15 s) and then writes the marker. The reconciler skips a run whose PR `mergedAt` is less than `MERGE_GRACE_MS` (10 minutes) before `now`, with entry `skipped`/`merge-grace` and nothing written, so it never races that session. A later pass picks the run up. A missing or unparseable `mergedAt` is treated as inside the grace window (skip, retry later), never as old.
+  - **Pass-versus-pass race.** Background passes already serialize on `background-lock.js`, but inline passes (Step 4.2's `--checks mirror,release,archive`, tidy's explicit list) do not. Before running Step 4.0 for a run, take a per-run claim by creating `{runDir}/.post-merge.lock` with `fs.openSync(path, 'wx')`. On `EEXIST`, if the lock file's mtime is under `CLAIM_STALE_MS` (10 minutes) old, skip with entry `skipped`/`in-flight`; otherwise remove it and retry the create once. Any other I/O error skips with `claim-failed`. Remove the lock in a `finally` after the marker write. A dotfile name keeps it out of archive's non-dotfile `staged/` checks.
+- Marker-write failure: when the marker append fails, the entry is `skipped`/`marker-write-failed`. The same pass's `archive` still archives the run (there is no archive guard), and archived runs are never walked again, so Steps 4.0 and 4.0b do not run twice. If archive leaves the run in place, the next pass retries, which is safe because Task 2 is idempotent. Either way, any parent left open falls to tidy's backstop.
+- `gh` absent: the check is `gh`-only. The `#4602` MCP transport covers in-session calls, not the reconciler. When `prStates` or the `gh` runner reports `gh` absent, the run gets entry `skipped`/`gh-absent`, no marker is written, and tidy's backstop stays the recovery.
 - Tidy's `parent-gate` backstop is unchanged and stays the last resort: every fail-open path below leaves the parent open for it.
 - Comment copy is the prose template in `verification-brief-parent-gate.md`'s **Close the parent below the floor** step 2, byte-for-byte (heading `## Closed below the oversight floor`).
 - Every subprocess under `plugin/bin/lib/reconcile/` goes through `timing.js`'s `execFileSyncTimed`/`execFileAsyncTimed` (`subprocess-timing-conformance.test.js`).
@@ -30,7 +37,7 @@
 ## Review Focus
 
 1. A human closes a `Refs #N` keep-open record hours after the merge, before the reconciler runs. The late Step 4.0 must not reopen it (bounded window). Pinned in Task 1.
-2. Two reconcile passes over the same merged run (or a pass after tidy already closed the parent) must produce one comment and one close (marker plus idempotence). Pinned in Tasks 2 and 3.
+2. Two reconcile passes over the same merged run (or a pass after tidy already closed the parent) must produce one comment and one close: marker, per-run claim, and idempotence. A pass must never race the merging session (merge grace window). Pinned in Tasks 2 and 3.
 3. A run whose session already ran Step 4.0b in-session (its marker line written by the real `formatEntry`) must never be re-run by the reconciler. Pinned in Task 3.
 4. A PR merged into a non-default integration branch leaves its sub-issues open. Step 4.0b is a no-op there. Pinned in Task 2.
 5. A sub-issue with no `risk:*` label makes the parent unscored (`exceeds: true`), so it is not closed. A `gh` failure on one parent skips only that parent, and the run is still marked. Pinned in Task 2.
@@ -58,6 +65,8 @@
 - [ ] **Step 5: Commit** `Bound closing-links post-merge reopens to a merge window — a late run never reopens a human close (refs #4599)`.
 
 ### Task 2: Node mirror of Step 4.0b's parent close
+
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/lib/issues/below-floor-parent-close.js`
@@ -90,6 +99,8 @@
 
 ### Task 3: The `post-merge` reconcile check
 
+**Review risk:** high
+
 **Files:**
 - Create: `plugin/bin/lib/reconcile/post-merge.js`
 - Test: `tests/bin-lib/reconcile/post-merge.test.js`
@@ -97,21 +108,24 @@
 **Interfaces:**
 - Consumes: Task 1's `run` (`require('../../closing-links').run`) with `--close-window-ms`, and Task 2's `closeBelowFloorParents`. Also `listRunDirsWithState` (`hooks/context.js`), `readWorkBackend`, `repoSlugOf` (`hooks/git-exec.js`), `resolvePolicyKeys` (`policy-schema.js`, keys `work-links` and `risk-floor` read from `.claude-tweaks/policy.yml`, defaults on a missing file), `appendEntry`/`formatEntry`/`parseEntry` (`log-decision/append.js`), `execFileSyncTimed` (`./timing`).
 - Produces:
-  - `MARKER_STEP = 'reconcile post-merge'`, `CLOSE_WINDOW_MS = 600000`.
+  - `MARKER_STEP = 'reconcile post-merge'`, `CLOSE_WINDOW_MS = 600000`, `MERGE_GRACE_MS = 600000`, `CLAIM_STALE_MS = 600000`, `CLAIM_FILENAME = '.post-merge.lock'`.
   - `hasPostMergeMarker(decisionsText) -> boolean` (the Global Constraints rule).
-  - `async postMerge({ cwd, integration, prStates, dryRun, now, deps }) -> { entries: [{ runDir, pr, action: 'ran' | 'skipped', reason?, closingLinks?, parentsClosed? }], failure? }`. `deps` overrides `{ gh, closingLinksRun, closeParents }` for tests. `failure` is `'no-remote'` or `'not-github-issues'`.
-  - Per run: skip silently when `pr.number` is absent, the marker is present, or the PR is `OPEN`/`CLOSED`. A failure string from `prStates.byNumberAsync` gives an entry `skipped` with that reason. Under `dryRun` a merged unmarked run gives `skipped: 'dry-run'` and nothing is written.
+  - `async postMerge({ cwd, integration, prStates, dryRun, now, deps }) -> { entries: [{ runDir, pr, action: 'ran' | 'skipped', reason?, closingLinks?, parentsClosed? }], failure? }`. `deps` overrides `{ gh, closingLinksRun, closeParents }` for tests. `failure` is `'no-remote'` or `'not-github-issues'`. `now` is a function returning epoch ms (default `Date.now`).
+  - Per run, in this order: skip silently when `pr.number` is absent, the marker is present, or the PR is `OPEN`/`CLOSED`. A failure string from `prStates.byNumberAsync` gives an entry `skipped` with that reason (`gh-absent` included). A `MERGED` PR whose `mergedAt` is missing, unparseable, or less than `MERGE_GRACE_MS` before `now()` gives `skipped: 'merge-grace'`. Under `dryRun` a merged, unmarked run past the grace window gives `skipped: 'dry-run'` and nothing is written, the claim file included. Otherwise take the per-run claim (Global Constraints): a live claim gives `skipped: 'in-flight'`, a create error other than `EEXIST` gives `skipped: 'claim-failed'`, and the claim is removed in a `finally`. Re-read `decisions.md` for the marker after taking the claim, so a pass that finished between the first read and the claim is seen.
   - Otherwise: call `closingLinksRun(['--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS)], { cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stdout, stderr })` and parse its JSON.
     - No `closingSet` (non-zero exit or any other action): append `SKIP` `MARKER_STEP` with the text `condition: Step 4.0 returned {action or exit N}, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them`. Entry `ran`.
     - Else call `closeParents` with `closingSet`, `unsettled = reopened + pendingClose + failed[].issue`, `mergingPr: pr`. Log one `AUTO` line per closed parent (`closed parent #{p} below the oversight floor (risk:{t}, risk-floor {f})`, reversibility `high (gh issue reopen)`). Then log the summary `AUTO` marker: `ran Steps 4.0 and 4.0b for PR #{pr}, merged after its session: closing links {action}; {k} parent(s) closed` plus `; skipped #{p} ({reason})` for each skip carrying a parent. Reversibility `n/a`.
-    - A failed marker append gives an entry `skipped: 'marker-write-failed'`; the next pass retries, which is safe because Task 2 is idempotent.
+    - A failed marker append gives an entry `skipped: 'marker-write-failed'` (Global Constraints: archive may still archive the run, and nothing runs twice).
 
 - [ ] **Step 1: Write the failing tests** on a temp main checkout: a `.git` dir, a `CLAUDE.md` with `work-backend: github-issues`, and run dirs under `.claude-tweaks/pipelines/{RUN_ID}` holding `run-state.json` with `pr: { number }`. Use a fake `prStates` (`{ byNumberAsync }`) and fake `closingLinksRun`/`closeParents`. Tests:
-  - Merged unmarked run → `closingLinksRun` is called with the argv above, `closeParents` gets the closing set and the unsettled set, `decisions.md` gains the parent line plus the summary marker, and the entry is `ran`.
+  - Merged unmarked run (fake `prStates` returns `{ state: 'MERGED', mergedAt }` one hour before a fixed `now()`, used by every test below unless stated) → `closingLinksRun` is called with the argv above, `closeParents` gets the closing set and the unsettled set, `decisions.md` gains the parent line plus the summary marker, and the entry is `ran`.
   - A second `postMerge` call on the same fixture → neither fake is called (exactly once).
   - A run whose `decisions.md` already holds a line written by `formatEntry({ status: 'AUTO', step: 'pr-first-merge Step 4.0b', ... })`, and a separate run holding only the `SKIP` `pr-first-merge Step 4.0b (skipped)` line → no fake is called.
   - A clean-status run (`status: 'clean'`) is processed too.
   - `OPEN` PR → no entry, no call. `prStates` returning `'network-failure'` → entry `skipped`/`network-failure`, no marker.
+  - Merge grace: `mergedAt` 2 minutes before `now()` → `skipped`/`merge-grace`, no fake called, `decisions.md` unchanged. `mergedAt` absent → `merge-grace` too. `mergedAt` 11 minutes before → runs.
+  - Claim: a fresh `.post-merge.lock` already in the run dir → `skipped`/`in-flight`, no fake called, the lock file left in place. A lock file with mtime 11 minutes old → taken over, the run proceeds, and no lock file remains afterwards. After a normal run no `.post-merge.lock` remains. A `closingLinksRun` that throws still leaves no lock file.
+  - Marker re-read under the claim: a fake `closingLinksRun` is never reached when the marker line is appended to `decisions.md` between the first read and the claim. Simulate it with a `deps.beforeClaim` hook that appends the marker; the hook exists for tests only.
   - `closingLinksRun` returning exit 5 → `SKIP` marker naming `exit 5`, `closeParents` not called.
   - `dryRun: true` → entry `dry-run`, `decisions.md` byte-identical before and after.
   - No `CLAUDE.md` → `failure: 'not-github-issues'`, no calls.
@@ -123,12 +137,20 @@
 
 ### Task 4: Register `post-merge` across the reconcile family
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/index.js`. Add `'post-merge'` to `ALL_CHECKS`; insert it into `DISPATCH_ORDER` between `release` and `archive` and shift every later `DISPATCH_ORDER.slice(k)` index by one. `PREREQUISITES.archive` becomes an array `[{ check: 'mirror', satisfiedBy: ['remote-prune'] }, { check: 'post-merge', satisfiedBy: [] }]`; `expandChecks` accepts an entry or an array of entries. Add `postMerge: null` to the result literal and the header comment's shape line. Add the dispatch block (`timePhase('post-merge', …)`; `failure` goes to `skipped`; otherwise `result.postMerge = r.entries`), passing `integration`, `prStates`, `dryRun`. Add `post-merge` to the `local-merge-model` skip list string.
 - Modify: `plugin/bin/hooks.js`. Add `'post-merge'` to `BACKGROUND_CHECKS` (not `CLI_DEFERRED_CHECKS`) and `postMerge: null` to the `reconcile-threw` fallback literal.
 - Modify: `plugin/bin/lib/reconcile/format-summary.js`. Add the `CATEGORIES` row `{ key: 'postMerge', unit: 'merged run', verb: 'post-merge steps run', takenActions: ['ran'], skipActions: ['skipped'] }`.
 - Modify: `plugin/skills/tidy/scan-procedures.md`'s explicit reconcile `--checks` list; add `post-merge`.
-- Modify: `docs/reconcile-checks.md`. Update the dispatch-order bullet, the prerequisites table (an archive row for `post-merge`), the `release,archive,reap` expansion example, and the Timing contract phase names, and add a `## Post-merge closes (#4599)` section stating the population, the marker rule, the window, the fail-open-to-tidy posture, and why there is no archive guard (archive's prerequisite is the ordering guarantee).
+- Modify: `docs/reconcile-checks.md`. Update the dispatch-order bullet, the prerequisites table (an archive row for `post-merge`), the `release,archive,reap` expansion example, and the Timing contract phase names, and add a `## Post-merge closes (#4599)` section. It states:
+  - the population (Reading B: every top-level run whose recorded PR is `MERGED` with no Step 4.0b marker, keyed on the recorded PR, exactly once);
+  - the marker rule;
+  - the one-time catch-up: on the first reconcile after this ships, legacy runs and runs merged in-session by an older installed build (which writes no summary marker) get a late Step 4.0 and Step 4.0b pass once, bounded by the 10-minute reopen window after `mergedAt` and by Step 4.0b's idempotence checks (parent already `CLOSED` means no-op; an existing trusted heading comment means close only);
+  - the two concurrency guards (merge grace window, per-run claim file);
+  - the `gh`-absent skip and the fail-open-to-tidy posture;
+  - why there is no archive guard: archive's prerequisite is the ordering guarantee, and a marker-write failure cannot cause a second run.
 - Modify: `docs/hooks.md` (the Background convergence bullet's two check lists) and `docs/plugin-structure.md` (the `plugin/bin/lib/reconcile/` and `issues/` inventory lines).
 - Test: `tests/reconcile.test.js` (expandChecks expectations, `INLINE_UNSCOPED_CHECKS` gains `post-merge`, the `local-merge-model` skip string, dispatch-order assertions), `tests/bin-lib/hooks/reconcile-background.test.js` and `tests/hooks-session-start.test.js` partition, and the `format-summary` test.
 
@@ -153,7 +175,7 @@
   - After **Log each parent closed**: add an always-written summary line (whatever happened above, once Step 4.0b is reached after a PR merge, the non-default-branch no-op included):
     `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}'s closing records: {k} parent(s) closed"`
     with one sentence explaining that this line is how the reconciler knows the step already ran. Under `local-files`, or with exit 3, there is no line.
-- Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md` lines 284-288. Replace "`/claude-tweaks:tidy`'s `parent-gate` backstop catches a merge no session saw land." with: "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open."
+- Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md`, the **Sub-issue-side entry, `work-backend: github-issues`** bullet under `exceeds: false` (about line 312). Replace "`/claude-tweaks:tidy`'s `parent-gate` backstop catches a merge no session saw land." with: "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open."
 - Modify: `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` step 3. The tidy row now appears only for a parent the reconciler could not close (a `gh` failure, a Step 4.0 result with no closing set); an armed merge GitHub completed later is closed by the next reconcile pass.
 - Test: `tests/below-floor-parent-close-conformance.test.js` line 245. Update the pinned sentence to the new Step 4.0b text, and add assertions for the summary log command's `--step "pr-first-merge Step 4.0b"` literal (the marker the reconciler parses) and for Step 4.0's `post-merge` mention.
 - Deliberately unchanged: `docs/decisions/0028-below-floor-parents-close-autonomously-after-the-merge.md` (historical decision record). Tidy's own files (its backstop behavior does not change).
