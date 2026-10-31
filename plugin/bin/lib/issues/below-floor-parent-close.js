@@ -20,7 +20,7 @@
 // stdout and throws on failure. A failing call skips that one parent (named in
 // `skipped`, reason `gh-failed`) and the next closing record is still
 // processed; a failing default-branch read skips the whole step, and so does a
-// `riskFloor` outside low/medium/high/always (`invalid-risk-floor`, no gh call).
+// `riskFloor` outside the policy schema's risk-floor enum (`invalid-risk-floor`, no gh call).
 // Never throws.
 'use strict';
 
