@@ -20,6 +20,9 @@ const IDENTITY = {
   GIT_CONFIG_GLOBAL: os.devNull, GIT_CONFIG_SYSTEM: os.devNull,
 };
 Object.assign(process.env, IDENTITY);
+// An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks `git -C <dir>`, which would aim the
+// real `stash drop` / `clear` calls below at the checkout running this suite and its shared stash.
+for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete process.env[name];
 
 const roots = [];
 test.after(() => {
@@ -683,4 +686,42 @@ test('a missing --run dir and a throwing append keep the exit code and report lo
   assert.equal(throwing.json.logError, 'disk full');
   assert.match(throwing.err, /could not append the decisions\.md entry: disk full/);
   assert.equal(stack(dir).length, 1);
+});
+
+// A runner that delegates to the real one but throws for the nth `stash list` call(s) it sees.
+// For one removed entry the CLI lists three times: compare's read, the pre-store re-read, and
+// the post-store confirmation.
+function failingList(...nths) {
+  let lists = 0;
+  return (args) => {
+    if (args[2] === 'stash' && args[3] === 'list' && nths.includes(++lists)) {
+      throw Object.assign(new Error('git stash list failed'), { stderr: 'fatal: simulated list failure\n' });
+    }
+    return realGit(args);
+  };
+}
+
+test('a failed pre-store re-read falls through to the store and still restores the entry', () => {
+  const dir = fixture();
+  const entry = stashPush(dir, 'one');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  const r = compare(dir, baseline, ['--restore'], { git: failingList(2) });
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.restored, [entry.sha]);
+  assert.deepEqual(r.json.alreadyPresent, []);
+  assert.deepEqual(r.json.restoreFailed, []);
+  assert.deepEqual(stack(dir), [entry]);
+});
+
+test('a failed post-store re-read trusts the exit code and reports the entry restored', () => {
+  const dir = fixture();
+  const entry = stashPush(dir, 'one');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  const r = compare(dir, baseline, ['--restore'], { git: failingList(3) });
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.restored, [entry.sha]);
+  assert.deepEqual(r.json.restoreFailed, []);
+  assert.deepEqual(stack(dir), [entry]);
 });

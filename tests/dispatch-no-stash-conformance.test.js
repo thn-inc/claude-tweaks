@@ -301,6 +301,9 @@ const STASH_GUARD_FACTS = [
   paragraphFact('exit 0 appends nothing and logged is absent', /nothing was appended and `logged` is absent/),
   paragraphFact('AC6.2 failed restores and added entries go to the handoff', /every `restoreFailed` command and `added` entry also goes into Common Step 7's handoff/),
   paragraphFact('I1 restored entries reach the handoff when logged is false or the build is standalone', /as does every restored entry when `logged` is false or the `\/build` is standalone/),
+  paragraphFact('F1 a failed decisions.md append is hand-logged', /hand-logs that restore's `AUTO` line under `\/build` \(step `Stash guard`\) with `log-decision\.js --text-file`/),
+  paragraphFact('F2 the reviewer void has a stated reason', /may have changed the tree it was judging/),
+  paragraphFact('F3 the retry bound has a stated reason', /keeps a reviewer that keeps disturbing the stash from looping the pipeline/),
   paragraphFact("T5a a reviewer's entries ride its own handoff line", /a reviewer dispatch's own restored and added entries ride its voided-verdict line, not a second slot/),
   paragraphFact('exit 3 restores every removed entry it could', /restored every removed entry it could with `git stash store`/),
   paragraphFact('alreadyPresent clause', /an entry a concurrent guard had already put back is logged as such and not stored twice/),
@@ -497,4 +500,32 @@ test("the stash-guard paragraph starts exactly where the forbid paragraph ends, 
   const split = BUILD_DISPATCH.replace(GUARD_LABEL, '\n' + GUARD_LABEL);
   assert.notStrictEqual(split, BUILD_DISPATCH);
   assert.ok(noStashParagraph(split).includes('\n'), 'a line break before the stash-guard label must show up in the forbid paragraph');
+});
+
+// AC8 (#4559): docs/hooks.md's stash-gate bullet no longer describes `drop` as read-only. The
+// bullet is located by its label so an unrelated "read-only" elsewhere in the file cannot satisfy it.
+const HOOKS_DOC = read('docs', 'hooks.md');
+const STASH_GATE_BULLET = (HOOKS_DOC.split('\n').find((l) => l.startsWith('- **Git-stash worktree-hazard gate')) || '');
+
+function hooksDocStashGateProblems(bullet) {
+  const problems = [];
+  if (!bullet) return ['the stash-gate bullet is missing'];
+  if (!/`drop`/.test(bullet) || !/`clear`/.test(bullet)) problems.push('drop and clear are not both named as warned');
+  if (/`drop`[^.;]{0,60}read-only|read-only[^.;]{0,60}`drop`/.test(bullet)) problems.push('drop is described as read-only');
+  return problems;
+}
+
+test('AC8: docs/hooks.md names drop and clear as warned stash subcommands and never as read-only', () => {
+  assert.deepStrictEqual(hooksDocStashGateProblems(STASH_GATE_BULLET), []);
+});
+
+test('AC8: reverting the stash-gate bullet to the old read-only wording goes red', () => {
+  const reverted = STASH_GATE_BULLET.replace(
+    /\(`list`, `show`, `apply`\)/,
+    '(`list`, `show`, `apply`, `drop` and `clear` are read-only)',
+  );
+  assert.notStrictEqual(reverted, STASH_GATE_BULLET, 'the revert anchor matched nothing');
+  assert.deepStrictEqual(hooksDocStashGateProblems(reverted), ['drop is described as read-only']);
+  const dropped = STASH_GATE_BULLET.split('`drop`').join('').split('`clear`').join('');
+  assert.deepStrictEqual(hooksDocStashGateProblems(dropped), ['drop and clear are not both named as warned']);
 });

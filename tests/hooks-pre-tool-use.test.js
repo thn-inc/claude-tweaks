@@ -1332,6 +1332,13 @@ test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, `branch`, `store
   }
 });
 
+test('#4559: the stash warning names the stash-guard recovery `git stash store` as the one intended exception', () => {
+  const { wt } = mainAndWorktree();
+  const out = pre.run({ input: bashInput(`git stash store -m "On main: autostash" ${STASH_SHA}`, wt), runDir: null, runState: null, cwd: wt });
+  assert.match(out.json.systemMessage, /Exception: putting back a stash entry that `stash-guard\.js` reported lost/);
+  assert.match(out.json.systemMessage, /git stash store -m "<subject>" <sha>/);
+});
+
 test('AC7.2: `git stash list`, `show` and `apply` from a linked worktree stay silent', () => {
   const { wt } = mainAndWorktree();
   for (const cmd of ['git stash list', 'git stash show', 'git stash apply']) {

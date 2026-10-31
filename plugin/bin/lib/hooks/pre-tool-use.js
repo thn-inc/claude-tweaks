@@ -940,7 +940,9 @@ function checkGitStashWarn(segments, warnings) {
       + "checkout — running it here can push onto, pop, or drop a SIBLING worktree's stash entry. "
       + 'Compare against a baseline without mutating the tree instead: `git show <rev>:<path>`, '
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
-      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
+      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash. '
+      + 'Exception: putting back a stash entry that `stash-guard.js` reported lost, with the '
+      + '`git stash store -m "<subject>" <sha>` command it printed, is the intended recovery.',
     );
   }
 }
