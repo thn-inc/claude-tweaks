@@ -10,3 +10,4 @@
 | 6 | build | SDD ruling — recovery command stays double-quoted per spec AC4; the ! history-expansion limit is documented (final review): ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
 | 7 | build | SDD ruling — no-op store FAILED line offers a recover command that cannot recover anything (residual): ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
 | 8 | build | SDD ruling — stash-guard.js post-store re-read failure fallback is untested (residual): ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
+| 9 | build/skill | gh-api-module-pattern's cli-wrapper-contract.md documents self-logging CLIs that call formatEntry, but stash-guard.js is the first plugin/bin CLI that also hand-composes FAILED lines (formatEntry rejects FAILED) — an enrichment worth a sentence in that contract | observation | — |
