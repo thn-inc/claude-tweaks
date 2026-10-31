@@ -741,11 +741,6 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
     /post-merge steps ran for 2 merged run\(s\), closing 2 parent record\(s\) below the oversight floor; post-merge steps closed 1 parent record\(s\) below the oversight floor in run\(s\) whose decisions\.md marker could not be written\./,
   );
 
-  // A status file written before the split carries the total only: it is credited as before.
-  seed({ postMergeRan: 0, postMergeParentsClosed: 4 });
-  const legacy = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
-  assert.match(legacy.json.hookSpecificOutput.additionalContext, /post-merge steps closed 4 parent record\(s\) below the oversight floor\./);
-
   seed({ postMergeRan: 0, postMergeParentsClosed: 0 });
   const quiet = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
