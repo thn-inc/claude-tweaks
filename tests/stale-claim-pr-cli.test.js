@@ -393,6 +393,22 @@ test('AC1.1: a real archive wins over a root work/ stub', () => {
   for (const v of [r.gh, r.mcp]) assert.deepEqual(v, { match: true, link: PR_URL, resume: DISPATCH, failure: null });
 });
 
+test('AC1.1: the dispatch line names the claim\'s own issue, not a fixed number', () => {
+  const runId = '2026-10-31T010000-record-4597';
+  const body = composePrEarlyBody({
+    runId, specSummary: 'a summary', target: '#4597', nextStep: 'review',
+    runDir: `/repo/.claude-tweaks/pipelines/${runId}`,
+  });
+  const args = ['--claim-file', CLAIM, '--resume', '--issue', '4597'];
+  const ghDeps = fakeDeps(claimFile(runId), { ...present(), gh: () => JSON.stringify([ghEntry({ body })]) });
+  assert.equal(run(args, ghDeps), 0);
+  const mcpDeps = fakeDeps({ ...claimFile(runId), [LISTING]: JSON.stringify([mcpEntry({ body })]) }, present());
+  assert.equal(run([...args, '--listing', LISTING], mcpDeps), 0);
+  for (const d of [ghDeps, mcpDeps]) {
+    assert.deepEqual(verdictOf(d), { match: true, link: PR_URL, resume: '`/claude-tweaks:dispatch resume #4597`', failure: null });
+  }
+});
+
 test('AC1.1: a gone run dir supersedes resolve', () => {
   const r = runBoth([ghEntry({ body: MARKED })], [mcpEntry({ body: MARKED })], RESUME_ARGS, present());
   for (const v of [r.gh, r.mcp]) {
@@ -507,6 +523,7 @@ test('--resume without --issue never probes the run dir', () => {
 });
 
 test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
+  const POSITIVE_INT = /--issue requires a positive integer/;
   const bad = [
     ['no --claim-file', []],
     ['an unknown flag', ['--claim-file', CLAIM, '--bogus']],
@@ -515,18 +532,20 @@ test('malformed invocations exit 1 with usage on stderr and no stdout', () => {
     ['--repo with no value', ['--claim-file', CLAIM, '--repo']],
     ['a flag in place of a value', ['--claim-file', '--resume']],
     ['an empty value', ['--claim-file', '']],
-    ['--issue with no value', ['--claim-file', CLAIM, '--issue']],
-    ['--issue 0', ['--claim-file', CLAIM, '--issue', '0']],
-    ['--issue -3', ['--claim-file', CLAIM, '--issue', '-3']],
-    ['--issue 12x', ['--claim-file', CLAIM, '--issue', '12x']],
-    ['--issue abc', ['--claim-file', CLAIM, '--issue', 'abc']],
-    ['--issue 400 digits (Infinity)', ['--claim-file', CLAIM, '--resume', '--issue', '9'.repeat(400)]],
-    ['--issue past Number.MAX_SAFE_INTEGER', ['--claim-file', CLAIM, '--resume', '--issue', '9007199254740993']],
-    ['--issue without --resume', ['--claim-file', CLAIM, '--issue', '4596']],
+    // Every --issue value row carries --resume, so the value check is what rejects it, not the --resume requirement.
+    ['--issue with no value', ['--claim-file', CLAIM, '--resume', '--issue'], POSITIVE_INT],
+    ['--issue 0', ['--claim-file', CLAIM, '--resume', '--issue', '0'], POSITIVE_INT],
+    ['--issue -3', ['--claim-file', CLAIM, '--resume', '--issue', '-3'], POSITIVE_INT],
+    ['--issue 12x', ['--claim-file', CLAIM, '--resume', '--issue', '12x'], POSITIVE_INT],
+    ['--issue abc', ['--claim-file', CLAIM, '--resume', '--issue', 'abc'], POSITIVE_INT],
+    ['--issue 400 digits (Infinity)', ['--claim-file', CLAIM, '--resume', '--issue', '9'.repeat(400)], POSITIVE_INT],
+    ['--issue past Number.MAX_SAFE_INTEGER', ['--claim-file', CLAIM, '--resume', '--issue', '9007199254740993'], POSITIVE_INT],
+    ['--issue without --resume', ['--claim-file', CLAIM, '--issue', '4596'], /--issue requires --resume/],
   ];
-  for (const [name, argv] of bad) {
+  for (const [name, argv, message] of bad) {
     const deps = fakeDeps(claimFile());
     assert.equal(run(argv, deps), 1, name);
+    if (message) assert.match(deps.calls.stderr.join(''), message, name);
     assert.match(deps.calls.stderr.join(''), /usage: stale-claim-pr\.js/, name);
     assert.equal(out(deps), '', name);
     assert.equal(deps.calls.readFile.length, 0, `${name}: nothing read`);
@@ -569,6 +588,11 @@ test('--help prints usage and probes nothing', () => {
   assert.equal(run(['--help'], deps), 0);
   assert.match(out(deps), /usage: stale-claim-pr\.js/);
   assert.equal(deps.calls.readFile.length, 0);
+  // parseArgs runs before run() checks help, so --help beside a bare --issue must not trip the --resume requirement.
+  const withIssue = fakeDeps(claimFile());
+  assert.equal(run(['--issue', '4596', '--help'], withIssue), 0);
+  assert.match(out(withIssue), /usage: stale-claim-pr\.js/);
+  assert.equal(withIssue.calls.stderr.length, 0);
 });
 
 test('parseArgs reads the documented flags', () => {
