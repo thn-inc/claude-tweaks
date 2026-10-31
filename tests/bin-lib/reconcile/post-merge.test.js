@@ -119,6 +119,7 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
     riskFloor: 'high',
     integrationBranch: 'main',
     gh: d.gh,
+    selfInclude: false,
   });
 
   const lines = decisionsOf(dir).trim().split('\n').map(parseEntry);

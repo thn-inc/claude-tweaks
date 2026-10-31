@@ -603,11 +603,14 @@ the source of truth; the module only decides when the steps run and records that
   claim, so a pass that finished in between is not repeated.
 - **One-time catch-up.** On the first reconcile after this ships, every run that merged without a
   marker gets a late Step 4.0 and Step 4.0b pass once: legacy runs, and runs merged in-session by an
-  older installed build, which writes no summary marker. This is bounded two ways. Step 4.0 runs with
-  the 10-minute reopen window (`CLOSE_WINDOW_MS`) after `mergedAt`, so a record a human closed later
-  is never reopened and counts by its live state. Step 4.0b's own idempotence checks make a repeat
-  harmless: a parent already `CLOSED` is a no-op, and an existing trusted heading comment means close
-  only, never a second comment.
+  older installed build, which writes no summary marker. This is bounded three ways. Step 4.0 runs
+  with the 10-minute reopen window (`CLOSE_WINDOW_MS`) after `mergedAt`, so a record a human closed
+  later is never reopened and counts by its live state. Step 4.0b runs with `selfInclude: false`, so
+  it skips the Self-inclusion rule: that rule assumes a caller seconds after the merge, while this
+  one runs at least 10 minutes later, so every closing record counts by its live state too, and a
+  sub-issue a human reopened since keeps its parent open. Step 4.0b's own idempotence checks make a
+  repeat harmless: a parent already `CLOSED` is a no-op, and an existing trusted heading comment
+  means close only, never a second comment.
 - **Two concurrency guards.**
   - *Merge grace* (`MERGE_GRACE_MS`, 10 minutes). The merging session runs both steps within seconds
     of `mergedAt` and then writes its marker, so a run whose PR merged less than the grace ago is

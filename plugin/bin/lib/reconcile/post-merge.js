@@ -299,8 +299,11 @@ function processRun({
     ...numbers(envelope.reopened), ...numbers(envelope.pendingClose),
     ...(Array.isArray(envelope.failed) ? envelope.failed : []).map((f) => f && f.issue).filter(Number.isInteger),
   ];
+  // selfInclude: false — this runs at least MERGE_GRACE_MS after the merge, so every closing record's live
+  // state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
   const { closed, skipped } = closeParents({
     closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, integrationBranch: integration, gh: timedGh,
+    selfInclude: false,
   });
   const items = closed.map((c) => ({
     entry: formatEntry({

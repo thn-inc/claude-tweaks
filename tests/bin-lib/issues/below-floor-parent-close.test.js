@@ -350,6 +350,37 @@ test('a closing-set member counts COMPLETED, so it forces --reason completed ove
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
 });
 
+test('selfInclude: false judges a closing-set member a human reopened by its live state: the gate keeps the parent open', () => {
+  const world = happyWorld();
+  world.issues[11] = { state: 'OPEN', stateReason: 'REOPENED', title: 'Eleven' };
+  const { gh, calls } = makeGh(world);
+  const out = closeBelowFloorParents(base({ selfInclude: false, gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'incomplete' }] });
+  assert.equal(writes(calls).length, 0);
+});
+
+test('selfInclude: false still closes when the live states are closed, judging each by its own stateReason and keeping mergingPr on the listing', () => {
+  const world = happyWorld();
+  world.issues[11] = { state: 'CLOSED', stateReason: 'NOT_PLANNED', title: 'Eleven' };
+  world.issues[12] = { state: 'CLOSED', stateReason: 'NOT_PLANNED', title: 'Twelve' };
+  const { gh, calls } = makeGh(world);
+  const out = closeBelowFloorParents(base({ selfInclude: false, gh }));
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
+  const w = writes(calls);
+  // Self-included, #11 would count COMPLETED and force --reason completed (the test above).
+  assert.deepEqual(w.map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason not planned']);
+  assert.ok(w[0].input.includes('- #11 Eleven — closed by PR #77'));
+});
+
+test('the default (selfInclude omitted) is the in-session mirror: a closing-set member reading OPEN still counts CLOSED', () => {
+  const world = happyWorld();
+  world.issues[11] = { state: 'OPEN', stateReason: 'REOPENED', title: 'Eleven' };
+  const { gh, calls } = makeGh(world);
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
+});
+
 test('nothing completed: the comment carries the not-planned line and the close reason is "not planned"', () => {
   // Closing record 99 resolves to parent 10 but is not itself one of parent 10's sub-issues, so
   // the self-inclusion override (which never adds sub-issues) leaves every sub-issue as live.

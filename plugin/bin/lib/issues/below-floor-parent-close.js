@@ -12,9 +12,15 @@
 // Not mirrored: the `#205` default-set rule (a caller arriving without
 // $CLOSING_SUB_ISSUES defaults to the one-element set, never to {}). Here the
 // set is always an explicit `closingSet` argument, so there is no default to
-// apply. The pre-merge entries, the Try it post, the no-parent fallback and
-// work-backend: local-files are out of scope too — this entry runs after the
-// merge has landed and never falls back to the no-parent path.
+// apply. The Self-inclusion rule is not applied when the caller passes
+// `selfInclude: false`: its premise is a caller running seconds after the merge,
+// while GitHub may still report a just-merged sub-issue OPEN. The reconciler runs
+// at least 10 minutes later (weeks later on a catch-up), when the live state is
+// the truth, so a sub-issue a human reopened since must keep its parent open.
+// `mergingPr` still names the merge on the listing lines. The default (`true`)
+// is the in-session mirror. The pre-merge entries, the Try it post, the
+// no-parent fallback and work-backend: local-files are out of scope too — this
+// entry runs after the merge has landed and never falls back to the no-parent path.
 //
 // Every gh call goes through the injected `gh(args, input?)`, which returns
 // stdout and throws on failure. A failing call skips that one parent (named in
@@ -62,7 +68,7 @@ function normalizeSet(values) {
 }
 
 function closeBelowFloorParents({
-  closingSet, unsettled, mergingPr, owner, repo, workLinks, riskFloor, integrationBranch, gh,
+  closingSet, unsettled, mergingPr, owner, repo, workLinks, riskFloor, integrationBranch, gh, selfInclude = true,
 } = {}) {
   const closed = [];
   const skipped = [];
@@ -143,14 +149,16 @@ function closeBelowFloorParents({
         const subIssues = subNumbers.map((num) => {
           const live = callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences']);
           const inClosingSet = closing.has(num);
+          const selfIncluded = selfInclude && inClosingSet;
           const refs = Array.isArray(live.closedByPullRequestsReferences) ? live.closedByPullRequestsReferences : [];
           const lastRef = refs.length ? refs[refs.length - 1] : null;
           return {
             number: num,
             // Self-inclusion: the merge closing these records may not show on
-            // GitHub yet, so each closing-set member counts CLOSED/COMPLETED.
-            state: inClosingSet ? 'CLOSED' : String(live.state || '').toUpperCase(),
-            stateReason: inClosingSet ? 'COMPLETED' : String(live.stateReason || '').toUpperCase(),
+            // GitHub yet, so each closing-set member counts CLOSED/COMPLETED
+            // (unless the caller opted out with selfInclude: false; see the header).
+            state: selfIncluded ? 'CLOSED' : String(live.state || '').toUpperCase(),
+            stateReason: selfIncluded ? 'COMPLETED' : String(live.stateReason || '').toUpperCase(),
             title: String(live.title || '').trim(),
             facets: parseRecordFacets(live.labels),
             pr: inClosingSet && mergingPr ? mergingPr : (lastRef && lastRef.number) || null,
