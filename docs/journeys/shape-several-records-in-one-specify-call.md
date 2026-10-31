@@ -45,9 +45,9 @@ files:
 ### 4. Take the paste-ready follow-up
 - **URL:** the `## Next Actions` block at the end of the same reply
 - **Action:** Copy the bolded first line — **`/claude-tweaks:flow #701,#702,#703`** — and run it.
-- **Should feel:** No hand-assembly — the recommended command already lists every successfully shaped record, in the order given.
+- **Should feel:** No hand-assembly — the recommended command already lists every successfully shaped record with no open blocker outside the batch, in the order given.
 - **Should understand:** The block is the "Shaping mode — multiple records shaped in place" row of the skill's Situation table; under `work-backend: local-files` the ids are bare (`/claude-tweaks:flow 701,702,703`). Before the row is picked, a Blocker check reads each record's blockers with `/claude-tweaks:flow`'s own `blocked-by` reader (`bin/resolve-blockers.js` under native links). If `#702` turns out blocked by an open record outside the batch, the bolded line becomes `/claude-tweaks:flow #701,#703` and `#702`'s own line reads "once #{blocker} closes", unbolded. If every record is blocked, the bolded line is the blocker step: the blocker's `/claude-tweaks:flow` when it is ready and unclaimed, otherwise `gh issue view` on it (#4703).
-- **Red flags:** A Next Actions block naming only `#701`; an `AskUserQuestion` menu instead of plain paste-ready markdown lines; a bolded `/claude-tweaks:flow` that includes a record with an open blocker outside the batch; a failed or unreadable blocker read rendered as if nothing were blocked — a bolded `/claude-tweaks:flow`, or no leading "Blocker check failed" line (#4703); a `gh issue view #…` command, which the shell truncates at the `#`.
+- **Red flags:** A Next Actions block naming only `#701` when neither `#702` nor `#703` is blocked; an `AskUserQuestion` menu instead of plain paste-ready markdown lines; a bolded `/claude-tweaks:flow` that includes a record with an open blocker outside the batch; a failed or unreadable blocker read rendered as if nothing were blocked — a bolded `/claude-tweaks:flow`, or no leading "Blocker check failed" line (#4703); a `gh issue view #…` command, which the shell truncates at the `#`.
 
 ### 5. Mix in a non-record element — the honest refusal
 - **URL:** `/claude-tweaks:specify #701,docs/superpowers/specs/x-design.md`
