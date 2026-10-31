@@ -132,28 +132,13 @@ lines, and it pins `KEYS.length` to a literal `6`, which is what lets an added o
 red. Import the scanner. Keep the expected count, list, or threshold a literal; a test-local
 constant is fine.
 
-### An allowlist entry owes a stale-check of its own
+### An allowlist entry owes a stale-check of its own — lazy-loaded
 
-A sweep with an exemption list has a failure mode the non-empty-haystack rule above does not
-cover: the exemptions rot. The condition that justified an entry goes away — the gap gets closed,
-the citation moves, the prose is reworded — and the entry silently starts covering something new,
-or covers nothing at all while reading as a live carve-out. `tests/dispatch-prompt-bundle-citations.test.js`
-(#1995) is the shape to copy. Its `GAPS` array names two `_shared/` citations with no compose step
-behind them yet; alongside the offender sweep it ships a `gapStatus(text, gap)` returning
-`ok` | `fallback-shaped` | `missing`, one test asserting every gap is still `ok`, and — the part
-that makes it discriminate — a proof that doctors each gap **both** ways in memory and asserts the
-status flips: rewrite the citation line into a fallback clause and it must read `fallback-shaped`;
-replace the path with a composed-bundle path and it must read `missing`. Write the stale-check in
-the same change as the allowlist, and make its failure message say *shrink the list*, not *fix the
-sweep* — the entry going stale is the success case for the work the exemption was waiting on.
+When a sweep ships with an exemption list, read `advanced-proof-patterns.md`'s "An allowlist entry owes a stale-check of its own" before writing it: every entry needs a stale-check, proved by doctoring the entry both ways, whose failure says *shrink the list*.
 
-When the list holds both permanent carve-outs and offenders left for a follow-up record, split it into `exempt` and `ratchet` classes, each entry keyed by a content anchor that must match exactly one offender — `advanced-proof-patterns.md`'s "Two-class allowlists: exempt and ratchet".
+### Fixture repos come from the shared helper — lazy-loaded
 
-### Fixture repos come from the shared helper
-
-`tests/helpers/git-fixtures.js` exports `gitRepo`, `linkedWorktreeOf`, `harnessWorktreeOf`, `fixtureGit`, and `FIXTURE_TIMEOUT_MS`. Adoption is partial, not universal — many suites under `tests/` still build their throwaway repo from a local `git init` ladder of their own (`tests/bin-lib/reconcile/archive-merged.test.js`'s `makeRepo()` among them), so never assume the suite you are editing already imports the helper: read its requires first, and when you factor a fixture helper out inside such a suite, build it on `gitRepo` rather than on the local ladder you found there. Build throwaway repos from the helper rather than hand-rolling another `spawnSync('git', ['init'])` ladder, and take `FIXTURE_TIMEOUT_MS` from it too so one machine-speed knob governs the suite.
-
-A named base branch or a suite-owned scratch directory is not a reason to hand-roll the ladder: `gitRepo({ parent, branch })` creates the repo's temp dir under `parent` (default `os.tmpdir()`) and runs `git init -b {branch}` when `branch` is given (default: git's own initial branch). `tests/local-merge-close-run-ordering.test.js`'s `makeRepo()` builds on `gitRepo({ parent: SCRATCH, branch: 'main' })`, so every fixture lands under the one `SCRATCH` dir its `process.on('exit')` removes; commit identity for its later commits still comes from a suite-local wrapper that passes `-c user.email=… -c user.name=…` to `fixtureGit` (#3762).
+Build throwaway git repos from `tests/helpers/git-fixtures.js` (`gitRepo`, `FIXTURE_TIMEOUT_MS`), never a hand-rolled `git init` ladder; read `advanced-proof-patterns.md`'s "Fixture repos come from the shared helper" for its `parent`/`branch` options and suites that have not adopted it yet.
 
 ### Prose reads come from the shared helper
 
@@ -259,7 +244,7 @@ A varying failure count across runs on byte-identical code tracks machine load f
 
 ## Advanced proof patterns — lazy-loaded
 
-`advanced-proof-patterns.md` alongside this file holds five specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with known offenders unmigrated (exempt/ratchet allowlists), a resolver test must prove an excluded source never wins, or a new pin needs an existing suite to model on (its `## Reference instances`).
+`advanced-proof-patterns.md` alongside this file holds seven specialized procedures. Read it when a go-red proof needs zero tree mutation, a change adds or removes an Anti-Patterns row, a detection signal needs corpus validation, a sweep ships with an exemption list (stale-checks) or with known offenders unmigrated (exempt/ratchet allowlists), a suite builds throwaway git repos, a resolver test must prove an excluded source never wins, or a new pin needs an existing suite to model on (its `## Reference instances`).
 
 ## Reference
 
