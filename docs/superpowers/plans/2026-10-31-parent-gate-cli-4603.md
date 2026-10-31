@@ -2,79 +2,158 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** The Parent-Gate Procedure's Resolve / Enumerate / Self-inclusion / Evaluate steps and the below-floor close's idempotence check run as one tested CLI, `plugin/bin/parent-gate.js`, that prints one JSON verdict; `wrap-up/verification-brief-parent-gate.md` keeps prose only for routing that verdict.
+**Goal:** The Parent-Gate Procedure's Resolve / Enumerate / Self-inclusion / Evaluate steps and the below-floor close's idempotence check run as one tested CLI, `plugin/bin/parent-gate.js`, that prints one JSON verdict. `wrap-up/verification-brief-parent-gate.md` keeps each section's heading and stated rule and routes the verdict, and no longer composes any fetch or compute.
 
-**Architecture:** A pure module `plugin/bin/lib/issues/parent-gate.js` turns already-gathered facts into the verdict (reusing `parentGateState`, `maxRiskTier`, `exceedsOversightFloor`, `isTrustedComment`). A thin CLI `plugin/bin/parent-gate.js` gathers those facts through an injectable `gh` runner — parent resolution, paginated sub-issue enumeration through `plugin/bin/fetch-sub-issues.js`'s exported `run` in-process, per-sub-issue `gh issue view`, the parent's own view, and the current `gh` login only when the close is reachable — and, under `--backend local-files`, through `local-store.js`. The skill prose and `_shared/pr-first-merge-post-merge.md` Step 4.0b call the CLI and route on its fields.
+**Architecture:** There is one Node implementation of the gate. `plugin/bin/lib/issues/parent-gate.js` holds four parts: a pure `evaluateParentGate`, a gh gather `gatherGateFacts`, a gh gather `gatherIdempotenceFacts`, and a pure `evaluateIdempotence`. The gathers use exactly the `gh` call shapes that #4599's `plugin/bin/lib/issues/below-floor-parent-close.js` already makes. Task 2 refactors `closeBelowFloorParents` (the reconciler's Step 4.0b engine) to compose them, so the reconciler and the CLI share every rule. The thin CLI `plugin/bin/parent-gate.js` feeds that one evaluate path from three fact sources:
+- `gh`, the default, through an injectable runner;
+- `--facts-json <file>`, the gh-absent MCP path: the agent writes raw MCP results and `plugin/bin/lib/issues/mcp-parent-gate-shape.js` normalizes them and checks their shape;
+- `--backend local-files`, through `local-store.js`.
+
+The skill prose and `_shared/pr-first-merge-post-merge.md` Step 4.0b call the CLI and route on its fields.
 
 **Tech Stack:** Node 18+ CommonJS, zero npm deps, `node --test`; Markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T094619-record-4603/work/4603-spec.md` (record #4603)
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T211744-record-4603/work/4603-spec.md` (record #4603). Its Plan Review Decisions section fixes **Reading B**: `parentIssue: false` is reported beside the prose's five verdict fields, and the no-op stays in Step 4.0b's routing prose. The pre-merge and tidy entries keep their current behavior.
 
-Scope keywords: parentGateState, Enumerate the parent's sub-issues, sub_issues
+**Base:** branch tip `f1304718d`, whose `plugin/`, `tests/` and `docs/` trees match `origin/main` at `0baad513d`. That commit brought in #4599, #4602, #4549 and #4600. Every line reference below was read against it.
 
-Check B sweep (2026-10-31): every unplanned hit is no-change — `sub_issues`/`parentGateState` hits are independent readers (`engine-verify.js`, tidy's scans, `link.js`, `backlog-grant-gate`) that this record does not route through the CLI; the `Enumerate the parent's sub-issues` hits (`tidy/actions-*.md`, `wrap-up/verification-brief.md`, `docs/skill-graph.md`) cite the section by name, and Task 4 keeps every section heading.
+Scope keywords: parentGateState, Enumerate the parent's sub-issues, sub_issues, below-floor-parent-close
+
+Check B sweep (2026-10-31, rerun against `0baad513d`): every hit outside this plan's file list needs no change.
+- Independent readers that this record does not route through the CLI: `engine-verify.js`, `record-snapshot.js`, `link.js`, `link-records.js`, `backlog-grant-gate`, `fetch-sub-issues.js`, `_shared/github-pr-scan*.md`, `_shared/trust-table.md`, `tidy/step-1-records.md`, `_shared/observation-plan.md` and `tidy/step-6-auto.md`'s `parentGateState` latch note.
+- Files that cite the procedure's sections by name: `tidy/actions-{github-issues,local-files}.md` ("from **Enumerate the parent's sub-issues** onward"), `wrap-up/verification-brief.md:44`, `demo/entry-paths.md:255` and `docs/skill-graph.md:200,706`. Task 6 keeps every heading. It places `## Run the gate CLI` right before `## Evaluate the gate`, so every one of those "from … onward" and "through" ranges passes through it with no caller edit.
+- `dispatch/settle-and-merge.md:28-30` still holds: it lists the calls the procedure makes, now made by its CLI, and says the Transport paragraph names each call's MCP tool. Task 6 keeps that paragraph naming them.
+- `.claude/skills/gh-api-module-pattern/SKILL.md` and `.claude/skills/skill-prose-conformance-tests/*` cite `fetch-sub-issues.js` and the `ghCalls` ratchet. Both still hold.
+- Stale claims that this plan fixes: `below-floor-parent-close.js`'s header (Task 2), `post-merge.js:5-7` (Task 2), `docs/reconcile-checks.md:579-586` (Task 2), `.claude/skills/prose-code-twin-pin/SKILL.md:253-258` (Task 2), `docs/plugin-structure.md:29` (Task 3), `.claude/skills/mcp-agent-fetch-node-compute/SKILL.md` rule 10 and its Instances table (Task 4), and `wrap-up/verification-brief.md:89-92`'s "It covers, in order" list (Task 6).
 
 ## Global Constraints
 
-- **Verdict shape** (byte-identical field names in every task):
+- **Read before you write.** Read these in full first: `plugin/bin/lib/issues/below-floor-parent-close.js`, `tests/bin-lib/issues/below-floor-parent-close.test.js`, `plugin/bin/lib/reconcile/post-merge.js:250-410`, and `tests/bin-lib/reconcile/post-merge.test.js:870-910`. The last one is the end-to-end case that pins the exact argv.
+- **The gh call shapes (fixed — byte-identical to `below-floor-parent-close.js` today, in this order):**
+  1. sub-issue → parent, `work-links: body-text`: `['issue', 'view', String(n), '--json', 'body', '-q', '.body']`, then `/^Parent: #(\d+)/m` on stdout.
+  2. sub-issue → parent, `work-links: native`: `fetchNativeParent({ number: n, owner, repo, runner })` (`./native-dependencies`), which sends `['api', 'graphql', '-f', 'query=…', '-f', 'owner=…', '-f', 'repo=…']`.
+  3. parent → sub-issues, `body-text`: `['issue', 'view', String(parent), '--json', 'body', '-q', '.body']`, then `parseSubIssues` (`./record`), sorted ascending.
+  4. parent → sub-issues, `native`: `['api', '--paginate', `repos/${owner}/${repo}/issues/${parent}/sub_issues`, '--jq', '.[].number']`. Split the output on `\n` and keep each distinct positive integer, sorted ascending.
+  5. each sub-issue, ascending: `['issue', 'view', String(num), '--repo', `${owner}/${repo}`, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences']`.
+  6. the parent's labels: `['issue', 'view', String(parent), '--json', 'labels', '-q', '[.labels[].name]']`, then `normalizeLabelNames`.
+  7. idempotence: `['issue', 'view', String(parent), '--json', 'state,stateReason,comments']`.
+  8. login: `['api', 'user', '--jq', '.login']`, read only when step 7 shows neither `CLOSED` nor `REOPENED` (both uppercased).
+
+  A resolution that finds no parent stops after step 1 or 2. Failure wrapping moves verbatim from `closeBelowFloorParents` lines 95-109 into the exported `ghCaller(gh)` → `{ call, callJson }`:
+  - a thrown call becomes `GhFailure('gh {first three args}: {message}')`;
+  - stdout that does not parse as JSON becomes `GhFailure('gh {first three args}: unparseable output ({message})')`;
+  - a `fetchNativeParent` throw that is not already a `GhFailure` becomes `GhFailure('gh api graphql (parent): {message}')`.
+- **Spec deviation — enumeration goes through the REST `--paginate` read (shape 4), not `plugin/bin/fetch-sub-issues.js`.** The spec says "through the paginated fetcher" and lists `fetch-sub-issues.js` as a Key File. `fetch-sub-issues.js` is a GraphQL batch CLI built for many parents, with a capability probe and a REST retry ladder. The gate enumerates one parent. The reconciler mirror and its two suites already pin shape 4 (`below-floor-parent-close.test.js`'s fake gh, `post-merge.test.js:893`), so one enumeration path is shared and stays pinned. The spec's requirement is met: the read is paginated (`--paginate`), and `stateReason` comes from shape 5. AC1.1 (more than 30 sub-issues) is proven by a fake runner whose shape-4 answer lists 35 numbers (Task 3), plus the same count through `--facts-json` (Task 4).
+- **Facts shape.** `gatherGateFacts` and the MCP normalizer both return this one object:
+  `{ parent: number|null, parentLabels: string[], subIssues: [{ number, title, state, stateReason, labels: string[], closedBy: number[] }] }`.
+  - `subIssues` is ascending.
+  - `state` and `stateReason` are uppercased strings (`''` when absent).
+  - `title` is `String(title || '').trim()`.
+  - `closedBy` holds each `closedByPullRequestsReferences` entry's `number`, in order.
+  - With no parent the object is `{ parent: null, parentLabels: [], subIssues: [] }`.
+
+  Idempotence facts: `{ state, stateReason, comments, login }` (gh, MCP) or `{ state, body }` (local-files).
+- **Verdict shape** (field names byte-identical in every task, emitted in this key order, exported as `VERDICT_FIELDS`):
   `{ parent, state, exceeds, closeReason, idempotence, maxTier, riskFloor, parentIssue, needs, held, subIssues, skipped }`
-  - `parent`: number, or `null` when no parent resolves.
-  - `state`: `'no-parent' | 'incomplete' | 'gated' | 'resolved' | 'due'` (the last four are `parentGateState`'s own values).
-  - `exceeds`: boolean when `state === 'due'`, else `null`.
-  - `closeReason`: `'completed' | 'not planned'` when `state === 'due' && exceeds === false`, else `null`. `'completed'` iff at least one sub-issue has `stateReason === 'COMPLETED'` or is a member of the effective closing set; otherwise `'not planned'`.
-  - `idempotence`: when `state === 'due' && exceeds === false`, one of `'already-closed'` (parent `CLOSED`), `'reopened'` (parent `OPEN` with `stateReason === 'REOPENED'`), `'close-only'` (a counted comment carries the heading), `'comment-and-close'`; else `null`. Checked in that order.
-  - `maxTier`: `maxRiskTier(...)` result or `null` (when `undefined`). `riskFloor`: the resolved floor string.
-  - `parentIssue`: `true` iff the parent's labels include `parent-issue` (local-files: `facets.isParentIssue === true`).
-  - `needs`: the parent's labels starting with `needs:`, in label order (local-files: `[]`).
-  - `held`: enumerated sub-issue numbers that appear in `--held`, ascending.
-  - `subIssues`: one `{ number, title, state, stateReason, pr }` per enumerated sub-issue, ascending by number, `state` as given to the gate (closing-set members already `'CLOSED'`); `pr` = `--merging-pr` for an effective-closing-set member when given, else the `number` of the **last** `closedByPullRequestsReferences` entry whose `repository.owner.login`/`repository.name` equal this repo (case-insensitive), else `null`.
-  - `skipped`: `untrustedSkipNote(c)` for each comment carrying the heading that was not counted, in comment order.
-- **Heading:** `## Closed below the oversight floor`, matched line-anchored: `/^## Closed below the oversight floor[ \t]*\r?$/m`. A comment counts iff `isTrustedComment(c)` or `c.author && c.author.login === currentLogin` (non-empty login).
-- **Oversight floor:** `exceedsOversightFloor({ risk: maxRiskTier(subIssues.map((s) => parseRecordFacets(s.labels))) }, { riskFloor, sizeFloor: null })` — `sizeFloor` is the literal `null`.
-- **Effective closing set:** `--closing` tokens, each `N` or `owner/repo#N`; a token naming another repo (case-insensitive compare) is dropped. `--sub-issue N` with no `--closing` defaults to `{N}`, never `{}`. `--parent` with no `--closing` is `{}`. The set overrides `state` to `'CLOSED'` only for sub-issues the enumeration returned; it never adds sub-issues.
-- **CLI exit codes (Split-1/2 vocabulary, `fetch-sub-issues.js`'s):** 0 verdict printed (every `state`, `no-parent` included); 1 malformed invocation; 2 `gh` absent or owner/repo unresolvable; 3 a `gh` call failed (stderr names the call). Status-as-data: a verdict is never an exit code.
-- **Governing skill `gh-api-module-pattern`** — read `.claude/skills/gh-api-module-pattern/SKILL.md` and `cli-wrapper-contract.md` in full before Task 2. Quoted rules:
-  - "The module takes `runner(args)`, invoked as if `gh ${args.join(' ')}`, returning stdout; a throw is a failed call. Export `defaultRunner` = `execFileSync('gh', args, { encoding: 'utf8' })` — always an argv array, never a shell string (no injection surface, no quoting bugs)."
-  - "**Every real spawn passes `windowsHide: true` in a form `tests/windows-hide-spawn-conformance.test.js` can see.**"
-  - "Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw (e.g. `remoteUrl` outside a git repo) is try/caught into the documented exit-code contract"
+
+  **Spec deviation (additive):** the spec names five fields. Reading B adds `parentIssue`. `maxTier`, `riskFloor`, `subIssues` and `skipped` are the values Close steps 1-3 consume, and `needs` and `held` are what Step 4.0b routes on. Without them, the prose would need a second fetch.
+  - `parent`: a number, or `null` when no parent resolves.
+  - `state`: `'no-parent' | 'incomplete' | 'gated' | 'resolved' | 'due'`. The last four are `parentGateState`'s own values (`./acceptance`).
+  - `exceeds`: `exceedsOversightFloor({ risk: maxTier }, { riskFloor, sizeFloor: null }).exceeds` when `state === 'due'`, else `null`. `sizeFloor` is the literal `null`.
+  - `closeReason`: set when `state === 'due' && exceeds === false`, else `null`. It is `'completed'` if any gate sub-issue (after the closing-set override) has `stateReason === 'COMPLETED'`, otherwise `'not planned'`.
+  - `idempotence`: when `state === 'due' && exceeds === false`, the first that applies of:
+    1. `'already-closed'` — the parent is `CLOSED`;
+    2. `'reopened'` — `stateReason === 'REOPENED'`;
+    3. `'close-only'` — a counted comment carries the heading;
+    4. `'comment-and-close'`.
+
+    Otherwise `null`. Exported as `IDEMPOTENCE_VALUES`, in that order.
+  - `maxTier`: `maxRiskTier(subIssues.map((s) => parseRecordFacets(s.labels)))`, or `null` when that is `undefined`. It is computed for every resolved parent.
+  - `riskFloor`: the resolved floor string.
+  - `parentIssue`: `parentLabels.includes(LABELS.PARENT_ISSUE)`, or `null` when there is no parent. This is Reading B's added field.
+  - `needs`: the `parentLabels` entries that start with `needs:`, in label order.
+  - `held`: enumerated sub-issue numbers that are in the caller's held/unsettled set, ascending.
+  - `subIssues`: one `{ number, title, state, stateReason, pr }` per enumerated sub-issue, ascending. `state` and `stateReason` are the values the gate saw, after the override. `pr` is the merging PR when `inClosingSet && mergingPr`, else the last `closedBy` entry, else `null`. There is no same-repo filter, matching the prose ("the last one when it lists several") and today's code.
+  - `skipped`: `untrustedSkipNote(c)` for each comment carrying the heading that was not counted, in comment order. Otherwise `[]`.
+- **Closing set.** `evaluateParentGate` takes `closingSet` (default `[]`) and `selfInclude` (default `true`). When `selfInclude && closingSet.includes(n)`, it overrides that enumerated sub-issue to `state: 'CLOSED'`, `stateReason: 'COMPLETED'`. The override never adds sub-issues. The CLI's `--closing` tokens go through `parseClosingTokens`. A token is `N` or `owner/repo#N`. A qualified token is mapped to a `{ number, repository: { name, owner: { login } } }` ref and passed to `plugin/bin/lib/flow/closing-links.js`'s exported `sameRepoNumbers`, which drops a foreign repo case-insensitively (reused, not re-derived). `--sub-issue N` with no `--closing` defaults to `{N}`, never `{}`. `--parent` with no `--closing` is `{}`.
+- **Heading test.** `HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m` and `isCloseMarkerComment(comment, login)` move from `below-floor-parent-close.js` into `parent-gate.js` unchanged. `below-floor-parent-close.js` re-exports `isCloseMarkerComment`, so its two existing importers keep working: `tests/bin-lib/issues/below-floor-parent-close.test.js` and `_shared/github-pr-scan-acceptance.md:484`'s `node -e` scan. The move is needed: the new core needs the predicate, and importing it from `below-floor-parent-close.js` would create a require cycle once Task 2 makes that file import the core.
+- **CLI exit codes (Split-1/2, `fetch-sub-issues.js`'s vocabulary):**
+  - `0` — a verdict was printed (every `state`, `no-parent` included);
+  - `1` — a malformed invocation, an unreadable or unparseable `--facts-json`, a facts file missing a required key, or a local-files record id the store does not hold;
+  - `2` — `gh` absent with no `--facts-json`/`local-files`, or owner/repo unresolvable;
+  - `3` — a `gh` call failed (a `GhFailure`, whose message goes to stderr), a facts-file entry failed its shape guard (an MCP error recorded as data), or a local-files filesystem error.
+
+  On every non-zero exit nothing goes to stdout. The verdict is data on stdout and is never encoded in the exit code. Only `GhFailure` and `FactsError` map to exit codes; any other throw propagates as a bug (the `cli-wrapper-contract.md` rule against flattening an unrelated bug into a tidy code).
+- **Governing skill `gh-api-module-pattern`.** Read `.claude/skills/gh-api-module-pattern/SKILL.md` and `cli-wrapper-contract.md` in full before Task 3. Quoted rules:
+  - "Every real spawn passes `windowsHide: true` in a form `tests/windows-hide-spawn-conformance.test.js` can see."
+  - "Logic lives in an exported `run(argv, deps)`; every side effect (`runner`, `ghAvailable`, `remoteUrl`, `stdout`, `stderr`) goes through `deps` so tests inject fakes. **Every** `deps` call that can throw … is try/caught into the documented exit-code contract"
   - "`require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`, which can truncate piped stdout). `--help` short-circuits before any availability probe."
   - "Every malformed-input class must actually reach its malformed code — `Number('') === 0` passes `Number.isInteger`, so validate positivity and pair-structure explicitly."
-- **Governing skill `skill-prose-conformance-tests`** (Task 4) — quoted rules:
-  - "Anchor on a literal token the skill already uses — a filename pattern, a fenced heading, a table-row prefix — never a paraphrase."
+  - "A value-taking flag given as the last argv element reads `undefined` … Validate the value inside `parseArgs` … and pin both the trailing bare flag and the empty-string value with their own test cases."
+  - "**`GH_TIMEOUT_MS` is a resolved value, not a literal — import it, never retype its default at a new call site.**" The CLI's runner is `execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] })`, with every key literal in that one options object.
+  - "A CLI that replaces a prose procedure inherits every guard the reader's view of the data used to enforce — inventory them before writing it." The inventory for this CLI:
+    - "already `CLOSED`" → `already-closed`
+    - "`stateReason` is `REOPENED`" → `reopened`
+    - "counting only a comment from a trusted author … or from the current `gh` identity" → `close-only`
+    - "The set overrides state; it never adds sub-issues" → the `closing set never adds sub-issues` test
+    - "default to `{the sub-issue in hand}`, never `{}`" → the `--sub-issue without --closing` test
+    - "a sub-issue missing `risk` … fails closed as `unscored`" → the `unscored sibling` test
+    - Step 4.0b's held parents → `held`
+  - "A `gh`-absent caller hands the CLI already-fetched records as a file; the CLI never tries to reach MCP itself … That path makes **zero** `gh` calls and never probes for `gh`."
+- **Governing skill `mcp-agent-fetch-node-compute`** (Task 4). Read `.claude/skills/mcp-agent-fetch-node-compute/SKILL.md` in full. Quoted rules:
+  - Rule 1: "**Inject the reader, do not branch the computation.** The gh branch and the MCP branch call the same function; only the data source differs" — both sources return the one facts shape above, and both feed `evaluateParentGate`/`evaluateIdempotence`.
+  - Rule 3: "**Validate the shape of every agent-written entry.** … Map such an entry to `{failure}`, never to content" — a failed guard is exit 3, never a verdict.
+  - Rule 8: "**Widen the handoff shape with every field the compute reads.**" — the facts keys are an exported `FACTS_KEYS`, and Task 6 pins them in the prose.
+  - Rule 9: "Normalise a differing field spelling once, at the pull boundary, and make the step a no-op on the other transport's shape."
+  - Rule 10: "**Normalise enum values and label shape, not only key spelling, before a predicate that matches `gh`'s exactly.**"
+- **Governing skill `skill-prose-conformance-tests`** (Task 6). Quoted rules:
   - "copy the pinned literal out of the edit's own replacement text, never from memory of what that edit says."
   - "**Retargeting existing pins: diff the assertion inventory, not the plan's prose anchor list.** … enumerate every assertion literal in the *replaced* tests and give each one an explicit verdict — moved, retargeted (naming the new literal), or retired (with its own stated reason)."
-  - "Apply the whitespace-collapsed control scan to **both** directions of a migration suite — absence assertions need it more than presence ones."
   - "Prove the assertion can go red before trusting its green"
-- **Commits:** subject `{Verb} {what} — refs #4603` (never `closes`/`fixes`), body ending with the line `Claude-Session: https://claude.ai/code/session_01YPgdwRbmhnsV1HHKVuy4KZ`. Run git as `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-4603" …`, one plain command per Bash call. Never `git stash`.
+- **Repo-wide scans the new files must pass** (each runs over `plugin/bin/**`):
+  - `tests/windows-hide-spawn-conformance.test.js`.
+  - `tests/bin-lib/exit-code-conformance.test.js`.
+  - `tests/path-guard-conformance.test.js`: no `fs.existsSync` in a new `plugin/bin/lib/` file. Read files directly, with `ENOENT` caught.
+  - `tests/accept-label-reader-conformance.test.js` (AC3.3). A `demo:` literal or a `DEMO_PENDING`/`DEMO_APPROVED`/`DEMO_CHANGES_REQUESTED` name anywhere in a new module's code fails the walk. The local-files acceptance translation therefore maps `facets.acceptance` through `LABELS.ACCEPT_PENDING`/`ACCEPT_APPROVED`/`ACCEPT_CHANGES_REQUESTED` (`dispositionState` reads both spellings), never `'demo:' + acceptance`.
+  - `tests/bin-lib/repo-resolve.test.js`: `gh --version` lives only in `repo-resolve.js`, so call its `ghAvailable`.
+- **Never edit `tests/bin-lib/issues/below-floor-parent-close.test.js` or `tests/bin-lib/reconcile/post-merge.test.js`.** They are Task 2's equivalence proof. If one goes red, the refactor changed behavior: fix the code, not the test.
+- **Prose size rail:** `plugin/bin/lib/skill-audit/budgets.js`'s `RAIL_BYTES` is 52,500. `verification-brief-parent-gate.md` is 39,786 bytes today, so check `wc -c` after Task 6. The fences that go should leave it at or under today's size.
+- **Commits:** subject `{Verb} {what} — refs #4603` (never `closes`/`fixes`), body ending with the line `Claude-Session: https://claude.ai/code/session_01Ngy9oZcZMUZBwcH7sESiVq`. Run git as `git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees/dispatch-record-4603" …`, one plain command per Bash call. Never `git stash`.
 - **Scope and edit discipline:** "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
-- **Test runs:** targeted suites only (`node --test <file>`); the full suite runs centrally.
+- **Test runs:** targeted suites only (`node --test <file> …`); the full suite runs centrally. Quote the raw `# pass`/`# fail` lines in each task report.
 
 ## Review Focus
 
-1. **A just-merged sub-issue still reads `OPEN`.** Expected: as a `--closing` member it counts `CLOSED` and `COMPLETED`; the gate reads `due`. Pinned in Task 1 (`closing member counts CLOSED and completed`).
-2. **Running the close twice** (a heading comment from the plugin's own non-member bot identity, then a failed close). Expected: `close-only`, never a second comment. Pinned in Task 1 (`own-login heading comment counts`).
+1. **One implementation, byte-identical reconciler behavior.** After Task 2, `tests/bin-lib/issues/below-floor-parent-close.test.js` (446 lines) and `tests/bin-lib/reconcile/post-merge.test.js` pass with zero edits (`git diff f1304718d -- <both>` is empty), and `below-floor-parent-close.js` no longer requires `./acceptance`, `./oversight-floor`, `./native-dependencies` or `./comment-trust`. Pinned in Task 2.
+2. **A just-merged sub-issue still reads `OPEN`.** Expected: as a `--closing` member it counts `CLOSED` and `COMPLETED`, and the gate reads `due`. Pinned in Task 1 (`closing member counts CLOSED and completed`) and Task 3.
 3. **A planted heading from an untrusted commenter.** Expected: `comment-and-close`, with that comment named in `skipped`. Pinned in Task 1.
 4. **An unscored sibling** (no `risk:*`). Expected: `maxTier: null`, `exceeds: true`, no close. Pinned in Task 1.
-5. **A `gh` failure mid-gather** (one sub-issue view throws). Expected: exit 3, nothing on stdout, so the prose fails open. Pinned in Task 2.
+5. **A `gh` failure mid-gather** (one sub-issue view throws). Expected: exit 3, nothing on stdout, stderr naming `issue view 12`, so the prose fails open. Pinned in Task 3.
+6. **An MCP read error the agent wrote as data** (`{ "message": "Not Found" }` as a sub-issue entry). Expected: exit 3, never a verdict. Lowercase MCP states give the same verdict as the gh path. Pinned in Task 4.
+7. **The pin inventory.** Every pin retired in Task 6 names the unit test that now covers its behavior. No `#4602` transport pin is retired without its literal staying in the Transport paragraph. Pinned in Task 6's commit body.
 
 ## Spec coverage map
 
 | Spec item | Task |
 |---|---|
-| Deliverable 1 (CLI, resolve native/`Parent: #N`, paginated enumeration with `stateReason`, self-inclusion, floor, JSON verdict) | Tasks 1, 2, 3 |
-| Deliverable 2 (prose calls the CLI, routing only) | Task 4 |
-| AC1.1 (> 30 sub-issues) | Task 2 |
-| AC1.2 (all closed not-planned) | Tasks 1, 2 |
-| AC1.3 (cross-repo closing reference) | Tasks 1, 2 |
-| AC1.4 (human-reopened parent) | Tasks 1, 2 |
-| AC1.5 (parent without `parent-issue`) | Tasks 1, 2 |
-| AC1.6 (each case gets the prose's verdict) | Tasks 1, 2 |
-| AC2.1 (`issues/$PARENT_NUM/sub_issues` gone from the gate file) | Task 4 |
-| Key File `pr-first-merge-post-merge.md` Step 4.0b (a caller) | Task 4 |
+| Deliverable 1: CLI; resolve via native or `Parent: #N`; paginated enumeration with `stateReason`; self-inclusion; floor; JSON verdict `{parent, state, exceeds, closeReason, idempotence}` (+ `parentIssue`, Reading B) | Tasks 1, 3, 4, 5 |
+| Deliverable 1 "through the paginated fetcher" / Key File `fetch-sub-issues.js` — **deviation**: REST `--paginate` read shared with the reconciler, not `fetch-sub-issues.js` (Global Constraints) | Tasks 1, 3 |
+| Deliverable 2 (prose calls the CLI; routing) | Task 6 |
+| Deliverable 2 "keeping prose only for routing the verdict" — **deviation**: Resolve/Enumerate/Self-inclusion/Evaluate keep their headings and one-line rule statements. Other files cite them by name (tidy, `verification-brief.md`, `docs/skill-graph.md`, Step 4.0b), and callers size `$CLOSING_SUB_ISSUES` from the Self-inclusion table. Every fetch and compute instruction goes. | Task 6 |
+| Verdict carries fields beyond the spec's five — **deviation** (additive, Global Constraints) | Tasks 1, 3 |
+| AC1.1 (> 30 sub-issues) | Task 3 (gh, 35 numbers), Task 4 (facts-json, 35 entries) |
+| AC1.2 (all closed not-planned) | Tasks 1, 3, 4, 5 |
+| AC1.3 (cross-repo closing reference) | Tasks 1, 3 |
+| AC1.4 (human-reopened parent) | Tasks 1, 3, 4 |
+| AC1.5 (parent without `parent-issue`) | Tasks 1, 3 (`parentIssue: false`) + Task 6 (Step 4.0b's no-op routing) |
+| AC1.6 (each case gets the prose's verdict) | Tasks 1-5. Task 4's gh-vs-facts equivalence test runs each case through both sources. |
+| AC2.1 (`issues/$PARENT_NUM/sub_issues` gone from the gate file) | Task 6 |
+| Key File `acceptance.js` (`parentGateState`, reused) | Task 1 (waived, read only) |
+| Key File `pr-first-merge-post-merge.md` Step 4.0b (a caller) | Task 6 |
 
 ---
 
-### Task 1: Pure verdict module
+### Task 1: Shared gate core
 
 **Role:** judgment
 **Review risk:** high
@@ -82,178 +161,469 @@ Check B sweep (2026-10-31): every unplanned hit is no-change — `sub_issues`/`p
 **Files:**
 - Create: `plugin/bin/lib/issues/parent-gate.js`
 - Test: `tests/bin-lib/issues/parent-gate.test.js`
-- Waived `plugin/bin/lib/issues/acceptance.js`: read only — `parentGateState` is reused unchanged (Step 3).
+- Waived `plugin/bin/lib/issues/acceptance.js`: read only. `parentGateState` is reused unchanged.
+- Waived `plugin/bin/lib/issues/oversight-floor.js`, `comment-trust.js`, `record-vocabulary.js`, `native-dependencies.js`, `plugin/bin/lib/flow/closing-links.js`: read only. Their exports are reused unchanged.
 
 **Interfaces:**
-- Consumes: `parentGateState` (`./acceptance`), `maxRiskTier`/`exceedsOversightFloor` (`./oversight-floor`), `parseRecordFacets` (`./record`), `isTrustedComment`/`untrustedSkipNote` (`./comment-trust`).
-- Produces:
-  - `CLOSE_HEADING_RE` (the regex in Global Constraints).
-  - `parseParentLine(body: string) -> number|null` — first line-anchored `/^Parent: #(\d+)\b/m` match.
-  - `parseClosingTokens(tokens: string[], { owner, repo }) -> { numbers: number[] } | { error: string }` — `N` or `owner/repo#N`; foreign repo dropped; anything else (including `0`, `''`, `#5`, `a/b#x`) is `{ error }`.
-  - `evaluateParentGate(input) -> verdict`, `input` = `{ parent: number, parentLabels: string[], parentState: string, parentStateReason: string, parentComments: object[], currentLogin: string|null, subIssues: [{ number, title, state, stateReason, labels: string[], closedBy: [{ number, repository: { name, owner: { login } } }] }], closingSet: number[], held: number[], mergingPr: number|null, owner: string, repo: string, riskFloor: string }`. optional `parentBody: string` — when a string (the local-files backend), the heading test runs on it alone and `parentComments`/`currentLogin` are ignored (`close-only` iff it matches `CLOSE_HEADING_RE`). `parentComments`/`currentLogin` are read only when the idempotence branch is reached. Returns the verdict shape from Global Constraints (`state` never `'no-parent'` here).
+- Consumes:
+  - `parentGateState` (`./acceptance`);
+  - `maxRiskTier`, `exceedsOversightFloor` (`./oversight-floor`);
+  - `parseRecordFacets`, `normalizeLabelNames`, `LABELS` (`./record-vocabulary`);
+  - `isTrustedComment`, `untrustedSkipNote` (`./comment-trust`);
+  - `fetchNativeParent` (`./native-dependencies`);
+  - `parseSubIssues` (`./record`);
+  - `sameRepoNumbers` (`../flow/closing-links`);
+  - `POLICY_KEYS` (`../policy-schema`).
+- Produces (all exported):
+  - `CLOSE_HEADING` (`'## Closed below the oversight floor'`), `HEADING_LINE_RE`, `isCloseMarkerComment(comment, login)`, all moved verbatim (Global Constraints).
+  - `VALID_RISK_FLOORS` (the policy schema's `risk-floor` values), `VERDICT_FIELDS`, `IDEMPOTENCE_VALUES`.
+  - `class GhFailure extends Error`; `ghCaller(gh) -> { call(args, input), callJson(args) }`.
+  - `resolveParent({ subIssue, owner, repo, workLinks, caller }) -> number|null` — shape 1 or 2.
+  - `gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) -> facts`. Exactly one of `subIssue`/`parent` is given. Shapes 1-6, in order. It returns early with no parent.
+  - `gatherIdempotenceFacts({ parent, caller }) -> { state, stateReason, comments, login }` — shapes 7 and 8. `login` is `null` when shape 8 is not read. `comments` is `[]` when the field is not an array.
+  - `evaluateParentGate({ parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor }) -> verdict`. It is pure. It throws a `TypeError` when `riskFloor` is not in `VALID_RISK_FLOORS`, because a `null` floor would switch the unscored check off. With `parent == null` it returns the `no-parent` verdict: `parentIssue: null`, `exceeds`/`closeReason`/`idempotence`/`maxTier` `null`, and `needs`/`held`/`subIssues`/`skipped` `[]`. It always returns `idempotence: null` and `skipped: []`, and the caller fills them from `evaluateIdempotence`.
+  - `evaluateIdempotence(facts) -> { idempotence, skipped }`. It is pure.
+    - With `typeof facts.body === 'string'` (local-files), it reads `already-closed` when `facts.state === 'CLOSED'`, `close-only` when `HEADING_LINE_RE` matches the body, else `comment-and-close`, and ignores comments and login.
+    - Otherwise it follows `closeBelowFloorParents` lines 192-207. A heading comment that `isCloseMarkerComment` counts makes `close-only`. Every other comment carrying the heading adds `untrustedSkipNote(comment)` to `skipped`. A note is added even when a counted comment also exists.
+  - `parseClosingTokens(tokens: string[], { owner, repo }) -> { numbers: number[] } | { error: string }`.
+    - A token is `N` or `owner/repo#N` (`/^\d+$/` or `/^([^/\s#]+)\/([^/\s#]+)#(\d+)$/`), with `N` a positive integer.
+    - It returns `{ error }` for anything else, `0`, `''`, `#5` and `a/b#x` included, and for a qualified token when `owner` is `null` (local-files).
+    - It returns `sameRepoNumbers(...)`'s result, which is sorted and de-duplicated.
 
-- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/issues/parent-gate.test.js` (style: `tests/bin-lib/issues/acceptance.test.js`). A `base()` helper builds an input with parent `#10`, labels `['parent-issue']`, `OPEN`/`''`, two `CLOSED`/`COMPLETED` sub-issues `#11`, `#12` labelled `risk:low`, owner/repo `o/r`, `riskFloor: 'high'`, `closingSet: []`, `held: []`, `mergingPr: null`, `currentLogin: 'bot'`, `parentComments: []`. Tests:
-  - `AC1.2: all sub-issues closed not-planned close the parent as not planned` — both `stateReason: 'NOT_PLANNED'` → `{ state: 'due', exceeds: false, closeReason: 'not planned', idempotence: 'comment-and-close' }`.
+- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/issues/parent-gate.test.js`. Style follows `tests/bin-lib/issues/below-floor-parent-close.test.js`.
+  - A `makeGh(world)` fake answers by exact argv (the eight shapes, owner/repo `o/r`), records `{ args }` for every call, and throws `unexpected gh call: …` on anything else.
+  - A `facts()` helper builds parent `10`, labels `['parent-issue']`, and two `CLOSED`/`COMPLETED` sub-issues `11` and `12` labelled `['risk:low']` with `closedBy: []`. `riskFloor` is `'high'`.
+
+  Tests:
+  - `AC1.2: all sub-issues closed not-planned close the parent as not planned` — both `NOT_PLANNED` → `{ state: 'due', exceeds: false, closeReason: 'not planned' }`.
   - `AC1.2: one completed sub-issue closes the parent completed` — `#11` `NOT_PLANNED`, `#12` `COMPLETED` → `closeReason: 'completed'`.
-  - `closing member counts CLOSED and completed` — `#12` `OPEN`/`''`, `#11` `NOT_PLANNED`, `closingSet: [12]` → `state: 'due'`, `closeReason: 'completed'`, `subIssues[1].state === 'CLOSED'`.
+  - `closing member counts CLOSED and completed` — `#12` `OPEN`/`''`, `#11` `NOT_PLANNED`, `closingSet: [12]` → `state: 'due'`, `closeReason: 'completed'`, `subIssues[1]` `{ state: 'CLOSED', stateReason: 'COMPLETED' }`.
+  - `selfInclude: false judges a closing member by its live state` — same input plus `selfInclude: false` → `state: 'incomplete'`.
   - `closing set never adds sub-issues` — `closingSet: [99]`, `#12` `OPEN` → `state: 'incomplete'`, `subIssues.length === 2`.
-  - `AC1.4: a human-reopened parent is never re-closed` — `parentStateReason: 'REOPENED'` → `idempotence: 'reopened'`.
-  - `an already-closed parent is a no-op` — `parentState: 'CLOSED'` → `idempotence: 'already-closed'`.
-  - `trusted heading comment means close only` — one comment `{ authorAssociation: 'MEMBER', author: { login: 'x' }, body: 'intro\n## Closed below the oversight floor\n' }` → `'close-only'`, `skipped: []`.
-  - `own-login heading comment counts` — `authorAssociation: 'NONE'`, `author.login: 'bot'` → `'close-only'`.
-  - `untrusted heading comment is skipped and named` — `authorAssociation: 'NONE'`, login `'eve'`, `url: 'u1'` → `'comment-and-close'`, `skipped.length === 1`, `skipped[0]` includes `'u1'`.
-  - `parentBody replaces the comment scan` — `parentBody: 'x\n## Closed below the oversight floor\n'` with an untrusted heading comment present → `'close-only'`, `skipped: []`; `parentBody: 'x'` with a trusted heading comment → `'comment-and-close'`.
-  - `a heading mentioned mid-line does not count` — trusted body `'see ## Closed below the oversight floor'` → `'comment-and-close'`.
-  - `AC1.5: a parent without parent-issue is reported` — `parentLabels: ['needs:human']` → `parentIssue: false`, `needs: ['needs:human']`.
-  - `unscored sibling fails closed` — `#12` labels `[]` → `maxTier: null`, `exceeds: true`, `closeReason: null`, `idempotence: null`.
-  - `above-floor risk exceeds` — `#12` `risk:high` → `exceeds: true`, `maxTier: 'high'`.
-  - `gated and resolved parents are no-ops` — `demo:pending` → `state: 'gated'`; `demo:approved` → `'resolved'`; both `exceeds: null`.
+  - `AC1.5: a parent without parent-issue is reported, not skipped` — `parentLabels: ['needs:decision']` → `parentIssue: false`, `needs: ['needs:decision']`, `state: 'due'` (the field is reported, the routing stays in prose).
+  - `unscored sibling fails closed` — `#12` labels `[]` → `maxTier: null`, `exceeds: true`, `closeReason: null`.
+  - `above-floor risk exceeds` — `#12` `['risk:high']` → `exceeds: true`, `maxTier: 'high'`.
+  - `gated and resolved parents are no-ops` — `['parent-issue', 'accept:pending']` → `'gated'`, `['parent-issue', 'demo:approved']` → `'resolved'`, both `exceeds: null`.
   - `held lists enumerated held sub-issues only` — `held: [12, 99]` → `held: [12]`.
-  - `AC1.3: pr prefers merging PR for closing members, else last same-repo reference` — `#11` closedBy `[{number:5, repo o/r}, {number:7, repository other/x}]` → `subIssues[0].pr === 5`; `#12` in `closingSet`, `mergingPr: 40` → `pr === 40`; a sub-issue with only a foreign reference → `pr === null`.
-  - `AC1.3: parseClosingTokens drops a cross-repo closing reference` — `parseClosingTokens(['12', 'other/r#11', 'O/R#13'], { owner: 'o', repo: 'r' })` → `{ numbers: [12, 13] }`; `['0']`, `['']`, `['#5']`, `['a/b#x']` each → `{ error }`.
-  - `parseParentLine reads a line-anchored Parent: #N` — `'x\nParent: #42\n'` → `42`; `'see Parent: #42'` → `null`; `''` → `null`.
+  - `pr prefers the merging PR for closing members, else the last reference, else null` — `#11` `closedBy: [5, 7]` → `7`; `#12` in `closingSet`, `mergingPr: 40` → `40`; `#12` with `mergingPr: null`, `closedBy: []` → `null`.
+  - `no parent yields the no-parent verdict` — `{ parent: null, parentLabels: [], subIssues: [] }` → `state: 'no-parent'`, every field per Global Constraints.
+  - `the verdict carries VERDICT_FIELDS in order` — `Object.keys(verdict)` deep-equals `VERDICT_FIELDS`.
+  - `an invalid risk floor throws` — `null`, `undefined`, `''`, `'critical'` each throw.
+  - `AC1.4: a human-reopened parent is never re-closed` — `evaluateIdempotence({ state: 'OPEN', stateReason: 'REOPENED', comments: [], login: 'bot' })` → `{ idempotence: 'reopened', skipped: [] }`.
+  - `an already-closed parent is a no-op, checked before reopened` — `CLOSED` + `REOPENED` → `'already-closed'`.
+  - `trusted heading comment means close only` — `MEMBER` author, body `'intro\n## Closed below the oversight floor\n'` → `'close-only'`, `skipped: []`.
+  - `own-login heading comment counts` — `NONE` association, `author.login === login` → `'close-only'`.
+  - `untrusted heading comment is skipped and named` — `CONTRIBUTOR`, `url: 'u1'` → `'comment-and-close'`, `skipped.length === 1`, `skipped[0]` includes `'u1'`.
+  - `a heading mentioned mid-line does not count` — trusted `'see ## Closed below the oversight floor'` → `'comment-and-close'`.
+  - `the local-files body variant ignores comments` — `{ state: 'OPEN', body: 'x\n## Closed below the oversight floor\n', comments: [untrusted heading] }` → `'close-only'`, `skipped: []`; `{ state: 'CLOSED', body: 'x' }` → `'already-closed'`; `{ state: 'OPEN', body: 'x' }` → `'comment-and-close'`.
+  - `IDEMPOTENCE_VALUES lists the four values in check order`.
+  - `AC1.3: parseClosingTokens drops a cross-repo closing reference` — `(['12', 'other/r#11', 'O/R#13'], { owner: 'o', repo: 'r' })` → `{ numbers: [12, 13] }`. Each of `['0']`, `['']`, `['#5']`, `['a/b#x']` → `{ error }`. `(['o/r#3'], { owner: null, repo: null })` → `{ error }`.
+  - `gatherGateFacts (native, from a sub-issue) makes the reconciler's call shapes in order` — the recorded argv equals shapes 2, 4, 5 (#11), 5 (#12), 6 exactly, and the facts equal the expected object (labels as names, `closedBy` numbers, `stateReason` uppercased, `title` trimmed).
+  - `gatherGateFacts (body-text) reads the Parent line and the parent's task list` — `#11` body `'Intro\n\nParent: #10\n'`, `#10` body `'- [ ] #11\n- [x] #12\n'` → argv shapes 1, 3, 5, 5, 6; `parent: 10`.
+  - `gatherGateFacts with no resolvable parent stops after resolution` — one recorded call; facts `{ parent: null, parentLabels: [], subIssues: [] }`.
+  - `gatherGateFacts from a parent skips resolution` — `{ parent: 10 }` → the first call is shape 4.
+  - `a failing or unparseable read throws GhFailure` — shape 5 for `#12` throws → `GhFailure` whose message starts `gh issue view 12:`. Shape 5 returning `'<html>502</html>'` → message matches `/unparseable output/`. A GraphQL answer with no repository → message starts `gh api graphql (parent):`.
+  - `gatherIdempotenceFacts reads the login only for an open, non-reopened parent` — `OPEN`/`''` → two calls (shapes 7, 8), `login: 'bot'`; `CLOSED` → one call, `login: null`; `OPEN`/`REOPENED` → one call, `login: null`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/parent-gate.test.js`
 Expected: FAIL — `Cannot find module '../../../plugin/bin/lib/issues/parent-gate'`
 
-- [ ] **Step 3: Implement `plugin/bin/lib/issues/parent-gate.js`** with the exports above. Header comment names #4603 and the eight #4466 defects it replaces in prose. Order inside `evaluateParentGate`: apply the closing set to `state`; `parentGateState`; if `due`, the floor; if `due && !exceeds`, `closeReason` then idempotence.
+- [ ] **Step 3: Implement `plugin/bin/lib/issues/parent-gate.js`** with the exports above.
+  - The header comment says the following. This is the one Node implementation of the Parent-Gate Procedure's Resolve / Enumerate / Self-inclusion / Evaluate rules and the below-floor close's idempotence check (#4603). The gathers keep #4599's call shapes. `bin/parent-gate.js` and `below-floor-parent-close.js` both compose it. It replaces the prose snippets that #4466's review found eight defects in.
+  - Move `HEADING_LINE_RE`, `isCloseMarkerComment`, `CLOSE_HEADING`, `VALID_RISK_FLOORS`, `GhFailure` and the `call`/`callJson` closures byte-for-byte from `below-floor-parent-close.js`. Leave that file untouched in this task.
+  - Order inside `evaluateParentGate`: the no-parent case; the closing-set override; `parentGateState`; `maxTier`; the floor when `due`; `closeReason` when `due && !exceeds`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/acceptance.test.js`
+Run: `node --test tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/acceptance.test.js tests/bin-lib/issues/below-floor-parent-close.test.js tests/path-guard-conformance.test.js tests/accept-label-reader-conformance.test.js`
 Expected: PASS, 0 failures
 
-- [ ] **Step 5: Commit** both files: `Add the parent-gate verdict module — refs #4603`
+- [ ] **Step 5: Commit** both files: `Add the shared Parent-Gate core — refs #4603`
 
 ---
 
-### Task 2: `bin/parent-gate.js` CLI (github-issues)
+### Task 2: Compose `closeBelowFloorParents` from the core
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/issues/below-floor-parent-close.js`
+  - `closeBelowFloorParents` keeps its signature, its `invalid-risk-floor` short-circuit and its per-closing-record loop.
+  - Per record, it calls `resolveParent` itself, before the `handled` check, so `two closing records sharing a parent` still makes two GraphQL calls.
+  - It then calls `gatherGateFacts({ parent, … })`, then `evaluateParentGate({ ...facts, closingSet, selfInclude, held: unsettled, mergingPr, riskFloor })`.
+  - It maps the verdict to the skip order it has today: `!parentIssue` → `not-parent-issue-labeled`, `needs.length` → `needs-label`, `held.length` → `sibling-unsettled`, `state !== 'due'` → `state`, `exceeds` → `above-floor`.
+  - Then it calls `gatherIdempotenceFacts` and `evaluateIdempotence`: `already-closed` → `already-closed`, `reopened` → `reopened-by-human`.
+  - It composes the comment (skipped only on `close-only`) from `verdict.subIssues`' `number`/`title`/`pr`, and `notPlanned` is `verdict.closeReason === 'not planned'`. It closes with `--reason {closeReason}` and pushes `{ parent, maxTier }` plus `notes` when `skipped` is non-empty.
+  - `GhFailure` (imported) still maps to `gh-failed`, anything else to `internal-error`.
+  - Keep `composeCloseComment` and `NOT_PLANNED_LINE` here. Re-export `isCloseMarkerComment` and `CLOSE_HEADING` from `./parent-gate`. Drop the now-unused requires.
+  - Rewrite the header comment to say that this file is the reconciler's Step 4.0b driver over `parent-gate.js`'s shared core (the code `bin/parent-gate.js` runs for the prose). Drop "The prose is the source of truth; this file follows its order and skip rules". Keep the `selfInclude: false` / no-`#205`-default / no-default-branch-check paragraphs, which still hold.
+- Modify: `plugin/bin/lib/reconcile/post-merge.js:5-7` — the header's "Step 4.0b runs lib/issues/below-floor-parent-close.js. Both stay the prose's mirrors" becomes: Step 4.0b runs `lib/issues/below-floor-parent-close.js` over `lib/issues/parent-gate.js`, the gate code the prose's `bin/parent-gate.js` CLI runs. Step 4.0 stays a `closing-links.js` run. This file only decides WHEN they run and records that they did. Change no code.
+- Modify: `docs/reconcile-checks.md:579-586` (`## Post-merge closes (#4599)`). "The prose stays the source of truth; the module only decides when the steps run and records that they did" becomes: Step 4.0b's gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js` (#4603). The module only decides when the steps run and records that they did.
+- Modify: `.claude/skills/prose-code-twin-pin/SKILL.md:253-258` (the `**Behavior-twin instance (#4599):**` paragraph). Say that since #4603 the gate's evaluation is one shared module (`plugin/bin/lib/issues/parent-gate.js`) that the prose's CLI and the reconciler both run, so the behavior twin shrinks to the close's composer. Keep the three bullets below it, which still hold.
+- Test: `tests/bin-lib/issues/parent-gate.test.js` (append)
+- Waived `tests/bin-lib/issues/below-floor-parent-close.test.js`, `tests/bin-lib/reconcile/post-merge.test.js`: **must not be edited**. They are the equivalence proof (Global Constraints).
+
+**Interfaces:**
+- Consumes: Task 1's exports.
+- Produces: `below-floor-parent-close.js` exports, unchanged in name: `CLOSE_HEADING`, `composeCloseComment`, `closeBelowFloorParents`, `isCloseMarkerComment`.
+
+- [ ] **Step 1: Write the failing tests** (append to `tests/bin-lib/issues/parent-gate.test.js`):
+  - `closeBelowFloorParents composes the shared core (one implementation)`:
+    - `require('…/below-floor-parent-close').isCloseMarkerComment` is strictly equal to `require('…/parent-gate').isCloseMarkerComment`, and `CLOSE_HEADING` is equal too.
+    - `below-floor-parent-close.js`'s source includes `require('./parent-gate')`.
+    - The source includes none of `require('./acceptance')`, `require('./oversight-floor')`, `require('./native-dependencies')`, `require('./comment-trust')`, or the literal `sub_issues`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test tests/bin-lib/issues/parent-gate.test.js`
+Expected: FAIL — the appended test only (the two `isCloseMarkerComment` functions are distinct objects, and the source still requires `./acceptance`). Task 1's tests stay green.
+
+- [ ] **Step 3: Implement** the refactor and the three comment and doc edits listed under **Files**.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/below-floor-parent-close.test.js tests/bin-lib/reconcile/post-merge.test.js tests/reconcile.test.js tests/below-floor-parent-close-conformance.test.js tests/accept-label-reader-conformance.test.js`
+Expected: PASS, 0 failures. Then `git -C "{worktree}" diff --stat f1304718d -- tests/bin-lib/issues/below-floor-parent-close.test.js tests/bin-lib/reconcile/post-merge.test.js` prints nothing.
+
+- [ ] **Step 5: Commit** the five files: `Compose the reconciler's parent close from the shared gate core — refs #4603`
+
+---
+
+### Task 3: `bin/parent-gate.js` CLI (gh)
 
 **Role:** integration
 **Review risk:** high
 
 **Files:**
 - Create: `plugin/bin/parent-gate.js`
-- Modify: `docs/plugin-structure.md` — one CLI line beside `fetch-sub-issues.js`'s (line ~219): usage, verdict fields, exit codes, test file.
 - Test: `tests/parent-gate-cli.test.js` (style: `tests/fetch-sub-issues-cli.test.js`)
-- Waived `plugin/bin/fetch-sub-issues.js`: read only — its exported `run` is called in-process, unchanged (Step 3).
+- Modify: `docs/plugin-structure.md`
+  - Add a CLI line right after `fetch-sub-issues.js`'s (line 224): usage, the verdict fields, the exit codes, and the test file.
+  - In the `plugin/bin/lib/issues/` line (29), add `parent-gate.js` (the shared gate core: `evaluateParentGate`, `gatherGateFacts`, `gatherIdempotenceFacts`, `evaluateIdempotence`, `isCloseMarkerComment`; consumed by `bin/parent-gate.js` and `below-floor-parent-close.js`, #4603).
+  - Reword `below-floor-parent-close.js`'s entry from "the Node mirror of …" to "the reconciler's Step 4.0b driver over `parent-gate.js`".
+- Waived `plugin/bin/fetch-sub-issues.js`: not consumed. See the enumeration deviation in Global Constraints.
 
 **Interfaces:**
-- Consumes: Task 1's exports; `run` from `plugin/bin/fetch-sub-issues.js` (called in-process with `['{parent}', '--repo', '{owner}/{repo}', '--resolve-retries']` and `deps` = this CLI's `ghAvailable`/`runner`/`stderr` plus a capturing `stdout`; its exit 4 → one REST call `['api', '--paginate', 'repos/{o}/{r}/issues/{p}/sub_issues', '--jq', '.[].number']`; any other non-zero → exit 3); `fetchNativeParent` (`lib/issues/native-dependencies`); `parseSubIssues` (`lib/issues/record`); `parseRepo`/`ghAvailable`/`remoteUrl` (`lib/repo-resolve`); `resolvePolicyKeys` (`lib/policy-schema`).
-- Produces: `run(argv, deps) -> exitCode`, `parseArgs(argv)`. Usage:
-  `parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>…]] [--held <n>[,<n>…]] [--merging-pr <n>] [--repo owner/name] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--backend github-issues|local-files] [--records-dir <dir>] [--help]`
-  Exactly one of `--sub-issue`/`--parent`. `--work-links`/`--risk-floor` default to `.claude-tweaks/policy.yml` at the repo root (`git rev-parse --show-toplevel`, cwd outside a repo) via `resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw })`. `deps`: `ghAvailable`, `remoteUrl`, `runner`, `repoRoot`, `readPolicyRaw`, `stdout`, `stderr` (Task 3 adds the local-store reads). `--backend local-files` is rejected with exit 1 until Task 3.
-  Gather calls (github-issues), each through `deps.runner`:
-  - native parent: `fetchNativeParent({ number, owner, repo, runner })`; body-text parent: `['issue', 'view', '{n}', '--json', 'body']` → `parseParentLine`.
-  - native enumeration: as Consumes above; body-text: `['issue', 'view', '{p}', '--json', 'body']` → `parseSubIssues`.
-  - each sub-issue: `['issue', 'view', '{n}', '--json', 'number,title,state,stateReason,labels,closedByPullRequestsReferences']` (labels mapped to names).
-  - parent: `['issue', 'view', '{p}', '--json', 'state,stateReason,labels,comments']`.
-  - login, only when the verdict reaches the idempotence branch with the parent `OPEN` and not `REOPENED`: `['api', 'user', '--jq', '.login']`.
-  No parent → print `{ parent: null, state: 'no-parent', …every other field null or [] }`, exit 0.
+- Consumes: Task 1's exports; `parseRepo`, `ghAvailable`, `remoteUrl` (`./lib/repo-resolve`); `resolvePolicyKeys` (`./lib/policy-schema`); `readWorkBackend` (`./lib/work-backend`); `GH_TIMEOUT_MS` (`./lib/shared-primitives`).
+- Produces: `run(argv, deps) -> exitCode`, `parseArgs(argv)`, `USAGE`. Usage:
+  `parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>…]] [--held <n>[,<n>…]] [--merging-pr <n>] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--backend github-issues|local-files] [--records-dir <dir>] [--help]`
+  - Exactly one of `--sub-issue`/`--parent`. Every value flag validates its value in `parseArgs`: a trailing bare flag, `''` or a `--`-prefixed value is exit 1. `--held`/`--merging-pr` take positive integers. `--risk-floor` must be in `VALID_RISK_FLOORS`, and `--work-links` in the policy schema's values.
+  - There is **no `--repo` flag**. Owner/repo come from `deps.remoteUrl()` through `parseRepo`, with the `.`/`..` guard copied from `fetch-sub-issues.js:94-97`. The reason: shapes 1, 3, 6 and 7 carry no `--repo`, so they read the repo of `gh`'s cwd. A `--repo` override would split the gate's reads across two repositories.
+  - `--work-links`/`--risk-floor` default to `.claude-tweaks/policy.yml` at `deps.repoRoot()` (`git rev-parse --show-toplevel`, else the cwd) through `resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw: deps.readPolicyRaw(root) })`. That is the same read the prose's `resolve-policy.js --values …` made.
+  - `--backend` defaults to `deps.readWorkBackend(root)`: `local-files` → local-files, anything else (`null` included) → `github-issues`. Until Task 5, `local-files` exits 1 with `--backend local-files is not supported yet`. Until Task 4, `--facts-json` is an unknown argument (exit 1).
+  - `deps`: `ghAvailable`, `remoteUrl`, `runner`, `repoRoot`, `readPolicyRaw`, `readWorkBackend`, `stdout`, `stderr`. Each one that can throw is try/caught: `remoteUrl` → `null` → exit 2, `repoRoot` → cwd, `readPolicyRaw` → `null`.
+  - Flow: parse → `--help` (exit 0, before any probe) → backend → `ghAvailable()` (false → exit 2, stderr names `--facts-json` as the gh-absent route) → owner/repo (else exit 2) → closing set → `gatherGateFacts` → `evaluateParentGate`. When `state === 'due' && exceeds === false`, it then runs `gatherIdempotenceFacts` → `evaluateIdempotence` → fills `idempotence`/`skipped`. It prints one line: `JSON.stringify` of the verdict in `VERDICT_FIELDS` order, plus `\n`. A `GhFailure` → stderr `parent-gate.js: {message}`, exit 3.
 
-- [ ] **Step 1: Write the failing tests.** A fake runner keyed on argv answers each gather call from a fixture map; `ghAvailable: () => true`, `remoteUrl: () => 'git@github.com:o/r.git'`, `readPolicyRaw: () => 'work-links: native\nrisk-floor: high\n'`. Tests:
-  - `AC1.1: a parent with more than 30 sub-issues is enumerated in full` — `--parent 10`; the GraphQL sub-issue answer lists 35 numbers (100-134), all `CLOSED`/`COMPLETED`/`risk:low` except #130 `OPEN` → `state: 'incomplete'`, `subIssues.length === 35`. Same fixture with #130 closed → `state: 'due'`.
-  - `AC1.1: the REST fallback paginates when the subIssues field is unavailable` — schema probe reports the field absent (fetch-sub-issues exit 4) → the runner sees `['api', '--paginate', 'repos/o/r/issues/10/sub_issues', '--jq', '.[].number']`; 35 numbers back → `subIssues.length === 35`.
-  - `AC1.2: all closed not-planned` — `--sub-issue 11 --closing 11`, #11 `OPEN`, #12 `NOT_PLANNED` → `closeReason: 'completed'` (closing member); same with #11 `NOT_PLANNED` and `--parent 10` → `'not planned'`.
+- [ ] **Step 1: Write the failing tests.** A fake runner keyed on argv answers the eight shapes from a world fixture (owner/repo `o/r`) and throws on anything else. Base deps: `ghAvailable: () => true`, `remoteUrl: () => 'git@github.com:o/r.git'`, `repoRoot: () => '/repo'`, `readPolicyRaw: () => 'work-links: native\nrisk-floor: high\n'`, `readWorkBackend: () => 'github-issues'`, and capturing `stdout`/`stderr`. Tests:
+  - `AC1.1: a parent with more than 30 sub-issues is enumerated in full` — `--parent 10`. Shape 4 answers 35 numbers (100-134), all `CLOSED`/`COMPLETED`/`risk:low` except #130 `OPEN`. Expect `state: 'incomplete'`, `subIssues.length === 35`, and the runner saw `['api', '--paginate', 'repos/o/r/issues/10/sub_issues', '--jq', '.[].number']` once and 35 shape-5 reads. With #130 closed: `state: 'due'`, `exceeds: false`, `closeReason: 'completed'`, `idempotence: 'comment-and-close'`.
+  - `AC1.2: all closed not-planned` — `--parent 10`, #11 and #12 `NOT_PLANNED` → `closeReason: 'not planned'`. `--sub-issue 11 --closing 11` with #11 `OPEN` and #12 `NOT_PLANNED` → `closeReason: 'completed'` (a closing member).
   - `AC1.3: a cross-repo closing token does not close this repo's sub-issue` — `--sub-issue 12 --closing other/r#11,12`, #11 `OPEN` → `state: 'incomplete'`.
-  - `AC1.4: a human-reopened parent` — parent `stateReason: 'REOPENED'` → `idempotence: 'reopened'`, and the runner never sees `['api', 'user', …]`.
-  - `AC1.5: a parent without parent-issue` — parent labels `[]` → `parentIssue: false`, exit 0.
-  - `body-text resolves Parent: #N and the parent's task list` — `--work-links body-text`, #11 body `'Parent: #10'`, #10 body `'- [x] #11\n- [x] #12'` → `parent: 10`, `subIssues.length === 2`.
-  - `no resolvable parent prints no-parent` — native parent `null` → `{ parent: null, state: 'no-parent' }`, exit 0.
+  - `AC1.4: a human-reopened parent` — shape 7 answers `OPEN`/`REOPENED` → `idempotence: 'reopened'`, and the runner never sees shape 8.
+  - `AC1.5: a parent without parent-issue` — shape 6 answers `[]` → `parentIssue: false`, `state: 'due'`, exit 0.
+  - `body-text resolves Parent: #N and the parent's task list` — `--work-links body-text` → `parent: 10`, `subIssues.length === 2`, and no GraphQL call.
+  - `no resolvable parent prints no-parent` — native parent `null` → `{ parent: null, state: 'no-parent' }`, exit 0, one runner call.
   - `--sub-issue without --closing counts itself closed` — #11 `OPEN`, #12 `CLOSED` → `state: 'due'`.
-  - exit codes: no args / both selectors / `--sub-issue 0` / `--closing a/b#x` / `--risk-floor bogus` → 1; `ghAvailable: () => false` → 2; one sub-issue view throws → 3 with empty stdout and stderr naming `#12`; `--help` → 0 before `ghAvailable` is called.
+  - `--held and --merging-pr reach the verdict` — `--sub-issue 11 --held 12 --merging-pr 40` → `held: [12]`, `subIssues[0].pr === 40`.
+  - `the policy file supplies the floor and work-links; flags override` — `readPolicyRaw` `risk-floor: low` → `exceeds: true` for `risk:low` sub-issues. Adding `--risk-floor high` → `exceeds: false`.
+  - `stdout is one JSON line in VERDICT_FIELDS order`.
+  - exit codes:
+    - exit 1, with nothing on stdout: no args; both selectors; `--sub-issue 0`; a trailing bare `--sub-issue`; `--closing ''`; `--closing a/b#x`; `--held x`; `--risk-floor bogus`; `--work-links bogus`; `--repo o/r`; an unknown flag.
+    - exit 2: `ghAvailable: () => false`, with stderr naming `--facts-json`. Also exit 2: `remoteUrl` throws.
+    - exit 3: the shape-5 read for #12 throws, with empty stdout and stderr including `issue view 12`.
+    - exit 0: `--help`, with stdout `USAGE`, before `ghAvailable` is called (a `ghAvailable` that throws if called).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/parent-gate-cli.test.js`
 Expected: FAIL — `Cannot find module '../plugin/bin/parent-gate'`
 
-- [ ] **Step 3: Implement `plugin/bin/parent-gate.js`** — header comment carries the usage, the verdict fields and the exit codes; real `runner` = `execFileSync('gh', args, { encoding: 'utf8', timeout: 30000, windowsHide: true })`; `require.main` guard sets `process.exitCode`. Add the `docs/plugin-structure.md` line.
+- [ ] **Step 3: Implement `plugin/bin/parent-gate.js`.**
+  - Header comment: the usage, the verdict fields, the exit codes, and why there is no `--repo` flag.
+  - Real deps: the runner from Global Constraints; `repoRoot` as `execFileSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim()`; `readPolicyRaw` reading `{root}/.claude-tweaks/policy.yml` with `ENOENT` → `null`.
+  - The `require.main === module` guard sets `process.exitCode = run(process.argv.slice(2), realDeps)`.
+  - Add the two `docs/plugin-structure.md` edits.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js tests/fetch-sub-issues-cli.test.js tests/windows-hide-spawn-conformance.test.js tests/bin-lib/exit-code-conformance.test.js`
+Run: `node --test tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js tests/windows-hide-spawn-conformance.test.js tests/bin-lib/exit-code-conformance.test.js tests/bin-lib/repo-resolve.test.js tests/accept-label-reader-conformance.test.js tests/path-guard-conformance.test.js`
 Expected: PASS, 0 failures
 
-- [ ] **Step 5: Real-input probe** (record each printed line in the task report). From the worktree:
-  - `node plugin/bin/parent-gate.js --parent 3374` — expect `state` `gated`/`resolved`/`due` and `subIssues.length === 8`; independent count: `node plugin/bin/fetch-sub-issues.js 3374 --resolve-retries` lists 8.
-  - `node plugin/bin/parent-gate.js --sub-issue 3375` — expect `parent: 3374`.
-  - `node plugin/bin/parent-gate.js --parent 3972` — expect `state: 'incomplete'`, `subIssues.length === 7`, `parentIssue: true`.
-  - `node plugin/bin/parent-gate.js --sub-issue 4603` — expect `state: 'no-parent'`.
-  A mismatch is a defect to fix before committing, not a number to adjust.
+- [ ] **Step 5: Real-input probe.** Run each line from the worktree as its own Bash call and record each printed line in the task report. These values were verified live on 2026-10-31 (`gh issue view`, `gh api --paginate …/sub_issues`, `fetchNativeParent`, and `node plugin/bin/fetch-sub-issues.js 3374 3972 4603 --resolve-retries`). A mismatch is a defect to fix before committing, not a number to adjust. If live state has since moved (for example, #3972's open sub-issues closed), re-derive the expectation from `fetch-sub-issues.js` and `gh issue view` and name the change.
+  - `node plugin/bin/parent-gate.js --parent 3374`
+    - The parent is `CLOSED`/`COMPLETED`, with labels `parent-issue`, `demo:approved` and `demo:approved-batch`.
+    - It has 8 sub-issues: `[3375, 3376, 3377, 3378, 3379, 3380, 3381, 3386]`. All read `CLOSED` except #3381.
+    - Expect `state: 'resolved'` (the disposition label wins over the open #3381), `parentIssue: true`, `exceeds: null`, `idempotence: null`, `subIssues.length === 8`.
+  - `node plugin/bin/parent-gate.js --sub-issue 3375` — the native parent of #3375 is #3374. Expect `parent: 3374`, `state: 'resolved'`.
+  - `node plugin/bin/parent-gate.js --parent 3972`
+    - The parent is `OPEN`, labelled `parent-issue`, with no disposition.
+    - It has 7 sub-issues `[3973 … 3979]`. #3973 and #3979 are closed completed; #3974-#3978 are open, all `risk:medium` except #3979, which carries no `risk:*`.
+    - Expect `state: 'incomplete'`, `parentIssue: true`, `needs: []`, `subIssues.length === 7`, `maxTier: null` (#3979 is unscored).
+  - `node plugin/bin/parent-gate.js --sub-issue 3974 --closing 3974` — the parent is #3972 and the other four sub-issues are still open. Expect `parent: 3972`, `state: 'incomplete'`, and `subIssues[1]` (#3974) `{ state: 'CLOSED', stateReason: 'COMPLETED' }`.
+  - `node plugin/bin/parent-gate.js --sub-issue 4603` — #4603 has no native parent (`fetchNativeParent` → `null`). Expect `state: 'no-parent'`, exit 0.
 
 - [ ] **Step 6: Commit** the three files: `Add bin/parent-gate.js — the Parent-Gate Procedure's gather and evaluate as one CLI — refs #4603`
 
 ---
 
-### Task 3: local-files backend
+### Task 4: `--facts-json` — the gh-absent MCP fact source
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Create: `plugin/bin/lib/issues/mcp-parent-gate-shape.js`
+- Test: `tests/bin-lib/issues/mcp-parent-gate-shape.test.js`
+- Modify: `plugin/bin/parent-gate.js`
+- Test: `tests/parent-gate-cli.test.js` (append)
+- Modify: `.claude/skills/mcp-agent-fetch-node-compute/SKILL.md`
+  - Add an Instances row: `bin/parent-gate.js --facts-json <path>` (#4603), driven by `wrap-up/verification-brief-parent-gate.md`'s Transport paragraph. The agent fetches `issue_read` `get_parent`/`get_sub_issues`/`get`/`get_comments` and `get_me`, written unreshaped. The compute is `normalizeMcpFacts`, then the same `evaluateParentGate`/`evaluateIdempotence` the gh path runs.
+  - Rule 10's last sentence currently says the agent uppercases and the Transport paragraph states the mapping. It becomes: since #4603 `mcp-parent-gate-shape.js` does that normalization in Node, and the Transport paragraph names it.
+
+**Interfaces:**
+- Produces (`mcp-parent-gate-shape.js`, pure, no I/O):
+  - `FACTS_KEYS = ['parentLink', 'subIssueGet', 'subIssueList', 'parentGet', 'subIssueGets', 'parentComments', 'me']`. Each key holds one MCP result written unreshaped:
+    - `parentLink` — `issue_read` `get_parent` of the sub-issue in hand, or `null` when it has none. Native, sub-issue-side entry only.
+    - `subIssueGet` — `issue_read` `get` of the sub-issue in hand. Body-text, sub-issue-side entry only.
+    - `subIssueList` — every `get_sub_issues` entry, all pages concatenated. Native only.
+    - `parentGet` — `issue_read` `get` of the parent.
+    - `subIssueGets` — `{ "<n>": issue_read get of n }`, with exactly one key per enumerated number.
+    - `parentComments` — every `get_comments` entry of the parent, all pages concatenated.
+    - `me` — `get_me`'s result.
+  - `class FactsError extends Error` with `exit` (`1` or `3`) and `key` (the offending entry, for example `subIssueGets.12`).
+  - `normalizeMcpFacts(raw, { subIssue, parent, workLinks }) -> { gate, idempotence }`.
+    - `gate` is the facts shape (Global Constraints).
+    - `idempotence` is `{ state, stateReason, comments, login }`. `comments` and `login` are `undefined` when their keys are absent.
+    - It throws `FactsError`:
+      - exit 1 for a top level that is not a plain object;
+      - exit 1 for a required key that is absent, or a `subIssueGets` key set that is not exactly the enumerated numbers (a key missing or unrequested);
+      - exit 3 for a present entry that fails its guard.
+
+    The guards:
+    - `parentLink` is `null` or a plain object with a positive-integer `number`.
+    - `subIssueGet`/`parentGet` are plain objects whose `number` equals the expected number and whose `state` is a string. `body` is a string when body-text needs it.
+    - `labels` is an array of strings or `{ name: string }`.
+    - `subIssueList` is an array whose entries carry a positive-integer `number`.
+    - `parentComments` is an array of plain objects with a string `body`.
+    - `me` is a plain object with a non-empty string `login`.
+
+    So an MCP error object (`{ message: 'Not Found' }`) or a wrapper written as data is exit 3, never content.
+
+    Normalization (rules 9 and 10), a no-op on a gh-shaped entry:
+    - `state` and `stateReason ?? state_reason` are uppercased (`null` → `''`).
+    - Label objects become names.
+    - `title` is trimmed.
+    - `closedBy` comes from `closedByPullRequestsReferences`, or from `closed_by_pull_requests` given either as an array of `{ number }` or as `{ references: [{ number }] }` (the `_shared/github-write-transport.md:27` row). It is `[]` when absent; any other shape fails the guard (exit 3).
+    - Each comment becomes `{ body, author: c.author || { login: c.user && c.user.login }, authorAssociation: c.authorAssociation || c.author_association, url: c.url || c.html_url }`.
+    - Body-text resolution and enumeration reuse `/^Parent: #(\d+)/m` and `parseSubIssues`, the same as the gh gather.
+- CLI:
+  - `--facts-json <file>` reads the file with `deps.readFile`. A read error or a JSON parse failure is exit 1. It never calls `deps.ghAvailable` or `deps.runner`.
+  - Owner/repo still come from `deps.remoteUrl()` for `parseClosingTokens` (a git read, not `gh`); unresolvable is exit 2.
+  - After `evaluateParentGate`, when `state === 'due' && exceeds === false` and the parent reads neither `CLOSED` nor `REOPENED`, a missing `parentComments` or `me` is exit 1, with stderr naming the key.
+  - `--facts-json` together with `--backend local-files` is exit 1.
+  - `FactsError` → stderr `parent-gate.js: facts file {key}: {message}`, exit `err.exit`.
+  - `deps` gains `readFile`.
+
+- [ ] **Step 1: Write the failing tests.**
+  - In `tests/bin-lib/issues/mcp-parent-gate-shape.test.js`:
+    - `normalizes the MCP shape` — lowercase `closed`/`not_planned`/`reopened` become `CLOSED`/`NOT_PLANNED`/`REOPENED`; label objects become names; both `closed_by_pull_requests` forms become numbers; `user.login` → `author.login`; `author_association` → `authorAssociation`; `html_url` → `url`.
+    - `is a no-op on a gh-shaped entry` — a gh-shaped input normalizes to the same facts as its MCP twin.
+    - `an error object recorded as data is exit 3, named` — `subIssueGets['12'] = { message: 'Not Found' }` → `FactsError`, `exit === 3`, `key === 'subIssueGets.12'`. Same for a `parentGet` whose `number` does not match, a `subIssueList` entry with no `number`, a non-array `parentComments`, and a `me` with no `login`.
+    - `a missing or unrequested key is exit 1` — `subIssueGets` lacking an enumerated number; holding an extra number; `parentGet` absent; top level `null` or `[]`.
+    - `FACTS_KEYS lists the seven keys`.
+  - Appended to `tests/parent-gate-cli.test.js`, with a `writeFacts(obj)` helper writing to a `t.after`-cleaned temp dir:
+    - `AC1.1 (facts-json): 35 sub-issues through the MCP shape` — `subIssueList` holds 35 entries, all lowercase `closed`/`completed` except one `open` → `state: 'incomplete'`, `subIssues.length === 35`.
+    - `AC1.6: the gh path and the facts-json path give the same verdict` — for each AC1.2-AC1.5 world, the verdict printed through the fake gh runner deep-equals the one printed through the same world rendered as an MCP facts file (lowercase enums, label objects, snake_case comments).
+    - `--facts-json makes no gh call and never probes gh` — `ghAvailable` and `runner` both throw if called; exit 0.
+    - `a parent that reads closed needs no comments or me` — `parentGet.state: 'closed'`, no `parentComments`/`me` → exit 0, `idempotence: 'already-closed'`.
+    - `an open below-floor parent without comments or me is exit 1` — stderr names `parentComments`, stdout empty.
+    - `an unreadable or non-JSON facts file is exit 1; an error-object entry is exit 3` — stdout empty in each case.
+    - `--facts-json with --backend local-files is exit 1`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test tests/bin-lib/issues/mcp-parent-gate-shape.test.js tests/parent-gate-cli.test.js`
+Expected: FAIL — `Cannot find module '../../../plugin/bin/lib/issues/mcp-parent-gate-shape'`. In `tests/parent-gate-cli.test.js`, only the appended tests fail (`--facts-json` is an unknown argument, exit 1). Task 3's tests stay green.
+
+- [ ] **Step 3: Implement** the module, the CLI branch and the skill-doc edit. Then prove the guard red: temporarily make the `subIssueGets` guard accept any object, run `node --test tests/bin-lib/issues/mcp-parent-gate-shape.test.js`, see `an error object recorded as data is exit 3, named` fail, and restore the guard. This is a scratch check and is not committed.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/bin-lib/issues/mcp-parent-gate-shape.test.js tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js tests/path-guard-conformance.test.js tests/accept-label-reader-conformance.test.js`
+Expected: PASS, 0 failures
+
+- [ ] **Step 5: Commit** the five files: `Teach bin/parent-gate.js the gh-absent facts file — refs #4603`
+
+---
+
+### Task 5: `--backend local-files`
 
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/parent-gate.js`, `docs/plugin-structure.md` (its line from Task 2)
+- Modify: `plugin/bin/parent-gate.js`
 - Test: `tests/parent-gate-cli.test.js` (append)
+- Modify: `docs/plugin-structure.md` — the CLI line (Task 3) gains `--facts-json` and `--backend local-files`. The `plugin/bin/lib/issues/` line gains `mcp-parent-gate-shape.js` (`normalizeMcpFacts`, `FACTS_KEYS`; consumed by `bin/parent-gate.js --facts-json`, #4603).
 
 **Interfaces:**
-- Consumes: `queryRecords`/`DEFAULT_DIR` (`lib/issues/local-store`).
-- Produces: `--backend local-files [--records-dir <dir>]` (default `DEFAULT_DIR`, relative to the repo root). No `gh` call, no `ghAvailable` check. Sub-issue record: the open+closed listing entry with `id === n`; parent = its `facets.parent` (`null` → `no-parent`). Sub-issues: `[...queryRecords(dir, { parent }), ...queryRecords(dir, { parent, closed: true })]` → `{ number: r.id, title: r.title, state: r.facets.closed ? 'CLOSED' : 'OPEN', stateReason: r.facets.closed ? (r.facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED') : '', labels: [] plus 'risk:{r.facets.risk}' when set, closedBy: [] }`. Parent record: `parentLabels` = `r.facets.acceptance ? ['demo:' + r.facets.acceptance] : []`, plus `'parent-issue'` when `facets.isParentIssue === true`; `parentState` from `facets.closed`, `parentStateReason: ''`; idempotence via Task 1's `parentBody` input (the parent record's body; no comments, no login). `closeReason` is computed exactly as for github-issues. A filesystem error → exit 3. `deps` gains `queryRecords` (default the real one) so tests use a temp dir via the real store.
+- Consumes: `queryRecords`, `DEFAULT_DIR` (`./lib/issues/local-store`); `LABELS` (`./lib/issues/record-vocabulary`).
+- Produces: `--backend local-files [--records-dir <dir>]`.
+  - The records dir defaults to `DEFAULT_DIR`, resolved against `deps.repoRoot()`.
+  - It makes no `gh` call and no `ghAvailable` or `remoteUrl` call. Closing tokens must be plain ids: a qualified token is exit 1.
+  - The sub-issue record is the open+closed listing entry with `id === n` (exit 1 when absent). Its parent is `facets.parent`: `null` → `no-parent`; set but unknown to the store → exit 1.
+  - Gate facts:
+    - `subIssues` is `[...queryRecords(dir, { parent }), ...queryRecords(dir, { parent, closed: true })]` mapped to `{ number: r.id, title: r.title, state: r.facets.closed ? 'CLOSED' : 'OPEN', stateReason: r.facets.closed ? (r.facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED') : '', labels: r.facets.risk ? ['risk:' + r.facets.risk] : [], closedBy: [] }`.
+    - `parentLabels` is `LABELS.PARENT_ISSUE` when `facets.isParentIssue === true`, plus `{ pending: LABELS.ACCEPT_PENDING, approved: LABELS.ACCEPT_APPROVED, 'changes-requested': LABELS.ACCEPT_CHANGES_REQUESTED }[r.facets.acceptance]` when set. There is no `demo:` literal (Global Constraints).
+  - Idempotence: `evaluateIdempotence({ state: parent.facets.closed ? 'CLOSED' : 'OPEN', body: parent.body })`.
+  - A filesystem error is exit 3. `deps` gains `queryRecords` (default: the real one), so tests use the real store in a temp dir.
 
-- [ ] **Step 1: Write the failing tests** — build records in a temp dir with `createRecord`/`closeRecord` (the real writers, never hand-written files): parent with `is-parent-issue`, two sub-issues with `parent` facets and `risk: low`.
-  - `local-files: all sub-issues not planned closes not planned` — both closed with `notPlanned: true` → `closeReason: 'not planned'`.
+- [ ] **Step 1: Write the failing tests.** Build records in a temp dir with the real writers: `createRecord`, then `closeRecord`, with `notPlanned: true` set through `writeRecord` on the read-back record. Never hand-write a record file. The parent has `isParentIssue: true`; two sub-issues have `parent` facets and `risk: 'low'`.
+  - `local-files: all sub-issues not planned closes not planned` — both closed and `notPlanned` → `closeReason: 'not planned'`.
   - `local-files: due below the floor closes completed` — both closed → `{ state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', parentIssue: true }`.
-  - `local-files: closing set counts the sub-issue in hand` — one open, `--sub-issue {that id}` → `state: 'due'`.
+  - `local-files: closing set counts the sub-issue in hand` — one open, `--sub-issue {its id}` → `state: 'due'`.
   - `local-files: a body heading means close only; a closed parent is a no-op` — parent body ends with the heading → `'close-only'`; closed parent → `'already-closed'`.
-  - `local-files: acceptance facet gates` — parent `acceptance: 'pending'` → `state: 'gated'`.
-  - `local-files: never calls gh` — `ghAvailable` throws if called; exit 0.
+  - `local-files: the acceptance facet gates` — `acceptance: 'pending'` → `state: 'gated'`; `'approved'` → `'resolved'`.
+  - `local-files: never calls gh, ghAvailable or remoteUrl` — each throws if called; exit 0.
+  - `local-files: a qualified closing token or an unknown id is exit 1`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/parent-gate-cli.test.js`
-Expected: FAIL after Step 1 — the new tests only (exit 1, `--backend local-files` rejected).
+Expected: FAIL — the appended tests only (exit 1, `--backend local-files is not supported yet`). Every earlier test stays green.
 
-- [ ] **Step 3: Implement** the backend branch; update the docs line.
+- [ ] **Step 3: Implement** the backend branch and the docs edits.
 
-- [ ] **Step 4: Run** `node --test tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js` — Expected: PASS, 0 failures.
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js tests/accept-label-reader-conformance.test.js tests/path-guard-conformance.test.js`
+Expected: PASS, 0 failures
 
 - [ ] **Step 5: Commit** the three files: `Teach bin/parent-gate.js the local-files backend — refs #4603`
 
 ---
 
-### Task 4: Route the Parent-Gate Procedure through the CLI
+### Task 6: Route the Parent-Gate Procedure through the CLI
 
 **Role:** judgment
 **Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md`
-  - New section `## Run the gate CLI`, placed right before `## Resolve the parent`: the one invocation per entry shape (sub-issue side: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {$CLOSING_SUB_ISSUES, comma-joined}`; Step 4.0b adds `--held {…}` and `--merging-pr {pr}` when non-empty; parent side: `--parent {n}`; `--backend local-files` under that driver), the verdict fields (Global Constraints, one line each), and exit codes 2/3 → the existing **Fail open on every `gh` call** paragraph (unchanged).
-  - `## Resolve the parent`, `## Enumerate the parent's sub-issues`, `## Self-inclusion rule`, `## Evaluate the gate`: keep every heading (other files cite them by name) and the rules they state — the self-inclusion table and its default-set rule stay, since callers size `$CLOSING_SUB_ISSUES` from it — but delete every fenced snippet (`WORK_LINKS=…`, the `gh api --paginate …/sub_issues` fence with its body-text half, the local-files `queryRecords` fence, the parent-labels `gh issue view` fence, the `resolve-policy.js --values risk-floor size-floor` fence, the `exceedsOversightFloor(…)` fence) and every sentence instructing an agent to fetch or compute; each section says, in one or two sentences, what the CLI does for it. `## Evaluate the gate` routes on `state`, `exceeds`, `parentIssue`, `needs` and `held`; keep the literal "no `demo:pending`, no brief" and "end-to-end variant" in the `**`exceeds: false`**` bullet (pinned by `tests/try-it-contract-conformance.test.js:170-171`).
-  - `## Close the parent below the floor` step 1: replace the two `gh` fences and the comment-counting rules with routing on `idempotence` (`already-closed`/`reopened` → no-op, `reopened` reported in the output; `close-only` → step 3's close call only; `comment-and-close` → steps 2-3) and on `skipped` (each named in the output). Step 2 takes `{maxTier}`, `{riskFloor}` and each listing line's `{title}`/`{pr}` from the verdict (`subIssues[].pr`, `null` → no suffix); step 3 closes with `--reason "{closeReason}"`. Leave steps 4-5 and every later section as they are.
-- Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.0b — the per-record sentence runs the CLI (`--sub-issue {n} --closing {$CLOSING_SUB_ISSUES} --held {each reopened[], pendingClose[] and failed[] issue} [--merging-pr {pr-number}]`) and routes: `held` non-empty → skip and name; `parentIssue: false` → no-op, named; `needs` non-empty → skip and name; `due` + `exceeds: false` → **Close the parent below the floor**. Keep the pinned sentences quoted by `tests/below-floor-parent-close-conformance.test.js` lines 257-344 byte-identical unless a sentence instructs an agent to fetch; retarget any such pin.
-- Modify: `tests/below-floor-parent-close-conformance.test.js` — inventory every assertion literal reading `verification-brief-parent-gate.md`'s Resolve/Enumerate/Self-inclusion/Evaluate sections and Close step 1, and Step 4.0b; give each a verdict in the commit body (moved / retargeted to `{new literal}` / retired: `{reason — behavior now unit-tested in tests/parent-gate-cli.test.js or tests/bin-lib/issues/parent-gate.test.js}`). Known now: lines 130, 132, 135, 136-141, 142 (Close step 1 literals) and 152-153 (Enumerate literals) retire to the unit tests; add `AC2.1: the gate file no longer composes the sub-issue enumeration` asserting the collapsed file text lacks `issues/$PARENT_NUM/sub_issues` and includes `bin/parent-gate.js`, with a go-red control over the frozen pre-change Enumerate fence (`git show d4d40c982:plugin/skills/wrap-up/verification-brief-parent-gate.md`, the test's existing `preChangeGate` pattern).
-- Modify: `tests/skill-fence-guard-shapes.test.js:156` — drop the `'# work-links: native'` ratchet entry once that fence is gone (keep line 157's).
-- Check (no change expected): `tests/comment-trust-conformance.test.js` (its `PARENT_GATE` pin is the **Apply the gate** brief paragraph, untouched), `tests/session-tmp-root-migration.test.js` (lists the file; the `wrapup-parent-body.md` resolve leaves with the fence), `tests/try-it-contract-conformance.test.js`, `tests/demo-full-verification-pointer.test.js`, `tests/verify-json-acceptance-guard-conformance.test.js`.
+  - **New `## Run the gate CLI`, placed right before `## Evaluate the gate`** (after the Self-inclusion rule section).
+    - Placement: every existing pointer runs through this spot with no caller edit — tidy's "from **Enumerate the parent's sub-issues** onward", Step 4.0b's "from **Resolve the parent** through **Evaluate the gate**", `verification-brief.md:44`'s "starts at **Enumerate the parent's sub-issues**", and Two entry shapes' "Run every section below in order".
+    - The section says that `bin/parent-gate.js` applies the sections above (Resolve, Enumerate, Self-inclusion) and Evaluate's state and floor rules below as code, in one call made as its own Bash call.
+    - Sub-issue-side fence: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {closing-sub-issues}`, where `{closing-sub-issues}` is `$CLOSING_SUB_ISSUES` comma-joined and sized by the table above.
+    - Parent-side fence: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --parent {parent-number}`.
+    - `--backend local-files` under that driver.
+    - The gh-absent path: fetch per the **Transport (#4602).** paragraph; resolve the facts file's path as its own call (`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value parent-gate-facts.json`, with `_shared/session-tmp-root.md` cited); write the MCP results with the Write tool under the seven `FACTS_KEYS` keys, each one named with its MCP read and when it is needed; add `--facts-json {that path}`. If any MCP read fails, write no file: that is a failing call under the Fail open paragraph.
+    - One line per verdict field (`VERDICT_FIELDS`).
+    - Exit routing: 0 → route the verdict; 2 with `gh` absent → the gh-absent path; any other non-zero exit → a failing `gh` call under **Fail open on every `gh` call** (unchanged).
+    - Fences hold only `node …` lines with `{…}` placeholders (no `$VAR`, no `gh`), so no `tools/guard-refusals/shapes.js` detector fires.
+  - `## Resolve the parent`: keep the heading, the per-driver resolution rule and the **No parent resolvable** paragraph. Add one sentence: the CLI resolves it (`--sub-issue`) and reports `state: 'no-parent'` when it finds none.
+  - `## Enumerate the parent's sub-issues`: keep the heading and every rule — parent side only; the `work-links` branches; the local-files reverse query; that each sub-issue's `state`, `stateReason`, labels, `title` and `closedByPullRequestsReferences` are read once; that the parent's labels are read fresh on both entry shapes. Delete all four fences (`WORK_LINKS=…`, the `# work-links: native` fence with its body-text half, the local-files `queryRecords` fence, the parent-labels `gh issue view` fence) and the inline `gh issue view {n} --json …` span. Say in one sentence each that the CLI performs that read.
+  - `## Self-inclusion rule`: keep everything except the `**Ruling (`#205`): …**` paragraph, which gains a closing sentence: since #4603 the CLI applies the default itself (`--sub-issue {n}` with no `--closing` counts `{n}`), so an omitted set can no longer reach the gate. A wrong value still can, which is why the table stays.
+  - `## Evaluate the gate`:
+    - Replace "Call `parentGateState({ subIssues, parentLabels })`, where …" with: the verdict's `state` is `parentGateState(...)`'s, over the enumerated sub-issues with the Self-inclusion rule applied and the parent's labels (local-files: the `facets.acceptance` translation).
+    - Keep the three state bullets.
+    - Delete the `resolve-policy.js --values risk-floor size-floor` fence and the `exceedsOversightFloor(…)` fence. The CLI resolves `risk-floor` from `.claude-tweaks/policy.yml`, overridable with `--risk-floor`, and reports `riskFloor`, `maxTier` (`null` when a sub-issue is unscored) and `exceeds`.
+    - Keep the **`sizeFloor` must be the literal `null`** paragraph and both `exceeds` bullets byte-identical, except for the one reconciler sentence retargeted in the inventory below. This section routes on `state` and `exceeds` only: `parentIssue`, `needs` and `held` are Step 4.0b's (Reading B).
+  - `## Close the parent below the floor` step 1: replace from `**1. Idempotence — check before writing anything.**` through the end of its bullet list with this text, verbatim (rewrap only at spaces outside code spans):
+
+    ```markdown
+    **1. Idempotence — route on the verdict before writing anything.** **Run the gate CLI** read the
+    parent's state, `stateReason` and comments, and the current `gh` identity, whenever its verdict
+    reached this section's case, so its `idempotence` field says what to do:
+
+    - `already-closed`: A parent already `CLOSED` is a no-op: an earlier entry, or a human, closed it.
+    - `reopened`: An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and never re-closed: a human reopened it after an earlier close.
+    - `close-only`: a comment carries a `## Closed below the oversight floor` heading line, counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the CLI reads its login), since the plugin's own bot or app token can post under an untrusted author association. An earlier run posted the comment and its close then failed: run only step 3's close call, with no second comment.
+    - `comment-and-close`: run steps 2 and 3. Any other comment carrying the heading reads as no comment posted, and the verdict's `skipped` names each one; name each in that section's skip notice in the output, since planting a heading must not suppress the real comment.
+
+    Under `work-backend: local-files` the CLI reads the parent record instead: `already-closed` is a set `facets.closed`, `close-only` a body already holding the heading, and `reopened` never occurs; step 5's fence repeats both checks. Steps 2 and 3 take `{maxTier}`, `{riskFloor}`, each listing line's `{n}`, `{title}` and `{pr}` (`subIssues[]`; a `null` `pr` means no suffix) and the close reason (`closeReason`) from the same verdict.
+    ```
+  - Step 2's local-files sentence, "from `subIssueRecords` above (`r.id`, `r.title`)", references the Enumerate fence this task deletes. It becomes "from the verdict's `subIssues[]` (`number`, `title`)". This is the only edit to steps 2-5. Every other byte of steps 2-5, Compose and Apply stays.
+  - **Transport (#4602).** paragraph: rewrite the gh-absent path so that the reads the CLI makes become MCP reads written to the facts file and handed to it with `--facts-json`. Keep, byte-identical, every literal the `#4602` tests pin there (the inventory below): `` `get_parent` ``, "`get_comments` for comments, paged per its row", "every `gh issue view` read", "`gh api user` is `get_me`", "`gh issue comment` is `add_issue_comment`", "`gh issue close` and `gh issue edit --add-label` are `issue_write`", the label-bootstrap sentence, the normalization list ("uppercase", `` `CLOSED` ``, `` `COMPLETED` ``, `` `REOPENED` ``, "label names", "the last of the references"), now stated as what the CLI's normalizer does, and the default-branch sentence. Delete the `$WRAPUP_PARENT_BODY` / `parseSubIssues` script clause. No code span may wrap across a line, and no line may end in `gh` (`brokenSpanLines`).
+- Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.0b's per-record paragraph (lines 103-117, "For each record in `$CLOSING_SUB_ISSUES`, run that procedure …"). It runs `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {closing-sub-issues} [--merging-pr {pr-number}] [--held {held}]`, where `{held}` lists every `reopened[]` and `pendingClose[]` number and every `failed[]` and `closeFailed[]` entry's `issue`, and each optional flag is omitted when empty. It routes in the reconciler's order:
+  1. **`parentIssue: false`** — keep the sentence "A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary." verbatim, then add "The verdict reports it as `parentIssue: false`."
+  2. **`needs`** — the retargeted sentence below.
+  3. **`held`** — a non-empty `held` is the inputs paragraph's skip: name the parent in the closing summary.
+  4. Then keep verbatim: "On `due` with `exceeds: false`, run **Close the parent below the floor**.", "Every other outcome is a no-op; a record with no resolvable parent follows **Resolve the parent**'s no-parent branch.", the `gh`-absent sentence (still citing `_shared/github-write-transport.md` and the **Transport (#4602).** paragraph), "Evaluate each parent once: skip a record whose parent this step already handled, so a parent with several sub-issues in the set is closed once." (the verdict's `parent` names it), and the Return-to-Try-it / Fail-open sentence, with "A non-zero CLI exit is a failing `gh` call." appended.
+
+  Leave every other paragraph of Step 4.0b, Step 4.0 and Step 4.1+ unchanged.
+- Modify: `plugin/skills/wrap-up/verification-brief.md:89-92` — add "Run the gate CLI" between "Self-inclusion rule" and "Evaluate the gate" in the "It covers, in order:" list.
+- Modify: `tests/below-floor-parent-close-conformance.test.js` — apply the inventory below, add the new tests, and add `PRE_4603_SHA = '0baad513d'`. That commit sits on `main`, so it survives the squash. `preChangeSkillFile(rel)` gains an optional `sha` parameter, defaulting to `PRE_CHANGE_SHA`.
+- Modify: `tests/skill-fence-guard-shapes.test.js:157` — delete the `ratchet('wrap-up/verification-brief-parent-gate.md', 'gh-computed-input', '# work-links: native')` entry, since its fence is gone. Keep line 158's `PARENT_VERIFICATION_BRIEF=` entry (Apply the gate is untouched).
+- Check, with no change expected: `tests/try-it-contract-conformance.test.js:162-189,240-249`, `tests/comment-trust-conformance.test.js:183-260` (the **Apply the gate** paragraph), `tests/accept-label-reader-conformance.test.js:455` (the `LABELS_JSON` fence in Apply), `tests/session-tmp-root-migration.test.js:66` (the file still cites `_shared/session-tmp-root.md` and holds no literal `/tmp/` path), `tests/demo-full-verification-pointer.test.js:138`, `tests/closing-links-prose-conformance.test.js:120-273` (Step 4.0b's inputs paragraph is untouched), `tests/bin-lib/issues/below-floor-parent-close.test.js` (reads step 2's template, its bare listing line and the not-planned line, all unchanged).
+
+**Pin inventory** — every assertion literal in `tests/below-floor-parent-close-conformance.test.js` that reads a section this task changes, re-derived from today's file (994 lines). The commit body carries this table's verdicts.
+
+| Test (lines) | Literal | Verdict |
+|---|---|---|
+| `AC2.2: the exceeds: false bullet…` (77-91) | `!closes cleanly`, `/no \`demo:pending\`, no brief/`, `/Step 4\.0b/`, `**Close the parent below the floor**`, `never closed ahead of the merge`, `commit the parent record with the entry's own close commit`, `never closed ahead of the merge, per that section's step 5.`, `!CLOSE_TIMING`, `!FALSE_MERGE_CLAIMS`, `/end-to-end variant/`, `/Parent-side entry/` | kept: the bullet is untouched apart from the #4599 sentence below |
+| `AC1.1: the close section excludes pre-merge…` (93-125) | marker heading, `closed by PR #{pr}`, `/Never[^.]*merge SHA/`, comment-before-close order, `writeRecord`-before-`closeRecord`, `/which call failed/`, `/the entry's own close commit/`, `CLOSE_TIMING`, short-circuit sentence, `!item 5's commit`, the pre-merge exclusion opener, `$MERGING_PR`-first then fallback, `so this fallback is arbitrary but deterministic`, `!uses \`$MERGING_PR\` instead` | kept: the opener and steps 2-5 are unchanged (step 2's local-files sentence is not pinned) |
+| `AC5.1: the close section is idempotent…` (127-143) | `/already \`CLOSED\`/` | kept (the `already-closed` bullet) |
+| ″ | `gh issue view $PARENT_NUM --json state,stateReason,comments` | retired: shape 7 is pinned by `tests/bin-lib/issues/parent-gate.test.js`'s `gatherIdempotenceFacts reads the login only…` and by the unchanged `below-floor-parent-close.test.js` fake gh |
+| ″ | `An open parent whose \`stateReason\` is \`REOPENED\` is a no-op too, reported in the output and never re-closed` | kept (the `reopened` bullet carries it verbatim) |
+| ″ | `gh api user --jq .login` | retired: shape 8, pinned by `gatherIdempotenceFacts reads the login only…` and Task 3's `AC1.4: a human-reopened parent` (no login read) |
+| ″ | ``counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the login printed above)`` | retargeted to ``counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the CLI reads its login)``; behavior is pinned by `own-login heading comment counts` / `trusted heading comment means close only` |
+| ″ | `Any other comment carrying the heading reads as no comment posted` | kept (the `comment-and-close` bullet) |
+| `AC1.1: the close reason follows… and the enumeration is paginated` (145-154) | `Close with \`--reason completed\` only when at least one sub-issue closed \`COMPLETED\``, `gh issue close $PARENT_NUM --reason "not planned"`, the not-planned line | kept (step 3 is unchanged). Rename the test to `AC1.1: the close reason follows the sub-issues' stateReason`. |
+| ″ | `gh issue view {n} --json state,stateReason,labels,title,closedByPullRequestsReferences` (Enumerate) | retired: shape 5, pinned by `gatherGateFacts (native, from a sub-issue) makes the reconciler's call shapes in order` and the unchanged `below-floor-parent-close.test.js` |
+| ″ | `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"` (Enumerate) | retired: shape 4, pinned by the same gather test and Task 3's `AC1.1: a parent with more than 30 sub-issues…`; its absence is now asserted by the new AC2.1 test |
+| `AC2.2: the entry shapes name Step 4.0b…` (156-172) | entry-shapes, Return, Fail open, Self-inclusion table and Routing literals | kept (untouched sections) |
+| `AC2.2: no resolvable parent is a no-op…` (174-187) | `NO_OP` in **No parent resolvable**; Step 4.0b `!as is a record with no resolvable parent` and ``a record with no resolvable parent follows **Resolve the parent**'s no-parent branch.`` | kept (that Step 4.0b sentence stays verbatim) |
+| `AC2.1: Step 4.0b sits between…` (225-259) | `` `closingSet[]` ``, `git log -1 --format=%B`, `**Close the parent below the floor**`, `` `merged` ``, `work-backend: github-issues`, `$CLOSING_SUB_ISSUES`, `$MERGING_PR`, the armed-merge sentence, `LOCAL_MERGE_NO_OP` | kept |
+| `AC2.1: Step 4.0b subtracts…` (261-283) | the `$CLOSING_SUB_ISSUES` subtraction sentence, the `failed[]`/`pendingClose[]` sentence, the two absences | kept (inputs paragraph untouched) |
+| ″ | ``Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.`` | retargeted to ``Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.``; behavior is pinned by Task 1's `AC1.5…` (`needs`) and the unchanged `below-floor-parent-close.test.js` `needs-label` case |
+| `AC2.1: Step 4.0b acts only on a below-floor due gate…` (285-314) | the four Step 4.0b literals, `!A failing \`gh\` call skips that parent`, the gate's fail-open sentence, the entry-shapes sentence | kept (all four stay verbatim in the rewritten paragraph) |
+| `AC2.1: Step 4.0b keeps same-repo closing records…` (316-359) | `CLOSING_SET_READ`, `SCOPED_SKIP`, `ACTIONS`, the skip sentence, the SKIP/AUTO `log-decision.js` lines, ``A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary.`` | kept (the parent-issue sentence stays verbatim, followed by the new `parentIssue: false` sentence) |
+| `#4599: the Parent-Gate Procedure says the reconciler closes…` (439-448) | ``A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.`` | retargeted to ``A merge no session saw land is closed by the reconciler's `post-merge` check, which runs this gate's own code (`bin/lib/issues/parent-gate.js`, through `bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.`` (the edit writes exactly this sentence into the `exceeds: false` bullet); `!backstop catches a merge no session saw land` kept |
+| `#4599: the Self-inclusion rule names the reconciler…` (450-462) | the **One caller skips this rule** sentence | kept |
+| `#4602 AC2.1: every gh call… has a mapping…` (942-970) | `brokenSpanLines(gate)`/`(step40b)` empty; `calls.length >= 10`; every call mapped and its MCP tool named in the Transport paragraph | kept. After the edit the gate keeps 7 call sites (step 3's three fences, Apply's `gh issue view … --json comments`, two `gh issue edit --add-label`, one `gh issue comment`) plus the Transport paragraph's five, and Step 4.0b keeps `gh repo view` and `gh issue reopen`: 14 ≥ 10. The implementer prints the count. |
+| ″ | `` `_shared/github-write-transport.md` ``, `` `get_parent` ``, `` `_shared/label-bootstrap.md` ``, the five pairings, the six normalization literals, the two fail-open literals | kept, byte-identical in the rewritten Transport paragraph. The normalization literals now describe the CLI's normalizer, whose behavior is pinned by `tests/bin-lib/issues/mcp-parent-gate-shape.test.js`'s `normalizes the MCP shape`. |
+| `#4602 AC1.1: the close section and Step 4.0b cite the MCP path` (972-980) | close section: `` `_shared/github-write-transport.md` ``, `` `state_reason` ``, `` `not_planned` ``, ``never pass `labels` `` | kept (step 3's MCP sentence is unchanged) |
+| ″ | close section: `` `get_me` ``, `` `get_comments` `` | retired from the close-section list (step 1's MCP sentence goes): both stay pinned in the Transport paragraph by `#4602 AC2.1`'s pairings ``"`gh api user` is `get_me`"`` and ``"`get_comments` for comments, paged per its row"`` |
+| ″ | close section: ``` `reopened` → `REOPENED` ```, `` `user.login` `` | retired: the normalization moved into Node and is pinned by `mcp-parent-gate-shape.test.js`'s `normalizes the MCP shape` (``reopened → REOPENED``, ``user.login → author.login``); the Transport paragraph keeps `` `REOPENED` `` |
+| ″ | Step 4.0b: `` `_shared/github-write-transport.md` ``, `git remote show origin` | kept |
+| `#4602: settle-and-merge's #205 paragraph…` (982-994) | each `ghCalls(gate)` call named in settle-and-merge's Parent-Gate sentence | kept (the gate's calls after the edit are a subset of those it makes today) |
+
+`tests/skill-fence-guard-shapes.test.js:157`: the `'# work-links: native'` ratchet is retired, because its fence is deleted; `applyAllowlist` would otherwise report it stale. Line 158 is kept.
 
 **Interfaces:**
-- Consumes: Task 2/3's usage, verdict fields and exit codes, verbatim.
+- Consumes: Task 3-5's `USAGE`, `VERDICT_FIELDS`, `IDEMPOTENCE_VALUES` and `FACTS_KEYS`, verbatim.
 
-- [ ] **Step 1: Write the failing test** `AC2.1: the gate file no longer composes the sub-issue enumeration` (above), plus `the gate file and Step 4.0b invoke bin/parent-gate.js` asserting the collapsed text of `## Run the gate CLI` includes `bin/parent-gate.js" --sub-issue` and `--parent`, and Step 4.0b's collapsed section includes `bin/parent-gate.js" --sub-issue` and `--held`.
+- [ ] **Step 1: Write the failing tests** (in `tests/below-floor-parent-close-conformance.test.js`, after applying the inventory's retargets and retirements, and the fence-guard deletion):
+  - `AC2.1 (#4603): the gate file no longer composes the sub-issue enumeration`:
+    - Neither the raw nor the whitespace-collapsed gate text includes `issues/$PARENT_NUM/sub_issues`.
+    - The `## Run the gate CLI` section includes `bin/parent-gate.js`.
+    - Go-red control: the frozen `preChangeSkillFile(GATE_REL, PRE_4603_SHA)` text does include `issues/$PARENT_NUM/sub_issues`. It skips when the SHA is unreachable, as the existing controls do.
+  - `#4603: the gate file and Step 4.0b invoke bin/parent-gate.js`:
+    - The collapsed `## Run the gate CLI` includes `bin/parent-gate.js" --sub-issue {n} --closing`, `bin/parent-gate.js" --parent`, `--facts-json` and `--backend local-files`.
+    - The collapsed Step 4.0b includes `bin/parent-gate.js" --sub-issue {n}`, `--held` and `--merging-pr`.
+    - The section sits between `## Self-inclusion rule` and `## Evaluate the gate`.
+  - `#4603: the prose names only the CLI's own flags, verdict fields and facts keys` (a prose-code twin):
+    - Every `--[a-z-]+` token in the `## Run the gate CLI` section and in Step 4.0b's `parent-gate.js` sentence appears in `require('../plugin/bin/parent-gate').USAGE`.
+    - Every `VERDICT_FIELDS` and `FACTS_KEYS` name appears as a code span in the section.
+    - Go-red: a doctored section with `--repo o/r` added fails the flag check.
+  - `#4603: Close step 1 routes on the CLI's idempotence values` — step 1 names each of `IDEMPOTENCE_VALUES` as a code span, and no longer includes `gh api user`.
 
 - [ ] **Step 2: Run tests to verify they fail**
 
-Run: `node --test tests/below-floor-parent-close-conformance.test.js`
-Expected: FAIL after Step 1 — on the two new tests only.
+Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/skill-fence-guard-shapes.test.js`
+Expected: FAIL. In the first file, the new tests and the three retargeted pins fail. In the second, `AC2.2: no shell fence…` fails: the `# work-links: native` fence offends uncovered once its ratchet entry is gone. Every other test stays green.
 
-- [ ] **Step 3: Edit the two skill files and retarget the pins** as listed. Then the AC check:
+- [ ] **Step 3: Edit the three skill files** as listed, copying each pinned literal from the replacement text above. Then the AC check:
 
 Run: `grep -F "issues/\$PARENT_NUM/sub_issues" plugin/skills/wrap-up/verification-brief-parent-gate.md`
 Expected: no output, exit 1.
 
+Then `wc -c plugin/skills/wrap-up/verification-brief-parent-gate.md`. It must be at most 52,500, and is expected to be at or below 39,786.
+
 - [ ] **Step 4: Run tests to verify they pass**
 
-Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/skill-fence-guard-shapes.test.js tests/comment-trust-conformance.test.js tests/session-tmp-root-migration.test.js tests/try-it-contract-conformance.test.js tests/demo-full-verification-pointer.test.js tests/verify-json-acceptance-guard-conformance.test.js tests/fetch-sub-issues-prose-conformance.test.js tests/closing-links-prose-conformance.test.js`
-Expected: PASS, 0 failures. Then `git -C "{worktree}" grep -n -F -e 'wrapup-parent-body' -e 'Enumerate the parent' -- plugin tests docs` and confirm every remaining hit still reads true.
+Run: `node --test tests/below-floor-parent-close-conformance.test.js tests/skill-fence-guard-shapes.test.js tests/bin-lib/issues/below-floor-parent-close.test.js tests/try-it-contract-conformance.test.js tests/comment-trust-conformance.test.js tests/accept-label-reader-conformance.test.js tests/session-tmp-root-migration.test.js tests/demo-full-verification-pointer.test.js tests/closing-links-prose-conformance.test.js tests/pr-first-merge.test.js tests/parent-gate-cli.test.js`
+Expected: PASS, 0 failures. Then run `git -C "{worktree}" grep -n -F -e 'wrapup-parent-body' -e 'WRAPUP_PARENT_BODY' -e 'subIssueRecords' -- plugin/skills/wrap-up/verification-brief-parent-gate.md`. Expected: no output. Then run `git -C "{worktree}" grep -n -F -e 'Enumerate the parent' -- plugin docs` and confirm that every remaining hit still reads true.
 
-- [ ] **Step 5: Commit** the changed files: `Route the Parent-Gate Procedure through bin/parent-gate.js — refs #4603`, body carrying the pin inventory verdicts.
+- [ ] **Step 5: Commit** the five files: `Route the Parent-Gate Procedure through bin/parent-gate.js — refs #4603`. The body carries the pin inventory's verdicts (kept / retargeted to `{new literal}` / retired: `{covering unit test}`).
