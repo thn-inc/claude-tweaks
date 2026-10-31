@@ -164,13 +164,20 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
   //   holds vacuously for it and any `interrupted` stamp would kill it.
   // - pid.detail alive-no-start-time / no-pid: this route is the death witness only
   //   for the case the PID row cannot judge; when it can (gone, reused, matching
-  //   start time) the PID row decides and this route adds nothing.
+  //   start time) the PID row decides and this route adds nothing. Another host's
+  //   process is never judged here: `other-host` stays `unknown` (#3973's unknown row).
   // - status interrupted + lastEvent session-end: the verdict-table row's own
   //   condition — the session ended through SessionEnd.
-  // - lastSessionEndMs set + heartbeatAt before it: "no owner heartbeat since" the
+  // - lastSessionEndMs !== null: the status stamp must be backed by a `session-end`
+  //   event from the owner's own session (probeOwnEvents scopes it to
+  //   owner.sessionId); without one there is nothing to measure "since" from, so
+  //   the status stamp alone never counts as a death witness.
+  // - heartbeatAt before lastSessionEndMs: "no owner heartbeat since" the
   //   SessionEnd. A nested `claude -p` (#3845) can stamp a false `interrupted`
-  //   while the owner keeps heartbeating; the comparison keeps that live run out
-  //   of `dead`.
+  //   while the owner keeps heartbeating; once the owner heartbeats after that
+  //   stamp, the comparison keeps the run out of `dead`. Accepted residual risk
+  //   (#3973 Gotchas): with a null `pidStartedAt` and an owner idle for more than
+  //   10 min, the run can still read `dead` until its next hook heartbeats.
   if (owner
     && (pid.detail === 'alive-no-start-time' || pid.detail === 'no-pid')
     && state.status === 'interrupted'
@@ -180,7 +187,8 @@ function gatherEvidence(runDir, { now = Date.now(), probes = {} } = {}) {
     witnesses.push('session-end');
   }
   // Legacy route (#3973 verdict table, legacy row): only for a run with no owner
-  // block, i.e. every run before #3973 — owner-block runs die through the pid or
+  // block, e.g. every run minted before #3973, or one whose stamp degraded without
+  // the block (docs/hooks.md) — owner-block runs die through the pid or
   // session-end witness. All three activity signals must be silent: no in-use
   // lock, no commit for LEGACY_DEAD_MS (or no worktree/commits at all), and no
   // owner-attributed event for LEGACY_DEAD_MS. The SessionEnd route alone is never
