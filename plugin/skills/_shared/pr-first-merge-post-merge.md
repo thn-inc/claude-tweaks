@@ -61,7 +61,7 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`): the PR's same-repo
   closing records (`sameRepoNumbers`, `bin/lib/flow/closing-links.js`, which drops a
   `Fixes other/repo#N` that would otherwise read as this repo's #N) minus those three lists, already
-  subtracted. When `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`,
+  subtracted. After a PR merge, when `closingSet[]` is absent — a non-zero exit, `not-merged`, `no-fixes-span`,
   `no-pr`, `gh-absent`, or no parseable output — skip this step entirely, never subtracting nothing,
   and log it (after exit 3, name it in the closing summary instead); tidy's `parent-gate` backstop
   recovers those parents:
@@ -70,7 +70,7 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --step "pr-first-merge Step 4.0b (skipped)" --reversibility n/a --text "condition: Step 4.0 returned {result}, no closingSet → fallback: no parent closed; the tidy parent-gate backstop recovers them"
   ```
 
-  Otherwise, after a PR merge, use `closingSet[]` as printed; never re-read the PR's links here.
+  Otherwise, use `closingSet[]` as printed; never re-read the PR's links here.
 
   After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
   taking the union across every merge commit when a call site pushes several:

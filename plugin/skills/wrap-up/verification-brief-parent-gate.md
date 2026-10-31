@@ -63,8 +63,8 @@ skips the Parent-Gate Procedure entirely and falls back to the no-parent path (`
 Oversight-floor gate, then Steps 1-4 on this record itself when it clears the floor) — never blocking the wrap-up, the
 auto-merge short-circuit, or the dispatched group's merge gate. The post-merge
 `_shared/pr-first-merge-post-merge.md` Step 4.0b entry is the sub-issue-side exception: on any
-failing `gh` call it skips that parent — or the whole step, when the call reads Step 4.0b's own
-input — names each skipped parent in the closing summary, and never falls back to the no-parent
+failing `gh` call it skips that parent — or the whole step, when the call is Step 4.0b's
+default-branch check — names each skipped parent in the closing summary, and never falls back to the no-parent
 path — its merge has already landed, so there is no wrap-up or merge left to protect, and
 `/claude-tweaks:tidy`'s `parent-gate` backstop is the recovery. The **parent-side** entry skips
 this one parent for this run, leaving its `[parent-gate]` finding surfaced and unmutated — never

@@ -297,7 +297,7 @@ test('AC2.1: Step 4.0b acts only on a below-floor due gate, once per parent, and
   assert.ok(!body.includes('A failing `gh` call skips that parent'), 'the fail-open rule is not restated in Step 4.0b');
   const failOpen = collapse(paragraph(read(GATE_REL), '**Fail open on every `gh` call'));
   assert.ok(
-    failOpen.includes("on any failing `gh` call it skips that parent — or the whole step, when the call reads Step 4.0b's own input — names each skipped parent in the closing summary"),
+    failOpen.includes("on any failing `gh` call it skips that parent — or the whole step, when the call is Step 4.0b's default-branch check — names each skipped parent in the closing summary"),
     'the gate states the Step 4.0b fail-open rule once',
   );
   const shapes = collapse(entryShapes(read(GATE_REL)));
@@ -326,7 +326,13 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   assert.ok(PRE_CHANGE_STEP_40B_READ.includes('closingIssuesReferences'), 'AC1.1 go-red: the pre-change read carries the literal');
   assert.ok(body.includes(CLOSING_SET_READ), 'Step 4.0b reads closingSet[] from Step 4.0');
   assert.ok(!collapse(PRE_CHANGE_STEP_40B_READ).includes(CLOSING_SET_READ), 'go-red: the pre-change read never names closingSet[]');
-  assert.ok(body.includes('When `closingSet[]` is absent'), 'Step 4.0b skips when the field is absent');
+  // The skip is scoped to PR merges: after a no-PR local merge Step 4.0 never runs, so closingSet[] is always absent there.
+  const SCOPED_SKIP = 'After a PR merge, when `closingSet[]` is absent';
+  const checkScopedSkip = (text) => assert.ok(text.includes(SCOPED_SKIP), 'Step 4.0b skips when the field is absent, after a PR merge only');
+  checkScopedSkip(body);
+  const unscopedBody = body.replace('After a PR merge, when `closingSet[]` is absent', 'When `closingSet[]` is absent');
+  assert.notEqual(unscopedBody, body, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => checkScopedSkip(unscopedBody), /Step 4\.0b skips when the field is absent, after a PR merge only/, 'go-red: an unscoped skip sentence fails the check');
   assert.ok(
     body.includes('which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)'),
     'only an exit-0 post-merge action carries the lists',

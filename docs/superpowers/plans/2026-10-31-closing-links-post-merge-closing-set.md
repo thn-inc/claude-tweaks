@@ -132,7 +132,7 @@ git commit -m "Emit closingSet from closing-links.js post-merge — same-repo cl
 - Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md` (Step 4.0b, lines ~41-86; 16,994 B now, rail 52,500 B — headroom ample, the edit shrinks the file)
 - Modify: `tests/below-floor-parent-close-conformance.test.js` (tests at ~225 and ~313 pin the old read)
 - Modify: `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` (line 43 names `closingIssuesReferences` as Step 4.0b's read)
-- No-change (classified): `plugin/skills/wrap-up/verification-brief-parent-gate.md` line 66 "or the whole step, when the call reads Step 4.0b's own input" — still true of the default-branch `gh repo view` gate; line 219's table row "the merge's closing records" is unchanged wording.
+- No-change (classified): `plugin/skills/wrap-up/verification-brief-parent-gate.md` line 66 "or the whole step, when the call reads Step 4.0b's own input" — reworded in the final-review fix wave to "when the call is Step 4.0b's default-branch check" (the default-branch `gh repo view` gate is the only whole-step `gh` call left); line 219's table row "the merge's closing records" is unchanged wording.
 
 **Interfaces:**
 - Consumes: Task 1's `closingSet: number[]` on Step 4.0's exit-0 post-merge output.

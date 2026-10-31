@@ -14,6 +14,7 @@ files:
   - plugin/skills/_shared/local-merge-auto-finish.md
   - plugin/bin/lib/issues/acceptance.js
   - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/bin/closing-links.js
 ---
 
 # Close a Below-Floor Decomposition Parent
