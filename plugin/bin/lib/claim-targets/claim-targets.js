@@ -21,7 +21,9 @@
 
 const path = require('path');
 const claimStore = require('../issues/claim-store');
-const { classifyClaimBlob, claimPayload, releasePayload } = require('../issues/claims');
+const {
+  classifyClaimBlob, claimPayload, releasePayload, CLAIMS_BRANCH,
+} = require('../issues/claims');
 const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
@@ -47,7 +49,9 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
   + '  exit 4 = transient gh failure\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
-  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n';
+  + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and could not be created —\n'
+  + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
   return String((e && e.message) || e);
@@ -436,12 +440,43 @@ function run(argv, deps) {
     return hit.result;
   }
 
-  for (const issue of targets) {
+  // #4495: a remote with no `claims-registry` branch makes every target's read
+  // or create-only write look absent/rejected, which used to read as a
+  // contest. The branch is created at most once per run: a second sighting
+  // after a bootstrap that reported success is transient (the remote has not
+  // caught up yet), never a second bootstrap. A refused bootstrap is
+  // run-level — every target would hit it — so it exits 6 even under
+  // `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
+  // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
+  // `null` means skipped under `--keep-going`, else the exit code to return).
+  let bootstrapAttempted = false;
+  function handleBranchMissing(issue) {
+    if (bootstrapAttempted) {
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-missing' }) };
+    }
+    bootstrapAttempted = true;
+    const b = claimStore.ensureClaimsBranch(deps, repoSlug);
+    if (!b.ok) {
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} branch missing on origin and could not be created: ${b.reason} — create it from the default branch\n`);
+      return { code: abort({ branchMissing: { branch: CLAIMS_BRANCH, reason: b.reason } }, 6) };
+    }
+    knownTip = null;
+    return { retry: true };
+  }
+
+  for (let i = 0; i < targets.length; i += 1) {
+    const issue = targets[i];
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (read.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     // A git-CAS success carries a chainable commit-sha tip; anything else
@@ -554,6 +589,12 @@ function run(argv, deps) {
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });
       if (stop !== null) return stop;
+      continue;
+    }
+    if (write.branchMissing) {
+      const missing = handleBranchMissing(issue);
+      if (missing.retry) { i -= 1; continue; }
+      if (missing.code !== null) return missing.code;
       continue;
     }
     if (!write.ok) {

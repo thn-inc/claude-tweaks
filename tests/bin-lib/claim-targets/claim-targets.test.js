@@ -1872,3 +1872,223 @@ test('--steps never bypasses argv validation: a skip-shaped step list with malfo
 test('USAGE names the --steps flag', () => {
   assert.match(USAGE, /\[--steps <step,step,\.\.\.>\]/);
 });
+
+// ---- #4495: a remote with no claims-registry branch --------------------------
+// One fake remote shared by every run in a test: `branchExists` flips true when
+// a bootstrap push lands, `created` counts the pushes that actually created it.
+function makeBranchlessRemote() {
+  return { branchExists: false, created: 0, pushes: [] };
+}
+
+// A git-CAS runner over a `makeBranchlessRemote()`. `staleView` makes this
+// runner's first claims-registry fetch fail "couldn't find remote ref" even
+// when the remote already has the branch (a sibling bootstrapped meanwhile).
+// `refuseBootstrapWith` makes the bootstrap push throw that text instead.
+// `creationHidden` makes a successful bootstrap invisible to later fetches.
+function makeBranchlessGitRunner(remote, { staleView = false, refuseBootstrapWith = null, creationHidden = false } = {}) {
+  let staleLeft = staleView ? 1 : 0;
+  let commitCounter = 0;
+  const commitOwner = {};
+  const BOOTSTRAP_LEASE = '--force-with-lease=refs/heads/claims-registry:';
+  return (args) => {
+    if (args[0] === 'fetch') {
+      if (String(args[3]).startsWith('HEAD:')) return '';
+      if (staleLeft > 0) { staleLeft -= 1; throw new Error("fatal: couldn't find remote ref claims-registry"); }
+      if (!remote.branchExists || creationHidden) throw new Error("fatal: couldn't find remote ref claims-registry");
+      return '';
+    }
+    if (args[0] === 'rev-parse' && args[1] !== 'FETCH_HEAD') return 'tip0\n';
+    if (args[0] === 'update-ref' && args[1] === '-d') return '';
+    if (args[0] === 'ls-remote') return remote.branchExists ? 'tip0\trefs/heads/claims-registry\n' : '';
+    if (args[0] === 'show') {
+      const [sha, ...pathParts] = String(args[1]).split(':');
+      const targetPath = pathParts.join(':');
+      const m = /issue-(\d+)\.json$/.exec(targetPath);
+      if (m && commitOwner[sha] === Number(m[1])) return liveMarker('r1');
+      throw new Error(`fatal: path '${targetPath}' does not exist in '${sha}'`);
+    }
+    if (args[0] === 'hash-object') return 'blobsha\n';
+    if (args[0] === 'read-tree' || args[0] === 'update-index') return '';
+    if (args[0] === 'write-tree') return 'treesha\n';
+    if (args[0] === 'commit-tree') {
+      commitCounter += 1;
+      const commitSha = `commit-${commitCounter}`;
+      const claim = /Claim issue #(\d+)/.exec(args[args.indexOf('-m') + 1]);
+      if (claim) commitOwner[commitSha] = Number(claim[1]);
+      return `${commitSha}\n`;
+    }
+    if (args[0] === 'push') {
+      remote.pushes.push(args);
+      if (args.includes(BOOTSTRAP_LEASE)) {
+        if (refuseBootstrapWith) { const e = new Error(refuseBootstrapWith); e.stderr = refuseBootstrapWith; throw e; }
+        if (remote.branchExists) {
+          const e = new Error('! [rejected] HEAD -> claims-registry (stale info)');
+          e.stderr = e.message;
+          throw e;
+        }
+        remote.branchExists = true;
+        remote.created += 1;
+      }
+      return '';
+    }
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+}
+
+const bootstrapPushes = (remote) => remote.pushes.filter((a) => a.includes('--force-with-lease=refs/heads/claims-registry:'));
+const refuseAllGhApi = (args) => { throw new Error(`contents-API must not be called: ${args.join(' ')}`); };
+
+test('(bm1) branchless remote, git transport: bootstraps claims-registry from the default-branch tip, retries the target, exit 0, claim recorded', () => {
+  const remote = makeBranchlessRemote();
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi: refuseAllGhApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote);
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, [720]);
+  assert.equal(body.transportByIssue[720], 'git');
+  const boot = bootstrapPushes(remote);
+  assert.equal(boot.length, 1, 'exactly one bootstrap push');
+  assert.ok(boot[0][2].endsWith(':refs/heads/claims-registry'));
+  assert.equal(remote.pushes.length, 2, 'the bootstrap push, then the claim push');
+});
+
+// A stateful contents-API fake for a repo whose claims-registry branch is absent
+// until the git/refs POST flips it. `postResponse` overrides that POST's answer
+// (a refusal) and leaves the branch absent.
+function makeBranchlessGhApi({ postResponse = null } = {}) {
+  const state = { branch: false, blob: null, refPosts: 0 };
+  const ok = { stdout: '{}', failure: null, status: null };
+  function ghApi(args) {
+    if (args[0] === readPath(720)) {
+      return state.branch && state.blob ? readOk(state.blob, 'blob-sha') : readAbsent;
+    }
+    if (isWrite(args, '720')) {
+      if (!state.branch) return readAbsent;
+      state.blob = Buffer.from(fieldOf(args, 'content'), 'base64').toString('utf8');
+      return ok;
+    }
+    if (args[0] === `repos/${REPO}/branches/claims-registry`) {
+      return state.branch ? { stdout: 'claims-registry\n', failure: null, status: null } : readAbsent;
+    }
+    if (args[0] === `repos/${REPO}` && args[2] === '.default_branch') return { stdout: 'main\n', failure: null, status: null };
+    if (args[0] === `repos/${REPO}/git/ref/heads/main`) return { stdout: 'abc123\n', failure: null, status: null };
+    if (args[0] === '--method' && args[1] === 'POST' && args[2] === `repos/${REPO}/git/refs`) {
+      state.refPosts += 1;
+      if (postResponse) return postResponse;
+      state.branch = true;
+      return ok;
+    }
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  }
+  return { ghApi, state };
+}
+
+test('(bm2) branchless remote, contents-API transport (no gitRunner): PUT 404 + branches 404 -> POST git/refs, retry, exit 0', () => {
+  const { ghApi, state } = makeBranchlessGhApi();
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).claimed, [720]);
+  assert.equal(state.refPosts, 1, 'exactly one git/refs POST');
+});
+
+test('(bm3) two first claims (different records) against one branchless remote: both exit 0, exactly one branch creation wins, neither contested', () => {
+  const remote = makeBranchlessRemote();
+  const { gh } = makeGh({});
+  const runA = baseDeps({ ghApi: refuseAllGhApi, gh });
+  runA.deps.gitRunner = makeBranchlessGitRunner(remote);
+  const runB = baseDeps({ ghApi: refuseAllGhApi, gh });
+  runB.deps.gitRunner = makeBranchlessGitRunner(remote, { staleView: true });
+
+  const codeA = run(['--run-id', 'r1', '--targets', '11'], runA.deps);
+  const codeB = run(['--run-id', 'r1', '--targets', '12'], runB.deps);
+
+  assert.equal(codeA, 0, runA.io.err.join(''));
+  assert.equal(codeB, 0, runB.io.err.join(''));
+  assert.equal(remote.created, 1, 'exactly one bootstrap creates the branch');
+  assert.equal(bootstrapPushes(remote).length, 2, 'the loser still attempted its create-only push');
+  assert.ok(!runA.io.out.join('').includes('contested'));
+  assert.ok(!runB.io.out.join('').includes('contested'));
+  assert.deepEqual(JSON.parse(runB.io.out[0]).claimed, [12]);
+});
+
+const REFUSED_SUFFIX = '— create it from the default branch\n';
+const REFUSAL_PREFIX = 'claim-targets: claims-registry branch missing on origin and could not be created:';
+
+test('(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
+  const remote = makeBranchlessRemote();
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote, { refuseBootstrapWith: 'remote: Permission to acme/w.git denied to bot.' });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6);
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.branchMissing.branch, 'claims-registry');
+  assert.match(body.branchMissing.reason, /Permission to acme\/w\.git denied to bot\./);
+  assert.match(body.branchMissing.reason, /HTTP 403: Resource not accessible by integration/);
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, []);
+});
+
+test('(bm4b) ruleset refusal: git push "[remote rejected] ... (push declined due to repository rule violations)", POST git/refs 422, branch still absent: exit 6, never a lost-race success and never exit 4', () => {
+  const remote = makeBranchlessRemote();
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: {
+      stdout: null, failure: null, status: 422, error: 'HTTP 422: Repository rule violations found\n\nCannot create ref due to creations being restricted.',
+    },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote, {
+    refuseBootstrapWith: '! [remote rejected] HEAD -> claims-registry (push declined due to repository rule violations)',
+  });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Repository rule violations found/);
+});
+
+test('(bm5) --keep-going with a refused bootstrap still exits 6', () => {
+  const remote = makeBranchlessRemote();
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote, { refuseBootstrapWith: 'remote: Permission to acme/w.git denied to bot.' });
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--keep-going'], deps);
+
+  assert.equal(code, 6);
+  assert.equal(JSON.parse(io.out[0]).branchMissing.branch, 'claims-registry');
+});
+
+test('(bm6) branch still missing after a successful bootstrap: one bootstrap only, transient exit 4', () => {
+  const remote = makeBranchlessRemote();
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi: refuseAllGhApi, gh });
+  deps.gitRunner = makeBranchlessGitRunner(remote, { creationHidden: true });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.transient[0].error, 'claims-branch-missing');
+  assert.equal(bootstrapPushes(remote).length, 1, 'bootstrap is attempted once per run');
+});
