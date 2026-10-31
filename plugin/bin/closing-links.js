@@ -33,12 +33,11 @@
 // messageUnread: true when the merge message could not be read; closingSet is
 // the same-repo closing records minus reopened, failed and pendingClose --
 // Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
-// with the worst outcome as the
-// action: reopen-failed > close-pending > reopened > nothing-closed; or
-// not-merged (carries state) | no-fixes-span | no-pr | gh-absent. Callers
-// report failed[] and pendingClose[] whatever the action. A `logFailed: true`
-// key means a decisions.md line could not be appended; the PR/issue work
-// still landed.
+// with the worst outcome as the action: reopen-failed > close-pending >
+// reopened > nothing-closed; or not-merged (carries state) | no-fixes-span |
+// no-pr | gh-absent. Callers report failed[] and pendingClose[] whatever the
+// action. A `logFailed: true` key means a decisions.md line could not be
+// appended; the PR/issue work still landed.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
