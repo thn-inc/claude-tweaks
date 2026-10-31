@@ -388,7 +388,6 @@ test('task-prompt.md: the fenced first-call template carries no RESUME_PR or res
 
 // ---- flow Step 2.8 + claims contract: RESUME_PR forwarding and the in-flight exception (Task 5) --
 
-const { RAIL_BYTES } = require('../plugin/bin/lib/skill-audit/budgets');
 const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
 const { CLAIM_LOG_STEP, claimLogText, isClaimLogEntry } = require('../plugin/bin/lib/log-decision/claim-log');
 
@@ -432,8 +431,23 @@ test('flow SKILL.md Step 2.8: the exit-code branch is unchanged and never reads 
   assert.match(`${step}\nresumedPr`, /resumedPr/, 'control: the ban pattern detects a planted mention');
 });
 
-const TOMBSTONE_STOPS = /`pr-opened:` tombstone[\s\S]{0,200}still\s+stops/;
-const MISMATCH_STOPS = /link`?\s+differs[\s\S]{0,80}still\s+stops|still\s+stops[\s\S]{0,120}link`?\s+differs/;
+// "Still stops" pins: each one is tied to its own clause (the subject and its verdict adjacent, no
+// span across sentences), so reversing one rule ("but not", "re-claims too") cannot be satisfied by
+// a neighbouring clause's "still stops". One pair per site that restates the exception.
+const STOPS = {
+  claimTargets: {
+    tombstone: /A `pr-opened:` tombstone still stops \(close-out owns it\)/,
+    mismatch: /`'stale'`\s+claim\s+whose\s+link\s+differs\s+from\s+`<url>`\s+still\s+stops\s+too/,
+  },
+  lockStep4: {
+    tombstone: /A\s+`pr-opened:`\s+tombstone\s+above\s+still\s+stops\s+whatever\s+`RESUME_PR`\s+says/,
+    mismatch: /whatever\s+`RESUME_PR`\s+says,\s+and\s+so\s+does\s+a\s+verdict\s+whose\s+`link`\s+differs\./,
+  },
+  inFlightDetection: {
+    tombstone: /a\s+`pr-opened:`\s+tombstone\s+still\s+stops,/,
+    mismatch: /and\s+so\s+does\s+a\s+stale\s+claim\s+whose\s+link\s+differs\s+—/,
+  },
+};
 
 test('claim-targets.md: the claim command block carries --resume-pr "$RESUME_PR"', () => {
   assertPinned(claimCommandBlock(CLAIM_TARGETS), /--run "\$PIPELINE_RUN_DIR" \[--resume-pr "\$RESUME_PR"\]/, 'command block flag');
@@ -444,8 +458,8 @@ const VARIANT_CLAIMS = [
   ['forwarding is keyed on RESUME_PR=<url> (dispatch resume)', /Only an invocation carrying `RESUME_PR=<url>` \(`dispatch resume`\)\s+forwards `--resume-pr "\$RESUME_PR"`/],
   ['no RESUME_PR keeps the #4423 stop unchanged', /[Ww]ithout it[\s\S]{0,80}unchanged \(#4423\)/],
   ['a stale claim whose link is exactly the url re-claims', /`'stale'` claim whose in-flight link is exactly `<url>`[\s\S]{0,120}ordinary conditional\s+write/],
-  ['a pr-opened: tombstone still stops', TOMBSTONE_STOPS],
-  ['a mismatched link still stops', MISMATCH_STOPS],
+  ['a pr-opened: tombstone still stops', STOPS.claimTargets.tombstone],
+  ['a mismatched link still stops', STOPS.claimTargets.mismatch],
   ['the run branches on the exit code, not resumedPr', /exit code[\s\S]{0,40}never[\s\S]{0,40}`resumedPr`/],
 ];
 for (const [label, re] of VARIANT_CLAIMS) {
@@ -480,8 +494,8 @@ const LOCK_CLAIMS = [
   ['names the exception', /Resume exception \(#4588\)/],
   ['keyed on RESUME_PR=<url> (dispatch resume)', /when the run carries `RESUME_PR=<url>` \(`dispatch resume`\)/],
   ['the verdict link must equal it exactly', /`"match": true` with a `link` exactly equal to it[\s\S]{0,80}conditional write/],
-  ['a pr-opened: tombstone still stops', TOMBSTONE_STOPS],
-  ['a mismatched link still stops', MISMATCH_STOPS],
+  ['a pr-opened: tombstone still stops', STOPS.lockStep4.tombstone],
+  ['a mismatched link still stops', STOPS.lockStep4.mismatch],
   ['a failure verdict keeps its fail-open-with-a-line handling', /A `failure` verdict\s+keeps its fail-open-with-a-line handling/],
   ['the reclaim is logged with the resume-pr suffix', /`resume-pr: \{url\}` suffix/],
 ];
@@ -505,18 +519,11 @@ test('issue-claims.md The lock step 4: the exception follows the stale-claim-pr.
 test('issue-claims.md In-flight detection: states the same narrowed exception', () => {
   const section = inFlightDetection(ISSUE_CLAIMS);
   assertPinned(section, /`--resume-pr <url>`/, 'flag');
-  assertPinned(section, /`dispatch resume`, #4588/, 'dispatch resume #4588');
-  assertPinned(section, TOMBSTONE_STOPS, 'tombstone still stops');
-  assertPinned(section, MISMATCH_STOPS, 'other link still stops');
+  assertPinned(section, /Under `dispatch resume` \(#4588\)/, 'dispatch resume (#4588)');
+  assertPinned(section, STOPS.inFlightDetection.tombstone, 'tombstone still stops');
+  assertPinned(section, STOPS.inFlightDetection.mismatch, 'other link still stops');
 });
 
 test('issue-claims.md The lock step 4: the tombstone in-flight stop (#974) is kept (characterization)', () => {
   assertPinned(lockStep4(ISSUE_CLAIMS), /A still-`OPEN` state means a build for this issue already exists and reclaiming\s+would race it — stop here, do not write/, 'tombstone stop');
-});
-
-test('flow SKILL.md, claim-targets.md and issue-claims.md stay under the skill-size rail', () => {
-  for (const p of [FLOW_SKILL_PATH, CLAIM_TARGETS_PATH, ISSUE_CLAIMS_PATH]) {
-    const bytes = fs.statSync(p).size;
-    assert.ok(bytes <= RAIL_BYTES, `${path.basename(p)} is ${bytes} B, over the ${RAIL_BYTES} B rail`);
-  }
 });

@@ -507,7 +507,7 @@ claimed — before ever calling `gh pr view`; anything else (wrong repo, malform
 treated the same as a missing `link` and never reaches `gh` at all. A `'stale'` claim whose `runId`
 matches an open same-repo PR's `claude-tweaks-run:` marker is in flight too (#4423,
 `staleClaimInFlightPr`) — same `inFlight` envelope, same fail-open (the gh-CLI path also writes
-one stderr warning on a failed check). Under `dispatch resume`, #4588, passing
+one stderr warning on a failed check). Under `dispatch resume` (#4588), passing
 `--resume-pr <url>` lets a `'stale'` claim whose in-flight link is exactly `<url>` re-claim; a
 `pr-opened:` tombstone still stops, and so does a stale claim whose link differs — "The lock" step 4
 mirrors this exception.
