@@ -29,7 +29,7 @@ files:
 - **Red flags:**
   - Only one of the two tests is red. The other list was already updated, or was edited differently. Make both lists name the same stems.
   - `two tree callers map to the stem "…"`. Two test files share a stem, so the list cannot tell them apart. Rename one test file rather than weakening the stem rule.
-  - A new scan that requires `plugin/bin/lib/strip-comments.js` directly. The stripper's code has lived there since #3903, but the tree side counts only requires that resolve to `tests/helpers/strip-comments.js`. That scan is not counted, stays off both lists, and the twin test stays green. Import through `./helpers/strip-comments` (the re-export) instead.
+  - A new scan that requires `plugin/bin/lib/strip-comments.js` directly. The stripper's code has lived there since #3903, but the tree side counts only requires that resolve to `tests/helpers/strip-comments.js`. That scan is not counted, stays off both lists, and the twin test stays green. Import through `./helpers/strip-comments` (which re-exports `stripComments` and defines `stripperVerdict`) instead.
 
 ### 2. Edit both lists
 - **URL:** the header comment at the top of `tests/helpers/strip-comments.js`, and item 15 of `.claude/skills/parse-signal-discipline/SKILL.md`.

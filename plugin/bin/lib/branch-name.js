@@ -1,9 +1,9 @@
 // bin/lib/branch-name.js — the one branch-name validator the plugin's CLIs and
-// libs share (#4648). Three callers, each putting a caller-supplied name into
+// libs share (#4648). Four callers, each putting a caller-supplied name into
 // a git argument or a rendered file:
-//   - bin/pre-review-catchup.js           — `--integration-branch`
-//   - bin/release-bootstrap.js and        — `--branch`, and the branch the
-//     lib/init/release-bootstrap.js         rendered workflow triggers on
+//   - bin/pre-review-catchup.js — `--integration-branch`
+//   - bin/release-bootstrap.js — `--branch`
+//   - lib/init/release-bootstrap.js — the branch the rendered workflow triggers on
 //   - lib/worktree/remote-branch-collision.js — the `refs/heads/{branch}` argument
 'use strict';
 
