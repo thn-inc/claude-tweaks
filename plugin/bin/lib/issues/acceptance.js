@@ -118,7 +118,10 @@ function closedParentGap({ parentLabels, stateReason, belowFloorClose, subIssues
   if (!admitted) return 'none';
   const all = Array.isArray(subIssues) ? subIssues : [];
   if (all.length === 0) return 'no-sub-issues';
-  const readable = all.filter((subIssue) => !(subIssue && subIssue.unread === true));
+  // An entry the caller could not build (null, non-object) is unknown, not unscored: unread.
+  const readable = all.filter((subIssue) => (
+    subIssue !== null && typeof subIssue === 'object' && subIssue.unread !== true
+  ));
   const exceeds = exceedsOversightFloor(
     { risk: maxRiskTier(readable) }, { riskFloor, sizeFloor: null },
   ).exceeds;

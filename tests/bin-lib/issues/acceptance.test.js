@@ -327,3 +327,13 @@ test('closedParentGap reports an unreadable parent instead of guessing', () => {
   assert.equal(closedParentGap({ parentLabels: ['demo:approved'], subIssues: [], riskFloor: 'high' }), 'none');
   assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: true, subIssues: [], riskFloor: 'high' }), 'none');
 });
+
+test('closedParentGap treats an unbuildable sub-issue entry as unread, not unscored', () => {
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: [null, { risk: 'high' }], riskFloor: 'high' }), 'gap');
+  assert.equal(closedParentGap({ parentLabels: [], subIssues: ['high', { risk: 'low' }], riskFloor: 'high' }), 'unread-sub-issue');
+});
+
+test('closedParentGap excludes on the marker only for literal true', () => {
+  assert.equal(closedParentGap({ parentLabels: [], belowFloorClose: 'true', subIssues: [{ risk: 'high' }], riskFloor: 'high' }), 'gap');
+});
