@@ -2,7 +2,7 @@
 
 A catch-up with the integration branch, run by `/claude-tweaks:build` last before Common Step 5's verification run (#4343), so a base that moved during the build is merged in before the suite runs and `VERIFICATION_SHA` is the post-merge HEAD. The call site is `build/SKILL.md`'s Common Step 5 **Catch up before verifying** paragraph; this file is the procedure, cited rather than restated there.
 
-Left to the build phase exit, the merge would change the tree after the suite, and `/test`'s Skip-if-recent (`test/verification.md`'s Mismatch branch) would run it a second time. Unlike the Pre-review catch-up (`_shared/pre-review-catchup.md`), it is not overlap-gated: Common Step 5 runs the full suite anyway, so the merge adds no run. It runs once, before the first verification run — a re-run after a fix does not repeat it; a base that moves after it is the residual case `_shared/git-discipline.md`'s Post-push merge-state check catches. Every `log-decision.js` call in this file takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verification catch-up"`.
+Left to the build phase exit, the merge would change the tree after the suite, and `/test`'s Skip-if-recent (`test/verification.md`'s Mismatch branch) would run it a second time. Unlike the Pre-review catch-up (`_shared/pre-review-catchup.md`), it is not overlap-gated: Common Step 5 runs the full suite anyway, so the merge adds no run. It runs once, before the first verification run — a re-run after a fix does not repeat it, so the tree a fix is re-verified on does not move again; a base that moves after it is the residual case `_shared/git-discipline.md`'s Post-push merge-state check catches. Every `log-decision.js` call in this file takes `--run "$PIPELINE_RUN_DIR" --section "/build" --step "Pre-verification catch-up"`, with ` (skipped)` appended to the step on a `SKIP` call (`_shared/auto-decision-log.md`'s Degrade-trace shape).
 
 ## Scope
 
@@ -12,7 +12,7 @@ Only a `pr-first` worktree run catches up, and never inside a multi-spec run. Re
 `--text "condition: integration-model local-merge → fallback: no pre-verification catch-up"`,
 `--text "condition: current-branch strategy → fallback: no pre-verification catch-up"`, or, under `MULTISPEC_SHARED_WORKTREE=1` or `MULTISPEC_PARALLEL_WAVE=1`,
 `--text "condition: multi-spec shared branch (MULTISPEC_SHARED_WORKTREE=1 or MULTISPEC_PARALLEL_WAVE=1) → fallback: no pre-verification catch-up; flow/multispec-freshness.md's boundary check owns upstream merges"`.
-A multi-spec run skips even under `pr-first` because `flow/multispec-freshness.md`'s boundary-freshness escalation is a registered HARD-GATE (`_shared/auto-mode-contract.md`) that must still see the drift: merged in here, upstream commits that landed during the build would read as `BEHIND=0` at the next spec boundary.
+A multi-spec run skips even under `pr-first` because `flow/multispec-freshness.md`'s boundary-freshness escalation is a registered HARD-GATE (`_shared/auto-mode-contract.md`) that must still see the drift: merged in here, upstream commits that landed during the build would read as `BEHIND=0` at the next spec boundary. The Pre-review catch-up (`_shared/pre-review-catchup.md`) already runs in a multi-spec run, but it merges only upstream commits that touch files the branch changed, so drift touching only a remaining spec's Key Files stays visible to that check; this catch-up is not overlap-gated and would merge that drift too.
 
 ## Procedure
 
@@ -23,10 +23,15 @@ A `pr-first` worktree run catches up in every mode — `auto`, `confirm`, `inter
    --reversibility n/a --text "condition: uncommitted changes in the worktree → fallback: catch-up
    not run; verifying the un-merged tree"`; a failed fetch logs the same with `--text "condition:
    fetch failed → fallback: catch-up not run; verifying the un-merged tree"`. Either way the
-   comparison in difference 5 does not run, and the verification run follows.
+   comparison in difference 5 does not run, and the verification run follows. A dirty tree whose
+   `git -C "{worktree-path}" rev-parse -q --verify MERGE_HEAD` prints a sha is a merge an earlier
+   session left in progress, not an un-merged tree, and the build's own run is no more the place to
+   conclude or abort it than to catch up: its `SKIP` text reads `condition: merge already in
+   progress (MERGE_HEAD set) → fallback: catch-up not run; verifying the tree as it stands`.
 3. `_shared/git-discipline.md`'s Merge conflict resolution "ask the user" fallback never applies, in any mode. A conflict it
    cannot resolve confidently: run `merge --abort` (its own Bash call), log `--status AUTO
-   --reversibility high --text-file "{text-file}"`, `{text-file}` holding
+   --reversibility high --text-file "{text-file}"` in place of Catch-up step 4's own abort entry
+   (which names a PR this procedure has none of), `{text-file}` holding
    `pre-verification catch-up with origin/{integration-branch} aborted on a conflict it could not resolve confidently — verifying the un-merged tree`,
    skip the comparison in difference 5, and run the verification on the un-merged tree; the build
    phase exit's Post-push merge-state check and, past it, the merge path own the conflict.
@@ -38,7 +43,12 @@ A `pr-first` worktree run catches up in every mode — `auto`, `confirm`, `inter
    skip the comparison in difference 5 as well, and run the verification. Never move or delete the
    untracked files to get past it.
 5. A resolved conflict is committed before HEAD is compared, as in Catch-up step 4; Common
-   Step 5's own run is the verification after resolving. Then compare `git -C "{worktree-path}"
+   Step 5's own run is the verification after resolving. A failed `add` or `commit` (a pre-commit
+   hook rejecting the merge commit, a path left unmerged) is handled as in difference 4, so the
+   tree is never left with `MERGE_HEAD` set: run `merge --abort` (its own Bash call), log
+   `--status SKIP --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding
+   `condition: commit of the resolved merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree`,
+   and run the verification without the comparison below. Otherwise compare `git -C "{worktree-path}"
    rev-parse --short HEAD` with Catch-up step 3's `{before short}`. Unchanged: log
    `--status SKIP --reversibility n/a --text-file "{text-file}"`, `{text-file}` holding
    `condition: branch already contains origin/{integration-branch} → fallback: nothing merged`.

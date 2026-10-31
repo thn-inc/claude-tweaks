@@ -86,6 +86,17 @@ const PVC_FACTS = [
   { name: 'step-3 rev-parse failure: no merge', needle: 'A failed Catch-up step 3 `rev-parse` (no `{before short}`) logs that same `SKIP` and the merge is not attempted' },
   { name: 'no run dir reports in handoff', needle: "each `SKIP` goes to the Step 7 handoff's Skipped steps section instead" },
   { name: 'post-push check stays', needle: "`_shared/git-discipline.md`'s Post-push merge-state check stays" },
+  // The abort path and its data-safety rule carry their own pins: the log-text needles above
+  // would stay green if the `merge --abort` instruction or the untracked-files rule were dropped.
+  { name: 'abort is its own Bash call', needle: 'run `merge --abort` (its own Bash call), log `--status AUTO' },
+  { name: 'abort entry replaces the step-4 one', needle: "in place of Catch-up step 4's own abort entry" },
+  { name: 'never move untracked files', needle: 'Never move or delete the untracked files to get past it' },
+  { name: 'failed commit of a resolved conflict aborts', needle: 'A failed `add` or `commit` (a pre-commit hook rejecting the merge commit, a path left unmerged) is handled as in difference 4' },
+  { name: 'failed commit SKIP', needle: 'condition: commit of the resolved merge with origin/{integration-branch} failed ({reason}) → fallback: catch-up not run; verifying the un-merged tree' },
+  { name: 'merge in progress SKIP', needle: 'condition: merge already in progress (MERGE_HEAD set) → fallback: catch-up not run; verifying the tree as it stands' },
+  { name: 'SKIP step carries (skipped)', needle: 'with ` (skipped)` appended to the step on a `SKIP` call' },
+  { name: 'once: the fix is re-verified on a stable tree', needle: 'so the tree a fix is re-verified on does not move again' },
+  { name: 'multi-spec: pre-review catch-up is overlap-gated', needle: 'it merges only upstream commits that touch files the branch changed' },
 ];
 
 const STEP_FLAGS = '--step "Pre-verification catch-up"';
@@ -230,6 +241,37 @@ test('Deliverable 3: git-discipline.md drops the subsection and its Post-push ch
   const noResidual = collapse(GD).replace(RESIDUAL, '');
   assert.notEqual(noResidual, collapse(GD));
   assert.throws(() => assertGitDisciplineResidual(noResidual), /post-push residual sentence missing/);
+});
+
+// The procedure cites git-discipline.md's Catch-up (`auto`) steps 1-4 by number and compares
+// HEAD against step 3's `{before short}`: pin that list's order so a renumbering there cannot
+// silently re-point this file.
+const CATCH_UP_STEPS = [
+  '1. `git -C "{worktree-path}" status --porcelain`',
+  '2. `git -C "{worktree-path}" fetch origin "{integration-branch}"`',
+  '3. `git -C "{worktree-path}" rev-parse --short HEAD`',
+  '4. `git -C "{worktree-path}" merge --no-edit "origin/{integration-branch}"`',
+  '5. `git -C "{worktree-path}" rev-parse --short HEAD`',
+];
+
+function assertCatchUpStepOrder(text) {
+  const from = text.indexOf(CATCH_UP);
+  assert.notStrictEqual(from, -1, `marker missing: ${CATCH_UP}`);
+  const to = text.indexOf('## Catching a branch up with `main`', from);
+  assert.notStrictEqual(to, -1, 'marker missing: ## Catching a branch up with `main`');
+  requireOrder(text.slice(from, to), CATCH_UP_STEPS);
+}
+
+test('AC5.1: git-discipline.md\'s Catch-up (auto) steps 1-4 are still status, fetch, rev-parse, merge', () => {
+  assertCatchUpStepOrder(GD);
+  // Swapping the fetch and the pre-merge rev-parse renumbers what "Catch-up step 3" means here.
+  const [fetch, before] = [CATCH_UP_STEPS[1], CATCH_UP_STEPS[2]];
+  const swapped = GD.replace(fetch, '@@FETCH@@').replace(before, fetch).replace('@@FETCH@@', before);
+  assert.notEqual(swapped, GD);
+  assert.throws(() => assertCatchUpStepOrder(swapped), /must come after the previous marker/);
+  const dropped = GD.replace(CATCH_UP_STEPS[3], '4. `git merge`');
+  assert.notEqual(dropped, GD);
+  assert.throws(() => assertCatchUpStepOrder(dropped), /marker missing: 4\. /);
 });
 
 test('AC2.1: integration-model.md lists the Pre-verification catch-up as a consumer', () => {
