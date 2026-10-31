@@ -438,11 +438,26 @@ test('#4599: the Parent-Gate Procedure says the reconciler closes a merge no ses
   const below = collapse(belowFloorBullet(read(GATE_REL)));
   assert.ok(
     below.includes(
-      "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
+      "A merge no session saw land is closed by the reconciler's `post-merge` check, a code mirror of this entry (`bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
     ),
-    'the sub-issue-side bullet names the reconciler check',
+    'the sub-issue-side bullet names the reconciler check and its one divergence',
   );
   assert.ok(!below.includes('backstop catches a merge no session saw land'), 'the "backstop catches the unseen merge" claim is gone');
+});
+
+test('#4599: the Self-inclusion rule names the reconciler as the one caller that skips it, and the code agrees', () => {
+  const rule = collapse(section(read(GATE_REL), '## Self-inclusion rule', '\n## '));
+  assert.ok(
+    rule.includes(
+      "**One caller skips this rule:** the reconciler's late `post-merge` pass judges closing records by live state (`selfInclude: false`), because it runs at least 10 minutes after the merge, when GitHub's state is the truth — a sub-issue a human reopened since keeps its parent open.",
+    ),
+    'the Self-inclusion rule states the reconciler exception',
+  );
+  // The clause's claims are the code's: post-merge passes selfInclude: false, and its 10 minutes is MERGE_GRACE_MS.
+  const source = readText(path.join(PLUGIN_ROOT, 'bin', 'lib', 'reconcile', 'post-merge.js'));
+  assert.match(source, /\n {4}selfInclude: false,\n {2}\}\);/, 'post-merge.js passes selfInclude: false to closeParents');
+  const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
 });
 
 test('#4599: the auto-merge short-circuit and the journey name the reconciler before tidy', () => {

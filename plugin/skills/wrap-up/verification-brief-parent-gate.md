@@ -227,6 +227,10 @@ The set overrides state; it never adds sub-issues. Only members of `$CLOSING_SUB
 the enumeration above already returned are affected — a member belonging to a different parent,
 or to no parent at all, is simply irrelevant to this parent's `subIssues` array.
 
+**One caller skips this rule:** the reconciler's late `post-merge` pass judges closing records by
+live state (`selfInclude: false`), because it runs at least 10 minutes after the merge, when
+GitHub's state is the truth — a sub-issue a human reopened since keeps its parent open.
+
 **A sub-issue-side entry arriving without an explicit `$CLOSING_SUB_ISSUES` defaults to the
 one-element set `{the sub-issue in hand}` — never to the empty set.** That default is what keeps
 this rule a strict widening of the self-contained one it replaced rather than a replacement for
@@ -314,8 +318,8 @@ regardless.
     Step 4.0b closes it after the merge lands: that post-merge entry runs
     **Close the parent below the floor** here. A merge no session saw land is closed by the
     reconciler's `post-merge` check, a code mirror of this entry
-    (`bin/lib/issues/below-floor-parent-close.js`); `/claude-tweaks:tidy`'s `parent-gate` backstop
-    catches whatever that leaves open.
+    (`bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion
+    rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.
   - **Sub-issue-side entry, `work-backend: local-files`:** run **Close the parent below the floor**
     now, and commit the parent record with the entry's own close commit. The parent is
     never closed ahead of the merge, per that section's step 5.
