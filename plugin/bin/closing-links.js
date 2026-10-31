@@ -32,11 +32,13 @@
 // e.g. the reconciler's, passes it so a human close hours after the merge is not
 // undone), a record closed later than mergedAt + n is not reopened: it is listed
 // in closedAfterWindow and stays in closingSet (it is closed), with no decisions
-// line. Prints {action, pr, candidates, willClose, reopened,
+// line; and once the clock is past mergedAt + n, a will-close record still OPEN
+// is settled open, not pending: listed in settledOpen, never in pendingClose,
+// with no re-run SKIP line. Prints {action, pr, candidates, willClose, reopened,
 // failed, stillOpen, pendingClose, closedBefore, closingSet} (plus
-// closedAfterWindow: [...] when --close-window-ms was given, and
+// closedAfterWindow: [...] and settledOpen: [...] when --close-window-ms was given, and
 // messageUnread: true when the merge message could not be read; closingSet is
-// the same-repo closing records minus reopened, failed and pendingClose --
+// the same-repo closing records minus reopened, failed, pendingClose and settledOpen --
 // Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
 // with the worst outcome as the action: reopen-failed > close-pending >
 // reopened > nothing-closed; or not-merged (carries state) | no-fixes-span |
@@ -76,7 +78,8 @@ const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--close-window-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
   + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
-  + '    --close-window-ms: post-merge only; a record closed later than mergedAt + n is a human close, not reopened and listed in closedAfterWindow (default: no bound)\n'
+  + '    --close-window-ms: post-merge only; a record closed later than mergedAt + n is a human close, not reopened and listed in closedAfterWindow (default: no bound);\n'
+  + '      past mergedAt + n, a will-close record still open is settled open, listed in settledOpen, never pendingClose\n'
   + '  prints one JSON line; action:\n'
   + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
   + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
@@ -378,8 +381,13 @@ function run(argv, overrides = {}) {
   }
 
   // A will-close record still OPEN after the poll window may yet close: that
-  // is pending, not clean.
-  const pendingClose = willClose.filter((x) => stillOpen.includes(x));
+  // is pending, not clean -- until the clock is past mergedAt + --close-window-ms
+  // (a late run's own bound): GitHub closes about 2 s after the merge, so a record
+  // still OPEN that late was never closed by it. That is settled open, not pending.
+  const openWillClose = willClose.filter((x) => stillOpen.includes(x));
+  const windowPassed = o.closeWindowMs !== null && Number(deps.now()) > mergedAt + o.closeWindowMs;
+  const settledOpen = windowPassed ? openWillClose : [];
+  const pendingClose = windowPassed ? [] : openWillClose;
   const windowSeconds = maxRereads * (POLL_STEP_MS / 1000);
   for (const issue of pendingClose) {
     degraded(`#${issue} still open ${windowSeconds}s after PR #${n} merged though the merge may close it`, 're-run --mode post-merge, or reopen it by hand if it closes');
@@ -391,14 +399,14 @@ function run(argv, overrides = {}) {
   else if (reopened.length) action = 'reopened';
 
   // The same-repo records the merge closing links name: `linked` minus whatever the
-  // guard reopened, could not settle, or has yet to see close. A Fixes-block record
+  // guard reopened, could not settle, has yet to see close, or saw stay open. A Fixes-block record
   // is never read, and a record closed before the merge stays in -- both count as closed.
-  const unsettled = new Set([...reopened, ...pendingClose, ...failed.map((f) => f.issue)]);
+  const unsettled = new Set([...reopened, ...pendingClose, ...settledOpen, ...failed.map((f) => f.issue)]);
   const closingSet = linked.filter((x) => !unsettled.has(x));
 
   return done({
     action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore, closingSet,
-    ...(o.closeWindowMs !== null ? { closedAfterWindow } : {}),
+    ...(o.closeWindowMs !== null ? { closedAfterWindow, settledOpen } : {}),
     ...(messageUnread ? { messageUnread: true } : {}),
   });
 }

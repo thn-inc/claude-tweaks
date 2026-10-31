@@ -605,7 +605,9 @@ the source of truth; the module only decides when the steps run and records that
   marker gets a late Step 4.0 and Step 4.0b pass once: legacy runs, and runs merged in-session by an
   older installed build, which writes no summary marker. This is bounded three ways. Step 4.0 runs
   with the 10-minute reopen window (`CLOSE_WINDOW_MS`) after `mergedAt`, so a record a human closed
-  later is never reopened and counts by its live state. Step 4.0b runs with `selfInclude: false`, so
+  later is never reopened and counts by its live state, and a record the merge was to close that is
+  still open past the window is settled open (`settledOpen`), not pending: no re-run line, and it
+  is not a closing record. Step 4.0b runs with `selfInclude: false`, so
   it skips the Self-inclusion rule: that rule assumes a caller seconds after the merge, while this
   one runs at least 10 minutes later, so every closing record counts by its live state too, and a
   sub-issue a human reopened since keeps its parent open. Step 4.0b's own idempotence checks make a
