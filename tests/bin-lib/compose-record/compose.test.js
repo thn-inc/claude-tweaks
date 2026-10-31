@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { composeBody, validateShaped, splitSections } = require('../../../plugin/bin/lib/compose-record/compose');
-const { shapeGate, PLACEHOLDER_PATTERNS } = require('../../../plugin/bin/lib/issues/materialize-format');
+const { shapeGate, PLACEHOLDER_PATTERNS, sectionText } = require('../../../plugin/bin/lib/issues/materialize-format');
 const { readText } = require('../../helpers/read-skill');
 
 const SHAPED = [
@@ -123,6 +123,14 @@ test('splitSections: line-anchored ## headings only — a mid-line "## " is not 
   const sections = splitSections('## Current State\n\ntext with ## not a heading inline\n\n## Deliverables\n\nmore');
   assert.equal(Object.keys(sections).length, 2);
   assert.match(sections['Current State'], /## not a heading inline/);
+});
+
+test('AC2.1: splitSections ignores a heading inside a fence and agrees with sectionText (#4561)', () => {
+  const body = '## Current State\n\nx\n\n```markdown\n## Release Note\nquoted\n```\n\n## Deliverables\n\ny';
+  const sections = splitSections(body);
+  assert.deepEqual(Object.keys(sections), ['Current State', 'Deliverables']);
+  for (const [name, content] of Object.entries(sections)) assert.equal(content, sectionText(body, name));
+  assert.equal(sectionText(body, 'Release Note'), null);
 });
 
 test('validateShaped characterization: exact gaps, in order, for a multi-gap body', () => {

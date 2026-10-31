@@ -6,6 +6,7 @@
 'use strict';
 
 const { recordPayload } = require('../issues/record');
+const { headingLine, fencedLineMask } = require('../issues/record-payload');
 const {
   REQUIRED_SECTIONS: GATE_SECTIONS, PLACEHOLDER_PATTERNS, authoredRegion, sectionText, shapeGate, stripCodeSpans,
   liftMetadata, describeDesignIntentError,
@@ -13,25 +14,28 @@ const {
 
 // Derived from the gate's own lists — never a locally declared copy (#2827). Exported under
 // the historical names REQUIRED_SECTIONS / PLACEHOLDER_MARKERS.
-const SECTION_NAMES = GATE_SECTIONS.map((h) => h.replace(/^## /, ''));
+const SECTION_NAMES = GATE_SECTIONS.map((h) => h.slice(3));
 const MARKER_NAMES = PLACEHOLDER_PATTERNS.map((p) => p.marker);
 
 // body -> { [headingText]: contentString } — content is every line between one line-anchored
 // "## {Heading}" line and the next (or end of string), trimmed. A "## " appearing mid-line
-// (not at the start of a line) is never treated as a heading.
+// (not at the start of a line) is never treated as a heading, and neither is a heading line
+// inside a fenced block (quoted content). One rule with sectionText/findSection: headingLine
+// decides what a heading line is, fencedLineMask which lines are fenced (#4561).
 function splitSections(body) {
-  const lines = String(body || '').split('\n');
+  const lines = String(body || '').replace(/\r\n/g, '\n').split('\n');
+  const fenced = fencedLineMask(lines);
   const raw = {};
   let current = null;
-  for (const line of lines) {
-    const m = /^## (.+)$/.exec(line);
-    if (m) {
-      current = m[1].trim();
+  lines.forEach((line, idx) => {
+    const h = fenced[idx] ? null : headingLine(line);
+    if (h !== null && h.level === 2) {
+      current = h.text;
       if (!(current in raw)) raw[current] = [];
-      continue;
+      return;
     }
     if (current !== null) raw[current].push(line);
-  }
+  });
   const out = {};
   for (const [heading, contentLines] of Object.entries(raw)) out[heading] = contentLines.join('\n').trim();
   return out;
