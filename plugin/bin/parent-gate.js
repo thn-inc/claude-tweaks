@@ -8,7 +8,7 @@
 //
 // Usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]]
 //   [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text]
-//   [--risk-floor low|medium|high|always] [--help]
+//   [--risk-floor low|medium|high|always] [--facts-json <file>] [--help]
 //   --closing    N or owner/repo#N; a foreign-repo token is dropped. --sub-issue N without
 //                --closing means {N}; --parent without it means {}.
 //   --held       sub-issues Step 4.0b's caller has not settled; they come back in `held`.
@@ -19,6 +19,14 @@
 //   --work-links, --risk-floor  default to .claude-tweaks/policy.yml at the repo root.
 //   --backend    github-issues|local-files; defaults to CLAUDE.md's `work-backend:`.
 //                local-files is refused until its record reader exists.
+//   --facts-json the gh-absent fact source: the MCP `issue_read` results the calling skill
+//                fetched, written unreshaped (bin/lib/issues/mcp-parent-gate-shape.js's
+//                FACTS_KEYS), normalized in Node and then evaluated by the same functions
+//                the gh path runs. This path makes zero gh calls and never probes for gh.
+//                `parentComments` and `me` are read only under --idempotence, and only for
+//                an open, non-reopened parent that is due below the floor. owner/repo are
+//                read from the origin remote (a git read) only when a --closing token is
+//                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
 // Output: one JSON line on stdout, the verdict in the order of VERDICT_FIELDS
 // (bin/lib/issues/parent-gate.js): {parent, state, exceeds, closeReason, idempotence,
@@ -28,7 +36,19 @@
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
 // 1 a malformed invocation; 2 `gh` is absent, or owner/repo or the repo root cannot be
 // resolved; 3 a gh call failed (the message goes to stderr). On every non-zero exit nothing
-// goes to stdout. Only a GhFailure maps to 3: any other throw is a bug and propagates.
+// goes to stdout. Only a GhFailure or a FactsError maps to an exit code: any other throw is a
+// bug and propagates.
+//
+// --facts-json uses the same vocabulary, and splits the file's problems by what they mean:
+// 1 a facts file that will not read, parse or hold a JSON object, a required key that is
+// absent, or a subIssueGets key set that is not the enumerated numbers (the fetch never
+// happened); 3 a present entry that fails its shape guard (an MCP error or a wrapper the
+// agent wrote as data). 2 can only mean no GitHub remote for a qualified --closing token. This
+// deliberately departs from cli-wrapper-contract.md's gh-absent rule (every problem with the
+// file on the malformed-invocation code, as materialize.js and preflight-records.js do): a
+// file problem and a guard failure are different recoveries for the prose that branches on
+// them, and mcp-agent-fetch-node-compute rule 3 maps a guard failure to a failed read, never
+// to content, which is this CLI's 3.
 //
 // There is no `--repo` flag. Owner/repo come from the origin remote, because shapes 1, 3,
 // 6 and 7 of the gate's gh calls carry no `--repo` and read the repo of gh's own cwd; an
@@ -46,12 +66,13 @@ const {
   VALID_RISK_FLOORS, VERDICT_FIELDS, GhFailure, ghCaller, gatherGateFacts, gatherIdempotenceFacts,
   evaluateParentGate, evaluateIdempotence, parseClosingTokens,
 } = require('./lib/issues/parent-gate');
+const { FactsError, normalizeMcpFacts, requireIdempotenceReads } = require('./lib/issues/mcp-parent-gate-shape');
 
-const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--help]\n';
+const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--help]\n';
 
 const WORK_LINKS = POLICY_KEYS.find((k) => k.key === 'work-links').values;
 const BACKENDS = ['github-issues', 'local-files'];
-const VALUE_FLAGS = new Set(['--sub-issue', '--parent', '--closing', '--held', '--merging-pr', '--work-links', '--risk-floor', '--backend']);
+const VALUE_FLAGS = new Set(['--sub-issue', '--parent', '--closing', '--held', '--merging-pr', '--work-links', '--risk-floor', '--backend', '--facts-json']);
 
 // A digit string -> its positive safe-integer value, or null (`Number('')` is 0, so test the digits first).
 function positive(text) {
@@ -83,6 +104,8 @@ function flagValue(flag, text) {
       return WORK_LINKS.includes(text) ? { value: text } : { error: `--work-links must be one of ${WORK_LINKS.join(', ')}: ${text}` };
     case '--risk-floor':
       return VALID_RISK_FLOORS.includes(text) ? { value: text } : { error: `--risk-floor must be one of ${VALID_RISK_FLOORS.join(', ')}: ${text}` };
+    case '--facts-json':
+      return { value: text };
     default:
       return BACKENDS.includes(text) ? { value: text } : { error: `--backend must be one of ${BACKENDS.join(', ')}: ${text}` };
   }
@@ -97,11 +120,12 @@ const OPT_NAMES = {
   '--work-links': 'workLinks',
   '--risk-floor': 'riskFloor',
   '--backend': 'backend',
+  '--facts-json': 'factsJson',
 };
 
 function parseArgs(argv) {
   const opts = {
-    help: false, subIssue: null, parent: null, closing: null, held: [], mergingPr: null, idempotence: false, workLinks: null, riskFloor: null, backend: null,
+    help: false, subIssue: null, parent: null, closing: null, held: [], mergingPr: null, idempotence: false, workLinks: null, riskFloor: null, backend: null, factsJson: null,
   };
   const given = new Set();
   for (let i = 0; i < argv.length; i++) {
@@ -145,6 +169,7 @@ const realDeps = {
     }
   },
   readWorkBackend,
+  readFile: (file) => fs.readFileSync(file, 'utf8'),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -172,27 +197,42 @@ function run(argv, deps = realDeps) {
     backend = configured === 'local-files' ? 'local-files' : 'github-issues';
   }
   if (backend === 'local-files') {
+    if (opts.factsJson !== null) {
+      deps.stderr('parent-gate.js: --facts-json cannot be combined with --backend local-files\n');
+      return 1;
+    }
     deps.stderr('parent-gate.js: --backend local-files is not supported yet\n');
     return 1;
   }
 
-  let hasGh = false;
-  try { hasGh = deps.ghAvailable(); } catch { hasGh = false; }
-  if (!hasGh) {
-    deps.stderr('parent-gate.js: `gh` is required; without it, pass the facts you fetched through --facts-json <file>\n');
-    return 2;
+  const tokens = opts.closing !== null ? opts.closing : opts.subIssue !== null ? [String(opts.subIssue)] : [];
+
+  // The facts file path makes no gh call and never probes for gh. It needs owner/repo only to
+  // judge a qualified --closing token (an unqualified one skips sameRepoNumbers), so it reads
+  // the origin remote only then.
+  if (opts.factsJson === null) {
+    let hasGh = false;
+    try { hasGh = deps.ghAvailable(); } catch { hasGh = false; }
+    if (!hasGh) {
+      deps.stderr('parent-gate.js: `gh` is required; without it, pass the facts you fetched through --facts-json <file>\n');
+      return 2;
+    }
   }
 
-  let remote = null;
-  try { remote = deps.remoteUrl(); } catch { remote = null; }
-  const repoSpec = parseRepo(remote);
-  if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
-  const { owner, repo } = repoSpec;
-  // parseRepo accepts any non-'/' segment, '.' and '..' included; the gate's REST paths interpolate
-  // owner/repo (the same guard as fetch-sub-issues.js).
-  if (owner === '.' || owner === '..' || repo === '.' || repo === '..') {
-    deps.stderr('parent-gate.js: invalid origin remote — owner/repo cannot be "." or ".."\n');
-    return 2;
+  let owner = null;
+  let repo = null;
+  if (opts.factsJson === null || tokens.some((token) => !/^\d+$/.test(token))) {
+    let remote = null;
+    try { remote = deps.remoteUrl(); } catch { remote = null; }
+    const repoSpec = parseRepo(remote);
+    if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
+    ({ owner, repo } = repoSpec);
+    // parseRepo accepts any non-'/' segment, '.' and '..' included; the gate's REST paths interpolate
+    // owner/repo (the same guard as fetch-sub-issues.js).
+    if (owner === '.' || owner === '..' || repo === '.' || repo === '..') {
+      deps.stderr('parent-gate.js: invalid origin remote — owner/repo cannot be "." or ".."\n');
+      return 2;
+    }
   }
 
   let policyRaw = null;
@@ -201,24 +241,59 @@ function run(argv, deps = realDeps) {
   const workLinks = opts.workLinks || policy['work-links'].value;
   const riskFloor = opts.riskFloor || policy['risk-floor'].value;
 
-  const tokens = opts.closing !== null ? opts.closing : opts.subIssue !== null ? [String(opts.subIssue)] : [];
   const closing = parseClosingTokens(tokens, { owner, repo });
   if (closing.error) { deps.stderr(`parent-gate.js: ${closing.error}\n${USAGE}`); return 1; }
 
-  const caller = ghCaller(deps.runner);
+  let mcp = null;
+  if (opts.factsJson !== null) {
+    let raw;
+    try {
+      raw = deps.readFile(opts.factsJson);
+    } catch (err) {
+      deps.stderr(`parent-gate.js: facts file ${opts.factsJson}: unreadable (${err && err.message})\n`);
+      return 1;
+    }
+    try {
+      raw = JSON.parse(raw);
+    } catch (err) {
+      deps.stderr(`parent-gate.js: facts file ${opts.factsJson}: not valid JSON (${err.message})\n`);
+      return 1;
+    }
+    // Without --idempotence the two idempotence reads are neither required nor looked at.
+    if (!opts.idempotence && raw !== null && typeof raw === 'object' && !Array.isArray(raw)) {
+      raw = { ...raw };
+      delete raw.parentComments;
+      delete raw.me;
+    }
+    try {
+      mcp = normalizeMcpFacts(raw, { subIssue: opts.subIssue, parent: opts.parent, workLinks });
+    } catch (err) {
+      if (!(err instanceof FactsError)) throw err;
+      deps.stderr(`parent-gate.js: facts file ${err.key}: ${err.message}\n`);
+      return err.exit;
+    }
+  }
+
+  const caller = mcp ? null : ghCaller(deps.runner);
   let verdict;
   try {
-    const facts = gatherGateFacts({
+    const facts = mcp ? mcp.gate : gatherGateFacts({
       subIssue: opts.subIssue, parent: opts.parent, owner, repo, workLinks, caller,
     });
     verdict = evaluateParentGate({
       ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
     });
     if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
-      const { idempotence, skipped } = evaluateIdempotence(gatherIdempotenceFacts({ parent: verdict.parent, caller }));
+      if (mcp) requireIdempotenceReads(mcp.idempotence);
+      const idempotenceFacts = mcp ? mcp.idempotence : gatherIdempotenceFacts({ parent: verdict.parent, caller });
+      const { idempotence, skipped } = evaluateIdempotence(idempotenceFacts);
       verdict = { ...verdict, idempotence, skipped };
     }
   } catch (err) {
+    if (err instanceof FactsError) {
+      deps.stderr(`parent-gate.js: facts file ${err.key}: ${err.message}\n`);
+      return err.exit;
+    }
     if (!(err instanceof GhFailure)) throw err;
     deps.stderr(`parent-gate.js: ${err.message}\n`);
     return 3;

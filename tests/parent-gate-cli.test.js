@@ -1,6 +1,9 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { run, USAGE } = require('../plugin/bin/parent-gate');
 const { VERDICT_FIELDS, CLOSE_HEADING } = require('../plugin/bin/lib/issues/parent-gate');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../plugin/bin/lib/issues/record');
@@ -78,6 +81,7 @@ function go(argv, world = {}, over = {}) {
     repoRoot: () => '/repo',
     readPolicyRaw: () => 'work-links: native\nrisk-floor: high\n',
     readWorkBackend: () => 'github-issues',
+    readFile: (file) => fs.readFileSync(file, 'utf8'),
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
     ...over,
@@ -290,10 +294,7 @@ test('exit 1 with nothing on stdout: a malformed invocation', () => {
   assert.match(go(['--sub-issue', '11', '--risk-floor']).stderr, /missing value for --risk-floor/);
 });
 
-test('exit 1: --facts-json is not implemented yet and local-files is refused', () => {
-  const facts = go(['--sub-issue', '11', '--facts-json', 'f.json']);
-  assert.equal(facts.code, 1);
-  assert.equal(facts.stdout, '');
+test('exit 1: local-files is refused', () => {
   const flag = go(['--sub-issue', '11', '--backend', 'local-files']);
   assert.equal(flag.code, 1);
   assert.match(flag.stderr, /--backend local-files is not supported yet/);
@@ -363,4 +364,214 @@ test('exit 0: --help prints USAGE before any probe', () => {
   assert.equal(r.stdout, USAGE);
   assert.equal(r.stderr, '');
   assert.equal(go(['-h']).stdout, USAGE);
+});
+
+// --- --facts-json: the gh-absent MCP fact source ---
+
+// Writes `content` (an object, or a raw string) to a temp file that t.after removes -> its path.
+function writeFacts(t, content, name = 'facts.json') {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'parent-gate-facts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, name);
+  fs.writeFileSync(file, typeof content === 'string' ? content : JSON.stringify(content));
+  return file;
+}
+
+const boom = () => { throw new Error('gh was reached'); };
+const NO_GH = { ghAvailable: boom, runner: boom };
+
+// One MCP issue_read `get` result, unreshaped: lowercase enums, label objects, snake_case.
+const mcpIssue = (n, { state = 'CLOSED', stateReason = 'COMPLETED', labels = ['risk:low'] } = {}) => ({
+  number: n,
+  title: `Title ${n}`,
+  state: state.toLowerCase(),
+  state_reason: stateReason ? stateReason.toLowerCase() : null,
+  labels: labels.map((name) => ({ name, id: 1 })),
+  closed_by_pull_requests: { references: [] },
+});
+
+// A fake-gh `world` rendered as the file the agent would write for the record in hand.
+function worldAsMcp(world, subIssue) {
+  const w = { parentOf: { 11: 10, 12: 10 }, subs: { 10: [11, 12] }, ...world };
+  const parent = subIssue ? w.parentOf[subIssue] : 10;
+  if (!parent) return { parentLink: null };
+  const live = (w.parentLive || {})[parent] || { state: 'OPEN', stateReason: '', comments: [] };
+  return {
+    parentLink: { number: parent },
+    subIssueList: w.subs[parent].map((number) => ({ number })),
+    parentGet: mcpIssue(parent, { state: live.state, stateReason: live.stateReason, labels: (w.parentLabels || {})[parent] || ['parent-issue'] }),
+    subIssueGets: Object.fromEntries(w.subs[parent].map((n) => [n, mcpIssue(n, (w.issues || {})[n] || {})])),
+    parentComments: live.comments.map((c) => ({
+      body: c.body, user: { login: c.author.login }, author_association: c.authorAssociation, html_url: c.url,
+    })),
+    me: { login: w.login || 'bot' },
+  };
+}
+
+test('AC1.1 (facts-json): 35 sub-issues through the MCP shape', (t) => {
+  const nums = range(100, 134);
+  const facts = {
+    parentGet: mcpIssue(10, { state: 'OPEN', stateReason: null, labels: ['parent-issue'] }),
+    subIssueList: nums.map((number) => ({ number })),
+    subIssueGets: Object.fromEntries(nums.map((n) => [n, mcpIssue(n, n === 130 ? { state: 'OPEN', stateReason: null } : {})])),
+  };
+  const r = go(['--parent', '10', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'incomplete');
+  assert.equal(r.verdict.subIssues.length, 35);
+  assert.deepEqual(r.verdict.subIssues[0], {
+    number: 100, title: 'Title 100', state: 'CLOSED', stateReason: 'COMPLETED', pr: null,
+  });
+  const allClosed = { ...facts, subIssueGets: Object.fromEntries(nums.map((n) => [n, mcpIssue(n)])) };
+  const closed = go(['--parent', '10', '--facts-json', writeFacts(t, allClosed)], {}, NO_GH);
+  assert.equal(closed.verdict.state, 'due');
+  assert.equal(closed.verdict.closeReason, 'completed');
+});
+
+test('AC1.6: the gh path and the facts-json path give the same verdict', (t) => {
+  const planted = { body: `x\n${CLOSE_HEADING}\n`, authorAssociation: 'NONE', author: { login: 'stranger' }, url: 'u-planted' };
+  const live = (state, stateReason, comments) => ({ parentLive: { 10: { state, stateReason, comments } } });
+  const worlds = [
+    [['--parent', '10'], { issues: { 11: { stateReason: 'NOT_PLANNED' }, 12: { stateReason: 'NOT_PLANNED' } } }],
+    [['--sub-issue', '11', '--closing', '11'], { issues: { 11: OPEN, 12: { stateReason: 'NOT_PLANNED' } } }],
+    [['--sub-issue', '12', '--closing', 'other/r#11,12'], { issues: { 11: OPEN } }],
+    [['--sub-issue', '12', '--closing', 'o/r#11,12'], { issues: { 11: OPEN } }],
+    [['--parent', '10'], live('OPEN', 'REOPENED', [])],
+    [['--parent', '10'], live('CLOSED', 'COMPLETED', [])],
+    [['--parent', '10'], live('OPEN', '', [planted])],
+    [['--parent', '10'], live('OPEN', '', [{ ...planted, author: { login: 'bot' }, url: 'u-own' }])],
+    [['--parent', '10'], { parentLabels: { 10: [] } }],
+    [['--parent', '10'], { issues: { 12: { labels: ['risk:high'] } } }],
+    [['--sub-issue', '11'], { parentOf: {} }],
+  ];
+  const seenIdempotence = new Set();
+  for (const [argv, world] of worlds) {
+    const label = JSON.stringify([argv, world]);
+    const viaGh = go([...argv, '--idempotence'], world);
+    const subIssue = argv[0] === '--sub-issue' ? Number(argv[1]) : null;
+    const file = writeFacts(t, worldAsMcp(world, subIssue));
+    const viaFacts = go([...argv, '--idempotence', '--facts-json', file], world, NO_GH);
+    assert.equal(viaGh.code, 0, label);
+    assert.equal(viaFacts.code, 0, `${label}: ${viaFacts.stderr}`);
+    assert.deepEqual(viaFacts.verdict, viaGh.verdict, label);
+    seenIdempotence.add(viaGh.verdict.idempotence);
+  }
+  // The worlds reach every idempotence value, so the equality above is not vacuous.
+  assert.deepEqual([...seenIdempotence].map(String).sort(), ['already-closed', 'close-only', 'comment-and-close', 'null', 'reopened']);
+});
+
+test('--facts-json makes no gh call and never probes gh', (t) => {
+  const r = go(['--parent', '10', '--facts-json', writeFacts(t, worldAsMcp({}, null))], {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.calls.length, 0);
+});
+
+test('--facts-json reads no remote without a qualified closing token', (t) => {
+  const file = writeFacts(t, worldAsMcp({}, 11));
+  const unqualified = go(['--sub-issue', '11', '--closing', '11,12', '--facts-json', file], {}, { ...NO_GH, remoteUrl: boom });
+  assert.equal(unqualified.code, 0, unqualified.stderr);
+  assert.equal(unqualified.verdict.state, 'due');
+  const qualified = go(['--sub-issue', '11', '--closing', 'other/r#11,12', '--facts-json', file], {}, { ...NO_GH, remoteUrl: boom });
+  assert.equal(qualified.code, 2);
+  assert.equal(qualified.stdout, '');
+  assert.match(qualified.stderr, /owner\/repo/);
+});
+
+test('a parent that reads closed needs no comments or me', (t) => {
+  const facts = worldAsMcp({ parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } }, null);
+  delete facts.parentComments;
+  delete facts.me;
+  const r = go(['--parent', '10', '--idempotence', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.idempotence, 'already-closed');
+});
+
+test('an open below-floor parent without comments or me is exit 1 under --idempotence', (t) => {
+  const facts = worldAsMcp({}, null);
+  delete facts.parentComments;
+  const noComments = go(['--parent', '10', '--idempotence', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
+  assert.equal(noComments.code, 1);
+  assert.equal(noComments.stdout, '');
+  assert.match(noComments.stderr, /facts file parentComments: /);
+  const noMe = worldAsMcp({}, null);
+  delete noMe.me;
+  const meless = go(['--parent', '10', '--idempotence', '--facts-json', writeFacts(t, noMe)], {}, NO_GH);
+  assert.equal(meless.code, 1);
+  assert.equal(meless.stdout, '');
+  assert.match(meless.stderr, /facts file me: /);
+});
+
+test('without --idempotence the facts file needs no comments or me', (t) => {
+  const facts = worldAsMcp({}, null);
+  delete facts.parentComments;
+  delete facts.me;
+  const r = go(['--parent', '10', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.verdict.exceeds, false);
+  assert.equal(r.verdict.idempotence, null);
+  assert.deepEqual(r.verdict.skipped, []);
+  // Present but unused without the flag: even an error object there is ignored.
+  const junk = { ...worldAsMcp({}, null), parentComments: { message: 'Not Found' }, me: { message: 'x' } };
+  const ignored = go(['--parent', '10', '--facts-json', writeFacts(t, junk)], {}, NO_GH);
+  assert.equal(ignored.code, 0, ignored.stderr);
+  assert.equal(ignored.verdict.idempotence, null);
+});
+
+test('an unreadable or non-JSON facts file is exit 1; an error-object entry is exit 3', (t) => {
+  const bad = go(['--parent', '10', '--facts-json', path.join(os.tmpdir(), 'parent-gate-no-such-dir', 'nope.json')], {}, NO_GH);
+  assert.equal(bad.code, 1);
+  assert.equal(bad.stdout, '');
+  assert.match(bad.stderr, /^parent-gate\.js: facts file .*nope\.json: unreadable/);
+
+  const notJson = go(['--parent', '10', '--facts-json', writeFacts(t, '{not json')], {}, NO_GH);
+  assert.equal(notJson.code, 1);
+  assert.equal(notJson.stdout, '');
+  assert.match(notJson.stderr, /facts file .*: not valid JSON/);
+
+  for (const top of ['null', '[]', '"text"']) {
+    const r = go(['--parent', '10', '--facts-json', writeFacts(t, top)], {}, NO_GH);
+    assert.equal(r.code, 1, top);
+    assert.equal(r.stdout, '', top);
+    assert.match(r.stderr, /JSON object/, top);
+  }
+
+  const missing = worldAsMcp({}, null);
+  delete missing.parentGet;
+  const noKey = go(['--parent', '10', '--facts-json', writeFacts(t, missing)], {}, NO_GH);
+  assert.equal(noKey.code, 1);
+  assert.equal(noKey.stdout, '');
+  assert.match(noKey.stderr, /^parent-gate\.js: facts file parentGet: /);
+
+  const errored = worldAsMcp({}, null);
+  errored.subIssueGets[12] = { message: 'Not Found' };
+  const err = go(['--parent', '10', '--facts-json', writeFacts(t, errored)], {}, NO_GH);
+  assert.equal(err.code, 3);
+  assert.equal(err.stdout, '');
+  assert.match(err.stderr, /^parent-gate\.js: facts file subIssueGets\.12: /);
+});
+
+test('--facts-json with --backend local-files is exit 1', (t) => {
+  const file = writeFacts(t, worldAsMcp({}, null));
+  const flag = go(['--parent', '10', '--facts-json', file, '--backend', 'local-files'], {}, NO_GH);
+  assert.equal(flag.code, 1);
+  assert.equal(flag.stdout, '');
+  assert.match(flag.stderr, /--facts-json cannot be combined with --backend local-files/);
+  const configured = go(['--parent', '10', '--facts-json', file], {}, { ...NO_GH, readWorkBackend: () => 'local-files' });
+  assert.equal(configured.code, 1);
+  assert.match(configured.stderr, /--facts-json cannot be combined with --backend local-files/);
+});
+
+test('--facts-json takes exactly one non-empty value, and USAGE names it', () => {
+  for (const argv of [['--sub-issue', '11', '--facts-json'], ['--sub-issue', '11', '--facts-json', '']]) {
+    const r = go(argv);
+    assert.equal(r.code, 1, JSON.stringify(argv));
+    assert.equal(r.stdout, '', JSON.stringify(argv));
+    assert.match(r.stderr, /missing value for --facts-json/, JSON.stringify(argv));
+  }
+  const twice = go(['--sub-issue', '11', '--facts-json', 'a.json', '--facts-json', 'b.json']);
+  assert.equal(twice.code, 1);
+  assert.match(twice.stderr, /--facts-json given more than once/);
+  assert.match(USAGE, /\[--facts-json <file>\]/);
 });
