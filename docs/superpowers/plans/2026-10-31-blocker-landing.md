@@ -269,3 +269,5 @@ Waived AC10.4: the "(Q2.)" provenance tag carries no behavior.
 Waived AC11.3: the "(Q3.)" provenance tag carries no behavior.
 Waived AC12.2: the "(Plan-review Q4: Reading A.)" provenance tag carries no behavior.
 Waived AC13.1: the closing rule governs how plan review routes findings; it carries no code or prose behavior — Global Constraints' "Closing rule" bullet records the edge cases decided under it.
+Waived AC13.2: plan-review routing rule (edge cases are implementer judgment, recorded in the plan); no code or prose behavior — honored by Global Constraints' "Closing rule" bullet.
+Waived AC13.3: plan-review stop rule (only a gap contradicting an AC or decision stops the build); governs Common Step 1.6's routing, not shipped behavior.
