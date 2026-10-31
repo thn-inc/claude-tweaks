@@ -114,8 +114,10 @@ Route the verdict in the reconciler's order. A parent whose labels lack
 `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in
 the closing summary. The verdict reports it as `parentIssue: false`. Skip a parent whose verdict
 lists `needs` (its `needs:*` labels) and name it in the closing summary, per
-`_shared/work-record.md`'s Worklist rule. A non-empty `held` is the skip the inputs paragraph
-above names: name the parent in the closing summary. On `due` with `exceeds: false`, run
+`_shared/work-record.md`'s Worklist rule. A non-empty `held` skips the parent, named in the
+closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a
+`failed[]`, `pendingClose[]` or `closeFailed[]` one waits on the hand reopen or close the inputs
+paragraph above names. On `due` with `exceeds: false`, run
 **Close the parent below the floor**. With `gh` absent, every call the procedure makes runs
 through `_shared/github-write-transport.md`'s MCP rows (the procedure's **Transport (#4602).**
 paragraph), so a gh-absent run with the GitHub MCP server closes the parent the same way after a
@@ -126,7 +128,8 @@ already handled, so a parent with several sub-issues in the set is closed once. 
 `parent` names it. The procedure's **Return to the Try it post** and **Fail open on every `gh`
 call** paragraphs state what this entry does not do (no Try it block, no fallback to the no-parent
 path) and how it skips on a failing `gh` call — never a stop, and never a reason to report
-anything other than `merged`. A non-zero CLI exit is a failing `gh` call.
+anything other than `merged`. Any other non-zero CLI exit (after **Run the gate CLI**'s exit-2
+`gh`-absent retry) is a failing `gh` call.
 
 Log each parent closed:
 

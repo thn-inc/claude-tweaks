@@ -1036,7 +1036,7 @@ const INVOCATION_FACTS = [
   [
     'facts-json exit 2 fails open',
     'cli',
-    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
+    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token, or an undeterminable repository root and working directory: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
   ],
   [
     'local-files exit is a reported failure',
@@ -1139,6 +1139,53 @@ function assertStep1RoutesOnIdempotence(step1) {
 
 test('#4603: Close step 1 routes on the CLI\'s idempotence values', () => {
   assertStep1RoutesOnIdempotence(closeStep1(read(GATE_REL)));
+});
+
+// Step 4.0b's exit sentence must leave Run the gate CLI's exit-2 gh-absent retry in force: a bare
+// "a non-zero CLI exit is a failing gh call" would skip the parent on a gh-absent local merge.
+const STEP_40B_EXIT = "Any other non-zero CLI exit (after **Run the gate CLI**'s exit-2 `gh`-absent retry) is a failing `gh` call.";
+const PRE_FIX_STEP_40B_EXIT = 'anything other than `merged`. A non-zero CLI exit is a failing `gh` call.';
+function assertStep40bKeepsRetry(text) {
+  const c = collapse(text);
+  assert.ok(c.includes(STEP_40B_EXIT), 'Step 4.0b carves the exit-2 gh-absent retry out of its failing-call rule');
+  assert.ok(!c.includes('. A non-zero CLI exit is a failing `gh` call.'), 'no unqualified non-zero-exit rule');
+}
+
+// Every Step 4.0b held number holds its parent for its own reason: `reopened[]` ones are open again,
+// the other three wait on a hand reopen or close.
+const HELD_SKIP =
+  'A non-empty `held` skips the parent, named in the closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a `failed[]`, `pendingClose[]` or `closeFailed[]` one waits on the hand reopen or close the inputs paragraph above names.';
+const PRE_FIX_HELD_SKIP = 'A non-empty `held` is the skip the inputs paragraph above names: name the parent in the closing summary.';
+const assertHeldSkip = (text) => assert.ok(collapse(text).includes(HELD_SKIP), 'the held skip names every held list accurately');
+
+test('#4603: Step 4.0b keeps the gh-absent retry and states the held skip accurately', () => {
+  const step40b = step40bOf();
+  assertStep40bKeepsRetry(step40b);
+  assertHeldSkip(step40b);
+  assert.throws(() => assertStep40bKeepsRetry(PRE_FIX_STEP_40B_EXIT), /carves the exit-2/, 'go-red: the unqualified sentence fails');
+  assert.throws(() => assertStep40bKeepsRetry(`${STEP_40B_EXIT} ${PRE_FIX_STEP_40B_EXIT}`), /no unqualified/, 'go-red: the unqualified sentence beside the carve-out fails');
+  assert.throws(() => assertHeldSkip(PRE_FIX_HELD_SKIP), /every held list/, 'go-red: the pre-fix held sentence fails');
+});
+
+// The computation the CLI now owns is not narrated in the prose, and the Transport paragraph no
+// longer lists step 1's comment read (the CLI's `parentComments`) among the agent's `gh issue view` reads.
+const CLI_NARRATION = [
+  ['Enumerate', "## Enumerate the parent's sub-issues", '## Self-inclusion rule', 'no second per-sub-issue round-trip'],
+  ['Enumerate', "## Enumerate the parent's sub-issues", '## Self-inclusion rule', 'to build the `subIssues` array'],
+  ['Evaluate', '**Oversight-floor check (risk only, never size).**', '- **`exceeds: false`**', 'exceedsOversightFloor('],
+  ['Evaluate', '**Oversight-floor check (risk only, never size).**', '- **`exceeds: false`**', 'maxRiskTier'],
+  ['Transport', '**Transport (#4602).**', '**Fail open on every `gh` call', 'the comment reads in **Close the parent below the floor**'],
+];
+const narrationPresent = (gate) =>
+  CLI_NARRATION.filter(([, start, end, lit]) => collapse(section(gate, start, end)).includes(lit)).map(([where, , , lit]) => `${where}: ${lit}`);
+
+test('#4603: the gate prose does not narrate the computation the CLI owns', () => {
+  assert.deepEqual(narrationPresent(read(GATE_REL)), []);
+  assert.ok(read(GATE_REL).includes('**Oversight-floor check (risk only, never size).**'), 'the check keeps its label (verification-brief.md cites it)');
+});
+
+test('#4603 go-red control: the pre-#4603 gate narrates every one of them', { skip: preChange4603Gate.skip }, () => {
+  assert.equal(narrationPresent(preChange4603Gate.text).length, CLI_NARRATION.length);
 });
 
 test('#4603 go-red control: the pre-#4603 Close step 1 reads the login itself', { skip: preChange4603Gate.skip }, () => {

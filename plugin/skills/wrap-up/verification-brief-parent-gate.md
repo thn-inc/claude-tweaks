@@ -63,9 +63,9 @@ absent, each call runs through the GitHub MCP tool its `_shared/github-write-tra
 its facts file and hand it with `--facts-json`. The native parent read is `issue_read`
 (`get_parent`) and the body-text read is `issue_read` (`get`); the native list is `issue_read`
 (`get_sub_issues`, paged per its row); and every `gh issue view` read (the sub-issue's and the
-parent's bodies, each sub-issue, the parent's labels, and the comment reads in **Close the parent
-below the floor** and **Apply the gate**) is `issue_read` (`get`, plus `get_comments` for comments,
-paged per its row). `gh api user` is `get_me`;
+parent's bodies, each sub-issue, the parent's labels, the parent's comments the CLI reads for
+**Close the parent below the floor** (`parentComments`), and **Apply the gate**'s comment read) is
+`issue_read` (`get`, plus `get_comments` for comments, paged per its row). `gh api user` is `get_me`;
 `gh issue comment` is `add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are
 `issue_write` (update mode), the latter under the Full-replace hazard's read-merge-write.
 `_shared/label-bootstrap.md`'s check-then-create loop has no MCP row: on the MCP path skip it, and a
@@ -170,15 +170,11 @@ query the reverse relationship instead — every record whose own `facets.parent
 closed alike (the same two-call merge `specify/record-creation.md:44` already uses). The CLI runs
 that query over the record store (`bin/lib/issues/local-store.js`'s `queryRecords`).
 
-For each sub-issue number resolved above (`work-backend: github-issues`), fetch its current state
-**and labels** in one call — its `state`, `stateReason`, labels, `title` and
-`closedByPullRequestsReferences` — to build the `subIssues`
-array `parentGateState({subIssues, parentLabels})` (`bin/lib/issues/acceptance.js`) reads, with each
-sub-issue's `facets` (`parseRecordFacets(labels)`, `bin/lib/issues/record.js`) attached alongside
-`state`. `facets` is fetched here, once, and reused by the Oversight-floor check's `maxRiskTier`
-call below — no second per-sub-issue round-trip. `title` and `closedByPullRequestsReferences`
-are kept for the listing lines of **Close the parent below the floor**, and `stateReason` for its
-close reason, for the same reason. The CLI makes that one read per sub-issue.
+For each sub-issue number resolved above (`work-backend: github-issues`), read its current state
+**and labels** once, in one call — its `state`, `stateReason`, labels, `title` and
+`closedByPullRequestsReferences` — and reuse that read for the gate state, the Oversight-floor
+check, and **Close the parent below the floor**'s listing lines and close reason. The CLI makes
+that one read per sub-issue.
 
 Then fetch the **parent's** own current labels — the other argument that predicate takes, and
 the one nothing above has produced yet. Both entry shapes need this: the parent-side entry
@@ -341,7 +337,7 @@ Route on its exit code:
 - **Exit 2 on the `gh` path with `gh` absent** (its message names `--facts-json`) — take the
   gh-absent path above, once.
 - **Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing`
-  token: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path
+  token, or an undeterminable repository root and working directory: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path
   again, so the two paths cannot loop.
 - **Any other non-zero exit on the `gh` or `--facts-json` path** — a failing `gh` call under
   **Fail open on every `gh` call**.
@@ -360,22 +356,14 @@ applied and the parent's current labels (`work-backend: github-issues`) or, unde
   oversight-floor check below before composing anything** — `due` alone no longer opens the gate
   (`#367`).
 
-**Oversight-floor check (risk only, never size).** On `due`, the CLI computes `exceeds` as
-`exceedsOversightFloor({ risk: maxTier }, { riskFloor, sizeFloor: null })`
-(`bin/lib/issues/oversight-floor.js`), where `maxTier` is `maxRiskTier` over each sub-issue's
-`risk:*` facets from **Enumerate the parent's sub-issues** above, and `riskFloor` is the
-`risk-floor` it resolves from `.claude-tweaks/policy.yml`, overridable with `--risk-floor`. A
-sub-issue missing `risk` entirely, or carrying an out-of-vocabulary value, makes `maxTier` `null`,
-so the check fails closed as `unscored` rather than being silently outvoted by its siblings. The
-verdict reports `riskFloor`, `maxTier` and `exceeds`. This section routes on `state` and `exceeds`
-only: `parentIssue`, `needs` and `held` are Step 4.0b's (`_shared/pr-first-merge-post-merge.md`).
-
-**`sizeFloor` must be the literal `null` here — never the resolved size-floor value and never
-omitted.** Per `#366`'s contract this is what makes a `facets` object carrying no `size` key
-correctly return `exceeds: false` (when risk doesn't trip) instead of failing closed on a `size`
-axis that was never meant to be evaluated at the parent level — parents carry no scoring of their
-own (`specify/record-creation.md`'s Parent record section), so there is nothing to read there
-regardless.
+**Oversight-floor check (risk only, never size).** On `due`, `exceeds` says whether the highest
+sub-issue `risk:*` tier (`maxTier`) reaches the `risk-floor` (`riskFloor`, resolved from
+`.claude-tweaks/policy.yml`, overridable with `--risk-floor`). A sub-issue with no `risk`, or an
+out-of-vocabulary one, fails the check closed as `unscored`, never outvoted by its siblings. The
+size axis is never evaluated (`#366`): parents carry no scoring of their own
+(`specify/record-creation.md`'s Parent record section). This section routes on `state` and
+`exceeds` only: `parentIssue`, `needs` and `held` are Step 4.0b's
+(`_shared/pr-first-merge-post-merge.md`).
 
 - **`exceeds: false`** — no `demo:pending`, no brief, same as a below-floor sub-issue record on
   the non-parent path. Do not compose the parent brief. The parent still has to be closed, and
