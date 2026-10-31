@@ -61,11 +61,12 @@ files:
 - **Should understand:**
   - The row is **Stage** at every tier, `aggressive` included.
   - Before staging, `bin/plan-retention.js` (run from `{REPO_ROOT}`) looks the decline up itself. A live decline, or a lookup that throws, routes the plans back to Keep.
-  - The citation check runs before the list is built, so a cited plan is never listed.
+  - The citation check runs before the list is built, so a cited plan is never listed. When the CLI reports `citationCheck: true` and any candidate is cited, tidy re-runs the same call — every plan again — with one `--cited {plan}` per cited plan, and that run's routes replace the first.
 - **Red flags:**
   - A `Prune plan` auto-applied at any tier.
   - An archive listing fewer than 30 plans at staging time.
   - The same archive re-staged on the run after a decline.
+  - An archive built from a `--cited` re-run that passed only the cited plans.
 
 ### 4. Approve: the listed plans go, in one commit
 - **URL:** Step 7, via `SKILL.md`'s **Prune plan** Action Vocabulary row, then the Step 7.5 checklist
@@ -75,7 +76,7 @@ files:
   - Each plan is re-verified first:
     - `plan-citation-check.md` is still clean.
     - Its classification still holds: the related spec is still complete, an orphan still has no spec, or a very-old plan's spec is still not started.
-    - It is still past the 7-day cutoff (for `(archive)`), or still committed (for `(ask)`).
+    - It is still past the 7-day cutoff (for `(archive)`), or still committed (for `(ask)`), read from a fresh `bin/plan-retention.js` run with the staging `--retention` value.
     - `superpowers-plans-retention` is unchanged.
   - A plan that fails any check is dropped as `stale — skipped`.
   - The rest are removed with `git rm` in one commit. Git history keeps them.
@@ -107,3 +108,4 @@ files:
 
 ## Origin
 - Created during build of #4465. Tidy Step 4 used to auto-delete plans of closed records at `moderate`, which contradicted `superpowers-plans-retention`'s `keep-forever` default and ADR-0007's recent-work cutoff. The 30-plan threshold and the decline memory were decided by the user at plan review.
+- Updated during build of #4594. The cutoff, the 30 threshold, the uncited recount and the decline lookup moved from Step 4's prose into `bin/plan-retention.js`; the journey's shape is unchanged, and its steps now name the CLI's `firstAdded`, `citationCheck` and `--cited` re-run.
