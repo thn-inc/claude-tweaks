@@ -351,7 +351,7 @@ function run(argv, overrides = {}) {
       // Not the integration-branch ladder (`_shared/integration-branch.md`): this
       // check needs GitHub's own default branch -- where closing keywords fire --
       // read on the PR's own host, not the project's integration branch.
-      defaultBranch =String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
+      defaultBranch = String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
       if (!defaultBranch) uncheckedReason = 'the repository returned no default branch';
     } catch (e) {
       uncheckedReason = `the default branch could not be read: ${errText(e)}`;
