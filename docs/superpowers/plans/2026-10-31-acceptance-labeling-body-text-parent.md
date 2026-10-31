@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, injected `deps.gh` / `deps.git` runners.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T133848-record-4551/work/4551-spec.md` (record #4551)
+**Spec:** `.claude-tweaks/pipelines/2026-10-31T171043-record-4551/work/4551-spec.md` (record #4551; re-materialized by the resumed run, carrying the plan-review Decision bullet — supersedes the earlier run's `2026-10-31T133848-record-4551` copy)
 
 ## Global Constraints
 
@@ -20,6 +20,7 @@
 - A body with no `Parent:` line resolves `parent: null` (legitimate — a collapsed decomposition), never an error.
 - Sub-issue `state` is upper-cased, labels are reduced to name strings — the same `{ number, state, labels }` shape `parentGateState` consumes today.
 - Governing skill `gh-api-module-pattern` (quoted): "The module takes `runner(args)`, invoked as if `gh ${args.join(' ')}`, returning stdout; a throw is a failed call. … always an argv array, never a shell string (no injection surface, no quoting bugs)." All new gh calls go through `deps.gh(argvArray, cwd)`.
+- **Plan-review Decision (record AC, 2026-10-31):** when a run record's `Parent: #N` line and parent #N's own task list disagree, the parent's task list wins. Sub-issues are enumerated from the parent side only. A run record whose `Parent: #N` points at a parent whose task list does not list it is logged as a mismatch in the row's detail — `#{n}: Parent: #{N} line not in #{N}'s task list — mismatch, not counted in the gate` — and is not added to the gate input (it is never forced `CLOSED` into `parentSubIssues`). The mismatch note is body-text only (native resolves both sides from one relationship) and is appended to the detail on every return path (fail, skip, pass), never replacing the row's verdict.
 - Real `gh` shapes (probed 2026-10-31 on #4551): `gh issue view N --json body` → `{"body":"..."}`; `gh issue view N --json state,labels` → `{"labels":[{"color":…,"description":…,"id":…,"name":"bug"}],"state":"OPEN"}`. Fixtures use these shapes.
 
 ## Review Focus
@@ -45,6 +46,7 @@
 | AC7.1 | Task 2 `AC7.1: no policy.yml takes the body-text path` |
 | AC8.1 | Task 2 Step 5 (revert-to-red proof) |
 | AC9.1 | `npm test`, run centrally by the pipeline's `/claude-tweaks:test` step |
+| AC10.1 (Decision) | Task 2 `AC10.1: body-text Parent line absent from the parent task list is a logged mismatch, not a gate member` |
 
 Waived wrap-up/verification-brief-parent-gate.md: read only — its body-text prose already describes the behavior this plan mechanizes; no wording changes.
 Waived _shared/work-record.md: read only — the `Parent: #N` entry is the format source; unchanged.
@@ -127,6 +129,7 @@ Behavior to implement:
 - `resolveParent` body-text: `deps.gh(['issue', 'view', String(n), '--json', 'body'], cwd)`, `JSON.parse`, `{ ok: true, parent: parseParent(data.body) }`. A throw or parse failure → `{ ok: false, error: \`gh issue view (body) failed for #${n} (${msg})\` }`. No `git remote` call and no GraphQL call on this path.
 - `enumerateSubIssues` body-text: fetch the parent body the same way; `parseSubIssues(body)`; empty → `{ ok: false, error: \`no sub-issues enumerated for parent #${parent}\` }` (same text as native). Then one `deps.gh(['issue', 'view', String(s), '--json', 'state,labels'], cwd)` per sub-issue (per-number, not `gh issue list` — its default 30-row limit would silently truncate); a throw, unparseable JSON, or non-string `state` → `{ ok: false, error }`. Map to `{ number: s, state: state.toUpperCase(), labels: labels.map((l) => l.name) }`.
 - Handler: `const workLinks = resolveWorkLinks(repoRoot);` once, after `checkIssues` is non-empty and before the resolve loop; pass it to both calls.
+- Handler, Decision mismatch (body-text only): record each run record's resolved parent (`parentOf: Map<n, parent>`, filled before the dedup `continue`, so a second run record sharing a parent is checked too). After the `gatherFailures` early return, for each `[n, p]` whose `parentSubIssues.get(p)` does not list `n`, push `#${n}: Parent: #${p} line not in #${p}'s task list — mismatch, not counted in the gate` to a `mismatches` array. Append `mismatches` to the detail of every return after that point (fail, all-skipped skip, pass). The gate input is untouched: `closing` only re-states enumerated entries, so the unlisted record is already absent from it.
 
 - [ ] **Step 1: Write the failing tests (native fixture migration + body-text tests)**
 
@@ -198,6 +201,13 @@ test('AC7.1: no policy.yml takes the body-text path', () => {
   // bodyTextRow({ …AC2 fixture…, policyRaw: null }) -> at least one '--json body' call, zero isGraphqlCall calls,
   // and the AC3.1 skip detail
 });
+test('AC10.1: body-text Parent line absent from the parent task list is a logged mismatch, not a gate member', () => {
+  // records: [20, 22]; bodies: { 20: 'Parent: #12\n', 22: 'Parent: #12\n', 12: '- [x] #20\n' };
+  // states: { 20: { state: 'OPEN', labels: ['risk:high'] } }; parentLabels: ['demo:pending'] + a trusted confirmed brief
+  // -> detail matches /#22: Parent: #12 line not in #12's task list — mismatch, not counted in the gate/;
+  //    no 'issue view 22 --json state,labels' call (22 never enters the gate);
+  //    the gate is due (only #20, forced CLOSED) so #12 is checked, and #22 is not reported missing demo:pending
+});
 ```
 
 Import `resolveParent, enumerateSubIssues` in the test file's existing `require('../../../plugin/bin/lib/wrap-up/engine-verify')` line.
@@ -216,7 +226,7 @@ Expected: PASS, 0 failures (new tests and every migrated native test)
 
 - [ ] **Step 5: Prove revert-to-red (AC8.1)**
 
-Temporarily make `resolveParent` and `enumerateSubIssues` ignore `workLinks` (always native), run Step 2's `node --test --test-name-pattern` command, and record that every body-text test (AC2.1/AC2.2, AC3.1, AC4.1 own-target, AC5.1, AC7.1, null body, no task list, state fetch failure, shared parent, enumerate upper-case) fails; then restore. Quote the failing test names in the task report. Do not commit the revert.
+Temporarily make `resolveParent` and `enumerateSubIssues` ignore `workLinks` (always native), run Step 2's `node --test --test-name-pattern` command, and record that every body-text test (AC2.1/AC2.2, AC3.1, AC4.1 own-target, AC5.1, AC7.1, AC10.1, null body, no task list, state fetch failure, shared parent, enumerate upper-case) fails; then restore. Quote the failing test names in the task report. Do not commit the revert.
 
 - [ ] **Step 6: Commit**
 
