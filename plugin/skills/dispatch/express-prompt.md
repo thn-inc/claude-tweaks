@@ -72,10 +72,11 @@ Either STOP above is outcome `blocked`; every other hook or gate denial up to th
 Procedure's `gate-denial` escalation. Do NOT tear the worktree down, run ExitWorktree or
 `git worktree remove`, or archive the run directory, on any outcome.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
