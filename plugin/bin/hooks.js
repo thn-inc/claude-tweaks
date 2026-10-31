@@ -168,8 +168,8 @@ const HELP_FLAGS = new Set(['--help', '-h']);
 // typo. The table gates flags only: archive-run keeps its ctxLib.resolveRunDir
 // fallback, because unambiguousOnly is chosen per call site (resolveOpts),
 // not by this table. Every other resolveRunArg caller (check-resume-freshness,
-// check-staged-inventory) has no entry here and keeps today's HELP_FLAGS-only
-// guard and ctxLib.resolveRunDir fallback, unchanged.
+// check-staged-inventory, check-session-residue) has no entry here and keeps
+// today's HELP_FLAGS-only guard and ctxLib.resolveRunDir fallback, unchanged.
 const KNOWN_FLAGS = {
   'archive-run': ['--run'],
   'close-run': ['--run'],
