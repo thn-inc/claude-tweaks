@@ -29,8 +29,11 @@
 // message (or a merge-commit oid that is not a hex sha) makes every candidate
 // will-close. Logs `reopened` (AUTO), `could not read`, `could not reopen` and `still open`
 // (SKIP, degraded). Prints {action, pr, candidates, willClose, reopened,
-// failed, stillOpen, pendingClose, closedBefore} (plus messageUnread: true
-// when the merge message could not be read), with the worst outcome as the
+// failed, stillOpen, pendingClose, closedBefore, closingSet} (plus
+// messageUnread: true when the merge message could not be read; closingSet is
+// the same-repo closing records minus reopened, failed and pendingClose --
+// Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
+// with the worst outcome as the
 // action: reopen-failed > close-pending > reopened > nothing-closed; or
 // not-merged (carries state) | no-fixes-span | no-pr | gh-absent. Callers
 // report failed[] and pendingClose[] whatever the action. A `logFailed: true`
@@ -373,8 +376,13 @@ function run(argv, overrides = {}) {
   else if (pendingClose.length) action = 'close-pending';
   else if (reopened.length) action = 'reopened';
 
+  // The same-repo records this merge closed and kept closed: `linked` minus
+  // whatever the guard reopened, could not settle, or has yet to see close.
+  const unsettled = new Set([...reopened, ...pendingClose, ...failed.map((f) => f.issue)]);
+  const closingSet = linked.filter((x) => !unsettled.has(x));
+
   return done({
-    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore,
+    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore, closingSet,
     ...(messageUnread ? { messageUnread: true } : {}),
   });
 }
