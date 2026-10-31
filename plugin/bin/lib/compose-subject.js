@@ -47,11 +47,12 @@
 // malformed invocation and an uncomposable record share one code. A fourth
 // code would only be worth adding if some caller could act differently on
 // "bad CLI invocation" vs. "shaping defect in the record"; today every merge
-// site (pr-first-merge.md's two squash sites, and the four local-merge sites
-// in merge-subject-composer-conformance.test.js's LOCAL_SITES) treats any
+// site (pr-first-merge.md's two squash sites, and the one local-merge fence in
+// _shared/local-merge-sequence.md — merge-subject-composer-conformance.test.js's
+// LOCAL_SEQUENCE — that four callers run) treats any
 // non-zero compose-subject.js exit identically (the composer exiting non-zero stops the fence before any merge), so a fourth
 // code would carry no distinguishable behavior at the only call sites that
-// exist — six merge-site fences would need editing for a distinction nothing
+// exist — three merge-site fences would need editing for a distinction nothing
 // reads. Revisit if a caller ever needs to route "uncomposable" (park the
 // record) differently from "bad invocation" (a caller bug).
 'use strict';
