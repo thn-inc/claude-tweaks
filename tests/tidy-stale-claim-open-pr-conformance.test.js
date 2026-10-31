@@ -80,6 +80,26 @@ test('a matching PR routes as the Yours Unsettled run no-op, never staged and ne
   assert.match(s, /never released/i);
 });
 
+test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes through dispatch (#4673)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.ok(flat.includes('--resume --issue {n}'), 'the call hands the claim number to the CLI');
+  // The dispatch literal sits in the Resume row's own sentence, not merely somewhere in the section.
+  const rowAt = flat.indexOf('Resume open PR #{number} ({url}) — {resume}');
+  assert.notEqual(rowAt, -1, 'the Resume row is present');
+  const archivedAt = flat.indexOf('absent or archived', rowAt);
+  assert.notEqual(archivedAt, -1, 'the Resume row names the absent-or-archived condition');
+  const sentence = flat.slice(rowAt, archivedAt);
+  assert.ok(sentence.includes('`/claude-tweaks:dispatch resume #{n}`'), 'names the dispatch-resume command in the Resume row sentence');
+  assert.ok(sentence.includes('`record-{n}`'), 'the dispatch line is for a dispatched run');
+  assert.ok(!sentence.includes('. '), 'the slice stays inside one sentence');
+});
+
+test('AC2.1: a present run dir still renders the PR body\'s resume line (#4673)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
+  assert.ok(flat.includes('Resume open PR #{number} ({url}) — {resume}'), 'the Resume row keeps its rendering');
+  assert.ok(flat.includes('the PR body\'s resume line'), 'the PR body stays the resume source for a present run dir');
+});
+
 test('the Collect line carries the PR number and resume command for a Resume recommendation (#4423)', () => {
   const s = claimAuditSection();
   const collect = '→ Collect each as: `[claim] claims/issue-{n}.json — {status} — {recommendation}`';

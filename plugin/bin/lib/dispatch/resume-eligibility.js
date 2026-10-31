@@ -276,5 +276,5 @@ function resumeContext(decisionsText) {
 }
 
 module.exports = {
-  REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
+  REFUSAL_REASONS, RUN_ID_PREFIX_LENGTH, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
 };
