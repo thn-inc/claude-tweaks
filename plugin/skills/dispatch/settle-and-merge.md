@@ -21,12 +21,14 @@ constraint.
 
 This blanket mapping also covers the `gh` calls the Auto-merge gate's acceptance-labeling step
 delegates to per member (`wrap-up/verification-brief.md`'s Routing section onward, and its
-Parent-Gate Procedure in `wrap-up/verification-brief-parent-gate.md`) — `#205`: neither of those
-files states its own MCP path, and every `gh` call either one issues (`gh issue view --json
-labels`/`--json comments`, `gh issue comment`, `gh issue edit --add-label`) is one of the three
-standard shapes this paragraph already names — `issue_read`, `add_issue_comment`, `issue_write`.
-No separate mapping table entry is needed for them; a gh-absent group auto-merge gate resolves
-the same way the rest of this file does.
+Parent-Gate Procedure in `wrap-up/verification-brief-parent-gate.md`) — `#205`: the
+`verification-brief.md` calls (`gh issue comment`, `gh issue edit --add-label`) are standard
+`add_issue_comment`/`issue_write` shapes. The Parent-Gate Procedure also makes
+`gh api .../sub_issues`, `gh issue view` (body, state, labels, comments), `gh api user`,
+`gh issue comment`, `gh issue close` and `gh issue edit --add-label`; each one's MCP tool is
+in the **Transport (#4602).** paragraph of `wrap-up/verification-brief-parent-gate.md`, which
+also states the label bootstrap's MCP-path behavior. A gh-absent group auto-merge gate resolves
+as the rest of this file does.
 
 ## Step 6: Settle — on pipeline failure
 

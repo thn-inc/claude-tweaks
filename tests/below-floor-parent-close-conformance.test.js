@@ -770,3 +770,10 @@ test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
   assert.ok(step40b.includes('`_shared/github-write-transport.md`'), 'Step 4.0b cites the mapping');
   assert.ok(step40b.includes('git remote show origin'), 'Step 4.0b default-branch read on a gh-absent run');
 });
+
+test('#4602: settle-and-merge\'s #205 paragraph lists the calls the Parent-Gate Procedure makes', () => {
+  const p = collapse(paragraph(read('dispatch/settle-and-merge.md'), 'This blanket mapping also covers'));
+  for (const lit of ['`gh issue close`', 'sub_issues', '`gh api user`', 'verification-brief-parent-gate.md', 'Transport (#4602)']) assert.ok(p.includes(lit), `names ${lit}`);
+  assert.ok(!p.includes('No separate mapping table entry is needed'), 'the stale no-row claim is gone');
+  assert.ok(!p.includes('is one of the three standard shapes'), 'the stale three-shapes claim is gone');
+});
