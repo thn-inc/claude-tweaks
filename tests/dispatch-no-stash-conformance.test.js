@@ -265,7 +265,8 @@ const paragraphFact = (label, pattern) => ({
 const branchFact = (label, pattern) => ({
   label,
   test: (p) => pattern.test(reviewerBranch(p)),
-  strip: (p) => p.replace(reviewerBranch(p), reviewerBranch(p).replace(globalOf(pattern), '')),
+  // Function replacements: a string replacement would read `$&` / `` $` `` in a future branch text as patterns.
+  strip: (p) => p.replace(reviewerBranch(p), () => reviewerBranch(p).replace(globalOf(pattern), () => '')),
 });
 
 const STASH_GUARD_FACTS = [
@@ -285,8 +286,16 @@ const STASH_GUARD_FACTS = [
   paragraphFact('AC11.2 --label fix-wave', /--label fix-wave/),
   paragraphFact('AC11.2 stash-guard-{id}.json', /stash-guard-\{id\}\.json/),
   paragraphFact('AC6.2 AUTO line', /AUTO \{time\} — Stash guard: \{who\} removed stash entr/),
-  paragraphFact('AC6.2 FAILED line', /FAILED/),
-  paragraphFact('AC6.2 handoff', /handoff/),
+  paragraphFact('AC6.2 FAILED line with its paste-ready command', /a failed restore is logged as a `FAILED` line carrying its paste-ready `git stash store -m "<subject>" <sha>` command/),
+  paragraphFact('AC6.2 failed restores and added entries go to the handoff', /every `restoreFailed` command and `added` entry also goes into Common Step 7's handoff/),
+  paragraphFact('exit 3 restores every removed entry it could', /restored every removed entry it could with `git stash store`/),
+  paragraphFact('alreadyPresent clause', /an entry a concurrent guard had already put back is logged as such and not stored twice/),
+  paragraphFact('{worktree} is filled', /`\{worktree\}`, the worktree root `\/build` runs in \(the project root under `current-branch`\)/),
+  paragraphFact('dirty note is the text between the step prefix and Reversibility', /the text between `Stash guard: ` and ` Reversibility:`/),
+  paragraphFact('dirty note qualifier spelled out', /--reversibility "n\/a \(a detection; the controller never discards worktree changes\)"/),
+  paragraphFact('dirty note standalone carrier is the handoff', /a standalone `\/build` with no run dir lists the line in the handoff only/),
+  paragraphFact('exit 2 SKIP follows the degrade-trace shape', /--status SKIP --section "\/build" --step "Stash guard \(degraded\)" --text "condition: \{id\} \{snapshot\|compare\} exited 2 → fallback: stash change undetected for this dispatch" --reversibility n\/a/),
+  paragraphFact('failed snapshot skips that dispatch compare', /after a failed `snapshot`, skip that dispatch's compare/),
   paragraphFact('AC6.2 DONE becomes DONE_WITH_CONCERNS', /a `DONE` result becomes `DONE_WITH_CONCERNS`/),
   paragraphFact('AC6.2 NEEDS_CONTEXT or BLOCKED keeps its status', /a `NEEDS_CONTEXT` or `BLOCKED` result keeps its status/),
   paragraphFact('AC6.2 never popped', /never popped/),
@@ -304,13 +313,18 @@ const STASH_GUARD_FACTS = [
 ];
 
 // The superseded behaviour: a reviewer-side stash change used to BLOCK the task. It must stay gone.
+// The third column is a re-insertion of the retired text, so each ban has its own go-red control.
 const STASH_GUARD_FORBIDDEN = [
-  ['AC13.1 report the task BLOCKED', /report the task `BLOCKED`/],
+  ['AC13.1 report the task BLOCKED', /report the task `BLOCKED`/, ' a stash change on a reviewer dispatch means report the task `BLOCKED` naming the stash change;'],
+  ['exit-2 SKIP in the pre-ruling shape', /SKIP \{time\} — Stash guard:/, ' log `SKIP {time} — Stash guard: {id} compare exited 2 → fallback: stash change undetected for this dispatch. Reversibility: n/a.`'],
+  ['elided --reversibility placeholder', /--reversibility "n\/a \(…\)"/, ' --reversibility "n/a (…)"'],
+  ['dirty note text taken from after the step prefix', /write the text after `Stash guard: `/, ' write the text after `Stash guard: ` with the Write tool'],
 ];
 
 function missingStashGuardFacts(paragraph) {
   const missing = STASH_GUARD_FACTS.filter((fact) => !fact.test(paragraph)).map((fact) => fact.label);
   const present = STASH_GUARD_FORBIDDEN.filter(([, pattern]) => pattern.test(paragraph)).map(([label]) => `forbidden: ${label}`);
+  // (the re-insertion column is read only by the go-red controls)
   return [...missing, ...present];
 }
 
@@ -332,14 +346,27 @@ function handoffStashGuardSection(text) {
   return text.slice(start, end);
 }
 
+// One pattern per fact, each matching exactly once in the section, so a strip removes exactly that fact.
 const HANDOFF_FACTS = [
   ['AC12.3 verdict voided', /verdict voided/],
   ['AC13.2 tree dirty after restore', /tree dirty after restore/],
   ['AC13.3 retry verdict stands', /retry verdict stands/],
+  ['failed-restore slot carries {command}', /restore failed; recover with:\n  \{command\}/],
+  ['{command} is restoreFailed[].command verbatim', /`\{command\}` is `restoreFailed\[\]\.command` verbatim/],
+  ['added-entry slot', /- \{sha\} \{subject\} — left on the stack/],
+  ['reviewer-restore slot fits restored and added entries', /\{change\}, review dispatched again/],
+  ['{change} is each restored or added entry', /`\{change\}` is each `\{sha\} \{subject\}` restored or added/],
+];
+
+// A restore command rebuilt from the raw subject breaks on `\ " $` and backtick, which the CLI escapes.
+const HANDOFF_FORBIDDEN = [
+  ['command rebuilt from the raw subject', /-m "\{subject\}"/, '\n  git stash store -m "{subject}" {sha}'],
 ];
 
 function missingHandoffFacts(section) {
-  return HANDOFF_FACTS.filter(([, pattern]) => !pattern.test(section)).map(([label]) => label);
+  const missing = HANDOFF_FACTS.filter(([, pattern]) => !pattern.test(section)).map(([label]) => label);
+  const present = HANDOFF_FORBIDDEN.filter(([, pattern]) => pattern.test(section)).map(([label]) => `forbidden: ${label}`);
+  return [...missing, ...present];
 }
 
 const FORBID_PARAGRAPH_OLD_BLOCKED_SENTENCE = 'a stash change on a reviewer dispatch means report the task `BLOCKED` naming the stash change; ';
@@ -390,7 +417,7 @@ test('AC13.1: "no stop" is pinned inside the reviewer-restore branch, not elsewh
   assert.ok(branch.length > 0, 'the reviewer-restore branch anchors are gone');
   assert.match(branch, /no stop/);
   // The same words elsewhere in the paragraph must not satisfy the pin once the branch loses them.
-  const doctored = paragraph.replace(branch, branch.replace(/no stop/g, 'a halt'));
+  const doctored = paragraph.replace(branch, () => branch.replace(/no stop/g, () => 'a halt'));
   assert.notStrictEqual(doctored, paragraph);
   assert.match(doctored, /no new stop/, 'the paragraph keeps its closing "no new stop" sentence outside the branch');
   assert.deepStrictEqual(missingStashGuardFacts(doctored), ['AC13.1 no stop (reviewer-restore branch)']);
@@ -400,14 +427,32 @@ test("AC12.3/AC13.2/AC13.3: handoff-template.md's Stash guard section has a slot
   const section = handoffStashGuardSection(HANDOFF_TEMPLATE);
   assert.deepStrictEqual(missingHandoffFacts(section), []);
   for (const [label, pattern] of HANDOFF_FACTS) {
-    const doctored = section.replace(pattern, '');
+    const doctored = section.replace(pattern, () => '');
     assert.notStrictEqual(doctored, section, `${label}: the strip matched nothing`);
     assert.deepStrictEqual(missingHandoffFacts(doctored), [label], `${label}: stripping it must report exactly it`);
   }
+  for (const [label, pattern, reinsertion] of HANDOFF_FORBIDDEN) {
+    assert.doesNotMatch(section, pattern, `${label}: must stay out of the handoff slot`);
+    const doctored = section + reinsertion;
+    assert.deepStrictEqual(missingHandoffFacts(doctored), [`forbidden: ${label}`], `${label}: re-inserting it must go red`);
+  }
 });
 
-test('session-tmp-root.md lists the stash guard as a consumer', () => {
-  assert.match(SESSION_TMP_ROOT, /\*\*Extended \(#4559\):\*\* `skills\/build\/dispatch\.md`'s stash guard \(`stash-guard-\{id\}\.json`, the standalone \/build snapshot path\)\./);
+test('AC6.3: every banned retired form goes red when re-inserted into the stash-guard paragraph', () => {
+  const paragraph = stashGuardParagraph(BUILD_DISPATCH);
+  for (const [label, pattern, reinsertion] of STASH_GUARD_FORBIDDEN) {
+    assert.doesNotMatch(paragraph, pattern, `${label}: the retired form is back in the shipped paragraph`);
+    const doctored = paragraph + reinsertion;
+    assert.deepStrictEqual(missingStashGuardFacts(doctored), [`forbidden: ${label}`], `${label}: re-inserting it must report exactly it`);
+  }
+});
+
+test('session-tmp-root.md lists the stash guard as a consumer, snapshot and dirty-tree note files both', () => {
+  const pattern = /\*\*Extended \(#4559\):\*\* `skills\/build\/dispatch\.md`'s stash guard \(`stash-guard-\{id\}\.json`, the standalone \/build snapshot path; `stash-guard-\{id\}-note\.txt`, the dirty-tree note's `--text-file`\)\./;
+  assert.match(SESSION_TMP_ROOT, pattern);
+  // Control: the pre-ruling line (snapshot only) must not satisfy the pin.
+  const preRuling = "**Extended (#4559):** `skills/build/dispatch.md`'s stash guard (`stash-guard-{id}.json`, the standalone /build snapshot path).";
+  assert.doesNotMatch(preRuling, pattern);
 });
 
 test("the stash-guard paragraph starts exactly where the forbid paragraph ends, on the same line of build/dispatch.md", () => {

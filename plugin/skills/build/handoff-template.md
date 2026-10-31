@@ -36,9 +36,10 @@ Render the markdown below, substituting placeholders. Generate field values from
 
 ### Stash guard (if any)
 - {sha} {subject} — restore failed; recover with:
-  git stash store -m "{subject}" {sha}
+  {command}
 - {sha} {subject} — left on the stack
-- {role} for task {k}: verdict voided, {sha} {subject} restored, review dispatched again[; tree dirty after restore: {paths}][; retry changed the stash again — retry verdict stands]
+- {role} for task {k}: verdict voided, {change}, review dispatched again[; tree dirty after restore: {paths}][; retry changed the stash again — retry verdict stands]
+(`{command}` is `restoreFailed[].command` verbatim, already shell-escaped by the CLI; `{change}` is each `{sha} {subject}` restored or added, e.g. `{sha} {subject} restored` or `{sha} {subject} added, left on the stack`.)
 (or omit this section: every stash-guard compare exited 0.)
 
 ### SDD rulings (standalone build, if any)

@@ -150,4 +150,4 @@ in step 1.
 (`pr-checks-{n}.txt`), head-runs capture (`pr-runs-{n}.json`) and park-comment body (`park-comment-{n}.md`)
 in one CLI call at the state read.
 
-**Extended (#4559):** `skills/build/dispatch.md`'s stash guard (`stash-guard-{id}.json`, the standalone /build snapshot path).
+**Extended (#4559):** `skills/build/dispatch.md`'s stash guard (`stash-guard-{id}.json`, the standalone /build snapshot path; `stash-guard-{id}-note.txt`, the dirty-tree note's `--text-file`).
