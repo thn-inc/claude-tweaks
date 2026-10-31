@@ -89,6 +89,40 @@ function runBlock(shell, block, records) {
   }
 }
 
+// #4740 — fallback mode: no wrap-up-pack.json, and the block's MIRROR literal points at a
+// temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
+// no work/ directory at all. Returns status, stderr and the probe's output without asserting,
+// so the go-red control can read a failure.
+const MIRROR_LITERAL = '{worktree}/.claude-tweaks/pipelines/{run-id}';
+function runFallback(shell, block, specs) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4740-'));
+  try {
+    const mirror = path.join(dir, 'mirror');
+    if (specs !== null) {
+      fs.mkdirSync(path.join(mirror, 'work'), { recursive: true });
+      for (const [name, body] of Object.entries(specs)) fs.writeFileSync(path.join(mirror, 'work', name), body);
+    }
+    // Forward slashes: Git Bash on a Windows runner reads C:/… but not C:\….
+    const posix = (p) => p.split(path.sep).join('/');
+    assert.ok(block.includes(MIRROR_LITERAL), 'the MIRROR literal vanished — the substitution would be vacuous');
+    const text = block.split(MIRROR_LITERAL).join(posix(mirror)).split('${RUN_DIR}').join(posix(dir));
+    const script = path.join(dir, 'snippet.sh');
+    fs.writeFileSync(script, `${text}\n${PROBE}\n`);
+    const r = spawnSync(shell.cmd, [...shell.args, posix(script)], { cwd: dir, encoding: 'utf8' });
+    const countLine = /^count=(\d+)$/m.exec(r.stdout);
+    return {
+      status: r.status,
+      stderr: r.stderr,
+      count: countLine ? Number(countLine[1]) : null,
+      els: [...r.stdout.matchAll(/^el=(.*)$/gm)].map((m) => m[1]),
+    };
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const specHeader = (n) => `---\nrecord: ${n}\n---\n# Spec\n`;
+
 const CASES = [
   { records: [101, 202], expect: ['101', '202'] },
   { records: [101], expect: ['101'] },
@@ -115,4 +149,47 @@ for (const shell of SHELLS) {
       assert.deepStrictEqual(runBlock(shell, PRE_CHANGE_BLOCK, records), { count: expect.length, els: expect });
     });
   }
+}
+
+for (const shell of SHELLS) {
+  const skip = skipFor(shell);
+  test(`${shell.name}: live block with no pack and an empty mirror work/ exits 0 with count=0 (#4740 AC1)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), {});
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 0, els: [] });
+  });
+  test(`${shell.name}: live block with no pack and no mirror work/ directory exits 0 with count=0`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), null);
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 0, els: [] });
+  });
+  test(`${shell.name}: live block with no pack fills 101 and 202 from two mirror spec headers (#4740 AC2)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101), '202-spec.md': specHeader(202) });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 2, els: ['101', '202'] });
+  });
+  test(`${shell.name}: live block with no pack skips a spec with no record: line and a non-spec file`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), {
+      '101-spec.md': specHeader(101),
+      '303-spec.md': '# Spec without a header\n',
+      'notes.md': specHeader(999),
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+  });
+}
+
+// Go-red control: the pre-change fallback loop (PRE_CHANGE_BLOCK's else branch) on an empty work/.
+for (const shell of SHELLS) {
+  const skip = skipFor(shell);
+  test(`${shell.name}: pre-change fallback loop with an empty mirror work/ — zsh aborts on the unmatched glob, bash loops zero times`, { skip }, () => {
+    const r = runFallback(shell, PRE_CHANGE_BLOCK, {});
+    if (shell.name === 'zsh') {
+      assert.notStrictEqual(r.status, 0, 'zsh must abort on the unmatched glob');
+      assert.match(r.stderr, /no matches found/);
+    } else {
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.strictEqual(r.count, 0);
+    }
+  });
 }
