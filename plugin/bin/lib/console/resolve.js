@@ -453,7 +453,8 @@ function mergeResolution(snapshot, deps) {
 //   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N digested: {reason}. Severity: {s}.
 //   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N dropped: refuted by tiebreak. Evidence: {e}. Severity: {s}.
 //   AUTO   … Reproduction: lens "L" finding P:N confirmed by tiebreak:{id}. Confirmed.
-// Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe, so a marker quoted
+// Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe (whose confirmed
+// alternative shares the confirmed line's VERDICT_LINE_END anchor, #4632), so a marker quoted
 // inside another line's text never parses as a verdict. The finding path is producer-supplied and may
 // hold spaces, so everything after it is matched against the resolver-written rest of the line, anchored
 // on the line's end: a path can never forge the kind, severity or recommendation (#3949 review).
@@ -502,15 +503,18 @@ function approveAllDefault(recommendation) {
 // A STAGED line's finding keys: its first location's, plus the second location of a
 // two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
 // Each location takes its longest candidate (locationCandidates) a settler's key names, else the
-// FINDING_PATH match (#4632). The second location's candidates start after the ` / `.
+// FINDING_PATH match (#4632). The second location's candidates start after the ` / `. A second
+// location FINDING_PATH cannot read keys as its raw text, which no settler names, so the line stays open.
+// With no `known`, the keys are each location's shortest candidate (prose settlers' keys).
 function lineKeys(line, known = new Set()) {
   const keys = [];
   const lens = FINDING_LENS_RE.exec(line);
   const loc = FINDING_LOC_RE.exec(line);
   if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
-  const co = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+findings\s+.+?:\d+\s+\/\s+(.+?:\d+\s+share a location)/.exec(line);
+  const co = COINCIDENCE_RE.exec(line);
   const second = co && FINDING_LOC_RE.exec(co[2]);
   if (second) keys.push(namedCandidate(locationCandidates(co[2], second, co[1]), known));
+  else if (co) keys.push(`${co[1]}|${co[2]}`);
   return keys;
 }
 
@@ -525,7 +529,8 @@ const FINDING_PATH_CLASS = String.raw`A-Za-z0-9_./@+~%$-`; // the plain class, a
 const FINDING_LENS_CLASS = String.raw`A-Za-z0-9_-`; // a lens token, on STAGED and verdict lines alike (#4632)
 const FINDING_PATH = String.raw`(?:[${FINDING_PATH_CLASS}]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
-const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+findings\s+.+?:\d+\s+\/\s+(.+?:\d+\s+share a location)`);
 const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
 const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
 const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
@@ -587,7 +592,9 @@ function contestedPositionCandidates(text) {
 function tiebreakModel(snapshot) {
   const lines = decisionLines(snapshot.decisions);
   const settledByKey = new Map();
+  const proseByKey = new Map(); // the latest prose settler (debate, #3772) per key, at its shortest key (#4632)
   const latestById = new Map();
+  const setProse = (key, v) => { settledByKey.set(key, v); proseByKey.set(key, v); };
   lines.forEach((line, index) => {
     const t = parseTiebreakLine(line);
     const debateKeys = debateConvergedKeys(line);
@@ -596,13 +603,23 @@ function tiebreakModel(snapshot) {
       latestById.set(v.id, v);
       if (v.key) settledByKey.set(v.key, v);
     } else if (debateKeys.length > 0) { // #4563: a converged-positive debate confirms every finding it names
-      for (const key of debateKeys) settledByKey.set(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
+      for (const key of debateKeys) setProse(key, { index, kind: 'confirmed', id: null, key, via: 'debate' });
     } else if (/^- AUTO /.test(line) && /\bConfirmed\b/.test(line)) { // #3772: the producer's own elevation sentence
       const key = findingKey(line);
-      if (key) settledByKey.set(key, { index, kind: 'confirmed', id: null, key });
+      if (key) setProse(key, { index, kind: 'confirmed', id: null, key });
     }
   });
-  const settledAfter = (index, keys) => keys.length > 0 && keys.every((k) => settledByKey.has(k) && settledByKey.get(k).index > index);
+  // The verdict settling one STAGED location after `index`, else null: its resolved key's, or a prose
+  // settler's at its shortest key (#4632) — prose settlers key there, so a location a whole-path verdict
+  // resolved (`a dir/x.ts`) still settles on a later one, as before. A tiebreak verdict never settles
+  // through the shortest key.
+  const settlerAfter = (index, key, short) => {
+    const v = settledByKey.get(key);
+    if (v && v.index > index) return v;
+    const p = proseByKey.get(short);
+    return p && p.index > index ? p : null;
+  };
+  const settledAfter = (index, keys, shorts = keys) => keys.length > 0 && keys.every((k, i) => settlerAfter(index, k, shorts[i]) !== null);
   // The keys some settler names: a STAGED location resolves to its longest candidate among them (#4632).
   const known = new Set(settledByKey.keys());
   const keysOf = (line) => lineKeys(line, known);
@@ -614,7 +631,7 @@ function tiebreakModel(snapshot) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
     const m = STAGED_FILE_RE.exec(line);
     if (!m || !stagedNames.has(m[1])) return;
-    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: keysOf(line) }]);
+    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: keysOf(line), shorts: lineKeys(line) }]);
   });
   function computeSettledFiles() {
     const settledFiles = new Map();
@@ -630,8 +647,8 @@ function tiebreakModel(snapshot) {
           if (v && v.kind === 'console' && v.index > r.index) absorbed.add(v.id);
         }
       }
-      if (!refs.every((r) => settledAfter(r.index, r.keys))) continue;
-      const verdicts = refs.flatMap((r) => r.keys.map((k) => settledByKey.get(k)));
+      if (!refs.every((r) => settledAfter(r.index, r.keys, r.shorts))) continue;
+      const verdicts = refs.flatMap((r) => r.keys.map((k, i) => settlerAfter(r.index, k, r.shorts[i])));
       // A contested file settles only on a verdict judged for it: an inherited one leaves its own
       // pair (and the partner it names) unjudged, so the file stays keep-staged.
       if (/^review-contested-/.test(name) && verdicts.some((v) => v.inheritedFrom)) continue;
@@ -824,7 +841,7 @@ function coordinationItems(snapshot, stagedIds) {
   const occurrences = new Map();
   for (const [i, line] of model.lines.entries()) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) continue;
-    if (model.settledAfter(i, model.keysOf(line))) continue;
+    if (model.settledAfter(i, model.keysOf(line), lineKeys(line))) continue;
     // Extension-anchored so trailing sentence punctuation (a period ending
     // the decisions.md line right after ".md") is never captured into the
     // filename — `.` is deliberately excluded from the body class.

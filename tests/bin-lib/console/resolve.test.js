@@ -1153,12 +1153,25 @@ test('Review Focus 1: a coincidence line at a dir/x.ts:3 / a dir/x.ts:5 keys bot
   assert.deepStrictEqual(findings([line, v3, tbVerdict(b5, { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged'], 'a sibling path\'s :5 verdict');
   assert.deepStrictEqual(findings([line, v3, tbVerdict(a5, { verdict: 'confirmed' }).entry].join('\n')), [], 'both verdicts settle it');
 });
+test('Review Focus 1: a coincidence line whose second location FINDING_PATH cannot read stays open on the first location\'s verdict alone (#4632)', () => {
+  const line = '- STAGED 09:59:00 — Reproduction: lens "3a" findings src/a.ts:3 / `src/a.ts`:5 share a location but not substance; both staged unconfirmed. Reversibility: high.';
+  const v3 = tbVerdict(tbFinding({ lens: '3a', path: 'src/a.ts', line: 3 }), { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([line, v3].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
 test('Review Focus 3: a re-staged space-path finding stays open after its earlier verdict (#4632, #4583)', () => {
   const d = [tbStaged(spaceA), tbVerdict(spaceA, { verdict: 'refuted' }).entry, tbStaged(spaceA)];
   assert.deepStrictEqual(findings(d.join('\n')).map((i) => i.resolution), ['keep-staged']);
   // A sibling path's later verdict does not settle the re-stage either.
   const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
   assert.deepStrictEqual(findings([...d, tbVerdict(b, { verdict: 'refuted' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
+test('Review Focus 3: a re-staged space-path finding settles on a later #3772 Confirmed elevation at its shortest key, as before (#4632, #4583)', () => {
+  const d = [tbStaged(spaceA), tbVerdict(spaceA, { verdict: 'refuted' }).entry, tbStaged(spaceA)];
+  const elevation = '- AUTO 10:01:00 — Reproduction: lens "3b" finding a dir/x.ts:3 elevated via direct-verification override. Confirmed, low. Reversibility: high.';
+  assert.deepStrictEqual(findings([...d, elevation].join('\n')), []);
+  // Only a prose settler counts at the shortest key: a later tiebreak verdict at plain dir/x.ts:3 does not settle it.
+  const plain = tbFinding({ lens: '3b', path: 'dir/x.ts', line: 3 });
+  assert.deepStrictEqual(findings([...d, tbVerdict(plain, { verdict: 'refuted' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged']);
 });
 test('Review Focus 4: a contested pair at a space path settles through its own console verdict; a sibling space path\'s file stays keep-staged (#4632)', () => {
   const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3, claim: 'sibling' });

@@ -408,9 +408,11 @@ function readFindingsArtifact(dir) {
 
 // The decisions.md line log-decision.js writes for a resolveTiebreak verdict
 // (`- {AUTO|STAGED} {HH:MM:SS} — {step}: {text}`). `id` is 12-hex validated,
-// so it needs no escaping.
+// so it needs no escaping. The confirmed line is anchored on its end, as
+// console/resolve.js's TIEBREAK_CONFIRMED_RE is, so text after `Confirmed.`
+// is not a verdict to either (#4632).
 function verdictLineRe(id) {
-  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.)`);
+  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$)`);
 }
 
 function checkTiebreakCoverage(dir) {
