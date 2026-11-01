@@ -13,6 +13,7 @@ const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
+const { FINDING_PATH } = require('./finding-path');
 const { FINDINGS_ARTIFACT } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
@@ -505,9 +506,6 @@ function lineKeys(line) {
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
 // as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
-// The path of a finding key `{lens}|{path}:{line}` (#4582): `@ + ~ % $` join the plain class, and `[id]` / `(group)` count only as a
-// closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
-const FINDING_PATH = String.raw`(?:[A-Za-z0-9_./@+~%$-]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
 const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
 const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
