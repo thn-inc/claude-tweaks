@@ -22,3 +22,4 @@
 | 18 | review | Word windows {0,3}/{0,4} had no stated reason (3g, aggregate-reproduction.js:20) | fixed | Archive-derived rationale and the re-runnable probe in the module header — 865978155 |
 | 19 | review | Coincidence-before-PATH_RE order unexplained (3g, aggregate-reproduction.js:42) | fixed | Comment naming the pinning test — 865978155 |
 | 20 | review | Aggregate refusal lives in log-decision.js, not appendEntries (3a, append.js:172, info) | accepted | Don't fix: no direct appendEntries caller composes a STAGED Reproduction: line, and repeatsStep sits at the same CLI layer |
+| 21 | review/hindsight | [skill: gh-api-module-pattern] A sanctioned writer's new text refusal is calibrated against the real decisions.md archive, with the refused set held as the regression oracle (it caught fix round 1's 123→122 regression); cli-wrapper-contract.md does not say so | open | Staged as staged/reflect-1.md (edit cli-wrapper-contract.md) for the Review Console |
