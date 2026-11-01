@@ -80,7 +80,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 const { POLICY_KEYS, resolvePolicyKeys } = require('./lib/policy-schema');
 const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
@@ -171,9 +171,9 @@ function parseArgs(argv) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
-  runner: (args) => execFileSync('gh', args, {
+  runner: (args) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
-  }),
+  })),
   cwd: () => process.cwd(),
   repoRoot: () => execFileSync('git', ['rev-parse', '--show-toplevel'], {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true,
