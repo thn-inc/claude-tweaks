@@ -4,19 +4,27 @@
 // run dirs of a pass; `postMergeOne` is the same guarded path (marker check, merged
 // check, claim, Step 4.0 then 4.0b, marker last) for one dir the caller names --
 // an `archive/{run-id}` dir included. wrap-up/merge-mode.md's Already merged
-// section calls this when `gh pr merge` finds the PR already MERGED by something
-// else (an armed auto-merge, a merge queue, a human); the marker and the claim
-// keep it and the reconciler from running the steps twice.
+// section calls this when its Preconditions'
+// `gh pr view --json state` finds the PR MERGED (an armed auto-merge, a merge
+// queue, a human merged it); the marker and the claim keep it and the
+// reconciler from running the steps twice.
 //
 //   node bin/post-merge-run.js --run <run-dir> [--help]
 //
 // Prints exactly one JSON line, `postMergeOne`'s entry:
 //   {runDir, pr, action: ran | skipped, reason?, detail?, closingLinks?,
-//    parentsClosed?, attempt?, step40Failed?, records?}
+//    parentsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?}
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
-//   4.0's action, and `step40Failed` and `records` ({failed, closeFailed,
-//   pendingClose, unchecked}, issue numbers) appear when Step 4.0 did not finish
-//   cleanly. already-done: a marker is already in the run's decisions.md.
+//   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
+//   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
+//   `ran` entry Step 4.0 printed a readable envelope for, so it is absent only
+//   when `step40Failed` comes from a non-zero exit or unparseable output;
+//   `logFailed: true` when Step 4.0 could not append a decisions.md line.
+//   `parentFailures` ([{parent | issue, reason, detail?}]) is on every `ran`
+//   entry Step 4.0b ran for: its failed closes (`gh-failed`, `internal-error`,
+//   and the step-wide `unreadable-policy` / `invalid-risk-floor`, no parent key),
+//   never a deliberate gate skip; a non-empty one is a failure to report.
+//   already-done: a marker is already in the run's decisions.md.
 //   in-flight: another process holds the run's claim. Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,
 //   marker-write-failed, error, not-github-issues, no-remote, no-pr-states,
@@ -40,8 +48,9 @@ const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
 const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  runs the post-merge closes (Step 4.0 closing-links, Step 4.0b below-floor parent close) once for the one named run dir, archived included\n'
-  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?}; action:\n'
-  + '    ran: the steps ran and the marker is written (step40Failed and records {failed, closeFailed, pendingClose, unchecked} when Step 4.0 did not finish cleanly)\n'
+  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?}; action:\n'
+  + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 printed a readable envelope;\n'
+  + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close)\n'
   + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim); any other reason is a failure to report\n'
   + '  exit 0 an entry was printed (every action and reason is data)\n'
   + '       2 malformed invocation\n'
