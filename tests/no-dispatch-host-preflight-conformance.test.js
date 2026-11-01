@@ -239,11 +239,32 @@ test('AC8.2: each cwd-pinned pointer fact can go red', () => {
 });
 
 test('AC7.1: build/worktree-setup.md carries no second copy of the #447 mechanism', () => {
-  const COPIES = ['`cd {worktree-path} &&`', 'explicit `cd`'];
-  const offenders = (text) => COPIES.filter((copy) => text.includes(copy));
+  // Any backticked `cd {worktree…} &&` form — dispatch's sequential-execution.md spells it both
+  // `cd {worktree-path} &&` (line 18) and `cd {worktree} &&` (line 104).
+  const CD_PREFIX = /`cd \{worktree[^`]*&&`/g;
+  const offenders = (text) => text.match(CD_PREFIX) || [];
   assert.deepEqual(offenders(readText(WORKTREE_SETUP)), [], 'worktree-setup.md must point at the #447 section, not restate its cd-prefix mechanism');
 
-  // Control: appending the mechanism to a copy must be reported.
-  const doctored = `${readText(WORKTREE_SETUP)}\nPrefix each call with \`cd {worktree-path} &&\`.`;
-  assert.deepEqual(offenders(doctored), ['`cd {worktree-path} &&`'], 'the check must report a restated cd-prefix mechanism');
+  // Controls: each spelling appended to a copy must be reported.
+  for (const variant of ['`cd {worktree-path} &&`', '`cd {worktree} &&`']) {
+    const doctored = `${readText(WORKTREE_SETUP)}\nPrefix each call with ${variant}.`;
+    assert.deepEqual(offenders(doctored), [variant], `the check must report a restated ${variant} mechanism`);
+  }
+});
+
+test('AC7.1: the headings the cwd-pinned pointer cites exist', () => {
+  const CITED = [
+    [path.join(SKILLS, 'dispatch', 'sequential-execution.md'), '## When the dispatching session itself is cwd-pinned (#447)'],
+    [POLICY, POLICY_HEADING],
+  ];
+  const hasHeading = (text, heading) => text.split('\n').includes(heading);
+  for (const [file, heading] of CITED) {
+    const text = readText(file);
+    assert.ok(hasHeading(text, heading), `${path.basename(file)} must carry the line "${heading}"`);
+
+    // Control: a copy with the heading renamed must fail the same check.
+    const renamed = text.replace(heading, `${heading} (renamed)`);
+    assert.notEqual(renamed, text, `heading anchor for ${path.basename(file)} not found — control cannot discriminate`);
+    assert.ok(!hasHeading(renamed, heading), `a renamed heading in ${path.basename(file)} must fail the check`);
+  }
 });
