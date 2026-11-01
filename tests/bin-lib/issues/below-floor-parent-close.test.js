@@ -287,7 +287,7 @@ test('#4770 AC1.4: a throwing identity probe still closes the due parent with th
   const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
 test('#4770 AC2.2: a failed probe plus a trusted marker closes with no second comment and no note', () => {
@@ -295,7 +295,7 @@ test('#4770 AC2.2: a failed probe plus a trusted marker closes with no second co
   const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith(comments) }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
+  assert.deepEqual(callKeys(writes(calls)), ['issue close 10 --repo o/r --reason completed']);
 });
 
 test('#4770 AC3.2: a failed probe plus the bot\'s own NONE marker posts a second comment (accepted duplicate)', () => {
@@ -304,14 +304,14 @@ test('#4770 AC3.2: a failed probe plus the bot\'s own NONE marker posts a second
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low', notes: [untrustedSkipNote(comment), IDENTITY_PROBE_FAILED_NOTE] }]);
   assert.deepEqual(out.skipped, []);
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
 test('#4770 AC4.2: an empty probe line behaves like a throwing one', () => {
   const { gh, calls } = makeGh(happyWorld({ login: '' }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
 test('#4770 AC5.1: the login is read at most once for a run closing two parents, working or throwing', () => {
