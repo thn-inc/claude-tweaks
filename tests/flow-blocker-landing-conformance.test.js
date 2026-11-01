@@ -254,9 +254,20 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
   const permuted = mutate(without, '- 2.9 —', `${bullet}\n- 2.9 —`);
   assert.throws(() => requireOrder(permuted, order), /must come after/);
   assert.throws(() => requireOrder(without, order), /marker missing: - 2\.7b —/);
-  // Step 2's count word and detailed-procedure pointer track the list.
-  assert.match(text, /\nFive checks, then a route, before pipeline starts\./);
-  assert.match(text, /for 2\.5-2\.7b's detailed procedure/);
+  // Step 2's count word and detailed-procedure pointer track the list; each pin proves itself on a mutated copy.
+  const COUNT_MSG = "Step 2's count word is Five checks";
+  const POINTER_MSG = 'Step 2 points at 2.5-2.7b for the detailed procedure';
+  const assertCount = (t) => assert.match(t, /\nFive checks, then a route, before pipeline starts\./, COUNT_MSG);
+  const assertPointer = (t) => assert.match(t, /for 2\.5-2\.7b's detailed procedure/, POINTER_MSG);
+  assertCount(text);
+  assertPointer(text);
+  assert.throws(() => assertCount(mutate(text, 'Five checks, then a route', 'Four checks, then a route')), { message: COUNT_MSG });
+  assert.throws(() => assertPointer(mutate(text, "for 2.5-2.7b's detailed procedure", "for 2.5-2.7's detailed procedure")), { message: POINTER_MSG });
+  // The bullet mirrors Step 2.8's "unresolved topic name" skip.
+  const TOPIC_MSG = 'SKILL.md 2.7b bullet skips on an unresolved topic name';
+  const assertTopic = (t) => assert.match(skillBullet(t), /or an unresolved topic name:/, TOPIC_MSG);
+  assertTopic(text);
+  assert.throws(() => assertTopic(mutate(text, ' or an unresolved topic name:', ':')), { message: TOPIC_MSG });
 });
 
 const RUN_FACTS = [
@@ -281,7 +292,9 @@ test("AC6.1: validation.md's 2.7b runs the landing call and stops before Step 2.
 const GATE_FACTS = [
   { re: /`bodyBlockedBy: \[\]`, the substep is a no-op/, msg: 'body-text with bodyBlockedBy: [] is a no-op', from: ', the substep is a no-op', to: ', the substep runs' },
   { re: /Under `native` the call always runs/, msg: 'native always makes the call', from: 'Under `native` the call always runs', to: 'Under `native` the call may run' },
-  { re: /`records\["\{n\}"\]\.blockerLanding: \[\]` → no-op/, msg: 'blockerLanding: [] is a no-op', from: ' → no-op', to: ' → stop' },
+  { re: /`blockerLanding: \[\]` → no-op/, msg: 'blockerLanding: [] is a no-op', from: ' → no-op', to: ' → stop' },
+  { re: /out-of-run verdict table to every entry of `records\["\{n\}"\]\.blockerLanding`, whether or not that flag is set/, msg: 'the verdict table still applies when nativeLinksUnchecked is set', from: ', whether or not that flag is set', to: '' },
+  { re: /nativeLinksUnchecked: true`[^\n]*hold one `SKIP` — it is never "no blockers":\n[\s\S]*?\n {3}Then apply/, msg: 'the nativeLinksUnchecked SKIP is held, then the table is applied (not an Otherwise)', from: '\n   Then apply', to: '\n   Otherwise apply' },
   { re: /Read `work-links`/, msg: 'the substep reads work-links', from: 'Read `work-links`', to: 'Read the links policy' },
 ];
 function assertGate(text) { assertFacts(section27b(text), GATE_FACTS); }
@@ -308,7 +321,12 @@ test('AC9.1: a non-zero 2.7b exit stops before claiming and is never "no blocker
 
 const PLAN_REVIEW_FACTS = [
   { re: /neither `build` nor `test`/, msg: '2.7b skips on a step list with neither build nor test', from: 'neither `build` nor `test`', to: 'no steps' },
-  { re: /`nativeLinksUnchecked: true`[^\n]*never "no blockers"/, msg: 'nativeLinksUnchecked: true is never "no blockers"', from: ', which is never "no blockers"', to: '' },
+  { re: /An unresolved topic name \(no record number\)/, msg: '2.7b skips on an unresolved topic name', from: 'An unresolved topic name (no record number), or a', to: 'A' },
+  { re: /`nativeLinksUnchecked: true`[^\n]*it is never "no blockers"/, msg: 'nativeLinksUnchecked: true is never "no blockers"', from: ' — it is never "no blockers"', to: '' },
+  { re: /Write the held `SKIP`s, exactly once\./, msg: 'the held SKIPs are written exactly once', from: ', exactly once', to: '' },
+  { re: /and not again if an express-escalated run continues at Step 3/, msg: 'an express-escalated run does not write the SKIPs again at Step 3', from: ', and not again if an express-escalated run continues at Step 3', to: '' },
+  { re: /Under `interactive` mode there is no run directory/, msg: 'under interactive there is no run directory', from: 'Under `interactive` mode there is no run directory', to: 'Under `confirm` mode there is a run directory' },
+  { re: /so 2\.7b writes none and instead states each `undetermined` verdict, and the native-links-unread note, in the conversation, one line each/, msg: 'under interactive 2.7b states each verdict and the native-links note in the conversation', from: ', in the conversation, one line each', to: '' },
   { re: /`express-entry\.md`'s Bind step/, msg: 'SKIPs on the express route are written after express-entry.md Bind step', from: "`express-entry.md`'s Bind step", to: 'the express route' },
   { re: /right after Step 3's Manifesto write or adoption/, msg: 'SKIPs are written right after Step 3', from: "right after Step 3's Manifesto write or adoption", to: 'right away' },
   { re: /never before[^\n]*Step 2\.8's claim lines/, msg: 'SKIPs are never written before Step 3 (adoption tolerates only claim lines)', from: /never before[^\n]*claim lines in `decisions\.md`/, to: 'at any time' },
@@ -316,6 +334,7 @@ const PLAN_REVIEW_FACTS = [
 function assertPlanReview(valText, expText) {
   assertFacts(section27b(valText), PLAN_REVIEW_FACTS);
   assert.match(expText, /`validation\.md`'s 2\.7b/, 'express-entry.md Bind step names 2.7b');
+  assert.match(expText, /2\.7b held — once: Step 3 does not write them again on escalation/, 'express-entry.md Bind step writes the SKIPs once, not again at Step 3');
 }
 test('plan-review: 2.7b skips on a step list with neither build nor test, writes its SKIPs after Step 3 or after express Bind, and treats nativeLinksUnchecked as never "no blockers"', () => {
   const val = readText(VALIDATION);
@@ -323,6 +342,7 @@ test('plan-review: 2.7b skips on a step list with neither build nor test, writes
   assertPlanReview(val, exp);
   for (const f of PLAN_REVIEW_FACTS) assert.throws(() => assertPlanReview(mutate(val, f.from, f.to), exp), { message: f.msg });
   assert.throws(() => assertPlanReview(val, mutate(exp, "`validation.md`'s 2.7b", '`validation.md`')), { message: 'express-entry.md Bind step names 2.7b' });
+  assert.throws(() => assertPlanReview(val, mutate(exp, ' — once: Step 3 does not write them again on escalation', '')), { message: 'express-entry.md Bind step writes the SKIPs once, not again at Step 3' });
   // The sentence sits in the Bind step (step 2 of the Express path), before step 3's Procedure.
   const BIND_ORDER = ['2. **Bind.**', "`validation.md`'s 2.7b", '3. **Procedure.**'];
   requireOrder(exp, BIND_ORDER);
@@ -357,6 +377,7 @@ test('2.7b checks run in the stated order: local-files, step list, work-links re
   const sec = section27b(readText(VALIDATION));
   const CHAIN = [
     'work-backend: local-files',
+    'An unresolved topic name',
     'neither `build` nor `test`',
     'resolve-policy.js" --values work-links',
     '`bodyBlockedBy: []`',
