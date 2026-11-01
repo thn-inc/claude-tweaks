@@ -249,6 +249,61 @@ test('item 10 routes the PR body Resume line through pr-resume-line.js, not a re
   assert.match(ITEM10, /Report the `resume` line it prints only when the verdict is `resume`/);
 });
 
+// #4818: item 10's evaluation script, run against fixture files. The three
+// $PR_SCAN_UNSETTLED_* placeholders become temp paths (the isolateItem9 pattern),
+// UNSETTLED_AGE=24 is set, and the PR list is empty so no `gh pr view` runs.
+function runItem10Evaluation({ claimRows, labelled }) {
+  const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
+  assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
+  const claimsPath = path.join(dir, 'claims.jsonl');
+  const labelledPath = path.join(dir, 'labelled.json');
+  const prsPath = path.join(dir, 'prs.json');
+  fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
+  fs.writeFileSync(labelledPath, JSON.stringify(labelled));
+  fs.writeFileSync(prsPath, '[]');
+  const script = scripts[0]
+    .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
+    .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
+    .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
+  const file = path.join(dir, 'item10-eval.js');
+  fs.writeFileSync(file, script);
+  return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24' } });
+}
+
+const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+
+test('item 10 reads claims in one git batch through bin/read-claims.js, never a per-blob contents call (#4818)', () => {
+  assert.ok(!ITEM10.includes('contents/claims/'), 'item 10 must not read a claim blob per call');
+  assert.ok(ITEM10.includes('bin/read-claims.js'), 'item 10 must name bin/read-claims.js');
+});
+
+test('item 10 characterization: a live claim 25h old with no PR still reports no PR found', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }],
+    labelled: [],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: a could-not-read registry row reports the registry and judges no label-only candidate (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: null, state: 'could-not-read', reason: 'transport-failure' }],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a could-not-read blob reports the blob, and its labelled issue is not label drift (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'could-not-read', reason: 'transport-failure' }],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: claim blob could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /#12: no PR found/);
+});
+
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {
   assert.match(SCAN, /Anti-pattern: a self-scheduled per-PR check-in loop\./);
   assert.match(SCAN, /that durability lives in GitHub's own `--auto`.*plus this scheduled sweep/s);
