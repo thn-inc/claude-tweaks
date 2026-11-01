@@ -1036,7 +1036,7 @@ const INVOCATION_FACTS = [
   [
     'facts-json exit 2 fails open',
     'cli',
-    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token, or an undeterminable repository root and working directory: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
+    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token, an undeterminable repository root and working directory, or an unreadable or invalid `.claude-tweaks/policy.yml` (the stderr line names the file): a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
   ],
   [
     'local-files exit is a reported failure',
