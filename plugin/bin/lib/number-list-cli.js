@@ -33,7 +33,7 @@
 
 const { execFileSync } = require('child_process');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoResolutionNote,
+  parseRepo, ghAvailable, remoteUrl, repoResolutionNote, ghOptions,
 } = require('./repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
 
@@ -72,7 +72,7 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
   const realDeps = {
     ghAvailable,
     remoteUrl,
-    runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
+    runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
   };

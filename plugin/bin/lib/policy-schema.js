@@ -771,7 +771,13 @@ function detectIntegrationModel(repoRoot, opts = {}) {
   }
   if (mcpReachable === true) return 'pr-first';
   try {
-    execFileSync('gh', ['repo', 'view', '--json', 'owner,name'], execOpts);
+    // windowsHide restated in the call: the windows-hide scan reads a bare
+    // execOpts, never one wrapped in ghOptions (#4505's GH_HOST seam).
+    // Required at call time: repo-resolve's load reads GH_TIMEOUT_MS, whose
+    // getter loads ./policy, which requires this module back (a cycle at load).
+    const { ghOptions } = require('./repo-resolve');
+    const args = ['repo', 'view', '--json', 'owner,name'];
+    execFileSync('gh', args, ghOptions(args, { ...execOpts, windowsHide: true }));
   } catch {
     return 'local-merge';
   }
