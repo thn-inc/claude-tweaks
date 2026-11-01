@@ -47,7 +47,7 @@ files:
 
 ### 5. Read what happened in the handoff — `build/handoff-template.md`
 - **URL:** —
-- **Action:** The build handoff's `### Stash guard` section lists each failed restore with its paste-ready, shell-escaped `git stash store -m "…" <sha>` command on its own line. It also lists each entry left on the stack, and each reviewer whose verdict was voided. Successful restores get a line too, for a standalone `/build` (no run dir) or when the decision-log append did not land.
+- **Action:** The build handoff's `### Stash guard` section lists each failed restore with its paste-ready, shell-escaped `git stash store -m "…" <sha>` command on its own line. A failed restore whose `command` is null — the same commit is still at `stash@{0}`, so `git stash store` wrote nothing — is listed as having nothing to recover, with no command. It also lists each entry left on the stack, and each reviewer whose verdict was voided. Successful restores get a line too, for a standalone `/build` (no run dir) or when the decision-log append did not land.
 - **Should feel:** Complete: if anything happened to the stash, the maintainer can find it and undo it from this one place.
 - **Should understand:** Under `/flow` the AUTO/FAILED lines are in `decisions.md` and reach the Review Console. A subject containing `!` must be pasted with history expansion off (`set +H` / `setopt nobanghist`).
 - **Red flags:** A recovery command rebuilt from the raw subject (backticks would run); a reviewer's voided-verdict line missing from the handoff.
