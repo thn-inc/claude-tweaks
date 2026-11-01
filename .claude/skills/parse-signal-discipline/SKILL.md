@@ -217,6 +217,12 @@ When mechanizing a prose heuristic into a deterministic check:
    verdict") and let every other outcome keep the stop: item 19's positive recogniser, in prose.
    `tests/issue-claims-stale-open-pr-conformance.test.js` pins that clause and the absence of
    `Otherwise: follow`.
+   A pipe hides a failed probe a third way: the pipeline's exit status is its last stage's, so a
+   producer that fails into a consumer that always succeeds still yields a confident value.
+   #4557's progress probe piped `git diff HEAD` into `git hash-object --stdin`; a failed diff
+   still exits 0 with the empty-blob hash (`e69de29…`), which differs from the previous probe and
+   reads as progress, granting another wait window. Review caught it (`704ff1076` made a `fatal:`
+   line fail the probe). Name each piped stage's own failure signal, never the pipeline's exit.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
@@ -307,8 +313,8 @@ When mechanizing a prose heuristic into a deterministic check:
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
     callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
-    `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
+    `precondition`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual

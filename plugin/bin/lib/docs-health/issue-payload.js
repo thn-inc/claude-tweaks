@@ -7,9 +7,9 @@
 // (skills/_shared/work-record.md): origin by:docs-health, colon-form
 // risk:*/size:* scoring, born-ready, Type task, work-fingerprint marker.
 // fenceFor/fencedBlock (GitHub-fence-safe code-block wrapper) and
-// CLASSIFICATION_SCORING (classification -> risk/size fold) also live in
-// record.js — shared with harness-health/issue-payload.js rather than
-// copy-pasted.
+// CLASSIFICATION_SCORING (classification -> risk/size fold) also come from
+// record.js (re-exported) — shared with harness-health/issue-payload.js rather
+// than copy-pasted.
 const {
   recordPayload, specShapedBody, CLASSIFICATION_SCORING, fencedBlock, isRepoRelativeKeyFilePath,
 } = require('../issues/record');

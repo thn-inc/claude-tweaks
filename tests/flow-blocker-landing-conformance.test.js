@@ -316,13 +316,13 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
   assert.throws(() => requireOrder(permuted, order), /must come after/);
   assert.throws(() => requireOrder(without, order), /marker missing: - 2\.7b —/);
   // Step 2's count word and detailed-procedure pointer track the list; each pin proves itself on a mutated copy.
-  const COUNT_MSG = "Step 2's count word is Five checks";
+  const COUNT_MSG = "Step 2's count word is five checks, after the dispatch-capability preflight";
   const POINTER_MSG = 'Step 2 points at 2.5-2.7b for the detailed procedure';
-  const assertCount = (t) => assert.match(t, /\nFive checks, then a route, before pipeline starts\./, COUNT_MSG);
+  const assertCount = (t) => assert.match(t, /\nA dispatch-capability preflight, five checks, then a route, before pipeline starts\./, COUNT_MSG);
   const assertPointer = (t) => assert.match(t, /for 2\.5-2\.7b's detailed procedure/, POINTER_MSG);
   assertCount(text);
   assertPointer(text);
-  assert.throws(() => assertCount(mutate(text, 'Five checks, then a route', 'Four checks, then a route')), { message: COUNT_MSG });
+  assert.throws(() => assertCount(mutate(text, 'five checks, then a route', 'four checks, then a route')), { message: COUNT_MSG });
   assert.throws(() => assertPointer(mutate(text, "for 2.5-2.7b's detailed procedure", "for 2.5-2.7's detailed procedure")), { message: POINTER_MSG });
   // The bullet mirrors Step 2.8's skip list: an unresolved topic name, or a step list with neither build nor test.
   const TOPIC_MSG = 'SKILL.md 2.7b bullet skips on an unresolved topic name';

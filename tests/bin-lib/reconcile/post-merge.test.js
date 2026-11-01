@@ -24,11 +24,12 @@ function git(root, ...args) {
 }
 
 // A temp main checkout: a real git repo with an origin, a CLAUDE.md, and no run dirs yet.
+// `origin`: true for the github.com default, a string for that URL, false for none.
 function mainCheckout({ claudeMd = '## Work records\n\nwork-backend: github-issues\n', origin = true } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-')));
   tempRoots.push(root);
   git(root, 'init', '-q');
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) git(root, 'remote', 'add', 'origin', origin === true ? 'git@github.com:acme/w.git' : origin);
   if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
   return root;
 }
@@ -118,6 +119,7 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
     mergingPr: 11,
     owner: 'acme',
     repo: 'w',
+    host: 'github.com',
     workLinks: 'body-text',
     riskFloor: 'high',
     gh: d.gh,
@@ -674,6 +676,64 @@ test('R2: the default gh runs through the timed wrapper with cwd at the main che
   assert.equal(typeof seen[0].opts.timeout, 'number');
 });
 
+test('a GitHub Enterprise origin hands Step 4.0b its host; a github.com origin hands it github.com', async () => {
+  for (const [origin, host] of [
+    ['git@ghe.example.com:acme/w.git', 'ghe.example.com'],
+    ['https://ghe.example.com/acme/w.git', 'ghe.example.com'],
+    ['https://github.com/acme/w.git', 'github.com'],
+  ]) {
+    const root = mainCheckout({ origin });
+    addRun(root, '2026-10-30T090000-spec-1');
+    const close = fakeCloseParents();
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    assert.equal(close.calls.length, 1, origin);
+    assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], [host, 'acme', 'w'], origin);
+  }
+});
+
+// A fresh checkout with one unmarked run and `policyText` as its policy.yml (null: no file).
+function policyCheckout(policyText) {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  if (policyText !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policyText);
+  return { root, dir };
+}
+
+test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, the skip named on the marker', async () => {
+  const { root, dir } = policyCheckout(null);
+  // A directory where the file belongs: the read fails EISDIR, an error that is not "no policy file".
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]);
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
+  assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
+});
+
+test('a risk-floor value policy.yml rejects skips Step 4.0b fail-closed, never the looser schema default', async () => {
+  const { root, dir } = policyCheckout('risk-floor: hgih\nwork-links: native\n');
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP]);
+  assert.match(lines[0].action, /; skipped step \(invalid-risk-floor: \.claude-tweaks\/policy\.yml risk-floor: "hgih"\)\./);
+});
+
+test('no policy.yml at all (and a policy.yml without risk-floor) keeps the schema default: the close runs with risk-floor high', async () => {
+  for (const policyText of [null, 'work-links: native\n']) {
+    const { root } = policyCheckout(policyText);
+    const close = fakeCloseParents();
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    assert.equal(close.calls.length, 1, String(policyText));
+    assert.equal(close.calls[0].riskFloor, 'high', String(policyText));
+  }
+});
+
 test('dryRun: a merged unmarked run past the grace window gives dry-run and writes nothing, the claim included', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1', { decisions: '# Decisions\n' });
@@ -887,19 +947,21 @@ function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {})
       return '';
     }
     if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      if (args[3].includes('subIssues(first:100)')) return JSON.stringify({ data: { repository: { i100: { number: 100, subIssues: { nodes: [{ number: 101 }, { number: 102 }], pageInfo: { hasNextPage: false } } } } } });
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: { number: 100 } } } } });
     }
     if (key === 'api --paginate repos/acme/w/issues/100/sub_issues --jq .[].number') return '101\n102\n';
     m = /^issue view (10[12]) --repo acme\/w --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) return JSON.stringify({ ...liveOf(Number(m[1])), title: `T${m[1]}`, labels: [{ name: 'risk:low' }], closedByPullRequestsReferences: [] });
-    if (key === 'issue view 100 --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
-    if (key === 'issue view 100 --json state,stateReason,comments') {
+    if (key === 'issue view 100 --repo acme/w --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
+    if (key === 'issue view 100 --repo acme/w --json state,stateReason,comments') {
       const closedYet = calls.some((c) => c.key.startsWith('issue close 100'));
       return JSON.stringify({ state: closedYet ? 'CLOSED' : 'OPEN', stateReason: closedYet ? 'COMPLETED' : '', comments: [] });
     }
     if (key === 'api user --jq .login') return 'bot\n';
-    if (key === 'issue comment 100 --body-file -' || /^issue close 100 --reason /.test(key)) return '';
+    if (key === 'issue comment 100 --repo acme/w --body-file -' || /^issue close 100 --repo acme\/w --reason /.test(key)) return '';
     throw new Error(`unexpected gh call: ${key}`);
   };
   return { gh, calls, mergedAt };
@@ -930,7 +992,7 @@ test('M6 end to end: an armed merge\'s last sub-issue closes its below-floor par
   const first = await e2ePass(root, world);
   assert.deepEqual(first, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 }], deferred: [] });
   const writes = writesOf(world.calls);
-  assert.deepEqual(writes.map((c) => c.key), ['issue comment 100 --body-file -', 'issue close 100 --reason completed']);
+  assert.deepEqual(writes.map((c) => c.key), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
   assert.ok(writes[0].input.startsWith('## Closed below the oversight floor\n'));
   assert.ok(writes[0].input.includes('- #101 T101 — closed by PR #11'), 'the merging PR names the closing record on the listing');
   const lines = entriesOf(dir);
@@ -963,7 +1025,7 @@ test('#4549 end to end: an armed merge into a non-default base — the late Step
   assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1 }], deferred: [] });
   const writes = writesOf(world.calls).map((c) => c.key);
   assert.match(writes[0], /^issue close 101 --reason completed --comment /, 'Step 4.0 closes the Fixes record itself');
-  assert.deepEqual(writes.slice(1), ['issue comment 100 --body-file -', 'issue close 100 --reason completed']);
+  assert.deepEqual(writes.slice(1), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
   assert.ok(!world.calls.some((c) => c.key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name'), 'Step 4.0b reads no default branch');
   const locations = entriesOf(dir).map((e) => e.location);
   assert.ok(locations.includes('reconcile post-merge parent-close'), `the parent line is logged: ${locations.join(' | ')}`);

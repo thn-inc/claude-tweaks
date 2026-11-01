@@ -41,6 +41,9 @@ const {
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
 
+// Exported for an in-process caller that branches on it (lib/issues/parent-gate.js).
+const EXIT_SUBISSUES_UNAVAILABLE = 4;
+
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
 function parseArgs(argv) {
@@ -118,7 +121,7 @@ function run(argv, deps = realDeps) {
   }
   if (!schema.subIssues) {
     deps.stderr('fetch-sub-issues.js: the subIssues GraphQL field is unavailable on this host — fall back to the per-parent REST loop\n');
-    return 4;
+    return EXIT_SUBISSUES_UNAVAILABLE;
   }
   const byParent = {};
   const retry = [];
@@ -153,6 +156,6 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, parseRepo };
+module.exports = { run, parseArgs, parseRepo, EXIT_SUBISSUES_UNAVAILABLE };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

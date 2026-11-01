@@ -136,7 +136,8 @@ When a gate fails, the pipeline stops immediately and renders a failure card. Tw
 
 ### Step 2: Pre-flight Checks
 
-Five checks, then a route, before pipeline starts. Each check can return OK / WARNING / BLOCKED.
+A dispatch-capability preflight, five checks, then a route, before pipeline starts. Each check can return OK / WARNING / BLOCKED.
+- 2.4 — Dispatch-capability preflight (#4555). When the step list includes `build`, on every entry — fresh, or a resume (a step-list resume or an adopted `PIPELINE_RUN_DIR`) — probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before 2.5-2.8, so a host that can never build leaves no claim or draft PR behind. A step list without `build` skips it (review's run-level **Independence: degraded** caveat covers that run). None found → stop BLOCKED per `build/execution-mode-policy.md`'s No-dispatch host section (resume command, `SKIP` line, `build-test-blocked` under dispatch); never implement plan tasks inline.
 - 2.5 — Branch-divergence check (branch ahead/behind)
 - 2.6 — Shape check (structural coupling, hard-fail on cross-task deps)
 - 2.7 — Design-doc rejection (granularity contract — records only, not design docs). **Path / topic input only** — a record reference is never a file path, so this ambiguity doesn't arise for `#N` input; `materialize.md`'s Step 1 hard gate is the equivalent granularity check there.

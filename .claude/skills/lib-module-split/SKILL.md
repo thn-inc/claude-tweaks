@@ -352,6 +352,31 @@ promoted `tests/helpers/strip-comments.js` into `plugin/bin/lib/strip-comments.j
 classified every journey citing the helper as "no change", so the three journeys whose `files:`
 name the helper were left without the implementation path.
 
+## A neutral-home leaf with no shim at the old path
+
+A third shape drops the old path instead of keeping a facade or a re-export. #4645 moved the
+CommonMark fence and heading-section primitives out of `issues/record-payload.js` into
+`plugin/bin/lib/markdown-blocks.js`, because importers in `preflight-records/` and `issues/`
+reached through the payload builder for one fence rule. Nothing re-exports them from
+`record-payload.js`: every importer now requires the leaf, and of the moved symbols `record.js`
+re-exports only the three its own consumers use (`fenceFor`, `fencedBlock`, `extractSection`). It fits the
+"Migrate" row of the facade table above, and only when the old path's moved symbols are not
+required by skill prose or an installed build (grep `plugin/skills` for each moved name first).
+The checks it owes:
+
+- **Pin the leaf even with no cycle motive.** The requires-nothing test (strip comments, assert
+  no `require(`, assert the export keys, register the stripper caller) applies to any module
+  whose header or docs claim it requires nothing, not only the cycle-breaking leaf above. #4645's
+  plan pinned `markdown-blocks.js` with a grep until a task review cited this skill
+  (`tests/bin-lib/markdown-blocks.test.js` is the test that replaced it).
+- **Migrate every importer, found by symbol.** Grep each moved symbol name, not the old path, across
+  `plugin` and `tests`. The old path no longer names them, so a path grep misses a test that
+  reached them through a destructured require.
+- **Run the sweep over `.claude/skills` as well as `plugin/`.** #4645's final review caught
+  `.claude/skills/gh-api-module-pattern/batching-failure-posture.md` still describing the
+  builders the same record had just collapsed. A project skill is prose in the same repo and goes
+  stale the same way.
+
 ## Update `docs/plugin-structure.md`
 
 The `plugin/bin/lib/{family}/` line there is the single module-family entry (for #2805, the

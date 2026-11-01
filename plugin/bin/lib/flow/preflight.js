@@ -78,8 +78,8 @@ function defaultDeps(cwd) {
       // have no static schema default, so the flat resolver leaves them null
       // until computeDerivedDefaults runs. `mcpReachable: false` is what the
       // CLI passes without its own `--mcp-reachable` flag (#1421).
-      const { root, result } = resolvePolicyConfig({ git, readFile, runDir, keys });
-      computeDerivedDefaults(result, keys, root, { mcpReachable: false });
+      const { root, runConfigRaw, result } = resolvePolicyConfig({ git, readFile, runDir, keys });
+      computeDerivedDefaults(result, keys, root, { mcpReachable: false, runConfigRaw });
       return result;
     },
     resolveTarget,
