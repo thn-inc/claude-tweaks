@@ -19,7 +19,8 @@
 - A pinned run (`resolvePolicyConfig` source `run-config` or `policy`) never reads the memo.
 - `precondition.js`'s call (`resolveRunPinnedIntegrationModel(mainRoot, runDir, { onDegrade })`) must behave exactly as today: no memo read, no memo write.
 - Existing tests `bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt` and `... the override receives an onDegrade callback; a clean local-merge still persists prExempt` stay green unchanged.
-- Every new test goes red against pre-change code (prove by reverting the source change) — AC7.1; each task's Step 2 run is that red proof.
+- AC7.1, as clarified at plan review (spec `## Plan Review Clarifications`): every new test goes red either against the pre-change code (the task's Step 2 run) or against the named mutation listed beside it. For each mutation-proven test, the implementer applies the mutation in the working tree, runs the test, quotes the red output in its report, and reverts with `git restore {file}`. A mutation is never committed.
+- Concurrent hook processes: a degraded detection that began before a concurrent clean detection still writes `forgeDegradedAt: now()` after its probe. That can re-arm a just-cleared memo, so a recovered forge goes unnoticed for at most one more TTL. This is accepted, because it sits inside the spec's "recovery is noticed within one TTL" envelope. Document it in `resolveRunPinnedIntegrationModel`'s header comment; do not add compare-and-set logic.
 - Waived AC7.2: the full `npm test` run is `/build` Common Step 5's job, not a per-task step.
 - Fake-`gh` tests carry `{ skip: STUB_SKIP }` (`tests/helpers/path-stub.js`), like the existing #4578 tests.
 - No new exemption: a memo hit must reach exactly the gate outcome a fresh degrade reaches (allow, no `prExempt`). `.claude/skills/pre-tool-use-gate-exemptions` governs exemptions on this file's deny gates; this change adds none and changes no allow/deny decision, only whether the probe runs.
@@ -86,6 +87,9 @@ git commit -m "Add FORGE_DEGRADE_MEMO_TTL_MS and isFreshForgeDegradeMemo — #48
 
 ### Task 2: Opt-in degrade memo in `resolveRunPinnedIntegrationModel`
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (`resolveRunPinnedIntegrationModel`, ~lines 1640-1685, and its header comment)
 - Test: `tests/hooks-pre-tool-use.test.js` (after Task 1's tests)
@@ -115,21 +119,28 @@ Test fixture for every test below: `unpinnedRepoWithOrigin()` (existing helper),
 //    call 2 with now: () => T + 59999 -> 'local-merge'; gh.count() === 2; seen[1] deepEquals { memoized: true, degradedAt: T }
 // b) an expired memo re-probes and refreshes the stamp
 //    pre-write run-state.json { forgeDegradedAt: T }; now: () => T + 60000; 'hang' -> gh.count() === 2; state.forgeDegradedAt === T + 60000
-// c) a future memo and a non-numeric memo both probe
-//    forgeDegradedAt: T + 1000 with now T -> gh.count() === 2; then a fresh run dir with forgeDegradedAt: 'x' -> count rises by 2
+// c) a future memo and a numeric-string memo both probe, then re-stamp
+//    forgeDegradedAt: T + 1000 with now T -> gh.count() === 2 and state.forgeDegradedAt === T (re-stamped);
+//    then a fresh run dir with forgeDegradedAt: String(T) (coerces under `-`, so only the isFinite clause rejects it)
+//    -> count rises by 2 and state.forgeDegradedAt === T
+//    Proof: red pre-change (no re-stamp); mutations "drop `0 <=`" and "drop `Number.isFinite`" each turn their half red
 // d) a garbled run-state.json probes and does not throw
-//    write 'not json' to run-state.json -> 'hang' -> no throw, gh.count() === 2, then forgeDegradedAt is a number
+//    write 'not json' to run-state.json -> 'hang' -> no throw, gh.count() === 2, then forgeDegradedAt === T
 // e) a clean detection clears a stale memo
 //    pre-write { forgeDegradedAt: T - 60000 }; fakeGh({ first: 'fail' }) -> 'local-merge'; state.forgeDegradedAt === null; seen deepEquals []
-// f) a pinned run ignores a fresh memo
-//    repo policy.yml 'integration-model: local-merge\n'; pre-write { forgeDegradedAt: T }; 'hang' -> gh.count() === 0; seen deepEquals []
+// f) a run-config pin ignores a fresh memo
+//    write `{run}/config.yml` with 'integration-model: pr-first\n'; pre-write { forgeDegradedAt: T }; 'hang'
+//    -> result === 'pr-first', gh.count() === 0, seen deepEquals []
+//    Proof: mutation "memo read moved ahead of the pin check" (returns 'local-merge', seen non-empty)
 // g) without degradeMemoTtlMs (precondition.js's call shape) a fresh memo is ignored and nothing is written
 //    pre-write { forgeDegradedAt: T }; opts = { timeoutMs: 1000, onDegrade, now: () => T } -> gh.count() === 2;
 //    run-state.json byte-identical to what was pre-written
+//    Proof: mutation "delete the degradeMemoTtlMs guard"
 // h) an empty runDir with the option set probes and writes nothing (the runDir guard decides this alone)
 //    run with process.chdir() into a fresh mkdtemp dir (restore cwd in finally):
 //    resolveRunPinnedIntegrationModel(repo, '', { timeoutMs: 1000, degradeMemoTtlMs: 60000, now: () => T }) -> 'local-merge', gh.count() === 2,
 //    and fs.existsSync(path.join(thatTmpDir, 'run-state.json')) === false
+//    Proof: mutation "delete the runDir guard"
 ```
 
 Guard discrimination: deleting the `degradeMemoTtlMs` guard turns g) red (count 0, state rewritten). Deleting the `runDir` guard turns h) red: measured on 2026-11-01, `ctxLib.writeRunState('', patch)` does not throw. It writes `run-state.json` into the process cwd, which is why h) chdirs into a temp dir. Each freshness clause is isolated by Task 1's cases.
@@ -139,7 +150,7 @@ Write each comment block as its own `test(...)` with these exact assertions.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test --test-name-pattern="#4830 memo" tests/hooks-pre-tool-use.test.js`
-Expected: FAIL after Step 1. a) fails on `forgeDegradedAt === T` (undefined) and on call 2's count (4); b) and e) fail on their state assertions. Coverage: b) is AC2.1/AC2.2 (expiry re-probes, stamp refreshed); c) is AC4.1; f) is AC5.1; e) is AC3.1's memo-clearing half at resolver level. f) and g) pass before the change (they pin behavior the change must keep) — confirm they still pass after Step 3.
+Expected: FAIL after Step 1. a)-e) fail on their stamp or clear assertions. f), g) and h) pass before the change: they are regression guards, proven by their named mutations after Step 4. Coverage: b) is AC2.1/AC2.2 (expiry re-probes, stamp refreshed); c) is AC4.1; f) is AC5.1; e) is AC3.1's memo-clearing half at resolver level.
 
 - [ ] **Step 3: Implement the memo in `resolveRunPinnedIntegrationModel`**
 
@@ -150,6 +161,16 @@ Per the behavior list above. Extend the function's header comment with one parag
 Run: `node --test --test-name-pattern="#4830|4578" tests/hooks-pre-tool-use.test.js`
 Expected: PASS (the existing #4578 resolver tests included)
 
+- [ ] **Step 4b: Mutation proofs (AC7.1, clarified)**
+
+Apply each mutation alone, run the Step 4 command, confirm the named test fails, then `git restore plugin/bin/lib/hooks/pre-tool-use.js`:
+1. Move the memo read ahead of the pin check → f) fails.
+2. In `isFreshForgeDegradeMemo`, drop the `0 <=` clause → c)'s future half fails.
+3. In `isFreshForgeDegradeMemo`, drop `Number.isFinite` → c)'s numeric-string half fails.
+4. Delete the `degradeMemoTtlMs` guard → g) fails.
+5. Delete the `runDir` guard → h) fails.
+Quote each red line in the task report. `git status --porcelain` must be empty for `pre-tool-use.js` before Step 5.
+
 - [ ] **Step 5: Commit**
 
 ```bash
@@ -158,6 +179,9 @@ git commit -m "Memoize a degraded forge detection per run in resolveRunPinnedInt
 ```
 
 ### Task 3: Wire the gate and prove the probe count end to end
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (the gate's call, ~line 2107; `require('../policy-schema')` at line 37)
@@ -181,7 +205,12 @@ In `tests/hooks-bookkeeping-stamps-gate.test.js`, require `fakeGh` and `STUB_SKI
 // #4830 AC3, { skip: STUB_SKIP }: an expired memo plus a recovered (definitive) gh clears the memo and persists prExempt
 //   mkRunDir(..., { forgeDegradedAt: Date.now() - 120000 }); gh = fakeGh({ first: 'fail' })
 //   returns {}; persisted.forgeDegradedAt === null; persisted.prExempt === true
+// #4830 AC2, { skip: STUB_SKIP }: an expired memo at the gate re-probes and refreshes the stamp
+//   before = Date.now() - 120000; mkRunDir(..., { forgeDegradedAt: before }); gh = fakeGh({ first: 'hang' })
+//   returns {}; gh.count() === 2; persisted.forgeDegradedAt > before; persisted.prExempt === undefined
 ```
+
+AC4.1 (untrusted values) is covered at resolver level only (Task 2 c and d). The gate passes `run-state.json` through to the resolver unchanged and injects no clock, so a gate-level copy would only re-run Task 2's assertion through a 10 s probe.
 
 Update `GATE_CALL_SHAPE` to require `degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS` between `timeoutMs` and `onDegrade`, and the self-test's `live` string to match. The self-test's existing negative cases stay as they are.
 
@@ -210,7 +239,7 @@ git commit -m "Pass the degrade memo TTL from the PR-stamp gate — #4830 one pr
 
 **Files:**
 - Modify: `docs/hooks.md` (the "The run's pin, not a fresh detection." bullet, line 45)
-- Modify: `docs/journeys/resolve-the-integration-model-on-a-slow-gh-host-4578.md` (step 4's "Should understand" line, line 46). It still calls the per-call cost "a known, undecided follow-up (#4830)". Rewrite it to say the gate now probes at most once per `FORGE_DEGRADE_MEMO_TTL_MS` (60 s) per run while `gh` stays hung, and notices recovery within that window. Add a Red flags entry: a run-state `forgeDegradedAt` with a `prExempt` beside it.
+- Modify: `docs/journeys/resolve-the-integration-model-on-a-slow-gh-host-4578.md` (step 4's "Should understand" line, line 46). It still calls the per-call cost "a known, undecided follow-up (#4830)". Rewrite it to say the gate now probes at most once per `FORGE_DEGRADE_MEMO_TTL_MS` (60 s) per run while `gh` stays hung, and notices recovery within that window. Add a Red flags entry: a `prExempt` written by an unpinned run while its `forgeDegradedAt` is still fresh. A stale `forgeDegradedAt` beside `prExempt` after the user pins `integration-model` mid-run is legitimate, because a pinned run never reads or clears the memo.
 - No change (behavior-change sweep, `grep -rnE "detects again|detect again|never cached as|degraded detection" plugin docs`): `plugin/bin/manifesto-write.js:28` and `plugin/bin/lib/flow/manifesto-write.js:211,270` describe `resolve-policy.js --run` CLI reads, which do not opt in; `plugin/skills/_shared/integration-model.md:29` and `plugin/skills/flow/manifesto.md:167` describe the run pin, which is unchanged.
 
 - [ ] **Step 1: Edit the bullet in place**
