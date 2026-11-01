@@ -1634,7 +1634,8 @@ function hasNoUpstreamYet(dir) {
 // later than `now` and strictly younger than the TTL; absent, non-numeric, NaN,
 // Infinity, or a future stamp (a clock step) is stale.
 function isFreshForgeDegradeMemo(at, now, ttlMs) {
-  return Number.isFinite(at) && 0 <= now - at && now - at < ttlMs;
+  const age = now - at;
+  return Number.isFinite(at) && age >= 0 && age < ttlMs;
 }
 
 // The PRODUCTION integration-model read for the PR-stamp branch below.
@@ -1731,12 +1732,15 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
     if (typeof opts.onDegrade === 'function') opts.onDegrade(d);
   };
   const model = detectIntegrationModel(root, detectOpts);
-  if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
-  // Clear on a clean detection. The outer `memoAt != null` check keeps the
-  // common no-memo path free of the run-state lock and write. The updater
-  // re-checks under the lock and returns null when a concurrent call already
-  // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
-  else if (memoAt != null) ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  if (degraded) {
+    ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  } else if (memoAt != null) {
+    // Clear on a clean detection. The outer `memoAt != null` check keeps the
+    // common no-memo path free of the run-state lock and write. The updater
+    // re-checks under the lock and returns null when a concurrent call already
+    // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
+    ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  }
   return model;
 }
 
