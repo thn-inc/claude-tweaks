@@ -217,6 +217,19 @@ test('AC3.1/AC3.2: opted-out fleet check prints the informational line naming th
   assertFleetOptOut(FLEET);
 });
 
+const FLEET_REPLACES_FIRST = 'At `false`, Step 5\'s opt-out "OK" alternative replaces the first one, kept entry or not.';
+
+function assertFleetReplacesFirst(text) {
+  assert.ok(fleetStep2(text).includes(FLEET_REPLACES_FIRST), 'fleet replaces-first sentence missing');
+}
+
+test('AC3.1: at false the opt-out OK alternative replaces the first one', () => {
+  assertFleetReplacesFirst(FLEET);
+  const doctored = FLEET.replace(FLEET_REPLACES_FIRST, '');
+  assert.notEqual(doctored, FLEET);
+  assert.throws(() => assertFleetReplacesFirst(doctored), { message: /fleet replaces-first sentence missing/ });
+});
+
 test('AC3.1: a missing claude-tweaks declaration is no gap under the opt-out', () => {
   const step2 = fleetStep2(FLEET);
   for (const literal of [
