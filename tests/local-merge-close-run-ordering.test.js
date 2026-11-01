@@ -564,20 +564,23 @@ test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a qu
   assert.notStrictEqual(run(inlined).code, 0, 'go-red: a {run-dir} pasted into the script text breaks on a quote in the path');
 });
 
-test("local-merge-auto-finish.md's run-state read takes $RUN_DIR as an argument, so a quote in the path cannot break it", () => {
-  const live = readText(path.join(ROOT, 'plugin/skills/_shared/local-merge-auto-finish.md'));
-  const readLine = extractFence(live, WORKTREE_READ_NEEDLE).split('\n')[0].replace(/\s+# ->.*$/, '');
-  const runDir = path.join(SCRATCH, "o'brien auto-finish run");
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/wt/feat', status: 'active' }));
-  const run = (line) => runFence(line, { cwd: SCRATCH, env: { RUN_DIR: posix(runDir) } });
-  const r = run(readLine);
-  assert.strictEqual(r.code, 0, r.stderr);
-  assert.strictEqual(r.stdout.trim(), '/wt/feat');
-  const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('$RUN_DIR/run-state.json')").replace(/ "\$RUN_DIR"$/, '');
-  assert.notStrictEqual(inlined, readLine);
-  assert.notStrictEqual(run(inlined).code, 0, 'go-red: a $RUN_DIR pasted into the script text breaks on a quote in the path');
-});
+for (const rel of ['plugin/skills/_shared/local-merge-auto-finish.md', 'plugin/skills/wrap-up/auto-merge-short-circuit.md']) {
+  test(`${path.basename(rel)}'s run-state worktree read takes {run-dir} as an argument, so a quote in the path cannot break it`, () => {
+    const live = readText(path.join(ROOT, rel));
+    // auto-merge-short-circuit.md also reads the worktree in its ledger-delete fence; key on the merge read's own error text.
+    const readLine = extractFence(live, 'run-state.json has no worktree field').split('\n')[0].replace(/\s+# ->.*$/, '');
+    const runDir = path.join(SCRATCH, `o'brien ${path.basename(rel, '.md')} run`);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/wt/feat', status: 'active' }));
+    const run = (line) => runFence(line, { cwd: SCRATCH, env: { RUN_DIR: posix(runDir) }, vars: { 'run-dir': posix(runDir) } });
+    const r = run(readLine);
+    assert.strictEqual(r.code, 0, r.stderr);
+    assert.strictEqual(r.stdout.trim(), '/wt/feat');
+    const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('$RUN_DIR/run-state.json')").replace(/ "\{run-dir\}"$/, '');
+    assert.notStrictEqual(inlined, readLine);
+    assert.notStrictEqual(run(inlined).code, 0, 'go-red: a $RUN_DIR pasted into the script text breaks on a quote in the path');
+  });
+}
 
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {
   const hits = fs.readdirSync(PLUGIN_DIR, { recursive: true })
