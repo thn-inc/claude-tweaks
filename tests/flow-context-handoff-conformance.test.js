@@ -124,7 +124,7 @@ test('the verbatim-copy check can go red: one changed word in the copy fails it'
 const HANDOFF_PROGRESS = [
   [/`git -C \{child-worktree\} rev-parse HEAD`/, 'the template probes the child worktree HEAD'],
   [/`git -C \{child-worktree\} --no-optional-locks status --porcelain`/, 'the template probes porcelain status'],
-  [/`git -C \{child-worktree\} --no-optional-locks diff HEAD \| git hash-object --stdin`/, 'the template hashes the diff against HEAD'],
+  [/`git -C \{child-worktree\} --no-optional-locks diff HEAD` piped to `git hash-object --stdin`/, 'the template hashes the diff against HEAD'],
   [/A failed wait call ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
   [/against the previous probe \(taken right after launching the wave, then at each bound/, 'the template compares with the previous probe'],
   [/a child whose prompt names no worktree counts as unchanged/, 'the template states the no-named-worktree rule'],

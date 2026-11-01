@@ -17,7 +17,7 @@ files:
 
 ### 1. Take the launch probe
 - **URL:** the dispatched agent's turn, right after it launches a wave of write-capable children
-- **Action:** the agent probes each child's worktree, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree} --no-optional-locks status --porcelain`, and `git -C {child-worktree} --no-optional-locks diff HEAD | git hash-object --stdin`. `{child-worktree}` is the path the child's own prompt names. It then waits with foreground `sleep 20` calls as before, logging one line per wait.
+- **Action:** the agent probes each child's worktree, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree} --no-optional-locks status --porcelain`, and `git -C {child-worktree} --no-optional-locks diff HEAD` piped to `git hash-object --stdin`. `{child-worktree}` is the path the child's own prompt names. It then waits with foreground `sleep 20` calls as before, logging one line per wait.
 - **Should feel:** invisible. The probe is three plain read-only commands; nothing in the child's worktree changes because it was looked at.
 - **Should understand:** the probe never reads the child's `output_file` and never writes. A child whose prompt names no worktree has nothing to probe and counts as unchanged.
 - **Red flags:**

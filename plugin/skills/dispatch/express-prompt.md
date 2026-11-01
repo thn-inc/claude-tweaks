@@ -53,8 +53,8 @@ judge); a write-capable child (one that edits files) still silent at the bound i
 in-session, because an abandoned child keeps running and may still write -- stop, and end with
 `STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
 names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree}
---no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
-git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
+--no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD`
+piped to `git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
 child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
 passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
@@ -147,8 +147,8 @@ judge); a write-capable child (one that edits files) still silent at the bound i
 in-session, because an abandoned child keeps running and may still write -- stop, and end with
 `STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
 names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree}
---no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
-git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
+--no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD`
+piped to `git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
 child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
 passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no

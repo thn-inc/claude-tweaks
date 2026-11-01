@@ -532,7 +532,7 @@ const PROGRESS_CHECK = [
   [/probe\s+the\s+worktree\s+its\s+prompt\s+names,\s+read-only/, 'the probe reads the worktree the child prompt names, read-only'],
   [/`git\s+-C\s+\{child-worktree\}\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],
   [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+status\s+--porcelain`/, 'the probe reads its --no-optional-locks porcelain status'],
-  [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+diff\s+HEAD\s+\|\s+git\s+hash-object\s+--stdin`/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
+  [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
   [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
   [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
   [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
