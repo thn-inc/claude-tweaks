@@ -264,13 +264,20 @@ function seedManifestVersion({ tags, manifestVersion } = {}) {
   return '0.1.0';
 }
 
+// JSON string syntax is a YAML double-quoted scalar, except that isValidBranchName's
+// [\s\x00-\x1f\x7f] lets the C1 range through and YAML 1.1 reads U+0085 as a line
+// break, so C1 characters are emitted as \uXXXX escapes.
+function yamlQuoted(value) {
+  return JSON.stringify(value).replace(/[\x80-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
 function renderWorkflowYaml({ branch } = {}) {
   if (!isValidBranchName(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
   // Quoting alone does not close this: Actions evaluates ${{ }} inside quoted scalars too.
   if (branch.includes('${{')) throw new Error(`invalid branch name: ${JSON.stringify(branch)} contains an Actions expression`);
-  const b = JSON.stringify(branch);
+  const b = yamlQuoted(branch);
   // on.push.branches entries are GitHub filter patterns, so '+' and a leading '!' must be escaped to match literally.
-  const filter = JSON.stringify(branch.replace(/\+/g, '\\+').replace(/^!/, '\\!'));
+  const filter = yamlQuoted(branch.replace(/\+/g, '\\+').replace(/^!/, '\\!'));
   return [
     'name: release-please',
     '',

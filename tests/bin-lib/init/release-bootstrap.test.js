@@ -225,6 +225,23 @@ test('renderWorkflowYaml: backslash-escapes filter metacharacters in the branche
   assert.ok(bang.includes('          target-branch: ' + JSON.stringify('!x')));
 });
 
+test('renderWorkflowYaml: filter escaping leaves a mid-name ! alone and escapes every +, plus a leading ! (#4714)', () => {
+  const cases = [['a!b', 'a!b'], ['a++b', 'a\\+\\+b'], ['!a+b', '\\!a\\+b']];
+  for (const [name, escaped] of cases) {
+    const lines = rb.renderWorkflowYaml({ branch: name }).split('\n');
+    assert.ok(lines.includes('      - ' + JSON.stringify(escaped)), name);
+    assert.ok(lines.includes('          target-branch: ' + JSON.stringify(name)), name);
+  }
+});
+
+test('renderWorkflowYaml: escapes C1 control characters as \\uXXXX in both quoted scalars (#4714)', () => {
+  const wf = rb.renderWorkflowYaml({ branch: 'rel\u0085x' });
+  const lines = wf.split('\n');
+  assert.ok(lines.includes('      - "rel\\u0085x"'));
+  assert.ok(lines.includes('          target-branch: "rel\\u0085x"'));
+  assert.equal(/[\x80-\x9f]/.test(wf), false);
+});
+
 test('bootstrapRelease: refuses an invalid branch on the pr-first path before any write; local-merge ignores an invalid branch entirely (ledger row 34)', () => {
   const root = tmp(); write(root, 'package.json', '{"name":"x"}');
   assert.throws(() => rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'bad branch', listTags: () => [] }), /invalid branch name/);
