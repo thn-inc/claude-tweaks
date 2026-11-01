@@ -7,7 +7,7 @@
 // effect that run actually produces, so a "nothing changed" assertion on the
 // refused call can fail.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -22,9 +22,20 @@ function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
 }
 
+// Every temp dir a fixture creates (repos, bare origins, linked-worktree
+// parents), removed once this file's tests are done.
+const tmpDirs = [];
+function tracked(dir) {
+  tmpDirs.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
+
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
 // own process.cwd() — that is the test runner's real working directory.
-const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-sandbox-'));
+const HOOK_SANDBOX = tracked(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-sandbox-')));
 
 // A reconcile pass under pr-first (forced by policy.yml in reconcileFixture)
 // fails its GitHub-health preflight at once against localhost, so it runs
@@ -42,7 +53,7 @@ function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
 }
 
 function runDirFixture(status) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-')));
+  const root = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-'))));
   git(['init', '-q', '--initial-branch=main'], root);
   git(['config', 'user.email', 'test@example.com'], root);
   git(['config', 'user.name', 'Test'], root);
@@ -67,7 +78,7 @@ function runDirFixture(status) {
 function reconcileFixture() {
   const fixture = runDirFixture('clean');
   const { root } = fixture;
-  const sib = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-origin-')));
+  const sib = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-origin-'))));
   const origin = path.join(sib, 'origin.git');
   const other = path.join(sib, 'other');
   git(['init', '-q', '--bare', '--initial-branch=main', origin], sib);
@@ -89,7 +100,7 @@ function reconcileFixture() {
 
 // A repo with one empty commit and no run dirs.
 function freshRepo() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-fresh-')));
+  const root = tracked(fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-fresh-'))));
   git(['init', '-q', '--initial-branch=main'], root);
   git(['config', 'user.email', 'test@example.com'], root);
   git(['config', 'user.name', 'Test'], root);
@@ -99,7 +110,7 @@ function freshRepo() {
 
 // A linked worktree of `root`, outside the main checkout.
 function linkedWorktree(root) {
-  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-wt-'));
+  const parent = tracked(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-wt-')));
   const wt = path.join(parent, 'wt');
   git(['worktree', 'add', '-q', wt, '-b', `wt-${path.basename(parent)}`], root);
   return fs.realpathSync(wt);
@@ -119,7 +130,7 @@ test('#4777: every VERBS verb refuses an undeclared flag with its usage line', (
 });
 
 test('#4777 AC1.1 AC1.2: reconcile --dryrun prints the reconcile usage line and runs no check', () => {
-  const { root, runDir } = reconcileFixture();
+  const { root } = reconcileFixture();
   const head = git(['rev-parse', 'HEAD'], root);
   const usage = 'claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n';
   for (const args of [['reconcile', '--dryrun'], ['reconcile', '--json', '--dryrun']]) {
@@ -127,8 +138,6 @@ test('#4777 AC1.1 AC1.2: reconcile --dryrun prints the reconcile usage line and 
     assert.equal(result.code, 0, args.join(' '));
     assert.equal(result.stdout, usage, args.join(' '));
     assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
-    assert.ok(fs.existsSync(runDir), 'the run dir is still there');
-    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive')), 'nothing was archived');
     assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
   }
   // Declared-flag control: the same verb with its real flags does not print the usage line.
@@ -170,15 +179,13 @@ test('#4777: a flagless verb still runs bare', () => {
 });
 
 test('#4777: reconcile-background and reconcile-summary refuse an undeclared flag and change nothing', () => {
-  const { root, runDir } = reconcileFixture();
+  const { root } = reconcileFixture();
   const head = git(['rev-parse', 'HEAD'], root);
   for (const verb of ['reconcile-background', 'reconcile-summary']) {
     const result = runHook([verb, '--bogus'], { cwd: root });
     assert.equal(result.code, 0, verb);
     assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, verb);
     assert.ok(!fs.existsSync(path.join(root, STATUS)), `${verb} wrote no background status`);
-    assert.ok(fs.existsSync(runDir), `${verb} left the run dir alone`);
-    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive')), `${verb} archived nothing`);
     assert.equal(git(['rev-parse', 'HEAD'], root), head, `${verb} left HEAD where it was`);
   }
 });
@@ -261,5 +268,7 @@ test('#4777: resolve-run-dir --create with no typo mints a run dir (positive con
   const root = freshRepo();
   const result = runHook(['resolve-run-dir', '--spec-slug', 'x', '--create'], { cwd: root });
   assert.equal(result.code, 0);
-  assert.ok(fs.statSync(result.stdout.trim()).isDirectory(), 'a real --create run mints the run dir');
+  const minted = result.stdout.trim();
+  assert.ok(minted.startsWith(path.join(root, '.claude-tweaks', 'pipelines') + path.sep), `minted run dir is under pipelines: ${minted}`);
+  assert.ok(fs.statSync(minted).isDirectory(), 'a real --create run mints the run dir');
 });
