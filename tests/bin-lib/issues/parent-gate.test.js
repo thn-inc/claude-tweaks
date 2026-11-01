@@ -454,6 +454,19 @@ test('shape 5: a sub-issue read that is not a JSON object is a GhFailure', () =>
   }
 });
 
+test('shape 5: a closedByPullRequestsReferences that is present, non-null and not an array is a GhFailure', () => {
+  const answer = (refs) => JSON.stringify({ state: 'CLOSED', stateReason: 'COMPLETED', title: 'T', labels: [], closedByPullRequestsReferences: refs });
+  for (const refs of [{ number: 5 }, 'PR #5', 5, true]) {
+    const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: answer(refs) } });
+    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(closedByPullRequestsReferences is not an array/), JSON.stringify(refs));
+  }
+  // Absent or null is no closing PR, never a failure.
+  for (const text of [answer(null), JSON.stringify({ state: 'CLOSED', stateReason: 'COMPLETED', title: 'T', labels: [] })]) {
+    const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
+    assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, caller }).subIssues[1].closedBy, [], text);
+  }
+});
+
 test('shape 6: a parent-labels read that is not a JSON array is a GhFailure', () => {
   for (const text of ['null', '42', '"parent-issue"', '{}', '{"labels":[]}']) {
     const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, labelsRaw: { 10: text } });

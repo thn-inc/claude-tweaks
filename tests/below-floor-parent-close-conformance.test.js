@@ -1142,6 +1142,21 @@ function assertStep1RoutesOnIdempotence(step1) {
   assert.ok(!collapse(step1).includes('gh api user'), 'step 1 makes no login read of its own');
 }
 
+// The listing lines read the verdict's subIssues[]; the per-sub-issue fetch they once cited left with Enumerate's narration.
+const LISTING_SOURCE = "`{title}` is the verdict's `subIssues[].title`.";
+const PRE_FIX_LISTING_SOURCE = "`{title}` comes from that section's per-sub-issue fetch.";
+function assertListingCitesVerdict(text) {
+  const c = collapse(text);
+  assert.ok(c.includes(LISTING_SOURCE), 'the listing title comes from the verdict');
+  assert.ok(!c.includes('per-sub-issue fetch') && !c.includes('entry from that fetch'), 'no citation of the removed fetch');
+}
+
+test('#4603: the close listing lines cite the verdict, not a removed fetch', () => {
+  assertListingCitesVerdict(closeSection(read(GATE_REL)));
+  assert.throws(() => assertListingCitesVerdict(PRE_FIX_LISTING_SOURCE), /from the verdict/, 'go-red: the pre-fix sentence fails');
+  assert.throws(() => assertListingCitesVerdict(`${LISTING_SOURCE} ${PRE_FIX_LISTING_SOURCE}`), /removed fetch/, 'go-red: a leftover citation beside the fix fails');
+});
+
 test('#4603: Close step 1 routes on the CLI\'s idempotence values', () => {
   assertStep1RoutesOnIdempotence(closeStep1(read(GATE_REL)));
 });

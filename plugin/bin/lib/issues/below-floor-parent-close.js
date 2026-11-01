@@ -34,7 +34,8 @@
 // is skipped (`sibling-unsettled`).
 //
 // Every gh call goes through the injected `gh(args, input?)`, which returns
-// stdout and throws on failure. A failing call skips that one parent (named in
+// stdout and throws on failure. Both writes carry `--repo owner/repo`, as the
+// gate's reads do, so a parent is written in the repository it was read from. A failing call skips that one parent (named in
 // `skipped`, reason `gh-failed`) and the next closing record is still
 // processed; a `riskFloor` outside the policy schema's risk-floor enum skips the
 // whole step (`invalid-risk-floor`, no gh call). Never throws.
@@ -120,9 +121,9 @@ function closeBelowFloorParents({
         const { maxTier, closeReason } = verdict;
         if (idempotence !== 'close-only') {
           const lines = verdict.subIssues.map((s) => `- #${s.number}${s.title ? ` ${s.title}` : ''}${s.pr ? ` — closed by PR #${s.pr}` : ''}`);
-          caller.call(['issue', 'comment', String(parent), '--body-file', '-'], composeCloseComment({ maxTier, riskFloor, notPlanned: closeReason === 'not planned', lines }));
+          caller.call(['issue', 'comment', String(parent), '--repo', `${owner}/${repo}`, '--body-file', '-'], composeCloseComment({ maxTier, riskFloor, notPlanned: closeReason === 'not planned', lines }));
         }
-        caller.call(['issue', 'close', String(parent), '--reason', closeReason]);
+        caller.call(['issue', 'close', String(parent), '--repo', `${owner}/${repo}`, '--reason', closeReason]);
         closed.push(notes.length ? { parent, maxTier, notes } : { parent, maxTier });
       } catch (err) {
         const target = parent === null || parent === undefined ? { issue: n } : { parent };

@@ -901,7 +901,7 @@ function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {})
       return JSON.stringify({ state: closedYet ? 'CLOSED' : 'OPEN', stateReason: closedYet ? 'COMPLETED' : '', comments: [] });
     }
     if (key === 'api user --jq .login') return 'bot\n';
-    if (key === 'issue comment 100 --body-file -' || /^issue close 100 --reason /.test(key)) return '';
+    if (key === 'issue comment 100 --repo acme/w --body-file -' || /^issue close 100 --repo acme\/w --reason /.test(key)) return '';
     throw new Error(`unexpected gh call: ${key}`);
   };
   return { gh, calls, mergedAt };
@@ -932,7 +932,7 @@ test('M6 end to end: an armed merge\'s last sub-issue closes its below-floor par
   const first = await e2ePass(root, world);
   assert.deepEqual(first, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 1 }], deferred: [] });
   const writes = writesOf(world.calls);
-  assert.deepEqual(writes.map((c) => c.key), ['issue comment 100 --body-file -', 'issue close 100 --reason completed']);
+  assert.deepEqual(writes.map((c) => c.key), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
   assert.ok(writes[0].input.startsWith('## Closed below the oversight floor\n'));
   assert.ok(writes[0].input.includes('- #101 T101 — closed by PR #11'), 'the merging PR names the closing record on the listing');
   const lines = entriesOf(dir);
@@ -965,7 +965,7 @@ test('#4549 end to end: an armed merge into a non-default base — the late Step
   assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1 }], deferred: [] });
   const writes = writesOf(world.calls).map((c) => c.key);
   assert.match(writes[0], /^issue close 101 --reason completed --comment /, 'Step 4.0 closes the Fixes record itself');
-  assert.deepEqual(writes.slice(1), ['issue comment 100 --body-file -', 'issue close 100 --reason completed']);
+  assert.deepEqual(writes.slice(1), ['issue comment 100 --repo acme/w --body-file -', 'issue close 100 --repo acme/w --reason completed']);
   assert.ok(!world.calls.some((c) => c.key === 'repo view --json defaultBranchRef -q .defaultBranchRef.name'), 'Step 4.0b reads no default branch');
   const locations = entriesOf(dir).map((e) => e.location);
   assert.ok(locations.includes('reconcile post-merge parent-close'), `the parent line is logged: ${locations.join(' | ')}`);

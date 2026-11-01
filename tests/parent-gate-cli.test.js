@@ -881,7 +881,7 @@ test('local-files: a record both scans return is one sub-issue, in its closed st
     const found = queryRecords(d, filter);
     return filter.closed ? found : [...found, { ...subs[0], facets: { ...subs[0].facets, closed: false } }];
   };
-  const r = goLocal(['--parent', String(parent.id), '--closing', String(subs[0].id)], dir, { queryRecords: racing });
+  const r = goLocal(['--parent', String(parent.id)], dir, { queryRecords: racing });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(r.verdict.subIssues.map((s) => [s.number, s.state]), [[subs[0].id, 'CLOSED'], [subs[1].id, 'CLOSED']]);
   assert.equal(r.verdict.state, 'due');

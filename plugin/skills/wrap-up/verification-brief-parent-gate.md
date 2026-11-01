@@ -412,11 +412,11 @@ When step 3 closes with `"not planned"`, add the line
 first paragraph.
 
 One listing line per sub-issue **Enumerate the parent's sub-issues** returned, in number order.
-`{title}` comes from that section's per-sub-issue fetch. For a `$CLOSING_SUB_ISSUES` member,
+`{title}` is the verdict's `subIssues[].title`. For a `$CLOSING_SUB_ISSUES` member,
 `{pr}` is `$MERGING_PR` when it is non-empty (**Two entry shapes** above): that PR's merge is the
 one that closed it, and GitHub may not have linked it yet a few seconds after the merge.
-Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry from
-that fetch (the last one when it lists several — an entry carries only `id`, `number`,
+Otherwise `{pr}` is the `number` of the sub-issue's `closedByPullRequestsReferences` entry the
+CLI read (the last one when it lists several — an entry carries only `id`, `number`,
 `repository` and `url`, no state or merged field, so this fallback is arbitrary but
 deterministic). A sub-issue left with no `{pr}` either way is listed as `- #{n} {title}`, with
 no suffix. Never write a merge SHA

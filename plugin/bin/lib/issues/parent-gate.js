@@ -154,7 +154,12 @@ function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
   const slug = `${owner}/${repo}`;
   const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, workLinks, caller }).map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
-    const refs = Array.isArray(live.closedByPullRequestsReferences) ? live.closedByPullRequestsReferences : [];
+    // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
+    const rawRefs = live.closedByPullRequestsReferences;
+    if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
+      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
+    }
+    const refs = rawRefs || [];
     return {
       number: num,
       title: String(live.title || '').trim(),
