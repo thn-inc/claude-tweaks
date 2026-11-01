@@ -47,7 +47,7 @@ const { PARENT_LINE_RE, distinctAscending, needsIdempotenceReads } = require('./
 //   parentGet     `get` of the parent.
 //   subIssueGets  { "<n>": `get` of n }, exactly one key per enumerated number.
 //   parentComments  every `get_comments` entry of the parent, all pages concatenated.
-//   me            `get_me`.
+//   me            `get_me`; a present me without a login (a failed get_me) reads as no identity.
 const FACTS_KEYS = ['parentLink', 'subIssueGet', 'subIssueList', 'parentGet', 'subIssueGets', 'parentComments', 'me'];
 
 // exit 1: the file as a whole is wrong (not an object, a key absent or unrequested), so
@@ -202,7 +202,8 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
 // The gh idempotence facts for the parent: `idempotence` (from normalizeMcpFacts) plus the
 // guarded `parentComments` and `me`. Only an open, non-reopened parent reads them
 // (evaluateIdempotence), so any other parent returns `idempotence` unchanged without looking at
-// the file's two keys. A missing key is exit 1, a present one that fails its guard exit 3.
+// the file's two keys. A missing key is exit 1, a present `parentComments` that fails its guard
+// exit 3; a present `me` never fails (a login-less one reads as no identity).
 function withIdempotenceReads(raw, idempotence) {
   if (!needsIdempotenceReads(idempotence.state, idempotence.stateReason)) return idempotence;
   const list = need(raw, 'parentComments');
@@ -212,8 +213,10 @@ function withIdempotenceReads(raw, idempotence) {
     return normalizeComment(c);
   });
   const me = need(raw, 'me');
-  if (!isPlainObject(me) || typeof me.login !== 'string' || me.login === '') throw invalid('me', 'has no login');
-  return { ...idempotence, comments, login: me.login };
+  // A present me without a login is a failed get_me: no identity (login ''), which the core
+  // reads as trusted-only dedupe plus a degrade note. Only a missing key is a fact error.
+  const login = isPlainObject(me) && typeof me.login === 'string' ? me.login : '';
+  return { ...idempotence, comments, login };
 }
 
 module.exports = {
