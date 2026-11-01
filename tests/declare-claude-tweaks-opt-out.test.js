@@ -192,3 +192,61 @@ test('Step 14 and init SKILL carry every remaining declare-claude-tweaks copy ed
     assert.deepStrictEqual(missingFacts(COPY_FACTS.map((f) => (f[0] === name ? [name, doctored, literal] : f))), [name]);
   }
 });
+
+// /routine fleet's cloud-parity check (Task 3): sliced by heading, both anchors asserted.
+const FLEET = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'fleet.md'));
+
+function fleetSlice(text, from, to, label) {
+  const start = text.indexOf(from);
+  const end = start === -1 ? -1 : text.indexOf(to, start + from.length);
+  assert.ok(start !== -1 && end !== -1, label + ' anchors missing');
+  return collapse(text.slice(start, end));
+}
+
+const fleetStep2 = (text) => fleetSlice(text, '## Step 2 — Cloud-parity honesty check', '## Step 3 —', 'fleet Step 2');
+const fleetStep5 = (text) => fleetSlice(text, '## Step 5 — Fleet summary', '\n## Fleet status (aggregation)', 'fleet Step 5');
+// (the next heading after Step 5 is named, not matched as "\n## ": Step 5's own fenced template opens with a "## Fleet: Provisioning Complete" line)
+
+const FLEET_OPT_OUT_LINE = '`Cloud parity: claude-tweaks is not declared at project scope (declare-claude-tweaks: false), so cloud firings in this project will not have claude-tweaks installed by the project declaration.`';
+
+function assertFleetOptOut(text) {
+  assert.ok(fleetStep2(text).includes(FLEET_OPT_OUT_LINE), 'fleet opt-out print line missing');
+}
+
+test('AC3.1/AC3.2: opted-out fleet check prints the informational line naming the cloud consequence', () => {
+  assertFleetOptOut(FLEET);
+});
+
+test('AC3.1: a missing claude-tweaks declaration is no gap under the opt-out', () => {
+  const step2 = fleetStep2(FLEET);
+  for (const literal of [
+    'a missing claude-tweaks declaration is no gap and never reaches item 3\'s prompt',
+    'When claude-tweaks is in fact undeclared, print this line instead',
+    '`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`',
+    'only item 1\'s opt-out line prints, when it applies',
+  ]) {
+    assert.ok(step2.includes(literal), 'missing: ' + literal);
+  }
+  assert.ok(fleetStep5(FLEET).includes('"OK — superpowers declared, setup script present; claude-tweaks not declared (declare-claude-tweaks: false)'));
+});
+
+test('AC4.1 / Review Focus 4: superpowers stays required and gaps still prompt', () => {
+  const step2 = fleetStep2(FLEET);
+  assert.ok(step2.includes('only `superpowers@claude-plugins-official` must be declared'));
+  assert.ok(step2.includes('If either check fails, report the specific gap'));
+});
+
+test('AC3.2 go-red: the opt-out line guard fails when the print line is stripped', () => {
+  const doctored = FLEET.replace(FLEET_OPT_OUT_LINE.slice(1, -1), '');
+  assert.notEqual(doctored, FLEET);
+  assert.throws(() => assertFleetOptOut(doctored), { message: /fleet opt-out print line missing/ });
+  const noAnchor = FLEET.replace('## Step 2 — Cloud-parity honesty check', '## Step 2 — renamed');
+  assert.notEqual(noAnchor, FLEET);
+  assert.throws(() => assertFleetOptOut(noAnchor), { message: /fleet Step 2 anchors missing/ });
+});
+
+test('AC1.1: default fleet path unchanged', () => {
+  const step2 = fleetStep2(FLEET);
+  assert.ok(step2.includes('confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared'));
+  assert.ok(step2.includes('Both checks passing is a silent pass-through'));
+});
