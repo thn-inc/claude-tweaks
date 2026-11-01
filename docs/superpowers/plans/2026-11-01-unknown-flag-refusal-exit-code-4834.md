@@ -38,7 +38,7 @@
 | AC3.1 | Task 1: `#4834: a captured resolve-run-dir --root-only with a typo …` (stdout `''`, exit 1) |
 | AC4.1, AC4.2 | Task 1 Step 4: `tests/hooks-help-guard.test.js` passes with an empty `git diff` |
 | AC5.1 | Task 1: `#4834: help wins over an unknown flag in the same call`, with its go-red control in Step 5 |
-| AC6.1, AC6.2 | Task 1: value-returning `resolve-run-dir`; mutating `archive-run`, `adopt-run-dir` and `sweep-shadow`. `assertRefused` checks stdout, stderr and code separately, and the nothing-moved checks are kept |
+| AC6.1, AC6.2 | Task 1: `reconcile` (mutating: its mirror check moves HEAD) and `resolve-run-dir` (value-returning, `--create` mints) each get both refusal kinds, with no-cache/HEAD and nothing-minted checks. `archive-run`, `adopt-run-dir` and `sweep-shadow` add the unknown-flag kind. `assertRefused` checks stdout, stderr and code separately |
 | AC7.1, AC7.2 | Task 2 Step 2 |
 | AC8.1 | `/build` Common Step 5 (the full suite via verify.js) |
 
@@ -46,14 +46,18 @@
 
 ### Task 1: Split the guard and repin every unknown-flag test
 
+**Review risk:** high
+
+Why: help-versus-refusal precedence and the refusal-case choice are decision logic, and the stderr write races `process.exit`.
+
 **Files:**
 - Modify: `plugin/bin/hooks.js:209-228` (`firstUnknownFlag` and its comment)
 - Modify: `plugin/bin/hooks.js:160-169` (the `KNOWN_FLAGS` comment: "main() intercepts both … before the undeclared-flag scan" stays true; add that an undeclared flag is refused on stderr with exit 1)
 - Modify: `plugin/bin/hooks.js:1943-1961` (the guard comment and the guard)
-- Test: `tests/hooks-js-flag-strict.test.js` (the `runHook` catch gains `stderr`; every unknown-flag and missing-value assertion moves to the new shape; new tests below)
+- Test: `tests/hooks-js-flag-strict.test.js` (`runHook` returns `stderr` on both paths; the header comment at lines 3-4 names the stderr/exit-1 refusal; every unknown-flag and missing-value assertion moves to the new shape; the declared-flag controls gain a stderr check; new tests below)
 - Test: `tests/archive-run-verb.test.js:25-38` (the `runHook` catch gains `stderr: e.stderr || ''`) and `:605-620` (the `#4773` test)
 - Test: `tests/hooks-check-pass-reentry.test.js:112-116` (the `#3553` test)
-- Test: `tests/hooks-dispatcher.test.js:275-285` (the `#1012` record-worktree test; its helper already returns stderr)
+- Test: `tests/hooks-dispatcher.test.js:249-285`. The `#1012 note` comment (249-253) and the `#1012` comment above the test (271-274) both say an undeclared `--*` argument "prints usage and exits 0"; rewrite both to the stderr/exit-1 refusal (#4834). Also update the `#1012` record-worktree test; its helper already returns stderr.
 - Test: `tests/hooks-resolve-console.test.js:17-28` (the helper's catch gains `stderr`) and `:118-126` (the test, and its comment, which wrongly says the never-break-a-session invariant covers this guard; rewrite it to say the guard refuses with exit 1 like an unknown verb, #4834)
 - No change: `tests/hooks-help-guard.test.js` must pass unmodified. `tests/hooks-adopt-run-dir.test.js:72-77` is a `--help` case and stays as it is.
 
@@ -76,12 +80,14 @@ The expected first lines are literal strings in each test, never built from prod
 - [ ] **Step 1: Repin the existing tests and add the new ones (red)**
 
 In `tests/hooks-js-flag-strict.test.js`:
-- Make the `runHook` catch return `stderr: e.stderr || ''`.
+- Make `runHook` return `{ code, stdout, stderr }` on both paths: switch it to `spawnSync`, as `tests/hooks-check-pass-reentry.test.js`'s `runCli` does, keeping its env and cwd.
+- The declared-flag controls (the `reconcile --dry-run --json` control inside the `--dryrun` test, both `declared value flags consume their value token` cases, and `check-sibling-sessions --record <id>`) each also assert `assert.doesNotMatch(result.stderr, /unknown flag|needs a value/)`. A refusal now leaves stdout empty, so a stdout-only check can no longer go red.
 - `every VERBS verb refuses an undeclared flag`: `assertRefused(result, verb, \`claude-tweaks: ${verb}: unknown flag '--definitely-not-a-flag'\`, verb)`.
 - `reconcile --dryrun`, for both arg lists: `assertRefused(result, 'reconcile', "claude-tweaks: reconcile: unknown flag '--dryrun'", …)`. Also assert `result.stderr` equals the AC's literal two lines: `"claude-tweaks: reconcile: unknown flag '--dryrun'\nclaude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n"`. Keep the no-cache-file and HEAD assertions.
 - `a value flag followed by a flag`:
   - `['reconcile','--dry-run','--checks','--json']` → `"claude-tweaks: reconcile: --checks needs a value, got '--json'"`
   - `['reconcile','--dry-run','--checks','--bogus']` → `"claude-tweaks: reconcile: --checks needs a value, got '--bogus'"`
+  - For both reconcile cases, also assert `!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json'))` and an unchanged `HEAD`, as the `--dryrun` test does.
   - `['resolve-run-dir','--spec-slug','--bogus','--create']` → `"claude-tweaks: resolve-run-dir: --spec-slug needs a value, got '--bogus'"`
   - `['resolve-run-dir','--spec-slug','--create']` → `"claude-tweaks: resolve-run-dir: --spec-slug needs a value, got '--create'"`
   - Keep `assertNoRunDirMinted`.
@@ -114,7 +120,7 @@ test('#4834: a captured resolve-run-dir --root-only with a typo yields an empty 
 });
 ```
 
-`resolve-run-dir --root-only` is the value-returning verb, and `archive-run`, `adopt-run-dir` and `sweep-shadow` are the mutating ones (AC6).
+For AC6, `reconcile` is the mutating verb tested with both refusal kinds (`--dryrun` and `--checks --json`), and `resolve-run-dir` is the value-returning one (`--bogus` / `--root-only --typo` and `--spec-slug --create`).
 
 - [ ] **Step 2: Run the five suites and confirm red**
 
@@ -134,7 +140,13 @@ Expected: the repinned and new refusal tests fail with `actual: 0, expected: 1`.
 Run: `node --test tests/hooks-js-flag-strict.test.js tests/archive-run-verb.test.js tests/hooks-check-pass-reentry.test.js tests/hooks-dispatcher.test.js tests/hooks-resolve-console.test.js tests/hooks-help-guard.test.js tests/hooks-adopt-run-dir.test.js > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/ec124c25-8b00-4cfa-8947-0c852b7f7961/scratchpad/4834-t1-green.txt 2>&1`
 Expected: `# fail 0`. `git diff --stat -- tests/hooks-help-guard.test.js` prints nothing.
 
-- [ ] **Step 5: Go-red control for the help-wins branch**
+- [ ] **Step 5: Go-red controls for the help-wins branch and the declared-flag controls**
+
+Apply each mutation alone, run `node --test tests/hooks-js-flag-strict.test.js`, see the named test fail, then undo the mutation and re-run green:
+- Remove `--json` from `KNOWN_FLAGS.reconcile`. Expected red: the `--dryrun` test's declared-flag control.
+- Remove `--checks` from `KNOWN_FLAGS.reconcile`. Expected red: `declared value flags consume their value token`.
+- Swap the help and unknown-flag checks in `main()` (the original Step 5 mutation, below).
+
 
 Temporarily swap the two checks in `main()` so the unknown-flag scan runs first. Run `node --test tests/hooks-js-flag-strict.test.js`, and expect the `#4834: help wins` test to fail with `actual: 1, expected: 0`. Restore with `git checkout -- plugin/bin/hooks.js` only if the swap was the sole uncommitted change; otherwise undo the swap by hand. Then re-run it green.
 
@@ -158,7 +170,7 @@ Message: `Refuse an unknown hooks.js flag with exit 1 on stderr — --help keeps
   - Step 4's flag-strict bullet (line 49): "any undeclared `--flag` is refused on stderr with exit 1 instead of running".
   - Step 5 Should feel (line 58): "stdout is empty, stderr is exactly `claude-tweaks: archive-run: unknown flag '--dry-run'` then `claude-tweaks: usage: archive-run [--run <dir>]`, the exit code is 1, and the run directory is still where it was."
   - Step 5 Should understand (lines 60 and 62): "The usage line is the whole answer" becomes "The usage line on stderr is the whole answer". The `reconcile --dryrun` bullet names the stderr pair, `claude-tweaks: reconcile: unknown flag '--dryrun'` then the usage line, with exit 1.
-  - Step 5 Red flags: add "Exit 0, or any stdout output, on a mistyped flag. That was the #4777 shape, which a caller capturing stdout read as a result."
+  - Step 5 Red flags: add "Usage on stdout and a success status on a mistyped flag. That was the #4777 shape, which a caller capturing stdout read as a result." Keep the literal `exit 0` out of it, so AC7's grep stays clean.
   - Origin: add "Steps 4–5's stderr/exit-1 flag refusal changed during build of #4834."
 - No change (prose sweep done at plan time): `git grep` over `plugin/skills`, `docs/plugin-structure.md`, `docs/donts.md`, `CLAUDE.md` and `.claude/skills` for "unknown flag", "undeclared flag", "usage line", "prints usage", "#1012" and "#1143" found no other hooks.js refusal prose. No test pins the rewritten sentences (`git grep -n -e "mistyped flag" -e "dispatcher's, not the verb's" -e "asserts the usage stdout" -- tests` is empty).
 
@@ -173,7 +185,6 @@ Expected: no hit describes an unknown-flag refusal. These hits are expected:
 - the skill's decision 3 (line 31, the `check-*` verbs' own refusals)
 - the journey's `--help` step 4 (line 46)
 - the journey's pre-#1586 red flag (line 23)
-- the new step 5 red flag naming the #4777 shape
 
 - [ ] **Step 3: Run the suite that reads these files**
 
