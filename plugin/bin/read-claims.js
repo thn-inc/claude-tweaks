@@ -8,21 +8,25 @@
 //
 // Usage: read-claims.js [--remote <name>] [--help]   (default remote `origin`)
 // Runs from the repo checkout (git uses the process cwd). One JSON object per
-// line on stdout, sorted by issue number:
+// line on stdout:
 //   {"number":N,"state":"live|stale|tombstone|unreadable","claimedAt":"..."}
-//     one per blob read; `state` is classifyClaimBlob's vocabulary; `claimedAt`
-//     present when the blob parses as an object carrying it
+//     one per blob read, sorted by issue number; `state` follows classifyClaimBlob's
+//     rules (claims.js) applied to one parse of the blob; `claimedAt` is present
+//     when the blob parses as an object carrying a string claimedAt
 //   {"number":N,"state":"could-not-read","reason":"transport-failure"}
 //     a blob the batched read could not fetch
-//   {"number":null,"state":"could-not-read","reason":"transport-failure"}
-//     the registry itself could not be read; the only row printed
-// Exit 0 read (including an empty or absent registry, which prints no rows, and
-// per-blob could-not-read rows); 1 malformed invocation; 3 the registry could
-// not be read — the registry row is still printed, and a one-line
-// `read-claims.js:` message names the failure on stderr.
+//   {"number":null,"state":"complete","count":C}
+//     the terminator, the last line of every exit-0 read; C is the blob rows
+//     printed (0 for an empty or missing registry)
+// Exit 0 read; 1 malformed invocation; 3 the registry could not be read. On exit 3
+// the only stdout line is the registry row {"number":null,"state":"could-not-read",
+// "reason":"transport-failure"} (with "timedOut":true for a timeout), there is no
+// terminator, and a one-line `read-claims.js:` message names the failure on stderr.
+// Consumers treat a claims file with neither a `complete` row nor a registry
+// could-not-read row as unread: an interpreter that dies before run() leaves it empty.
 'use strict';
 
-const { classifyClaimBlob } = require('./lib/issues/claims');
+const { isStale } = require('./lib/issues/claims');
 const {
   CLAIMS_BRANCH, classifyGitError, defaultRunner, errText, readClaimBlobsGitBatch,
 } = require('./lib/issues/claims-git-cas');
@@ -51,15 +55,26 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-function claimedAtOf(content) {
+// The blob's one JSON.parse. null for anything that is not a JSON object.
+function parseBlob(content) {
   try {
     const parsed = JSON.parse(content);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed) && typeof parsed.claimedAt === 'string') {
-      return { claimedAt: parsed.claimedAt };
-    }
-  } catch { /* unparseable: no claimedAt */ }
-  return {};
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
+
+// The same rules as claims.js's classifyClaimBlob (unparseable or non-object →
+// unreadable, released → tombstone, isStale → stale, else live), applied to the
+// parse already in hand. tests/read-claims-cli.test.js pins the two to each other.
+function stateOf(parsed, now) {
+  if (!parsed) return 'unreadable';
+  if (parsed.released === true) return 'tombstone';
+  return isStale(parsed, now) ? 'stale' : 'live';
+}
+
+const line = (row) => `${JSON.stringify(row)}\n`;
 
 function run(argv, deps) {
   const opts = parseArgs(argv);
@@ -67,38 +82,46 @@ function run(argv, deps) {
   if (opts.error) { deps.stderr(`read-claims.js: ${opts.error}\n${USAGE}`); return 1; }
 
   const scratchRef = `refs/claims-scan-read/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  const rows = [];
-  let code = 0;
-  const registryFailure = (detail, timedOut) => {
-    rows.push({ number: null, state: 'could-not-read', reason: 'transport-failure', ...(timedOut ? { timedOut: true } : {}) });
-    deps.stderr(`read-claims.js: could not read claims-registry: ${detail}\n`);
-    code = 3;
-  };
+  const blobRows = [];
+  let failure = null;
   try {
     deps.runner(['fetch', '-q', opts.remote, `${CLAIMS_BRANCH}:${scratchRef}`]);
     const tip = deps.runner(['rev-parse', scratchRef]).trim();
     const batch = readClaimBlobsGitBatch({ tip, runner: deps.runner });
     if (batch.failure) {
-      registryFailure(batch.failure, batch.timedOut);
+      failure = { detail: batch.failure, timedOut: Boolean(batch.timedOut) };
     } else {
       const now = deps.now();
       for (const n of Object.keys(batch.results).map(Number).sort((a, b) => a - b)) {
         const r = batch.results[n];
         if (r.failure) {
-          rows.push({ number: n, state: 'could-not-read', reason: r.failure });
+          blobRows.push({ number: n, state: 'could-not-read', reason: r.failure });
         } else if (!r.absent) {
-          rows.push({ number: n, state: classifyClaimBlob(r.content, now).state, ...claimedAtOf(r.content) });
+          const parsed = parseBlob(r.content);
+          const claimedAt = parsed && typeof parsed.claimedAt === 'string' ? { claimedAt: parsed.claimedAt } : {};
+          blobRows.push({ number: n, state: stateOf(parsed, now), ...claimedAt });
         }
       }
     }
   } catch (err) {
-    if (classifyGitError(err).kind === 'missing-branch') return 0;
-    registryFailure(errText(err).split('\n')[0], isTimeoutError(err));
+    // A remote with no claims-registry branch is an empty registry, not a failure.
+    if (classifyGitError(err).kind !== 'missing-branch') {
+      failure = { detail: errText(err).split('\n')[0], timedOut: isTimeoutError(err) };
+    }
   } finally {
     try { deps.runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the read's own outcome */ }
   }
-  for (const row of rows) deps.stdout(`${JSON.stringify(row)}\n`);
-  return code;
+
+  if (failure) {
+    deps.stdout(line({
+      number: null, state: 'could-not-read', reason: 'transport-failure', ...(failure.timedOut ? { timedOut: true } : {}),
+    }));
+    deps.stderr(`read-claims.js: could not read claims-registry: ${failure.detail}\n`);
+    return 3;
+  }
+  for (const row of blobRows) deps.stdout(line(row));
+  deps.stdout(line({ number: null, state: 'complete', count: blobRows.length }));
+  return 0;
 }
 
 module.exports = { run, parseArgs, realDeps };

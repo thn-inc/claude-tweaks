@@ -252,7 +252,7 @@ test('item 10 routes the PR body Resume line through pr-resume-line.js, not a re
 // #4818: item 10's evaluation script, run against fixture files. The three
 // $PR_SCAN_UNSETTLED_* placeholders become temp paths (the isolateItem9 pattern),
 // UNSETTLED_AGE=24 is set, and the PR list is empty so no `gh pr view` runs.
-function runItem10Evaluation({ claimRows, labelled }) {
+function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]' }) {
   const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
   assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
@@ -260,8 +260,8 @@ function runItem10Evaluation({ claimRows, labelled }) {
   const labelledPath = path.join(dir, 'labelled.json');
   const prsPath = path.join(dir, 'prs.json');
   fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
-  fs.writeFileSync(labelledPath, JSON.stringify(labelled));
-  fs.writeFileSync(prsPath, '[]');
+  fs.writeFileSync(labelledPath, labelledText ?? JSON.stringify(labelled));
+  fs.writeFileSync(prsPath, prsText);
   const script = scripts[0]
     .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
     .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
@@ -272,6 +272,8 @@ function runItem10Evaluation({ claimRows, labelled }) {
 }
 
 const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+// read-claims.js's terminator: present on every completed read, absent on a failed or cut-off one.
+const COMPLETE = (count) => ({ number: null, state: 'complete', count });
 
 test('item 10 reads claims in one git batch through bin/read-claims.js, never a per-blob contents call (#4818)', () => {
   assert.ok(!ITEM10.includes('contents/claims/'), 'item 10 must not read a claim blob per call');
@@ -280,7 +282,7 @@ test('item 10 reads claims in one git batch through bin/read-claims.js, never a 
 
 test('item 10 characterization: a live claim 25h old with no PR still reports no PR found', () => {
   const out = runItem10Evaluation({
-    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }],
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
     labelled: [],
   });
   assert.match(out, /\[unsettled\] #12: no PR found/);
@@ -297,11 +299,48 @@ test('item 10: a could-not-read registry row reports the registry and judges no 
 
 test('item 10: a could-not-read blob reports the blob, and its labelled issue is not label drift (#4818)', () => {
   const out = runItem10Evaluation({
-    claimRows: [{ number: 12, state: 'could-not-read', reason: 'transport-failure' }],
+    claimRows: [{ number: 12, state: 'could-not-read', reason: 'transport-failure' }, COMPLETE(1)],
     labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
   });
   assert.match(out, /\[unsettled\] #12: claim blob could not be read \(transport-failure\)/);
   assert.doesNotMatch(out, /#12: no PR found/);
+});
+
+test('item 10: an EMPTY claims file is an unread registry, never silence (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(no completion row\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: an empty registry (terminator count 0) is a real answer, so a label-only candidate is judged', () => {
+  const out = runItem10Evaluation({
+    claimRows: [COMPLETE(0)],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.doesNotMatch(out, /could not be read/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: an unreadable bot:in-progress list judges no label-only candidate, but still judges the claims (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, { number: 13, state: 'live', claimedAt: HOURS_AGO(1) }, COMPLETE(2)],
+    labelledText: '',
+  });
+  assert.match(out, /\[unsettled\] bot:in-progress list could not be read — label-only candidates not judged/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: an unreadable PR list judges no candidate, so a stale claim is not reported as no PR found (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+    prsText: '',
+  });
+  assert.match(out, /\[unsettled\] PR list could not be read — no candidate judged/);
+  assert.doesNotMatch(out, /no PR found/);
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {

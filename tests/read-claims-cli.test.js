@@ -12,41 +12,38 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { run } = require('../plugin/bin/read-claims');
+const { classifyClaimBlob } = require('../plugin/bin/lib/issues/claims');
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'read-claims.js');
 
-const LS_TREE = [
-  '100644 blob sha3\tclaims/issue-3.json',
-  '100644 blob sha5\tclaims/issue-5.json',
-  '100644 blob sha8\tclaims/issue-8.json',
-  '100644 blob sha9\tclaims/issue-9.json',
-].map((l) => `${l}\0`).join('');
-
+// Blob content keyed by issue number.
 const BLOBS = {
-  sha3: JSON.stringify({ issueNumber: 3, claimedAt: '2026-11-01T11:00:00Z', runId: 'r3' }), // live
-  sha5: JSON.stringify({ issueNumber: 5, claimedAt: '2026-10-01T00:00:00Z', ttlHours: 1, runId: 'r5' }), // stale
-  sha8: JSON.stringify({ issueNumber: 8, claimedAt: '2026-10-01T00:00:00Z', released: true }), // tombstone
-  sha9: 'not json {', // unreadable
+  3: JSON.stringify({ issueNumber: 3, claimedAt: '2026-11-01T11:00:00Z', runId: 'r3' }), // live
+  5: JSON.stringify({ issueNumber: 5, claimedAt: '2026-10-01T00:00:00Z', ttlHours: 1, runId: 'r5' }), // stale
+  8: JSON.stringify({ issueNumber: 8, claimedAt: '2026-10-01T00:00:00Z', released: true }), // tombstone
+  9: 'not json {', // unreadable
 };
 
 // `git cat-file --batch`: one `{sha} {type} {size}` header, the content, a newline per object.
-function catFile(input) {
+function catFile(input, contentBySha) {
   const shas = Buffer.from(input).toString('utf8').split('\n').filter(Boolean);
   return Buffer.concat(shas.map((sha) => {
-    const body = BLOBS[sha];
+    const body = contentBySha[sha];
     if (body === undefined) return Buffer.from(`${sha} missing\n`);
     return Buffer.from(`${sha} blob ${Buffer.byteLength(body)}\n${body}\n`);
   }));
 }
 
-function fakeGit(overrides = {}) {
+function fakeGit(overrides = {}, blobs = BLOBS) {
   const calls = [];
+  const lsTree = Object.keys(blobs).map((n) => `100644 blob sha${n}\tclaims/issue-${n}.json\0`).join('');
+  const contentBySha = Object.fromEntries(Object.entries(blobs).map(([n, c]) => [`sha${n}`, c]));
   const handlers = {
     fetch: () => '',
     'rev-parse': () => 'tip-sha\n',
-    'ls-tree': () => LS_TREE,
-    'cat-file': (args, opts) => catFile(opts.input),
+    'ls-tree': () => lsTree,
+    'cat-file': (args, opts) => catFile(opts.input, contentBySha),
     'update-ref': () => '',
     ...overrides,
   };
@@ -71,6 +68,7 @@ function harness(git) {
 }
 
 const rowsOf = (out) => out.stdout.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const REGISTRY_ROW = { number: null, state: 'could-not-read', reason: 'transport-failure' };
 
 // The scratch ref is the refspec's destination in the fetch call.
 function scratchRefOf(calls) {
@@ -79,22 +77,46 @@ function scratchRefOf(calls) {
   return refspec.slice(refspec.indexOf(':') + 1);
 }
 
-test('a registry read that fails on transport is one could-not-read registry row, exit 3, never empty output (#4818)', () => {
+test('a registry read that fails on transport is one could-not-read registry row, exit 3, no terminator (#4818)', () => {
   const git = fakeGit({ fetch: () => { throw new Error('HTTP 403 ... rate limit'); } });
   const { out, deps } = harness(git);
   assert.equal(run([], deps), 3);
-  assert.deepEqual(rowsOf(out), [{ number: null, state: 'could-not-read', reason: 'transport-failure' }]);
-  assert.match(out.stderr.join(''), /read-claims\.js: /);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
+  assert.match(out.stderr.join(''), /read-claims\.js: could not read claims-registry/);
 });
 
-test('a cat-file --batch failure reads every listed claim as could-not-read, exit 0', () => {
+test('a fetch timeout carries timedOut: true on the registry row', () => {
+  const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const { out, deps } = harness(fakeGit({ fetch: () => { throw err; } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [{ ...REGISTRY_ROW, timedOut: true }]);
+});
+
+test('an ls-tree failure is the registry row, exit 3 — no blob rows, no terminator', () => {
+  const { out, deps } = harness(fakeGit({ 'ls-tree': () => { throw new Error('fatal: unable to read tree'); } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
+  assert.match(out.stderr.join(''), /could not read claims-registry: transport-failure/);
+});
+
+test('an ls-tree timeout carries timedOut: true on the registry row', () => {
+  const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { killed: true });
+  const { out, deps } = harness(fakeGit({ 'ls-tree': () => { throw err; } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [{ ...REGISTRY_ROW, timedOut: true }]);
+});
+
+test('a cat-file --batch failure reads every listed claim as could-not-read, then the terminator, exit 0', () => {
   const git = fakeGit({ 'cat-file': () => { throw new Error('fatal: cat-file died'); } });
   const { out, deps } = harness(git);
   assert.equal(run([], deps), 0);
-  assert.deepEqual(rowsOf(out), [3, 5, 8, 9].map((n) => ({ number: n, state: 'could-not-read', reason: 'transport-failure' })));
+  assert.deepEqual(rowsOf(out), [
+    ...[3, 5, 8, 9].map((n) => ({ number: n, state: 'could-not-read', reason: 'transport-failure' })),
+    { number: null, state: 'complete', count: 4 },
+  ]);
 });
 
-test('happy path: live, stale, tombstone and unreadable blobs classify to their states, claimedAt on parsed rows', () => {
+test('happy path: live, stale, tombstone and unreadable blobs classify to their states, then the terminator', () => {
   const { out, deps } = harness(fakeGit());
   assert.equal(run([], deps), 0);
   assert.deepEqual(rowsOf(out), [
@@ -102,14 +124,32 @@ test('happy path: live, stale, tombstone and unreadable blobs classify to their 
     { number: 5, state: 'stale', claimedAt: '2026-10-01T00:00:00Z' },
     { number: 8, state: 'tombstone', claimedAt: '2026-10-01T00:00:00Z' },
     { number: 9, state: 'unreadable' },
+    { number: null, state: 'complete', count: 4 },
   ]);
 });
 
-test('a registry with no claims-registry branch is an empty registry: exit 0, no rows', () => {
+test('the per-blob state matches classifyClaimBlob for every blob shape the registry can hold', () => {
+  const shapes = {
+    1: JSON.stringify({ claimedAt: '2026-11-01T11:00:00Z' }), // live, default TTL
+    2: JSON.stringify({ claimedAt: '2026-10-01T00:00:00Z', ttlHours: 1 }), // stale
+    3: JSON.stringify({ claimedAt: '2026-10-01T00:00:00Z', released: true }), // tombstone
+    4: '[]', 5: 'null', 6: '"text"', 7: '7', 8: '{not json',
+    9: JSON.stringify({ released: false, claimedAt: 5 }), // non-string claimedAt: state still classified
+  };
+  const { out, deps } = harness(fakeGit({}, shapes));
+  assert.equal(run([], deps), 0);
+  const rows = rowsOf(out);
+  assert.equal(rows.length, 10, 'nine blob rows plus the terminator');
+  for (const row of rows.filter((r) => r.number !== null)) {
+    assert.equal(row.state, classifyClaimBlob(shapes[row.number], NOW).state, `issue ${row.number}`);
+  }
+});
+
+test('a registry with no claims-registry branch is an empty registry: exit 0, the terminator with count 0', () => {
   const git = fakeGit({ fetch: () => { throw new Error("fatal: couldn't find remote ref claims-registry"); } });
   const { out, deps } = harness(git);
   assert.equal(run([], deps), 0);
-  assert.deepEqual(out.stdout, []);
+  assert.deepEqual(rowsOf(out), [{ number: null, state: 'complete', count: 0 }]);
   assert.deepEqual(out.stderr, []);
 });
 
@@ -126,7 +166,7 @@ test('the scratch ref is deleted when rev-parse fails, and the failure is the re
   const git = fakeGit({ 'rev-parse': () => { throw new Error('fatal: bad revision'); } });
   const { out, deps } = harness(git);
   assert.equal(run([], deps), 3);
-  assert.deepEqual(rowsOf(out), [{ number: null, state: 'could-not-read', reason: 'transport-failure' }]);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
   const ref = scratchRefOf(git.calls);
   assert.deepEqual(git.calls.filter((c) => c[0] === 'update-ref'), [['update-ref', '-d', ref]]);
 });
@@ -156,7 +196,7 @@ test('--remote with no value is a malformed invocation: exit 1, git never called
   assert.match(out.stderr.join(''), /--remote needs a remote name/);
 });
 
-test('real git: a temp origin with two live claim blobs reads as two rows through the spawned CLI', () => {
+test('real git: a temp origin with two live claim blobs reads as two rows and the terminator through the spawned CLI', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'read-claims-cli-'));
   const origin = path.join(root, 'origin.git');
   const work = path.join(root, 'work');
@@ -181,5 +221,6 @@ test('real git: a temp origin with two live claim blobs reads as two rows throug
   assert.deepEqual(rows, [
     { number: 7, state: 'live', claimedAt },
     { number: 9, state: 'live', claimedAt },
+    { number: null, state: 'complete', count: 2 },
   ]);
 });
