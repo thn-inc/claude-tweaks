@@ -342,3 +342,63 @@ test('merge-check Anti-Patterns names the Independence floor', () => {
   assert.notEqual(mutated, text, 'row anchor not found — control cannot discriminate');
   assert.equal(lineStartingWith(mutated, PREFIX), '', 'removing the row must turn the check red');
 });
+
+// --- dispatch's Settle: a no-dispatch-host stop is a pre-flight stop (Task 6) ---
+
+const SETTLE = path.join(SKILLS, 'dispatch', 'settle-and-merge.md');
+const SETTLE_PREFIX = '**No-dispatch-host special case (#4555).**';
+const SETTLE_STEP1 = '1. The CLI in step 2 performs the ownership read itself';
+const settleParaOf = (text) => lineStartingWith(text, SETTLE_PREFIX);
+
+const SETTLE_FACTS = [
+  [/`ISSUE #\{n\}: failed:no-dispatch-host`/, 'D4: Settle recognizes the stop by its gate line'],
+  [/treat it as a pre-flight stop, like the claims-branch-missing stop above/, 'D4: pre-flight-stop special case'],
+  [/Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: no classification, retry count or failure comment'],
+  [/When `DISPATCH_HEADLESS=1` was set, read `_shared\/headless-self-report\.md`/, 'D4: headless self-report'],
+  [/failing-check-name `flow-step-2\.4-no-dispatch-host`/, 'D4: self-report name'],
+];
+const settleMissing = missingFactsOf(SETTLE_FACTS);
+
+test('AC12.1 AC12.2: Settle settles a no-dispatch-host stop as a pre-flight stop (#4555)', () => {
+  const paragraph = settleParaOf(readText(SETTLE));
+  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  assert.deepEqual(settleMissing(paragraph), [], 'the Settle special case must state every fact (#4555)');
+});
+
+test('AC8.2: each Settle no-dispatch-host fact can go red', () => {
+  const paragraph = settleParaOf(readText(SETTLE));
+  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  assertEachPatternGoesRed(paragraph, SETTLE_FACTS, settleMissing);
+});
+
+test('AC12.1: the special case sits before Settle step 1', () => {
+  const placed = (text) => {
+    const at = text.indexOf(SETTLE_PREFIX);
+    return at >= 0 && at < text.indexOf(SETTLE_STEP1);
+  };
+  const text = readText(SETTLE);
+  assert.ok(text.includes(SETTLE_STEP1), 'Settle step 1 anchor not found');
+  assert.ok(placed(text), 'the No-dispatch-host special case must precede Settle step 1');
+
+  // Control: a copy with the paragraph moved after step 1's line must fail the same check.
+  const paragraph = settleParaOf(text);
+  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  const moved = text.replace(`${paragraph}\n\n`, '').replace(SETTLE_STEP1, `${SETTLE_STEP1}\n\n${paragraph}`);
+  assert.notEqual(moved, text, 'move anchor not found — control cannot discriminate');
+  assert.ok(!placed(moved), 'a paragraph moved after step 1 must turn the placement check red');
+});
+
+test('AC12.1: Settle and the policy section name the same gate', () => {
+  const GATE = 'failed:no-dispatch-host';
+  const policySection = sectionOf(readText(POLICY), POLICY_HEADING);
+  const paragraph = settleParaOf(readText(SETTLE));
+  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  const namesGate = (t) => t.includes(GATE);
+  assert.ok(namesGate(policySection), 'the policy section must name the gate token');
+  assert.ok(namesGate(paragraph), 'the Settle paragraph must name the same gate token');
+
+  // Control: a drifted Settle paragraph must fail the same check.
+  const drifted = paragraph.replaceAll('no-dispatch-host', 'no-dispatch');
+  assert.notEqual(drifted, paragraph, 'drift anchor not found — control cannot discriminate');
+  assert.ok(!namesGate(drifted), 'a Settle paragraph with a drifted gate token must turn the check red');
+});
