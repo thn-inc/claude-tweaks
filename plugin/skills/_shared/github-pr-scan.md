@@ -1,6 +1,6 @@
 # GitHub PR Scan — Shared Procedure
 
-Single source of truth for scanning GitHub pull-request and issue state. Consumed by `/claude-tweaks:help` (Stage 4.5, **`current-pr`** scope; Stage 4.6, **`triage-queue`** scope; Stage 4.7, **`acceptance-queue`** scope; Stage 4.8, which inlines `_shared/forge-detection.md`'s Detection Ladder alone — its fetch and render come from `_shared/trust-table.md`, so it consumes no scope section below) and `/claude-tweaks:tidy` (Step 4.8, **`repo-wide`** scope; Step 4.8, **`acceptance-gap`** scope; Step 4.8, **`parent-gate`** scope). Subagents cannot read this file — the dispatcher inlines the relevant scope section and this file's Output Contract, plus `_shared/forge-detection.md`'s Detection Ladder, into the scan agent's prompt (the same pattern as `tidy/scan-procedures.md`). A scope section is inlined **whole**, its `work-links` resolution and fetch-limit sub-sections included: the `acceptance-gap` and `parent-gate` scopes each carry a `work-links: body-text` / `work-links: native` branch pair, and an agent that cannot resolve `work-links` cannot choose between them — taking the first-listed `body-text` branch on a `native` repo returns zero sub-issues from every parent and makes both scopes silently wrong (see each scope's own resolution sub-section for the failure it produces).
+Single source of truth for scanning GitHub pull-request and issue state. Consumed by `/claude-tweaks:help` (Stage 4.5, **`current-pr`** scope; Stage 4.6, **`triage-queue`** scope, held in `_shared/github-pr-scan-triage.md`; Stage 4.7, **`acceptance-queue`** scope; Stage 4.8, which inlines `_shared/forge-detection.md`'s Detection Ladder alone — its fetch and render come from `_shared/trust-table.md`, so it consumes no scope section below) and `/claude-tweaks:tidy` (Step 4.8, **`repo-wide`** scope; Step 4.8, **`acceptance-gap`** scope; Step 4.8, **`parent-gate`** scope). Subagents cannot read this file — the dispatcher inlines the relevant scope section and this file's Output Contract, plus `_shared/forge-detection.md`'s Detection Ladder, into the scan agent's prompt (the same pattern as `tidy/scan-procedures.md`). A scope section is inlined **whole**, its `work-links` resolution and fetch-limit sub-sections included: the `acceptance-gap` and `parent-gate` scopes each carry a `work-links: body-text` / `work-links: native` branch pair, and an agent that cannot resolve `work-links` cannot choose between them — taking the first-listed `body-text` branch on a `native` repo returns zero sub-issues from every parent and makes both scopes silently wrong (see each scope's own resolution sub-section for the failure it produces).
 
 Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — `gh`'s implicit default is 30, which silently truncates instead of erroring. A result count landing exactly at the stated limit means the scan may be incomplete; treat that as a signal to narrow the query (a tighter label/state filter) or re-run with a higher `--limit`, not as a final count.
 
@@ -388,56 +388,7 @@ Emit `[pr]` and `[gh-issue]` rows per the Output Contract. Backlog-record findin
 
 ## Scope: `triage-queue` (consumed by /help Stage 4.6)
 
-Three cheap counts for the dashboard's Triage Queue section. This scope exists so `/help` never hand-writes its own query for these numbers — see the fix this closes: Stage 4.6 previously computed "pending authorization" without excluding `bot:blocked` records, so a blocked record counted as both pending AND blocked on the same dashboard.
-
-**Transport split (see Transport above):** items 1 and 2 are issue-backed and run unchanged on either transport. Item 3's commits-endpoint query has no MCP equivalent — on `gh`-absent it degrades individually (omit the "Auto-merged this week" line rather than the whole scope).
-
-1. **Pending authorization** — `ready` ∧ no `auto:*` ∧ no `bot:*` (`bot:in-progress`, `bot:blocked`, or `bot:parked`). Origin-agnostic: matches `/claude-tweaks:backlog refine`'s own `ready`-queue pull (`skills/backlog/refine-mode.md`), which tiers no health-skill origin specially — every `ready` record, with or without a `by:*` label, is in scope.
-
-   Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md`:
-
-   ```bash
-   TRIAGE_QUEUE_READY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value triage-queue-ready.json)"
-   gh issue list --label ready --state open --json number,labels --limit 200 > "$TRIAGE_QUEUE_READY"
-   node -e "
-     const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
-     const { isPendingAuthorization } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/pending-authorization.js');
-     const issues = require('$TRIAGE_QUEUE_READY');
-     const pending = issues.filter((i) => isPendingAuthorization(parseRecordFacets(i.labels))).length;
-     console.log(pending);
-   "
-   ```
-
-2. **Blocked** — `gh issue list --label bot:blocked --state open --json number --limit 200 -q 'length'`
-
-<!-- when: transport=gh -->
-3. **Auto-merged this week** — `[fast-lane]`-tagged, `[auto-merge]`-tagged, or
-   `[manifesto-authorized]`-tagged commits on the *default* branch (never the current worktree's
-   own branch — see the note on `worktree-always` below), last 7 days. All three skip the
-   interactive finish-branch prompt because `merge-check` already cleared it — that is what this
-   metric counts, not headlessness: `[auto-merge]` is always dispatch-originated (singleton or
-   bundle, both via `dispatch/settle-and-merge.md`'s Dispatching-session merge execution —
-   genuinely headless); `[fast-lane]` (`wrap-up/review-console.md`'s Auto-merge short-circuit) is
-   reachable only by an interactive, human-run single-record `/flow` — its own dispatch-call
-   branch redirects a dispatch-originated singleton to `[auto-merge]` instead, so a `[fast-lane]`
-   commit is never headless; `[manifesto-authorized]` (`wrap-up/manifesto-authorized-merge.md`,
-   the `merge-authorization` lever) is likewise human-originated, never dispatch-originated — it
-   requires a human answer (a Manifesto `confirm`/`hybrid` override, or the human-typed `/flow`
-   `pre-authorize-merge` token, which a dispatch-bound run ignores). A human-authored Routine
-   prompt or alias can bake the token in, so a `[manifesto-authorized]` commit can come from a
-   headless firing — a standing human choice, not a live per-run one; the tag counts the
-   authorization route, not headlessness.
-   `[human-approved]` (close-out's confirmed merge) is excluded — a human decided it.
-
-   ```bash
-   SINCE=$(node -e "console.log(new Date(Date.now() - 7*24*60*60*1000).toISOString())")
-   gh api "repos/{owner}/{repo}/commits?since=${SINCE}&per_page=100" -q '[.[] | select(.commit.message | contains("[fast-lane]") or contains("[auto-merge]") or contains("[manifesto-authorized]"))] | length'
-   ```
-
-   The commits endpoint defaults to the default branch when no `sha=` param is given — correct regardless of which branch/worktree `/help` itself runs from under `worktree-always`. `SINCE` is computed via `node`, not shell `date` arithmetic, which differs between BSD/macOS and GNU date.
-<!-- /when -->
-
-Render as three lines: `Pending authorization: **{N}** records awaiting your decision` / `Blocked: **{N}** records blocked (retry ceiling, or a plan-review question awaiting an answer)` / `Auto-merged this week: **{N}** auto-merges` — omit any line whose count is 0.
+Extracted to `_shared/github-pr-scan-triage.md` (#4820, headroom-forced). This heading stays as a stub so existing section and item references (`triage-queue` item 3) still resolve in one hop: read that file's scope section, which runs behind this file's Detection Ladder and Transport rule.
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 

@@ -13,8 +13,10 @@ const { compose, KEYS, VOCAB, UNRESOLVED } = require('../plugin/bin/lib/compose-
 const { readText } = require('./helpers/read-skill');
 
 const PR_SCAN_FILE = 'plugin/skills/_shared/github-pr-scan.md';
+const TRIAGE_FILE = 'plugin/skills/_shared/github-pr-scan-triage.md';
 const CLAIMS_FILE = 'plugin/skills/_shared/issue-claims.md';
 const prScanContent = readText(path.join(__dirname, '..', PR_SCAN_FILE));
+const triageContent = readText(path.join(__dirname, '..', TRIAGE_FILE));
 const claimsContent = readText(path.join(__dirname, '..', CLAIMS_FILE));
 
 // The file composed at `transport`, every other condition pinned to its first vocabulary
@@ -62,12 +64,11 @@ test('github-pr-scan.md: ITEM9_BODY_ONLY occurs only inside item 9\'s and item 1
 test('github-pr-scan.md under mcp: item 9 and item 11\'s labels survive, their fenced bodies do not, and the other cited labels survive', () => {
   const bundle = bundleFor(PR_SCAN_FILE, 'mcp', prScanContent);
   assert.deepEqual(
-    presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
+    presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
     {
       [ITEM9_LABEL]: true,
       [ITEM11_LABEL]: true,
       [ITEM9_BODY_ONLY]: false,
-      [TRIAGE_ITEM3]: false,
       [ITEM4_LABEL]: true,
       [PR_BACKED_BULLET]: true,
       [ITEM1_LABEL]: true,
@@ -79,12 +80,11 @@ test('github-pr-scan.md under gh and under unresolved transport: every cited lab
   for (const transport of ['gh', UNRESOLVED]) {
     const bundle = bundleFor(PR_SCAN_FILE, transport, prScanContent);
     assert.deepEqual(
-      presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, TRIAGE_ITEM3, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
+      presence(bundle, [ITEM9_LABEL, ITEM11_LABEL, ITEM9_BODY_ONLY, ITEM4_LABEL, PR_BACKED_BULLET, ITEM1_LABEL]),
       {
         [ITEM9_LABEL]: true,
         [ITEM11_LABEL]: true,
         [ITEM9_BODY_ONLY]: true,
-        [TRIAGE_ITEM3]: true,
         [ITEM4_LABEL]: true,
         [PR_BACKED_BULLET]: true,
         [ITEM1_LABEL]: true,
@@ -92,6 +92,20 @@ test('github-pr-scan.md under gh and under unresolved transport: every cited lab
       `mismatch under transport=${transport}`,
     );
   }
+});
+
+test('github-pr-scan-triage.md: triage-queue item 3 is transport=gh-fenced (absent under mcp, present under gh and unresolved)', () => {
+  assert.equal(bundleFor(TRIAGE_FILE, 'mcp', triageContent).includes(TRIAGE_ITEM3), false);
+  for (const transport of ['gh', UNRESOLVED]) {
+    assert.equal(bundleFor(TRIAGE_FILE, transport, triageContent).includes(TRIAGE_ITEM3), true, `transport=${transport}`);
+  }
+});
+
+test('github-pr-scan.md keeps a triage-queue stub that names the new file, and carries none of the moved body', () => {
+  const stub = prScanContent.split('## Scope: `triage-queue` (consumed by /help Stage 4.6)')[1].split('\n## ')[0];
+  assert.match(stub, /`_shared\/github-pr-scan-triage\.md`/);
+  assert.equal(prScanContent.includes(TRIAGE_ITEM3), false, 'the moved item 3 must not remain in github-pr-scan.md');
+  assert.equal(prScanContent.includes('TRIAGE_QUEUE_READY'), false, 'the moved item 1 fence must not remain in github-pr-scan.md');
 });
 
 test('discrimination: re-fencing item 9\'s label under transport=gh goes red under mcp', () => {
