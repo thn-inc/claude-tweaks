@@ -46,7 +46,7 @@ that cite it. A merge that never lands never reaches it, so its parent stays ope
 session sees land (an `armed` PR that GitHub merges later) never reaches it either: the reconciler's
 `post-merge` check runs Steps 4.0 and 4.0b for that run once, keyed on its recorded PR
 (`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop
-stays the last resort.
+stays the last resort. The one in-session caller that runs this step after a merge it did not make is merge mode's Already merged section (`wrap-up/merge-mode.md`), through `bin/post-merge-run.js`.
 
 After a no-PR local merge it is a no-op unless the branch the merge landed on — the integration
 branch (`_shared/integration-branch.md`) — is the repo's default branch

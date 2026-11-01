@@ -75,13 +75,19 @@ const MERGE_MODE_FACTS = {
   'already-claim': /runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/,
   'already-marker': /a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/,
   'already-in-flight': /`in-flight` — a reconcile pass holds the run's claim and is running them now: report `in-flight`, never `ran`/,
-  'already-step40-failed': /a `ran` entry carrying `step40Failed`, or a `closingLinks` other than `nothing-closed`, `closed` or `reopened`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
-  'already-retry': /every failure line here names `\/claude-tweaks:wrap-up #\{n\} merge` as the next step: with no marker written yet, a re-run tries the closes again/,
+  'already-json-line': /It prints one JSON line and exits 0 for every outcome, so route on the line, never the exit code/,
+  'already-clean-ran': /A clean `ran` entry — `closingLinks` `nothing-closed`, `closed`, `reopened`, `no-fixes-span`, `not-merged` or `no-pr`, no `step40Failed` — reports `ran`/,
+  'already-step40-failed': /a `ran` entry carrying `step40Failed`, or a `closingLinks` of `reopen-failed`, `close-failed`, `close-pending` or `base-unchecked`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
+  'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: the line names no re-run and cites `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open/,
+  'already-other-reason': /any other `reason` — `gh-absent`, `transient-failure`, `network-failure`, `claim-failed`, `marker-write-failed`, `error` and the rest — adds one `cleanup: post-merge closes failed — \{reason\}` line/,
+  'already-exit-2-3': /A CLI exit 2 or 3 prints nothing on stdout, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
+  'already-retry': /the `skipped` ones and the exit 2 or 3 line: each names `\/claude-tweaks:wrap-up #\{n\} merge` as the next step, because with no marker written yet a re-run tries the closes again/,
+  'already-step-4-1-line': /Step 4\.1's own release-status line is reported as that step defines it: it is none of the per-step words here and never adds a next step/,
   'already-done-word': /A target that is already gone — worktree reaped, branch deleted, claim released — reports `already done`, never `failed`/,
   'already-link': /`\$LINK` is the PR's `mergeCommit\.oid` from `gh pr view \{pr\} --json mergeCommit,mergedAt,mergedBy`/,
-  'already-teardown': /then the rest of Procedure step 3 from Step 4\.1 on, in its order, with the reconcile call last/,
+  'already-teardown': /then the rest of Procedure step 3 from Step 4\.1 on, in its order, with Step 4\.2's reconcile call last/,
   'already-outcome': /`already merged \{mergedAt\} by \{mergedBy\} — merge mode ran only the post-merge steps`/,
-  'already-no-next': /names no next step when every line reads `ran`, `already done` or `in-flight`/,
+  'already-no-next': /names no next step when every line reads `ran`, `already done` or `in-flight`; Step 4\.1's release-status line is none of these words and never adds one/,
 };
 
 // SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
@@ -119,6 +125,7 @@ test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules reje
 // Step 4.0 of the shared post-merge doc names merge mode's in-session caller (#4692).
 const POST_MERGE_EXCEPTION = {
   'merge-mode-caller': /merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\) runs this step in-session for an already-merged PR/,
+  'merge-mode-caller-4-0b': /The one in-session caller that runs this step after a merge it did not make is merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\), through `bin\/post-merge-run\.js`/,
 };
 
 test('pr-first-merge-post-merge.md Step 4.0 names merge mode as an in-session caller', () => {
