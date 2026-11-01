@@ -279,8 +279,7 @@ function evaluateParentGate({
     });
 
   const state = parentGateState({ subIssues: gateSubIssues, parentLabels: labels });
-  const tier = maxRiskTier(gateSubIssues.map((s) => s.facets));
-  const maxTier = tier === undefined ? null : tier;
+  const maxTier = maxRiskTier(gateSubIssues.map((s) => s.facets)) ?? null;
   // sizeFloor is the literal null: parents carry no size scoring of their own.
   const exceeds = state === 'due' ? exceedsOversightFloor({ risk: maxTier }, { riskFloor, sizeFloor: null }).exceeds : null;
   let closeReason = null;

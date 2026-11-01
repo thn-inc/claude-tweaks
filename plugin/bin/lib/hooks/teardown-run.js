@@ -14,6 +14,7 @@
 'use strict';
 const fs = require('fs');
 const { closeRunState } = require('./close-run-state');
+// repoSpecOf keeps the host a GitHub Enterprise Server remote carries, so Step 5's `gh api` call targets it, not github.com.
 const { runGit, repoSpecOf } = require('./git-exec');
 const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
@@ -58,12 +59,6 @@ function modeGateSkip(mode, branch, isIntegrationBranch, label) {
   if (isIntegrationBranch) return `${label}: skipped — refusing to delete the integration branch (${branch})`;
   return null;
 }
-
-// repoSpecOf (git-exec.js, #4603) -> { host, owner, repo } | null: repo-resolve.js's shared
-// parseRepo (the one owner/repo/host regex in the codebase, #1177), not an owner/repo-only
-// regex that discards the host segment a GitHub Enterprise Server remote carries — the
-// discarded host was exactly what made Step 5's `gh api` call below always target github.com
-// regardless of the actual remote. This module used to carry its own copy; re-exported below.
 
 // Branch registered for `worktreePath` in `git worktree list --porcelain`, or null when the
 // worktree isn't registered at all. Deliberately independent from run-integrity.js's own

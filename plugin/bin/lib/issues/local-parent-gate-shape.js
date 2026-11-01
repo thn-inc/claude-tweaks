@@ -36,6 +36,12 @@ class LocalRecordError extends Error {
   }
 }
 
+// A record's facets -> the gh-shaped stateReason: '' while open, else COMPLETED or NOT_PLANNED.
+function stateReasonOf(facets) {
+  if (!facets.closed) return '';
+  return facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED';
+}
+
 // The open scan's and the closed scan's records -> one record per id, the closed scan's winning.
 function recordsById({ open = [], closed = [] } = {}) {
   return new Map([...open, ...closed].map((record) => [record.id, record]));
@@ -69,7 +75,7 @@ function localGateFacts(records, { subIssue = null, parent = null } = {}) {
     number: r.id,
     title: r.title,
     state: r.facets.closed ? 'CLOSED' : 'OPEN',
-    stateReason: r.facets.closed ? (r.facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED') : '',
+    stateReason: stateReasonOf(r.facets),
     labels: r.facets.risk ? [`risk:${r.facets.risk}`] : [],
     closedBy: [],
   }));
