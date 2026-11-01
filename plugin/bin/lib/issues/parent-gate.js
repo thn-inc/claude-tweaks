@@ -19,7 +19,7 @@
 // The gh reads, numbered as the comments below and the tests' `shape N:` labels cite them.
 // {slug} is repoSlug({ host, owner, repo }) (`owner/repo` on github.com, `host/owner/repo`
 // off it); off github.com every `gh api` read also carries `--hostname {host}`.
-//   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then PARENT_LINE_RE.
+//   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then parseParent.
 //   2   sub-issue -> parent, native: fetchNativeParent's api graphql -f query=<parent> -f owner= -f repo=.
 //   3   parent -> sub-issues, body-text: issue view {parent} --repo {slug} --json body -q .body, then parseSubIssues.
 //   4   parent -> sub-issues, native: fetch-sub-issues.js's run([parent, --repo {slug}, --resolve-retries]), whose runner sends
@@ -34,7 +34,7 @@
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
-const { parseSubIssues } = require('./record');
+const { parseSubIssues, parseParent } = require('./record');
 const { parseRecordFacets, normalizeLabelNames, LABELS } = require('./record-vocabulary');
 const { parentGateState } = require('./acceptance');
 const { maxRiskTier, exceedsOversightFloor } = require('./oversight-floor');
@@ -51,7 +51,6 @@ const CLOSE_HEADING = '## Closed below the oversight floor';
 // parent whose sub-issues carry no risk label.
 const VALID_RISK_FLOORS = POLICY_KEYS.find((k) => k.key === 'risk-floor').values;
 const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
-const PARENT_LINE_RE = /^Parent: #(\d+)/m;
 
 // The verdict's keys, in emission order.
 const VERDICT_FIELDS = [
@@ -108,6 +107,15 @@ function distinctAscending(values) {
   return [...new Set(values.filter((v) => Number.isInteger(v) && v > 0))].sort((a, b) => a - b);
 }
 
+// Under body-text a `Parent: #N` line is only honored when the parent's task list lists the
+// sub-issue (the parent's list wins). True when a NON-EMPTY list omits it; an empty or missing
+// list is not an omission and keeps the parent. The one copy both labeler transports (gh here,
+// the MCP shape in mcp-parent-gate-shape.js) apply; engine-verify.js's checker applies the same
+// membership rule to its own enumeration, where an empty list is a gather failure instead.
+function listOmitsSubIssue(numbers, subIssue) {
+  return numbers.length > 0 && !numbers.includes(subIssue);
+}
+
 // A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
 // already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
 // github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
@@ -126,8 +134,7 @@ function needsIdempotenceReads(state, stateReason) {
 // Shape 1 (body-text) or 2 (native): the sub-issue's parent number, or null.
 function resolveParent({ subIssue, owner, repo, host, workLinks, caller }) {
   if (workLinks === 'body-text') {
-    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--repo', repoSlug({ host, owner, repo }), '--json', 'body', '-q', '.body'])));
-    return match ? Number(match[1]) : null;
+    return parseParent(String(caller.call(['issue', 'view', String(subIssue), '--repo', repoSlug({ host, owner, repo }), '--json', 'body', '-q', '.body'])));
   }
   // fetchNativeParent throws only for a failed or malformed GraphQL read.
   try {
@@ -174,8 +181,10 @@ function enumerateSubIssues({
 }
 
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
-// With no resolvable parent it stops after resolution. `host` is the origin's host; absent or
-// 'github.com' leaves every argv as on github.com.
+// With no resolvable parent it stops after resolution; so does a body-text `Parent: #N` whose
+// task list does not list `subIssue` (the parent's task list wins), before any shape 5 or 6 read.
+// An empty or missing task list is not an omission: it keeps the parent, as before.
+// `host` is the origin's host; absent or 'github.com' leaves every argv as on github.com.
 function gatherGateFacts({
   subIssue, parent, owner, repo, host, workLinks, caller,
 }) {
@@ -183,13 +192,16 @@ function gatherGateFacts({
   if (given(subIssue) === given(parent)) {
     throw new TypeError('gatherGateFacts takes exactly one of subIssue and parent');
   }
+  const noParent = { parent: null, parentLabels: [], subIssues: [] };
   let resolved = parent;
   if (resolved === null || resolved === undefined) {
     resolved = resolveParent({ subIssue, owner, repo, host, workLinks, caller });
-    if (resolved === null || resolved === undefined) return { parent: null, parentLabels: [], subIssues: [] };
+    if (resolved === null || resolved === undefined) return noParent;
   }
   const slug = repoSlug({ host, owner, repo });
-  const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller }).map((num) => {
+  const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
+  if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
+  const subIssues = numbers.map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
     const rawRefs = live.closedByPullRequestsReferences;
@@ -388,7 +400,6 @@ function parseClosingTokens(tokens, { owner, repo } = {}) {
 module.exports = {
   CLOSE_HEADING,
   HEADING_LINE_RE,
-  PARENT_LINE_RE,
   VALID_RISK_FLOORS,
   VERDICT_FIELDS,
   IDEMPOTENCE_VALUES,
@@ -397,6 +408,7 @@ module.exports = {
   needsIdempotenceReads,
   positive,
   distinctAscending,
+  listOmitsSubIssue,
   numberSet,
   GhFailure,
   ghCaller,
