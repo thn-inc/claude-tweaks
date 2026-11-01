@@ -42,10 +42,11 @@ files:
 - **URL:** —
 - **Action:** The maintainer either exports `GH_HOST=other.example` or runs `materialize.js N --repo owner/name`. With the export, no claude-tweaks call overwrites it. With `--repo owner/name`, every `gh` call that run makes (the issue view and the author-association lookup) goes to github.com, the host the bare slug names.
 - **Should feel:** In control: the plugin defers to what the maintainer said.
-- **Should understand:** An explicit `--repo` pins its own host for that CLI's calls, so one record is never read from two hosts. The pin stays out of the record's own Premise-check command, which runs with the environment it had before. An SSH host alias remote (`git@github-work:acme/widgets.git`) gets no injection at all, because gh resolves aliases itself.
+- **Should understand:** An explicit `--repo` pins its own host for that CLI's calls, so one record is never read from two hosts. The pin stays out of the record's own Premise-check command, which runs with the environment it had before. An SSH host alias remote (`git@github-work:acme/widgets.git`) gets no injection at all, because gh resolves aliases itself. For a GHES host that is neither `*.ghe.com` nor in `hosts.yml`, this export (or `gh auth login --hostname {host}`) is the opt-in: an enterprise token alone no longer admits the host. A `--repo` host is compared the same normalized way, so `github.com./owner/name` pins nothing on a github.com origin.
 - **Red flags:** An exported `GH_HOST` replaced by the origin host; `materialize --repo owner/name` reading the issue on github.com but its author on the GHE host; `none of the git remotes correspond to the GH_HOST environment variable` on an SSH-alias checkout.
 
 ## Origin
 - Created during build of #4505 (bin/ gh calls: GitHub Enterprise host dropped again, regression of #2538)
 - Steps 1-4 built in this session: the `ghOptions` seam, its migration across every `plugin/bin` `gh` spawn, the explicit-`--repo` pin, and `tests/gh-host-seam-behavior.test.js` / `tests/gh-host-seam-conformance.test.js`
+- Updated during build of #4854 (an enterprise token alone admits no host; hosts compared lower-cased with trailing dots stripped): Steps 1 and 4
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
