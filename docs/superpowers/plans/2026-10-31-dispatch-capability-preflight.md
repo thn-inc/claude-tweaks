@@ -87,7 +87,7 @@ const POLICY_FACTS = [
 ];
 ```
 
-Tests: `test('AC5.1 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 D3 D4: execution-mode-policy.md states the no-dispatch-host stop (#4555)', …)` asserting `missingFactsOf(POLICY_FACTS)(section)` deep-equals `[]`; and `test('AC8.2: each policy fact can go red', …)` calling `assertEachPatternGoesRed(section, POLICY_FACTS, missing)`. Negative pin `test('AC9.2: the dispatch route never names the prefixed flow invocation', …)`: the sentence starting `Under \`/claude-tweaks:dispatch\`` does not contain `PIPELINE_RUN_DIR`; control: a copy with ` PIPELINE_RUN_DIR="x"` appended to that sentence fails the same check.
+Tests: `test('AC5.1 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', …)` asserting `missingFactsOf(POLICY_FACTS)(section)` deep-equals `[]`; and `test('AC8.2: each policy fact can go red', …)` calling `assertEachPatternGoesRed(section, POLICY_FACTS, missing)`. Negative pin `test('AC9.2: the dispatch route never names the prefixed flow invocation', …)`: the sentence starting `Under \`/claude-tweaks:dispatch\`` does not contain `PIPELINE_RUN_DIR`; control: a copy with ` PIPELINE_RUN_DIR="x"` appended to that sentence fails the same check.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -278,7 +278,7 @@ const INDEPENDENCE_SLOT = [
 const VERDICT_INDEPENDENCE = [[/then its \*\*Independence: degraded\*\* line verbatim when it rendered/, 'AC6.1: verdict comment copies the Independence line']];
 ```
 
-Tests (each with a go-red twin): `AC6.1 AC6.2 D5: step3-lens-dispatch.md states the run-level no-Agent note` (over `lineStartingWith(text, RUN_LEVEL_PREFIX)`, asserted non-empty); `AC6.1: summary template carries the Independence slot in compact and full forms` (over each of `summaryForms`'s halves); `AC6.1: verdict comment copies the Independence line` (over `verdictParagraph`); `the compact form says an Independence line does not disqualify it` (pattern `/An \*\*Independence: degraded\*\* line is informational the same way\./`). Also `AC6.2: the per-lens and tiebreak caveat lines are unchanged` — `review-summary-template.md` still contains, byte-for-byte, the existing `**Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no \`Agent\` tool, timed out})` line; the existing `partner-died paragraph states the degrade line shape and caveat once` test already pins the single-read line.
+Tests (each with a go-red twin): `AC6.1 AC6.2 AC13.1: step3-lens-dispatch.md states the run-level no-Agent note` (over `lineStartingWith(text, RUN_LEVEL_PREFIX)`, asserted non-empty); `AC6.1: summary template carries the Independence slot in compact and full forms` (over each of `summaryForms`'s halves); `AC6.1: verdict comment copies the Independence line` (over `verdictParagraph`); `the compact form says an Independence line does not disqualify it` (pattern `/An \*\*Independence: degraded\*\* line is informational the same way\./`). Also `AC6.2: the per-lens and tiebreak caveat lines are unchanged` — `review-summary-template.md` still contains, byte-for-byte, the existing `**Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no \`Agent\` tool, timed out})` line; the existing `partner-died paragraph states the degrade line shape and caveat once` test already pins the single-read line.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -398,7 +398,7 @@ const SETTLE_FACTS = [
 ];
 ```
 
-Tests: `test('D4: Settle settles a no-dispatch-host stop as a pre-flight stop (#4555)')` asserting `missingFactsOf(SETTLE_FACTS)(paragraph)` is `[]`, with its go-red twin. Placement pin `test('D4: the special case sits before Settle step 1')`: the paragraph's index is `>= 0` and below `indexOf('1. The CLI in step 2 performs the ownership read itself')`; control: a copy with the paragraph moved after that line fails the check. Cross-file pin `test('D4: Settle and the policy section name the same gate')`: the gate token `failed:no-dispatch-host` appears in both Task 1's section and the Settle paragraph; control: a copy of the Settle paragraph with `no-dispatch-host` replaced by `no-dispatch` (`assert.notEqual` first) fails.
+Tests: `test('AC12.1 AC12.2: Settle settles a no-dispatch-host stop as a pre-flight stop (#4555)')` asserting `missingFactsOf(SETTLE_FACTS)(paragraph)` is `[]`, with its go-red twin. Placement pin `test('AC12.1: the special case sits before Settle step 1')`: the paragraph's index is `>= 0` and below `indexOf('1. The CLI in step 2 performs the ownership read itself')`; control: a copy with the paragraph moved after that line fails the check. Cross-file pin `test('AC12.1: Settle and the policy section name the same gate')`: the gate token `failed:no-dispatch-host` appears in both Task 1's section and the Settle paragraph; control: a copy of the Settle paragraph with `no-dispatch-host` replaced by `no-dispatch` (`assert.notEqual` first) fails.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -437,13 +437,19 @@ In `docs/skill-graph.md`'s `## dispatch` table add a row: target `build/executio
 | Decision Q2 / AC10.1-10.2 | 1, 2 |
 | Decision Q2 / AC10.3 (never auto-merges, test pins it) | 5 |
 | AC10.4 (amends AC1's "again on resume") | 2 (the flow item says a step list without `build` skips it) |
-| Decision D3 (SKIP only into a dir with `config.yml` at flow 2.4) | 1 |
-| Decision D4 (Settle pre-flight-stop special case, headless self-report) | 1 (report line), 6 |
-| Decision D5 (same-session detection scope, effectively unreachable) | 4 |
+| Decision D3 / AC11.1-11.2 (SKIP only into a dir with `config.yml` at flow 2.4); AC11.3 (narrows AC4's logging clause — the narrowed item 3 is that clause) | 1 |
+| Decision D4 / AC12.1-12.2 (Settle pre-flight-stop special case, headless self-report) | 1 (report line), 6 |
+| Decision D5 / AC13.1-13.2 (same-session detection scope, effectively unreachable, no stamp) | 4 |
 | Decision D6 (closing rule) | — (governs plan review; the implementer judgment it licenses is recorded in Global Constraints' D4 bullet) |
 
 Waived AC9.4: "(Plan-review Q1: Reading B.)" is provenance, not a behavior to test.
 Waived AC10.5: "(Q2: Reading B, with the auto-merge condition.)" is provenance, not a behavior to test.
+Waived AC11.4: "(Plan-review Q1: Reading B.)" is provenance, not a behavior to test.
+Waived AC12.3: "(Q2: Reading B.)" is provenance, not a behavior to test.
+Waived AC13.3: "(Q3: Reading A.)" is provenance, not a behavior to test.
+Waived AC14.1: the closing rule governs plan review, not a skill behavior to test.
+Waived AC14.2: the closing rule governs plan review, not a skill behavior to test.
+Waived AC14.3: the closing rule governs plan review, not a skill behavior to test.
 
 Waived plugin/skills/_shared/subagent-dispatch-core.md: read-only — Tasks 1, 2 and 4 cite its no-`Agent` probe; the probe text was re-read at plan time (line ~77) and needs no change.
 Waived _shared/subagent-dispatch-core.md: same file as above, short-form citation.
