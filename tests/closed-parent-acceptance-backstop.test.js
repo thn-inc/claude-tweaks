@@ -194,14 +194,17 @@ test('AC2.1: the parent-gate fetch block degrades an empty gh login to trusted-a
   // trusted-author close markers match, so #11's MEMBER marker still counts and #17's NONE-association
   // marker (posted by the current identity) reads as absent, and one WARNING names the cause.
   const { IDENTITY_PROBE_FAILED_NOTE } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'parent-gate.js'));
-  const { res, parentsFile } = runFetchBlock('', { raw: true });
-  assert.equal(res.status, 0, res.stderr);
-  const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
-  assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20]);
-  assert.deepEqual(parents.filter((x) => x.belowFloorClose === true).map((x) => x.number), [11]);
-  const warnings = lines(res.stderr).filter((l) => l.startsWith('WARNING: '));
-  assert.equal(warnings.length, 1, res.stderr);
-  assert.ok(warnings[0].includes(IDENTITY_PROBE_FAILED_NOTE), warnings[0]);
+  // A whitespace-only login trims to empty, so it takes the same degraded path as an empty one.
+  for (const login of ['', '   ']) {
+    const { res, parentsFile } = runFetchBlock(login, { raw: true });
+    assert.equal(res.status, 0, JSON.stringify(login) + ': ' + res.stderr);
+    const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
+    assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20], JSON.stringify(login));
+    assert.deepEqual(parents.filter((x) => x.belowFloorClose === true).map((x) => x.number), [11], JSON.stringify(login));
+    const warnings = lines(res.stderr).filter((l) => l.startsWith('WARNING: '));
+    assert.equal(warnings.length, 1, JSON.stringify(login) + ': ' + res.stderr);
+    assert.ok(warnings[0].includes(IDENTITY_PROBE_FAILED_NOTE), warnings[0]);
+  }
 });
 
 test('AC1.1: the closed-parent fetches are bounded to the window and carry what the gate reads', () => {
