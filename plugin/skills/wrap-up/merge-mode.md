@@ -18,13 +18,26 @@ Then bind the adopted run to the typed record: its `config.yml` `spec:` value mu
 
 ## Preconditions
 
-Each one stops before any merge step, with no cleanup, and reports which failed: the project does not resolve to `integration-model: pr-first` (`_shared/integration-model.md`); `run-state.json` carries no `pr` object; the PR is not `OPEN` (`gh pr view {pr} --json state`). For a `MERGED` PR — an `armed` run's auto-merge can land before the human types this — the report names `/claude-tweaks:wrap-up #{n} cleanup-only` as the next step, since only the teardown is left.
+Each one stops before any merge step, with no cleanup, and reports which failed: the project does not resolve to `integration-model: pr-first` (`_shared/integration-model.md`); `run-state.json` carries no `pr` object; the PR is neither `OPEN` nor `MERGED` (`gh pr view {pr} --json state`). A `MERGED` PR — an `armed` run's auto-merge, or a merge on GitHub, landing before the human types this — skips Procedure steps 1-2 and runs the Already merged section below.
 
 ## Procedure
 
 1. Read the composed merge bundle exactly as `review-console.md` step 13 does: `node "${CLAUDE_PLUGIN_ROOT}/bin/compose-context.js" --run "$PIPELINE_RUN_DIR" --step merge "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-first-merge.md" "${CLAUDE_PLUGIN_ROOT}/skills/_shared/pr-checklist-refresh.md"`, then read `$PIPELINE_RUN_DIR/context/merge.md`. If compose is unavailable, read the two source files.
 2. Run `_shared/pr-first-merge.md` Steps 1 through 4, split as below. Steps 1-3 are: acceptance labeling unconditionally, Step 1.5's curation guard, mark ready, Step 2.5's merge-verification gate, the merge.
 3. On `merged`: run Step 4.0 (`_shared/pr-first-merge-post-merge.md`), then Step 4.0b (`{pr-number}` = `{pr}`), then Step 4.1. When `{run-dir}/wrap-up-pack.json` is absent, produce it before any teardown — `node "${CLAUDE_PLUGIN_ROOT}/bin/wrap-up-pack.js" --run "$PIPELINE_RUN_DIR" --only claim`, as Section E's intro requires. Then run `wrap-up/cleanup-procedures-execution.md` Section C steps 3.5-5.5 (step 3.5 is the pre-anchoring copy-out guard; step 4 carries the squash containment proof) and Section E's claim release, with reason `merged: spec {n}` and `$LINK` set to the merge commit sha. Finish every `decisions.md` write first — Step 4.2's reconcile runs last, because its `archive` check moves the run dir and a later write would recreate it.
+
+## Already merged
+
+A `MERGED` PR has no merge left to make, so merge mode finishes what the merge leaves behind: the post-merge closes, then the teardown. Run `node "${CLAUDE_PLUGIN_ROOT}/bin/post-merge-run.js" --run "$PIPELINE_RUN_DIR"` on the adopted run, an `archive/` one included. The CLI runs Step 4.0 and Step 4.0b once under the run's `.post-merge.lock` claim, choosing the in-session or the late-merge arguments by the merge's age; `bin/post-merge-run.js` owns those arguments, so this section does not restate them. It prints one JSON line and exits 0 for every outcome, so route on the line, never the exit code (exit 2 and exit 3 are failures, reported as `cleanup: post-merge closes failed — {reason}`). The line's `action` and `reason` pick one report line:
+
+- A clean `ran` entry — `closingLinks` `nothing-closed`, `closed` or `reopened`, no `step40Failed` — reports `ran` with its `closingLinks` word and `parentsClosed` count.
+- `already-done`: a run whose `decisions.md` already holds the post-merge marker prints `already-done` and runs neither step, so report `already done`.
+- `in-flight` — a reconcile pass holds the run's claim and is running them now: report `in-flight`, never `ran`.
+- A failure: a `ran` entry carrying `step40Failed`, or a `closingLinks` other than `nothing-closed`, `closed` or `reopened`, is a failure: one `cleanup: post-merge closes failed — {closingLinks}` line naming every record in its `records` lists (`failed`, `closeFailed`, `pendingClose`, `unchecked`). Any other `reason` adds one `cleanup: post-merge closes failed — {reason}` line.
+
+For both failure shapes, every failure line here names `/claude-tweaks:wrap-up #{n} merge` as the next step: with no marker written yet, a re-run tries the closes again.
+
+The teardown does not depend on the closes, so whatever the CLI reported, report its line and then the rest of Procedure step 3 from Step 4.1 on, in its order, with the reconcile call last. `$LINK` is the PR's `mergeCommit.oid` from `gh pr view {pr} --json mergeCommit,mergedAt,mergedBy`, which also supplies the `mergedAt` and `mergedBy` the report names. A target that is already gone — worktree reaped, branch deleted, claim released — reports `already done`, never `failed`.
 
 ## Step 3's branch 5 under merge mode
 
@@ -37,6 +50,8 @@ Before accepting branch 5's `pending-review` for an error branches 1-4 do not re
 ## Outcomes
 
 Report `merged`, `armed`, or `pending-review` in `pr-first-merge.md`'s Outcome vocabulary. Any other stop inside `pr-first-merge.md` before the merge — Step 1.5's curation guard, a non-zero `compose-subject` exit — reports `pending-review` naming that step. A cleanup step that fails after `merged` keeps the `merged` outcome and adds one `cleanup: {step} failed — {reason}` line per failure, never a silent success.
+
+An already merged PR (the Already merged section) reports outcome `merged` with a leading `already merged {mergedAt} by {mergedBy} — merge mode ran only the post-merge steps` line, then one line per step: `ran`, `already done`, `in-flight`, or a `cleanup:` failure line. The report names no next step when every line reads `ran`, `already done` or `in-flight`.
 
 ## Conflict
 

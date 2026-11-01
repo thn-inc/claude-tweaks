@@ -35,7 +35,7 @@ this step in-session: the reconciler's `post-merge` check (`gh` only) runs the C
 with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
 On a non-default base that late run closes an `armed` merge's still-open `Fixes` records the same
-way, so they no longer wait for a human (#4599).
+way, so they no longer wait for a human (#4599). The one in-session exception: merge mode's Already merged section (`wrap-up/merge-mode.md`) runs this step in-session for an already-merged PR, through `bin/post-merge-run.js` rather than the composer's inline call.
 
 ### Step 4.0b: Close below-floor parents (#4466)
 

@@ -25,14 +25,15 @@ function assertEachFactGoesRed(text, facts) {
 const HINT = '[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]';
 
 const MERGE_MODE_FACTS = {
-  invocation: /`\/claude-tweaks:wrap-up #\{n\} merge`/,
+  // Anchored on its own sentence: the Already merged section also names this command as the failure next step.
+  invocation: /`\/claude-tweaks:wrap-up #\{n\} merge` merges the record's already-open PR now/,
   'human-confirmation': /typed invocation is the human merge confirmation/,
   tag: /`\{tag\}` = `human-approved`/,
   'no-console-resolve': /never runs `console-resolve\.js`/,
   'no-console-question': /never asks a `"Review Console"`-headed question/,
   'run-dir': /`_shared\/run-dir-resolution\.md`'s resolution order/,
   'not-resume': /not the `resume` form/,
-  'precondition-open': /PR is not `OPEN`/,
+  'precondition-open': /the PR is neither `OPEN` nor `MERGED`/,
   'precondition-pr': /`run-state\.json` carries no `pr` object/,
   'precondition-model': /`integration-model: pr-first`/,
   'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
@@ -42,7 +43,6 @@ const MERGE_MODE_FACTS = {
   'release-reason': /with reason `merged: spec \{n\}` and `\$LINK` set to the merge commit sha/,
   'human-turn': /The confirmation holds only on a human's own turn: a subagent, a scheduled Routine, or any other headless caller that reaches this file stops and reports `pending-review`, reason `no-human-confirmation`/,
   'record-binding': /bind the adopted run to the typed record: its `config\.yml` `spec:` value must equal `\{n\}`/,
-  'merged-pr-next': /names `\/claude-tweaks:wrap-up #\{n\} cleanup-only` as the next step/,
   'budget-ignored': /they have no effect here and the report says they were ignored/,
   'branch5-once': /This happens once per invocation: a second branch-5 error accepts `pending-review`/,
   'other-stops': /Any other stop inside `pr-first-merge\.md` before the merge — Step 1\.5's curation guard, a non-zero `compose-subject` exit — reports `pending-review` naming that step/,
@@ -67,6 +67,21 @@ const MERGE_MODE_FACTS = {
   'anything-else': /Anything else: accept `pending-review`/,
   outcomes: /`merged`, `armed`, or `pending-review`/,
   bundle: /--step merge/,
+  // `## Already merged` (#4692). assertEachFactGoesRed strips only a pattern's first match, so no
+  // sentence below may contain text another fact matches: the section points at Procedure step 3
+  // for Section C, Section E and the reconcile call instead of restating them.
+  'merged-routes-already': /A `MERGED` PR — an `armed` run's auto-merge, or a merge on GitHub, landing before the human types this — skips Procedure steps 1-2 and runs the Already merged section below/,
+  'already-cli': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/post-merge-run\.js" --run "\$PIPELINE_RUN_DIR"/,
+  'already-claim': /runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/,
+  'already-marker': /a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/,
+  'already-in-flight': /`in-flight` — a reconcile pass holds the run's claim and is running them now: report `in-flight`, never `ran`/,
+  'already-step40-failed': /a `ran` entry carrying `step40Failed`, or a `closingLinks` other than `nothing-closed`, `closed` or `reopened`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
+  'already-retry': /every failure line here names `\/claude-tweaks:wrap-up #\{n\} merge` as the next step: with no marker written yet, a re-run tries the closes again/,
+  'already-done-word': /A target that is already gone — worktree reaped, branch deleted, claim released — reports `already done`, never `failed`/,
+  'already-link': /`\$LINK` is the PR's `mergeCommit\.oid` from `gh pr view \{pr\} --json mergeCommit,mergedAt,mergedBy`/,
+  'already-teardown': /then the rest of Procedure step 3 from Step 4\.1 on, in its order, with the reconcile call last/,
+  'already-outcome': /`already merged \{mergedAt\} by \{mergedBy\} — merge mode ran only the post-merge steps`/,
+  'already-no-next': /names no next step when every line reads `ran`, `already done` or `in-flight`/,
 };
 
 // SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
@@ -93,6 +108,23 @@ test('merge-mode.md carries every merge-mode fact before its Conflict heading', 
 
 test('merge-mode.md facts each go red when stripped', () => {
   assertEachFactGoesRed(mergeModeRegion(), MERGE_MODE_FACTS);
+});
+
+test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules rejection', () => {
+  const text = flat(read('plugin', 'skills', 'wrap-up', 'merge-mode.md'));
+  assert.strictEqual((text.match(/cleanup-only/g) || []).length, 1);
+  assert.ok(text.includes('`merge` with `cleanup-only` is rejected'), 'the one match is the Token rules rejection');
+});
+
+// Step 4.0 of the shared post-merge doc names merge mode's in-session caller (#4692).
+const POST_MERGE_EXCEPTION = {
+  'merge-mode-caller': /merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\) runs this step in-session for an already-merged PR/,
+};
+
+test('pr-first-merge-post-merge.md Step 4.0 names merge mode as an in-session caller', () => {
+  const text = flat(read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md'));
+  assert.deepStrictEqual(missingFactsOf(text, POST_MERGE_EXCEPTION), []);
+  assertEachFactGoesRed(text, POST_MERGE_EXCEPTION);
 });
 
 test('AC4.1: merge-mode.md no longer claims a parked run stays active', () => {
