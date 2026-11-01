@@ -137,6 +137,9 @@ function resolveGhSpec(cwd, deps = {}) {
     const parsed = parseRepo(hostPathOf(url));
     const host = parsed && normalizeHost(parsed.host);
     if (host && host !== 'github.com') {
+      // Positive signals only. Any other host stays silent (no note), token or not,
+      // decided at #4854's plan review; its opt-in is an exported GH_HOST, or a
+      // hosts.yml key from `gh auth login --hostname` (run with the token unset).
       const known = host.endsWith('.ghe.com') || ghConfigHosts(deps).has(host);
       if (known) spec = { ...parsed, host };
     }

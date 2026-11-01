@@ -265,7 +265,7 @@ test('resolveGhHost: a user-less scp-style remote with a token is not admitted; 
 
 // #4854: the enterprise-token clause is gone, so no spelling of an SSH remote or a
 // non-GitHub forge can sidestep a guard: a token alone admits nothing.
-test('#4854: bypass spellings of the old guards inject nothing with a token set', () => {
+test('#4854: a token admits no trailing-dot forge or git+ssh/ssh+git alias host', () => {
   for (const url of ['https://gitlab.com./o/r.git', 'https://GITLAB.COM./o/r.git', 'git+ssh://alias/o/r', 'ssh+git://alias/o/r', 'git+ssh://git@alias/o/r.git']) {
     _resetGhHostCache();
     const o = { cwd: '/b' }; const notes = [];
