@@ -105,13 +105,14 @@ test('a --run-id that fails RUN_ID_SHAPE is rejected before the body is read', (
     `${RUN} `,
   ];
   for (const runId of bad) {
+    const label = JSON.stringify(runId);
     const deps = fakeDeps({ [BODY]: composed() });
-    assert.equal(run(['--body-file', BODY, '--run-id', runId], deps), 1, JSON.stringify(runId));
+    assert.equal(run(['--body-file', BODY, '--run-id', runId], deps), 1, label);
     const err = deps.calls.stderr.join('');
-    assert.ok(err.startsWith(`pr-resume-line.js: --run-id is not a valid run id: ${JSON.stringify(runId)}\n`), JSON.stringify(runId));
-    assert.match(err, /usage: pr-resume-line\.js/, JSON.stringify(runId));
-    assert.equal(out(deps), '', JSON.stringify(runId));
-    assert.equal(deps.calls.readFile.length, 0, JSON.stringify(runId));
+    assert.ok(err.startsWith(`pr-resume-line.js: --run-id is not a valid run id: ${label}\n`), label);
+    assert.match(err, /usage: pr-resume-line\.js/, label);
+    assert.equal(out(deps), '', label);
+    assert.equal(deps.calls.readFile.length, 0, label);
   }
 });
 
