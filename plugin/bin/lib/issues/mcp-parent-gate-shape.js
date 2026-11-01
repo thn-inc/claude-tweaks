@@ -156,7 +156,9 @@ function normalizeComment(c) {
 }
 
 // A fresh no-parent result per call, so no caller can mutate a shared one.
-const noParent = () => ({ gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null });
+function noParent() {
+  return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
+}
 
 // raw facts + { subIssue | parent, workLinks } -> { gate, idempotence }.
 //   gate         { parent, parentLabels, subIssues: [{ number, title, state, stateReason, labels, closedBy }] }
