@@ -107,9 +107,20 @@ outstanding: handle it per the dispatching skill's own status handling where one
 yourself. Self-judging is for a read-only unit (a lens, a single read, a judge); a
 write-capable child (one that edits files) still silent at the bound is never redone in-session,
 because an abandoned child keeps running and may still write — stop, and end with
-`STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or fails is not a
-wait and never counts toward the bound; never retry it in another form (a longer, wrapped or
-backgrounded sleep): treat every child still outstanding as silent at the bound. The full rule is
+`STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
+names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree}
+--no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
+git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
+each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
+child shows a change, log one line and grant one more window; stop when a whole window passes with
+no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no progress for
+one window` or `ceiling reached while progressing`) and every unchanged child. Children sharing a
+worktree progress together; a child whose prompt names no worktree counts as unchanged. A failed
+wait call ends its window, and the probe runs as at any bound; a failed probe counts as no change,
+never retried in another form. Read-only units keep the first-bound self-judge. A wait call that is
+blocked or fails is not a wait and never counts toward the bound; never retry it in another form (a
+longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the bound.
+The full rule is
 in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
 dispatch this same instruction, whether it is a nested Task/Agent call or a
 `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
