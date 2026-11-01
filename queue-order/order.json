@@ -1,16 +1,11 @@
 {
-  "computedAt": "2026-10-31T21:42:09.579Z",
+  "computedAt": "2026-11-01T07:31:30.038Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 4756,
         "updatedAt": "2026-10-31T21:11:35Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4729,
-        "updatedAt": "2026-10-31T17:12:50Z",
         "state": "OPEN"
       },
       {
@@ -34,18 +29,13 @@
         "state": "OPEN"
       },
       {
-        "number": 4649,
-        "updatedAt": "2026-10-31T20:47:18Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4645,
-        "updatedAt": "2026-10-31T20:44:05Z",
+        "updatedAt": "2026-10-31T23:15:19Z",
         "state": "OPEN"
       },
       {
         "number": 4640,
-        "updatedAt": "2026-10-31T20:44:03Z",
+        "updatedAt": "2026-11-01T00:04:18Z",
         "state": "OPEN"
       },
       {
@@ -130,12 +120,12 @@
       },
       {
         "number": 4603,
-        "updatedAt": "2026-10-31T21:20:04Z",
+        "updatedAt": "2026-11-01T01:56:15Z",
         "state": "OPEN"
       },
       {
         "number": 4593,
-        "updatedAt": "2026-10-31T20:44:01Z",
+        "updatedAt": "2026-11-01T00:19:57Z",
         "state": "OPEN"
       },
       {
@@ -199,23 +189,13 @@
         "state": "OPEN"
       },
       {
-        "number": 4559,
-        "updatedAt": "2026-10-31T20:45:40Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4557,
         "updatedAt": "2026-10-31T20:40:47Z",
         "state": "OPEN"
       },
       {
         "number": 4555,
-        "updatedAt": "2026-10-31T20:40:45Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4553,
-        "updatedAt": "2026-10-31T20:40:42Z",
+        "updatedAt": "2026-11-01T06:09:51Z",
         "state": "OPEN"
       },
       {
@@ -266,11 +246,6 @@
       {
         "number": 4521,
         "updatedAt": "2026-10-30T04:28:48Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4505,
-        "updatedAt": "2026-10-31T20:40:34Z",
         "state": "OPEN"
       },
       {
@@ -1205,168 +1180,6 @@
     ],
     [
       {
-        "body": "Origin: tidy digest cluster promotion — digest #1426, run 2026-10-30T154127-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n2 below-floor findings in the `review` area sit un-promoted in the rolling digest (#1426). Each was deferred on its own under the materiality floor; together they cross the 3-entry cluster threshold of tidy's digest sweep (Step 5.6), and run `2026-10-30T154127-sweep-standalone` proposed this record, approved via `/claude-tweaks:tidy --approve`.\n\nSource digest entries:\n- materiality-a741e6c1 — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6476790372\n- materiality-067f68fa — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6518866799\n\n## Deliverables\n\n- The rename-old-path test accepts either merged or conflict, so it does not pin the merge decision its name implies (tiebreak evidence unverified) — `tests/bin-lib/pre-review-catchup/cli.test.js:275`\n- a filed review-followup- proposal gets no open-items ledger write-back — `the console queue-write step has none, as for ledger-record-* (#4484 review, lens 3e)`\n\n## Acceptance Criteria\n\n- Each Deliverables bullet is either fixed (with a test where behaviour changes) or closed out with a one-line rationale in the PR body.\n- Every promoted digest line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/pre-review-catchup/cli.test.js` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (scope of Deliverable 2): Reading A.** Deliverable 2 is settled by a PR-body close-out of the *filed* path, as written. The refused-path gap (`wrap-up/refused-proposals.md` reopens only `ledger-record-*` rows, so a refused `review-followup-*` row stays terminal `deferred` naming a staged file nothing will file) is out of scope here and is tracked as its own follow-up record, #4772.\n- **Q2:** not applicable under Q1 Reading A.\n- The PR-body close-out lines (filed-path rationale; AC 2 already holds, both digest lines on #1426 end `→ #4649`) need a plan step that writes them into the PR body.\n",
-        "createdAt": "2026-10-30T20:03:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4649,
-        "state": "OPEN",
-        "title": "Settle 2 below-floor digest findings in review",
-        "updatedAt": "2026-10-31T20:47:18Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy digest cluster promotion — digest #1426, run 2026-10-30T154127-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n5 below-floor findings in the `issues` area sit un-promoted in the rolling digest (#1426). Each was deferred on its own under the materiality floor; together they cross the 3-entry cluster threshold of tidy's digest sweep (Step 5.6), and run `2026-10-30T154127-sweep-standalone` proposed this record, approved via `/claude-tweaks:tidy --approve`.\n\nSource digest entries:\n- (older entry, no fingerprint) — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-5443626563\n- materiality-60c398ca — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6383162471\n- materiality-5267d483 — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6525082273\n- materiality-5741dadb — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6525082273\n- materiality-801923a8 — https://github.com/thn-inc/claude-tweaks/issues/1426#issuecomment-6525082273\n\n## Deliverables\n\n- record.js now has 4 near-identical aliased-GraphQL-query builders (buildNativeDependencyQuery, buildLinkedPRQuery, buildNativeSubIssuesQuery, buildNativeParentQuery) sharing the exact same wrapper shape, differing only in the inner connection-field expression — `a shared `buildAliasedIssueQuery(numbers, fieldExpr)` helper would collapse all four`\n- No test covers a duplicate in-flight id (liveIds dedupe); controller read: gh issue list never returns one record twice, so the input is hypothetical. — `plugin/bin/lib/issues/grouping.js:281`\n- The MCP stale-claim path pages until exhausted with no cap, while the gh path stops at OPEN_PR_LIST_LIMIT. — `plugin/skills/_shared/issue-claims.md:183`\n- Markdown fence and section primitives live in the record-payload builder and are imported across domains by merge-gate.js. — `plugin/bin/lib/issues/record-payload.js:97`\n- The comment above scanFences describes [start,end] ranges; it returns { ranges, unclosed } and unclosed is undocumented. — `plugin/bin/lib/issues/record-payload.js:96`\n\n## Acceptance Criteria\n\n- Each Deliverables bullet is either fixed (with a test where behaviour changes) or closed out with a one-line rationale in the PR body.\n- Every promoted digest line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/grouping.js` — modify\n- `plugin/skills/_shared/issue-claims.md` — modify\n- `plugin/bin/lib/issues/record-payload.js` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (Deliverable 3, MCP stale-claim listing cap): Reading B.** Leave the MCP path uncapped; close the Deliverable 3 bullet in the PR body. Rationale: uncapped is strictly more accurate, and the matcher already returns `failure` on a no-match listing of `>= OPEN_PR_LIST_LIMIT` entries, so uncapped never yields a false clean no-match — whereas a cap would turn a beyond-1,000 match into a fail-open claim write (the reclaim race the check exists to stop).\n- AC2 is already satisfied (all five source lines in #1426 end `→ #4645`). Key Files per the plan reviewer: `grouping.js` is read-only (test-only dedupe fix); the four builders live in `plugin/bin/lib/issues/record-dependencies.js`; `plugin/skills/tidy/scan-procedures.md` is untouched under Reading B.\n",
-        "createdAt": "2026-10-30T20:03:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4645,
-        "state": "OPEN",
-        "title": "Settle 5 below-floor digest findings in issues",
-        "updatedAt": "2026-10-31T20:44:05Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/plan-audit.js --task-markers {plan}` reads each task's optional `**Role:**` / `**Review risk:**` markers (#3378) and prints `{\"markers\", \"tasks\": [{index, title, role, risk}], \"findings\"?}`. `/build`'s per-task tier forwarding (`plugin/skills/build/dispatch.md`, the \"Per-task role/review-risk tier forwarding (#3378)\" paragraph) is its one consumer: a task reported `risk: \"high\"` gets a Capable task review; `risk: null` falls back to the run's `size:`-derived tier.\n\nThe parser (`plugin/bin/lib/plan-audit/parser.js`, `extractTaskMarkers`) captures everything after the key to end of line (`RISK_MARKER_RE = /^\\*\\*Review risk:\\*\\*[ \\t]*(.*)$/m`, same shape for `ROLE_MARKER_RE`), trims it, and recognizes it only on an exact whole-value match against the closed sets `TASK_MARKER_RISKS = ['high']` / `TASK_MARKER_ROLES = ['transcription', 'integration', 'judgment']`. So `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` yields `riskRaw = \"high (a read-once/…)\"`, `risk: null`. The same holds for a `**Role:** judgment (needs design judgment)` line.\n\nThe mis-parse is then invisible end to end:\n\n- `checkTaskMarkers` (`plugin/bin/lib/plan-audit/checks.js`) records a `findings` entry, but `--task-markers` (`plugin/bin/plan-audit.js`) only embeds it in the stdout JSON — exit 0, nothing on stderr. `plugin/skills/build/plan-audit.md` documents findings as warn-only, never exit-changing.\n- `dispatch.md`'s tier-forwarding paragraph never reads `findings` at all — it keys only on `markers` and each task's `role`/`risk`.\n- `plugin/skills/build/plan-authoring-checks.md` documents the syntax as `**Review risk:** high` but never says the value must stand alone on the line, and a trailing reason reads as valid to a human author.\n\nNet effect: a task its author explicitly marked high-risk silently drops from a Capable review to the unpinned tier. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) parses correctly — confirmed by the reporter on plugin 6.156.1.\n\n**Related:** #3986, #4618, #4549, #4559 (near-duplicate screen: shared Key Files / body anchors only — no title similarity; #4618 adds a different risk axis to plan-audit and shares `plan-audit.js`/`checks.js`)\n\n## Deliverables\n\n1. **Accept a trailing annotation after a recognized marker value.** In `extractTaskMarkers`, a `**Role:**` / `**Review risk:**` value is recognized when its leading token is in the closed set and is either the whole value or is followed by whitespace (the annotation after it is ignored). `**Review risk:** high (reason)` → `risk: \"high\"`; `**Role:** judgment — needs design judgment` → `role: \"judgment\"`. A leading token not in the closed set (`medium`, `hgih`, `high-ish`) stays unrecognized (`null`) exactly as today. `roleRaw`/`riskRaw` keep carrying the full raw trimmed line value.\n2. **Make an unrecognized marker value visible on stderr.** When `--task-markers` produces any `findings` entry, print one warning line per finding to stderr naming the task index, title, field, and raw value (e.g. `plan-audit.js: warning: task 3 \"X\" — unrecognized Review risk value \"medium\"; the task reads as unmarked`). Stdout JSON and the exit code (0) are unchanged — findings stay warn-only per `plan-audit.md`.\n3. **Surface findings in `/build`'s tier forwarding.** `dispatch.md`'s Per-task role/review-risk tier forwarding paragraph: when the `--task-markers` output carries `findings`, log one decision-log line naming each offending task/field/value (via `log-decision.js`, status per `_shared/auto-decision-log.md`'s Status semantics — not `STAGED`, since nothing is staged) and continue dispatch with those tasks treated as unmarked — never a stop.\n4. **Document the accepted shape.** `plan-authoring-checks.md`'s marker paragraph and `plan-audit.md`'s `--task-markers` paragraph state that a trailing annotation after the value is allowed and ignored, and that an unrecognized value is now warned on stderr as well as listed in `findings`.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-audit.js --task-markers plan.md` on a plan with `### Task 1: X` followed by `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` prints task 1 with `\"risk\": \"high\"`, no `findings` key, exit 0.\n- The same for `**Role:** judgment (needs design judgment)` → `\"role\": \"judgment\"`, and for a value followed by an em-dash annotation (`**Review risk:** high — reason`).\n- `**Review risk:** high` and `**Role:** transcription` with no annotation still parse exactly as today (existing `tests/bin-lib/plan-audit/parser.test.js` / `cli.test.js` #3378 cases stay green unmodified).\n- `**Review risk:** medium`, `**Review risk:** high-ish`, and `**Role:** trivial` still yield `null` plus a `findings` entry carrying the full raw value; `--task-markers` exits 0 and writes one stderr warning line per finding naming the task index, field, and raw value.\n- A plan with no findings writes nothing to stderr under `--task-markers`.\n- `dispatch.md`'s tier-forwarding paragraph names the `findings` field and the decision-log line it writes; `tests/plan-task-markers-conformance.test.js` (or a sibling conformance test) pins that the paragraph references `findings`.\n- `plan-authoring-checks.md` and `plan-audit.md` each state that a trailing annotation after the marker value is ignored.\n- New unit tests in `tests/bin-lib/plan-audit/parser.test.js` and `tests/bin-lib/plan-audit/cli.test.js` cover the annotated forms and the stderr warning, and each goes red when the parser change (respectively the stderr write) is reverted.\n- `npm test` passes.\n\n## Release Note\n\nFix plan-audit's task markers silently ignoring `**Review risk:** high` when a reason follows the value on the same line, and warn about unrecognized marker values instead of dropping them quietly.\n\n## Technical Approach\n\nParser: keep `ROLE_MARKER_RE` / `RISK_MARKER_RE` capturing the full line (so `roleRaw`/`riskRaw` and the findings' `value` stay the raw text), then derive the recognized value from the leading token — e.g. `const lead = raw.split(/\\s/, 1)[0]` and recognize `lead` when it is in the closed set. Splitting on whitespace (not on any non-word character) is what keeps `high-ish` / `high,` unrecognized rather than read as `high`; decide in the build whether a directly-attached separator like `high,` should also be accepted, and test whichever way it lands. `checkTaskMarkers` must use the same recognition rule as `extractTaskMarkers` (today it re-tests `TASK_MARKER_RISKS.includes(t.riskRaw)` against the raw value — switch it to test the recognized `t.risk`/`t.role` being null while the raw is non-null, so an annotated valid value is not reported as a finding).\n\nCLI: in the `parsed.taskMarkers` branch of `plan-audit.js`, after computing `findings`, write each to `process.stderr` before the stdout JSON line; leave `process.exitCode` untouched.\n\nSkill prose: the `dispatch.md` change is one sentence inside the existing tier-forwarding paragraph; keep the `markers: false` branch byte-for-byte as the paragraph promises.\n\n### Key Files\n\n- `plugin/bin/lib/plan-audit/parser.js` — `extractTaskMarkers`: leading-token recognition for Role / Review risk\n- `plugin/bin/lib/plan-audit/checks.js` — `checkTaskMarkers`: finding iff raw present and recognized value null\n- `plugin/bin/plan-audit.js` — `--task-markers` branch: one stderr warning line per finding\n- `plugin/skills/build/dispatch.md` — tier-forwarding paragraph: log `findings` to the decision log, continue with the task unmarked\n- `plugin/skills/build/plan-authoring-checks.md` — marker paragraph: trailing annotation allowed and ignored\n- `plugin/skills/build/plan-audit.md` — `--task-markers` paragraph: annotation rule + stderr warning\n- `tests/bin-lib/plan-audit/parser.test.js` — annotated-value cases\n- `tests/bin-lib/plan-audit/checks.test.js` — annotated valid value yields no finding\n- `tests/bin-lib/plan-audit/cli.test.js` — stdout risk/role + stderr warning cases\n- `tests/plan-task-markers-conformance.test.js` — pin `dispatch.md`'s `findings` handling\n\n## Gotchas\n\n- `tests/plan-task-markers-conformance.test.js` pins the marker syntax in `plan-authoring-checks.md` with `/\\*\\*Review risk:\\*\\* (\\S+)`/` and the dispatch tier wording — edit the prose so those pins still match, or update the pins in the same change.\n- The `markers` flag semantics are unchanged: a recognized key with an unrecognized value still sets `markers: true`.\n- Keep the matcher same-line-only (`[ \\t]*`, never `\\s*`) — `parser.js`'s own comment explains why `\\s` would read into the next line.\n- Exit code for findings must stay 0 — `plan-audit.md` documents findings as warn-only and `dispatch.md` runs this call unconditionally before SDD dispatch.\n\n## Original request\n\nplan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently\n\n**Summary:** `plan-audit.js --task-markers` reads a `**Review risk:** high` line that has a trailing reason as no risk, with no warning.\n\n**Kind:** Defect\n\n**Affected component:** `bin/plan-audit.js --task-markers` (with `skills/build/plan-authoring-checks.md`'s marker paragraph and `skills/build/dispatch.md`'s per-task tier forwarding)\n\n**Repro steps:**\n1. Write a plan with `### Task 1: X`, followed by the line `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)`.\n2. Run `node bin/plan-audit.js --task-markers plan.md`.\n\n**Expected vs. actual:**\nExpected: task 1 reports `\"risk\": \"high\"`, or the CLI exits non-zero or warns, naming the task and the unparsed value.\nActual: task 1 reports `\"risk\": null`. A `findings` entry quotes the raw value, but the exit code is 0 and nothing is printed to stderr. `/build`'s per-task tier forwarding keys on `risk: \"high\"`, so the task's review would silently drop from Capable to the unpinned tier. The marker reads as valid to a human, so the degradation is invisible. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) gives `\"risk\": \"high\"`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-e271bd38 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **AC8 \"respectively\": Reading B (split by coverage).** Annotated-form tests (parser tests, plus the CLI criterion-1 test) go red when the parser change is reverted; stderr-warning tests go red when the stderr write is reverted. The criterion-5 \"a plan with no findings writes nothing to stderr under `--task-markers`\" test is a negative control, exempt from the go-red requirement.\n",
         "createdAt": "2026-10-30T14:43:37Z",
         "labels": [
@@ -1428,7 +1241,7 @@
         "number": 4640,
         "state": "OPEN",
         "title": "plan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently",
-        "updatedAt": "2026-10-31T20:44:03Z",
+        "updatedAt": "2026-11-01T00:04:18Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2046,7 +1859,7 @@
         "number": 4593,
         "state": "OPEN",
         "title": "flow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer",
-        "updatedAt": "2026-10-31T20:44:01Z",
+        "updatedAt": "2026-11-01T00:19:57Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -2611,186 +2424,6 @@
         "state": "OPEN",
         "title": "build: a fixed wait budget abandoned a live implementer seconds before it committed, costing a full handoff",
         "updatedAt": "2026-10-31T20:40:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nA `/claude-tweaks:flow` run resumed inside a forked agent (no `Agent`/`Task` tool, no `EnterWorktree`) completed by improvising: all five plan tasks were implemented inline by the same agent, review ran in that same agent, and the worktree was created with a raw `git worktree add` plus `cd`. Nothing in flow or build detected the host shape up front or said what to do.\n\nWhat already exists (verified in the checkout):\n\n- **Build forbids the improvisation the run fell into.** `plugin/skills/build/SKILL.md:212` (Common Step 2) and `plugin/skills/build/execution-mode-policy.md:21` (record #491) state that `subagent` and `batched` are the only licensed execution strategies, and that an in-session run that skips Task dispatch is \"never licensed\" because it collapses the dispatch contract's independence. `plugin/skills/flow/SKILL.md:128` pins flow to `subagent` execution. Neither file says how to *detect* a host where `subagent` cannot run, or what to do instead, so a no-dispatch host drifts into the unlicensed path silently.\n- **Precedent for detect-and-stop.** `plugin/skills/tidy/console-backfill.md:16`: when running inside a Task agent with no `Agent` tool, it stops and reports that the command must run in the main session — \"Never a nested or in-place substitute for the dispatch.\"\n- **The no-`Agent` probe already has a canonical shape.** `plugin/skills/_shared/subagent-dispatch-core.md:77` (\"`ToolSearch` finds none, deferred or otherwise\"), reused at `plugin/skills/dispatch/task-prompt.md:53` and `plugin/skills/flow/context-handoff.md:86`.\n- **Review already degrades per unit, but never says so for the whole run.** A lens whose agents are unavailable gets single-read treatment with `unconfirmed` findings, a `STAGED … single-read coverage` line, and a per-lens caveat in the Step 7 summary and PR verdict comment (`plugin/skills/review/step3-lens-dispatch.md:60`, `:98`). An unavailable tiebreak agent is judged inline with ` Mode: inline.` and a `Tiebreak caveat:` line (`plugin/skills/review/step3-tiebreak.md:119`, `plugin/skills/review/review-summary-template.md:94`). So the issue's claim that review \"gets no signal\" is only partly true. What is still missing: (a) one run-level statement that *every* lens and tiebreak was judged by the reviewer itself because the host has no `Agent` tool, instead of N per-lens caveats a reader has to add up; (b) any mention that the reviewer may be the same agent that wrote the code.\n- **The worktree fallback is documented only for dispatch.** `plugin/skills/dispatch/sequential-execution.md:9` (#447) covers a cwd-pinned dispatching session: plain `git worktree add`, then per-command `cd {worktree} &&` anchoring. `plugin/skills/_shared/worktree-setup.md:90` keeps it separate from adopt-or-create. `plugin/skills/build/worktree-setup.md` (Common Step 1, which flow's build reaches) has no pointer to it.\n\n## Deliverables\n\n1. **Dispatch-capability preflight at flow and build entry.** Before `/claude-tweaks:flow` claims targets or creates a worktree, on both a fresh run and a resume, and before `/claude-tweaks:build` Common Step 2 runs the `subagent` strategy, probe for an `Agent`/`Task` tool using `_shared/subagent-dispatch-core.md:77`'s canonical probe (cite it; don't restate it). When none exists:\n   - Do **not** implement the plan inline. Stop the run with a BLOCKED outcome whose message names the cause (\"this host has no Agent/Task tool, so the `subagent` execution strategy cannot run\") and gives the resume route as a paste-ready command for a top-level session. On a standalone `/build` whose `execution-strategy` is not locked to `subagent-only`, also name `batched` (`/claude-tweaks:build #{n} batched`) as the licensed in-session alternative, for a human to choose explicitly. Never switch to it automatically.\n   - When a pipeline run directory resolves, log one `decisions.md` line per `_shared/auto-decision-log.md` (status `SKIP`, text `condition: no Agent/Task tool in this host → fallback: run stopped before build; resume from a top-level session`).\n   - Under `/claude-tweaks:dispatch`'s headless call, the stop reports through dispatch's existing `build-test-blocked` channel. Do not add a new outcome word.\n2. **Execution-mode policy names the no-dispatch host.** Add a short section to `plugin/skills/build/execution-mode-policy.md` stating that a host with no `Agent`/`Task` tool is exactly the case the #491 decision forbids silent inline execution for, and pointing to Deliverable 1's preflight as the enforcement point.\n3. **Run-level review independence marker.** When `/claude-tweaks:review` Step 3 starts in a host with no `Agent` tool (same probe), log one run-level line and carry a single `Independence: degraded — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself` caveat into the Step 7 summary and the PR verdict comment, through the same channels the existing per-lens caveat uses. When the review runs in the same session that ran build's implementation, the caveat also says so. The existing per-lens and per-tiebreak degrade lines stay unchanged.\n4. **Worktree fallback pointer for build.** In `plugin/skills/build/worktree-setup.md`, add one paragraph for a session whose cwd is harness-pinned (cannot move via `EnterWorktree`) that cites `dispatch/sequential-execution.md`'s #447 mechanism instead of restating it.\n5. **Prose conformance pins.** Extend the existing suites, or add one sized like them, to pin: the preflight's stop-not-inline rule in flow and build, the run-level `Independence: degraded` caveat in review, and the build worktree pointer to #447.\n\n## Acceptance Criteria\n\n- [ ] `plugin/skills/flow/SKILL.md` and `plugin/skills/build/SKILL.md` each run a dispatch-capability preflight that cites `_shared/subagent-dispatch-core.md`'s no-`Agent` probe. In flow it runs before claim and worktree creation, and again on resume. In build it runs before Common Step 2's `subagent` execution.\n- [ ] On a host with no `Agent`/`Task` tool, the documented outcome is a BLOCKED stop with a paste-ready resume command on its own line. Nothing in either skill tells the agent to implement plan tasks inline.\n- [ ] On a standalone `/build` with an unlocked `execution-strategy`, the stop message names `batched` as an explicit human choice. With `execution-strategy: subagent-only` it does not.\n- [ ] The stop logs one `SKIP` line in the condition → fallback shape when a run directory resolves. A dispatch-headless stop reports `build-test-blocked`, and no new outcome word is introduced.\n- [ ] `plugin/skills/build/execution-mode-policy.md` has a section naming the no-dispatch host and pointing to the preflight.\n- [ ] `/claude-tweaks:review` in a host with no `Agent` tool writes one run-level `Independence: degraded` caveat to the Step 7 summary and the PR verdict comment, and names the same-session-as-build case when it applies. The existing per-lens `single-read coverage` and `Tiebreak caveat:` lines are unchanged.\n- [ ] `plugin/skills/build/worktree-setup.md` covers the cwd-pinned session by citing `dispatch/sequential-execution.md`'s #447 section, without a second copy of the mechanism.\n- [ ] Conformance tests pin each of the above. Reverting each prose change turns its test red. `npm test` passes.\n- **Decision (plan review, 2026-10-31):** The stop's paste-ready resume command depends on how the run was started. Under `/claude-tweaks:dispatch` it names `/claude-tweaks:dispatch #{n}`, to use after Settle runs. Outside dispatch it repeats the received invocation, keeping its `PIPELINE_RUN_DIR=\"…\"` prefix whenever one was adopted. (Plan-review Q1: Reading B.)\n- **Decision (plan review, 2026-10-31):** Flow's preflight probe runs only when the step list includes `build`. Resumes without `build` proceed, and review's run-level `Independence: degraded` marker covers them. A run whose review is marked `Independence: degraded` never auto-merges: its merge decision routes to a human, and a test pins that. This amends the \"again on resume\" clause of the first criterion above. (Q2: Reading B, with the auto-merge condition.)\n- **Decision (plan review, 2026-10-31):** At flow Step 2.4, the no-dispatch-host `SKIP` line is written to `decisions.md` only when the run dir already has `config.yml`; otherwise its text goes in the stop report only, so a resume never adopts the dir as a recovery (case 3). This narrows the AC4 logging clause. (Plan-review Q1: Reading B.)\n- **Decision (plan review, 2026-10-31):** Dispatch's Settle treats a no-dispatch-host `build-test-blocked` as a pre-flight-stop special case, like claims-branch-missing: no failure classification, no retry count, no failure comment. Under `DISPATCH_HEADLESS=1` it self-reports through `_shared/headless-self-report.md` as `flow-step-2.4-no-dispatch-host`. (Q2: Reading B.)\n- **Decision (plan review, 2026-10-31):** Review detects \"same session as build\" only inside one `/claude-tweaks:flow` call that ran both steps, and the spec states this is effectively unreachable once Deliverable 1 lands. No session stamp. (Q3: Reading A.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nStop flow and build cleanly, with a resume command, when they run in a host that cannot dispatch subagents, and flag reviews whose independence was lost.\n\n## Technical Approach\n\nThis is prose-only work in the skill files plus conformance tests. No new `bin/` CLI. Detection reuses the existing `ToolSearch`-finds-none probe, cited from `_shared/subagent-dispatch-core.md`. The stop-not-degrade choice follows the standing #491 ruling (`execution-mode-policy.md`) and the `tidy/console-backfill.md:16` precedent, not the issue's suggestion of an `AUTO` inline-degrade line (see Gotchas). Review's marker goes through the caveat channels the #3817 single-read degrade already writes to, so no new Review Console section is needed. Keep every new paragraph short and cite rather than restate (`docs/skill-authoring.md`). Add the skill-graph edge to `docs/skill-graph.md` if a new cross-skill citation creates one.\n\n### Key Files\n\n- `plugin/skills/flow/SKILL.md` — dispatch-capability preflight before claim and worktree creation, and on resume\n- `plugin/skills/build/SKILL.md` — preflight before Common Step 2's `subagent` execution\n- `plugin/skills/build/execution-mode-policy.md` — new no-dispatch-host section\n- `plugin/skills/build/worktree-setup.md` — cwd-pinned pointer to #447\n- `plugin/skills/review/step3-lens-dispatch.md` — run-level no-`Agent` detection and log line\n- `plugin/skills/review/review-summary-template.md` — `Independence: degraded` caveat line\n- `plugin/skills/_shared/subagent-dispatch-core.md` — cited probe (read-only; no change expected)\n- `plugin/skills/dispatch/sequential-execution.md` — cited #447 mechanism (read-only; no change expected)\n- `tests/review-dispatched-reviewer-degrade-conformance.test.js` — extend for the run-level caveat\n- `docs/skill-graph.md` — any new edge the citations introduce\n\n## Gotchas\n\n- **Departure from the issue's suggested direction 1.** The issue proposes logging an `AUTO` degrade and implementing inline. That conflicts with `build/execution-mode-policy.md`'s \"Never licensed\" ruling (#491) and this project's `execution-strategy: subagent-only` lock, so this spec stops instead. Reopening inline execution as a licensed fallback means revisiting #491 explicitly, not doing it as a side effect of this record.\n- **The issue's direction 2 offered two options; this spec picks (b), a stamp.** Option (a), a `needs-independent-review` status the caller acts on, would need new outcome handling in flow and dispatch. The stamp reuses existing caveat channels. Once Deliverable 1 lands, the same-agent-wrote-and-reviewed case mostly disappears from flow, because build stops first. The marker still matters for a standalone review in a no-`Agent` host.\n- The preflight must run before flow's claim and draft-PR creation under `pr-first`. Otherwise a run that can never build leaves a claim and a draft PR behind. On resume, the claim and worktree already exist: the stop leaves them in place for the top-level resume, not torn down.\n- A cwd-pinned session that *does* have an `Agent` tool (e.g. flow launched as a Task subagent) is not a no-dispatch host. Deliverable 4 covers it; Deliverable 1 must not stop it.\n- ASSUMPTION — verify at build: the `ToolSearch`-finds-none probe reliably reports no `Agent` tool inside a forked agent, as it does in a cloud routine sandbox. Confirm by running the probe in a forked agent before pinning the wording.\n\n## Original request\n\nflow/build/review: say what to do when the run is hosted in an agent that cannot dispatch subagents\n\n**Summary:** flow, build and review do not say what to do when the run's host agent cannot dispatch subagents. Build falls back to inline implementation without saying so, and review's independence can be lost without anyone being told.\n\n**Kind:** Gap\n\n**Affected component:** /claude-tweaks:flow (resume path), /claude-tweaks:build (subagent-driven tasks), /claude-tweaks:review (independent review)\n\n**Use case:**\nA `/claude-tweaks:flow` run paused at plan review on a needs-human merge-order question. It was later resumed inside a forked agent, a host with no Task/Agent dispatch and no `EnterWorktree`. The run carried on, but it had to work out the fallbacks itself:\n\n- Build's per-task implementer and reviewer dispatches could not run, so all five tasks were implemented inline by the same agent.\n- Review's code review ran inline in that same agent, so it was not independent. The controlling session had to start a second fresh agent to get a real independent review. That review found nothing new, but nothing in the run would have noticed if it had been skipped.\n- Worktree entry was replaced by a raw `git worktree add` plus explicit `cd`. That fallback is documented for `/claude-tweaks:dispatch` (#447) but not for flow/build.\n\n`/claude-tweaks:dispatch` documents the cwd-pinned-subagent case (#447). flow, build and review have no matching guidance for a host with no dispatch at all. Build has no stated \"implement inline\" fallback. Review gets no signal that its independence guarantee is gone, so a same-agent review can be logged as if it were the normal independent review.\n\nSuggested direction:\n1. At flow/build entry, detect a host with no dispatch (check whether the Agent/Task tool is present, the same way #447 detects a pinned cwd). Log an `AUTO` degrade line that names the inline-implementation fallback.\n2. In review, when the reviewer would be the same agent that wrote the code, either (a) return a `needs-independent-review` status so the caller starts a fresh agent, or (b) stamp the review result `independence: degraded` so wrap-up and the PR checklist show it.\n3. Extend the #447 worktree note in dispatch to flow/build's worktree-entry step.\n\nEvidence (from the run's decisions log): \"worktree created via raw git worktree add (pinned subagent cannot EnterWorktree)\", \"Tasks 1-5: implemented inline by the resumed flow (fork agent; no subagent dispatch available)\", and a separate later \"independent review pass\" entry from a second agent.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-85022236 -->\n\n\n\n",
-        "createdAt": "2026-10-29T17:28:02Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4555,
-        "state": "OPEN",
-        "title": "flow/build/review: say what to do when the run is hosted in an agent that cannot dispatch subagents",
-        "updatedAt": "2026-10-31T20:40:45Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #3721, #3822, #3873, #3878, #3974, #3975, #3976, #3977, #3982, #4038, #4108, #4118, #4191, #4217, #4289, #4292, #4344, #4353, #4366, #4471, #4531, #4551, #4603, #4610\n\n## Current State\n\nA record's `blocked-by` prerequisite counts as satisfied as soon as the blocking issue is closed. Nothing checks that the blocker's code ever reached the integration branch the dependent run builds from.\n\n- **Multi-spec out-of-run check.** `plugin/skills/flow/multispec-dependency-ordering.md`, section \"Targets with a dependency on a target NOT in the run\", reads: status `complete` → \"fine, dependency satisfied\"; `pending`/`in-progress` → hard fail. A closed issue is `complete`.\n- **`preflight-records.js` data.** `plugin/bin/lib/preflight-records/preflight-records.js` `buildRecords` (lines ~127-147) emits `blockedBy` plus `openBlocker`. Under `work-links: native`, `openBlocker` is `hasOpenNativeBlocker(node)` (`plugin/bin/lib/issues/record-dependencies.js:108`): only `state === 'OPEN'` counts, so a closed blocker reads `false`. Under `work-links: body-text`, `openBlocker` is `null` (\"undetermined by this driver\"), and nothing downstream resolves blocker state mechanically. The query builder `buildNativeDependencyQuery` (`record-dependencies.js:64`) asks only for `number state` per blocker, with no closing-PR or commit data.\n- **Single-record `/flow #N`.** It runs no `blocked-by` check at all. `flow/SKILL.md` Step 2 (2.5-2.9) and `flow/validation.md` hold no prerequisite substep, and `materialize.md`'s reader table lists the `blocked-by` header field only for multi-spec ordering. Dispatched runs are filtered upstream by `dispatch/queue-pull-script.md`'s open-blocker exclusion (`openBlockerIds`, OPEN-state only), which also treats a closed blocker as satisfied.\n- **Merge-state gate.** `plugin/bin/lib/preflight-records/merge-gate.js` is a different check. It covers only *in-run* blockers whose own text demands \"merged to the integration branch\". It does not look at out-of-run blockers or at git reachability.\n\n**Incident (reported against 6.156.1):** a blocker issue was closed by a PR merged into the production branch instead of the configured integration branch. The dependent record's pre-flight reported `openBlocker: null`, and the run built on an integration-branch base without the blocker's code. The gap surfaced only mid-build, when the implementer found the pre-blocker version of a file the spec assumed was already changed.\n\n**Prior art for the reachability primitive:** `plugin/bin/lib/reconcile/archive-merged.js` `localHasMerge` (~line 737) and `plugin/bin/lib/docs-health/commit-ref.js` (~line 148) both classify a commit against the integration ref with `git merge-base --is-ancestor`.\n\n**Probed API surface (2026-10-30, live against this repo):** the GraphQL `Issue` exposes `stateReason`, `timelineItems(itemTypes:[CLOSED_EVENT], last:1)` → `ClosedEvent.closer` (`PullRequest { number merged baseRefName mergeCommit{oid} }` | `Commit { oid }`), and `closedByPullRequestsReferences(first:N, includeClosedPrs:true)`. REST `repos/{o}/{r}/compare/{base}...{sha}` returns `status` (`identical`/`behind` = the sha is an ancestor of base).\n\n## Deliverables\n\n1. **Blocker-landing module.** New `plugin/bin/lib/preflight-records/blocker-landing.js`. It has three parts:\n   - A pure batched, aliased GraphQL query builder. For each blocker number it requests `state`, `stateReason`, the last `ClosedEvent.closer`, and merged `closedByPullRequestsReferences` with `mergeCommit{oid}`.\n   - A pure classifier mapping one blocker node plus a reachability answer to `{ blocker, verdict, commit, via }`. The verdict is one of:\n     - `open`: the blocker is still OPEN.\n     - `landed`: at least one candidate closing commit is reachable from `origin/{integration-branch}`.\n     - `unlanded`: there are candidate commits, but none is reachable.\n     - `not-applicable`: closed with `stateReason` `NOT_PLANNED` or `DUPLICATE`, which carries no code.\n     - `undetermined`: closed `COMPLETED` with no closing PR or commit found, or a reachability probe failed.\n   - An injectable-runner fetch function (`gh-api-module-pattern` seam). It resolves reachability per candidate commit through the REST compare API (`identical`/`behind` → reachable; `ahead`/`diverged` → not; any error → undetermined for that candidate). This means no local `git fetch` and no dependence on the caller's checkout.\n\n   Candidate commits are taken from the `ClosedEvent.closer`: a merged PR's `mergeCommit.oid`, or a `Commit`'s `oid`. When the closer is null (a manual close), they fall back to every merged `closedByPullRequestsReferences` PR's `mergeCommit.oid`.\n2. **`preflight-records.js --blocker-landing`.** A new additive flag on `plugin/bin/preflight-records.js`, paired with the existing `--integration-branch` (default `main`). It runs the module over every record's **out-of-run** blockers: blockers not among the positional numbers, since in-run blockers are built inside the same run. Each record in the envelope gains `blockerLanding: [{blocker, verdict, commit, via}]`. Without the flag, the output is byte-identical to today's. The flag is documented in `--help` and the header comment. Under `--records-json` (no `gh`), every out-of-run closed blocker reads `undetermined`, and one stderr line names why.\n3. **Multi-spec rule.** Update `plugin/skills/flow/multispec-dependency-ordering.md`'s out-of-run section and `plugin/skills/flow/multi-spec.md` Validation step 3's call so that `/flow` passes `--blocker-landing` and applies these rules per out-of-run blocker:\n   - `open` → hard fail (today's `pending` rule, now mechanical).\n   - `unlanded` → hard fail, stopping before Step 2.8 claims anything. The message names the blocker, its closing commit, and `origin/{integration-branch}`. It gives two paste-ready escapes: merge that commit into the integration branch, or remove the `blocked-by` edge.\n   - `landed` / `not-applicable` → satisfied.\n   - `undetermined` → proceed, and write one `SKIP` line per blocker to the run's decision log (`log-decision.js`), naming the reason.\n4. **Single-record pre-flight substep.** Add a new substep to `/flow` Step 2 (`plugin/skills/flow/SKILL.md`'s Step 2 list plus its procedure in `plugin/skills/flow/validation.md`). For one record target, it runs `preflight-records.js {n} --blocker-landing --integration-branch \"$INTEGRATION_BRANCH\"` (`$INTEGRATION_BRANCH` per `_shared/integration-branch.md`) and applies the same per-verdict rules as Deliverable 3. Every blocker of a single-record run is out-of-run, so this is the identical rule. It returns BLOCKED on `open`/`unlanded`, before Step 2.8 claims. For a record with no `blocked-by` edges it makes no extra call. Multi-spec runs keep using Validation step 3's single call and never run this substep a second time.\n5. **`gh`-absent path.** `plugin/skills/flow/multispec-preflight-failure.md` states that under the `--records-json` path, blocker landing is `undetermined`, with the logged `SKIP` that implies.\n6. **Tests** under `tests/bin-lib/preflight-records/`:\n   - Classifier cases for all five verdicts, including:\n     - a closer PR merged into a non-integration base, the incident shape (`unlanded`);\n     - a null closer with a merged `closedByPullRequestsReferences` fallback;\n     - mixed candidates where one is reachable (`landed`);\n     - a compare-API error (`undetermined`).\n   - A CLI test that `--blocker-landing` excludes in-run blockers, and that output without the flag is unchanged.\n\n## Acceptance Criteria\n\n- A fixture reproducing the incident (out-of-run blocker CLOSED/COMPLETED, closer PR merged with base `production`, compare API reporting `diverged` against the integration branch) yields `verdict: 'unlanded'` with that PR's merge commit in `commit`.\n- A closed blocker whose closer PR's merge commit compares `behind` or `identical` against `origin/{integration-branch}` yields `landed`. A blocker closed `NOT_PLANNED` or `DUPLICATE` yields `not-applicable`. A `COMPLETED` blocker with a null closer and no merged closing PR yields `undetermined`.\n- `preflight-records.js 10 11 --blocker-landing --integration-branch dev`, where #11 is blocked by #10 and by out-of-run #5, reports landing for #5 only. #10 is in-run and never appears in `blockerLanding`.\n- `preflight-records.js` output without `--blocker-landing` is byte-identical to the pre-change output on the existing CLI fixtures.\n- `multispec-dependency-ordering.md` names all five verdicts and their outcomes. An `unlanded` out-of-run blocker stops the run before claiming, with a message carrying the blocker number, the commit sha, the integration branch, and both escapes as paste-ready commands.\n- A single-record `/flow #N` whose out-of-run blocker is `unlanded` or `open` stops at the new Step 2 substep, before Step 2.8's claim. A record with no `blocked-by` edges runs the substep as a no-op, with no `preflight-records.js` call.\n- An `undetermined` verdict never stops a run. It writes one `SKIP` decision-log line per blocker.\n- `npm test` passes, including the existing preflight-records and `multispec-preflight-failure-conformance` suites.\n- **Decision (plan review, 2026-10-31):** When the blocker query fails as a whole (the call that fetches blocker state fails outright), the result is not `undetermined`: the run stops before Step 2.8's claim, under every `work-links` mode, with a message naming the failed query. `undetermined` stays reserved for one blocker whose landing cannot be judged, and the criterion above that an `undetermined` verdict never stops a run applies only to that per-blocker case. (Plan-review Q1.)\n- **Decision (plan review, 2026-10-31):** Candidate commits are the union of the recorded closing source and the issue's linked closing PRs, so a fix merged into `dev` by a second PR counts as landed. The Technical Approach governs; Deliverable 1's \"only when nothing is recorded as closing it\" wording is superseded. (Q2.)\n- **Decision (plan review, 2026-10-31):** The criterion above that a record with no `blocked-by` edges makes no `preflight-records.js` call applies only under `work-links: body-text`. Under `work-links: native`, that call is how a record's blockers are read, so it still runs, and the substep is a no-op when it returns no blockers. (Q3.)\n- **Decision (plan review, 2026-10-31):** Under `work-backend: local-files`, the single-record blocker-landing check is skipped entirely, the way Step 2.8 skips itself: no `preflight-records.js` call and no log line. (Plan-review Q4: Reading A.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nStop `/flow` before it builds when a closed blocker's merge never reached the integration branch.\n\n## Technical Approach\n\nKeep the reachability judgment in one pure module beside `merge-gate.js` and `waves.js`, wired through the existing `preflight-records.js` call. That way multi-spec gets it in the call it already makes, and single-record gets it from one new call. The new GraphQL builder is separate from `buildNativeDependencyQuery`, which stays unchanged for its dispatch and wrap-up consumers. It queries the *blockers* (not the dependents), so it works identically under `work-links: native` and `body-text`: blocker numbers come from the existing `blockedBy` field either way.\n\nReachability goes through the REST compare API rather than local `git merge-base --is-ancestor`. The pre-flight runs before any worktree exists and may run from a stale or shallow checkout. Compare answers against the remote integration branch with no fetch and no local state. The archive-merged and commit-ref modules remain the house examples for the three-way reachable / unreachable / unverifiable split, and the classifier mirrors that split (`undetermined` = unverifiable).\n\n\"Landed if any candidate commit is reachable\" is deliberate. A blocker closed by a production hotfix PR and separately merged into `dev` by a second PR must pass. Requiring every candidate to land would block real work.\n\n`unlanded` stops before claiming, because the pre-flight already returns BLOCKED for hard fails and the auto-mode contract permits pre-Manifesto pre-flight stops. A warning-and-continue would reproduce the incident: a full build on a base missing the prerequisite.\n\n### Key Files\n\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — new: query builder, classifier, injectable fetch with compare-API reachability\n- `plugin/bin/lib/preflight-records/preflight-records.js` — out-of-run blocker set; `blockerLanding` per record\n- `plugin/bin/preflight-records.js` — `--blocker-landing` flag, usage, `--help`, header comment, `--records-json` degrade line\n- `plugin/skills/flow/multispec-dependency-ordering.md` — out-of-run rule over the five verdicts\n- `plugin/skills/flow/multi-spec.md` — Validation step 3 call adds `--blocker-landing`\n- `plugin/skills/flow/validation.md` — new single-record blocker-landing substep\n- `plugin/skills/flow/SKILL.md` — Step 2 list names the new substep\n- `plugin/skills/flow/multispec-preflight-failure.md` — `gh`-absent path: landing undetermined\n- `tests/bin-lib/preflight-records/blocker-landing.test.js` — new: classifier and fetch tests\n- `tests/bin-lib/preflight-records/` — CLI flag test (existing suite file for `preflight-records.js`)\n\n## Gotchas\n\n- **Single-record behavior change.** Today `/flow #N` ignores `blocked-by` entirely, so after this change a human-invoked run with an *open* out-of-run blocker stops where it used to build. This matches `flow/SKILL.md`'s own anti-pattern row (\"Running flow on specs with unmet prerequisites\") and multispec-dependency-ordering's \"the dependency check is the same regardless\" rule. Dispatched runs are unaffected, because dispatch's queue already excludes open blockers.\n- **Cherry-picks read `unlanded`.** A blocker fix cherry-picked onto the integration branch has a different sha from the closer PR's merge commit, so it stops the run. The stop message names the commit so a human can confirm, and the remove-the-edge escape covers it.\n- **Manual closes are common here.** Under `pr-first` with an integration branch that differs from GitHub's default, GitHub does not auto-close the issue on merge. A manually closed issue has a null `closer`, and resolves only through a `closedByPullRequestsReferences` link from a closing keyword in the PR body. Without that link the verdict is `undetermined` (proceed + `SKIP`), never a stop.\n- **Compare-API cost.** There is one REST call per candidate commit, and only for closed out-of-run blockers. Records without `blocked-by` edges pay nothing.\n- **Dispatch's queue-pull scope.** Dispatch's queue-pull open-blocker exclusion still treats a closed blocker as satisfied when *selecting* a record. The `/flow` pre-flight is where the landing check binds. A dispatched record with an unlanded blocker is still selected by dispatch, then stopped by `/flow`'s Step 2 substep.\n\n## Original request\n\nflow: a closed blocker is treated as satisfied even when its merge never reached the integration branch\n\n**Summary:** `/claude-tweaks:flow`'s pre-flight treats a `blocked-by` prerequisite as satisfied when the blocking issue is closed, without checking that the blocker's merge commit is reachable from the integration branch.\n\n**Kind:** Gap\n\n**Affected component:** flow — multi-spec pre-flight (`bin/preflight-records.js` `blockedBy` / `openBlocker`) and the single-record blocked-by check\n\n**Use case:** A blocker issue was closed by a PR that (by mistake) merged into the production branch instead of the configured integration branch. The dependent record's pre-flight reported `openBlocker: null` and the run built on an integration-branch base that did not contain the blocker's code. The gap surfaced only mid-build, when the implementer found the pre-blocker version of a file the dependent spec assumed was already changed. A check that the blocker's closing PR's merge commit (or the closing commit) is an ancestor of `origin/{integration-branch}` — and a warning or stop when it is not — would have caught it before claiming.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-3f379c65 -->\n\n\n",
-        "createdAt": "2026-10-29T10:42:31Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4553,
-        "state": "OPEN",
-        "title": "flow: a closed blocker is treated as satisfied even when its merge never reached the integration branch",
-        "updatedAt": "2026-10-31T20:40:42Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3618,96 +3251,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2538, #3193, #3878, #3931, #3976, #3990, #4058, #4076, #4077, #4085, #4086, #4087, #4088, #4110, #4113, #4209, #4217, #4287, #4343, #4345, #4346, #4366, #4433, #4456, #4492\n\n## Current State\n\n#2538 (closed) taught `wrap-up-pack`, `resolve-blockers`, `materialize` and `preflight-records` to derive the GitHub host from `origin`. It added `plugin/bin/lib/repo-resolve.js`: `parseRepo` returns `{host, owner, repo}`, `repoSlug` returns a host-qualified `host/owner/repo` off github.com, and `repoResolutionNote` covers the rest. The fix was per call site. 30 `plugin/bin` files still spawn `gh` directly (`execFileSync('gh'` / `spawnSync('gh'` / `execFile('gh'`), and nothing enforces that a new call site passes the host.\n\nObserved on 6.156.1, origin `https://<org>.ghe.com/<org>/<repo>.git`, `gh` authenticated to that host, `GH_HOST` not exported. A `pr-first` `/claude-tweaks:flow #N` through `/claude-tweaks:wrap-up #N merge` showed:\n\n- `pr-checklist.js --run … --phase wrap-up` exits 5: `gh pr view failed on PR #N: spawnSync gh ETIMEDOUT`, 3/3, and also via `phase-exit.js`, so the checklist row stays unflipped. `plugin/bin/pr-checklist.js:170` calls `gh pr view <n> --json body` with no repo or host.\n- `compose-subject.js N --tag human-approved --pr N` exits 3: `gh issue view N failed: spawnSync gh ETIMEDOUT`. Its GraphQL fallback already passes `--hostname` (`plugin/bin/lib/compose-subject.js:217`); the `issue view` path does not.\n- `wrap-up-engine.js verify` reports acceptance-labeling `unknown`: its GraphQL call resolves `<org>/<repo>` on github.com (\"Could not resolve to a Repository\"). `plugin/bin/lib/wrap-up/engine-verify.js:1022` passes `--repo owner/repo`, not `repoSlug(...)`.\n- The `wrap-up-pack.js` probes also reached github.com.\n- With `GH_HOST=<org>.ghe.com` exported, every one succeeded. Plain `gh … -R <org>.ghe.com/<org>/<repo>` worked in the same session, so the fault is the missing host, not connectivity.\n\n## Deliverables\n\n1. One shared `gh` invocation seam in `plugin/bin/lib/` (extend `repo-resolve.js` or add a sibling) that resolves `origin`'s host once per process and, off github.com, sets `GH_HOST` in the child env. Explicit `-R`/`--repo`/`--hostname` args still win. It carries the existing `GH_TIMEOUT_MS` bound and `windowsHide`.\n2. Route every `gh` call site in `plugin/bin/**` through the seam. That covers at least `pr-checklist.js`, `compose-subject.js`'s `issue view` path, `lib/wrap-up/engine-verify.js` (and switch its `--repo` arguments to `repoSlug`), and the `wrap-up-pack` probes. Replace the per-site `--hostname` logic where the seam now covers it.\n3. A conformance test that fails if any `plugin/bin/**/*.js` file spawns `gh` outside the seam, with an explicit allow-list for the seam itself and for call sites that already pass a host-qualified `-R`.\n4. A behavioral test that runs `pr-checklist.js` and `compose-subject.js` against a fake `*.ghe.com` origin with a fake `gh` on PATH, and asserts the child saw `GH_HOST=<org>.ghe.com` or a host-qualified `-R`.\n\n## Acceptance Criteria\n\n- On a `*.ghe.com` origin with no `GH_HOST` exported, `pr-checklist.js`, `compose-subject.js`, `wrap-up-engine.js verify` and the `wrap-up-pack` probes all send their `gh` calls to the enterprise host (the fake-`gh` test sees the host).\n- On a github.com origin, the `gh` argument lists and child env are unchanged: no `GH_HOST` is injected, and existing call-shape tests pass as they are.\n- The conformance test fails when a raw `execFileSync('gh', …)` is added to any `plugin/bin` file (verified by adding one), and passes with the seam in place.\n- An exported `GH_HOST` set by the user is never overwritten.\n- **Decision (plan review, 2026-10-31):** `GH_HOST` is injected only for a known GitHub host: one ending in `.ghe.com`, one listed in gh's `hosts.yml`, or any host when an enterprise-token env var is set. SSH host aliases such as `github-work` get no injection. Deliverable 1 is amended to this. (Plan-review Q1: Reading B.)\n- **Decision (plan review, 2026-10-31):** Any explicit `-R`/`--repo`/`--hostname` suppresses injection; a bare `owner/repo` slug means github.com, per `repoSlug`'s contract. (Q2: Reading A.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nOn GitHub Enterprise remotes, the PR checklist, merge-subject, wrap-up verification and wrap-up probes now talk to your enterprise host without exporting `GH_HOST` by hand.\n\n## Technical Approach\n\n#2538 fixed this per call site, and new call sites regressed it. The reporter offered `-R <host>/<owner>/<repo>` per call or `GH_HOST` in the child env. Both go into one seam: `GH_HOST` covers subcommands that take no `-R` (`gh api graphql`), and host-qualified `-R` stays where a call already names the repo. The conformance test is what keeps a future call site from regressing again, so it is a deliverable, not a nice-to-have.\n\n### Key Files\n\n- `plugin/bin/lib/repo-resolve.js` — host resolution and the shared `gh` seam\n- `plugin/bin/pr-checklist.js` — `gh pr view` at :170 through the seam\n- `plugin/bin/lib/compose-subject.js` — `issue view` path through the seam; drop the :217 one-off\n- `plugin/bin/lib/wrap-up/engine-verify.js` — `--repo` at :1022 to `repoSlug`, GraphQL through the seam\n- `plugin/bin/wrap-up-pack.js` — probes through the seam\n- `tests/` — conformance scan over `plugin/bin/**` plus the fake-`ghe.com` behavioral test\n\n## Gotchas\n\n- Do not resolve the host by running `git remote get-url origin` from the hook hot path on every call. Memoize per process, and fall back to \"no host\" (github.com) when `origin` is absent, as `parseRepo` returning null already implies.\n- The win32 path simulation preload does not exercise this. Use the fake-`gh` PATH shim the existing gh-absent tests use, which is symlink-only on PATH.\n- `GH_HOST` changes which host `gh auth` checks. A user authenticated to both hosts is unaffected, but log `repoResolutionNote` once, so a wrong derivation is visible.\n\n## Original request\n\nbin/ gh calls: GitHub Enterprise host dropped again (regression of #2538)\n\n**Summary:** On a GitHub Enterprise Cloud remote (`<org>.ghe.com`), several `bin/` CLIs call `gh` without the enterprise host, so they time out or resolve the repo on github.com. Exporting `GH_HOST` by hand works around it. This looks like a regression of #2538.\n\n**Kind:** Defect\n\n**Affected component:** `bin/` CLIs that shell out to `gh` without passing the remote's host: `pr-checklist.js` (also reached through `phase-exit.js`), `compose-subject.js`, `wrap-up-engine.js verify` (acceptance-labeling check), and the `wrap-up-pack.js` probes.\n\n**Repro steps:**\n1. Use a project whose `origin` is a GitHub Enterprise Cloud host (`https://<org>.ghe.com/<org>/<repo>.git`), with `gh` authenticated to that host and no `GH_HOST` exported.\n2. Run a `pr-first` `/claude-tweaks:flow #N` through wrap-up and its merge (`/claude-tweaks:wrap-up #N merge`).\n\n**Expected vs. actual:**\nExpected: every CLI derives the host from `origin`, as #2538's fix made `wrap-up-pack` / `materialize` do, and talks to the enterprise host.\nActual:\n- `pr-checklist.js --run … --phase wrap-up` exits 5 with `gh pr view failed on PR #N: spawnSync gh ETIMEDOUT`, reproduced 3/3 times. Via `phase-exit.js`, this leaves the PR checklist row unflipped.\n- `compose-subject.js N --tag human-approved --pr N` exits 3 with `gh issue view N failed: spawnSync gh ETIMEDOUT`. With `GH_HOST=<org>.ghe.com` it succeeds.\n- `wrap-up-engine.js verify` reports acceptance-labeling as `unknown` with `gh api graphql … -f owner=<org> -f repo=<repo>` → `Could not resolve to a Repository with the name '<org>/<repo>'`. The graphql call goes to github.com.\n- `release-claim.js` worked when `GH_HOST` was exported; it wasn't tried without it.\n- In the same session, plain `gh … -R <org>.ghe.com/<org>/<repo>` calls worked fine. The fault is the missing host, not connectivity.\n\n**Suggested fix:** route every `gh` invocation in `bin/` through the shared repo resolver's host: pass `-R <host>/<owner>/<repo>`, or set `GH_HOST` in the child env. Add a test that runs each CLI against a fake `*.ghe.com` remote, so a new call site can't regress silently.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-73cbcd4f -->\n\n\n",
-        "createdAt": "2026-10-28T10:40:25Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4505,
-        "state": "OPEN",
-        "title": "bin/ gh calls: GitHub Enterprise host dropped again (regression of #2538)",
-        "updatedAt": "2026-10-31T20:40:34Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
