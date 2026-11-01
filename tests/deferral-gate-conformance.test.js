@@ -262,12 +262,15 @@ const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug
 function assertDeferKeepPathsQualified(md) {
   const lines = md.split('\n').filter((l) => DEFER_KEEP_PATH_RE.test(l));
   assert.ok(lines.length >= 4, `expected at least 4 Defer/Keep Resolution-path lines, found ${lines.length}`);
-  for (const l of lines) assert.ok(l.includes('spec-qualified in a multi-spec run'), `a Defer/Keep line writes a bare staged path: ${l.slice(0, 80)}`);
+  for (const l of lines) {
+    assert.ok(l.includes('spec-qualified in a multi-spec run'), `a Defer/Keep line writes a bare staged path: ${l.slice(0, 80)}`);
+  }
 }
 function exceptionSentence(paragraph) {
   const i = paragraph.indexOf('The one exception:');
   assert.ok(i >= 0, 'no reopen exception sentence');
-  return paragraph.slice(i, paragraph.indexOf('Ledger origin).', i) + 'Ledger origin).'.length);
+  const close = 'Ledger origin).';
+  return paragraph.slice(i, paragraph.indexOf(close, i) + close.length);
 }
 
 function assertLedgerOrigin(section) {
@@ -293,17 +296,31 @@ function assertReopenException(paragraph) {
   const exception = paragraph.indexOf('The one exception:');
   assert.ok(rule >= 0, 'the "never a reopen" rule is gone');
   assert.ok(exception > rule, 'the reopen exception must follow the "never a reopen" rule');
-  for (const anchor of ['a `deferred` row whose Resolution names a staged record proposal', 'returns to `open`', 'its deferral never completed', '`wrap-up/refused-proposals.md`'])
+  for (const anchor of ['a `deferred` row whose Resolution names a staged record proposal', 'returns to `open`', 'its deferral never completed', '`wrap-up/refused-proposals.md`']) {
     assert.ok(paragraph.includes(anchor), `the reopen exception is missing: ${anchor}`);
+  }
 }
 function assertSpecQualifiedPath(paragraph) {
-  assert.ok(paragraph.includes('In a multi-spec run,') && paragraph.includes('that path is written spec-qualified — `spec-{N}/staged/{name}`'), 'ledger-format.md does not state the spec-qualified staged path');
+  const stated = paragraph.includes('In a multi-spec run,') && paragraph.includes('that path is written spec-qualified — `spec-{N}/staged/{name}`');
+  assert.ok(stated, 'ledger-format.md does not state the spec-qualified staged path');
 }
 function assertReopeningRowPointer(row) {
   assert.ok(row.includes("`_shared/ledger-format.md`'s Resolution-text requirements"), 'the anti-pattern row does not point at the exception');
 }
 function assertStep3Pointer(md) {
   assert.ok(flat(md).includes("(`spec-{N}/staged/review-followup-{n}.md` in a multi-spec run, per `_shared/ledger-format.md`'s Resolution-text requirements)"), 'step3-routing.md does not spec-qualify its ledger Resolution path');
+}
+const RATIONALE = 'each number their own';
+function assertRationaleLivesInLedgerFormatOnly(ledgerText, refusedText, step3Text) {
+  assert.ok(resolutionTextParagraph(ledgerText).includes(RATIONALE), 'ledger-format.md no longer states the spec-qualified path rationale');
+  assert.ok(!flat(refusedText).includes(RATIONALE), 'refused-proposals.md restates the spec-qualified path rationale');
+  assert.ok(!flat(step3Text).includes(RATIONALE), 'step3-routing.md restates the spec-qualified path rationale');
+}
+function assertRefusalLogAndDryRun(md) {
+  const f = flat(md);
+  for (const anchor of ['ledger row reopened, staged file removed', 'its reopened ledger row', 'the staged-file deletion are previewed']) {
+    assert.ok(f.includes(anchor), `refused-proposals.md is missing: ${anchor}`);
+  }
 }
 
 const OLD_FIRST = flat("When the refused proposal came from a ledger item (`staged/ledger-record-*.md`): set that item's status back to `open` with note `proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate resurfaces it on the next resolve; delete the staged file (the ledger item is the durable trace).");
@@ -328,12 +345,6 @@ test('AC1.1 go-red: dropping the "Today\'s producers are" sentence fails the pos
   assert.notEqual(mutated, s);
   assert.throws(() => assertLedgerOrigin(mutated), /Ledger origin is missing/);
 });
-const RATIONALE = 'each number their own';
-function assertRationaleLivesInLedgerFormatOnly(ledgerText, refusedText, step3Text) {
-  assert.ok(resolutionTextParagraph(ledgerText).includes(RATIONALE), 'ledger-format.md no longer states the spec-qualified path rationale');
-  assert.ok(!flat(refusedText).includes(RATIONALE), 'refused-proposals.md restates the spec-qualified path rationale');
-  assert.ok(!flat(step3Text).includes(RATIONALE), 'step3-routing.md restates the spec-qualified path rationale');
-}
 test('AC1.1: the rationale for the spec-qualified path lives in ledger-format.md only', () => {
   assertRationaleLivesInLedgerFormatOnly(LEDGER, REFUSED_MD, STEP3_ROUTING);
 });
@@ -379,11 +390,6 @@ test('Defer/Keep go-red: stripping the pointer from one such line fails the pin'
   assert.notEqual(mutated, LEDGER);
   assert.throws(() => assertDeferKeepPathsQualified(mutated), /bare staged path/);
 });
-function assertRefusalLogAndDryRun(md) {
-  const f = flat(md);
-  for (const anchor of ['ledger row reopened, staged file removed', 'its reopened ledger row', 'the staged-file deletion are previewed'])
-    assert.ok(f.includes(anchor), `refused-proposals.md is missing: ${anchor}`);
-}
 test('refused-proposals.md: a ledger-origin refusal logs the reopen, names the reopened row as the way out, and previews the deletion under --dry-run', () => {
   assertRefusalLogAndDryRun(REFUSED_MD);
 });
@@ -402,7 +408,9 @@ test('AC5.2: no DEFER_REASONS value in the edited spans', () => {
     step3Parenthetical(STEP3_ROUTING),
     reopeningRow(LEDGER_SKILL),
   ];
-  for (const v of DEFER_REASONS) for (const s of spans) assert.ok(!s.includes(v), `edited text names Defer-reason value ${v}`);
+  for (const v of DEFER_REASONS) {
+    for (const s of spans) assert.ok(!s.includes(v), `edited text names Defer-reason value ${v}`);
+  }
 });
 
 // --- #623: born-shaped matrix rows + composer provenance ---
