@@ -108,9 +108,9 @@ function pluginRoot() {
 // #1143: the one verb table. Each key is a dispatch key — the `hooks.js <verb>`
 // argv token — and each entry carries that verb's usage line and its `run(argv)`
 // handler (the `run{Verb}` functions below, one per verb; see docs/plugin-structure.md's
-// hooks.js line). One table feeds the `--help`/`-h` intercept in main() below
-// (membership: a verb absent from here gets no guard, by design — the EVENTS
-// names are invoked by the harness via stdin JSON, never probed with a `--help`
+// hooks.js line). One table feeds the unknown-flag guard in main() below, which also
+// intercepts `--help`/`-h` (membership: a verb absent from here gets no guard, by design —
+// the EVENTS names are invoked by the harness via stdin JSON, never probed with a `--help`
 // flag, and never fell through to the implicit-run-dir-guess hazard #1143
 // closed), the derived `USAGE` map, dispatch, and the usage listing an unknown
 // or missing verb prints. record-pr's and spec-status's own internal "usage:"
@@ -157,19 +157,16 @@ function usageText() {
     + `  <event>  (harness hook events, JSON on stdin: ${EVENTS.join(', ')})\n`;
 }
 
-const HELP_FLAGS = new Set(['--help', '-h']);
-
-// #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
-// verbs (archive-run too, since it moves files and commits — #4773) plus the
-// read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the
-// keys of the table below. The unknown-flag guard in main() consults these
-// sets and supersedes HELP_FLAGS for exactly these verbs: `--help`/`-h` are
-// simply never declared, so they fall out as "unknown" the same as a genuine
-// typo. The table gates flags only: archive-run keeps its ctxLib.resolveRunDir
-// fallback, because unambiguousOnly is chosen per call site (resolveOpts),
-// not by this table. Every other resolveRunArg caller (check-resume-freshness,
-// check-staged-inventory, check-session-residue) has no entry here and keeps
-// today's HELP_FLAGS-only guard and ctxLib.resolveRunDir fallback, unchanged.
+// #1012, #4777: declared-flag sets, one per VERBS verb — exactly the keys of the
+// table below. The unknown-flag guard in main() consults these sets for every
+// verb and fails closed: a verb with no entry refuses every flag, and a flagless
+// verb carries `[]`. `--help`/`-h` are never declared; main() intercepts both
+// anywhere in the argument list (value positions included) before the
+// undeclared-flag scan.
+// tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
+// flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
+// unambiguousOnly is chosen per call site (resolveOpts), not by this table —
+// the same holds for every resolveRunArg caller.
 const KNOWN_FLAGS = {
   'archive-run': ['--run'],
   'close-run': ['--run'],
@@ -189,24 +186,43 @@ const KNOWN_FLAGS = {
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
   'check-pass-reentry': ['--run', '--online'],
+  'resolve-run-dir': ['--spec-slug', '--mode', '--standalone', '--create', '--root-only', '--archived'],
+  'sweep-shadow': ['--run', '--worktree'],
+  'adopt-run-dir': ['--run', '--worktree'],
+  'check-resume-freshness': ['--run'],
+  'check-staged-inventory': ['--run'],
+  'check-session-residue': ['--run'],
+  'check-sibling-sessions': ['--record'],
+  reconcile: ['--dry-run', '--json', '--mcp-reachable', '--checks'],
+  'reconcile-summary': [],
+  'reconcile-background': [],
 };
 
 // Declared flags that consume the following token as a value — the
-// unknown-flag scan below must skip that token rather than risk misreading
-// it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger']);
+// unknown-flag scan below skips that token rather than reading it as a flag.
+// A "--" token in that position is refused instead: no declared value starts
+// with "--", and the handler would otherwise read the stray flag as the value.
+// One set for every verb: a flag name here takes a value on every verb that
+// declares it, so it must never be a boolean flag on another verb.
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
-// FULL argument list, not just a fixed position, matching #1143's own
-// "anywhere in the argument list" guarantee for --help.
+// FULL argument list, not just a fixed position. A token consumed as a value
+// is skipped, so main() checks --help and -h over every position separately
+// (#1143's "anywhere in the argument list" guarantee).
 function firstUnknownFlag(knownFlags, args) {
   const known = new Set(knownFlags);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (typeof a !== 'string' || !a.startsWith('--')) continue;
     if (!known.has(a)) return a;
-    if (VALUE_FLAGS.has(a)) i += 1; // skip this flag's own value
+    if (VALUE_FLAGS.has(a)) {
+      // A value flag followed by a "--" token has no value: refuse that token.
+      const next = args[i + 1];
+      if (typeof next === 'string' && next.startsWith('--')) return next;
+      i += 1; // skip this flag's own value
+    }
   }
   return null;
 }
@@ -1924,23 +1940,24 @@ async function main(argv) {
   // corruption hazard observed 2026-08-20 (see the now-removed docs/donts.md
   // bridging rule). Checked against the VERBS table, not a hardcoded verb
   // list, so a verb with no table entry gets no guard by design.
-  // #1012: for the flag-strict verbs (the KNOWN_FLAGS table), ANY undeclared --* argument (--help
-  // included — it is never declared) intercepts here, before resolveRunArg
-  // or any lib call ever runs. Every other VERBS-table verb keeps the
-  // narrower HELP_FLAGS-only guard unchanged.
-  if (verb && Object.hasOwn(KNOWN_FLAGS, cmd)) {
+  // #1012, #4777: ANY undeclared --* argument (--help included — it is never
+  // declared) intercepts here, before resolveRunArg or any lib call ever runs,
+  // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
+  // closed and refuses every flag. The refusal keeps the #1012/#1143 shape —
+  // usage on stdout, exit 0 (tests/hooks-help-guard.test.js pins it) — even for
+  // resolve-run-dir, whose callers capture stdout as a path: such a caller gets
+  // the usage line, not an empty value.
+  if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
-    // scan never sees it as a token to classify — checked separately here,
-    // same as --help itself (also never declared for any of these
-    // verbs, so it always falls out as "unknown" via the scan below too).
+    // scan never sees it. --help is checked in every position too: the scan
+    // skips the token after a VALUE_FLAGS member, so a --help sitting in a
+    // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
-    if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd], argsAfterCmd)) {
+    const hasHelpFlag = argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help');
+    if (hasHelpFlag || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
-  } else if (verb && argv.slice(3).some((a) => HELP_FLAGS.has(a))) {
-    process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
-    return 0;
   }
   if (verb) return verb.run(argv);
   if (!EVENTS.includes(cmd)) {
@@ -2030,4 +2047,4 @@ if (require.main === module) {
 // VERBS and its derived USAGE exported so tests/hooks-help-guard.test.js's
 // table-driven suite iterates the SAME verb table this dispatcher's --help/-h
 // guard and dispatch use, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE, VERBS };
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS };
