@@ -258,7 +258,11 @@ function step3Parenthetical(md) {
   assert.ok(i >= 0, 'step3-routing.md has no spec-qualified parenthetical');
   return f.slice(i, f.indexOf(')', i) + 1);
 }
-const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`/;
+// ledger-format.md's Defer/Keep writers phrase the Resolution path two ways: "names the staged path, `…`"
+// (the two Phase 2 auto-routes and the Keep bullet) and "naming the staged path (`…`" (the Defer bullet).
+// The floor of 4 is those four lines today; it keeps a rewording that stops this regex matching from
+// passing the per-line spec-qualification check on zero lines.
+const DEFER_KEEP_PATH_RE =/names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`/;
 function assertDeferKeepPathsQualified(md) {
   const lines = md.split('\n').filter((l) => DEFER_KEEP_PATH_RE.test(l));
   assert.ok(lines.length >= 4, `expected at least 4 Defer/Keep Resolution-path lines, found ${lines.length}`);
@@ -270,7 +274,9 @@ function exceptionSentence(paragraph) {
   const i = paragraph.indexOf('The one exception:');
   assert.ok(i >= 0, 'no reopen exception sentence');
   const close = 'Ledger origin).';
-  return paragraph.slice(i, paragraph.indexOf(close, i) + close.length);
+  const end = paragraph.indexOf(close, i);
+  assert.ok(end > i, 'the reopen exception sentence lost its closing "Ledger origin)."');
+  return paragraph.slice(i, end + close.length);
 }
 
 function assertLedgerOrigin(section) {
@@ -285,6 +291,7 @@ function assertLedgerOrigin(section) {
     '`staged/review-followup-*.md`',
     '`proposal refused — no defer reason`',
     'delete the staged file',
+    'only once the status write has landed',
     'that no `deferred` ledger row names',
     "`_shared/ledger-format.md`'s Location section's resolution rule",
     'Under `--dry-run`',
@@ -295,6 +302,7 @@ function assertReopenException(paragraph) {
   const rule = paragraph.indexOf('never a reopen.');
   const exception = paragraph.indexOf('The one exception:');
   assert.ok(rule >= 0, 'the "never a reopen" rule is gone');
+  assert.ok(exception >= 0, 'the reopen exception is missing: The one exception:');
   assert.ok(exception > rule, 'the reopen exception must follow the "never a reopen" rule');
   for (const anchor of ['a `deferred` row whose Resolution names a staged record proposal', 'returns to `open`', 'its deferral never completed', '`wrap-up/refused-proposals.md`']) {
     assert.ok(paragraph.includes(anchor), `the reopen exception is missing: ${anchor}`);
@@ -358,7 +366,7 @@ test('AC2.1 go-red: removing the exception sentence fails the pin', () => {
   const p = resolutionTextParagraph(LEDGER);
   const mutated = p.replace(/ The one exception:[^]*?Ledger origin\)\./, '');
   assert.notEqual(mutated, p);
-  assert.throws(() => assertReopenException(mutated));
+  assert.throws(() => assertReopenException(mutated), /reopen exception is missing/);
 });
 test('ledger-format.md spec-qualifies a multi-spec staged path, and step3-routing.md points at it (plan-review clarification)', () => {
   assertSpecQualifiedPath(resolutionTextParagraph(LEDGER));
