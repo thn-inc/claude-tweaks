@@ -1697,6 +1697,47 @@ test('#4559: `git stash drop` from the main checkout is silent', () => {
   assert.deepStrictEqual(out, {});
 });
 
+// #4548: killing a process by image or name matches every process of that name on the
+// machine, sibling sessions' dev servers included. The warning is run- and
+// location-independent, so every fixture runs in a plain temp dir (no git repo, no
+// policy file — which also keeps checkPowershellOpaqueCommand's deny out of the way).
+const killDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+const runKill = (cmd) => pre.run({ input: bashInput(cmd, killDir), runDir: null, runState: null, cwd: killDir });
+const assertKillWarning = (out) => {
+  assert.ok(out.json, 'expected a hook response');
+  assert.match(out.json.systemMessage, /by image or name/);
+  assert.match(out.json.systemMessage, /-sTCP:LISTEN/);
+  assert.ok(!(out.json.hookSpecificOutput && out.json.hookSpecificOutput.permissionDecision), 'a warning must not decide permission');
+};
+const silentKill = (out) => !out.json || (!out.json.systemMessage && !out.json.hookSpecificOutput);
+
+for (const cmd of [
+  'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f',
+  'Stop-Process -Name node', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
+  'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+  'Get-Process node | Stop-Process', 'TASKKILL /IM node.exe',
+  'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+  'pwsh -Command "Get-Process node | Stop-Process"', 'pwsh -c "Stop-Process -Name node"',
+  'cmd /c taskkill /IM node.exe', "sh -c 'pkill node'", 'bash -c "killall node"',
+]) {
+  test(`#4548: \`${cmd}\` warns about killing by image or name`, () => {
+    assertKillWarning(runKill(cmd));
+  });
+}
+
+test('#4548: a compound command with several name kills warns once', () => {
+  const out = runKill('npm run dev & sleep 1; pkill -f vite; killall node');
+  assertKillWarning(out);
+  assert.strictEqual(out.json.systemMessage.split('by image or name').length - 1, 1);
+});
+
+for (const cmd of ['kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"']) {
+  test(`#4548: \`${cmd}\` is PID-scoped and stays silent`, () => {
+    const out = runKill(cmd);
+    assert.ok(silentKill(out), `expected no warning for: ${cmd}, got ${JSON.stringify(out)}`);
+  });
+}
+
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree
 // --dispatch) bound to a REAL linked worktree denies git writes there until
 // /claude-tweaks:flow Step 3 writes {runDir}/config.yml. Every fixture hands

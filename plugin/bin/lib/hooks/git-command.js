@@ -1152,13 +1152,19 @@ function gitTargets(command, cwd, opts) {
 // module already accepts in exchange for never fabricating a false deny.
 const POWERSHELL_LEADS = new Set(['powershell', 'pwsh']);
 const POWERSHELL_OPAQUE_FLAGS = new Set(['-command', '-encodedcommand']);
+// A command word's name: lowercase, `.exe` and any directory dropped (Windows exe lookups are
+// case-insensitive, and `\` is a path separator there).
+function commandName(word) {
+  const lead = word.toLowerCase().replace(/\.exe$/, '');
+  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
+  return cut >= 0 ? lead.slice(cut + 1) : lead;
+}
+
 // The lead is matched on the word's value and on the word as typed (#4281), so an
 // unquoted `C:\Windows\System32\powershell.exe`, whose value has lost its backslashes,
 // still reads as powershell: the deny keeps erring toward the shape.
 function isPowershellLead(word) {
-  const lead = word.toLowerCase().replace(/\.exe$/, '');
-  const cut = Math.max(lead.lastIndexOf('/'), lead.lastIndexOf('\\'));
-  return POWERSHELL_LEADS.has(cut >= 0 ? lead.slice(cut + 1) : lead);
+  return POWERSHELL_LEADS.has(commandName(word));
 }
 
 function powershellOpaqueCommand(command, cwd) {
@@ -1174,6 +1180,185 @@ function powershellOpaqueCommand(command, cwd) {
     }
   });
   return found;
+}
+
+// #4548: which segments of a Bash command kill processes by image or name, for
+// pre-tool-use.js's warn-only checkProcessKillWarn. The process table is shared with
+// sibling sessions, so a kill that names no PID may take one down; a PID-scoped kill
+// (`kill 123`, `taskkill /PID 12`, `kill $(lsof -t -iTCP:3000)`) is never reported. Every
+// lead is a GUARDED_PROGRAM_WORDS.processKill word except `pgrep`/`pidof`/`get-process`
+// (each only arms a later `kill`/`Stop-Process`), `xargs`/`sudo` and the other command
+// wrappers (each only runs a segment led by one of those words), and the wrappers that
+// carry a command string: `sh`/`bash`/… `-c`, `cmd /c`, `powershell`/`pwsh` `-Command`/`-c`.
+// Their argument still carries a kill word, which the whitespace-splitting prefilter
+// reads. Command names match case-insensitively because `taskkill` and PowerShell cmdlets
+// are case-insensitive on Windows. A `PID eq {n}` filter is the only silent `/FI` filter.
+// `-EncodedCommand` (base64) is not decoded. A `kill` is also armed by a process listing piped
+// through `grep` (`ps aux | grep node | … | xargs kill`, `kill $(ps aux | grep node | …)`): a
+// `ps`-led segment before a `grep`/`egrep`/`fgrep`-led one arms the `kill` segments that FOLLOW the
+// pair (`kill 123; ps aux | grep node` stays silent, unlike `pgrep`, which arms command-wide), as does
+// a `$(ps …`/backtick opener inside the `kill` itself; a `ps` with `-p`/`--pid` is a PID lookup and arms nothing.
+// Deliberate narrow miss: a positional PowerShell command (`powershell "Stop-Process -Name node"`,
+// which Windows PowerShell 5.1 runs as `-Command`) is not scanned, here or in powershellOpaqueCommand —
+// only an explicit `-Command` (here also `-c`) is, like every best-effort parser in this module.
+// Deliberate narrow miss: a command substitution's
+// body (`echo $(pkill node)`, `git commit -m "$(pkill node)"`, backticks) is not scanned — the
+// shared segment walk keeps `$(…)` inside its enclosing segment's tokens and exposes no nested
+// segment, and widening that scanner is out of this parser's scope. Only the pgrep/pidof arming
+// reads into a substitution.
+const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
+const PROCESS_KILL_MAX_DEPTH = 4;
+// `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
+// The directory part excludes the substitution delimiters (a `$` may start a variable in the path:
+// `$($HOME/bin/pgrep node)`), so a run of openers inside one word is not rescanned.
+const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
+// `$(ps …` or `` `ps … `` — a kill fed by a process listing. The segment walk cuts the substitution
+// at its `|` (`kill -9 $(ps aux` | `grep node` | …), so the opener only arms a later `grep`-led
+// segment; a `|` kept inside one segment's text (a quoted substitution) is searched from the first
+// `ps` opener on, once, with a directory part that excludes `|` so each pipe rescans only its own word.
+const PS_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?ps(?:\.exe)?(?=[\s)`]|$)/i;
+const PIPE_TO_GREP_RE = /\|\s*(?:[^\s`()|]*[\/\\])?[ef]?grep(?=[\s)`'"]|$)/i;
+// A `ps` looking up given PIDs (`-p 123`, `-p123`, `-ep`, `--pid 5`, `--pid=5`) names no process by name.
+const PS_PID_FLAG_RE = /^(?:--pid(?:=.*)?|-[A-Za-z]*p\d*)$/;
+const PS_PID_FLAG_IN_TEXT_RE = /(?:^|\s)(?:--pid(?:=\S*)?|-[A-Za-z]*p\d*)(?=\s|$)/;
+const SHELL_COMMAND_FLAG_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
+const CMD_COMMAND_FLAG_RE = /^\/\/?[ck]$/i;
+const TASKKILL_IMAGE_FLAG_RE = /^(\/\/?|-)im$/i;
+const TASKKILL_FILTER_FLAG_RE = /^(\/\/?|-)fi$/i;
+const TASKKILL_PID_FILTER_RE = /^pid\s+eq\s+\d+$/i;
+const POWERSHELL_NAME_FLAG_RE = /^-(name|processname)(:.*)?$/i;
+const POWERSHELL_PID_FLAG_RE = /^-id(:.*)?$/i;
+const POWERSHELL_STOP_PID_FLAG_RE = /^-(id|inputobject)(:.*)?$/i;
+// Each command wrapper's value-taking flags: the word after one is its value, not the program.
+const PROCESS_KILL_WRAPPER_VALUE_FLAGS = Object.freeze({
+  sudo: new Set(['-u', '-g', '-U', '-C', '-D', '-h', '-p']),
+  doas: new Set(['-u', '-C']),
+  env: new Set(['-u', '-C']),
+  nice: new Set(['-n']),
+  timeout: new Set(['-s', '-k', '--signal', '--kill-after']),
+});
+const XARGS_VALUE_FLAGS = new Set(['-I', '-n', '-P', '-L', '-d', '-E', '-s', '-a']);
+const NO_FLAGS = new Set();
+
+// The index of the first word at or after `i` that is no flag, flag value, `NAME=value`
+// (when `assignments`) or the duration `timeout` takes first (when `duration`).
+function skipWrapperArguments(t, i, valueFlags, { assignments = false, duration = false } = {}) {
+  let wantDuration = duration;
+  while (i < t.length) {
+    const word = t[i];
+    if (word.length > 1 && word[0] === '-') i += valueFlags.has(word) ? 2 : 1;
+    else if (assignments && SIMPLE_ASSIGNMENT_RE.test(word)) i += 1;
+    else if (wantDuration) { wantDuration = false; i += 1; } else break;
+  }
+  return i;
+}
+
+// The names the word at `i` reads as: its value, and the word as typed (#4281), so an unquoted
+// `C:\Windows\System32\taskkill.exe`, whose value lost its backslashes, still reads as taskkill.
+function leadNames(t, quoting, i) {
+  const names = [commandName(t[i])];
+  if (typeof quoting.typed[i] === 'string') names.push(commandName(quoting.typed[i]));
+  return names;
+}
+
+// The index of the program a segment runs: past leading `NAME=value` words, command wrappers
+// (`sudo`, `env`, `timeout 10`, …) and `xargs`, with their flags and flag values.
+function processKillLead(t, quoting) {
+  let i = 0;
+  // A control keyword (`then pkill node`, `do kill $p`, `! taskkill …`) leads a segment the walk
+  // hands over whole. It counts only as a bare word, as compoundBodyEnd reads it (#4281).
+  const isControlKeyword = (k) => {
+    const raw = quoting.raw[k];
+    return raw !== undefined && COMPOUND_LEAD_WORDS.has(raw) && quoting.spanKinds[k] === 'b'.repeat(raw.length);
+  };
+  while (i < t.length && (SIMPLE_ASSIGNMENT_RE.test(t[i]) || isControlKeyword(i))) i += 1;
+  while (i < t.length) {
+    const names = leadNames(t, quoting, i);
+    const wrapper = names.find((n) => READER_WRAPPER_WORDS.has(n) || n === 'timeout');
+    // `command -v pkill` looks the program up; it runs nothing.
+    if (wrapper === 'command' && /^-[A-Za-z]*[vV]/.test(t[i + 1] || '')) return t.length;
+    if (wrapper) {
+      i = skipWrapperArguments(t, i + 1, PROCESS_KILL_WRAPPER_VALUE_FLAGS[wrapper] || NO_FLAGS, {
+        assignments: wrapper === 'env' || wrapper === 'sudo', duration: wrapper === 'timeout',
+      });
+    } else if (names.includes('xargs')) i = skipWrapperArguments(t, i + 1, XARGS_VALUE_FLAGS);
+    else return i;
+  }
+  return i;
+}
+
+function processKillLabels(command, cwd, depth) {
+  if (typeof command !== 'string' || depth > PROCESS_KILL_MAX_DEPTH || !/kill|stop-process/i.test(command)) return [];
+  const slots = []; // one per visited segment, in order: what it reports, and what a later arm could add
+  let pgrepSeen = false;
+  // A name-listing `ps` so far (one that is no PID lookup), and the slot index of the first `grep`-led
+  // segment after it: that pair arms the kill-led slots after it, and any kill whose own text holds the
+  // `$(ps` opener. Unlike pgrep, it is order-aware: `kill 123; ps aux | grep node` stays silent.
+  let psSeen = false;
+  let pairAt = -1;
+  let getProcessSeen = false;
+  forEachCommandSegment(command, cwd, (t, _effCwd, quoting, again) => {
+    if (again || !t.length) return;
+    const slot = { labels: [], killLed: false, stopConsumer: false, psOpener: false, psInline: false };
+    slots.push(slot);
+    // Joined, because the tokenizer splits a spaced `$( pgrep node )` after its `$(`.
+    const joined = t.join(' ');
+    if (PGREP_SUBSTITUTION_RE.test(joined)) pgrepSeen = true;
+    const psOpener = PS_SUBSTITUTION_RE.exec(joined);
+    if (psOpener) {
+      const tail = joined.slice(psOpener.index + psOpener[0].length);
+      if (!PS_PID_FLAG_IN_TEXT_RE.test(tail.split('|')[0])) {
+        psSeen = true;
+        slot.psOpener = true;
+        if (PIPE_TO_GREP_RE.test(tail)) slot.psInline = true;
+      }
+    }
+    const i = processKillLead(t, quoting);
+    if (i >= t.length) return;
+    const names = leadNames(t, quoting, i);
+    const is = (...words) => names.some((n) => words.includes(n));
+    const later = (test) => t.slice(i + 1).some((word) => test(word));
+    const recurse = (inner) => { if (inner !== undefined) slot.labels.push(...processKillLabels(inner, cwd, depth + 1)); };
+    if (is('pgrep', 'pidof')) pgrepSeen = true;
+    else if (is('ps')) { if (!later((word) => PS_PID_FLAG_RE.test(word))) psSeen = true; }
+    else if (is('grep', 'egrep', 'fgrep')) { if (psSeen && pairAt < 0) pairAt = slots.length - 1; }
+    else if (is('pkill', 'killall')) slot.labels.push(names.find((n) => PROCESS_KILL_WORDS.includes(n)));
+    else if (is('taskkill')) {
+      const filter = t.findIndex((word, j) => j > i && TASKKILL_FILTER_FLAG_RE.test(word) && j + 1 < t.length && !TASKKILL_PID_FILTER_RE.test(t[j + 1].trim()));
+      if (later((word) => TASKKILL_IMAGE_FLAG_RE.test(word)) || filter >= 0) slot.labels.push('taskkill');
+    } else if (is('kill')) {
+      if (later((word) => POWERSHELL_NAME_FLAG_RE.test(word))) slot.labels.push('kill');
+      else slot.killLed = true;
+    } else if (is('stop-process')) {
+      if (later((word) => POWERSHELL_NAME_FLAG_RE.test(word))) slot.labels.push('stop-process');
+      else if (!later((word) => POWERSHELL_STOP_PID_FLAG_RE.test(word))) slot.stopConsumer = true;
+    } else if (is('get-process')) {
+      if (!later((word) => POWERSHELL_PID_FLAG_RE.test(word))) getProcessSeen = true;
+    } else if (names.some((n) => KNOWN_SHELL_WORDS.has(n))) {
+      const j = t.findIndex((word, k) => k > i && SHELL_COMMAND_FLAG_RE.test(word));
+      if (j >= 0) recurse(t[j + 1]);
+    } else if (names.some((n) => POWERSHELL_LEADS.has(n))) {
+      const j = t.findIndex((word, k) => k > i && (word.toLowerCase() === '-command' || word.toLowerCase() === '-c'));
+      if (j >= 0 && j + 1 < t.length) recurse(t.slice(j + 1).join(' '));
+    } else if (is('cmd')) {
+      const j = t.findIndex((word, k) => k > i && CMD_COMMAND_FLAG_RE.test(word));
+      if (j >= 0 && j + 1 < t.length) recurse(t.slice(j + 1).join(' '));
+    }
+  });
+  for (const [at, slot] of slots.entries()) {
+    if (slot.labels.length) continue;
+    const psFed = slot.psInline || (pairAt >= 0 && (at > pairAt || slot.psOpener));
+    if ((pgrepSeen || psFed) && slot.killLed) slot.labels.push('kill');
+    else if (getProcessSeen && slot.stopConsumer) slot.labels.push('stop-process');
+  }
+  return slots.flatMap((slot) => slot.labels);
+}
+
+// One lowercased label per segment of `command` that kills by image or name (`'pkill'`,
+// `'killall'`, `'taskkill'`, `'kill'`, `'stop-process'`); a wrapper contributes its inner
+// command's labels. Empty when none. Wrapper nesting past PROCESS_KILL_MAX_DEPTH reads as none.
+function processKillByName(command, cwd) {
+  return processKillLabels(command, cwd, 0);
 }
 
 // Best-effort detection of non-git, non-Edit/Write direct file-write shapes in
@@ -3072,6 +3257,7 @@ const WRITE_SHAPES = Object.freeze(['cp', 'mv', 'tee', 'sed', 'perl', 'install',
 //   powershell: powershellOpaqueCommand's lead (`powershell`, `pwsh`) — pre-tool-use
 //          only (#3061); post-tool-use's POST_TOOL_USE_WORDS stays scoped to the
 //          git family, since this gate has nothing to check after the fact.
+//   processKill: processKillByName's leads — pre-tool-use only, matched case-insensitively by the prefilter (#4548); post-tool-use stays git-scoped
 // tests/hooks-bash-prefilter.test.js's differential corpus runs the real parsers
 // and fails when a targeted command's word is missing here — for the commands it
 // lists, so a parser keyed on a new word also needs a corpus line there.
@@ -3080,6 +3266,7 @@ const GUARDED_PROGRAM_WORDS = Object.freeze({
   mkdir: Object.freeze(['mkdir']),
   write: WRITE_SHAPES,
   powershell: Object.freeze([...POWERSHELL_LEADS]),
+  processKill: PROCESS_KILL_WORDS,
 });
 
 // Per-shape value-consuming flags. Wrong entries here shift which token is read
@@ -3411,7 +3598,7 @@ function mkdirTargets(command, cwd, opts) {
 }
 
 module.exports = {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, splitSegments, tokenize, forEachCommandSegment, skipGlobalFlags, findGitLead, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, PROCESS_KILL_WORDS, WRITE_SHAPES, GUARDED_PROGRAM_WORDS, redirectWriteTargets, redirectRawTargets, stripHeredocBodies, forEachShellSegment, keepLost, PIPELINE_STATE_DIR, subjectLine, namesPipelinesSegment,
   // The heredoc reader vocabularies, pinned against policy-schema-coverage.md's prose (#4149).
   DATA_READER_WORDS, READER_WRAPPER_WORDS, GIT_DATA_SUBCOMMANDS, INERT_NEIGHBOUR_WORDS,
 };

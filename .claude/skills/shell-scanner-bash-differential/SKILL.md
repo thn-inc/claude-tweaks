@@ -82,7 +82,7 @@ Bash decides where a word lands; the program decides what the word means. macOS'
 
 ## Project Conventions
 
-- A new guarded program word or parser needs its own line in the differential corpus in `tests/hooks-bash-prefilter.test.js` (`docs/hooks.md`, #3092). The prefilter and the five guard parsers must agree on every command in it.
+- A new guarded program word or parser needs its own line in the differential corpus in `tests/hooks-bash-prefilter.test.js` (`docs/hooks.md`, #3092). The prefilter and the six guard parsers must agree on every command in it.
 - The fail-closed cases are stated once, in `plugin/skills/_shared/policy-schema-coverage.md`'s coverage block. Its reader lists are pinned to `DATA_READER_WORDS`, `READER_WRAPPER_WORDS`, `GIT_DATA_SUBCOMMANDS` and `INERT_NEIGHBOUR_WORDS`, so changing a list means editing the prose in the same change.
 - Test titles name the record and the behavior (`#4149: …`), never review-round labels (m1, F2, round N). Test comments state what bash and the scanner do now, citing the record that set it: no `Fix round 1 (#3989):` or `#4481 round 2:` lead and no "an earlier revision of this branch", since the squash merge erases the history they narrate (#4483 rewrote about 25). A comparison with a released version (`before #4210 it did`) is fine.
 - Expected paths the scanner resolves go through `path.resolve` (`MAIN_F` in `tests/hooks-gate-coverage.test.js`), or the pin fails on win32.

@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, skipGlobalFlags, tokenize, redirectWriteTargets,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, resolveGitCommand, fileWriteTargets, mkdirTargets, powershellOpaqueCommand, processKillByName, skipGlobalFlags, tokenize, redirectWriteTargets,
 } = require('../plugin/bin/lib/hooks/git-command');
 
 test('plain commit resolves to cwd', () => {
@@ -605,6 +605,126 @@ test('an unrelated command, and a bare powershell invocation with no opaque flag
 
 test('an abbreviated flag form (-Com) is a deliberate, documented miss — not matched', () => {
   assert.strictEqual(powershellOpaqueCommand('powershell -Com "git push"', '/repo'), false);
+});
+
+// ─── processKillByName (#4548) ─────────────────────────────────────────────
+
+const hit = (c) => processKillByName(c, '/repo').length > 0;
+
+test('#4548: processKillByName flags image- and name-based kills', () => {
+  for (const c of [
+    'pkill node', 'killall node', 'taskkill /F /IM node.exe', 'taskkill /im node.exe /f', 'taskkill //F //IM node.exe',
+    'taskkill -im node.exe', 'Stop-Process -Name node', 'stop-process -name node', 'Stop-process -Name node',
+    'kill -Name node', 'Stop-Process -ProcessName:node', 'TASKKILL /IM node.exe', '/usr/bin/pkill node',
+    'C:\\Windows\\System32\\taskkill.exe /IM node.exe', 'sudo pkill node', 'sudo -u root pkill node',
+    'FOO=1 pkill node', 'env pkill node', 'env -u HOME FOO=1 pkill node', 'timeout 10 pkill node',
+    'timeout -s KILL 5 killall node', 'nohup killall node', 'command pkill node', 'exec pkill node',
+    'nice -n 5 pkill node', 'doas pkill node', 'time pkill node', 'sudo nice pkill node', 'sudo FOO=1 pkill node',
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName reads past control keywords, and arms on a spaced pgrep substitution', () => {
+  for (const c of [
+    'if true; then pkill node; fi', 'if pgrep node; then pkill node; fi', 'for p in $(pgrep node); do kill $p; done',
+    'while true; do killall node; done', '! taskkill /IM node.exe', 'if x; then :; else killall node; fi',
+    'kill $( pgrep node )', 'kill $(  pidof node)',
+  ]) assert.ok(hit(c), c);
+  // A quoted keyword is a command name, not a keyword (bash reserves no quoted word).
+  assert.ok(!hit('"then" pkill node'));
+});
+
+test('#4548: processKillByName does not scan a command substitution body (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('echo $(pkill node)', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('git commit -m "$(pkill node)"', '/repo'), []);
+});
+
+test('#4548: processKillByName does not read a positional PowerShell command (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('powershell "Stop-Process -Name node"', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('powershell Stop-Process -Name node', '/repo'), []);
+  assert.strictEqual(powershellOpaqueCommand('powershell "Stop-Process -Name node"', '/repo'), false);
+});
+
+test('#4548: processKillByName flags pgrep-fed kills, non-PID taskkill filters and Get-Process pipelines', () => {
+  for (const c of [
+    'kill $(pgrep node)', 'kill `pgrep node`', 'kill -9 $(pgrep -f vite)', 'pgrep -f x | xargs kill',
+    'pgrep node | xargs -n 1 kill', 'P=$(pgrep node); kill $P', 'kill $(pidof node)', 'kill $(/usr/bin/pgrep node)',
+    'kill $( /usr/bin/pgrep -f x)', 'kill $(pgrep.exe node)', 'kill $($HOME/bin/pgrep node)', 'kill $(${HOME}/bin/pgrep node)',
+    'kill `$BIN/pidof node`',
+    'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /F /fi "imagename eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
+    'taskkill /FI "USERNAME eq me" /F', 'taskkill /FI "STATUS eq NOT RESPONDING"', 'taskkill /FI "PID ne 0"',
+    'Get-Process node | Stop-Process', 'Get-Process -Name node | Stop-Process -Force',
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName flags a kill fed by a ps | grep name search', () => {
+  for (const c of [
+    "ps aux | grep node | awk '{print $2}' | xargs kill -9", "kill -9 $(ps aux | grep '[n]ode' | awk '{print $2}')",
+    "ps -ef | grep vite | awk '{print $2}' | xargs kill", "kill -9 `ps aux | grep node | awk '{print $2}'`",
+    "sudo ps aux | grep node | xargs kill", "kill $(/bin/ps -ef | /usr/bin/grep vite | awk '{print $2}')",
+    "kill $( ps aux | grep node )", 'kill "$(ps aux | grep node)"', "kill '$(ps aux | grep node)'",
+    "ps aux | egrep node | awk '{print $2}' | xargs kill", "ps aux | fgrep node | xargs kill", "ps aux | grep -E 'node|vite' | xargs kill",
+    "ps aux | grep node; kill 123",
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName leaves a PID-scoped kill alone next to a ps | grep, before it or fed by a PID lookup', () => {
+  for (const c of [
+    'kill 123; ps aux | grep node', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t); ps aux | grep node',
+    'ps -p $PID | grep -q node && kill $PID', 'ps -o comm= -p 123 | grep -q vite && kill 123',
+    'ps -p123 | grep -q vite && kill 123', 'ps -ep 123 | grep vite && kill 123', 'ps --pid 123 | grep vite && kill 123',
+    'ps --pid=123 | grep vite && kill 123', 'kill $(ps -p 123 | grep vite)',
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName stays silent on a ps | grep search no kill consumes', () => {
+  for (const c of [
+    'ps aux | grep node', 'ps aux | grep node; echo done', "kill $(ps aux | awk '{print $2}')", "ps aux | awk '{print $2}' | xargs kill",
+    'grep node notes.txt | xargs kill', 'ps aux; kill 123', 'kill 123 | grep x', "echo $(ps aux | grep node)",
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName scans each wrapper\'s command argument', () => {
+  for (const c of [
+    'powershell -Command "Stop-Process -Name node"', 'powershell -c "Stop-Process -Name node"',
+    'POWERSHELL.EXE -command "taskkill /IM node.exe"', 'pwsh -Command "Get-Process node | Stop-Process"',
+    'pwsh -c "Stop-Process -Name node"', 'cmd /c taskkill /IM node.exe', 'cmd /C "taskkill /F /IM node.exe"',
+    "sh -c 'pkill node'", 'bash -c "killall node"', "bash -lc 'kill $(pgrep node)'", `bash -c "sh -c 'pkill node'"`,
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName stays silent on PID-scoped kills, data mentions and benign wrappers', () => {
+  for (const c of [
+    'kill 12345', 'kill -9 12345', 'kill -- -12345', 'taskkill /PID 12345 /T /F', 'taskkill /FI "PID eq 123"',
+    'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t)',
+    'Stop-Process -Id 123', 'Get-Process -Id 123 | Stop-Process', 'echo pkill', 'grep killall notes.txt',
+    'command -v pkill', 'command -V pkill', 'echo "$(pgrep node)"', 'pgrep node', 'git commit -m "pkill node"', 'bash script.sh', "sh -c 'echo pkill'",
+    "bash -c 'kill 123'", 'cmd /c "taskkill /PID 12 /F"', 'powershell -File kill.ps1', '',
+  ]) assert.ok(!hit(c), c);
+});
+
+test('#4548: processKillByName returns one label per matching segment', () => {
+  assert.deepStrictEqual(processKillByName('npm run dev & sleep 1; pkill -f vite; killall node', '/repo'), ['pkill', 'killall']);
+});
+
+test('#4548: processKillByName caps wrapper recursion without throwing', () => {
+  let command = 'pkill node';
+  for (let i = 0; i < 12; i += 1) command = i % 2 ? `bash -c "${command.replace(/(["\\$`])/g, '\\$1')}"` : `sh -c '${command.replace(/'/g, "'\\''")}'`;
+  assert.ok(Array.isArray(processKillByName(command, '/repo')));
+  assert.deepStrictEqual(processKillByName(`bash -c "sh -c 'pkill node'"`, '/repo'), ['pkill']);
+});
+
+test('#4548: processKillByName returns an array on a long run of substitution openers inside one word', () => {
+  // The linearity budget for these shapes lives in perf/process-kill-linearity.test.js
+  // (a wall-clock assertion flakes under load); this pins only that the scan completes.
+  for (const command of [
+    'kill ' + '`'.repeat(32000), "kill '" + '$('.repeat(32000), 'kill ' + '$(ps '.repeat(8000),
+    'kill $(ps ' + '|'.repeat(32000), 'kill $(ps aux ' + '|/'.repeat(16000),
+    'kill ' + '$($'.repeat(10000), 'kill $(' + '$/'.repeat(16000), 'kill ' + '`$/'.repeat(10000),
+  ]) assert.ok(Array.isArray(processKillByName(command, '/repo')), command.slice(0, 10));
+});
+
+test('#4548: processKillByName never throws on a non-string', () => {
+  for (const c of [undefined, null, 42, {}]) assert.deepStrictEqual(processKillByName(c, '/repo'), []);
 });
 
 // #4149: gitTargets and mkdirTargets read a `cd` behind `(` or `{` the way the write walk does.
