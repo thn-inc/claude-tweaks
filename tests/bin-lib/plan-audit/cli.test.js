@@ -5,7 +5,7 @@ const assert = require('node:assert');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 
 const CLI = path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'plan-audit.js');
 const { RAIL_BYTES } = require(path.resolve(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'skill-audit', 'budgets'));
@@ -579,6 +579,76 @@ test('--task-markers cannot be combined with --spec (#3378)', () => {
     const result = runCliArgs([plan, '--spec', spec, '--task-markers']);
     assert.strictEqual(result.exitCode, 2);
     assert.match(result.stderr, /--spec cannot be combined with --count-tasks, --bytes, or --task-markers/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+function runTaskMarkersCapture(planFile) {
+  const r = spawnSync('node', [CLI, planFile, '--task-markers'], { encoding: 'utf8' });
+  return { exitCode: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+test('AC1.1 AC2.1 (#4640): --task-markers reads annotated Review risk / Role values, with no findings and no stderr', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: X',
+      '**Review risk:** high (a read-once/write-last ordering, and branching on computed state)',
+      '',
+      '### Task 2: Y',
+      '**Role:** judgment (needs design judgment)',
+      '**Review risk:** high — reason',
+    ].join('\n'));
+    assert.deepStrictEqual(runTaskMarkersCapture(plan), {
+      exitCode: 0,
+      stdout: `${JSON.stringify({
+        markers: true,
+        tasks: [
+          { index: 1, title: 'X', role: null, risk: 'high' },
+          { index: 2, title: 'Y', role: 'judgment', risk: 'high' },
+        ],
+      })}\n`,
+      stderr: '',
+    });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 AC4.2 (#4640): --task-markers writes one stderr warning per finding and still exits 0', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, [
+      '### Task 1: A', '**Review risk:** medium', '',
+      '### Task 2: Say "hi"', '**Review risk:** high-ish', '',
+      '### Task 3: C', '**Role:** trivial',
+    ].join('\n'));
+    const r = runTaskMarkersCapture(plan);
+    assert.strictEqual(r.exitCode, 0);
+    assert.deepStrictEqual(JSON.parse(r.stdout).findings, [
+      { taskIndex: 1, title: 'A', field: 'Review risk', value: 'medium' },
+      { taskIndex: 2, title: 'Say "hi"', field: 'Review risk', value: 'high-ish' },
+      { taskIndex: 3, title: 'C', field: 'Role', value: 'trivial' },
+    ]);
+    assert.strictEqual(r.stderr, [
+      'plan-audit.js: warning: task 1 "A" — unrecognized Review risk value "medium"; that field reads as unmarked',
+      'plan-audit.js: warning: task 2 "Say "hi"" — unrecognized Review risk value "high-ish"; that field reads as unmarked',
+      'plan-audit.js: warning: task 3 "C" — unrecognized Role value "trivial"; that field reads as unmarked',
+      '',
+    ].join('\n'));
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC5.1 (#4640): --task-markers writes nothing to stderr for a plan with no findings (negative control)', () => {
+  const repo = makeTmpRepo();
+  try {
+    const plan = writePlan(repo, '### Task 1: A\n**Role:** transcription\n**Review risk:** high\n\n### Task 2: B\n');
+    const r = runTaskMarkersCapture(plan);
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.stderr, '');
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }
