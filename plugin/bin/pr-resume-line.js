@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // bin/pr-resume-line.js — the Resume line of a run's PR body, or why none is
 // usable. The tombstone-PR path of skills/flow/claim-targets.md and the Unsettled
-// run report of skills/_shared/github-pr-scan.md (item 10) call this instead of
-// restating the Resume-line grammar in prose (#4659); the verdict is
+// run report of skills/_shared/github-pr-scan-unsettled-resume.md (item 10's
+// resume procedure) call this instead of restating the Resume-line grammar in prose (#4659); the verdict is
 // pr-body.js's resumeVerdict, the one the `--resume` mode of stale-claim-pr.js
 // reads too. A Resume line is untrusted input rendered as a paste command, so
 // only a line parseResumeLine accepts for this run is ever printed as `resume`.

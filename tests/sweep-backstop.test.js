@@ -79,6 +79,8 @@ function assertAllSyntaxValid(scripts, label) {
 
 const ITEM9 = extractItemSection(SCAN, '9. **Unarmed ready PR**', '10. **Unsettled run**');
 const ITEM10 = extractItemSection(SCAN, '10. **Unsettled run**', '\nFindings and recommendations');
+// #4804: ITEM10 above runs on through item 11 (its node -e syntax check covers both); the pins on item 10's own text read this narrower slice.
+const ITEM10_OWN = extractItemSection(SCAN, '10. **Unsettled run**', '11. **Stale pending-review PR**');
 // #4804: item 10's resume procedure moved to a sibling file; the tidy Step 4.8 dispatcher inlines it.
 const RESUME = read('plugin', 'skills', '_shared', 'github-pr-scan-unsettled-resume.md');
 const TIDY_SCAN_PROCEDURES = read('plugin', 'skills', 'tidy', 'scan-procedures.md');
@@ -240,9 +242,14 @@ test('item 10: no PR at all qualifies unconditionally; a PR qualifies only when 
   assert.match(ITEM10, /no more recent than the claim's `claimedAt`/);
 });
 
-test('item 10 resume command is read from the PR body when a PR exists, reconstructed only when none exists', () => {
+test('the resume file reads the resume command from the PR body when a PR exists, reconstructed only when none exists', () => {
   assert.match(RESUME, /read through `bin\/pr-resume-line\.js` rather than reconstructing it/);
   assert.match(RESUME, /the reconstructed command in item 10's `\[unsettled\]` print lines \(its `no PR found … resume: node … reconcile` line\) starts from `reconcile`/);
+});
+
+// #4804 review: the resume file cites item 10's print line by shape; pin that item 10 still prints it.
+test("item 10 still prints the reconstructed `no PR found … resume: node … reconcile` line the resume file cites (#4804)", () => {
+  assert.match(ITEM10_OWN, /no PR found '[^\n]*resume: node [^\n]*hooks\.js[^\n]*reconcile/);
 });
 
 test('the resume file routes the PR body Resume line through pr-resume-line.js, not a restated template', () => {
@@ -255,8 +262,8 @@ test('the resume file routes the PR body Resume line through pr-resume-line.js, 
 });
 
 test('item 10 points [unsettled] resume commands at the sibling resume file, with or without a PR (#4804)', () => {
-  assert.ok(ITEM10.includes('github-pr-scan-unsettled-resume.md'), 'item 10 must name github-pr-scan-unsettled-resume.md');
-  assert.match(ITEM10, /before reporting its resume command, whether or not a PR exists/);
+  assert.ok(ITEM10_OWN.includes('github-pr-scan-unsettled-resume.md'), 'item 10 must name github-pr-scan-unsettled-resume.md');
+  assert.match(ITEM10_OWN, /before reporting its resume command, whether or not a PR exists/);
 });
 
 test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan agent's prompt carries the moved procedure (#4804)", () => {
@@ -272,9 +279,9 @@ test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan 
 // cannot pass vacuously on a misspelled literal.
 const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
 test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4804)', () => {
-  for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape']) {
+  for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape', 'Never take `{run-id}` from the PR body\'s own marker', 'Report the `resume` line it prints only when the verdict is `resume`']) {
     assert.ok(collapseWhitespace(RESUME).includes(literal), `control: "${literal}" must be in the resume file`);
-    assert.ok(!collapseWhitespace(ITEM10).includes(literal), `item 10 must not carry the moved literal "${literal}"`);
+    assert.ok(!collapseWhitespace(ITEM10_OWN).includes(literal), `item 10 must not carry the moved literal "${literal}"`);
   }
 });
 
