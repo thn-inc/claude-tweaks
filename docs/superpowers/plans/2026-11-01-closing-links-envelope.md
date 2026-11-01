@@ -112,7 +112,7 @@ git -C "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude/worktrees
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/post-merge.js` (header lines 7-9 and 24-33; `parseEnvelope` lines 235-243; `processRun` lines 365-417)
+- Modify: `plugin/bin/lib/reconcile/post-merge.js` (header lines 7-9 and 24-33; the `require('../../closing-links')` import line 73; `parseEnvelope` lines 235-243; the `runClosingLinks` default line 299; `processRun` lines 365-417)
 - Test: `tests/bin-lib/reconcile/post-merge.test.js`
 
 Consumers of `deps.closingLinksRun` / `closingLinksRun` (enumerated by grep): `post-merge.js` only; its fakes live only in `post-merge.test.js`.
@@ -126,7 +126,8 @@ Consumers of `deps.closingLinksRun` / `closingLinksRun` (enumerated by grep): `p
   - In `'merged unmarked run: Step 4.0 argv, …'` (rename `argv` → `options` in the title) replace the argv deep-equal with
     `assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });` and add `assert.ok(!('stdout' in d), 'the core prints nothing, so post-merge passes no stdout');`.
   - `'claim: a closing-links runner that throws …'`: the inline runner becomes `(opts) => { n += 1; if (opts.run === bad) throw new Error('kaboom'); return { code: 0, envelope: ENVELOPE }; }`.
-  - M4: `links.calls[0].argv[1]` → `links.calls[0].opts.run`.
+  - Every remaining reader of the removed `argv` field moves to `opts.run`: M4 (`links.calls[0].argv[1]` → `links.calls[0].opts.run`) and the two merge-grace tests (`assert.equal(links.calls[0].argv[1], old)` → `links.calls[0].opts.run`; `links.calls.map((c) => c.argv[1])` → `c.opts.run`). Before finishing, `grep -n "argv" tests/bin-lib/reconcile/post-merge.test.js` must show no reader of a fake's `argv`.
+  - Add test `'postMerge without deps.closingLinksRun falls back to the exported closingLinks core'`: call `postMerge` with `deps` omitting `closingLinksRun` (inject only `gh: fakeGh` and `closeParents`) on a merged unmarked run; assert it does not throw. The real core, with the fake gh answering `''`, fails to parse `gh pr view` and returns exit 5, so the entry is `{ runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0 returned exit 5 (a gh failure)', attempt: 1 }` (a ReferenceError would instead surface as `reason: 'error'`). This pins the default binding the injected-fake tests cannot reach.
   - Delete test `'K4: an exit-0 envelope with neither closingSet nor action is labelled unreadable …'`.
   - `'step40Failed marks a non-zero exit and an unreadable exit-0 envelope, …'` → rename to `'step40Failed marks a non-zero exit, never a readable envelope without a closing set'`; replace its unreadable half with a `fakeClosingLinks(null, 3)` run asserting `{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true }`; keep the not-merged and ok halves.
 
@@ -137,7 +138,7 @@ Expected: FAIL — the options deep-equal receives the argv array, and runs that
 
 - [ ] **Step 3: Implement in `plugin/bin/lib/reconcile/post-merge.js`**
 
-`processRun` calls `const { code, envelope } = runClosingLinks({ run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS }, { cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stderr: () => {} });` (no `out` buffer, no `stdout`). Delete `parseEnvelope`. In the no-closing-set branch: `const returned = code !== 0 ? \`exit ${code}\` : envelope.action;`, `const baseUnchecked = code === 0 && envelope.baseUnchecked === true;`, and the entry flag becomes `...(code !== 0 || baseUnchecked ? { step40Failed: true } : {})`. Update the comment above that `write` (drop "an unreadable envelope"), header line 8 (Step 4.0 runs through `bin/closing-links.js`'s `closingLinks()` core, in-process) and header line 33 (drop "as is an unreadable exit-0 envelope").
+Line 73 imports `const { closingLinks, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');` and line 299's default becomes `const runClosingLinks = deps.closingLinksRun || closingLinks;` (production — `reconcile/index.js` calls `postMerge` with no `deps` — reaches this default). `processRun` calls `const { code, envelope } = runClosingLinks({ run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS }, { cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stderr: () => {} });` (no `out` buffer, no `stdout`). Delete `parseEnvelope`. In the no-closing-set branch: `const returned = code !== 0 ? \`exit ${code}\` : envelope.action;`, `const baseUnchecked = code === 0 && envelope.baseUnchecked === true;`, and the entry flag becomes `...(code !== 0 || baseUnchecked ? { step40Failed: true } : {})`. Update the comment above that `write` (drop "an unreadable envelope"), header line 8 (Step 4.0 runs through `bin/closing-links.js`'s `closingLinks()` core, in-process) and header line 33 (drop "as is an unreadable exit-0 envelope").
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
