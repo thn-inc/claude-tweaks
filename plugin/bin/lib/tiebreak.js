@@ -93,9 +93,26 @@ function stripWrapper(s) {
   return s;
 }
 
-function parseEvidence(value) {
-  const w = WRAPPED_TOKEN_RE.exec(value);
-  const m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+// The finding's own path, when it holds whitespace, cannot be read by
+// EVIDENCE_RE's \S+ path; so the three path:line spellings are matched as a
+// literal prefix (exact string comparison, no regex built from the path) and the
+// tail is read by the same line/quote rule. Null when no spelling matches.
+const LINE_TAIL_RE = /^(\d+)(?:\s+([\s\S]*))?$/;
+function findingPathTail(value, findingPath) {
+  if (value.startsWith(`${findingPath}:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 1));
+  if (value.startsWith(`\`${findingPath}\`:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 3));
+  if (value.startsWith(`\`${findingPath}:`)) return /^(\d+)`(?:\s+([\s\S]*))?$/.exec(value.slice(findingPath.length + 2));
+  return null;
+}
+
+function parseEvidence(value, findingPath) {
+  const known = typeof findingPath === 'string' && findingPath !== '' ? findingPathTail(value, findingPath) : null;
+  let m;
+  if (known) m = [null, findingPath, known[1], known[2]];
+  else {
+    const w = WRAPPED_TOKEN_RE.exec(value);
+    m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+  }
   if (!m) return null;
   const line = Number(m[2]);
   const quote = stripWrapper((m[3] || '').trim());
@@ -113,7 +130,7 @@ function parseRecommendation(value) {
   return { recommendation: m[1].toLowerCase(), recommendationReason: sep[1].trim() || null };
 }
 
-function parseTiebreakReply(text) {
+function parseTiebreakReply(text, { findingPath } = {}) {
   if (typeof text !== 'string') return unparsed();
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
   if (lines.length === 0) return unparsed();
@@ -145,7 +162,7 @@ function parseTiebreakReply(text) {
   return {
     parse: 'ok',
     verdict: verdicts[0],
-    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence),
+    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence, findingPath),
     severity: SEVERITIES.includes(severity) ? severity : null,
     recommendation: rec.recommendation,
     recommendationReason: rec.recommendationReason,
@@ -259,7 +276,7 @@ function neutralize(text) {
 }
 
 function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
-  const parsed = parseTiebreakReply(replyText);
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
   const id = findingId(finding);
   const t = stamp(now);
   const line = firstLine(finding.line);

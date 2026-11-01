@@ -810,6 +810,24 @@ test('a path:line token wrapped in one pair of backticks parses like the bare to
   }
 });
 
+test('AC2.1: evidence at a space-holding finding path resolves drop and confirmed (#4632)', () => {
+  const f = { ...RAW[0], path: 'a dir/x.ts', line: 3 };
+  for (const [verdict, outcome] of [['refuted', 'drop'], ['confirmed', 'confirmed']]) {
+    for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+      const r = resolveTiebreak(f, `Verdict: ${verdict}\nEvidence: ${ev}\nSeverity: medium\nSTATUS: DONE`, { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+      assert.strictEqual(r.outcome, outcome, `${verdict} ${ev}`);
+    }
+  }
+});
+test('a space-holding evidence path for a different finding path still fails (#4632)', () => {
+  const f = { ...RAW[0], path: 'b dir/x.ts', line: 3 };
+  const r = resolveTiebreak(f, 'Verdict: refuted\nEvidence: a dir/x.ts:3 `quote text here`\nSeverity: medium\nSTATUS: DONE', { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+  assert.strictEqual(r.outcome, 'console');
+});
+test('parseTiebreakReply without findingPath keeps today\'s evidence parse (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE').evidence, null);
+});
+
 test('Recommendation reasons split on an en dash and a comma like the other separators', () => {
   for (const rec of ['drop – guarded upstream', 'drop, guarded upstream', 'drop–guarded upstream', 'drop,guarded upstream',
     'drop — guarded upstream', 'drop: guarded upstream', 'drop - guarded upstream']) {
