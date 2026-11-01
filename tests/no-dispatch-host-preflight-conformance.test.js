@@ -62,6 +62,9 @@ const POLICY_FACTS = [
   [/This stop tears nothing down itself/, 'resume leaves state in place'],
   [/under `current-branch` the open-items ledger flow Step 1 created/, 'current-branch ledger stays in place'],
   [/A flow resume whose step list omits `build` is not probed here/, 'AC10.2: build-less resumes proceed'],
+  [/`assess-agent-autonomy`'s `merge-check` then routes that run's merge to a human/, 'AC10.3: a build-less degraded review routes its merge to a human'],
+  [/a choice for a human and never taken automatically/, 'AC3.1: batched is never taken automatically'],
+  [/before it claims targets or creates a worktree, fresh or resumed/, 'AC1.2: flow preflight precedes claim and worktree, fresh or resumed'],
 ];
 const policyMissing = missingFactsOf(POLICY_FACTS);
 
@@ -76,7 +79,7 @@ test('AC8.2: each policy fact can go red', () => {
 });
 
 // Item 1's dispatch-route sentence (not item 4's, whose parenthetical adds ", headless or not").
-const DISPATCH_ROUTE_SENTENCE = /Under `\/claude-tweaks:dispatch` \(`run-state\.json` `dispatched: true`\) it is[^.]*\./;
+const DISPATCH_ROUTE_SENTENCE = /Under `\/claude-tweaks:dispatch` \(`run-state\.json` `dispatched: true`\) it is[\s\S]*?Settle procedure runs\./;
 
 function dispatchRouteSentence(section) {
   const found = section.match(DISPATCH_ROUTE_SENTENCE);
@@ -89,8 +92,9 @@ test('AC9.2: the dispatch route never names the prefixed flow invocation', () =>
   const sentence = dispatchRouteSentence(section);
   assert.ok(!sentence.includes('PIPELINE_RUN_DIR'), 'the dispatch route must name /claude-tweaks:dispatch #{n}, never a PIPELINE_RUN_DIR-prefixed flow invocation');
 
-  // Control: the same check on a copy with the prefix appended to that sentence must fail.
-  const doctored = section.replace(sentence, `${sentence.slice(0, -1)} PIPELINE_RUN_DIR="x".`);
+  // Control: the same check on a copy with the prefix inside that sentence must fail. A dotted token
+  // ("a.b") precedes it, so a first-"." sentence end would miss the prefix — the extraction must not.
+  const doctored = section.replace(sentence, sentence.replace('to use after', 'to use a.b PIPELINE_RUN_DIR="x" after'));
   assert.notEqual(doctored, section, 'anchor text for the dispatch-route sentence not found — control cannot discriminate');
   assert.ok(dispatchRouteSentence(doctored).includes('PIPELINE_RUN_DIR'), 'the control copy must trip the same check');
 });
