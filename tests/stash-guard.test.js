@@ -301,7 +301,7 @@ test('AC1.1: stack [x, y, x] with stash@{2} dropped, then compare --restore: rep
   assert.match(failedLine, /^- FAILED \d{2}:\d{2}:\d{2} — Stash guard: implementer for task 2 removed stash entry [0-9a-f]{40} On main: twice; restore failed: same commit still at stash@\{0\}; nothing to recover\. Reversibility: n\/a \(write did not land\)\.$/);
 });
 
-test('a store that writes nothing: probe B (two newer entries dropped) restores what it can and reports the rest as failed', () => {
+test('a store that writes nothing: probe B (two newer entries dropped) keeps the recover command because a later restore moved the entry down', () => {
   const dir = fixture();
   const { x, y } = doubledStack(dir);
   const baseline = snapshot(dir);
@@ -315,9 +315,10 @@ test('a store that writes nothing: probe B (two newer entries dropped) restores 
   assert.deepEqual(r.json.alreadyPresent, []);
   assert.equal(r.json.restoreFailed.length, 1);
   assert.equal(r.json.restoreFailed[0].sha, x.sha);
-  assert.match(r.json.restoreFailed[0].error, NOTHING_TO_RECOVER);
-  assert.equal(r.json.restoreFailed[0].command, null);
-  assert.doesNotMatch(r.err, /recover with/);
+  assert.equal(r.json.restoreFailed[0].error, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down');
+  assert.equal(r.json.restoreFailed[0].command, storeCommand(x.subject, x.sha));
+  assert.doesNotMatch(r.json.restoreFailed[0].error, NOTHING_TO_RECOVER);
+  assert.match(r.err, new RegExp(`restore failed for ${x.sha}; recover with:`));
   // Only the real write landed: y went on top of the surviving x.
   assert.deepEqual(stack(dir), [y, x]);
 });
@@ -742,6 +743,21 @@ test('a failed pre-store re-read falls through to the store and still restores t
   assert.deepEqual(r.json.alreadyPresent, []);
   assert.deepEqual(r.json.restoreFailed, []);
   assert.deepEqual(stack(dir), [entry]);
+});
+
+test('a failed final re-read after a nothing-written store keeps the recover command (probe A shape)', () => {
+  const dir = fixture();
+  const { x, y } = doubledStack(dir);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{2}');
+  // Lists: compare's read, the pre-store re-read, the post-store confirmation, the final read.
+  const r = compare(dir, baseline, ['--restore'], { git: failingList(4) });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].error, 'git stash store wrote nothing (same commit was at stash@{0}); stack could not be re-read');
+  assert.equal(r.json.restoreFailed[0].command, storeCommand(x.subject, x.sha));
+  assert.match(r.err, new RegExp(`restore failed for ${x.sha}; recover with:`));
+  assert.deepEqual(stack(dir), [x, y]);
 });
 
 test('a failed post-store re-read trusts the exit code and reports the entry restored', () => {
