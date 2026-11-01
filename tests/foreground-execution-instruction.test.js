@@ -530,9 +530,9 @@ test('each core measured-fact assertion can actually go red on its own (discrimi
 // alone. One passage, the same words in all seven copies; each pattern matches once per copy.
 const PROGRESS_CHECK = [
   [/probe\s+the\s+worktree\s+its\s+prompt\s+names,\s+read-only/, 'the probe reads the worktree the child prompt names, read-only'],
-  [/`git\s+-C\s+\{child-worktree\}\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],
-  [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+status\s+--porcelain`/, 'the probe reads its --no-optional-locks porcelain status'],
-  [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+status\s+--porcelain`/, 'the probe reads its --no-optional-locks porcelain status'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`\s+\(a\s+`fatal:`\s+line\s+fails\s+the\s+probe\)/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
   [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
   [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
   [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
@@ -542,7 +542,7 @@ const PROGRESS_CHECK = [
   [/and\s+every\s+unchanged\s+child/, 'the BLOCKED report names every child that showed no change (Decision: Reading B)'],
   [/Children\s+sharing\s+a\s+worktree\s+progress\s+together/, 'children sharing one worktree count as progressing together (Decision: Reading B)'],
   [/a\s+child\s+whose\s+prompt\s+names\s+no\s+worktree\s+counts\s+as\s+unchanged/, 'a child with no named worktree counts as unchanged (spec Technical Approach)'],
-  [/A\s+failed\s+wait\s+call\s+ends\s+its\s+window,\s+and\s+the\s+probe\s+runs\s+as\s+at\s+any\s+bound/, 'a failed wait call in an extension window expires that bound and the probe runs (AC8.1)'],
+  [/A\s+failed\s+wait\s+call\s+counts\s+as\s+no\s+wait\s+but\s+ends\s+its\s+window,\s+and\s+the\s+probe\s+runs\s+as\s+at\s+any\s+bound/, 'a failed wait call in an extension window expires that bound and the probe runs (AC8.1)'],
   [/failed\s+probe\s+command\s+counts\s+as\s+no\s+change,\s+never\s+retried\s+in\s+another\s+form/, 'a failed probe command counts as no change and is never retried in another form'],
   [/Read-only\s+units\s+keep\s+the\s+first-bound\s+self-judge/, 'a read-only unit is still self-judged at the first bound'],
 ];

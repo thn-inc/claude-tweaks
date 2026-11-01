@@ -122,10 +122,10 @@ test('the verbatim-copy check can go red: one changed word in the copy fails it'
 // {child-worktree}, never {worktree}: the handoff substitutes {worktree} with the handing-off
 // agent's own checkout, which is not where the template's dispatched children work.
 const HANDOFF_PROGRESS = [
-  [/`git -C \{child-worktree\} rev-parse HEAD`/, 'the template probes the child worktree HEAD'],
-  [/`git -C \{child-worktree\} --no-optional-locks status --porcelain`/, 'the template probes porcelain status'],
-  [/`git -C \{child-worktree\} --no-optional-locks diff HEAD` piped to `git hash-object --stdin`/, 'the template hashes the diff against HEAD'],
-  [/A failed wait call ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
+  [/`git -C "\{child-worktree\}" rev-parse HEAD`/, 'the template probes the child worktree HEAD'],
+  [/`git -C "\{child-worktree\}" --no-optional-locks status --porcelain`/, 'the template probes porcelain status'],
+  [/`git -C "\{child-worktree\}" --no-optional-locks diff HEAD` piped to `git hash-object --stdin` \(a `fatal:` line fails the probe\)/, 'the template hashes the diff against HEAD'],
+  [/A failed wait call counts as no wait but ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
   [/against the previous probe \(taken right after launching the wave, then at each bound/, 'the template compares with the previous probe'],
   [/a child whose prompt names no worktree counts as unchanged/, 'the template states the no-named-worktree rule'],
   [/Per wave, while any child shows a change, log one wait line and grant one more 60-wait window/, 'the template states the per-wave grant'],
@@ -142,7 +142,7 @@ const handoffProgressMissing = (tpl) => {
 test('AC4.1: the handoff template carries the progress-check extension, with a child-worktree placeholder the handoff never substitutes (#4557)', () => {
   const [tpl] = fencedBlocks(read(HANDOFF));
   assert.deepEqual(handoffProgressMissing(tpl), []);
-  assert.doesNotMatch(squash(tpl), /git -C \{worktree\}/);
+  assert.doesNotMatch(squash(tpl), /git -C "?\{worktree\}/);
 });
 
 test('AC5.1: each handoff progress-check assertion can go red (discrimination proof)', () => {
@@ -153,8 +153,8 @@ test('AC5.1: each handoff progress-check assertion can go red (discrimination pr
     assert.notEqual(doctored, squashed, `anchor text for "${fact}" not found — proof cannot discriminate`);
     assert.deepEqual(handoffProgressMissing(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
-  const swapped = squashed.replace('git -C {child-worktree} rev-parse HEAD', 'git -C {worktree} rev-parse HEAD');
-  assert.match(swapped, /git -C \{worktree\}/, 'the placeholder control must match the wrong placeholder');
+  const swapped = squashed.replace('git -C "{child-worktree}" rev-parse HEAD', 'git -C "{worktree}" rev-parse HEAD');
+  assert.match(swapped, /git -C "?\{worktree\}/,'the placeholder control must match the wrong placeholder');
 });
 
 // #4728: the continuation child inherits the worktree, so the harness's Bash-shape

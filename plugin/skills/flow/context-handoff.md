@@ -49,7 +49,7 @@ A top-level run never hands off `wrap-up`: its `--next-steps` stops before `wrap
 
 1. **Resolve** the substitutions. `{run}` is the literal run dir. `{worktree}` is what `git rev-parse --show-toplevel` prints, run as its own call. `{plugin-root}` is this session's `$CLAUDE_PLUGIN_ROOT` as a literal path. The model comes from `node "{plugin-root}/bin/resolve-profile.js" capable` (the profile dispatch's first call uses), passed as `model` on the `Agent` call.
 2. **Dispatch** one `Agent` with the template below inlined verbatim and the substitutions filled in. This is a dispatch site under `_shared/subagent-output-contract.md`.
-3. **Wait** for the child. The template's 20-minute bound (`sleep 20` at most 60 times) applies only when this agent is itself a subagent, such as an earlier handoff's child, whose own prompt already carries that rule: wait within the turn under it and never end the turn with the child outstanding. A top-level session waits for the child's task-notification with no bound, as the parallel-wave orchestrator does (`_shared/dispatch-waiting.md`): a child phase often runs past 20 minutes. Never redo the child's steps in this session, since a child that has not reported may still be writing. Any blocked report (a subagent's bound expired, the `Agent` call failed) must tell the reader to confirm the child has stopped before anyone runs `resume`, then give `{run}/handoff.json`'s `resume` line on its own line.
+3. **Wait** for the child. The template's wait bound (`sleep 20` at most 60 times, 20 minutes, stretched to at most 60 while the write-capable child keeps changing its worktree) applies only when this agent is itself a subagent, such as an earlier handoff's child, whose own prompt already carries that rule: wait within the turn under it and never end the turn with the child outstanding. A top-level session waits for the child's task-notification with no bound, as the parallel-wave orchestrator does (`_shared/dispatch-waiting.md`): a child phase often runs past 20 minutes. Never redo the child's steps in this session, since a child that has not reported may still be writing. Any blocked report (a subagent's bound expired, the `Agent` call failed) must tell the reader to confirm the child has stopped before anyone runs `resume`, then give `{run}/handoff.json`'s `resume` line on its own line.
 4. **Relay** the child's final report, unchanged. If it is a failure card, or its status is not `DONE`/`DONE_WITH_CONCERNS`, stop there: a gate failed (Step 4 item 3). After relaying the child's Steps Complete note, this agent runs `wrap-up` and Step 5 itself. It does so when `wrap-up` is in its step list, continuing its own Step 4 loop at that step with `$PIPELINE_RUN_DIR` unchanged. With no `wrap-up` in the list, the relayed note is this run's close.
 
 The child may cross the cap and hand off in turn. That does not end because each hop finishes a step (a resume at `review` auto-inserts `test` first, `steps-and-gates.md`'s Auto-insert rule). The chain ends because a fresh agent starts well under the cap and so finishes several steps before it nears the cap again. The gauge's per-run bound of three handoffs (Reading the result) caps it regardless.
@@ -108,15 +108,15 @@ yourself. Self-judging is for a read-only unit (a lens, a single read, a judge);
 write-capable child (one that edits files) still silent at the bound is never redone in-session,
 because an abandoned child keeps running and may still write — stop, and end with
 `STATUS: BLOCKED` naming that child and its unit. Before that stop, probe the worktree its prompt
-names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-worktree}
---no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD`
-piped to `git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
+names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C "{child-worktree}"
+--no-optional-locks status --porcelain` and `git -C "{child-worktree}" --no-optional-locks diff HEAD`
+piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
 child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
 passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
 progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
 sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
-failed wait call ends its window, and the probe runs as at any bound; a failed probe command counts
+failed wait call counts as no wait but ends its window, and the probe runs as at any bound; a failed probe command counts
 as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
 call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
 another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
