@@ -1339,6 +1339,7 @@ test('--bound-run outside the main root pipelines dir -> exit 2 (a worktree-loca
   for (const dir of [
     path.join(WT, '.claude-tweaks', 'pipelines', '2026-10-31T120000-record-4589'),
     '/tmp/elsewhere/2026-10-31T120000-record-4589',
+    // path.join would normalize the `..` away; this test feeds a raw `..` on purpose.
     `${ROOT}${path.sep}..`,
   ]) {
     const env = makeEnv();
