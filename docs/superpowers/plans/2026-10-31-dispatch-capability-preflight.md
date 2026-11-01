@@ -23,7 +23,7 @@
 - Decision Q1 (record body, verbatim): "The stop's paste-ready resume command depends on how the run was started. Under `/claude-tweaks:dispatch` it names `/claude-tweaks:dispatch #{n}`, to use after Settle runs. Outside dispatch it repeats the received invocation, keeping its `PIPELINE_RUN_DIR="…"` prefix whenever one was adopted."
 - Decision Q2 (record body, verbatim): "Flow's preflight probe runs only when the step list includes `build`. Resumes without `build` proceed, and review's run-level `Independence: degraded` marker covers them. A run whose review is marked `Independence: degraded` never auto-merges: its merge decision routes to a human, and a test pins that."
 - Decision D3 (record body, verbatim): "At flow Step 2.4, the no-dispatch-host `SKIP` line is written to `decisions.md` only when the run dir already has `config.yml`; otherwise its text goes in the stop report only, so a resume never adopts the dir as a recovery (case 3). This narrows the AC4 logging clause."
-- Decision D4 (record body, verbatim): "Dispatch's Settle treats a no-dispatch-host `build-test-blocked` as a pre-flight-stop special case, like claims-branch-missing: no failure classification, no retry count, no failure comment. Under `DISPATCH_HEADLESS=1` it self-reports through `_shared/headless-self-report.md` as `flow-step-2.4-no-dispatch-host`." Implementer's judgment (D6): Settle recognizes the stop by the existing `ISSUE #{n}: failed:{gate}` report line, gate `no-dispatch-host` (a gate name, not a new outcome word); steps 1-2 (ownership check, release) still run, as in the plan-review needs-human case, so a resume's claim is released for `/claude-tweaks:dispatch #{n}`, and a first call stopped at flow Step 2.4 holds no claim, so step 1 skips.
+- Decision D4 (record body, verbatim): "Dispatch's Settle treats a no-dispatch-host `build-test-blocked` as a pre-flight-stop special case, like claims-branch-missing: no failure classification, no retry count, no failure comment. Under `DISPATCH_HEADLESS=1` it self-reports through `_shared/headless-self-report.md` as `flow-step-2.4-no-dispatch-host`." Implementer's judgment (D6): Settle recognizes the stop by the existing `ISSUE #{n}: failed:{gate}` report line, gate `no-dispatch-host` (a gate name, not a new outcome word), emitted on every dispatched call (`run-state.json` `dispatched: true`), headless or not; steps 1-2 (ownership check, release) still run, as in the plan-review needs-human case, but find nothing of this run's to release: a dispatched first call stops at flow Step 2.4 before its own Step 2.8 claim, and a `dispatch resume` call mints a fresh run directory whose id no earlier claim carries (`dispatch/resume.md` Step 4 writes no claim), so step 1 skips. A dispatched second call (`review,polish,wrap-up`) has no `build`, so flow never probes it (Decision Q2). Q1's `/claude-tweaks:dispatch #{n}` stays the resume command; when the record already has an open draft PR, that command's open-pr line names `/claude-tweaks:dispatch resume #{n}` whenever resume would accept it (`dispatch/open-pr-exclusion-report.md`).
 - Decision D5 (record body, verbatim): "Review detects "same session as build" only inside one `/claude-tweaks:flow` call that ran both steps, and the spec states this is effectively unreachable once Deliverable 1 lands. No session stamp."
 - Decision D6 (record body, verbatim): "Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above."
 - The existing per-lens `single-read coverage` line and the `Tiebreak caveat:` line stay byte-unchanged.
@@ -74,11 +74,14 @@ const POLICY_FACTS = [
   [/`\{resume command\}` depends on how the run was started/, 'AC9.1: resume command depends on entry route'],
   [/Under `\/claude-tweaks:dispatch` \(`run-state\.json` `dispatched: true`\) it is `\/claude-tweaks:dispatch #\{n\}`, to use after dispatch's Settle procedure runs/, 'AC9.2: dispatch route names /claude-tweaks:dispatch #{n}'],
   [/Otherwise it repeats the invocation the stopped run received, keeping its `PIPELINE_RUN_DIR="…"` prefix whenever one was adopted/, 'AC9.3: other routes repeat the invocation, prefix kept'],
-  [/Or run it in-session, in human-reviewed batches: `\/claude-tweaks:build #\{n\} batched`/, 'AC3.1: batched named as explicit human choice'],
+  [/When the record already has an open draft PR, that command's open-pr line names `\/claude-tweaks:dispatch resume #\{n\}` whenever resume would accept it \(`dispatch\/open-pr-exclusion-report\.md`\)/, 'AC9.2: an open draft PR routes to dispatch resume'],
+  [/Or run it in-session, in human-reviewed batches: `\/claude-tweaks:build \{received target\} batched`/, 'AC3.1: batched named as explicit human choice'],
+  [/`\{received target\}` is the `#\{n\}` or design-doc path the build received/, 'AC3.1: design-mode build has no record number'],
   [/Under `subagent-only` that line is omitted/, 'AC3.2: subagent-only omits batched'],
   [/--status SKIP --text "condition: no Agent\/Task tool in this host → fallback: run stopped before build; resume from a top-level session"/, 'AC4.1: SKIP line in condition → fallback shape'],
   [/at flow Step 2\.4 only when it already has `config\.yml`/, 'D3: flow 2.4 logs only into a dir with config.yml'],
   [/otherwise the `SKIP` text goes in the stop report only, so a resume never adopts the directory as a recovery \(`flow\/steps-and-gates\.md`'s case 3\)/, 'D3: no config.yml → stop report only, never case 3'],
+  [/Under `\/claude-tweaks:dispatch` \(`run-state\.json` `dispatched: true`, headless or not\), report through its existing channel/, 'AC4.2: every dispatched call reports the gate line, not only headless'],
   [/`OUTCOME: build-test-blocked`, `STATUS: BLOCKED`, `ISSUE #\{n\}: failed:no-dispatch-host` — never a new outcome word/, 'AC4.2: dispatch headless reports build-test-blocked'],
   [/Settle treats it as a pre-flight stop \(`dispatch\/settle-and-merge\.md`'s No-dispatch-host special case\)/, 'D4: policy points at the Settle special case'],
   [/This stop tears nothing down itself/, 'resume leaves state in place'],
@@ -87,7 +90,7 @@ const POLICY_FACTS = [
 ];
 ```
 
-Tests: `test('AC5.1 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', …)` asserting `missingFactsOf(POLICY_FACTS)(section)` deep-equals `[]`; and `test('AC8.2: each policy fact can go red', …)` calling `assertEachPatternGoesRed(section, POLICY_FACTS, missing)`. Negative pin `test('AC9.2: the dispatch route never names the prefixed flow invocation', …)`: the sentence starting `Under \`/claude-tweaks:dispatch\`` does not contain `PIPELINE_RUN_DIR`; control: a copy with ` PIPELINE_RUN_DIR="x"` appended to that sentence fails the same check.
+Tests: `test('AC5.1 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', …)` asserting `missingFactsOf(POLICY_FACTS)(section)` deep-equals `[]`; and `test('AC8.2: each policy fact can go red', …)` calling `assertEachPatternGoesRed(section, POLICY_FACTS, missing)`. Negative pin `test('AC9.2: the dispatch route never names the prefixed flow invocation', …)`: the sentence starting `Under \`/claude-tweaks:dispatch\` (\`run-state.json\` \`dispatched: true\`) it is` (item 1's, not item 4's) does not contain `PIPELINE_RUN_DIR`; control: a copy with ` PIPELINE_RUN_DIR="x"` appended to that sentence fails the same check.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -112,10 +115,10 @@ The enforcement point is the dispatch-capability preflight. `/claude-tweaks:flow
    {resume command}
    ```
 
-   `{resume command}` depends on how the run was started. Under `/claude-tweaks:dispatch` (`run-state.json` `dispatched: true`) it is `/claude-tweaks:dispatch #{n}`, to use after dispatch's Settle procedure runs. Otherwise it repeats the invocation the stopped run received, keeping its `PIPELINE_RUN_DIR="…"` prefix whenever one was adopted — e.g. `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow #{n} {steps}` or `/claude-tweaks:build #{n}`.
-2. A standalone `/claude-tweaks:build` whose `execution-strategy` is not `subagent-only` adds one line, a choice for a human and never taken automatically: Or run it in-session, in human-reviewed batches: `/claude-tweaks:build #{n} batched`. Under `subagent-only` that line is omitted — the lock forbids `batched`.
+   `{resume command}` depends on how the run was started. Under `/claude-tweaks:dispatch` (`run-state.json` `dispatched: true`) it is `/claude-tweaks:dispatch #{n}`, to use after dispatch's Settle procedure runs. When the record already has an open draft PR, that command's open-pr line names `/claude-tweaks:dispatch resume #{n}` whenever resume would accept it (`dispatch/open-pr-exclusion-report.md`). Otherwise it repeats the invocation the stopped run received, keeping its `PIPELINE_RUN_DIR="…"` prefix whenever one was adopted — e.g. `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow #{n} {steps}` or `/claude-tweaks:build {received target}`, where `{received target}` is the `#{n}` or design-doc path the build received.
+2. A standalone `/claude-tweaks:build` whose `execution-strategy` is not `subagent-only` adds one line, a choice for a human and never taken automatically: Or run it in-session, in human-reviewed batches: `/claude-tweaks:build {received target} batched`. Under `subagent-only` that line is omitted — the lock forbids `batched`.
 3. When a pipeline run directory resolves — at flow Step 2.4 only when it already has `config.yml` — log one line per `_shared/auto-decision-log.md`: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --text "condition: no Agent/Task tool in this host → fallback: run stopped before build; resume from a top-level session" --reversibility n/a`; otherwise the `SKIP` text goes in the stop report only, so a resume never adopts the directory as a recovery (`flow/steps-and-gates.md`'s case 3).
-4. Under `/claude-tweaks:dispatch`'s headless call, report through its existing channel — `OUTCOME: build-test-blocked`, `STATUS: BLOCKED`, `ISSUE #{n}: failed:no-dispatch-host` — never a new outcome word; Settle treats it as a pre-flight stop (`dispatch/settle-and-merge.md`'s No-dispatch-host special case).
+4. Under `/claude-tweaks:dispatch` (`run-state.json` `dispatched: true`, headless or not), report through its existing channel — `OUTCOME: build-test-blocked`, `STATUS: BLOCKED`, `ISSUE #{n}: failed:no-dispatch-host` — never a new outcome word; Settle treats it as a pre-flight stop (`dispatch/settle-and-merge.md`'s No-dispatch-host special case).
 5. This stop tears nothing down itself: what already exists — on a resume the claim, worktree and draft PR, under `current-branch` the open-items ledger flow Step 1 created — stays in place for the resume (under dispatch, its Settle procedure still acts on the reported outcome).
 6. A flow resume whose step list omits `build` is not probed here: `/claude-tweaks:review`'s run-level **Independence: degraded** caveat covers it, and `assess-agent-autonomy`'s `merge-check` then routes that run's merge to a human.
 ````
@@ -138,12 +141,13 @@ Expected: PASS (all tests).
 - Modify: `plugin/skills/flow/SKILL.md` (Step 2 list, lines ~139-140)
 - Modify: `plugin/skills/build/SKILL.md` (Common Step 1.5, directly under its `### Common Step 1.5: Plan Audit` heading)
 - Modify: `docs/skill-graph.md` (`## flow` table: one new row for target `build/execution-mode-policy.md`)
+- Modify: `tests/flow-blocker-landing-conformance.test.js` (its Step 2 count-word pin, lines ~319-325)
 - Test: `tests/no-dispatch-host-preflight-conformance.test.js` (append)
 
 **Interfaces:**
 - Consumes: Task 1's heading and test helpers.
 
-- [ ] **Step 1: Append failing tests.** Region helpers: flow's item = `lineStartingWith(flowText, '- 2.4 — Dispatch-capability preflight (#4555).')`; build's paragraph = `lineStartingWith(buildText, '**Dispatch-capability preflight (#4555), first, whatever this step\'s skip gate decides:**')`. Assert each is non-empty.
+- [ ] **Step 1: Append failing tests.** Also update `tests/flow-blocker-landing-conformance.test.js`'s count pin to the new sentence: `COUNT_MSG` reads `"Step 2's count word is five checks, after the dispatch-capability preflight"`, `assertCount` matches `/\nA dispatch-capability preflight, five checks, then a route, before pipeline starts\./`, and its control mutates `'five checks, then a route'` to `'four checks, then a route'` (the control must still go red; nothing else in that test changes). Region helpers: flow's item = `lineStartingWith(flowText, '- 2.4 — Dispatch-capability preflight (#4555).')`; build's paragraph = `lineStartingWith(buildText, '**Dispatch-capability preflight (#4555), first, whatever this step\'s skip gate decides:**')`. Assert each is non-empty.
 
 ```js
 const FLOW_FACTS = [
@@ -172,7 +176,7 @@ Expected: FAIL on the missing `- 2.4 — Dispatch-capability preflight (#4555).`
 
 - [ ] **Step 3: Edit the skills.**
 
-In `plugin/skills/flow/SKILL.md` Step 2, change `Four checks, then a route, before pipeline starts.` to `A dispatch-capability preflight, four checks, then a route, before pipeline starts.` and insert directly above the `- 2.5 — Branch-divergence check` line:
+In `plugin/skills/flow/SKILL.md` Step 2, change `Five checks, then a route, before pipeline starts.` (the #4553 blocker-landing change already made it "Five", adding 2.7b) to `A dispatch-capability preflight, five checks, then a route, before pipeline starts.` and insert directly above the `- 2.5 — Branch-divergence check` line:
 
 ```markdown
 - 2.4 — Dispatch-capability preflight (#4555). When the step list includes `build`, on every entry — fresh, or a resume (a step-list resume or an adopted `PIPELINE_RUN_DIR`) — probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before 2.5-2.8, so a host that can never build leaves no claim or draft PR behind. A step list without `build` skips it (review's run-level **Independence: degraded** caveat covers that run). None found → stop BLOCKED per `build/execution-mode-policy.md`'s No-dispatch host section (resume command, `SKIP` line, `build-test-blocked` under dispatch); never implement plan tasks inline.
@@ -189,17 +193,18 @@ In `docs/skill-graph.md`'s `## flow` table, add one row in that table's existing
 - [ ] **Step 4: Verify.** Run, each its own call:
   - `node --test tests/no-dispatch-host-preflight-conformance.test.js` → PASS
   - `node --test tests/skill-graph-table-structure.test.js tests/skill-graph-dangling-pointer.test.js` → PASS
-  - `node --test tests/flow-preflight-conformance.test.js tests/flow-claim-preflight.test.js` → PASS
+  - `node --test tests/flow-preflight-conformance.test.js tests/flow-claim-preflight.test.js tests/flow-blocker-landing-conformance.test.js` → PASS
   - `wc -c plugin/skills/flow/SKILL.md plugin/skills/build/SKILL.md` → each under 52500
-  - Renumbering sweep (three forms): `grep -rn "Four checks" plugin docs`, `grep -rn "2\.5-2\.[0-9]" plugin/skills/flow`, `grep -rni "four pre-flight\|four checks" plugin/skills docs` — every hit either already updated or not about flow Step 2.
+  - Renumbering sweep (three forms): `git grep -n -i "five checks" -- plugin docs tests`, `git grep -n "2\.5-2\.[0-9]" -- plugin/skills/flow`, `git grep -n -i "five pre-flight\|four checks\|four pre-flight" -- plugin/skills docs tests` — every hit either already updated or not about flow Step 2.
 
-- [ ] **Step 5: Commit** — the three files plus the test by path; message `Add the dispatch-capability preflight to flow Step 2.4 and build Common Step 1.5 (refs #4555)`.
+- [ ] **Step 5: Commit** — the four files plus the new test by path; message `Add the dispatch-capability preflight to flow Step 2.4 and build Common Step 1.5 (refs #4555)`.
 
 ---
 
 ### Task 3: Cwd-pinned pointer in build/worktree-setup.md
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/worktree-setup.md` (one paragraph directly after the `## If worktree creation fails` table, before `## Impeccable hook consent (per-worktree)`)
@@ -331,9 +336,9 @@ Expected: FAIL after Step 1, on the new run-level note assertion (existing tests
 
 ```js
 const MERGE_FLOOR_FACTS = [
-  [/if this run's `decisions\.md` carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line'],
+  [/if `\$PIPELINE_RUN_DIR\/decisions\.md` — or, when `--pack` was passed, the `decisions\.md` beside that pack — carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line, in a named file'],
   [/`condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`/, 'AC10.3: quotes the exact SKIP text'],
-  [/or its review summary rendered the \*\*Independence: degraded\*\* line, render `needs-human`/, 'AC10.3: renders needs-human'],
+  [/or its review summary rendered the \*\*Independence: degraded\*\* line \(with no run directory to read, that summary line alone decides\), render `needs-human`/, 'AC10.3: renders needs-human; no run dir → summary line decides'],
   [/so its merge routes to a human\. Do not weigh anything else\./, 'AC10.3: merge decision routes to a human, hard floor'],
 ];
 ```
@@ -350,7 +355,7 @@ Expected: FAIL on the missing `- **An \`Independence: degraded\` review is a har
 Insert as one line directly after the `**Review's findings are a hard input, not advisory**` bullet (it ends `this mode never overrides a real review finding.`):
 
 ```markdown
-- **An `Independence: degraded` review is a hard floor (#4555)**: if this run's `decisions.md` carries `/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line (`review/step3-lens-dispatch.md`'s run-level note, text `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`), or its review summary rendered the **Independence: degraded** line, render `needs-human` — no independent agent reviewed this diff, so its merge routes to a human. Do not weigh anything else.
+- **An `Independence: degraded` review is a hard floor (#4555)**: if `$PIPELINE_RUN_DIR/decisions.md` — or, when `--pack` was passed, the `decisions.md` beside that pack — carries `/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line (`review/step3-lens-dispatch.md`'s run-level note, text `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`), or its review summary rendered the **Independence: degraded** line (with no run directory to read, that summary line alone decides), render `needs-human` — no independent agent reviewed this diff, so its merge routes to a human. Do not weigh anything else.
 ```
 
 Replace the Calibration closing sentence `Both floors stated above still apply on their own terms: a\nsensitive-path hit renders \`needs-human\` with nothing else weighed, and so does any review finding\nat Medium or above.` with `Every floor stated above still applies on its own terms: a\nsensitive-path hit renders \`needs-human\` with nothing else weighed, and so do any review finding\nat Medium or above and an \`Independence: degraded\` review.` (keep the existing line breaks; the trailing `Match a row here…` sentence is unchanged).
@@ -408,7 +413,7 @@ Expected: FAIL on the missing `**No-dispatch-host special case (#4555).**` parag
 - [ ] **Step 3: Insert the paragraph**, exactly:
 
 ```markdown
-**No-dispatch-host special case (#4555).** When the failure this call is settling is the dispatch-capability preflight's stop (`ISSUE #{n}: failed:no-dispatch-host`, `build/execution-mode-policy.md`'s No-dispatch host section), treat it as a pre-flight stop, like the claims-branch-missing stop above: the host, not the record, is at fault. Steps 1-2 run as normal — a first call stopped at `/flow` Step 2.4, before its Step 2.8 claim, so step 1 finds no claim to release; a resume's claim is released with `--reason "failed: no-dispatch-host"`. Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment, and no PR tombstone. When `DISPATCH_HEADLESS=1` was set, read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`), failing-check-name `flow-step-2.4-no-dispatch-host`, with the stop report as the diagnostic body.
+**No-dispatch-host special case (#4555).** When the failure this call is settling is the dispatch-capability preflight's stop (`ISSUE #{n}: failed:no-dispatch-host`, `build/execution-mode-policy.md`'s No-dispatch host section), treat it as a pre-flight stop, like the claims-branch-missing stop above: the host, not the record, is at fault. Steps 1-2 run as normal and find no claim of this run's to release — a first call stops at `/flow` Step 2.4, before its Step 2.8 claim, and a `dispatch resume` call's fresh run directory is one no earlier claim names — so step 1 skips. Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment, and no PR tombstone. When `DISPATCH_HEADLESS=1` was set, read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`), failing-check-name `flow-step-2.4-no-dispatch-host`, with the stop report as the diagnostic body.
 ```
 
 In `docs/skill-graph.md`'s `## dispatch` table add a row: target `build/execution-mode-policy.md`; relationship: Since #4555, `settle-and-merge.md`'s No-dispatch-host special case recognizes that file's No-dispatch host stop (`ISSUE #{n}: failed:no-dispatch-host`) and settles it as a pre-flight stop — no `failure-check`, no retry count, no failure comment — filing headless through `_shared/headless-self-report.md` as `flow-step-2.4-no-dispatch-host`.
