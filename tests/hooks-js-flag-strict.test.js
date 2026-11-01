@@ -15,7 +15,7 @@ const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS } = require('../plugin/bin/hooks.js');
+const { main, KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS } = require('../plugin/bin/hooks.js');
 const { readText } = require('./helpers/read-skill');
 const { fixtureGit } = require('./helpers/git-fixtures');
 
@@ -347,6 +347,19 @@ test('#4834: help wins over an unknown flag in the same call', () => {
     assert.equal(result.code, 0, args.join(' '));
     assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE.reconcile}\n`, args.join(' '));
     assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
+  }
+});
+
+test('#4834: an unusable stderr still refuses with exit 1', async () => {
+  const realWriteSync = fs.writeSync;
+  fs.writeSync = (fd, ...rest) => {
+    if (fd === 2) throw Object.assign(new Error('EBADF'), { code: 'EBADF' });
+    return realWriteSync.call(fs, fd, ...rest);
+  };
+  try {
+    assert.equal(await main(['node', 'hooks.js', 'reconcile', '--bogus']), 1);
+  } finally {
+    fs.writeSync = realWriteSync;
   }
 });
 

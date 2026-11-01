@@ -248,9 +248,10 @@ test('record-worktree accepts --run before or after the worktree positional', ()
 //
 // #1012 note: a `--`-prefixed positional (the original `--bogus-flag`) is
 // now intercepted even earlier, by the KNOWN_FLAGS unknown-flag guard shared
-// by all five mutating verbs (#4834: any undeclared `--*` argument is refused
-// on stderr with exit 1, before this branch — or resolveRunArg itself — ever runs; see
-// tests/hooks-help-guard.test.js and the KNOWN_FLAGS-specific cases below).
+// by every VERBS verb (#4834: any undeclared `--*` argument is refused on
+// stderr with exit 1, before this branch — or resolveRunArg itself — ever
+// runs; see tests/hooks-help-guard.test.js and the KNOWN_FLAGS-specific cases
+// below).
 // This test now uses a single-dash shape (`-x`), which that scan does not
 // classify (it only recognizes `--`-prefixed tokens), so it still reaches
 // and exercises this deeper, single-dash-specific safety net.

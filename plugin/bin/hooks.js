@@ -206,10 +206,11 @@ const KNOWN_FLAGS = {
 // declares it, so it must never be a boolean flag on another verb.
 const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
-// null when every `--*` token is declared (or there are none), else
-// `{ token, valueFlag }`: `token` is the first refused token, and `valueFlag`
-// is the declared VALUE_FLAGS member whose value position held it, or null
-// when `token` is itself undeclared. Scans the FULL argument list, not just a
+// Returns the first `--*`-shaped token in `args` that isn't declared for this
+// verb, as `{ token, valueFlag }`, or null when every `--*` token is declared
+// (or there are none). `token` is the refused token, and `valueFlag` is the
+// declared VALUE_FLAGS member whose value position held it, or null when
+// `token` is itself undeclared. Scans the FULL argument list, not just a
 // fixed position. A token consumed as a value is skipped, so main() checks
 // --help and -h over every position separately (#1143's "anywhere in the
 // argument list" guarantee).
@@ -1966,8 +1967,10 @@ async function main(argv) {
       const reason = unknown.valueFlag
         ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
         : `unknown flag '${unknown.token}'`;
-      fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
-      fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
+        fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
+      } catch { /* stderr unusable — the exit code still carries the refusal */ }
       return 1;
     }
   }
