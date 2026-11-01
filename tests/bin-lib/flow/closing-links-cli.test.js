@@ -188,6 +188,19 @@ test('AC1.1: closingLinks returns the pre-merge envelope run() prints', () => {
   assert.deepEqual(b.h.out, []);
 });
 
+test('AC1.1: closingLinks defaults settleMs to the CLI default (5 re-reads) and honors an explicit 0', () => {
+  const still = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    return { runDir, h: makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'OPEN', closedAt: null }] } }) };
+  };
+  const a = still();
+  assert.equal(closingLinks({ run: a.runDir, mode: 'post-merge' }, a.h.deps).envelope.action, 'close-pending');
+  assert.deepEqual(a.h.sleeps, [3000, 3000, 3000, 3000, 3000]);
+  const b = still();
+  closingLinks({ run: b.runDir, mode: 'post-merge', settleMs: 0 }, b.h.deps);
+  assert.deepEqual(b.h.sleeps, []);
+});
+
 test('AC1.1: closingLinks exit 5 returns no envelope and still logs its /wrap-up SKIP', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { prReads: [new Error('network down')] });
