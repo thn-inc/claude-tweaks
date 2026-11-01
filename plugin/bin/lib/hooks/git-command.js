@@ -1195,7 +1195,9 @@ function powershellOpaqueCommand(command, cwd) {
 // are case-insensitive on Windows. A `PID eq {n}` filter is the only silent `/FI` filter.
 // `-EncodedCommand` (base64) is not decoded. A `kill` is also armed by a process listing piped
 // through `grep` (`ps aux | grep node | … | xargs kill`, `kill $(ps aux | grep node | …)`): a
-// `ps`-led segment anywhere before a `grep`-led one, or a `$(ps …`/backtick opener, arms it like `pgrep`.
+// `ps`-led segment before a `grep`/`egrep`/`fgrep`-led one arms the `kill` segments that FOLLOW the
+// pair (`kill 123; ps aux | grep node` stays silent, unlike `pgrep`, which arms command-wide), as does
+// a `$(ps …`/backtick opener inside the `kill` itself; a `ps` with `-p`/`--pid` is a PID lookup and arms nothing.
 // Deliberate narrow miss: a positional PowerShell command (`powershell "Stop-Process -Name node"`,
 // which Windows PowerShell 5.1 runs as `-Command`) is not scanned, here or in powershellOpaqueCommand —
 // only an explicit `-Command` (here also `-c`) is, like every best-effort parser in this module.
@@ -1207,14 +1209,18 @@ function powershellOpaqueCommand(command, cwd) {
 const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
 const PROCESS_KILL_MAX_DEPTH = 4;
 // `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
-// The directory part excludes the opener characters, so a run of them inside one word is not rescanned.
-const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`$()]*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
+// The directory part excludes the substitution delimiters (a `$` may start a variable in the path:
+// `$($HOME/bin/pgrep node)`), so a run of openers inside one word is not rescanned.
+const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
 // `$(ps …` or `` `ps … `` — a kill fed by a process listing. The segment walk cuts the substitution
 // at its `|` (`kill -9 $(ps aux` | `grep node` | …), so the opener only arms a later `grep`-led
 // segment; a `|` kept inside one segment's text (a quoted substitution) is searched from the first
 // `ps` opener on, once, with a directory part that excludes `|` so each pipe rescans only its own word.
-const PS_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`$()]*[\/\\])?ps(?:\.exe)?(?=[\s)`]|$)/i;
-const PIPE_TO_GREP_RE = /\|\s*(?:[^\s`$()|]*[\/\\])?grep(?=[\s)`'"]|$)/i;
+const PS_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`()]*[\/\\])?ps(?:\.exe)?(?=[\s)`]|$)/i;
+const PIPE_TO_GREP_RE = /\|\s*(?:[^\s`()|]*[\/\\])?[ef]?grep(?=[\s)`'"]|$)/i;
+// A `ps` looking up given PIDs (`-p 123`, `-p123`, `-ep`, `--pid 5`, `--pid=5`) names no process by name.
+const PS_PID_FLAG_RE = /^(?:--pid(?:=.*)?|-[A-Za-z]*p\d*)$/;
+const PS_PID_FLAG_IN_TEXT_RE = /(?:^|\s)(?:--pid(?:=\S*)?|-[A-Za-z]*p\d*)(?=\s|$)/;
 const SHELL_COMMAND_FLAG_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
 const CMD_COMMAND_FLAG_RE = /^\/\/?[ck]$/i;
 const TASKKILL_IMAGE_FLAG_RE = /^(\/\/?|-)im$/i;
@@ -1285,19 +1291,27 @@ function processKillLabels(command, cwd, depth) {
   if (typeof command !== 'string' || depth > PROCESS_KILL_MAX_DEPTH || !/kill|stop-process/i.test(command)) return [];
   const slots = []; // one per visited segment, in order: what it reports, and what a later arm could add
   let pgrepSeen = false;
-  let psSeen = false; // a `ps`-led segment so far; a later `grep`-led one arms pgrepSeen (`ps aux | grep node`)
+  // A name-listing `ps` so far (one that is no PID lookup), and the slot index of the first `grep`-led
+  // segment after it: that pair arms the kill-led slots after it, and any kill whose own text holds the
+  // `$(ps` opener. Unlike pgrep, it is order-aware: `kill 123; ps aux | grep node` stays silent.
+  let psSeen = false;
+  let pairAt = -1;
   let getProcessSeen = false;
   forEachCommandSegment(command, cwd, (t, _effCwd, quoting, again) => {
     if (again || !t.length) return;
-    const slot = { labels: [], killLed: false, stopConsumer: false };
+    const slot = { labels: [], killLed: false, stopConsumer: false, psOpener: false, psInline: false };
     slots.push(slot);
     // Joined, because the tokenizer splits a spaced `$( pgrep node )` after its `$(`.
     const joined = t.join(' ');
     if (PGREP_SUBSTITUTION_RE.test(joined)) pgrepSeen = true;
     const psOpener = PS_SUBSTITUTION_RE.exec(joined);
     if (psOpener) {
-      psSeen = true;
-      if (PIPE_TO_GREP_RE.test(joined.slice(psOpener.index + psOpener[0].length))) pgrepSeen = true;
+      const tail = joined.slice(psOpener.index + psOpener[0].length);
+      if (!PS_PID_FLAG_IN_TEXT_RE.test(tail.split('|')[0])) {
+        psSeen = true;
+        slot.psOpener = true;
+        if (PIPE_TO_GREP_RE.test(tail)) slot.psInline = true;
+      }
     }
     const i = processKillLead(t, quoting);
     if (i >= t.length) return;
@@ -1306,8 +1320,8 @@ function processKillLabels(command, cwd, depth) {
     const later = (test) => t.slice(i + 1).some((word) => test(word));
     const recurse = (inner) => { if (inner !== undefined) slot.labels.push(...processKillLabels(inner, cwd, depth + 1)); };
     if (is('pgrep', 'pidof')) pgrepSeen = true;
-    else if (is('ps')) psSeen = true;
-    else if (is('grep')) { if (psSeen) pgrepSeen = true; }
+    else if (is('ps')) { if (!later((word) => PS_PID_FLAG_RE.test(word))) psSeen = true; }
+    else if (is('grep', 'egrep', 'fgrep')) { if (psSeen && pairAt < 0) pairAt = slots.length - 1; }
     else if (is('pkill', 'killall')) slot.labels.push(names.find((n) => PROCESS_KILL_WORDS.includes(n)));
     else if (is('taskkill')) {
       const filter = t.findIndex((word, j) => j > i && TASKKILL_FILTER_FLAG_RE.test(word) && j + 1 < t.length && !TASKKILL_PID_FILTER_RE.test(t[j + 1].trim()));
@@ -1331,9 +1345,10 @@ function processKillLabels(command, cwd, depth) {
       if (j >= 0 && j + 1 < t.length) recurse(t.slice(j + 1).join(' '));
     }
   });
-  for (const slot of slots) {
+  for (const [at, slot] of slots.entries()) {
     if (slot.labels.length) continue;
-    if (pgrepSeen && slot.killLed) slot.labels.push('kill');
+    const psFed = slot.psInline || (pairAt >= 0 && (at > pairAt || slot.psOpener));
+    if ((pgrepSeen || psFed) && slot.killLed) slot.labels.push('kill');
     else if (getProcessSeen && slot.stopConsumer) slot.labels.push('stop-process');
   }
   return slots.flatMap((slot) => slot.labels);

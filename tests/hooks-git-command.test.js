@@ -648,7 +648,8 @@ test('#4548: processKillByName flags pgrep-fed kills, non-PID taskkill filters a
   for (const c of [
     'kill $(pgrep node)', 'kill `pgrep node`', 'kill -9 $(pgrep -f vite)', 'pgrep -f x | xargs kill',
     'pgrep node | xargs -n 1 kill', 'P=$(pgrep node); kill $P', 'kill $(pidof node)', 'kill $(/usr/bin/pgrep node)',
-    'kill $( /usr/bin/pgrep -f x)', 'kill $(pgrep.exe node)',
+    'kill $( /usr/bin/pgrep -f x)', 'kill $(pgrep.exe node)', 'kill $($HOME/bin/pgrep node)', 'kill $(${HOME}/bin/pgrep node)',
+    'kill `$BIN/pidof node`',
     'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /F /fi "imagename eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
     'taskkill /FI "USERNAME eq me" /F', 'taskkill /FI "STATUS eq NOT RESPONDING"', 'taskkill /FI "PID ne 0"',
     'Get-Process node | Stop-Process', 'Get-Process -Name node | Stop-Process -Force',
@@ -661,7 +662,18 @@ test('#4548: processKillByName flags a kill fed by a ps | grep name search', () 
     "ps -ef | grep vite | awk '{print $2}' | xargs kill", "kill -9 `ps aux | grep node | awk '{print $2}'`",
     "sudo ps aux | grep node | xargs kill", "kill $(/bin/ps -ef | /usr/bin/grep vite | awk '{print $2}')",
     "kill $( ps aux | grep node )", 'kill "$(ps aux | grep node)"', "kill '$(ps aux | grep node)'",
+    "ps aux | egrep node | awk '{print $2}' | xargs kill", "ps aux | fgrep node | xargs kill", "ps aux | grep -E 'node|vite' | xargs kill",
+    "ps aux | grep node; kill 123",
   ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName leaves a PID-scoped kill alone next to a ps | grep, before it or fed by a PID lookup', () => {
+  for (const c of [
+    'kill 123; ps aux | grep node', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t); ps aux | grep node',
+    'ps -p $PID | grep -q node && kill $PID', 'ps -o comm= -p 123 | grep -q vite && kill 123',
+    'ps -p123 | grep -q vite && kill 123', 'ps -ep 123 | grep vite && kill 123', 'ps --pid 123 | grep vite && kill 123',
+    'ps --pid=123 | grep vite && kill 123', 'kill $(ps -p 123 | grep vite)',
+  ]) assert.ok(!hit(c), c);
 });
 
 test('#4548: processKillByName stays silent on a ps | grep search no kill consumes', () => {
@@ -708,6 +720,7 @@ test('#4548: processKillByName stays linear on a long run of substitution opener
   for (const command of [
     'kill ' + '`'.repeat(32000), "kill '" + '$('.repeat(32000), 'kill ' + '$(ps '.repeat(8000),
     'kill $(ps ' + '|'.repeat(32000), 'kill $(ps aux ' + '|/'.repeat(16000),
+    'kill ' + '$($'.repeat(10000), 'kill $(' + '$/'.repeat(16000), 'kill ' + '`$/'.repeat(10000),
   ]) {
     let best = Infinity;
     for (let run = 0; run < 3; run += 1) {
