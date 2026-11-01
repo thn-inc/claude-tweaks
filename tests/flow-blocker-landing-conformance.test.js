@@ -273,6 +273,9 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
 const RUN_FACTS = [
   { re: /preflight-records\.js" \{n\} --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, msg: '2.7b runs the --blocker-landing call with $INTEGRATION_BRANCH', from: ' --blocker-landing --integration-branch "$INTEGRATION_BRANCH"', to: ' --integration-branch "$INTEGRATION_BRANCH"' },
   { re: /BLOCKED[^\n]*before Step 2\.8 claims/, msg: '2.7b stops before Step 2.8 claims', from: / before Step 2\.8 claims/, to: ' before the build' },
+  { re: /`open` or `unlanded` is BLOCKED — a STOP before Step 2\.8 claims/, msg: '2.7b: open and unlanded are both BLOCKED before Step 2.8 claims', from: '`open` or `unlanded` is BLOCKED', to: '`open` proceeds; `unlanded` is BLOCKED' },
+  { re: /`undetermined` proceeds/, msg: '2.7b: undetermined proceeds', from: '`undetermined` proceeds', to: '`undetermined` is BLOCKED too' },
+  { re: /`undetermined` proceeds, holding that file's per-blocker `SKIP`/, msg: '2.7b: undetermined holds the per-blocker SKIP', from: ", holding that file's per-blocker `SKIP`", to: '' },
   { re: /`multispec-dependency-ordering\.md`'s out-of-run verdict table/, msg: '2.7b applies the out-of-run verdict table', from: "`multispec-dependency-ordering.md`'s out-of-run verdict table", to: 'the verdict table' },
   { re: /`_shared\/integration-branch\.md`/, msg: '2.7b resolves $INTEGRATION_BRANCH per _shared/integration-branch.md', from: ' per `_shared/integration-branch.md`', to: '' },
 ];
@@ -325,8 +328,8 @@ const PLAN_REVIEW_FACTS = [
   { re: /`nativeLinksUnchecked: true`[^\n]*it is never "no blockers"/, msg: 'nativeLinksUnchecked: true is never "no blockers"', from: ' — it is never "no blockers"', to: '' },
   { re: /Write the held `SKIP`s, exactly once\./, msg: 'the held SKIPs are written exactly once', from: ', exactly once', to: '' },
   { re: /and not again if an express-escalated run continues at Step 3/, msg: 'an express-escalated run does not write the SKIPs again at Step 3', from: ', and not again if an express-escalated run continues at Step 3', to: '' },
-  { re: /Under `interactive` mode there is no run directory/, msg: 'under interactive there is no run directory', from: 'Under `interactive` mode there is no run directory', to: 'Under `confirm` mode there is a run directory' },
-  { re: /so 2\.7b writes none and instead states each `undetermined` verdict, and the native-links-unread note, in the conversation, one line each/, msg: 'under interactive 2.7b states each verdict and the native-links note in the conversation', from: ', in the conversation, one line each', to: '' },
+  { re: /Under `interactive` mode no Manifesto runs \(`mode-table\.md`\), so `decisions\.md` never legitimately carries more than Step 2\.8's claim lines/, msg: 'under interactive no Manifesto runs, so decisions.md carries only the claim lines', from: 'Under `interactive` mode no Manifesto runs', to: 'Under `confirm` mode the Manifesto runs' },
+  { re: /; 2\.7b writes none and instead states each `undetermined` verdict, and the native-links-unread note, in the conversation, one line each/, msg: 'under interactive 2.7b states each verdict and the native-links note in the conversation', from: ', in the conversation, one line each', to: '' },
   { re: /`express-entry\.md`'s Bind step/, msg: 'SKIPs on the express route are written after express-entry.md Bind step', from: "`express-entry.md`'s Bind step", to: 'the express route' },
   { re: /right after Step 3's Manifesto write or adoption/, msg: 'SKIPs are written right after Step 3', from: "right after Step 3's Manifesto write or adoption", to: 'right away' },
   { re: /never before[^\n]*Step 2\.8's claim lines/, msg: 'SKIPs are never written before Step 3 (adoption tolerates only claim lines)', from: /never before[^\n]*claim lines in `decisions\.md`/, to: 'at any time' },
