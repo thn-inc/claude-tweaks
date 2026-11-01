@@ -1143,6 +1143,28 @@ test('postMergeOne runs inside MERGE_GRACE_MS under the claim with the in-sessio
   assert.ok(!fs.existsSync(lockOf(dir)));
 });
 
+test('postMergeOne fails closed on an unreadable mergedAt: merged-at-unreadable, no claim, no call, no marker; the loop still defers it as merge-grace', async () => {
+  // `merged(undefined)` would take the default mergedAt: build the no-mergedAt state by hand.
+  for (const prState of [{ number: 11, state: 'MERGED' }, merged('not-a-date')]) {
+    const mergedAt = prState.mergedAt;
+    const root = mainCheckout();
+    const dir = addRun(root, '2026-10-30T090000-spec-1');
+    const links = fakeClosingLinks(ENVELOPE);
+    let claims = 0;
+    const entry = await postMergeOne(oneArgs(root, dir, {
+      prs: { 11: prState }, links, close: fakeCloseParents(), takeClaimFn: () => { claims += 1; return { ok: true }; },
+    }));
+    assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'merged-at-unreadable' }, String(mergedAt));
+    assert.equal(claims, 0, 'no claim taken');
+    assert.equal(links.calls.length, 0);
+    assert.equal(decisionsOf(dir), '');
+    assert.ok(!fs.existsSync(lockOf(dir)));
+
+    const loop = await run(root, { prs: { 11: prState }, links, close: fakeCloseParents() });
+    assert.deepEqual(loop, { entries: [{ runDir: dir, pr: 11, action: 'skipped', reason: 'merge-grace' }], deferred: [dir] });
+  }
+});
+
 test('postMergeOne surfaces Step 4.0\'s record lists; postMerge entries never carry them', async () => {
   const envelope = {
     action: 'reopen-failed', closingSet: [101], failed: [{ issue: 105, error: 'x' }], closeFailed: [], pendingClose: [106], reopened: [],

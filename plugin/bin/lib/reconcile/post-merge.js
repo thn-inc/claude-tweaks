@@ -324,8 +324,9 @@ function setupContext({ cwd, deps }) {
 // One run through the guards and, when it clears them, Steps 4.0 and 4.0b. Order: recorded PR -> marker ->
 // PR state -> MERGED -> grace -> dry-run -> budget -> claim -> marker re-read -> processRun -> release.
 // -> { entry, defer }: `entry` null is a silent skip; `defer` says archive must keep the run for a retry.
-// `single` (postMergeOne) runs inside the grace under the in-session parameters instead of skipping it, and
-// returns its silent skips (`no-pr`, `already-done`, `not-merged`) as entries.
+// `single` (postMergeOne) runs inside the grace under the in-session parameters instead of skipping it,
+// skips an unreadable mergedAt as `merged-at-unreadable`, and returns its silent skips (`no-pr`,
+// `already-done`, `not-merged`) as entries.
 async function processCandidate({
   dir, state, ctx, prStates, dryRun, now, budgetExceeded, deps, single = false, retryHint, includeRecords = false,
 }) {
@@ -347,6 +348,10 @@ async function processCandidate({
   if (prState.state !== 'MERGED') return { entry: silentSkip('not-merged', { detail: String(prState.state) }), defer: false };
 
   const mergedAt = Date.parse(prState.mergedAt);
+  // Single-run: an unreadable mergedAt leaves the merge's age unknown, and the in-session arguments carry no
+  // close-window bound (unsafe on a late merge), so it fails closed — no claim, no marker, nothing run. The
+  // loop defers the same case as merge-grace below.
+  if (single && Number.isNaN(mergedAt)) return { entry: skipped('merged-at-unreadable'), defer: false };
   // `<=`: a run is processed only strictly past the grace, so strictly past CLOSE_WINDOW_MS too
   // (closing-links settles a still-open will-close record only once the clock is past mergedAt + window).
   const inGrace = Number.isNaN(mergedAt) || now() - mergedAt <= MERGE_GRACE_MS;

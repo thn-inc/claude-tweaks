@@ -29,6 +29,8 @@
 //   in-flight: another process holds the run's claim. Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,
 //   marker-write-failed, error, not-github-issues, no-remote, no-pr-states,
+//   merged-at-unreadable (a MERGED PR whose mergedAt does not parse: its age is
+//   unknown, so nothing runs),
 //   no-pr-state, pr-not-found, invalid-arguments -- the last three are the PR-state
 //   resolver's own answer passed through -- and this CLI's own gh-absent -- `pr: null`,
 //   no lookup made) is a failure to report.

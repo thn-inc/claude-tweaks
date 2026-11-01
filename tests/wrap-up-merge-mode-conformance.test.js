@@ -84,13 +84,13 @@ const MERGE_MODE_FACTS = {
   'already-log-failed': /Any line reporting a `ran` entry that carries `logFailed`, clean or a failure, also notes that Step 4\.0 could not append a `decisions\.md` line/,
   'already-step40-failed': /a `ran` entry carrying `step40Failed`, or a `closingLinks` of `reopen-failed`, `close-failed`, `close-pending` or `base-unchecked`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
   'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: the line names no `\/claude-tweaks:wrap-up` re-run and cites `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
-  'already-other-reason': /any other `reason` — `gh-absent`, `transient-failure`, `network-failure`, `claim-failed`, `marker-write-failed`, `error`, `not-github-issues`, `no-remote`, `no-pr`, `no-pr-states`, `no-pr-state`, `pr-not-found`, `invalid-arguments` and `not-merged` — adds one `cleanup: post-merge closes failed — \{reason\}` line/,
+  'already-other-reason': /any other `reason` — `gh-absent`, `transient-failure`, `network-failure`, `claim-failed`, `marker-write-failed`, `error`, `not-github-issues`, `no-remote`, `no-pr`, `no-pr-states`, `no-pr-state`, `pr-not-found`, `invalid-arguments`, `merged-at-unreadable` and `not-merged` — adds one `cleanup: post-merge closes failed — \{reason\}` line/,
   'already-exit-nonzero': /Any CLI exit other than 0 leaves no line to route on, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
   'already-unparseable': /an exit 0 whose stdout is empty or will not parse as JSON reads `cleanup: post-merge closes failed — unparseable output`/,
   'already-marker-less': /The marker-less failures are the `skipped` ones, the non-zero exit line and the unparseable-output line/,
   'already-retry': /Those reading `transient-failure`, `network-failure`, `claim-failed`, `marker-write-failed` or `error`, the non-zero exit line and the unparseable-output line name `\/claude-tweaks:wrap-up #\{n\} merge` as the next step, because with no marker written yet a re-run tries the closes again/,
   'already-gh-absent': /`gh-absent` names that re-run from an environment where `gh` is available, since this one cannot run the closes at all, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop/,
-  'already-no-rerun': /Every other `skipped` reason — `not-github-issues`, `no-remote`, and the `no-pr`, `no-pr-states`, `no-pr-state`, `pr-not-found`, `invalid-arguments` and `not-merged` that the Preconditions above and the CLI's own checks make unreachable here — names no next step: a re-run fails the same way, because the project's work backend or remote, not this run, decides the first two/,
+  'already-no-rerun': /Every other `skipped` reason — `not-github-issues`, `no-remote`, and the `no-pr`, `no-pr-states`, `no-pr-state`, `pr-not-found`, `invalid-arguments`, `merged-at-unreadable` and `not-merged` that the Preconditions above and the CLI's own checks make unreachable here \(a `MERGED` PR always carries `mergedAt`\) — names no next step: a re-run fails the same way, because the project's work backend or remote, not this run, decides the first two/,
   'already-step-4-1-line': /Step 4\.1's own release-status line is reported as that step defines it: it is none of the per-step words here and never adds a next step/,
   'already-done-word': /A target that is already gone — worktree reaped, branch deleted, claim released — reports `already done`, never `failed`/,
   'already-link': /`\$LINK` is the PR's `mergeCommit\.oid` from `gh pr view \{pr\} --json mergeCommit,mergedAt,mergedBy`/,
@@ -184,6 +184,7 @@ test('the journey, skill-graph and CLI docs describe the Already merged route, n
     const text = flat(read(...file));
     assert.match(text, /parentFailures/, `${file.join('/')}: names parentFailures`);
     assert.match(text, /logFailed/, `${file.join('/')}: names logFailed`);
+    assert.match(text, /merged-at-unreadable/, `${file.join('/')}: names merged-at-unreadable`);
   }
 });
 
