@@ -218,6 +218,36 @@ test('AC1.1: closingLinks exit 3 (missing run dir) returns no envelope', () => {
   assert.deepEqual(h.out, []);
 });
 
+test('closingLinks has no stdout seam: with none injected it writes nothing to process.stdout, on an exit-0 and an exit-3 path', () => {
+  const written = [];
+  const real = process.stdout.write;
+  const withoutStdout = (deps) => { const { stdout: _omit, ...rest } = deps; return rest; };
+  try {
+    process.stdout.write = (chunk) => { written.push(String(chunk)); return true; };
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const ok = makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] } });
+    const r = closingLinks({ run: runDir, mode: 'post-merge' }, withoutStdout(ok.deps));
+    const missing = closingLinks({ run: path.join(runDir, 'does-not-exist'), mode: 'post-merge' }, withoutStdout(ok.deps));
+    assert.equal(r.code, 0);
+    assert.equal(r.envelope.action, 'reopened');
+    assert.equal(missing.code, 3);
+    assert.deepEqual(written, []);
+  } finally {
+    process.stdout.write = real;
+  }
+});
+
+test('closingLinks throws a TypeError for a mode that is not pre-merge or post-merge, before any gh call or log', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [preView(body(), [3997])] });
+  for (const mode of ['bogus', undefined, null, '']) {
+    assert.throws(() => closingLinks({ run: runDir, mode }, h.deps), (e) => e instanceof TypeError && /mode must be one of pre-merge, post-merge/.test(e.message));
+  }
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.err, []);
+  assert.equal(h.log(runDir), '');
+});
+
 test('AC2.1 pre-merge unlinks a stale closing reference', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const h = makeDeps(main, { prReads: [preView(body(), [2724, 3997])], rereads: [refsOf(3997)] });

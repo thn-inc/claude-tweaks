@@ -578,14 +578,15 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 
 ## Post-merge closes (#4599)
 
-`post-merge.js` runs `_shared/pr-first-merge-post-merge.md`'s Step 4.0 (`bin/closing-links.js
---mode post-merge`) and Step 4.0b (`lib/issues/below-floor-parent-close.js`) once for a PR GitHub
-merged after its session ended: an armed auto-merge, a merge-queue merge, or a human clicking merge
-in the browser. No session saw that merge, so no session ran the steps, and a below-floor parent
-whose last sub-issue merged this way used to wait for a human to approve a tidy row. Step 4.0b's
-gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js`
-(#4603). The module only decides when the steps run and records that they did. Tidy's
-`parent-gate` backstop is unchanged, and every fail-open path below leaves the parent open for it.
+`post-merge.js` runs `_shared/pr-first-merge-post-merge.md`'s Step 4.0 in-process through
+`bin/closing-links.js`'s `closingLinks()` core (post-merge mode) and Step 4.0b
+(`lib/issues/below-floor-parent-close.js`) once for a PR GitHub merged after its session ended: an
+armed auto-merge, a merge-queue merge, or a human clicking merge in the browser. No session saw
+that merge, so no session ran the steps, and a below-floor parent whose last sub-issue merged this
+way used to wait for a human to approve a tidy row. Step 4.0b's gate is
+`lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js` (#4603). The
+module only decides when the steps run and records that they did. Tidy's `parent-gate` backstop is
+unchanged, and every fail-open path below leaves the parent open for it.
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
   included (a closed run is the usual armed-auto-merge shape), whose `run-state.json` records a
@@ -659,17 +660,16 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
 - **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
   or its transport, so it is transient. Exit 3 (run dir not anchored) is deterministic; exit 4 is
-  pre-merge only. An exit-0
-  `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base
-  or the default branch could not be read, so Step 4.0 closed nothing and printed no closing set,
-  #4549) is a failed read, so it is transient too; once its retries are spent its marker entry
-  carries `step40Failed: true`. A `gh-failed` skip for one parent or record in Step 4.0b is that
-  parent's, and the marker is written as usual. A transient failure appends a `SKIP … reconcile
-  post-merge attempt` line (`condition: … (attempt N of 3) → fallback: the next reconcile pass
-  retries …`), never the marker, and the run is deferred. Once three attempt lines exist, the next transient failure
-  writes the marker as a deterministic one does, so the retry is bounded and the parent falls to
-  tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent past the close window: a
-  record it reopened last time reads open and is settled open.
+  pre-merge only. An exit-0 `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed`
+  with that flag: the PR's base or the default branch could not be read, so Step 4.0 closed nothing
+  and printed no closing set, #4549) is a failed read, so it is transient too; once its retries are
+  spent its marker entry carries `step40Failed: true`. A `gh-failed` skip for one parent or record
+  in Step 4.0b is that parent's, and the marker is written as usual. A transient failure appends a
+  `SKIP … reconcile post-merge attempt` line (`condition: … (attempt N of 3) → fallback: the next
+  reconcile pass retries …`), never the marker, and the run is deferred. Once three attempt lines
+  exist, the next transient failure writes the marker as a deterministic one does, so the retry is
+  bounded and the parent falls to tidy's backstop. A retry re-runs Step 4.0 too, which is idempotent
+  past the close window: a record it reopened last time reads open and is settled open.
 - **Budget (`budget-exhausted`).** `index.js` hands `postMerge` the pass's own wall-clock budget as
   `budgetExceeded`. It is checked before each run's steps, never mid-run, so a catch-up or several
   armed merges cannot run the inline 18 s passes (the unscoped CLI, Step 4.2, dispatch's calls) past

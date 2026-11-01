@@ -915,7 +915,7 @@ test('prefetchPostMergePrStates: nothing is looked up for a project postMerge wo
   await assert.doesNotReject(prefetchPostMergePrStates(root, null));
 });
 
-// ---- M6: end to end — the real postMerge, closing-links run() and closeBelowFloorParents; only gh is faked ----
+// ---- M6: end to end — the real postMerge, closing-links' closingLinks() core and closeBelowFloorParents; only gh is faked ----
 
 // A merged PR #11 whose Fixes block names `fixes` (default #101); #101 and #102 are the sub-issues of parent
 // #100 (native links). `live` is each sub-issue's state as GitHub reports it now, an hour after the merge.

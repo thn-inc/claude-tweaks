@@ -183,18 +183,24 @@ function uniqueSorted(numbers) {
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
+// The core's real deps: realDeps minus the stdout seam, so the core cannot print
+// even by accident (run() keeps stdout for its own one JSON line).
+const { stdout: _unusedStdout, ...coreDeps } = realDeps;
+
 // The core: already-validated opts -> { code, envelope }. Prints nothing to
 // stdout; stderr lines and decisions.md appends are its own. `envelope` is the
-// object the CLI prints, non-null iff code is 0.
+// object the CLI prints, non-null iff code is 0. An unknown mode is a caller bug
+// (the CLI's parseArgs rejects it with exit 2 first), so it throws.
 function closingLinks(opts, overrides = {}) {
+  if (!MODES.includes(opts.mode)) throw new TypeError(`closingLinks: mode must be one of ${MODES.join(', ')}: ${opts.mode}`);
   // Tests pass only the seams they fake; the rest stay real.
-  const deps = { ...realDeps, ...overrides };
+  const deps = { ...coreDeps, ...overrides };
   const o = {
     run: opts.run, mode: opts.mode, settleMs: opts.settleMs ?? DEFAULT_SETTLE_MS, closeWindowMs: opts.closeWindowMs ?? null,
   };
   const ok = (envelope) => ({ code: 0, envelope });
 
-  // 2. The run dir must be the main checkout's, never a worktree-local shadow.
+  // 1. The run dir must be the main checkout's, never a worktree-local shadow.
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`closing-links.js: run dir does not exist: ${o.run}\n`);
@@ -202,7 +208,7 @@ function closingLinks(opts, overrides = {}) {
     return { code: 3, envelope: null };
   }
 
-  // 3. The PR number and run id; a per-spec dir answers for its parent run.
+  // 2. The PR number and run id; a per-spec dir answers for its parent run.
   let resolved = { state: null, parentRunDir: null };
   try { resolved = deps.readRunState(o.run) || resolved; } catch { /* no readable run-state: no-pr */ }
   const n = resolved.state && resolved.state.pr && resolved.state.pr.number;
@@ -238,7 +244,7 @@ function closingLinks(opts, overrides = {}) {
     return { code: EXIT_GH_FAILURE, envelope: null };
   };
 
-  // 4. No gh: status as data, never a failure.
+  // 3. No gh: status as data, never a failure.
   if (!deps.ghAvailable()) {
     unchecked('gh-absent');
     return ok({ action: 'gh-absent', pr: n, ...(logFailed ? { logFailed: true } : {}) });
@@ -262,7 +268,7 @@ function closingLinks(opts, overrides = {}) {
   const degraded = (condition, fallback) => log(`condition: ${condition} → fallback: ${fallback}`, 'n/a', 'SKIP', 'Closing links (degraded)');
   const done = (envelope) => ok({ ...envelope, ...(logFailed ? { logFailed: true } : {}) });
 
-  // 5. Read the live PR. A body that is not a string, or links that are not an
+  // 4. Read the live PR. A body that is not a string, or links that are not an
   // array, is a read failure -- never an empty answer that licenses a write.
   const fields = o.mode === 'pre-merge'
     ? 'body,closingIssuesReferences,url'
@@ -288,13 +294,13 @@ function closingLinks(opts, overrides = {}) {
   const linked = sameRepoNumbers(pr.closingIssuesReferences, scope);
 
   if (o.mode === 'pre-merge') {
-    // 6a. No fixes span means no statement of what the run keeps open.
+    // 5a. No fixes span means no statement of what the run keeps open.
     if (!span.found) return ok({ action: 'no-fixes-span', pr: n });
     const unwanted = linked.filter((x) => !expected.includes(x));
     const base = { pr: n, expected, keepOpen, linked, unwanted };
     if (unwanted.length === 0) return ok({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
 
-    // 7a. Prove the PR is this run's before anything is written to it or any
+    // 6a. Prove the PR is this run's before anything is written to it or any
     // outcome is logged (a no-write path still logs into this run) -- only the
     // refusal's own SKIP is -- then rewrite the unwanted phrases and write only
     // what changed.
@@ -313,7 +319,7 @@ function closingLinks(opts, overrides = {}) {
       }
     }
 
-    // 8a. Always re-read: the forge's own links are the evidence, not the text.
+    // 7a. Always re-read: the forge's own links are the evidence, not the text.
     let relinked;
     try {
       const reread = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', 'closingIssuesReferences']));
@@ -338,11 +344,11 @@ function closingLinks(opts, overrides = {}) {
     });
   }
 
-  // 6b. post-merge: nothing to reopen until the PR merged.
+  // 5b. post-merge: nothing to reopen until the PR merged.
   if (pr.state !== 'MERGED') return ok({ action: 'not-merged', pr: n, state: pr.state });
   if (!span.found) return ok({ action: 'no-fixes-span', pr: n });
 
-  // 7b. The squash message is the second closing channel. A failed read (or
+  // 6b. The squash message is the second closing channel. A failed read (or
   // an oid that is not a commit sha, never put into the API path) degrades to
   // "unread" and says so; it never blocks the reopen. Unread, any candidate
   // may be named by a closing keyword, so every one counts as will-close and
@@ -359,7 +365,7 @@ function closingLinks(opts, overrides = {}) {
   const candidates = uniqueSorted([...linked, ...keepOpen].filter((x) => !expected.includes(x)));
   const closers = new Set([...linked, ...messageCloses]);
 
-  // 7b'. GitHub acts on closing keywords only for a merge into the repo's
+  // 6b'. GitHub acts on closing keywords only for a merge into the repo's
   // default branch (#4549). Which branch this one landed on is read before the
   // reopen loop, because a merge elsewhere closes nothing: no will-close
   // polling, no pendingClose. The default branch comes from `gh repo view` for
@@ -384,7 +390,7 @@ function closingLinks(opts, overrides = {}) {
   const nonDefaultBase = !baseUnchecked && base !== defaultBranch;
   const willClose = nonDefaultBase ? [] : (messageUnread ? candidates : candidates.filter((x) => closers.has(x)));
 
-  // 8b. Per candidate: read, re-read while a will-close one still reads OPEN
+  // 7b. Per candidate: read, re-read while a will-close one still reads OPEN
   // (bounded by re-read count, never by the clock), reopen what closed at or
   // after the merge -- and, with --close-window-ms, no later than mergedAt + n.
   const maxRereads = Math.floor(o.settleMs / POLL_STEP_MS);
@@ -440,7 +446,7 @@ function closingLinks(opts, overrides = {}) {
   for (const issue of pendingClose) {
     degraded(`#${issue} still open ${windowSeconds}s after PR #${n} merged though the merge may close it`, 're-run --mode post-merge, or reopen it by hand if it closes');
   }
-  // 9b. The merge landed outside the default branch: its Fixes records stay
+  // 8b. The merge landed outside the default branch: its Fixes records stay
   // open, so close each one still open (#4549). Records already CLOSED are left
   // alone and count as closed; a failed read or close is reported, never
   // counted. An unchecked base closes nothing.
@@ -515,7 +521,7 @@ function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const usageError = (message) => { deps.stderr(`closing-links.js: ${message}\n${USAGE}`); return 2; };
 
-  // 1. Parse / validate. --help answers before any probe.
+  // Parse / validate. --help answers before any probe.
   const o = parseArgs(argv);
   if (o.error) return usageError(o.error);
   if (o.help) { deps.stdout(USAGE); return 0; }
