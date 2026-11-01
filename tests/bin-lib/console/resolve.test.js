@@ -1103,6 +1103,17 @@ test('AC1.1 AC1.2: a dropped verdict for a dir/x.ts:3 settles that line only; b 
   // A coordination id keeps only line.slice(2, 60), which cuts before `.ts`.
   assert.deepStrictEqual(items.map((i) => [i.id.includes('finding b dir/x.'), i.resolution]), [[true, 'keep-staged']]);
 });
+test('a space path with no verdict of its own settles on a plain-path verdict at its suffix, as before (#4632)', () => {
+  const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
+  const plain = tbFinding({ lens: '3b', path: 'dir/x.ts', line: 3 });
+  assert.deepStrictEqual(findings([tbStaged(b), tbVerdict(plain, { verdict: 'refuted' }).entry].join('\n')), []);
+});
+test('a path holding two spaces keys whole: its own verdict settles it, a sibling sharing the last two tokens stays keep-staged (#4632)', () => {
+  const mine = tbFinding({ lens: '3b', path: 'my a dir/x.ts', line: 3 });
+  const sib = tbFinding({ lens: '3b', path: 'b a dir/x.ts', line: 3 });
+  const items = findings([tbStaged(mine), tbStaged(sib), tbVerdict(mine, { verdict: 'refuted' }).entry].join('\n'));
+  assert.deepStrictEqual(items.map((i) => [i.id.includes('finding b a dir/'), i.resolution]), [[true, 'keep-staged']]);
+});
 test('AC2.1: a lone STAGED line at my dir/x.ts:3 is settled by its own dropped, digested, console and confirmed verdict (#4632)', () => {
   const f = tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3 });
   const low = tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3, reporterSeverity: 'low' });

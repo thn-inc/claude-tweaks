@@ -13,7 +13,7 @@ const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
-const { FINDINGS_ARTIFACT } = require('../tiebreak');
+const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
 // Section names exactly as the console renders them (console-template.md;
@@ -454,13 +454,12 @@ function mergeResolution(snapshot, deps) {
 //   AUTO   … Tiebreak tiebreak:{id}: lens "L" finding P:N dropped: refuted by tiebreak. Evidence: {e}. Severity: {s}.
 //   AUTO   … Reproduction: lens "L" finding P:N confirmed by tiebreak:{id}. Confirmed.
 // Anchored on the verdict line's own shape, mirroring tiebreak.js's verdictLineRe (whose confirmed
-// alternative shares the confirmed line's VERDICT_LINE_END anchor, #4632), so a marker quoted
+// alternative ends on the same imported VERDICT_LINE_END anchor, #4632), so a marker quoted
 // inside another line's text never parses as a verdict. The finding path is producer-supplied and may
 // hold spaces, so everything after it is matched against the resolver-written rest of the line, anchored
 // on the line's end: a path can never forge the kind, severity or recommendation (#3949 review).
 const VERDICT_LINE_HEAD = '^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — ';
 const VERDICT_SEV = '(critical|high|medium|low|info)';
-const VERDICT_LINE_END = '(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$';
 const TIEBREAK_STEP_HEAD = `${VERDICT_LINE_HEAD}Tiebreak tiebreak:([0-9a-f]{12}): lens "([^"]*)" finding (.+):([^\\s:]+) `;
 // The reason is one of resolveTiebreak's own tokens (`verdict:cant-tell`, `status:BLOCKED`, …), never free text.
 const TIEBREAK_CANT_TELL_RE = new RegExp(`${TIEBREAK_STEP_HEAD}(console|digested): ([A-Za-z0-9:_-]+)\\. Severity: ${VERDICT_SEV}\\.(?: Recommendation: (file|drop|none)\\.)?${VERDICT_LINE_END}`);
@@ -611,8 +610,8 @@ function tiebreakModel(snapshot) {
   });
   // The verdict settling one STAGED location after `index`, else null: its resolved key's, or a prose
   // settler's at its shortest key (#4632) — prose settlers key there, so a location a whole-path verdict
-  // resolved (`a dir/x.ts`) still settles on a later one, as before. A tiebreak verdict never settles
-  // through the shortest key.
+  // resolved (`a dir/x.ts`) still settles on a later one, as before. A tiebreak verdict settles only
+  // through the resolved key, which is the shortest key only on namedCandidate's fallback.
   const settlerAfter = (index, key, short) => {
     const v = settledByKey.get(key);
     if (v && v.index > index) return v;
