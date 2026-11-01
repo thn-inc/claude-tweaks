@@ -26,6 +26,62 @@
 - Scope and edit discipline (verbatim): "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
 - Never run `git stash` in any form.
 
+## Scratch helpers (recreate verbatim if missing)
+
+Two uncommitted scratch scripts back the go-red proofs and the real-input probe. They live at `{scratch}` = `/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/`. If either file is missing (a resumed build in another session), recreate it from the block below with the Write tool in that session's own scratchpad directory and use that path — never skip the step that calls it.
+
+`{scratch}go-red-4640.js` — swap one file to its base-revision content, run one test file, restore content and mode in `finally`:
+
+```js
+// Usage: node go-red-4640.js <repoRoot> <relPath> <baseRev> <testFile> [namePattern]
+const fs = require('fs');
+const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
+const [repoRoot, relPath, baseRev, testFile, namePattern] = process.argv.slice(2);
+const abs = path.join(repoRoot, relPath);
+const original = fs.readFileSync(abs);
+const mode = fs.statSync(abs).mode;
+const base = execFileSync('git', ['-C', repoRoot, 'show', `${baseRev}:${relPath}`]);
+let result;
+try {
+  fs.writeFileSync(abs, base);
+  const args = ['--test'];
+  if (namePattern) args.push(`--test-name-pattern=${namePattern}`);
+  args.push(path.join(repoRoot, testFile));
+  result = spawnSync(process.execPath, args, { cwd: repoRoot, encoding: 'utf8' });
+} finally {
+  fs.writeFileSync(abs, original);
+  fs.chmodSync(abs, mode);
+}
+const restored = Buffer.compare(fs.readFileSync(abs), original) === 0;
+const tail = (result.stdout || '').split('\n').filter((l) => /^# (tests|pass|fail)|^not ok/.test(l));
+console.log(JSON.stringify({ swapped: relPath, exit: result.status, restored }));
+for (const l of tail) console.log(l);
+```
+
+`{scratch}marker-probe-4640.js` — run `extractTaskMarkers`/`checkTaskMarkers` over every committed plan:
+
+```js
+// Usage: node marker-probe-4640.js <repoRoot>
+const fs = require('fs');
+const path = require('path');
+const root = process.argv[2];
+const { checkTaskMarkers } = require(path.join(root, 'plugin/bin/lib/plan-audit/checks.js'));
+const { extractTaskMarkers } = require(path.join(root, 'plugin/bin/lib/plan-audit/parser.js'));
+const dir = path.join(root, 'docs/superpowers/plans');
+let plans = 0, marked = 0, high = 0, roles = 0; const findings = [];
+for (const f of fs.readdirSync(dir).filter((n) => n.endsWith('.md')).sort()) {
+  const text = fs.readFileSync(path.join(dir, f), 'utf8');
+  plans++;
+  const m = extractTaskMarkers(text);
+  if (m.markers) marked++;
+  for (const t of m.tasks) { if (t.risk) high++; if (t.role) roles++; }
+  for (const x of checkTaskMarkers(text).findings) findings.push(`${f} task ${x.taskIndex} ${x.field}=${JSON.stringify(x.value)}`);
+}
+console.log(JSON.stringify({ plans, marked, highRisk: high, roles, findings: findings.length }));
+for (const l of findings) console.log(l);
+```
+
 ## Review Focus
 
 - An empty value (`**Review risk:**` with nothing after it) — must stay `risk: null` with a finding whose `value` is `""`, as today (leading token `""` is not in the set). Pinned in Task 1.
@@ -260,7 +316,7 @@ Expected: `"exit":1`, `"restored":true`, a `not ok` line for `AC1.1 AC2.1 (#4640
 - [ ] **Step 6: Real-input probe**
 
 Run: `node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/marker-probe-4640.js" "{worktree}"`
-Expected: exactly `{"plans":90,"marked":53,"highRisk":95,"roles":116,"findings":0}` plus — if this plan file itself is committed by then — `plans` 91 / `marked` 54 / `highRisk` 96 / `roles` 119, still `findings: 0`. (Independent count: `git -C "{worktree}" grep -c -E '^\*\*Review risk:\*\* high' -- docs/superpowers/plans` summed must equal `highRisk`.)
+Expected: exactly `{"plans":90,"marked":53,"highRisk":95,"roles":116,"findings":0}` plus — if this plan file itself is committed by then — `plans` 91 / `marked` 54 / `highRisk` 97 / `roles` 119, still `findings: 0`. (Independent count: `git -C "{worktree}" grep -c -E '^\*\*Review risk:\*\* high' -- docs/superpowers/plans` summed must equal `highRisk`.)
 
 - [ ] **Step 7: Commit**
 
@@ -271,7 +327,8 @@ git -C "{worktree}" commit -m "Warn on stderr for each --task-markers finding �
 
 ### Task 3: Document the annotation rule and log findings in /build's tier forwarding
 
-**Role:** transcription
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/build/dispatch.md` (line 19, the `**Per-task role/review-risk tier forwarding (#3378).**` paragraph)
@@ -291,7 +348,8 @@ test('AC6.1 AC6.2 (#4640): dispatch.md\'s tier forwarding names `findings` and i
   const text = read('plugin', 'skills', 'build', 'dispatch.md');
   const section = text.slice(text.indexOf('**Per-task role/review-risk tier forwarding (#3378).**'));
   assert.match(section, /When that output carries `findings`/);
-  assert.match(section, /--status SKIP --section "\/build" --step "Per-task tier forwarding" --text-file "\{note\}"/);
+  assert.match(section, /--status SKIP --section "\/build" --step "Per-task tier forwarding \(degraded\)" --text-file "\{path\}"/);
+  assert.match(section, /whichever exclusion below fires/);
   assert.match(section, /treated as unmarked for that field, never a stop/);
 });
 
@@ -317,7 +375,7 @@ Expected: FAIL after Step 1 — both `#4640` tests fail (phrases absent); every 
 `plugin/skills/build/dispatch.md` — insert, immediately after the sentence ending `this is today's forwarded text, byte-for-byte.` and before `Markers are also ignored outside`, this sentence (one space separating it from each neighbor):
 
 ```
-When that output carries `findings` (a recognized key whose value's leading token is outside its closed set), log one `SKIP` line for that call naming every offending task, field and value: write `condition: unrecognized task-marker value(s) — task {index} "{title}" {field} "{value}"[; …] → fallback: dispatched with that field unmarked` with the Write tool to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value task-marker-findings-note.txt` prints, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/build" --step "Per-task tier forwarding" --text-file "{note}" --reversibility n/a` (`_shared/auto-decision-log.md`'s Text from git or a user rule — the values are plan text; a standalone `/build` lists the line in the Step 7 handoff instead) — and continue dispatch with each such task treated as unmarked for that field, never a stop.
+When that output carries `findings` (a recognized key whose value's leading token is outside its closed set), whichever exclusion below fires, log one `SKIP` line for that call naming every offending task, field and value: write `condition: unrecognized task-marker value(s) — task {index} "{title}" {field} "{value}"[; …] → fallback: dispatched with that field unmarked` with the Write tool to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-per-task-tier-forwarding.md` prints, then run `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/build" --step "Per-task tier forwarding (degraded)" --text-file "{path}" --reversibility n/a` (`_shared/auto-decision-log.md`'s Text from git or a user rule — the values are plan text; a standalone `/build` lists the line in the Step 7 handoff instead) — and continue dispatch with each such task treated as unmarked for that field, never a stop.
 ```
 
 `plugin/skills/build/plan-audit.md` — in the `--task-markers {plan-file}` paragraph, replace the clause `` `findings` is present only when a recognized key carries a value outside its closed set, and is warn-only — it never changes the exit code. `` with:
@@ -345,14 +403,14 @@ Expected: PASS. Then `wc -c plugin/skills/build/plan-authoring-checks.md` prints
 
 - [ ] **Step 5: Behavior-change prose sweep**
 
-Run: `git -C "{worktree}" grep -n -i -e "unrecognized value" -e "outside its closed set" -e "value outside the closed set" -e "isn't in the closed set" -- plugin docs tests ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`
-Expected: every hit either already reflects the leading-token rule (the edited files, parser.js/checks.js comments from Task 1) or is classified no-change in the commit message. Control: `git -C "{worktree}" grep -n -F "isn't in the closed set" 8d640e794 -- plugin/bin/lib/plan-audit/parser.js` matches line 487 at base.
+Run: `git -C "{worktree}" grep -n -i -e "recognized key's unrecognized value" -e "carries a value outside its closed set" -e "value outside the closed set" -e "isn't in the closed set" -e "unknown marker value" -- plugin docs tests ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`
+At base this printed exactly six hits: `checks.js:661`, `parser.js:487`, `plan-audit.js:109`, `plan-audit.md:17`, `plan-authoring-checks.md:99`, `cli.test.js:540`. Expected after Tasks 1-3: only `plan-audit.js:109` ("An unknown marker value is reported inline as a `findings` entry" — still accurate, no change) and `cli.test.js:540` (an existing #3378 test name, kept unmodified per Global Constraints) remain; any other hit is a missed rewrite to fix before committing. (The exclusions were added per #4579; the control is the base run above, which matched all six.)
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git -C "{worktree}" add plugin/skills/build/dispatch.md plugin/skills/build/plan-audit.md plugin/skills/build/plan-authoring-checks.md tests/plan-task-markers-conformance.test.js
-git -C "{worktree}" commit -m "Document annotated task markers and log --task-markers findings in tier forwarding, refs #4640"
+git -C "{worktree}" commit -m "Document annotated task markers and log --task-markers findings in tier forwarding, refs #4640" -m "Prose sweep: plan-audit.js:109 and cli.test.js:540 still match the old phrasing and are no-change (accurate comment; unmodified #3378 test name)."
 ```
 
 Waived AC3.1: covered by the unmodified existing #3378 cases staying green (Global Constraints), not a new test.
