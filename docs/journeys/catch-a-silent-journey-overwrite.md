@@ -9,14 +9,14 @@ files:
 
 **Persona:** A claude-tweaks agent running `/claude-tweaks:flow`'s multi-spec Consolidated Review Console, whose shared worktree has a `docs/journeys/` file that more than one spec touched — the exact shape #786's completion check exists to police.
 **Goal:** Confirm, before the console renders, that a later spec's commit on a shared journey/story path only ever *extended* an earlier spec's content (its own step, a shared bookkeeping list) rather than silently deleting it — without falling back to a manual `git log --numstat` ruling every time the raw walk sees an `A`-then-`M` path.
-**Entry point:** A terminal at this repo's checkout root (or another project's resolved plugin root), inside the multi-spec run's shared worktree, with `$EXPECTED_BASE` known (the commit before spec 1's materialize commit).
+**Entry point:** A terminal at this repo's checkout root (or another project's resolved plugin root), inside the multi-spec run's shared worktree, with `$EXPECTED_BASE` known (the commit before spec 1's materialize commit) and `$MULTISPEC_PARENT_DIR` known (the multi-spec parent run dir holding `manifest.yml`).
 **Success state:** One command answers "clean" or "overwrite" for the whole run's commit range, naming the offending path/commit/reason on an overwrite — the same verdict `flow/multispec-artifact-namespacing.md`'s HARD-GATE reads, reached without a human (or an agent) staring at `git blame` output.
 
 ## Steps
 
 ### 1. Run the mechanized check over the run's commit range — terminal
-- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "$EXPECTED_BASE" --path docs/journeys/ --path stories/`
-- **Action:** Run it once, after every spec in the shared worktree has committed, before the Consolidated Review Console renders.
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "$EXPECTED_BASE" --run "$MULTISPEC_PARENT_DIR" --path docs/journeys/ --path stories/`
+- **Action:** Run it once, after every spec in the shared worktree has committed, before the Consolidated Review Console renders. `--run` is omitted only when the run's `parallel` waves ran with two or more members (see `plugin/skills/flow/multispec-artifact-namespacing.md`).
 - **Should feel:** One command, one verdict — no manual `git log --numstat` reading required for the common case.
 - **Should understand:** Exit `0` means clean — stdout is `{"clean":true,"overwrites":[]}` — and the console renders normally. A path that was only ever added once, with no later modification, never even appears in the walk.
 - **Red flags:** A nonzero exit read as "clean" without checking it; a caller that greps stdout for a substring instead of parsing the JSON envelope.
@@ -53,15 +53,23 @@ files:
 - **Should understand:** Exit `1`, and stdout's `overwrites[]` array carries one entry per offending path/commit: `{path, commit, reason}`, where `reason` names the deleted line number and the commit whose `refs` trailer it traces back to. This is the HARD-GATE case — `flow/multispec-artifact-namespacing.md` says stop before rendering the console and report this array.
 - **Red flags:** An overwrite silently merged into "clean" because only the exit code was checked and `1` was treated as "harmless — probably just a lint warning"; a console that renders anyway.
 
-### 6. Understand the five safety tests without reading the algorithm
+### 6. Read a spec's own untrailered review fix — the #4593 case
+- **URL:** a synthetic fixture, same shape as `tests/bin-lib/flow/artifact-overwrite-check.test.js`'s "AC1.1" case: spec #10's stories commit adds `stories/x-10.yaml`, and spec #10's own review fix changes one of its lines; neither commit carries a `refs` trailer. Run step 1's command with `--run` pointing at the run dir whose `manifest.yml` puts both commits' author dates inside spec #10's window.
+- **Action:** Run it with `--run`, then once more without it.
+- **Should feel:** Like the gate understood whose edit it was — a spec correcting its own artifact during review no longer stops the run for a manual ruling.
+- **Should understand:** With `--run`, exit `0` and `{"clean":true,"overwrites":[]}`: the manifest window attributes both commits to spec #10. Without `--run`, exit `1`, and the entry's `reason` says `unattributable — no refs trailer and no manifest window`, never `refs trailer does not match`, so a missing attribution reads differently from a confirmed cross-spec deletion. A manifest that `--run` cannot read or that is unusable (no specs, a present-but-invalid timestamp) exits `3` and names the file or field.
+- **Red flags:** A clean verdict from a manifest whose specs' transitions interleave, or that names a `failed`/`not-run` spec — the tool turns windows off for those and must stay refs-only.
+
+### 7. Understand the five safety tests without reading the algorithm
 - **URL:** `plugin/skills/flow/multispec-artifact-namespacing.md`'s "Append vs. overwrite (#2014)" section
 - **Action:** Read it instead of `plugin/bin/lib/flow/artifact-overwrite-check.js` directly.
 - **Should feel:** The prose and the code agree — reading either one gives the same mental model.
-- **Should understand:** A deletion is safe when either (1) `git blame` on the deleting commit's parent revision traces every deleted line back to a commit carrying the *same* `refs #{N}` trailer as the deleting commit (a spec editing its own prior content), or (2) every deleted line is itself a `- ` list entry and the hunk replaces it with at least as many list entries (a shared frontmatter `files:` list, or a running bookkeeping bullet every spec's commit legitimately reflows), or (3) the hunk's removed and added lines are equal once journey step markup is normalized — `N. **Name** — x` and `### N. Name — x` read the same, and list indentation and blank lines are ignored (a step-markup reformat), or (4) every deleted line is a numbered step heading the hunk re-adds under a different number with the same text (a step renumber, the shape inserting a step ahead of existing ones produces), or (5) every deleted line is an inline `Origin:` line (plain, `_italic_` or `**bold**`) citing at least one `#{N}`, re-added as an `Origin:` line that still cites every reference (a later spec adding itself to a journey's Origin line). Only a deletion failing all five is a real overwrite. The bulleted `## Origin` section falls under test 2, which does not check references.
+- **Should understand:** A deletion is safe when either (1) `git blame` on the deleting commit's parent revision traces every deleted line back to a commit of the *same* spec as the deleting commit (a spec editing its own prior content) — a spec read from the commit's own `refs #{N}` trailer first, else from the one spec whose `manifest.yml` window (supplied with `--run`) holds the commit's author date, else unattributed and not safe, or (2) every deleted line is itself a `- ` list entry and the hunk replaces it with at least as many list entries (a shared frontmatter `files:` list, or a running bookkeeping bullet every spec's commit legitimately reflows), or (3) the hunk's removed and added lines are equal once journey step markup is normalized — `N. **Name** — x` and `### N. Name — x` read the same, and list indentation and blank lines are ignored (a step-markup reformat), or (4) every deleted line is a numbered step heading the hunk re-adds under a different number with the same text (a step renumber, the shape inserting a step ahead of existing ones produces), or (5) every deleted line is an inline `Origin:` line (plain, `_italic_` or `**bold**`) citing at least one `#{N}`, re-added as an `Origin:` line that still cites every reference (a later spec adding itself to a journey's Origin line). Only a deletion failing all five is a real overwrite. The bulleted `## Origin` section falls under test 2, which does not check references.
 - **Red flags:** The doc and the code disagreeing about which test applies, or which one exempts a given deletion.
 
 ## Origin
 - Created during build of #2014 (mechanize the artifact-overwrite completion check's append-vs-overwrite judgment).
 - Step 3 added, and step 5 widened to three tests, during build of #3341 (pass a content-preserving step-markup reformat).
 - Step 4 added, and step 6 widened to five tests, during build of #4590 (step renumber and reference-preserving `Origin:` line).
+- Step 6 added, step 1 given `--run`, and the self-edit test's attribution widened to manifest windows, during build of #4593 (attribute untrailered commits by manifest window).
 - Related specs: #786 (the original completion check this extends).

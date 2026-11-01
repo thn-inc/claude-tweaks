@@ -15,9 +15,24 @@
 // by any of five independent tests — any one is enough:
 //
 //   1. Same-spec self-edit: every deleted line traces, via `git blame` on the
-//      parent revision, back to a commit carrying the *same* `refs #N`
-//      trailer as the deleting commit itself — a spec editing its own prior
-//      content (a typo fix, a follow-up correction within the same build).
+//      parent revision, back to a commit attributed to the *same* spec as the
+//      deleting commit itself — a spec editing its own prior content (a typo
+//      fix, a follow-up correction within the same build). Each commit is
+//      attributed by, in order: its own `refs #N` trailer; otherwise the one
+//      spec whose manifest window (`opts.manifest`, refs #4593) holds the
+//      commit's author date (`%aI`) — a window runs from a spec's first
+//      recorded transition (`startedAt`, else its earliest `phases[].at`),
+//      start inclusive, up to the next spec's first transition, exclusive, and
+//      the last is open-ended; otherwise nothing. Git author dates carry whole
+//      seconds, so an author date in the same whole second as any later
+//      spec's first transition is ambiguous and stays unattributed (Q10), as
+//      does one inside no window. Windows are off (refs-only) when no manifest
+//      is given, any spec's status is not `complete` or `running`, any spec
+//      has no recorded transition, or spec transitions interleave (a spec has
+//      a transition at or after a later-starting spec's first transition, as
+//      in a parallel wave). An unusable manifest — no specs, or a present but
+//      unparseable `startedAt` / `phases[].at` — throws
+//      ArtifactOverwriteCheckError rather than falling back to refs-only.
 //   2. List reflow: every deleted line in the hunk is itself a `- ` list
 //      entry (a YAML frontmatter `files:` item, or a markdown bookkeeping
 //      bullet such as a running "Related specs: ..." line), and the hunk
@@ -59,9 +74,10 @@
 // Tests 4 and 5 are journey-shaped (numbered step headings, an `Origin:` line)
 // and simply never fire on a stories/*.yaml file's own shared list, which has
 // neither.
-// Fails closed: an unattributable deletion (no blame, no refs trailer, not a
-// list reflow, step-markup reformat, step renumber, or reference-preserving
-// Origin line) is treated as an overwrite.
+// Fails closed: an unattributable deletion (no blame, no attribution from a
+// refs trailer or a manifest window, not a list reflow, step-markup reformat,
+// step renumber, or reference-preserving Origin line) is treated as an
+// overwrite.
 
 const { execFileSync } = require('child_process');
 const { splitLogZ, parseNameStatusTokens } = require('../git-z');
@@ -110,6 +126,96 @@ function extractRefs(message) {
     for (const n of m[1].matchAll(/#(\d+)/g)) refs.add(Number(n[1]));
   }
   return refs;
+}
+
+// A manifest timestamp is present when it is not undefined, null or '' —
+// absent data (Q8), as opposed to a present value that fails to parse (Q9).
+function isPresent(value) {
+  return value !== undefined && value !== null && value !== '';
+}
+
+const WINDOW_STATUSES = new Set(['complete', 'running']);
+
+// Builds each spec's attribution window from a parsed manifest.yml
+// (parseManifestYaml's `{ multispec: { specs: [...] } }`, or null/undefined).
+// Returns { windows: [{ id, start, end }] (epoch ms, sorted, the last end
+// Infinity) | null, off: string | null } — windows is null exactly when off
+// names why window attribution is off (refs-only). Throws
+// ArtifactOverwriteCheckError (`manifest unusable: ...`) for a manifest that
+// names no specs or holds a present-but-unparseable timestamp; validation
+// runs over every spec before any off check.
+function computeSpecWindows(manifest) {
+  if (!manifest) return { windows: null, off: 'no manifest' };
+  const specs = manifest.multispec && manifest.multispec.specs;
+  if (!Array.isArray(specs) || specs.length === 0) {
+    throw new ArtifactOverwriteCheckError('manifest unusable: manifest names no specs');
+  }
+
+  // Validate, collecting each spec's present transition times.
+  const entries = specs.map((spec) => {
+    let startedAt = null;
+    if (isPresent(spec.startedAt)) {
+      startedAt = Date.parse(spec.startedAt);
+      if (Number.isNaN(startedAt)) {
+        throw new ArtifactOverwriteCheckError(`manifest unusable: spec #${spec.id} startedAt is not a valid date (${spec.startedAt})`);
+      }
+    }
+    const phaseTimes = [];
+    (Array.isArray(spec.phases) ? spec.phases : []).forEach((p, i) => {
+      if (!p || !isPresent(p.at)) return; // absent data, skipped
+      const at = Date.parse(p.at);
+      if (Number.isNaN(at)) {
+        throw new ArtifactOverwriteCheckError(`manifest unusable: spec #${spec.id} phases[${i}].at is not a valid date (${p.at})`);
+      }
+      phaseTimes.push(at);
+    });
+    const earliestPhase = phaseTimes.length > 0 ? Math.min(...phaseTimes) : null;
+    const first = startedAt ?? earliestPhase;
+    const times = startedAt !== null ? [startedAt, ...phaseTimes] : phaseTimes;
+    return { spec, first, times };
+  });
+
+  for (const { spec } of entries) {
+    if (!WINDOW_STATUSES.has(spec.status)) return { windows: null, off: `spec #${spec.id} is ${spec.status}` };
+  }
+  for (const { spec, first } of entries) {
+    if (first === null) return { windows: null, off: `spec #${spec.id} has no recorded transition` };
+  }
+  // Interleave (Q6): any transition of S at or after a later-or-equal-starting
+  // T's first transition. Equal first transitions always count.
+  for (const s of entries) {
+    for (const t of entries) {
+      if (s === t || t.first < s.first) continue;
+      if (s.times.some((ms) => ms >= t.first)) {
+        return {
+          windows: null,
+          off: `spec transitions interleave (spec #${s.spec.id} has a transition at or after spec #${t.spec.id}'s first transition)`,
+        };
+      }
+    }
+  }
+
+  const sorted = [...entries].sort((a, b) => a.first - b.first);
+  const windows = sorted.map((e, i) => ({
+    id: e.spec.id,
+    start: e.first,
+    end: i + 1 < sorted.length ? sorted[i + 1].first : Infinity,
+  }));
+  return { windows, off: null };
+}
+
+// The one spec whose window holds the author date (`start <= ms < end`), as a
+// Set; empty for null windows, a non-finite date, no match, or 2+ matches.
+// Q10: git author dates carry whole seconds and manifest transitions carry
+// milliseconds, so a date in the same whole second as any later window's
+// start (every window but the earliest) is ambiguous and stays unattributed.
+function attributeByWindow(windows, authorDateMs) {
+  if (!Array.isArray(windows) || windows.length === 0 || !Number.isFinite(authorDateMs)) return new Set();
+  const earliest = windows.reduce((a, b) => (b.start < a.start ? b : a));
+  const second = Math.floor(authorDateMs / 1000);
+  if (windows.some((w) => w !== earliest && Math.floor(w.start / 1000) === second)) return new Set();
+  const matches = windows.filter((w) => authorDateMs >= w.start && authorDateMs < w.end);
+  return matches.length === 1 ? new Set([matches[0].id]) : new Set();
 }
 
 function setsIntersect(a, b) {
@@ -323,6 +429,7 @@ function blameShas(git, cwd, rev, path) {
  * @param {string[]} [opts.paths] - pathspecs to scope the walk (default docs/journeys/ stories/)
  * @param {string} [opts.cwd] - repo root (default process.cwd())
  * @param {function} [opts.git] - injectable runner: (argv, cwd) => stdout string, throws on failure
+ * @param {object} [opts.manifest] - parsed manifest.yml (parseManifestYaml's shape) for window attribution
  * @returns {{ clean: boolean, overwrites: Array<{path: string, commit: string, reason: string}> }}
  */
 function checkArtifactOverwrite(opts) {
@@ -332,11 +439,15 @@ function checkArtifactOverwrite(opts) {
     paths: rawPaths,
     cwd = process.cwd(),
     git = defaultGit,
+    manifest,
   } = opts;
 
   if (!base) {
     throw new Error('checkArtifactOverwrite: opts.base is required');
   }
+
+  // Before any git call, so an unusable manifest throws before the walk.
+  const { windows, off } = computeSpecWindows(manifest);
 
   // An empty array is treated the same as `paths` unset (falls back to the
   // default scope) rather than as git's own "no pathspec after --" meaning
@@ -354,14 +465,27 @@ function checkArtifactOverwrite(opts) {
   const byPath = groupByPath(commits);
 
   const overwrites = [];
-  const messageCache = new Map();
-  const getRefs = (sha) => {
-    if (messageCache.has(sha)) return messageCache.get(sha);
-    const msg = git(['log', '-1', '--format=%B', sha], cwd);
-    const refs = extractRefs(msg);
-    messageCache.set(sha, refs);
-    return refs;
+  const attributionCache = new Map();
+  // A commit's spec ids: its own refs trailer, else the single manifest
+  // window holding its author date, else none. One git call per sha.
+  const getAttribution = (sha) => {
+    if (attributionCache.has(sha)) return attributionCache.get(sha);
+    const out = git(['log', '-1', '--format=%aI%n%B', sha], cwd);
+    const newline = out.indexOf('\n');
+    const authorDate = newline === -1 ? out : out.slice(0, newline);
+    const message = newline === -1 ? '' : out.slice(newline + 1);
+    let attribution;
+    const refs = extractRefs(message);
+    if (refs.size > 0) {
+      attribution = { ids: refs, source: 'refs trailer' };
+    } else {
+      const ids = attributeByWindow(windows, Date.parse(authorDate.trim()));
+      attribution = ids.size > 0 ? { ids, source: 'manifest window' } : { ids: new Set(), source: null };
+    }
+    attributionCache.set(sha, attribution);
+    return attribution;
   };
+  const fmt = (attr) => `${[...attr.ids].map((id) => `#${id}`).join(', ')} (by ${attr.source})`;
 
   for (const [path, events] of byPath) {
     const firstAddIdx = events.findIndex((e) => e.status === 'A');
@@ -381,7 +505,7 @@ function checkArtifactOverwrite(opts) {
       }
       if (deletions === 0) continue; // pure extension, no deletions at all
 
-      const commitRefs = getRefs(commit);
+      const dAttr = getAttribution(commit);
       const diffOut = git(['diff', '--no-color', '-U0', `${commit}~1`, commit, '--', path], cwd);
       const hunks = parseHunks(diffOut);
 
@@ -404,11 +528,17 @@ function checkArtifactOverwrite(opts) {
             culprit = { lineNo: d.lineNo, blamedSha: null };
             break;
           }
-          const blamedRefs = getRefs(blamedSha);
-          const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs);
+          const bAttr = getAttribution(blamedSha);
+          const selfEdit = dAttr.ids.size > 0 && setsIntersect(dAttr.ids, bAttr.ids);
           if (!selfEdit) {
             overwrite = true;
-            culprit = { lineNo: d.lineNo, blamedSha };
+            culprit = {
+              lineNo: d.lineNo,
+              blamedSha,
+              bAttr,
+              deletingUnattributed: dAttr.source === null,
+              blamedUnattributed: bAttr.source === null,
+            };
             break;
           }
         }
@@ -416,10 +546,22 @@ function checkArtifactOverwrite(opts) {
       }
 
       if (overwrite) {
-        const reason = culprit.blamedSha
-          ? `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to commit ${culprit.blamedSha}, `
-            + `whose refs trailer does not match ${commit}'s own refs trailer, and the deletion is neither a list reflow, a step-markup reformat, a step renumber, nor a reference-preserving Origin line`
-          : `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or any extension test (list reflow, step-markup reformat, step renumber, reference-preserving Origin line)`;
+        const tail = 'and the deletion is neither a list reflow, a step-markup reformat, a step renumber, nor a reference-preserving Origin line';
+        let reason;
+        if (!culprit.blamedSha) {
+          reason = `deleted line ${culprit.lineNo} has no blame attribution — cannot confirm self-edit or any extension test (list reflow, step-markup reformat, step renumber, reference-preserving Origin line)`;
+        } else if (culprit.deletingUnattributed || culprit.blamedUnattributed) {
+          const sides = [];
+          if (culprit.deletingUnattributed) sides.push(`deleting commit ${commit}`);
+          if (culprit.blamedUnattributed) sides.push(`blamed commit ${culprit.blamedSha}`);
+          const who = sides.join(' and ');
+          reason = `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to commit ${culprit.blamedSha}; `
+            + `unattributable — no refs trailer and no manifest window for ${who}${off ? ` (manifest windows off: ${off})` : ''}, `
+            + `so a same-spec self-edit cannot be confirmed, ${tail}`;
+        } else {
+          reason = `deleted line ${culprit.lineNo} (as of parent ${commit}~1) traces to commit ${culprit.blamedSha}, `
+            + `attributed to ${fmt(culprit.bAttr)}, which does not match ${commit}'s own ${fmt(dAttr)}, ${tail}`;
+        }
         overwrites.push({ path, commit, reason });
       }
     }
@@ -439,6 +581,8 @@ module.exports = {
   isStepMarkupReformat,
   isStepRenumber,
   isReferencePreservingOriginLine,
+  computeSpecWindows,
+  attributeByWindow,
   defaultGit,
   ArtifactOverwriteCheckError,
 };
