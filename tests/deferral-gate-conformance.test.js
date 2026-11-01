@@ -262,7 +262,7 @@ function step3Parenthetical(md) {
 // (the two Phase 2 auto-routes and the Keep bullet) and "naming the staged path (`…`" (the Defer bullet).
 // The floor of 4 is those four lines today; it keeps a rewording that stops this regex matching from
 // passing the per-line spec-qualification check on zero lines.
-const DEFER_KEEP_PATH_RE =/names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`/;
+const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`/;
 function assertDeferKeepPathsQualified(md) {
   const lines = md.split('\n').filter((l) => DEFER_KEEP_PATH_RE.test(l));
   assert.ok(lines.length >= 4, `expected at least 4 Defer/Keep Resolution-path lines, found ${lines.length}`);
