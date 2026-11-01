@@ -8,6 +8,10 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { shellQuote } = require('./helpers/shell-quote');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
+const { readText } = require('./helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
@@ -1255,6 +1259,117 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
   assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
 });
 
+// --- #4578: timeout + degrade parameters on resolveRunPinnedIntegrationModel ---
+
+const GH_TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+
+// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS deleted so detection's ladder falls
+// to policy / the 5000 ms default, then restores the original value.
+function withoutGhTimeoutEnv(fn) {
+  const original = process.env[GH_TIMEOUT_ENV];
+  delete process.env[GH_TIMEOUT_ENV];
+  try {
+    return fn();
+  } finally {
+    if (original !== undefined) process.env[GH_TIMEOUT_ENV] = original;
+  }
+}
+
+// An unpinned repo whose origin looks like a GitHub remote, so detection reaches the fake `gh`.
+function unpinnedRepoWithOrigin() {
+  const repo = gitRepoWithCommit();
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
+  return repo;
+}
+
+test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detection (#4578 AC8.1, AC13.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    // The recorded timeoutMs proves which bound reached detection (no wall-clock assertion).
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/;
+
+test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
+  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
+    'git probe + all gh attempts must fit the 15 s hook budget');
+  // Scan LIVE code only: comments and literals are blanked, so a commented-out or quoted copy of the
+  // call shape cannot satisfy the match, and the verdict is taken on the same text the matcher reads.
+  const raw = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
+  const code = stripComments(raw, { literals: 'blank' });
+  const verdict = stripperVerdict(raw, code);
+  assert.strictEqual(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
+  assert.match(
+    code,
+    GATE_CALL_SHAPE,
+    'the gate must bound its forge probe with the hook constant and report degrades (Decision Q3, Q5)',
+  );
+});
+
+test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });';
+  const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
+  assert.strictEqual(scan(live), true);
+  // The same text only in a line comment, a block comment, or a string: the live call is gone.
+  assert.strictEqual(scan(`// ${live}\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`/* ${live} */\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`x = '${live}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  // A changed live call shape (no timeoutMs) is not matched even with a comment holding the old one after it.
+  assert.strictEqual(scan(`x = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { onDegrade }); // ${live}`), false);
+  // The scan still sees the live call after a literal holding a comment opener.
+  assert.strictEqual(scan(`s = '/*'; ${live}`), true);
+  // A mis-parse is an offender, not a clean scan: a regex after ")" blanks the live call into a string.
+  const misparsed = `if (b) /'/.test(b); const c = 'x'; ${live}`;
+  assert.strictEqual(stripperVerdict(misparsed, stripComments(misparsed, { literals: 'blank' })), 'misparsed');
+});
+
+test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveRunPinnedIntegrationModel: a pinned model returns before detection — no gh spawn, onDegrade never called (#4578 Q5)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 0);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a
@@ -1313,10 +1428,43 @@ test('#2065: `git stash -u`, `git stash -m "wip"`, and `git stash save wip` from
   }
 });
 
-test('#2065: `git stash apply` and `git stash drop` from a linked worktree stay silent', () => {
+// #4559: `drop` and `clear` destroy stack entries — a sibling worktree's
+// in-flight WIP stash included — and `branch` drops the entry it applies,
+// while `store` and `import` write onto the stack; all of them warn like
+// push/pop. Only the subcommands that leave the stack alone stay silent.
+// These are command strings fed to the hook — nothing here runs git stash.
+const STASH_SHA = 'a'.repeat(40);
+test('AC7.1/AC7.3: `git stash drop`, `drop stash@{0}`, `clear`, `branch`, `store`, `import`, and a compound `git status && git stash drop` from a linked worktree warn', () => {
   const { wt } = mainAndWorktree();
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash apply', wt), runDir: null, runState: null, cwd: wt }), {});
-  assert.deepStrictEqual(pre.run({ input: bashInput('git stash drop', wt), runDir: null, runState: null, cwd: wt }), {});
+  const cmds = [
+    'git stash drop', 'git stash drop stash@{0}', 'git stash clear', 'git status && git stash drop',
+    'git stash branch fix-wip', `git stash store -m x ${STASH_SHA}`, `git stash import ${STASH_SHA}`,
+  ];
+  for (const cmd of cmds) {
+    const out = pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt });
+    assert.match(out.json.systemMessage, /git stash is repository-wide/, `expected a warning for: ${cmd}`);
+    assert.notStrictEqual(out.json.hookSpecificOutput?.permissionDecision, 'deny', `must warn, never deny: ${cmd}`);
+  }
+});
+
+test('#4559: the stash warning names the stash-guard recovery `git stash store` as the one intended exception', () => {
+  const { wt } = mainAndWorktree();
+  const out = pre.run({ input: bashInput(`git stash store -m "On main: autostash" ${STASH_SHA}`, wt), runDir: null, runState: null, cwd: wt });
+  assert.match(out.json.systemMessage, /Exception: putting back a stash entry that `stash-guard\.js` reported lost/);
+  assert.match(out.json.systemMessage, /git stash store -m "<subject>" <sha>/);
+});
+
+test('AC7.2: `git stash list`, `show` and `apply` from a linked worktree stay silent', () => {
+  const { wt } = mainAndWorktree();
+  for (const cmd of ['git stash list', 'git stash show', 'git stash apply']) {
+    assert.deepStrictEqual(pre.run({ input: bashInput(cmd, wt), runDir: null, runState: null, cwd: wt }), {}, `expected silence for: ${cmd}`);
+  }
+});
+
+test('#4559: `git stash drop` from the main checkout is silent', () => {
+  const { main } = mainAndWorktree();
+  const out = pre.run({ input: bashInput('git stash drop', main), runDir: null, runState: null, cwd: main });
+  assert.deepStrictEqual(out, {});
 });
 
 // #3225: checkDispatchConfigGate — a dispatched run (record-worktree

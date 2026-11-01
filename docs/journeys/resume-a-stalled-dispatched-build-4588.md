@@ -36,8 +36,8 @@ files:
 - **URL:** —
 - **Action:** When the CLI reports `archivePriorRun: true`, resume runs `hooks.js close-run` (if the prior run is still open) and `hooks.js archive-run`, then verifies `archive/{priorRunId}` exists. It mints the new run dir, enters the existing worktree by path (or re-adds it from the PR head when it was reaped), binds it with `record-worktree --dispatch`, and re-runs the CLI with `--bound-run` to catch a concurrent resume.
 - **Should feel:** Like the stalled build's own workspace coming back, not a fresh one.
-- **Should understand:** A stranded `archiving` marker does not count as archived — the prior owner is still probed. Another session's ad-hoc run dir never reads as a concurrent resume. A Step 6a stop closes the new run dir, leaves the worktree kept, and logs a `SKIP` line, so a retry is not refused by the leftover.
-- **Red flags:** Two resumes both reaching Step 7; a Step 6a refusal that leaves the new run dir `active`; a resume refused by the original dispatcher's leftover ad-hoc dir.
+- **Should understand:** A stranded `archiving` marker does not count as archived — the prior owner is still probed. Another session's ad-hoc run dir never reads as a concurrent resume. A Step 6a stop closes the new run dir, leaves the worktree kept, and logs a `SKIP` line, so a retry is not refused by the leftover. A run this same session left bound — a resume that crashed between Step 6's bind and Step 6a — is never proven dead, since the owner probe cannot tell it from a second resume sharing the session id: it refuses `concurrent-resume` with a line naming both readings, stop the other resume and re-run, or close the crashed leftover with `hooks.js close-run --run "{dir}"` and re-run.
+- **Red flags:** Two resumes both reaching Step 7; a Step 6a refusal that leaves the new run dir `active`; a resume refused by the original dispatcher's leftover ad-hoc dir; a same-session retry told to wait for "that run" to end with no `close-run` command named.
 
 ### 4. Re-claim the stale claim through the PR it resumes — `flow/SKILL.md` Step 2.8, `claim-targets.js --resume-pr`
 - **URL:** —
@@ -56,4 +56,5 @@ files:
 ## Origin
 - Created during build of #4588 (Add a dispatch resume form for a build that stalled with its PR still open)
 - Steps 1-5 built in this session
+- Updated during build of #4729 (dispatch resume: name close-run when the conflicting bound run belongs to this session) — Step 3's same-session leftover line
 - Related: `learn-why-a-named-record-wont-dispatch-3084.md` (the refusal that now names the remedy), `resume-a-run-on-a-pr-an-earlier-run-opened-4580.md` (the PR-body rebind step 5 relies on), `act-on-a-contested-claim.md` (the in-flight stop step 4 narrows)

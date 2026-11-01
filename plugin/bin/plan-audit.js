@@ -108,7 +108,8 @@ function main() {
   // read-only verb in the same family as --count-tasks, never running the
   // gating checks above. An unknown marker value is reported inline as a
   // `findings` entry (checkTaskMarkers, warn-only like Check E) rather than
-  // failing the exit code — never a build-blocking defect on its own.
+  // failing the exit code — never a build-blocking defect on its own. Each
+  // finding is also warned on stderr, one line each, exit code unchanged.
   if (parsed.taskMarkers) {
     const { markers, tasks } = extractTaskMarkers(text);
     if (tasks.length === 0) {
@@ -117,6 +118,9 @@ function main() {
       return;
     }
     const { findings } = checkTaskMarkers(text);
+    for (const f of findings) {
+      process.stderr.write(`plan-audit.js: warning: task ${f.taskIndex} "${f.title}" — unrecognized ${f.field} value "${f.value}"; that field reads as unmarked\n`);
+    }
     const output = {
       markers,
       tasks: tasks.map((t) => ({ index: t.index, title: t.title, role: t.role, risk: t.risk })),

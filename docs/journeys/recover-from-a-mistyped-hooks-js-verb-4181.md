@@ -44,10 +44,29 @@ files:
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" record-pr --help` (or `-h`)
 - **Action:** Ask the corrected verb for its usage before running it for real.
 - **Should feel:** Safe. Nothing runs and nothing is written; the reply is exactly `claude-tweaks: usage: record-pr [--run <dir>] <number> <url>` with exit 0.
-- **Should understand:** That usage string is the same table entry the step-1 listing printed, so the two can never disagree. On the flag-strict verbs (`close-run`, `record-worktree`, `record-pr`, `spec-status`, …) any undeclared `--flag` also prints the usage line instead of running.
-- **Red flags:** `--help` on a `--run`-accepting verb changing `run-state.json`. That is the #1143 hazard this guard exists to close.
+- **Should understand:**
+  - That usage string is the same table entry the step-1 listing printed, so the two can never disagree.
+  - Every verb is flag-strict, so any undeclared `--flag` also prints the usage line instead of running.
+  - `--help` and `-h` are caught anywhere in the argument list, even where a flag's value would go: `resolve-run-dir --spec-slug --help --create` prints usage and mints nothing.
+- **Red flags:**
+  - `--help` on a `--run`-accepting verb changing `run-state.json`. That is the #1143 hazard this guard exists to close.
+  - `--help` in a value position being taken as the value: a run dir named `…---help`, or `no sibling-session conflict found for record --help`.
+
+### 5. Pass a flag the verb does not have
+- **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run <dir> --dry-run`
+- **Action:** Ask a mutating verb for a preview it does not support, expecting nothing to happen.
+- **Should feel:** Like a refusal, not a gamble. The reply is exactly `claude-tweaks: usage: archive-run [--run <dir>]` with exit 0, and the run directory is still where it was.
+- **Should understand:**
+  - `archive-run` has no dry-run mode. The usage line is the whole answer; to see what would block archival, read the run's `console.json` and `decisions.md` instead.
+  - The refusal does not depend on where the flag sits: `--dry-run --run <dir>` is refused the same way.
+  - Every verb refuses this way. A typo of a real flag, such as `reconcile --dryrun`, prints `claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]` and runs no reconcile check.
+- **Red flags:**
+  - Any `moved:` line, a run directory missing from `.claude-tweaks/pipelines/`, or a new `[reconcile] archive run …` commit. Before #4773, `archive-run` ignored every flag it did not know, so `--dry-run` archived and committed for real.
+  - `reconcile --dryrun` moving a branch ref or reaping a worktree. Before #4777, only some verbs refused unknown flags, and `reconcile` was not one of them.
 
 ## Origin
 - Created during build of #4181 (hooks.js table-driven verb dispatch so USAGE keys double as dispatch keys).
 - Steps 1–3's usage listing and step 2's prototype-name rejection were built in this session. Step 2's `log-decision` redirect and the near-miss suggestion predate it (#1586), as does step 4's `--help` guard (#1143, #1012).
-- Related records: #1143 (the `--help` intercept), #1586 (non-zero exit and suggestion for unknown verbs), #1012 (flag-strict verbs).
+- Step 5 added during build of #4773, which made `archive-run` flag-strict.
+- Steps 4 and 5 updated during build of #4777, which made every verb flag-strict and catches `--help` in a value position.
+- Related records: #1143 (the `--help` intercept), #1586 (non-zero exit and suggestion for unknown verbs), #1012 (flag-strict verbs), #4773 (`archive-run` joins them), #4777 (every verb is flag-strict).

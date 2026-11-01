@@ -49,6 +49,7 @@ const {
 } = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
 const { normalizePrListing } = require('./mcp-pr-shape');
+const { ghOptions } = require('../repo-resolve');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
 // whose rejection a fresh read proves spurious (#787 final-review finding I1 —
@@ -162,11 +163,12 @@ function classifyGhApiError(e) {
 // classified `{failure, status}` alone drops the reason (a 4xx is data, not
 // a throw, on this seam).
 function defaultGhApi(args) {
+  const ghArgs = ['api', ...args];
   try {
-    const stdout = execFileSync('gh', ['api', ...args], {
+    const stdout = execFileSync('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
-    });
+    }));
     return { stdout, failure: null, status: null };
   } catch (e) {
     const { failure, status } = classifyGhApiError(e);
@@ -287,10 +289,10 @@ function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
 }
 
 function defaultRunGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     windowsHide: true,
-  });
+  }));
 }
 
 // (runGh?) -> string|null. `runGh(args)` returns stdout; a thrown error

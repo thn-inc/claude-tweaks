@@ -21,6 +21,13 @@ const read = (...p) => readText(path.join(ROOT, ...p));
 
 const sorted = (arr) => [...arr].sort();
 
+// The paragraph (up to the next blank line) that starts at `heading`.
+function paragraphFrom(text, heading) {
+  const from = text.slice(text.indexOf(heading));
+  const end = from.indexOf('\n\n');
+  return end === -1 ? from : from.slice(0, end);
+}
+
 test('#3378 AC9: TASK_MARKER_ROLES is exactly transcription/integration/judgment, TASK_MARKER_RISKS is exactly high', () => {
   assert.deepStrictEqual(TASK_MARKER_ROLES, ['transcription', 'integration', 'judgment']);
   assert.deepStrictEqual(TASK_MARKER_RISKS, ['high']);
@@ -86,4 +93,24 @@ test('#3378: dispatch.md names no hardcoded model name in its per-task tier-forw
   const section = text.slice(text.indexOf('**Per-task role/review-risk tier forwarding (#3378).**'));
   assert.doesNotMatch(section, /\bhaiku\b|\bsonnet\b|\bopus\b|\bfable\b/i);
   assert.match(section, /resolve-profile\.js/);
+});
+
+test('AC6.1 AC6.2 (#4640): dispatch.md\'s tier forwarding names `findings` and its one SKIP decision-log line, and continues unmarked', () => {
+  const text = read('plugin', 'skills', 'build', 'dispatch.md');
+  const section = paragraphFrom(text, '**Per-task role/review-risk tier forwarding (#3378).**');
+  assert.match(section, /When that output carries `findings`/);
+  assert.match(section, /--status SKIP --section "\/build" --step "Per-task tier forwarding \(degraded\)" --text-file "\{path\}"/);
+  assert.match(section, /whether or not an exclusion below fires/);
+  assert.match(section, /treated as unmarked for that field, never a stop/);
+});
+
+test('AC7.1 (#4640): plan-authoring-checks.md and plan-audit.md each state that a trailing annotation after the marker value is ignored', () => {
+  const authoring = read('plugin', 'skills', 'build', 'plan-authoring-checks.md');
+  const markers = paragraphFrom(authoring, '**Per-task role/review-risk markers (#3378).**');
+  assert.match(markers, /A trailing annotation after the value and whitespace is ignored\./);
+  assert.match(markers, /a stderr warning/);
+  const audit = read('plugin', 'skills', 'build', 'plan-audit.md');
+  const para = paragraphFrom(audit, '`--task-markers {plan-file}` (#3378)');
+  assert.match(para, /a trailing annotation after the value and whitespace is ignored/);
+  assert.match(para, /each entry is also written to stderr as one warning line/);
 });

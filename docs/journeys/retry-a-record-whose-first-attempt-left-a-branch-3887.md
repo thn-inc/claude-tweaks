@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/worktree/remote-branch-collision.js
+  - plugin/bin/lib/branch-name.js
   - plugin/skills/build/adopted-branch-collision-check.md
   - plugin/skills/build/already-shipped-assessment.md
   - plugin/skills/_shared/pr-early-run-lifecycle.md
@@ -47,4 +48,5 @@ files:
 ## Origin
 - Created during build of #3887 (Dispatch retry collides with the remote branch its own failed first attempt left behind)
 - Steps 1-4 built in this session
+- Updated during build of #4648. `classifyRemoteBranch` now uses the shared `isValidBranchName` (`plugin/bin/lib/branch-name.js`) instead of the looser `isSafeBranchName`. A name ending in `/` or `.lock`, or containing `//`, now degrades to `unreachable` with reason `invalid-branch-name` before git runs. Git refuses such names anyway, so the steps are unchanged.
 - Related: #2844 (adopted-branch collision check, `foreign`/`mine`), #3093 (unknown-relation card), #3915 (MCP-fed lookup for gh-absent firings), `keep-a-live-run-whose-reused-branch-backed-a-merged-pr-3416.md` (reused branch names, reconcile side)

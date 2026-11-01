@@ -59,8 +59,8 @@ const { openPrEarly } = require('./lib/flow/pr-early-open');
 const { appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { resolveTarget } = require('./lib/stage-item/write');
-const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { ghAvailable, parseRepo, repoSlug } = require('./lib/repo-resolve');
+const { resolvePolicyConfig, POLICY_KEYS } = require('./lib/policy-schema');
+const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
 
@@ -101,9 +101,9 @@ function readFileSafe(p) {
 const realDeps = {
   cwd: () => process.cwd(),
   ghAvailable: () => ghAvailable(),
-  gh: (args, { cwd } = {}) => execFileSync('gh', args, {
+  gh: (args, { cwd } = {}) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   // GIT_TIMEOUT_MS bounds the one network call here, the push.
   git: (args, { cwd } = {}) => execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
@@ -251,7 +251,7 @@ async function run(argv, overrides = {}) {
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
     if (e && e.ghTimedOut) {
-      return internal(`${errText(e)}\ngh timed out after ${GH_TIMEOUT_MS} ms — override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var (max 60000)`);
+      return internal(`${errText(e)}\ngh timed out after ${GH_TIMEOUT_MS} ms — override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var (max ${POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms').max})`);
     }
     return internal(errText(e));
   }

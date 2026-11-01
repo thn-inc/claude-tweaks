@@ -52,11 +52,12 @@ files:
   - `closed`
   - `nothing-closed`
 - **Should feel:** Reassuring. Even if GitHub closed the record, it is back open within seconds, and the comment says why.
-- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. The armed-merge (`--auto`) path merges later and is a known gap. On a base that is not the repo's default branch GitHub acts on none of the PR's closing keywords, so this step closes the merge's `Fixes` records itself (`closed`); a record listed in `closeFailed[]` needs a hand close, and `base-unchecked` means the base could not be read, so the envelope's `unchecked[]` records were not checked.
+- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. An armed merge (`--auto`) that GitHub completes after the session ended gets this step later, from the reconciler's `post-merge` check (`docs/reconcile-checks.md`'s Post-merge closes): the first reconcile pass at least 10 minutes after the merge runs it once, with no settle poll, and reopens only a record closed within 10 minutes of `mergedAt`. A record a human closed after that is left closed and listed in `closedAfterWindow[]`. On a base that is not the repo's default branch GitHub acts on none of the PR's closing keywords, so this step closes the merge's `Fixes` records itself (`closed`); a record listed in `closeFailed[]` needs a hand close, and `base-unchecked` means the base could not be read, so the envelope's `unchecked[]` records were not checked.
 - **Red flags:** The deferred record closed with no `reopened` or `reopen-failed` entry; a reopen of a record the run actually finished.
 
 ## Origin
 - Created during build of #4199 (pr-first: rewriting Fixes #N to Refs #N before merge does not stop GitHub closing #N)
 - Steps 1-4 built in this session; mechanism probed live on throwaway PR #4234 / issue #4233
 - Updated by #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a merge into a non-default base, Step 4.0 closes the PR's still-open `Fixes` records itself and reports `closed[]`, `closeFailed[]`, or `base-unchecked` with `unchecked[]`
+- Updated by #4599 (run `2026-10-31T135734-record-4599`): an armed merge GitHub completes later is no longer a gap. The reconciler's `post-merge` check runs Step 4.0 for it once, with reopens bounded to 10 minutes after `mergedAt`
 - Related: #3412 (reconciler keeps an unfinished record's claim when its bundle PR merges early), #2724 (the record PR #4144 closed by mistake)

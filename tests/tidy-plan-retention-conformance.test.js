@@ -11,8 +11,23 @@ const os = require('os');
 const { execFileSync } = require('child_process');
 
 const { readText } = require('./helpers/read-skill');
+const { CUTOFF_DAYS, ARCHIVE_THRESHOLD } = require('../plugin/bin/lib/plan-retention/route');
+const probe = require('../plugin/bin/lib/plan-retention/probe');
+const store = require('../plugin/bin/lib/declined-learning/store');
 
 const REPO_ROOT = path.join(__dirname, '..');
+
+// Frozen pre-#4594 bytes of the lines the CLI replaced (scan-procedures.md Step 4, at a649a7568), so each
+// #4594 pin below is proven able to go red: it matches the live prose and does NOT match these.
+const PRE_CHANGE_CUTOFF = "- **Cutoff** (`keep-forever` only). The cutoff is 7 days (ADR-0007's \"last ~week\"), counted from the plan's first-add commit date — `git -C \"{REPO_ROOT}\" log --diff-filter=A --format=%cs -1 -- {plan}`; empty output or a non-zero exit counts as within the cutoff — Keep.";
+const PRE_CHANGE_LOOKUP = "  - Before staging a `Prune plan (archive)`, look up a decline — `printf '%s' '{\"description\":\"tidy Prune plan (archive): docs/superpowers/plans/\"}' | node \"${CLAUDE_PLUGIN_ROOT}/bin/declined-learning.js\" lookup --source tidy`: a non-null `decline`, or a lookup that exits non-zero, routes them to Keep.";
+// The Citation check bullet as it stood before the --cited second pass was added: the control for those pins,
+// the pre-change text of the same region.
+const PRE_CHANGE_CITATION = "- **Citation check** (`keep-forever` only). Run it on past-cutoff candidates only once their pre-check count reaches 30; below 30 the count can never yield 30 uncited, so a cited plan is a plain Keep, never a Yours row. At 30 or more, a cited candidate renders per `plan-citation-check.md` and does not count toward the 30.";
+// The Compute bullet at 382a26559, before the ask/prune-after-wrapup clause and the failed-run clause were added:
+// the control for the pins on those two clauses. Unlike PRE_CHANGE_CITATION it carries the `- **Compute.**` anchor,
+// so a doesNotMatch against it can only pass because the clause itself is absent.
+const PRE_CHANGE_COMPUTE = "- **Compute.** From `{REPO_ROOT}`, run `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\" --retention {value} {plan} …` with every would-be-Delete plan under `docs/superpowers/plans/` as a repo-relative path. It prints one JSON line: each plan's `route` (`delete`, `keep`, `prune-ask` = `Prune plan (ask)`, `prune-archive` = `Prune plan (archive)`) and `firstAdded` (a date or `uncommitted`), plus `citationCheck` and `citationCandidates`. Exit 2 is a malformed call — fix and re-run, never route by hand.";
 
 function read(rel) {
   return readText(path.join(REPO_ROOT, rel));
@@ -38,6 +53,13 @@ function step4Section() {
   assert.notEqual(start, -1, 'scan-procedures.md must carry the Step 4 heading');
   assert.notEqual(end, -1, 'scan-procedures.md must carry the Step 4.5 heading');
   return SCAN_PROCEDURES.slice(start, end);
+}
+
+// One claim per call: the pattern matches the live Step 4 AND fails against the frozen pre-change text, so a
+// green result proves the regex can go red.
+function pinned(pattern, control) {
+  assert.match(step4Section(), pattern);
+  assert.doesNotMatch(control, pattern, 'pattern must NOT match the pre-change text (proves it can go red)');
 }
 
 test('tidy Step 4 resolves superpowers-plans-retention (#4465)', () => {
@@ -66,10 +88,9 @@ test('tidy Step 4 states why the 30 threshold exists and why ask skips cutoff, t
 
 test('tidy Step 4 remembers a declined keep-forever prune and fails closed (#4465)', () => {
   const s = step4Section();
-  assert.match(s, /declined-learning\.js" lookup --source tidy/);
+  pinned(/the CLI looks up a decline itself before routing to `Prune plan \(archive\)`/, PRE_CHANGE_LOOKUP);
   assert.match(s, /declined-learning\.js" record-decline --source tidy < "\{D\}"/);
-  assert.match(s, /a non-null `decline`, or a lookup that exits non-zero, routes them to Keep/);
-  assert.match(s, /Before staging a `Prune plan \(archive\)`, look up a decline/);
+  pinned(/a live decline, or a lookup that throws, routes them to Keep/, PRE_CHANGE_LOOKUP);
   assert.match(s, /excludes every row of a `Prune plan \(archive\)` `tidy-prune-plan-\{n\}` item/);
   assert.match(s, /\*\*Decline memory\*\* \(`keep-forever` only — excluding a `Prune plan \(ask\)` item records nothing\)/);
   assert.match(s, /stays live for 180 days \(reconcile's `pruneDeclines` expires it\)/);
@@ -82,40 +103,65 @@ test('tidy Step 4 keeps the human decline reason off the command line (#4465)', 
   assert.doesNotMatch(s, /"reason":"\{why\}"\}' \|/, 'the reason must not be interpolated into a single-quoted printf argument');
 });
 
-// Executes the prose's own lookup/record payloads against the real CLI, in a sandbox cwd (the store is
-// cwd-relative), so a drift between the two description strings, the verbs, or the CLI's stdin contract fails here.
-test('tidy Step 4 decline commands round-trip through declined-learning.js (#4465)', () => {
+// Executes the prose's own record payload against the real record-decline CLI, in a sandbox cwd (the store is
+// cwd-relative), then reads it back through the same fingerprint and store lookup plan-retention.js makes, so a
+// drift between the prose's description, the verb, the CLI's stdin contract and that lookup fails here. The CLI's
+// own wiring of the lookup is pinned separately, in tests/bin-lib/plan-retention/cli.test.js's spawned test.
+test("tidy Step 4's decline record payload round-trips through the fingerprint and store lookup plan-retention uses (#4594)", () => {
   const s = step4Section();
-  const lookup = s.match(/`printf '%s' '(\{[^']*\})' \| node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" (lookup) --source (\w+)`/);
   const payload = s.match(/`Write` `(\{"description":[^`]*\})`/);
   const record = s.match(/`node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/declined-learning\.js" (record-decline) --source (\w+) < "\{D\}"`/);
-  assert.ok(lookup && payload && record, 'Step 4 carries the lookup command, the record payload, and the record command');
+  assert.ok(payload && record, 'Step 4 carries the record payload and the record command');
+  assert.equal(JSON.parse(payload[1].replace('{why}', 'x')).description, probe.DECLINE_DESCRIPTION);
+  assert.equal(record[2], probe.DECLINE_SOURCE);
 
   const cli = path.join(REPO_ROOT, 'plugin', 'bin', 'declined-learning.js');
   const sandbox = fs.mkdtempSync(path.join(os.tmpdir(), 'tidy-plan-decline-'));
-  const [, lookupInput, lookupVerb, lookupSource] = lookup;
-  const [, recordVerb, recordSource] = record;
-
-  function run(verb, source, input) {
-    const stdout = execFileSync(process.execPath, [cli, verb, '--source', source], { cwd: sandbox, input, encoding: 'utf8' });
-    return JSON.parse(stdout);
-  }
+  const lookup = () => store.lookupDecline(probe.archiveDeclineFingerprint(), {
+    readFile: (p) => fs.readFileSync(path.join(sandbox, p), 'utf8'),
+  });
 
   try {
-    assert.equal(run(lookupVerb, lookupSource, lookupInput).decline, null);
+    assert.equal(lookup(), null);
     const why = 'it\'s "noise", per ADR-0007';
-    run(recordVerb, recordSource, payload[1].replace('{why}', JSON.stringify(why).slice(1, -1)));
-    assert.equal(run(lookupVerb, lookupSource, lookupInput).decline.reason, why);
+    execFileSync(process.execPath, [cli, record[1], '--source', record[2]], {
+      cwd: sandbox,
+      input: payload[1].replace('{why}', JSON.stringify(why).slice(1, -1)),
+      encoding: 'utf8',
+    });
+    const entry = lookup();
+    assert.ok(entry, 'the recorded decline is found by plan-retention\'s fingerprint');
+    assert.equal(entry.reason, why);
   } finally {
     fs.rmSync(sandbox, { recursive: true, force: true });
   }
 });
 
-test('tidy Step 4 pins the 7-day cutoff and fails closed toward Keep (#4465)', () => {
+test('AC4.1/AC4.2/AC5.1: tidy Step 4 cites plan-retention.js and no longer spells out the date command (#4594)', () => {
   const s = step4Section();
-  assert.match(s, /git -C "\{REPO_ROOT\}" log --diff-filter=A --format=%cs -1 -- \{plan\}/);
+  pinned(/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/plan-retention\.js" --retention \{value\}/, PRE_CHANGE_CUTOFF + '\n' + PRE_CHANGE_LOOKUP);
+  assert.doesNotMatch(s, /--diff-filter=A/);
+  assert.match(PRE_CHANGE_CUTOFF, /--diff-filter=A/, 'control: the frozen cutoff line carries the retired command');
   assert.match(s, /The cutoff is 7 days \(ADR-0007's "last ~week"\), counted from the plan's first-add commit date/);
-  assert.match(s, /empty output or a non-zero exit counts as within the cutoff/);
+  pinned(/a plan first added 7 or more days before today is past/, PRE_CHANGE_CUTOFF);
+  pinned(/`uncommitted` plan counts as within the cutoff/, PRE_CHANGE_CUTOFF);
+});
+
+test("tidy Step 4's 7 and 30 match plan-retention's constants (#4594)", () => {
+  const s = step4Section();
+  assert.equal(CUTOFF_DAYS, 7);
+  assert.equal(ARCHIVE_THRESHOLD, 30);
+  assert.match(s, /The cutoff is 7 days/);
+  assert.match(s, /30 or more plans are past the cutoff/);
+});
+
+test('tidy Step 4 states the --cited second pass (#4594)', () => {
+  pinned(/re-run[^.]*--cited \{plan\}/, PRE_CHANGE_CITATION);
+  pinned(/re-run the same call — every plan again — adding one `--cited \{plan\}`/, PRE_CHANGE_CITATION);
+  pinned(/with no cited candidate, the first call's routes stand/, PRE_CHANGE_CITATION);
+  pinned(/- \*\*Compute\.\*\*[^\n]*Under `ask` and `prune-after-wrapup`, `citationCheck: true` means apply `plan-citation-check\.md`'s outcome directly — no `--cited` re-run, the CLI rejects it/, PRE_CHANGE_COMPUTE);
+  pinned(/- \*\*Compute\.\*\*[^\n]*Any other exit, or stdout that is not one JSON line, is a failed run: Keep every plan\. Never route by hand/, PRE_CHANGE_COMPUTE);
+  assert.doesNotMatch(step4Section(), /\*\*Citation check\*\*[^\n]*Under `ask` and `prune-after-wrapup`/, 'the ask/prune-after-wrapup clause belongs in Compute, not under the keep-forever-only Citation check label');
 });
 
 test('tidy Step 4 collects the recommendation after retention routing, not before it (#4465)', () => {
@@ -237,15 +283,25 @@ test('tidy Step 4: under keep-forever the citation check runs on past-cutoff can
   assert.match(s, /At 30 or more, a cited candidate renders per `plan-citation-check\.md` and does not count toward the 30/);
 });
 
-test('skill-graph.md tidy section names the declined-learning store row (#4465)', () => {
+function tidyGraphSection() {
   const start = SKILL_GRAPH.indexOf('\n## tidy\n');
   const end = SKILL_GRAPH.indexOf('\n## visual-review\n');
   assert.ok(start !== -1 && end > start);
-  const row = findRow(SKILL_GRAPH.slice(start, end), '| `bin/lib/declined-learning/store.js`');
+  return SKILL_GRAPH.slice(start, end);
+}
+
+test('skill-graph.md tidy section names the declined-learning store row (#4465)', () => {
+  const row = findRow(tidyGraphSection(), '| `bin/lib/declined-learning/store.js`');
   assert.ok(row, 'tidy section carries the declined-learning store row');
-  assert.match(row, /Step 4's Plan retention looks up a `keep-forever` `Prune plan \(archive\)` decline via `bin\/declined-learning\.js lookup --source tidy`/);
+  assert.match(row, /Step 4's Plan retention looks up a `keep-forever` `Prune plan \(archive\)` decline via `bin\/plan-retention\.js`/);
   assert.match(row, /records one via `record-decline --source tidy` when a human excludes that item entirely at Step 6's approval or `--approve`/);
   assert.match(row, /one decline suppresses the archive until reconcile's 180-day `pruneDeclines` expires it/);
+});
+
+test('skill-graph.md tidy section carries the plan-retention.js row (#4594)', () => {
+  const row = findRow(tidyGraphSection(), '| `bin/plan-retention.js`');
+  assert.ok(row, 'tidy section carries the plan-retention.js row');
+  assert.match(row, /Step 4's Plan retention/);
 });
 
 test('policy-schema.js superpowers-plans-retention summary mentions the tidy bulk prune within the 140-char cap (#4465)', () => {

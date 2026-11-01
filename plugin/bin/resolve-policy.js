@@ -23,7 +23,19 @@
 // (exit 0). Invocation failures — zero keys, a --run dir that does not exist,
 // or a --run path that resolves inside a checkout other than the main
 // checkout (#1065's anchored-or-outside guard) — exit 1 with a stderr message
-// and no JSON. Repo root comes from `git rev-parse --show-toplevel` at the
+// and no JSON. A degraded forge detection (#4578 — `gh` timed out, then failed
+// its retry, so the 'local-merge' answer is a guess rather than a detection)
+// writes one stderr line per affected key, in every output mode (stdout and the
+// exit code unchanged): `resolve-policy: degraded — {key}: {reason text};
+// resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or
+// raise gh-timeout-ms`. It applies to integration-model and to a merge-
+// verification request that runs its own detection (a merge-verification that
+// reuses a degraded integration-model from the same call carries the field
+// only — no second line); JSON entries gain the
+// additive `degraded: 'timeout' | 'timeout-then-exit'` reason code, and a
+// non-degraded entry keeps exactly { value, source }. merge-verification's
+// own detection honours a valid --run config.yml integration-model pin first.
+// Repo root comes from `git rev-parse --show-toplevel` at the
 // process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
 // (observed unset in Bash tool environments, #170) and never from a
 // positional path argument.
@@ -36,7 +48,7 @@
 'use strict';
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { POLICY_KEYS, resolvePolicyConfig } = require('./lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
@@ -146,7 +158,7 @@ function main(argv) {
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
   const invalidRaw = new Map();
-  const { root, policyRaw, result } = resolvePolicyConfig({
+  const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({
     git: gitRoot,
     readFile: readFileSafe,
     runDir,
@@ -164,8 +176,21 @@ function main(argv) {
   // defaults.js (#604) so the dedup is unit-testable via an injectable deps
   // map — see that module for the full block. mcpReachable forwards through
   // so both keys' forge detection can skip the `gh` probe within this call
-  // (--mcp-reachable, #1421).
-  computeDerivedDefaults(result, keys, root, { mcpReachable });
+  // (--mcp-reachable, #1421). #4578: runConfigRaw lets merge-verification's own
+  // detection honour the run's integration-model pin first, and the degrade
+  // collector (a Map, so a key requested twice reports once) carries the full
+  // degrade object the entry's bare `degraded` reason code cannot.
+  const degrades = new Map();
+  computeDerivedDefaults(result, keys, root, {
+    mcpReachable,
+    runConfigRaw,
+    onDegrade: (key, degrade) => degrades.set(key, degrade),
+  });
+  // One stderr line per degraded key, in every output mode; stdout is unchanged.
+  for (const key of ['integration-model', 'merge-verification']) {
+    if (!degrades.has(key)) continue;
+    process.stderr.write(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
 
   // model-profiles is a block-style key — policy-only (the --run
   // overlay never applies; run configs hold flat lever lines, not nested

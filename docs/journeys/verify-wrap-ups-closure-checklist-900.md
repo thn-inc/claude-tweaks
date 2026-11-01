@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/lib/wrap-up/engine-verify.js
+  - plugin/bin/lib/issues/record-dependencies.js
   - plugin/bin/lib/wrap-up/verify-results.js
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/wrap-up-engine.js
@@ -75,6 +76,13 @@ files:
 - **Should understand:** For a pointer, the check reads the PR's comments. It accepts `brief:{N}` for the record it is checking first, then the plain `brief` (a single-spec run, or a brief posted before #3333), each from a trusted author and carrying `### Confirmed`. A sibling's `brief:{M}` never satisfies `#N`. When neither is found, the fail detail names both markers it looked for: `… no confirmed Verification Brief on PR #P (looked for brief:{N}, then brief)`.
 - **Red flags:** A bundled spec failing `pointer to PR #P found but no confirmed Verification Brief` while its own `brief:{N}` comment is on the PR. That was the pre-#3333 behavior, when only the bare marker was read. Also a spec passing on a sibling's `brief:{M}`.
 
+### 9. Wrap up a sub-issue in a project that links records with `Parent:` lines
+- **URL:** the table's `acceptance-labeling` row, from the same command, in a project whose `.claude-tweaks/policy.yml` sets `work-links: body-text` or leaves it unset (the schema default)
+- **Action:** Run the verb on a wrap-up of a sub-issue whose body carries `Parent: #P`, where #P's body holds a task list (`- [ ] #N`) and no native sub-issue link exists.
+- **Should feel:** The same as step 7 in a native-linked project. The sub-issue is routed to its parent's gate instead of being failed for a `demo:pending` it was never supposed to carry.
+- **Should understand:** The check reads `work-links` once per run from the repo root's `policy.yml`, never the worktree's copy. Under `body-text` it reads the run record's `Parent:` line (`parseParent`, the plugin's one reader of that line) and enumerates #P's sub-issues from #P's own task list, so every step 7 outcome (`not due`, below floor, the `demo:pending` check on #P) applies unchanged. The parent's task list wins on disagreement: a record whose `Parent: #P` names a parent whose task list does not list it is checked as its own target and needs its own `demo:pending`, and the row's detail carries `#N: Parent: #P line not in #P's task list — mismatch, not counted in #P's gate; checked as its own target`. The labeler agrees: `bin/parent-gate.js --sub-issue N` resolves no parent for that record, so wrap-up labels the record itself. A body with no `Parent:` line is checked as its own target, as before. A failed body fetch, unparseable JSON, a malformed state or labels reply, or a parent body with no task list renders the row `unknown`, never `fail`. Under `work-links: native` nothing changes and no body is fetched.
+- **Red flags:** `acceptance-labeling | fail | #N: missing demo:pending label` on a body-text sub-issue whose parent lists it (the #4551 false fail). A mismatched record dropped from the row with no note, or silently counted in #P's gate. A `--json body` call in a project that sets `work-links: native`.
+
 ## Origin
 - Created during build of #900 (wrap-up verify verb — mechanizes `execution-and-verification.md`'s hand-run closure checklist into a deterministic table), part of the shared #343+#900 `/flow` multi-spec run.
 - Related: #343 (prerequisite — fixed the same skill file's circular gate condition on the same branch), #892/#891 (the sibling `bin/verify.js` deterministic-check-runner family — a different subsystem covering type/lint/test checks, not this feature's closure-gate checks).
@@ -88,4 +96,5 @@ files:
 - Updated for #4466: a below-floor parent's `acceptance-labeling` skip now names the post-merge close (`skip (parent #P below oversight floor — closes after the merge lands (Step 4.0b))`). The parent is closed by `pr-first-merge-post-merge.md`'s Step 4.0b once the merge lands, so it never carries an acceptance label and never reaches the `demo:pending` check.
 - Updated for #3333: `acceptance-labeling`'s PR pointer branch reads the record's own `brief:{N}` comment before the plain `brief`, so a multi-spec bundle's spec passes on its own brief, and the fail detail names the markers it looked for. Added step 8.
 - Updated for #4610: `acceptance-labeling` reads the record's resolved acceptance state over both label spellings, and a pending label that a verdict outranks fails with its own detail naming `/claude-tweaks:demo`. Step 7 notes it.
+- Updated for #4551 (run `2026-11-01T171342-record-4551`): `acceptance-labeling` resolves a sub-issue's parent, and enumerates the parent's sub-issues, under `work-links: body-text` (the `Parent: #N` line and the parent's task list) instead of only through native links; a record its parent's task list omits is checked as its own target with a mismatch note. Added step 9.
 - Updated for #3783: the verb writes its rows to `verify.json` in the verified (possibly archived) run dir (`verify-results.js`), the input the close-out and pr-first-merge Step 1 acceptance guards read. A run dir that is missing is never recreated by the write. Step 1 notes the file.

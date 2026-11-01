@@ -21,15 +21,16 @@ const claimStore = require('./lib/issues/claim-store');
 const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-targets');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { ghOptions } = require('./lib/repo-resolve');
 
 // maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
 // every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
 // before its 1000-PR limit.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 const realDeps = {

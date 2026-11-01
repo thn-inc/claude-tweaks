@@ -9,7 +9,8 @@
 'use strict';
 
 const fs = require('fs');
-const { bootstrapRelease, isValidBranchName, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
+const { bootstrapRelease, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
+const { isValidBranchName } = require('./lib/branch-name');
 
 const USAGE = 'usage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n';
 const VALUE_FLAGS = new Set(['--root', '--branch', '--integration-model', '--release-type', '--extra-file']);

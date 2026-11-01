@@ -22,8 +22,8 @@
 //   The run-dir scan: a non-terminal top-level run dir (never an ad-hoc one) bound to the stalled
 //   worktree is `concurrent-resume`, or `stale-bound-run` — naming hooks.js close-run on that dir —
 //   when its owner is provably dead by the same owner ladder the prior run's probe uses (an owner
-//   block naming this session is never dead here; an unknown or other-host owner's line names how
-//   to settle that run).
+//   block naming this session is never dead here: its line names both a resume still running and
+//   close-run for a crashed one; an unknown or other-host owner's line names how to settle that run).
 // Exit codes (a CLI-specific vocabulary — the verdict is data on stdout, no exit 1 at all):
 //   0  eligible, or {concurrent:false}
 //   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
@@ -49,7 +49,7 @@ const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
 const { parseDependencies } = require('./lib/issues/record');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
@@ -77,10 +77,10 @@ const HOOKS_JS = path.join(__dirname, 'hooks.js');
 
 // maxBuffer: the PR listing carries every matching PR's body.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 // Local reads only; a non-zero exit throws with the child's status (rev-parse --verify --quiet → 1).
@@ -92,10 +92,10 @@ function defaultGit(args) {
 }
 
 function nativeGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: NATIVE_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 // `resolve-policy.js --values work-links`, in process: the same resolvePolicyConfig that CLI runs.
@@ -333,6 +333,7 @@ function ownerClass(deps, state) {
 // it: EnterWorktree's friction placeholder stays non-terminal while the worktree is registered and
 // is never a record claim (#2783), and a second resume always binds a formal record-N run. A
 // provably dead owner (ownerClass, never this session's own) is a leftover the human can close;
+// this session's own run names both readings (a resume still running, or a crashed one to close);
 // an unknown or other-host owner's line names how to settle it; a live owner's run may still end.
 function boundRunConflict(ctx, excluded) {
   const { deps, issue } = ctx;
@@ -348,8 +349,14 @@ function boundRunConflict(ctx, excluded) {
     // ownerClass reads this session's own block as dead (right for the prior run); here it may be a
     // second resume sharing the session id (#965), so it is never proven dead in the scan.
     const ownSession = owner !== null && nonEmptyString(deps.sessionId) !== null && owner.sessionId === deps.sessionId;
+    if (ownSession) {
+      return {
+        reason: 'concurrent-resume',
+        line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to another active run ${name} owned by this same session — if another dispatch resume in this session is still running, stop it, then run /claude-tweaks:dispatch resume #${issue}; if an earlier resume in this session crashed and left that run open, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
+      };
+    }
     const cls = ownerClass(deps, state);
-    if (cls === 'dead-owner' && !ownSession) {
+    if (cls === 'dead-owner') {
       return {
         reason: 'stale-bound-run',
         line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to run ${name}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${issue}`,
@@ -605,6 +612,6 @@ function run(argv, deps) {
   }
 }
 
-module.exports = { run, parseArgs, realDeps };
+module.exports = { run, parseArgs, realDeps, classifyPriorRun };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

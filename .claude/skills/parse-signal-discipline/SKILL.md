@@ -209,6 +209,20 @@ When mechanizing a prose heuristic into a deterministic check:
    exits 0 with no output, so an exit-code branch alone cannot call that one.
    `tests/reflect-integration-branch-probe.test.js` pins the clause, and removing either the fetch
    clause or the `-e` form turns it red.
+   Naming the failure arms is not enough when the acting branch is the complement of a stop list.
+   `plugin/skills/flow/claim-targets.md`'s in-flight route (#4659) listed its stop outcomes, then
+   said "Otherwise: follow `dispatch/resume-confirmation.md`", so a failed `gh pr view`, a non-zero
+   `bin/pr-resume-line.js` exit, or stdout that was not one JSON line fell through to resuming.
+   Review caught it (`d78eb3940`). Name the one verdict that acts ("Route onward only on a `resume`
+   verdict") and let every other outcome keep the stop: item 19's positive recogniser, in prose.
+   `tests/issue-claims-stale-open-pr-conformance.test.js` pins that clause and the absence of
+   `Otherwise: follow`.
+   A pipe hides a failed probe a third way: the pipeline's exit status is its last stage's, so a
+   producer that fails into a consumer that always succeeds still yields a confident value.
+   #4557's progress probe piped `git diff HEAD` into `git hash-object --stdin`; a failed diff
+   still exits 0 with the empty-blob hash (`e69de29…`), which differs from the previous probe and
+   reads as progress, granting another wait window. Review caught it (`704ff1076` made a `fatal:`
+   line fail the probe). Name each piped stage's own failure signal, never the pipeline's exit.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
@@ -298,16 +312,16 @@ When mechanizing a prose heuristic into a deterministic check:
     transform that mis-parses produces a clean scan. `stripComments` (implemented in
     `plugin/bin/lib/strip-comments.js`, re-exported by `tests/helpers/strip-comments.js`)
     blanks comments to spaces before its callers' scans count tokens. Its
-    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `cli`, `exit-code`, `git-status-optional-locks`,
-    `hooks-harness-refusal`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
-    `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
+    callers, by test-file stem: `accept-label-reader`, `backfill-cli`, `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`,
+    `hooks-harness-refusal`, `hooks-pre-tool-use`, `markdown-blocks`, `owner-pid-probe`, `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`,
+    `precondition`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`, `subprocess-timing`, `wall-clock-budget` and
     `windows-hide-spawn`.
     `tests/strip-comments-callers-twin.test.js` pins this list and the helper header's to the
     tree. It models regex literals (#3585); its residual
     ambiguity is a regex right after `)` or `}`, which it reads as division. In
     `if (b) /"/.test(b); const c = "//"; fs.existsSync(c);` the quote inside the regex pairs with a
     later string, the `//` after it opens a line comment, and the guarded call counted as zero.
-    `stripperVerdict` (#3573) checks the transform with an oracle the raw input already passes: it
+    `stripperVerdict` (#3573, defined in `tests/helpers/strip-comments.js`, so a plugin caller of the stripper gets no verdict) checks the transform with an oracle the raw input already passes: it
     compiles both the raw file and the stripped text under a CommonJS wrapper with `vm.Script`. A
     blanked comment never breaks syntax, but blanked code cuts a literal short. So "raw compiles,
     stripped does not" is `misparsed`, and a raw file that does not compile at all (an ESM file) is

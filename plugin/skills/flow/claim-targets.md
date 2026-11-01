@@ -280,33 +280,39 @@ stays best-effort and the claim read stays the authoritative hold check:
   stops for this exact stop shape — nobody headless is present to answer a resume confirmation);
   the card above is the terminal output for that form. Otherwise, parse the PR number from the
   trailing path segment of `link` (already validated same-repo-PR-URL-shaped by
-  `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and
-  `gh pr view {number} --json body`, reading the body for both the `claude-tweaks-run: {run-id}`
-  marker (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since
-  this read has no preference for the HTML-comment one) and, on the same read, that file's
-  `### Resume` section — the exact command line `` `PIPELINE_RUN_DIR="{run-dir}"
-  /claude-tweaks:flow "{target}" {next-step}` `` composed once at PR-open time (that file's
-  Step 3), carrying the found run's *actual* record composition — single- or multi-spec
-  (`flow/multi-spec.md`'s "Multi-spec runs share one PR"). **Validate `{run-id}` before using it for anything**: a PR body is editable by
+  `tombstoneInFlightPr` or `staleClaimInFlightPr` before this branch is ever reached) and save
+  the body with `gh pr view {number} --json body --jq .body > "{body-file}"` (its own Bash call),
+  `{body-file}` being what `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value
+  pr-body-{number}.md` prints. Read the `claude-tweaks-run: {run-id}` marker from that file
+  (`_shared/pr-early-run-lifecycle.md`'s dual-marker scheme — the plain-text form, since this read
+  has no preference for the HTML-comment one). **Validate `{run-id}` before using it for anything**: a PR body is editable by
   anyone with write access to it, so this value is exactly as untrusted as `link`, and gets the
   same reject-rather-than-sanitize treatment `tombstoneInFlightPr` already applies there — require
   it to match `^\d{4}-\d{2}-\d{2}T\d{6}-[a-z0-9][a-z0-9-]*$` (the canonical run-id shape,
   `_shared/run-dir-resolution.md`'s ISO-timestamp + spec-slug convention) with no `/` or `..`
-  anywhere in it; a value that doesn't match is treated identically to no marker found. No marker
-  found, the marker fails that validation, `gh` unavailable, the `### Resume` line is missing or
-  doesn't parse, or the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
-  foreign PR, or one whose run dir was already reaped) — the card above is the terminal output;
-  there is nothing safe to route into. Otherwise: follow `dispatch/resume-confirmation.md`'s full
-  "Confirm before resuming" procedure now, passing the parsed `### Resume` line's own `{target}`
-  (the found run's actual record composition — never substitute this claim loop's own single
-  stopped target for it; the two coincide only in the common single-record case) and the
-  validated `{run-id}`'s resolved directory as `{run-dir}`. That file's own freshness probe
-  (`check-resume-freshness`) is what tells a genuinely still-running build (`BLOCKED` — report the
-  line verbatim and stay stopped, exactly as an unresolved run-id would) apart from one that only
-  looks in-flight because its tombstone hasn't caught up yet (`OK` — its own `AskUserQuestion`
-  offers Resume); this call site makes no freshness judgment of its own, and asks nothing directly
-  — either the headless skip above or `resume-confirmation.md`'s own gate owns every user-facing
-  decision here.
+  anywhere in it; a value that doesn't match is treated identically to no marker found. Once
+  `{run-id}` validates, run `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-resume-line.js" --body-file
+  "{body-file}" --run-id "{run-id}"`. It parses the line under the PR body's last `### Resume`
+  heading with `pr-body.js`'s `parseResumeLine`, the parser twin of the composer
+  `_shared/pr-early-run-lifecycle.md` Step 3 uses, so this file states no grammar of its own, and
+  prints one JSON line: a `resume` verdict, a `resolve` of `no-resume-line` or
+  `resume-line-shape`, or a `failure`. No marker found, the marker fails that validation, `gh`
+  unavailable, the resolved `$RUN_ROOT/.claude-tweaks/pipelines/{run-id}` directory absent (a
+  foreign PR, or one whose run dir was already reaped), or a `resolve` verdict or a `failure` from
+  the CLI — the card above is the terminal output; there is nothing safe to route into. A failed
+  `gh pr view`, a non-zero CLI exit, or stdout that is not one JSON line also leaves that card
+  standing. Route onward only on a `resume` verdict: follow
+  `dispatch/resume-confirmation.md`'s full "Confirm before resuming" procedure now, passing the
+  `resume` verdict's own `target` (the found run's actual record composition, single- or
+  multi-spec, `flow/multi-spec.md`'s "Multi-spec runs share one PR" — never substitute this claim
+  loop's own single stopped target for it; the two coincide only in the common single-record
+  case) and the validated `{run-id}`'s resolved directory as `{run-dir}`. That file's own
+  freshness probe (`check-resume-freshness`) is what tells a genuinely still-running build
+  (`BLOCKED` — report the line verbatim and stay stopped, exactly as an unresolved run-id would)
+  apart from one that only looks in-flight because its tombstone hasn't caught up yet (`OK` — its
+  own `AskUserQuestion` offers Resume); this call site makes no freshness judgment of its own, and
+  asks nothing directly — either the headless skip above or `resume-confirmation.md`'s own gate
+  owns every user-facing decision here.
 - **4** — transient `gh` failure, same fail-fast/all-or-abort shape as exit 3: stdout carries
   `{transient: [{issue, error}], released, releaseFailed}`, release already attempted. Render the
   transient-failure card below. Also covers a pre-claim repo-slug resolution timeout (#3065) — a

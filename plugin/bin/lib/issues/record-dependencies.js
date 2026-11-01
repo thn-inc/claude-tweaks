@@ -15,6 +15,10 @@ const DEP_RE = /^Blocked by #(\d+)\b/gm;
 // '- [ ] #{subIssueNum}' and checked off over time — both box states count.
 const SUB_ISSUE_RE = /^- \[[ xX]\] #(\d+)\b/gm;
 
+// Line-anchored 'Parent: #N' back-link (work-links: body-text), written by
+// /specify as a metadata line in a sub-issue's body. Non-global: first match wins.
+const PARENT_RE = /^Parent: #(\d+)\b/m;
+
 // Line-anchored 'Blocked by #N: {text}' assumption declarations (multiline) —
 // a separate, additive sibling to DEP_RE/parseDependencies below, never a
 // modification of either. DEP_RE already stops matching at the number, so a
@@ -56,17 +60,35 @@ function parseSubIssues(body) {
   return parseIssueNumbers(body, SUB_ISSUE_RE);
 }
 
+// sub-issue body -> its parent's issue number from the first line-anchored
+// 'Parent: #N' line (written by /specify under work-links: body-text), or null
+// for a null/undefined/empty/non-string body or one with no such line. Mid-line
+// mentions don't count, exactly as with DEP_RE.
+function parseParent(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = body.match(PARENT_RE);
+  return m ? Number(m[1]) : null;
+}
+
+// issue numbers + a per-alias field expression -> the one batched, aliased GraphQL
+// query all four builders below share: `i{n}: {fieldExpr(n)}` per number, inside
+// repository(owner:$owner,name:$repo){}. Returns null for a non-array or empty
+// input. Module-private; the builders below own the per-alias selection sets.
+function buildAliasedIssueQuery(numbers, fieldExpr) {
+  if (!Array.isArray(numbers) || numbers.length === 0) return null;
+  const fields = numbers
+    .map((n) => `i${n}: ${fieldExpr(n)}`)
+    .join('\n      ');
+  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+}
+
 // candidate issue numbers -> one batched, aliased GraphQL query requesting each
 // candidate's native blockedBy connection (work-links: native). GraphQL aliases
 // can't start with a digit, hence the 'i' prefix. Returns null for an empty or
 // non-array input — nothing to query, and an empty repository{} selection set
 // would be invalid GraphQL.
 function buildNativeDependencyQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number blockedBy(first:25){ nodes{ number state } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number blockedBy(first:25){ nodes{ number state } } }`);
 }
 
 // candidate parent-issue numbers -> one batched, aliased GraphQL query requesting
@@ -77,11 +99,7 @@ function buildNativeDependencyQuery(numbers) {
 // that cap turns out to be, so a truncated page is never mistaken for a complete
 // one. Same alias/null conventions as buildNativeDependencyQuery above.
 function buildNativeSubIssuesQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number subIssues(first:100){ nodes{ number } pageInfo{ hasNextPage } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number subIssues(first:100){ nodes{ number } pageInfo{ hasNextPage } } }`);
 }
 
 // candidate sub-issue numbers -> one batched, aliased GraphQL query requesting each
@@ -93,11 +111,7 @@ function buildNativeSubIssuesQuery(numbers) {
 // pointer sub-procedure. review/cross-spec-promise-check.md performs the equivalent
 // native parent-resolution query independently — it does not call this function.
 function buildNativeParentQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number parent{ number title state } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number parent{ number title state } }`);
 }
 
 // one candidate's parsed aliased response value (the { number, blockedBy: { nodes } }
@@ -204,11 +218,7 @@ function partitionByOpenNativeBlockers(candidates, repoData) {
 // wrap-up's carrier-commit fallback can read whether the issue is CLOSED
 // from this one batched call instead of a per-issue `gh issue view`.
 function buildLinkedPRQuery(numbers) {
-  if (!Array.isArray(numbers) || numbers.length === 0) return null;
-  const fields = numbers
-    .map((n) => `i${n}: issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`)
-    .join('\n      ');
-  return `query($owner:String!,$repo:String!){\n  repository(owner:$owner,name:$repo){\n      ${fields}\n  }\n}`;
+  return buildAliasedIssueQuery(numbers, (n) => `issue(number:${n}){ number state closedByPullRequestsReferences(first:10){ nodes{ number state } } timelineItems(itemTypes:[CROSS_REFERENCED_EVENT], last:20){ nodes{ ... on CrossReferencedEvent { source { ... on PullRequest { number title state createdAt merged mergedAt repository { nameWithOwner } } } } } } }`);
 }
 
 // candidates[] (each with .number), repoData: the linked-PR GraphQL response's
@@ -255,6 +265,6 @@ function parseDependencyAssumptions(body) {
 
 module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
 };

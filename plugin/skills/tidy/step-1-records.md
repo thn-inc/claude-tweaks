@@ -249,11 +249,16 @@ or out-of-vocabulary `risk`) makes the whole parent's aggregate unscored too, ma
 RISK_FLOOR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values risk-floor)
 node -e "
   const { queryRecords } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
-  const { parentGateState } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
+  const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
   const [riskFloor] = process.argv.slice(1);
-  const parents = queryRecords('specs', { isParentIssue: true });
+  const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const parents = [
+    ...queryRecords('specs', { isParentIssue: true }),
+    ...queryRecords('specs', { isParentIssue: true, closed: true })
+      .filter((p) => Number.isNaN(Date.parse(p.facets.closedAt)) || Date.parse(p.facets.closedAt) >= cutoff),
+  ].sort((a, b) => a.id - b.id);
   const gates = parents.map((p) => {
     const subIssueRecords = [
       ...queryRecords('specs', { parent: p.id }),
@@ -264,6 +269,9 @@ node -e "
       title: p.title,
       path: p.path,
       needsDefinition: p.facets.needsDefinition === true,
+      closed: p.facets.closed === true,
+      notPlanned: p.facets.notPlanned === true,
+      belowFloorClose: /^## Closed below the oversight floor\s*$/m.test(p.body || ''),
       parentLabels: p.facets.acceptance ? ['demo:' + p.facets.acceptance] : [],
       subIssues: subIssueRecords.map((r) => ({ number: r.id, state: r.facets.closed ? 'CLOSED' : 'OPEN', risk: r.facets.risk })),
     };
@@ -278,12 +286,22 @@ node -e "
     }
     return hasUnscored ? undefined : TIERS[maxIndex];
   }
+  const bad = {};
   gates
     .filter((f) => !f.needsDefinition)
-    .filter((f) => parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) === 'due')
-    .forEach((f) => console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
-      ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
-      : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)')));
+    .forEach((f) => {
+      if (f.closed) {
+        const v = closedParentGap({ parentLabels: f.parentLabels, stateReason: f.notPlanned ? 'NOT_PLANNED' : undefined, belowFloorClose: f.belowFloorClose, subIssues: f.subIssues, riskFloor });
+        if (v === 'gap') console.log(f.path + '\t[acceptance-gap] ' + f.id + ': ' + f.title + ' — closed with no acceptance disposition — recommend /claude-tweaks:demo ' + f.id);
+        else if (v !== 'none') bad[v] = (bad[v] || 0) + 1;
+        return;
+      }
+      if (parentGateState({ subIssues: f.subIssues, parentLabels: f.parentLabels }) !== 'due') return;
+      console.log(f.path + '\t[parent-gate] ' + f.id + ': ' + f.title + (exceedsOversightFloor({ risk: maxRiskTier(f.subIssues) }, { riskFloor, sizeFloor: null }).exceeds
+        ? ' — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo ' + f.id
+        : ' — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)'));
+    });
+  for (const v in bad) console.error('WARNING: ' + bad[v] + ' closed parent(s) print no [acceptance-gap] row (' + v + ') — risk unreadable; check the sub-issue records\' parent facet, then re-run.');
 " -- "$RISK_FLOOR"
 ```
 
@@ -291,16 +309,18 @@ Each line is `{path}<TAB>{finding}` — the path fills the row's `Path:Line` col
 Tidy-specific column semantics: the local record path on this driver, where `github-issues` rows
 carry `#{n}`), the rest is the finding.
 
-Both `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
-(closed records are excluded unless the filter names `closed`) — the right set, since a closed
-parent was already dispositioned and closed — by `/claude-tweaks:demo` above the oversight floor, by
-**Close the parent below the floor** below it — and it mirrors the
-`github-issues` scope's `--state open` fetch. The sub-issue listing is the open+closed two-call
-merge for the same reason: one call alone drops every closed sub-issue, exactly the ones that make
+The `queryRecords` shapes are deliberate. `{ isParentIssue: true }` returns **open** parents only
+(closed records are excluded unless the filter names `closed`), and mirrors the `github-issues`
+scope's `--state open` fetch. `{ isParentIssue: true, closed: true }` adds the parents closed in the
+last 30 days, keeping one whose `closedAt` is missing or unparseable: a parent closed by hand never
+passed through `/claude-tweaks:demo` or **Close the parent below the floor**, so `closedParentGap`
+(`acceptance.js`, which holds the reasoning) judges it. The parent's `## Closed below the oversight
+floor` body section is #4466's marker. The sub-issue listing is the open+closed two-call
+merge: one call alone drops every closed sub-issue, exactly the ones that make
 a gate due. No fetch-limit or truncation warning applies, unlike the API-paging twin —
 `queryRecords` reads the whole `specs/` directory every call.
 
-→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
+→ Collect each as: `[parent-gate] {id}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo {id}`, or below the floor: `[parent-gate] {id}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`, or, for a hand-closed parent above the floor: `[acceptance-gap] {id}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo {id}`
 
 Severity `info` — with several open decompositions this is a standing backlog, not a defect
 count, and tidy reads a row's severity as recommendation urgency, so any tier above `info` would
@@ -350,7 +370,7 @@ issue — Shape 7's population — and never on the sub-issue. Drop that transla
 sub-issue of every closed decomposition lands here as a row, flooding the report with exactly the
 records another shape already covers. That is the same reason the `github-issues` scope resolves
 its own sub-issue set before filtering. `isParent` excludes the parent itself for the mirror reason: a
-parent's acceptance is Shape 7's parent gate, or the below-floor close (#4466) — never a row here.
+parent's acceptance is Shape 7's, which reports a hand-closed one above the floor itself (#4600), or the below-floor close (#4466) — never a row here.
 
 It needs its own query, not Step 1's shared fetch: that fetch returns open records only, and every
 record this shape looks at is closed by definition. `risk-floor`/`size-floor` are resolved again

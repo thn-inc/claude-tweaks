@@ -31,10 +31,11 @@ hand if it closed) in the closing summary, never as anything but `merged`. A `ba
 envelope means the PR's base or the default branch could not be read, so nothing was closed and the
 `Fixes` records were not checked: name the envelope's `unchecked[]` records in the closing summary. Exit
 5 or `gh-absent`: the CLI logged its own `SKIP` line; exit 3: the run dir is untrusted and `log-decision.js` refuses it too, so name the gap in the closing summary. Then continue to Step 4.0b. An `armed` outcome never reaches
-this step, and the reconciler does not run the CLI; with `--keep-open` on the composer, only a
+this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace),
+with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer, only a
 Development-sidebar link can still close a kept-open record there, a gap tracked in the run's ledger.
-On a non-default base an `armed` merge's `Fixes` records also stay open, since this step never runs
-for it (#4599 tracks running it for an armed PR).
+On a non-default base that late run closes an `armed` merge's still-open `Fixes` records the same
+way, so they no longer wait for a human (#4599).
 
 ### Step 4.0b: Close below-floor parents (#4466)
 
@@ -42,8 +43,10 @@ Applies only under `work-backend: github-issues`. Under `local-files` the pre-me
 already closed the parent in-branch, so this step is a no-op there. It runs once the merge has
 landed: after outcome `merged`, or after a no-PR local merge's successful push at the call sites
 that cite it. A merge that never lands never reaches it, so its parent stays open. A merge no
-session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design:
-`/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.
+session sees land (an `armed` PR that GitHub merges later) never reaches it either: the reconciler's
+`post-merge` check runs Steps 4.0 and 4.0b for that run once, keyed on its recorded PR
+(`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop
+stays the last resort.
 
 After a no-PR local merge it is a no-op unless the branch the merge landed on — the integration
 branch (`_shared/integration-branch.md`) — is the repo's default branch
@@ -98,26 +101,54 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   which holds no per-spec pack.
 
 For each record in `$CLOSING_SUB_ISSUES`, run that procedure from **Resolve the parent** through
-**Evaluate the gate**. On `due` with `exceeds: false`, run **Close the parent below the floor**.
-With `gh` absent, every call the procedure makes runs through `_shared/github-write-transport.md`'s
-MCP rows (the procedure's **Transport (#4602).** paragraph), so a gh-absent run with the GitHub MCP
-server closes the parent the same way after a no-PR local merge; after a PR merge, Step 4.0's
-`gh-absent` result skips this step, as above. Every other outcome is a no-op; a record with no
-resolvable parent follows **Resolve the parent**'s no-parent branch. A parent whose labels lack
-`parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in
-the closing summary. Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the
-parent's sub-issues** fetches) and name it in the closing summary, per
-`_shared/work-record.md`'s Worklist rule. Evaluate each parent once: skip a record whose parent
-this step already handled, so a parent with several sub-issues in the set is closed once. The
-procedure's **Return to the Try it post** and **Fail open on every `gh` call** paragraphs state
-what this entry does not do (no Try it block, no fallback to the no-parent path) and how it skips
-on a failing `gh` call — never a stop, and never a reason to report anything other than `merged`.
+**Evaluate the gate**, which its **Run the gate CLI** section makes one call. `{closing-sub-issues}`
+is `$CLOSING_SUB_ISSUES` comma-joined, and `{held}` lists every number in Step 4.0's `reopened[]`
+and `pendingClose[]` and each `failed[]` and `closeFailed[]` entry's `issue`, comma-joined. Omit
+`--merging-pr {pr-number}` after a no-PR local merge, and `--held {held}` when `{held}` is empty:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {closing-sub-issues} --idempotence --merging-pr {pr-number} --held {held}
+```
+
+Route a `no-parent` verdict first: a record with no resolvable parent follows **Resolve the
+parent**'s no-parent branch. Route every other verdict in the reconciler's order. A parent whose
+labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op
+too, named in the closing summary. The verdict reports it as `parentIssue: false`. Skip a parent whose verdict
+lists `needs` (its `needs:*` labels) and name it in the closing summary, per
+`_shared/work-record.md`'s Worklist rule. A non-empty `held` skips the parent, named in the
+closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a
+`failed[]`, `pendingClose[]` or `closeFailed[]` one waits on the hand reopen or close the inputs
+paragraph above names. On `due` with `exceeds: false`, run
+**Close the parent below the floor**. With `gh` absent, every call the procedure makes runs
+through `_shared/github-write-transport.md`'s MCP rows (the procedure's **Transport (#4602).**
+paragraph), so a gh-absent run with the GitHub MCP server closes the parent the same way after a
+no-PR local merge; after a PR merge, Step 4.0's `gh-absent` result skips this step, as above.
+Every other outcome is a no-op; this step writes nothing for it. Evaluate each parent once:
+skip a record whose parent this step already handled, so a parent with several sub-issues in the
+set is closed once. The verdict's
+`parent` names it. The procedure's **Return to the Try it post** and **Fail open on every `gh`
+call** paragraphs state what this entry does not do (no Try it block, no fallback to the no-parent
+path) and how it skips on a failing `gh` call — never a stop, and never a reason to report
+anything other than `merged`. Any other non-zero CLI exit (after **Run the gate CLI**'s exit-2
+`gh`-absent retry) is a failing `gh` call.
 
 Log each parent closed:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility "high (gh issue reopen)" --text "closed parent #{parent} below the oversight floor (risk:{maxTier}, risk-floor {riskFloor})"
 ```
+
+Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]`,
+or after a no-PR local merge (its non-default-branch no-op included), where `the pushed merge commit` replaces `PR #{pr-number}` in the text:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}'s closing records: {k} parent(s) closed"
+```
+
+The reconciler's `post-merge` check reads this line as the marker that the step already ran, so it
+does not run Steps 4.0 and 4.0b a second time for this run. On the no-`closingSet[]` path above, the
+`(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and
+"0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.
 
 ### Step 4.1: Which release carried this? (before reconcile)
 
@@ -175,7 +206,7 @@ auto-backgrounding on the harness's default command timeout (#1543 — a full un
 was observed taking ~2 minutes, at or past that default, twice tripping it in one dispatch
 firing and once stranding a firing whose one-shot turn ended waiting on the backgrounded call).
 
-`--checks mirror,release,archive` scopes the sweep to exactly what this step needs — the full
+`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full
 unscoped default also runs `red-tip`/`reap`/`console` inline (and hands `archive-branches`/
 `remote-prune`/`ledger-residue` to the background pass), none of which this step's own next
 paragraph describes needing, and `remote-prune`'s inclusion is what forces the full

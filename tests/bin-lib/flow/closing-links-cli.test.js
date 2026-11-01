@@ -140,7 +140,7 @@ const PRE = ['--mode', 'pre-merge'];
 const POST = ['--mode', 'post-merge'];
 
 test('parseArgs: shapes and rejections', () => {
-  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, help: false });
+  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, closeWindowMs: null, help: false });
   assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--settle-ms', '0']).settleMs, 0);
   assert.equal(parseArgs(['--help']).help, true);
   assert.ok(parseArgs(['--bogus']).error);
@@ -762,6 +762,197 @@ test('post-merge closingSet keeps a linked record closed before the merge', () =
   assert.equal(j.action, 'nothing-closed');
   assert.deepEqual(j.closedBefore, [2724]);
   assert.deepEqual(j.closingSet, [2724, 3997]);
+});
+
+// ---- #4599: --close-window-ms bounds the reopen window for a late post-merge run ----
+
+const CLOSED_IN_WINDOW = '2026-10-24T18:52:34Z'; // MERGED_AT + 2 s
+const CLOSED_PAST_WINDOW = '2026-10-24T21:52:32Z'; // MERGED_AT + 3 h
+const WINDOW = ['--settle-ms', '0', '--close-window-ms', '600000'];
+
+test('parseArgs: --close-window-ms takes a non-negative integer, no cap', () => {
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge']).closeWindowMs, null);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '600000']).closeWindowMs, 600000);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '0']).closeWindowMs, 0);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '99999999999']).closeWindowMs, 99999999999);
+  assert.match(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '-1']).error, /--close-window-ms takes a non-negative integer/);
+  assert.match(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', 'abc']).error, /--close-window-ms takes a non-negative integer/);
+  assert.ok(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '1.5']).error);
+  assert.ok(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms']).error);
+  // Post-merge only: pre-merge reads no closedAt, so the flag there is a malformed invocation.
+  assert.match(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--close-window-ms', '5']).error, /post-merge/);
+});
+
+test('--close-window-ms with --mode pre-merge exits 2 before touching gh', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main);
+  assert.equal(run(['--run', runDir, ...PRE, '--close-window-ms', '5'], h.deps), 2);
+  assert.match(h.err.join(''), /--close-window-ms/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('post-merge --close-window-ms: a keep-open record closed inside the window is reopened', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_IN_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closedAfterWindow, []);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge --close-window-ms: a record closed after the window is not reopened, listed, and stays in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'nothing-closed');
+  assert.deepEqual(j.reopened, []);
+  assert.deepEqual(j.closedAfterWindow, [2724]);
+  assert.deepEqual(j.closedBefore, []);
+  assert.deepEqual(j.failed, []);
+  assert.deepEqual(j.closingSet, [2724, 3997]);
+  assert.equal(h.reopens().length, 0);
+  assert.equal(h.log(runDir), '');
+});
+
+test('post-merge --close-window-ms: the window boundary is inclusive (closedAt == mergedAt + window reopens)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const atEdge = new Date(Date.parse(MERGED_AT) + 600000).toISOString();
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: atEdge }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  assert.deepEqual(h.json().reopened, [2724]);
+  assert.deepEqual(h.json().closedAfterWindow, []);
+});
+
+test('post-merge --close-window-ms 0: only a close at mergedAt itself is inside the window', () => {
+  const a = fixture({ pr: { number: 7 } });
+  const inside = makeDeps(a.main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: MERGED_AT }] },
+  });
+  assert.equal(run(['--run', a.runDir, ...POST, '--settle-ms', '0', '--close-window-ms', '0'], inside.deps), 0);
+  assert.deepEqual(inside.json().reopened, [2724]);
+
+  const b = fixture({ pr: { number: 7 } });
+  const outside = makeDeps(b.main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', b.runDir, ...POST, '--settle-ms', '0', '--close-window-ms', '0'], outside.deps), 0);
+  assert.deepEqual(outside.json().closedAfterWindow, [2724]);
+  assert.equal(outside.reopens().length, 0);
+});
+
+test('post-merge --close-window-ms: a record closed before the merge is closedBefore, never closedAfterWindow', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.closedBefore, [2724]);
+  assert.deepEqual(j.closedAfterWindow, []);
+});
+
+test('post-merge --close-window-ms: an unparseable or null closedAt stays closedBefore', () => {
+  for (const closedAt of [null, 'not-a-date']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, {
+      prReads: [mergedView(body(), [2724, 3997])],
+      issues: { 2724: [{ state: 'CLOSED', closedAt }] },
+    });
+    assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+    assert.deepEqual(h.json().closedBefore, [2724], String(closedAt));
+    assert.deepEqual(h.json().closedAfterWindow, [], String(closedAt));
+    assert.equal(h.reopens().length, 0, String(closedAt));
+  }
+});
+
+test('post-merge --close-window-ms: in-window and late candidates split in one run', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'] }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_IN_WINDOW }], 2725: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closedAfterWindow, [2725]);
+  assert.deepEqual(j.closingSet, [2725, 3997]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge --close-window-ms past the window: a will-close record still OPEN is settledOpen, not pending, with no re-run line', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  const late = () => new Date(Date.parse(MERGED_AT) + 11 * 60 * 1000);
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], { ...h.deps, now: late }), 0);
+  const j = h.json();
+  assert.equal(j.action, 'nothing-closed');
+  assert.deepEqual(j.stillOpen, [2724]);
+  assert.deepEqual(j.pendingClose, []);
+  assert.deepEqual(j.settledOpen, [2724]);
+  // Still open, so never a closing record of this merge.
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.equal(h.log(runDir), '');
+});
+
+test('post-merge --close-window-ms inside the window: a will-close record still OPEN stays pending, logged for a re-run', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  // Exactly mergedAt + window is not past it.
+  const atEdge = () => new Date(Date.parse(MERGED_AT) + 600000);
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], { ...h.deps, now: atEdge }), 0);
+  const j = h.json();
+  assert.equal(j.action, 'close-pending');
+  assert.deepEqual(j.pendingClose, [2724]);
+  assert.deepEqual(j.settledOpen, []);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.match(h.log(runDir), /#2724 still open 0s after PR #7 merged though the merge may close it → fallback: re-run --mode post-merge/);
+});
+
+test('post-merge without --close-window-ms: no settledOpen key, and a still-OPEN will-close record stays pending however late', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  const weeksLater = () => new Date(Date.parse(MERGED_AT) + 21 * 24 * 60 * 60 * 1000);
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], { ...h.deps, now: weeksLater }), 0);
+  const j = h.json();
+  assert.equal(Object.hasOwn(j, 'settledOpen'), false);
+  assert.deepEqual(j.pendingClose, [2724]);
+});
+
+test('post-merge without --close-window-ms: no closedAfterWindow key, a 3 h late close still reopens (unbounded, today)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], h.deps), 0);
+  const j = h.json();
+  assert.equal(Object.hasOwn(j, 'closedAfterWindow'), false);
+  assert.deepEqual(j.reopened, [2724]);
 });
 
 test('post-merge no-fixes-span carries no closingSet', () => {
