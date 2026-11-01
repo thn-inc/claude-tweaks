@@ -323,6 +323,41 @@ test('a store that writes nothing: probe B (two newer entries dropped) keeps the
   assert.deepEqual(stack(dir), [y, x]);
 });
 
+test('a nothing-written store keeps its recover command when another outcome carries one, and the printed commands restore the baseline', () => {
+  const dir = fixture();
+  const x = stashPush(dir, 'xx');
+  const z = stashPush(dir, 'zz');
+  git(dir, 'stash', 'store', '-m', x.subject, x.sha);
+  git(dir, 'stash', 'store', '-m', z.subject, z.sha);
+  assert.deepEqual(stack(dir), [z, x, z, x]);
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  assert.deepEqual(stack(dir), [x]);
+  const r = compare(dir, baseline, ['--restore']);
+  assert.equal(r.code, 3);
+  assert.deepEqual(r.json.restored, [z.sha]);
+  assert.equal(r.json.restoreFailed.length, 2);
+  assert.ok(r.json.restoreFailed.every((f) => f.command !== null));
+  const heldZ = r.json.restoreFailed.find((f) => f.sha === z.sha);
+  assert.equal(heldZ.command, storeCommand(z.subject, z.sha));
+  assert.equal(heldZ.error, 'git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands');
+  const movedX = r.json.restoreFailed.find((f) => f.sha === x.sha);
+  assert.equal(movedX.error, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down');
+  assert.doesNotMatch(r.err, NOTHING_TO_RECOVER);
+  assert.deepEqual(stack(dir), [z, x]);
+  // Run the printed commands in the printed (stderr) order, as argv rather than a shell.
+  const printed = [...r.err.matchAll(/restore failed for ([0-9a-f]{40}); recover with:\n(.+)\n/g)];
+  assert.deepEqual(printed.map((m) => m[1]), [x.sha, z.sha]);
+  for (const [, sha, command] of printed) {
+    const f = r.json.restoreFailed.find((e) => e.sha === sha);
+    assert.equal(command, f.command);
+    git(dir, 'stash', 'store', '-m', f.subject, f.sha);
+  }
+  assert.deepEqual(stack(dir), [z, x, z, x]);
+});
+
 test('a store that exits 0 but leaves a different sha at stash@{0} keeps its recover command (sibling drop race)', () => {
   const dir = fixture();
   const older = stashPush(dir, 'older');
@@ -721,7 +756,8 @@ test('a missing --run dir and a throwing append keep the exit code and report lo
 
 // A runner that delegates to the real one but throws for the nth `stash list` call(s) it sees.
 // For one removed entry the CLI lists three times: compare's read, the pre-store re-read, and
-// the post-store confirmation.
+// the post-store confirmation. A store that wrote nothing while its commit sat at stash@{0}
+// adds a fourth, the final read that judges it after every restore has run.
 function failingList(...nths) {
   let lists = 0;
   return (args) => {

@@ -26,10 +26,14 @@
 // stack; one that wrote nothing is a restoreFailed entry, never counted or logged as
 // restored. When the re-read shows that commit at stash@{0}, the outcome is held until every
 // restore in the compare has run and judged on the final stack: if that commit is still at
-// stash@{0} the error is "same commit still at stash@{0}; nothing to recover" and command is
-// null (a recover command would be the same no-op); if a later restore pushed another entry
-// on top, the error is "git stash store wrote nothing (same commit was at stash@{0}); a later
-// restore moved it down" and command is kept, as it is ("...; stack could not be re-read")
+// stash@{0} and no other restoreFailed outcome in the compare carries a command, the error is
+// "same commit still at stash@{0}; nothing to recover" and command is null (a recover command
+// would be the same no-op); if another outcome carries a command, the entry keeps its command
+// with the error "git stash store wrote nothing (same commit was at stash@{0}); run it after the
+// other recover commands" (running the other command buries it, so the store then writes), and
+// its stderr block prints after every other recover command; if a later restore pushed another
+// entry on top, the error is "git stash store wrote nothing (same commit was at stash@{0}); a
+// later restore moved it down" and command is kept, as it is ("...; stack could not be re-read")
 // when the final read throws. When a different sha is on top at the first re-read, a sibling
 // session raced, the error is "git stash store exited 0 but the entry is not back on the
 // stack" and command is kept.
@@ -295,11 +299,22 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
     try {
       finalStack = readStack(deps.git, repo);
     } catch { /* offer the command: in the unchanged-top case it is a harmless duplicate-store no-op */ }
-    for (const { i, entry } of pending) {
+    // Entries that keep a command are decided first. An entry still on top of the final stack is
+    // null only when no other outcome carries a command: running another printed command buries
+    // it, and the store that would have been a no-op then writes. Otherwise it keeps its command,
+    // and its stderr block prints after every other recover command.
+    const onTop = [];
+    for (const p of pending) {
+      const { i, entry } = p;
       const command = storeCommand(entry.subject, entry.sha);
       if (finalStack === null) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); stack could not be re-read', command);
-      else if (finalStack[0] && finalStack[0].sha === entry.sha) fail(i, entry, 'same commit still at stash@{0}; nothing to recover', null);
+      else if (finalStack[0] && finalStack[0].sha === entry.sha) onTop.push(p);
       else fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down', command);
+    }
+    const otherCommand = outcomes.some((x) => x && x.failed && x.failed.command !== null);
+    for (const { i, entry } of onTop) {
+      if (otherCommand) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands', storeCommand(entry.subject, entry.sha));
+      else fail(i, entry, 'same commit still at stash@{0}; nothing to recover', null);
     }
   }
   return outcomes;
