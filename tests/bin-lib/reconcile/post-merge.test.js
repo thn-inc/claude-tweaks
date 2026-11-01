@@ -1217,6 +1217,8 @@ test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate 
     { reason: 'invalid-risk-floor' },
     { parent: 88, reason: 'above-floor' },
     { parent: 89, reason: 'sibling-unsettled' },
+    { parent: 90, reason: 'incomplete' },
+    { parent: 91, reason: 'some-future-reason' },
   ];
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -1228,6 +1230,8 @@ test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate 
     { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
     { issue: 103, reason: 'internal-error', detail: 'boom' },
     { reason: 'invalid-risk-floor' },
+    // An unlisted reason is a failure, never silently deliberate.
+    { parent: 91, reason: 'some-future-reason' },
   ]);
 
   // Only policy skips: an empty list, a clean `ran`.

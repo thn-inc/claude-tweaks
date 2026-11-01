@@ -95,11 +95,14 @@ const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIM_FILENAME = '.post-merge.lock';
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
-// Step 4.0b skips that are failures, not deliberate gate outcomes: closeBelowFloorParents' `gh-failed` and
-// `internal-error`, and the step-wide `unreadable-policy` / `invalid-risk-floor` (policySkipOf, or
-// closeBelowFloorParents' own). Every other skip reason (`above-floor`, `sibling-unsettled`, `needs-label`,
-// `already-closed`, …) is the gate deciding not to close.
-const PARENT_FAILURE_REASONS = new Set(['gh-failed', 'internal-error', 'unreadable-policy', 'invalid-risk-floor']);
+// Step 4.0b skips that are deliberate gate outcomes, not failures: closeBelowFloorParents' own reasons plus
+// the parentGateState verdicts its skipReason passes through (`resolved`, `gated`, `incomplete`). Every other
+// reason — `gh-failed`, `internal-error`, the step-wide `unreadable-policy` / `invalid-risk-floor`, and any
+// reason added later — is a failure, so a new skip surfaces loudly rather than reading as a clean close.
+const DELIBERATE_PARENT_SKIPS = new Set([
+  'not-parent-issue-labeled', 'needs-label', 'sibling-unsettled', 'resolved', 'gated', 'incomplete',
+  'above-floor', 'already-closed', 'reopened-by-human',
+]);
 
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
@@ -543,7 +546,7 @@ function processRun({
   });
   // Step 4.0b's failed closes, for a caller that must not report them as a clean run (postMergeOne only).
   const parentFailures = includeRecords ? {
-    parentFailures: skipped.filter((s) => PARENT_FAILURE_REASONS.has(s.reason)).map((s) => ({
+    parentFailures: skipped.filter((s) => !DELIBERATE_PARENT_SKIPS.has(s.reason)).map((s) => ({
       ...(s.parent !== undefined && s.parent !== null ? { parent: s.parent } : {}),
       ...(s.issue !== undefined && s.issue !== null ? { issue: s.issue } : {}),
       reason: s.reason,

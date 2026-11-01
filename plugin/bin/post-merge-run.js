@@ -21,9 +21,10 @@
 //   when `step40Failed` comes from a non-zero exit or unparseable output;
 //   `logFailed: true` when Step 4.0 could not append a decisions.md line.
 //   `parentFailures` ([{parent | issue, reason, detail?}]) is on every `ran`
-//   entry Step 4.0b ran for: its failed closes (`gh-failed`, `internal-error`,
-//   and the step-wide `unreadable-policy` / `invalid-risk-floor`, no parent key),
-//   never a deliberate gate skip; a non-empty one is a failure to report.
+//   entry Step 4.0b ran for: every skip that is not a deliberate gate outcome
+//   (`gh-failed`, `internal-error`, the step-wide `unreadable-policy` /
+//   `invalid-risk-floor` with no parent key, or any unlisted reason); a
+//   non-empty one is a failure to report.
 //   already-done: a marker is already in the run's decisions.md.
 //   in-flight: another process holds the run's claim. Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,

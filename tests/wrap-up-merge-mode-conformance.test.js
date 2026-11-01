@@ -74,14 +74,14 @@ const MERGE_MODE_FACTS = {
   'already-cli': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/post-merge-run\.js" --run "\$PIPELINE_RUN_DIR"/,
   'already-claim': /runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/,
   'already-marker': /a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/,
-  'already-in-flight': /`in-flight` — a reconcile pass holds the run's claim and is running them now: report `in-flight`, never `ran`/,
+  'already-in-flight': /`in-flight` — another process holds the run's claim and is running them now: report `in-flight`, never `ran`/,
   'already-json-line': /It prints one JSON line and exits 0 for every outcome, so route on the line, never the exit code/,
   'already-clean-ran': /A clean `ran` entry — `closingLinks` `nothing-closed`, `closed`, `reopened`, `no-fixes-span`, `not-merged` or `no-pr`, no `step40Failed` and no `parentFailures` element — reports `ran`/,
   'already-in-flight-archived': /On an archived run \(the adopted path is under `archive\/`\) the holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again once the claim is past its 10-minute stale window \(`CLAIM_STALE_MS`\), in case that holder died/,
   'already-pending-close': /Merge mode skips the re-run half of that `pendingClose` action, because the re-run would print `already-done` here, so its `pendingClose` records go straight to the hand check: reopen one by hand if it closed/,
   'already-parent-failures': /A `ran` entry with a non-empty `parentFailures` list is a failure too, never a clean `ran`: one `cleanup: post-merge closes failed — Step 4\.0b \{reason\} on #\{parent\}` line per element/,
   'already-parent-failures-recovery': /Its marker is written too, so the line names no `\/claude-tweaks:wrap-up` re-run and cites `\/claude-tweaks:tidy`'s `parent-gate` backstop/,
-  'already-log-failed': /Any `ran` line whose entry carries `logFailed` also notes that Step 4\.0 could not append a `decisions\.md` line/,
+  'already-log-failed': /Any line reporting a `ran` entry that carries `logFailed`, clean or a failure, also notes that Step 4\.0 could not append a `decisions\.md` line/,
   'already-step40-failed': /a `ran` entry carrying `step40Failed`, or a `closingLinks` of `reopen-failed`, `close-failed`, `close-pending` or `base-unchecked`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
   'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: the line names no `\/claude-tweaks:wrap-up` re-run and cites `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
   'already-other-reason': /any other `reason` — `gh-absent`, `transient-failure`, `network-failure`, `claim-failed`, `marker-write-failed`, `error`, `not-github-issues`, `no-remote`, `no-pr`, `no-pr-states`, `no-pr-state`, `pr-not-found`, `invalid-arguments` and `not-merged` — adds one `cleanup: post-merge closes failed — \{reason\}` line/,
@@ -163,9 +163,14 @@ test('the journey, skill-graph and CLI docs describe the Already merged route, n
   assert.match(journey, /A second invocation on an already-merged PR reports `already done`/);
   assert.match(journey, /A merge or acceptance-label step on a closed or merged PR\./);
 
-  const graph = flat(read('docs', 'skill-graph.md'));
-  assert.match(graph, /Since #4692 its `## Already merged` section does the same for a PR something else already merged: it runs `_shared\/pr-first-merge-post-merge\.md` Steps 4\.0 and 4\.0b through `bin\/post-merge-run\.js`, then this file's Section C and Section E teardown/);
-  assert.match(graph, /Since #4692, `wrap-up\/merge-mode\.md`'s `## Already merged` section reaches Steps 4\.0 and 4\.0b for a PR already `MERGED`/);
+  // Both skill-graph rows (Section C/E's and Steps 4.0/4.0b's) carry the edge: meaning, not wording.
+  const edgeRows = read('docs', 'skill-graph.md').split('\n').filter((line) => line.includes('#4692'));
+  assert.equal(edgeRows.length, 2, 'skill-graph: one #4692 edge in each of the two rows');
+  for (const row of edgeRows) {
+    for (const part of ['`## Already merged`', 'bin/post-merge-run.js', '4.0b', 'Section C', 'Section E']) {
+      assert.ok(row.includes(part), `skill-graph #4692 row names ${part}`);
+    }
+  }
 
   for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md'], ['docs', 'reconcile-checks.md']]) {
     const text = flat(read(...file));
