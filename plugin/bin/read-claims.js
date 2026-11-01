@@ -65,8 +65,9 @@ function parseBlob(content) {
   }
 }
 
-
-const line = (row) => `${JSON.stringify(row)}\n`;
+function line(row) {
+  return `${JSON.stringify(row)}\n`;
+}
 
 function run(argv, deps) {
   const opts = parseArgs(argv);

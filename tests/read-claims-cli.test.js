@@ -178,8 +178,9 @@ test('--remote with no value is a malformed invocation: exit 1, git never called
   assert.match(out.stderr.join(''), /--remote needs a remote name/);
 });
 
-test('real git: a temp origin with two live claim blobs reads as two rows and the terminator through the spawned CLI', () => {
+test('real git: a temp origin with two live claim blobs reads as two rows and the terminator through the spawned CLI', (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'read-claims-cli-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const origin = path.join(root, 'origin.git');
   const work = path.join(root, 'work');
   const git = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' });
