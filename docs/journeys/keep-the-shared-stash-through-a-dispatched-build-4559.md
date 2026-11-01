@@ -56,4 +56,5 @@ files:
 ## Origin
 - Created during build of #4559 (build dispatch: size:low → Fast puts a cheapest-tier implementer on git-running tasks, and it ignored the no-stash rule)
 - Steps 1-5 built in this session
+- Updated during build of #4785. Steps 3-5's non-zero-exit handling (restore logging, the implementer/fix and reviewer branches, the one reviewer retry, the handoff and hand-log carry-over, the degraded SKIP) moved out of `build/dispatch.md`'s stanza into the lazy-loaded `build/stash-guard.md`. The controller reads it only when a `snapshot` or `compare` exits 3 or 2. Behavior is unchanged.
 - Related: `run-shell-loops-without-a-hook-storm-3074.md` (the Bash prefilter that routes compound `git` commands to the stash gate)
