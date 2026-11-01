@@ -1,17 +1,17 @@
 // plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the bin/
-// gh CLIs: the one parseRepo definition (nine hand-rolled copies migrated here,
-// #1177), the injectable `gh --version` probe, and the gh host seam (#4505).
-// ghOptions(args, opts) returns opts itself when GH_HOST is already set, args
-// name -R/--repo/--hostname, or origin's host is github.com or not a known GHE
-// host; a known one (*.ghe.com, a gh hosts.yml key, or an enterprise token on a
-// non-SSH remote) gets a copy whose env adds GH_HOST, memoized per cwd.
+// gh CLIs: the one parseRepo (#1177), the injectable `gh --version` probe, and the
+// gh host seam (#4505). ghOptions(args, opts) returns opts itself when GH_HOST is set,
+// args name -R/--repo/--hostname, or origin's host is not a known GHE host; a known
+// one (*.ghe.com, a gh hosts.yml key, a token on a non-SSH remote) gets a copy whose
+// env adds GH_HOST, memoized per cwd. It adds no timeout or windowsHide and there is
+// no seam spawn helper: each wrapped site's own `timeout` carries its bound.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const sharedPrimitives = require('./shared-primitives');
-const { GH_TIMEOUT_MS, isTimeoutError } = sharedPrimitives;
+const { isTimeoutError } = sharedPrimitives;
 
 // A git remote URL (SSH or HTTPS, with or without .git, on github.com or an
 // arbitrary GitHub Enterprise Server host, or an `owner/name` string wrapped
@@ -37,7 +37,7 @@ function parseRepo(url) {
 function ghAvailable(deps = {}) {
   const exec = deps.execFileSync || execFileSync;
   try {
-    exec('gh', ['--version'], { stdio: 'ignore', timeout: GH_TIMEOUT_MS, windowsHide: true });
+    exec('gh', ['--version'], { stdio: 'ignore', timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true });
     return true;
   } catch (err) {
     return isTimeoutError(err);
@@ -122,13 +122,24 @@ function ghConfigHosts(deps) {
   return new Set([...String(text).matchAll(/^([^\s#:][^:\s]*):\s*$/gm)].map((m) => m[1].toLowerCase()));
 }
 
+// A `scheme://[user[:pass]@]host[:port]/path` URL -> `host/path`, the shape
+// parseRepo reads. Its userinfo (a credential, never logged) and port are dropped;
+// an scp-style or scheme-less remote is returned as is.
+function hostPathOf(url) {
+  const u = String(url || '').trim();
+  const m = /^[a-z][a-z0-9+.-]*:\/\/([^/]*)(.*)$/i.exec(u);
+  if (!m) return u;
+  const authority = m[1].slice(m[1].lastIndexOf('@') + 1).replace(/:\d*$/, '');
+  return `${authority}${m[2]}`;
+}
+
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
   let spec = null;
   try {
     const url = (deps.remoteUrl || originUrl)(key);
-    const parsed = parseRepo(url);
+    const parsed = parseRepo(hostPathOf(url));
     const host = parsed && parsed.host.toLowerCase();
     if (host && host !== 'github.com') {
       const env = deps.env || process.env;
@@ -153,11 +164,19 @@ function resolveGhHost(cwd, deps = {}) {
 
 // Decision Q2: any -R/--repo/--hostname (also `--repo=x`, `--hostname=x` and
 // pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
-// A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag.
+// A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
+// and the token after a value-taking flag is its value (a `--body` text that opens
+// `-R`), never a flag.
+const GH_VALUE_FLAGS = new Set(['--body', '--title', '-b', '-t', '-f', '-F', '--field', '--raw-field',
+  '--jq', '-q', '--search', '--template', '--input']);
+
 function hasExplicitHostArg(args) {
-  for (const a of args || []) {
+  const list = args || [];
+  for (let i = 0; i < list.length; i++) {
+    const a = list[i];
     if (a === '--') return false;
     if (typeof a !== 'string') continue;
+    if (GH_VALUE_FLAGS.has(a)) { i++; continue; }
     if (a === '-R' || a === '--repo' || a === '--hostname') return true;
     if (a.startsWith('--repo=') || a.startsWith('--hostname=') || (a.startsWith('-R') && a.length > 2)) return true;
   }
@@ -208,13 +227,7 @@ function pinExplicitRepoHost(repoSpec, deps = {}) {
   return host;
 }
 
-// The seam's bounded, windowsHide'd gh spawn. ghOptions alone adds neither, so a
-// wrapped site keeps its own timeout; this helper is for sites that want GH_TIMEOUT_MS.
-function ghExecFileSync(args, opts = {}) {
-  return execFileSync('gh', args, ghOptions(args, { timeout: sharedPrimitives.GH_TIMEOUT_MS, ...opts, windowsHide: true }));
-}
-
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, ghExecFileSync, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
+  ghOptions, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
 };

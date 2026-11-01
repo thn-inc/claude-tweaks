@@ -7,8 +7,7 @@ const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('.
 const { readText } = require('./helpers/read-skill');
 
 // Every `gh` spawn under plugin/bin/ routes its options through repo-resolve.js's
-// `ghOptions(args, opts)` seam (or spawns through `ghExecFileSync`, which applies it).
-// The seam injects GH_HOST for a GitHub Enterprise origin; a spawn that skips it sends
+// `ghOptions(args, opts)` seam. The seam injects GH_HOST for a GitHub Enterprise origin; a spawn that skips it sends
 // its call to github.com on a `*.ghe.com` origin. #4505 migrated every site at once, and
 // this scan keeps a new call site from regressing that fix.
 //
@@ -20,8 +19,8 @@ const { readText } = require('./helpers/read-skill');
 //
 // A `'gh'` / `"gh"` / `` `gh` `` literal is a site when it is
 //   (a) a whole top-level argument, in any position, of a call expression. The call is
-//       compliant when its balanced argument text names the identifier `ghOptions` or
-//       `ghExecFileSync` (`execFileSync('gh', args, ghOptions(args, {…}))`,
+//       compliant when its balanced argument text names the identifier `ghOptions`
+//       (`execFileSync('gh', args, ghOptions(args, {…}))`,
 //       `makeDefaultRunner('gh', ghOptions)`, `execBounded(deps, 'gh', args, cwd, ghOptions)`);
 //   (b) the first element of an array literal (an argv such as `['gh', 'pr', 'list']`).
 // A string or template literal beginning `gh ` passed to a callee whose name matches
@@ -32,18 +31,19 @@ const { readText } = require('./helpers/read-skill');
 // Recall limits: a command name reached through a variable (`const GH = 'gh';
 // execFileSync(GH, …)`), a computed argument (`cond ? 'gh' : x`) or a concatenated shell
 // string (`'gh' + ' pr list'`) is not a site, since only a literal that is the whole
-// argument counts. A comparison (`exe === 'gh'`), a default (`transport = 'gh'`) and a
+// argument counts. Nor is an object-property form (`{ cmd: 'gh' }` passed to
+// `spawn(spec.cmd, …)`): a literal inside `{…}` is neither an argument nor an array
+// element. A comparison (`exe === 'gh'`), a default (`transport = 'gh'`) and a
 // non-first array element are not sites by design.
 const BIN_ROOT = path.join(__dirname, '..', 'plugin', 'bin');
 const BLANK = { literals: 'blank' };
-const SEAM = /\b(?:ghOptions|ghExecFileSync)\b/;
+const SEAM = /\bghOptions\b/;
 // A word before `(` that makes it a grouping or statement paren, not a call; before `[`,
 // one that makes it an array literal, not a member access.
 const KEYWORDS = new Set(['if', 'for', 'while', 'switch', 'catch', 'return', 'typeof', 'void', 'await',
   'in', 'of', 'case', 'delete', 'throw', 'yield', 'instanceof', 'else', 'do', 'new']);
 
-// The seam itself: `ghExecFileSync` applies ghOptions inside it, and `ghAvailable`'s
-// `gh --version` probe asks no host.
+// The seam itself: `ghAvailable`'s `gh --version` probe asks no host.
 const EXEMPT = new Set(['lib/repo-resolve.js']);
 
 // Non-spawn `gh` literals the matcher flags, keyed file -> exact offender count. Each
@@ -191,7 +191,6 @@ test('AC3.1: the matcher flags an unwrapped gh spawn and accepts the wrapped sha
     "// execFileSync('gh', ['x'], {}) in a comment",                         // ok
     "stderr('gh pr view failed');",                                          // ok: message, not exec callee
     "if (transport === 'gh') {}",                                            // ok: comparison
-    "ghExecFileSync(['issue', 'view', '1'], { encoding: 'utf8' });",         // ok
   ].join('\n');
   assert.deepEqual(offendingGhCalls(src).map((o) => o.line), [2, 4, 6, 8, 9]);
 });
@@ -229,6 +228,32 @@ test('a comment-stripper mis-parse is reported as an offender', () => {
   assert.equal(stripperVerdict(blankOnly, stripComments(blankOnly)), 'ok');
   assert.equal(stripperVerdict(blankOnly, stripComments(blankOnly, BLANK)), 'misparsed');
   assert.deepEqual(offendingGhCalls(blankOnly), [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.misparsed }]);
+});
+
+// The forge.js allow-list entry holds only while residue.js's runner wraps a `gh` argv
+// in ghOptions and probeForge is handed that runner. Read as code, comments blanked.
+function residueWrapsGhArgv(raw) {
+  const code = stripComments(raw);
+  return /\bconst wrap = argv\[0\] === 'gh' \? ghOptions : /.test(code)
+    && /\bexecFileSync\(argv\[0\], args, wrap\(args, \{/.test(code)
+    && /\bprobeForge\(\{ scope, run, /.test(code);
+}
+
+test("the forge.js allow-list reason: residue.js's runner applies ghOptions when argv[0] === 'gh', and probeForge gets that runner", () => {
+  const raw = readText(path.join(BIN_ROOT, 'residue.js'));
+  assert.equal(stripperVerdict(raw, stripComments(raw)), 'ok');
+  assert.ok(residueWrapsGhArgv(raw), "residue.js's runner no longer wraps a gh argv in ghOptions (or probeForge no longer gets it): re-settle forge.js's ALLOWED entry");
+  // Go-red: each clause, broken in a copy of the real file, fails the check.
+  const mutants = [
+    ["argv[0] === 'gh' ? ghOptions", "argv[0] === 'git' ? ghOptions"],
+    ['execFileSync(argv[0], args, wrap(args, {', 'execFileSync(argv[0], args, ({'],
+    ['probeForge({ scope, run, ', 'probeForge({ scope, run: git, '],
+    ["const wrap = argv[0] === 'gh'", "// const wrap = argv[0] === 'gh'"], // the clause inside a comment
+  ];
+  for (const [from, to] of mutants) {
+    assert.ok(raw.includes(from), `mutant anchor missing from residue.js: ${from}`);
+    assert.equal(residueWrapsGhArgv(raw.replace(from, to)), false, `mutant still passes: ${to}`);
+  }
 });
 
 test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {

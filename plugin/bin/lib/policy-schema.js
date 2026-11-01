@@ -7,6 +7,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
+const { ghOptions } = require('./repo-resolve');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -773,9 +774,6 @@ function detectIntegrationModel(repoRoot, opts = {}) {
   try {
     // windowsHide restated in the call: the windows-hide scan reads a bare
     // execOpts, never one wrapped in ghOptions (#4505's GH_HOST seam).
-    // Required at call time: repo-resolve's load reads GH_TIMEOUT_MS, whose
-    // getter loads ./policy, which requires this module back (a cycle at load).
-    const { ghOptions } = require('./repo-resolve');
     const args = ['repo', 'view', '--json', 'owner,name'];
     execFileSync('gh', args, ghOptions(args, { ...execOpts, windowsHide: true }));
   } catch {

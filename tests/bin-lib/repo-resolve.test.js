@@ -137,7 +137,6 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
 
 // #4505: the gh host seam. Every test resets the per-process memo first and
 // passes fake deps, so no real `git` probe or hosts.yml read happens.
-const path = require('path');
 const { ghOptions, resolveGhHost, _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve');
 
 const ghe = { remoteUrl: () => 'https://acme.ghe.com/acme/widgets.git', readFile: () => { throw new Error('ENOENT'); }, env: {}, platform: 'linux', homedir: '/h', stderr: () => {} };
@@ -177,7 +176,7 @@ test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with a
   assert.strictEqual(ghOptions(['pr', 'list'], o3, { ...ghe, remoteUrl: () => 'https://GitHub.com/acme/widgets.git' }), o3); // mixed-case github.com is github.com
   _resetGhHostCache();
   const ghes = { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' },
-    readFile: (p) => { assert.equal(p, path.join('/cfg', 'hosts.yml')); return 'git.corp.example:\n    user: me\n'; } };
+    readFile: (p) => { assert.equal(p, pathModule.join('/cfg', 'hosts.yml')); return 'git.corp.example:\n    user: me\n'; } };
   assert.equal(ghOptions(['pr', 'list'], { cwd: '/b' }, ghes).env.GH_HOST, 'git.corp.example');
 });
 test('AC6.1, AC6.2 (Decision Q2): any explicit -R/--repo/--hostname suppresses injection, agreeing with origin or not', () => {
@@ -206,7 +205,7 @@ test('review focus: caller opts.env is the merge base', () => {
 test('review focus: memoized per cwd, probe failure is "no host", note logged once per host', () => {
   _resetGhHostCache();
   let probes = 0; const notes = [];
-  const d = { ...ghe, remoteUrl: (cwd) => { probes++; if (cwd === path.resolve('/none')) throw new Error('no origin'); return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  const d = { ...ghe, remoteUrl: (cwd) => { probes++; if (cwd === pathModule.resolve('/none')) throw new Error('no origin'); return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
   ghOptions(['a'], { cwd: '/r' }, d); ghOptions(['b'], { cwd: '/r' }, d);
   const none = { cwd: '/none' };
   assert.strictEqual(ghOptions(['c'], none, d), none);
@@ -217,10 +216,10 @@ test('review focus: memoized per cwd, probe failure is "no host", note logged on
 test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matched case-insensitively", () => {
   const corp = { ...ghe, remoteUrl: () => 'git@Git.Corp.Example:acme/widgets.git' };
   const cases = [
-    [{ GH_CONFIG_DIR: '/cfg', XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', path.join('/cfg', 'hosts.yml')],
-    [{ XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', path.join('/x', 'gh', 'hosts.yml')],
-    [{ AppData: '/ad' }, 'win32', path.join('/ad', 'GitHub CLI', 'hosts.yml')],
-    [{ AppData: '/ad' }, 'linux', path.join('/h', '.config', 'gh', 'hosts.yml')],
+    [{ GH_CONFIG_DIR: '/cfg', XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', pathModule.join('/cfg', 'hosts.yml')],
+    [{ XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', pathModule.join('/x', 'gh', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'win32', pathModule.join('/ad', 'GitHub CLI', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'linux', pathModule.join('/h', '.config', 'gh', 'hosts.yml')],
   ];
   for (const [env, platform, want] of cases) {
     _resetGhHostCache();
@@ -271,4 +270,68 @@ test('pinExplicitRepoHost: exports the pinned host on deps.env, leaves it alone 
   const untouched = {};
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: untouched }), null);
   assert.deepEqual(untouched, {});
+});
+
+// Final review item 1: an origin URL with an ssh:// scheme, userinfo or a :port
+// still names its host; the stderr note never carries the userinfo.
+test('final review: ssh://, user[:pass]@ and :port origins on *.ghe.com inject GH_HOST, and the note carries no credential', () => {
+  for (const url of ['ssh://git@acme.ghe.com/acme/widgets.git', 'ssh://git@acme.ghe.com:22/acme/widgets.git',
+    'https://user@acme.ghe.com/acme/widgets.git', 'https://x:tok@acme.ghe.com/acme/widgets.git',
+    'https://acme.ghe.com:443/acme/widgets.git', 'HTTPS://x:tok@ACME.ghe.com:8443/acme/widgets']) {
+    _resetGhHostCache();
+    const notes = [];
+    const out = ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => url, stderr: (s) => notes.push(s) });
+    assert.equal(out.env && out.env.GH_HOST, 'acme.ghe.com', url);
+    assert.equal(notes.length, 1, url);
+    assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\)/, url);
+    assert.doesNotMatch(notes[0], /tok|user|git@|:443|:8443|:22/, url);
+  }
+});
+test('final review: an ssh:// remote stays SSH for the token clause; hosts.yml admits it; a token admits an https:// remote with userinfo and a port', () => {
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example:2222/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@github.com/acme/widgets.git' }), null); // github.com stays github.com
+});
+
+// Final review item 6: the value of a value-taking flag is never read as a flag.
+test('final review: a value after a value-taking flag is not an explicit host arg, whatever it starts with', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'create', '--title', '-R is broken', '--body', '--repo'], ['pr', 'create', '-t', '-Rfoo', '-b', '--hostname'],
+    ['api', 'graphql', '-f', '--repo', '-F', '-R', '--field', '--hostname=x', '--raw-field', '-Rx'],
+    ['api', 'x', '--jq', '--repo', '-q', '-R', '--template', '--repo=x', '--input', '-R'], ['issue', 'list', '--search', '-Racme']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+  for (const args of [['issue', 'create', '--body', '-R', '--repo', 'acme/widgets'], ['pr', 'create', '-t', 'x', '-Racme/widgets'],
+    ['api', 'graphql', '-f', 'query=q', '--hostname', 'acme.ghe.com']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' ')); // a real flag after a skipped value still counts
+  }
+});
+
+// Final review item 3: shared-primitives' GH_TIMEOUT_MS is a lazy getter whose first
+// read loads ./policy. Requiring repo-resolve must not trigger that read.
+test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable reads it at call time', () => {
+  const { execFileSync } = require('child_process');
+  const lib = pathModule.join(__dirname, '..', '..', 'plugin', 'bin', 'lib');
+  const script = [
+    "const p = require('path');",
+    'const rr = require(p.join(process.argv[1], "repo-resolve.js"));',
+    'const policyLoaded = Object.keys(require.cache).some((k) => k === p.join(process.argv[1], "policy.js"));',
+    'let timeout = null;',
+    'rr.ghAvailable({ execFileSync: (c, a, o) => { timeout = o.timeout; } });',
+    'const sp = require(p.join(process.argv[1], "shared-primitives.js"));',
+    'process.stdout.write(JSON.stringify({ policyLoaded, timeout, expected: sp.GH_TIMEOUT_MS }));',
+  ].join('\n');
+  const env = { ...process.env };
+  delete env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  const out = JSON.parse(execFileSync(process.execPath, ['-e', script, lib], { cwd: require('os').tmpdir(), env, encoding: 'utf8', windowsHide: true }));
+  assert.equal(out.policyLoaded, false, 'requiring repo-resolve.js read GH_TIMEOUT_MS at load (the getter loads ./policy)');
+  assert.equal(out.timeout, out.expected);
 });
