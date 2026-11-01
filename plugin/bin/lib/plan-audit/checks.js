@@ -14,7 +14,7 @@ const { RAIL_BYTES } = require('../skill-audit/budgets');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
 const {
   extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
-  extractFileEntries, normalizeRepoPath, extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
+  extractFileEntries, normalizeRepoPath, extractTaskMarkers,
 } = require('./parser');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
@@ -658,8 +658,8 @@ function checkE(specText, planText) {
 // `--task-markers` (bin/plan-audit.js) never turns this into an exit-code
 // failure — a mistyped `**Role:**`/`**Review risk:**` value is a
 // plan-authoring nit, not a build-blocking structural defect. A recognised
-// key (the line is present) with a value outside the closed set
-// (`TASK_MARKER_ROLES`/`TASK_MARKER_RISKS`, parser.js) is a finding; a
+// key (the line is present) whose value's leading token is outside the
+// closed set (`extractTaskMarkers` left it null) is a finding; a
 // misspelled key is not detectable here at all (extractTaskMarkers never
 // matched the line, so the task is simply unmarked) and is correctly never
 // reported.
@@ -667,10 +667,10 @@ function checkTaskMarkers(text) {
   const { tasks } = extractTaskMarkers(text);
   const findings = [];
   for (const t of tasks) {
-    if (t.roleRaw !== null && !TASK_MARKER_ROLES.includes(t.roleRaw)) {
+    if (t.roleRaw !== null && t.role === null) {
       findings.push({ taskIndex: t.index, title: t.title, field: 'Role', value: t.roleRaw });
     }
-    if (t.riskRaw !== null && !TASK_MARKER_RISKS.includes(t.riskRaw)) {
+    if (t.riskRaw !== null && t.risk === null) {
       findings.push({ taskIndex: t.index, title: t.title, field: 'Review risk', value: t.riskRaw });
     }
   }

@@ -737,3 +737,38 @@ test('#3378: TASK_MARKER_ROLES and TASK_MARKER_RISKS are the documented closed v
   assert.deepStrictEqual(TASK_MARKER_ROLES, ['transcription', 'integration', 'judgment']);
   assert.deepStrictEqual(TASK_MARKER_RISKS, ['high']);
 });
+
+test('AC1.1 AC2.1 (#4640): extractTaskMarkers recognizes a closed-set value followed by a trailing annotation', () => {
+  const text = [
+    '### Task 1: X',
+    '**Review risk:** high (a read-once/write-last ordering, and branching on computed state)',
+    '',
+    '### Task 2: Y',
+    '**Role:** judgment (needs design judgment)',
+    '',
+    '### Task 3: Z',
+    '**Review risk:** high — reason',
+    '**Role:** judgment — needs design judgment',
+  ].join('\n');
+  const { markers, tasks } = extractTaskMarkers(text);
+  assert.strictEqual(markers, true);
+  assert.deepStrictEqual(tasks, [
+    { index: 1, title: 'X', role: null, risk: 'high', roleRaw: null, riskRaw: 'high (a read-once/write-last ordering, and branching on computed state)' },
+    { index: 2, title: 'Y', role: 'judgment', risk: null, roleRaw: 'judgment (needs design judgment)', riskRaw: null },
+    { index: 3, title: 'Z', role: 'judgment', risk: 'high', roleRaw: 'judgment — needs design judgment', riskRaw: 'high — reason' },
+  ]);
+});
+
+test('AC4.1 (#4640): a leading token outside the closed set stays unrecognized, attached separators included', () => {
+  const values = ['medium', 'high-ish', 'high,', 'hgih (typo)', 'medium (reason)', ''];
+  for (const v of values) {
+    const { tasks } = extractTaskMarkers(`### Task 1: A\n**Review risk:** ${v}\n`);
+    assert.deepStrictEqual(
+      { risk: tasks[0].risk, riskRaw: tasks[0].riskRaw },
+      { risk: null, riskRaw: v },
+      `Review risk value ${JSON.stringify(v)}`,
+    );
+  }
+  const { tasks } = extractTaskMarkers('### Task 1: A\n**Role:** trivial (x)\n');
+  assert.deepStrictEqual({ role: tasks[0].role, roleRaw: tasks[0].roleRaw }, { role: null, roleRaw: 'trivial (x)' });
+});
