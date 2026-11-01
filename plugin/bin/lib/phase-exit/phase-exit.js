@@ -56,7 +56,7 @@ const { formatEntry, appendEntry } = require('../log-decision/append');
 const { readRunStateWithParent, appendEvent, readEventLines } = require('../hooks/context');
 const { hasLoggedPrDegrade, hasLoggedPrEarlyStep1, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
-const { GIT_REMOTE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs } = require('../policy-schema');
+const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, resolveForgeProbeTimeoutMs } = require('../policy-schema');
 const { canonicalRealpath } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const prChecklist = require('../../pr-checklist');
@@ -83,7 +83,7 @@ function policyReadTimeoutMs(key, cwd) {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
     }).trim() || cwd;
   } catch { /* not a checkout, or git unavailable: the child's own root is unknown, size from cwd */ }
-  return GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(root) + GIT_TIMEOUT_MS;
+  return GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * resolveForgeProbeTimeoutMs(root) + GIT_TIMEOUT_MS;
 }
 
 const realDeps = {

@@ -1303,10 +1303,10 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
 const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/;
 
 test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
-  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../plugin/bin/lib/policy-schema');
   assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
-  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
-    'git probe + two gh attempts must fit the 15 s hook budget');
+  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
+    'git probe + all gh attempts must fit the 15 s hook budget');
   // Scan LIVE code only: comments and literals are blanked, so a commented-out or quoted copy of the
   // call shape cannot satisfy the match, and the verdict is taken on the same text the matcher reads.
   const raw = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));

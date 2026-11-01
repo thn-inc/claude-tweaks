@@ -283,6 +283,32 @@ test('resolveForgeProbeTimeoutMs: explicit > valid env > policy > 5000; invalid 
   assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: 0 })), 7000);
 });
 
+test('resolveForgeProbeTimeoutMs: a non-string repoRoot resolves the default instead of throwing', () => {
+  for (const bad of [undefined, null, 42]) {
+    assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(bad)), 5000, `repoRoot ${String(bad)}`);
+    assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(bad)), 9000, `env still wins for ${String(bad)}`);
+  }
+});
+
+test('the gh probe bound is documented as the resolved gh-timeout-ms, not a fixed 5 s (#4578 AC)', () => {
+  const FIXED_5S = /\b5\s?s(?:ec(?:onds?)?)?\s+timeout|timeout of 5\s?s\b|under a 5\s?s\b/i;
+  const schemaText = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'policy-schema.js'));
+  const at = schemaText.indexOf('function detectIntegrationModel(');
+  assert.ok(at > 0, 'detectIntegrationModel must exist');
+  // The header comment: the contiguous `//` block directly above the function.
+  const header = schemaText.slice(0, at).trimEnd().split('\n').reverse().reduce((acc, line) => (acc.done || !/^\s*\/\//.test(line)
+    ? { ...acc, done: true } : { ...acc, lines: [line, ...acc.lines] }), { lines: [], done: false }).lines.join('\n');
+  assert.match(header, /gh-timeout-ms/, 'the header must name the timeout source');
+  assert.doesNotMatch(header, FIXED_5S, 'the header must not state a fixed 5 s timeout');
+  const doc = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'forge-detection.md'));
+  const twin = doc.slice(doc.indexOf('**Code twin.**'), doc.indexOf('**Dispatcher-inlining note'));
+  assert.ok(twin.length > 0, 'the Code twin paragraph must exist');
+  assert.match(twin, /gh-timeout-ms/, 'the Code twin paragraph must name the timeout source');
+  assert.doesNotMatch(twin, FIXED_5S, 'the Code twin paragraph must not state a fixed 5 s timeout');
+  // Go-red control: the pre-#4578 header sentence is exactly what the matcher must flag.
+  assert.match('Each check runs under a 5s timeout.', FIXED_5S);
+});
+
 test('formatForgeDegrade renders both exact degraded strings', () => {
   assert.strictEqual(
     formatForgeDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }),

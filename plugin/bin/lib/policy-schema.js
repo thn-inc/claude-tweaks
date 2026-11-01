@@ -745,6 +745,11 @@ function riskAllowedSlugs(policyRaw) {
 // Bound on detectIntegrationModel's `git remote get-url origin` probe — local
 // and fixed, never the gh budget (a git remote read is not a network call).
 const GIT_REMOTE_PROBE_TIMEOUT_MS = 5000;
+// How many times detectIntegrationModel runs the `gh repo view` probe before giving up on a
+// timeout (the first attempt plus one retry, record #4578 Decision Q4). The single source for
+// the probe loop, the degrade object's `attempts`, and every worst-case budget derived from
+// it (the hook budget below, phase-exit's resolve-policy.js kill timeout).
+const FORGE_PROBE_ATTEMPTS = 2;
 // The per-attempt `gh` bound both lifecycle hooks (session-start, pre-tool-use)
 // pass as `timeoutMs`. Hook worst case: git 5 s + two 5 s gh attempts = 15 s
 // (record #4578 Decision Q2) — one constant so the two hooks cannot drift.
@@ -763,7 +768,9 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   if (Number.isInteger(explicit) && explicit > 0) return explicit;
   const raw = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
-  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
+  // path.join throw, which would break detectIntegrationModel's never-throws contract.
+  const policyRaw = typeof repoRoot === 'string' ? readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml')) : null;
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
 }
 
@@ -801,7 +808,7 @@ function formatForgeDegrade(degrade) {
 // non-zero first time — the forge really isn't there) or DEGRADED (a timeout,
 // then a failed retry — the forge was never reached, so the answer is a guess).
 // A degraded fallback is reported through the optional `opts.onDegrade(d)`
-// callback with `d = { reason, timeoutMs, attempts: 2 }` — reason 'timeout'
+// callback with `d = { reason, timeoutMs, attempts: FORGE_PROBE_ATTEMPTS }` — reason 'timeout'
 // when the retry timed out too, 'timeout-then-exit' when it failed any other
 // way; a callback that throws is swallowed. The return value stays a bare
 // string for every caller.
@@ -841,19 +848,24 @@ function detectIntegrationModel(repoRoot, opts = {}) {
       }));
       return 'ok';
     } catch (err) {
+      // execFileSync's `timeout` kills the child, so a timed-out probe surfaces as ETIMEDOUT or
+      // as the kill signal on err.signal (platform-dependent). Any signal-killed gh counts: it
+      // is retried once and, if it dies again, reported as a degrade, never as a definitive
+      // "not a GitHub repo". Deliberately broader than shared-primitives' isTimeoutError
+      // (spec Technical Approach, record #4578).
       if (err && (err.code === 'ETIMEDOUT' || err.signal)) return 'timeout';
       if (err && err.code === 'ENOENT') return 'absent';
       return 'exit';
     }
   };
-  const first = probe();
-  if (first === 'ok') return 'pr-first';
-  if (first !== 'timeout') return 'local-merge'; // definitive: gh absent, or exited non-zero
-  const second = probe();
-  if (second === 'ok') return 'pr-first';
+  let last = probe();
+  if (last === 'ok') return 'pr-first';
+  if (last !== 'timeout') return 'local-merge'; // definitive: gh absent, or exited non-zero
+  for (let attempt = 1; attempt < FORGE_PROBE_ATTEMPTS && last === 'timeout'; attempt += 1) last = probe();
+  if (last === 'ok') return 'pr-first';
   if (typeof onDegrade === 'function') {
     try {
-      onDegrade({ reason: second === 'timeout' ? FORGE_DEGRADE_REASON.TIMEOUT : FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT, timeoutMs: ghTimeoutMs, attempts: 2 });
+      onDegrade({ reason: last === 'timeout' ? FORGE_DEGRADE_REASON.TIMEOUT : FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT, timeoutMs: ghTimeoutMs, attempts: FORGE_PROBE_ATTEMPTS });
     } catch {
       // A reporting callback must never break "never throws".
     }
@@ -994,6 +1006,6 @@ function auditPolicy(repoRoot) {
 module.exports = {
   POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
-  GIT_REMOTE_PROBE_TIMEOUT_MS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
+  GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
   FORGE_DEGRADE_REASONS,
 };

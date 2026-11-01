@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { runPhaseExit, realDeps, policyReadTimeoutMs } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
-const { GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../../../plugin/bin/lib/policy-schema');
+const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../../../plugin/bin/lib/policy-schema');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
 const { run } = require('../../../plugin/bin/phase-exit');
@@ -805,7 +805,7 @@ test('policyReadTimeoutMs: only integration-model gets the ladder-sized timeout;
   const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   try {
-    assert.equal(policyReadTimeoutMs('integration-model', repo), GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 5000 + GIT_TIMEOUT_MS);
+    assert.equal(policyReadTimeoutMs('integration-model', repo), GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 5000 + GIT_TIMEOUT_MS);
     assert.equal(policyReadTimeoutMs('integration-branch', repo), GIT_TIMEOUT_MS);
     assert.equal(policyReadTimeoutMs('merge-verification', repo), GIT_TIMEOUT_MS);
   } finally {
@@ -822,7 +822,7 @@ test('policyReadTimeoutMs: a subdirectory cwd is sized from the checkout topleve
   const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   try {
-    const want = GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 20000 + GIT_TIMEOUT_MS;
+    const want = GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 20000 + GIT_TIMEOUT_MS;
     assert.equal(policyReadTimeoutMs('integration-model', repo), want);
     assert.equal(policyReadTimeoutMs('integration-model', sub), want);
   } finally {
@@ -838,7 +838,7 @@ test('policyReadTimeoutMs: a cwd that is not a git checkout falls back to sizing
   const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
   try {
-    assert.equal(policyReadTimeoutMs('integration-model', dir), GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 20000 + GIT_TIMEOUT_MS);
+    assert.equal(policyReadTimeoutMs('integration-model', dir), GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * 20000 + GIT_TIMEOUT_MS);
   } finally {
     if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
   }
@@ -847,7 +847,7 @@ test('policyReadTimeoutMs: a cwd that is not a git checkout falls back to sizing
 // The wiring scan: reads the module as text, comments stripped (a mention in a comment must not
 // satisfy it), the stripper verdict reported rather than trusted.
 const PHASE_EXIT_SRC = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'phase-exit', 'phase-exit.js');
-const LADDER_RE = /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbeTimeoutMs\(/;
+const LADDER_RE = /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*FORGE_PROBE_ATTEMPTS\s*\*\s*resolveForgeProbeTimeoutMs\(/;
 const GUARD_RE = /if\s*\(\s*key\s*!==\s*'integration-model'\s*\)\s*return\s+GIT_TIMEOUT_MS\s*;/;
 const WIRING_RE = /timeout:\s*policyReadTimeoutMs\(\s*key\s*,\s*cwd\s*\)/;
 
@@ -881,7 +881,7 @@ function wiringFindings(raw) {
   // another function does not protect the ladder expression here.
   const ladder = body.search(LADDER_RE);
   const guard = body.search(GUARD_RE);
-  if (ladder < 0) findings.push('no ladder-sized timeout (GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(...))');
+  if (ladder < 0) findings.push('no ladder-sized timeout (GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * resolveForgeProbeTimeoutMs(...))');
   if (guard < 0) findings.push("the ladder timeout is not guarded to the integration-model key (if (key !== 'integration-model') return GIT_TIMEOUT_MS;)");
   if (ladder >= 0 && guard >= 0 && guard > ladder) findings.push('the integration-model guard must precede the ladder expression');
   if (!WIRING_RE.test(stripped)) findings.push('realDeps.resolvePolicy does not pass timeout: policyReadTimeoutMs(key, cwd)');

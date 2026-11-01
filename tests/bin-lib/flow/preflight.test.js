@@ -364,6 +364,32 @@ test('defaultDeps().resolvePolicy hands the run config to computeDerivedDefaults
   assert.strictEqual(resolved['merge-verification'].value, 'off');
 });
 
+test('defaultDeps().resolvePolicy carries a degraded forge detection onto the integration-model entry (#4578 Q10 seam)', { skip: STUB_SKIP }, () => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preflight-degraded-')));
+  const git = (...a) => execFileSync('git', a, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+  git('init', '-q'); git('config', 'user.email', 't@example.invalid'); git('config', 'user.name', 't');
+  git('commit', '-q', '--allow-empty', '-m', 'init');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-01T000000-record-7');
+  fs.mkdirSync(runDir, { recursive: true });
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const savedEnv = process.env[KEY];
+  process.env[KEY] = '1000';
+  const gh = fakeGh({ first: 'hang' });
+  let resolved;
+  let calls;
+  try {
+    resolved = defaultDeps(root).resolvePolicy(['integration-model'], runDir);
+    calls = gh.count();
+  } finally {
+    gh.restore();
+    if (savedEnv === undefined) delete process.env[KEY]; else process.env[KEY] = savedEnv;
+  }
+  assert.strictEqual(calls, 2, 'a timeout is retried once, then the detection is degraded');
+  assert.strictEqual(resolved['integration-model'].value, 'local-merge');
+  assert.strictEqual(resolved['integration-model'].degraded, 'timeout', 'the Manifesto reads this field to avoid pinning a guess');
+});
+
 // #2861: /flow Step 2.8 logs its claim to decisions.md BEFORE Step 3 runs this
 // classifier, so a freshly minted dir is never byte-empty by the time it is read.
 const NO_SPEC = { git: (args) => (args[0] === 'ls-tree' ? '' : 'feat-branch\n') };
