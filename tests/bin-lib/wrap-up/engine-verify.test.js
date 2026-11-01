@@ -2138,6 +2138,7 @@ test('body-text sub-issue with a non-string state is a gather failure', () => {
   const result = enumerateSubIssues(12, deps, process.cwd(), 'body-text');
   assert.strictEqual(result.ok, false);
   assert.match(result.error, /#21/);
+  assert.match(result.error, /could not parse state\/labels/);
 });
 
 test('body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure', () => {
@@ -2155,7 +2156,7 @@ test('body-text sub-issue with a malformed labels entry renders unknown as a par
 
 test('body-text sub-issue with a missing or empty labels key still enumerates with labels []', () => {
   const body = JSON.stringify({ body: '- [ ] #21\n' });
-  for (const reply of [{ state: 'open' }, { state: 'open', labels: [] }]) {
+  for (const reply of [{ state: 'open' }, { state: 'open', labels: [] }, { state: 'open', labels: null }, { state: 'open', labels: 'x' }]) {
     const deps = { git: () => '', gh: (args) => (args[4] === 'body' ? body : JSON.stringify(reply)) };
     assert.deepStrictEqual(enumerateSubIssues(12, deps, process.cwd(), 'body-text'), {
       ok: true,
