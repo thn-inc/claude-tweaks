@@ -21,7 +21,7 @@ Scope keywords: FINDING_PATH
   - Composer callers: "The composed text is built so it cannot trip the delegate's own refusals." (Checked at authoring: `review-routing-line.js`, `lib/log-decision/review-routing.js`, `dream-scan.js`, `release-note-repair.js` contain no `reproduction` text — `grep -n -i reproduction` empty — so none can trip the new refusal.)
 - The new refusal is exit **2**, nothing written; it applies to `status === 'STAGED'` only. AUTO/SKIP/etc. are never refused by it.
 - Exit-2 statement sweep (the only three that enumerate `log-decision.js`'s exit-2 reasons, from `grep -rn -i "log-decision" plugin docs .claude/skills | grep -i -E "exit.?2|exits 2|malformed"`): `plugin/bin/log-decision.js` header comment, `plugin/skills/_shared/auto-decision-log.md`, `docs/plugin-structure.md:196`.
-- `plugin/skills/review/step3-lens-dispatch.md` is 52,336 bytes against `RAIL_BYTES` 52,500 (`plugin/bin/lib/skill-audit/budgets.js`): its edit is the exact replacement given in Task 3, measured at −14 bytes. No other edit to that file.
+- `plugin/skills/review/step3-lens-dispatch.md` is 52,336 bytes against `RAIL_BYTES` 52,500 (`plugin/bin/lib/skill-audit/budgets.js`): its edit is the exact replacement given in Task 3, measured at +50 bytes (52,386, headroom 114 — the full-path and never-several wording is Deliverable 2's own text, already trimmed elsewhere in the same bullet). No other edit to that file.
 - `console/resolve.js`'s export surface and behavior are unchanged (Task 1 is a pure move with re-export).
 - Commit style `{Verb} {what} — {detail}`; every commit message ends with the line `Claude-Session: https://claude.ai/code/session_01JHXvgY3ABzbfGWHHYSMJwB`.
 - Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch.
@@ -34,6 +34,8 @@ A probe over every `decisions.md` under the main checkout's `.claude-tweaks/pipe
 1. The detector keys on grammar, not location count: a plural `findings` that is the line's own subject, or two `lens … finding` clauses.
 2. The marker is case-insensitive `reproduction:` and the lens quotes are optional — the reader's `findingKey` (`lens\s+"?…"?`, case-insensitive) and `_shared/multi-agent-coordination.md`'s `/review reproduction: lens …` form both require it.
 3. The coincidence exemption requires a full path on **both** sides (the documented `{path}:{lineA} / {path}:{lineB}`): `lineKeys` cannot key a shortened `/ :46`, so a shortened coincidence line is residue too and is refused.
+
+Departures 1 and 2 were settled by the user at Common Step 1.6's plan review (grammar rule; widened marker) and are recorded in the spec's `## Plan Review Clarifications` section, which supersedes Deliverable 1, AC3 and AC5 where they differ.
 
 ## Review Focus
 
@@ -49,12 +51,12 @@ Each has a test in Task 2.
 
 | AC clause | Covered by |
 |---|---|
-| AC1.1 | Task 2 Step 1: refuse — run 4481 (`--step "Step 3"`), refuse — spec #1921 (`--spec 1921`), refuse — split step; each asserts exit 2 and no `decisions.md` |
-| AC2.1 | Task 2 Step 1: refuse — `--entries` (stderr names `entries[1]`, nothing written) |
-| AC3.1 | Task 2 Step 1: refuse — location list, refuse — lowercase marker (two full locations, no count, plural `findings`) |
+| AC1.1 | Task 2 Step 1: refuse — run 4481 (`--step "Step 3"`), refuse — spec #1921 (`--spec 1921`), both again with the prefix inside the text, refuse — split step; each asserts exit 2 and no `decisions.md` |
+| AC2.1 | Task 2 Step 1: refuse — `--entries`, both observed texts (stderr names `entries[1]`, then `entries[2]` alone; nothing written) |
+| AC3.1 | Task 2 Step 1: refuse — location list, refuse — lowercase marker (two full locations, no count, plural `findings` — the grammar rule the spec's Plan Review Clarifications settled) |
 | AC4.1 | Task 2 Step 1: accept — per-finding, accept — coincidence, accept — single-read coverage, accept — vacuity downgrade, accept — AUTO aggregate (AUTO lines, including `reproduced. Confirmed`, `severity contested` and absence-claim-refuted, are never refused: status gate) |
 | AC5.1 | Task 2 Step 1: accept — non-reproduction STAGED with several locations (the marker is now case-insensitive `reproduction:`, departure 2 above; a non-reproduction line still never matches) |
-| AC6.1 | Task 2 Step 1: the `refusesAggregate` helper asserts stderr includes `one line per finding` and `--entries` on every refusal |
+| AC6.1 | Task 2 Step 1: the `refusesAggregate` helper asserts stderr includes `one line per finding` and the reason's own `(--entries writes several in one call)` on every refusal (a bare `--entries` match would pass on `USAGE` alone) |
 | AC7.1 | Task 2 Step 5: go-red proof |
 | AC8.1 | Task 3 Step 4: `grep -c "one line per finding"` on `step3-lens-dispatch.md`, plus the `--entries` mention in the Step 1 replacement |
 
@@ -104,22 +106,25 @@ Each has a test in Task 2.
 5. Coincidence exemption (full path both sides) → `null` when `tail` matches
    `new RegExp(String.raw\`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b\`)`.
 6. `bare = tail.replace(new RegExp(String.raw\`${FINDING_PATH}(?::\d+)?\`, 'g'), 'PATH')` — neutralize paths so a path containing `findings` never counts.
-7. Refuse when `bare` matches any of (all `i`): `\b\d+\s+(?:WORD){0,3}findings\b` (a count), `\bLENS\s+(?:WORD){0,3}findings\b` (lens noun phrase), `^reproduction:\s+(?:WORD){0,4}findings\b` (marker subject) — or when `bare` holds two or more matches of `\bLENS\s+(?:[\w-]+\s+)?finding\b` (`gi`).
+7. Refuse when `bare` matches any of (all `i`): `\b\d+\s+(?:WORD){0,3}findings\b` (a count), `\bLENS\s+(?:WORD){0,3}findings\b` (lens noun phrase), `\breproduction:\s+(?:WORD){0,4}findings\b` (marker subject — unanchored, so it is tested after every `reproduction:` in the tail, including the text's own marker when the step also carries one, e.g. `--step "Step 3 reproduction"`) — or when `bare` holds two or more matches of `\bLENS\s+(?:[\w-]+\s+)?finding\b` (`gi`).
 8. Reason: `names several findings in one reproduction line — log one line per finding, each with its lens and full {path}:{line} (--entries writes several in one call): "${entry}"`.
 
 Wiring: single-entry → `return usageError(\`--text ${reason}\`)`; `entryProblem` → `return \`text ${reason}\`` (readEntries already prefixes `entries[{i}]: `). Header comment's exit-2 line gains: "or a STAGED reproduction entry naming several findings (one line per finding — lib/log-decision/aggregate-reproduction.js)".
 
-- [ ] **Step 1: Write the failing tests** in `cli.test.js`, reusing `fixture()`, `deps()`, `streamOf()`, `entriesFile()`. One helper: `const refusesAggregate = (args) => { const { main, run: runDir } = fixture(); const out = []; assert.equal(run(['--run', runDir, '--status', 'STAGED', ...args], deps(main, out)), 2); assert.ok(streamOf(out, 'err').includes('one line per finding')); assert.ok(streamOf(out, 'err').includes('--entries')); assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false); };` and its mirror `acceptsLine(args, status = 'STAGED')` asserting exit 0. Name every test `#4581: …`. Texts are real `decisions.md` lines (prefix and `. Reversibility: …` suffix removed):
+- [ ] **Step 1: Write the failing tests** in `cli.test.js`, reusing `fixture()`, `deps()`, `streamOf()`, `entriesFile()`. One helper: `const refusesAggregate = (args) => { const { main, run: runDir } = fixture(); const out = []; assert.equal(run(['--run', runDir, '--status', 'STAGED', ...args], deps(main, out)), 2); assert.ok(streamOf(out, 'err').includes('one line per finding')); assert.ok(streamOf(out, 'err').includes('(--entries writes several in one call)')); assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false); };` and its mirror `acceptsLine(args, status = 'STAGED')` asserting exit 0. Name every test `#4581: …`. Texts are real `decisions.md` lines (prefix and `. Reversibility: …` suffix removed):
   - refuse — run 4481: `['--step', 'Step 3', '--text', 'Reproduction: lens "3a" 10 findings not reproduced (A: journey:89 medium, test:1921 low, git-command.js:2253 low, :2433 info, journey:34 info; B: ledger:5 medium, policy-schema-coverage.md:30 medium, git-command.js:2066 low, :2475 low, :2008 low). Staged to Review Console as low-confidence; handed to the tiebreak']`
   - refuse — spec #1921: `['--spec', '1921', '--text', 'Reproduction: lens "3f Test quality" 4 findings not reproduced (A only; B: no findings): cli.test.js:338 critical claim; cli.test.js:15 tmpDir never cleaned up. Staged to Review Console as low-confidence']`
+  - refuse — run 4481, prefix inside the text: `['--text', 'Step 3: Reproduction: lens "3a" 10 findings not reproduced (A: journey:89 medium, test:1921 low, git-command.js:2253 low, :2433 info, journey:34 info; B: ledger:5 medium, policy-schema-coverage.md:30 medium, git-command.js:2066 low, :2475 low, :2008 low). Staged to Review Console as low-confidence; handed to the tiebreak']`
+  - refuse — spec #1921, prefix inside the text: `['--text', 'spec #1921 — Reproduction: lens "3f Test quality" 4 findings not reproduced (A only; B: no findings): cli.test.js:338 critical claim; cli.test.js:15 tmpDir never cleaned up. Staged to Review Console as low-confidence']`
   - refuse — split step: `['--step', 'Reproduction', '--text', 'lens "3a" 10 findings not reproduced']`
+  - refuse — marker subject behind a step that also carries the marker: `['--step', 'Step 3 reproduction', '--text', 'Reproduction: unconfirmed findings a/b.js:1 and c/d.js:2']`
   - refuse — location list: `['--text', 'Reproduction: lens "3c" findings plugin/bin/lib/worktree/remote-branch-collision.js:179 and :134 not reproduced']`
   - refuse — marker subject: `['--text', 'Reproduction: 26 unconfirmed single-agent findings (3a x4, 3c x4) staged at staged/review-lowconf-8.md']`
   - refuse — unquoted lens noun phrase: `['--text', 'Reproduction: lens 3a/3f single-agent low findings (Removes-from-Source cell, incidental-wording pins) not reproduced. Stage path: staged/review-unconfirmed-1.md']`
   - refuse — two clauses: `['--text', 'Reproduction: lens 3a finding plugin/bin/lib/reconcile/index.js:412 and lens 3f finding plugin/bin/lib/reconcile/index.js:334 not reproduced']`
   - refuse — shortened coincidence: `['--text', 'Reproduction: lens "3a" findings plugin/bin/lib/reconcile/release-merged.js:46 / :46 share a location but not substance; both staged unconfirmed']`
   - refuse — lowercase marker: `['--text', '/review reproduction: lens "3a" findings a/b.js:1 and c/d.js:2 surfaced by one agent only']`
-  - refuse — `--entries`: element 0 `{ status: 'AUTO', text: 'ok' }`, element 1 `{ status: 'STAGED', step: 'Step 3', text: 'Reproduction: lens "3a" 10 findings not reproduced' }` → exit 2, stderr includes `entries[1]: text names several findings`, stdout `''`, no `decisions.md`.
+  - refuse — `--entries`, both observed texts (AC2): element 0 `{ status: 'AUTO', text: 'ok' }`, element 1 `{ status: 'STAGED', step: 'Step 3', text: <the full run-4481 text above, without its prefix> }`, element 2 `{ status: 'STAGED', spec: '1921', text: <the full spec #1921 text above, without its prefix> }` → exit 2, stderr includes `entries[1]: text names several findings`, stdout `''`, no `decisions.md`. A second `--entries` test with element 1 replaced by `{ status: 'AUTO', text: 'ok' }` → exit 2, stderr includes `entries[2]: text names several findings` (so the spec #1921 element is refused on its own, not only shadowed by element 1).
   - accept — per-finding (documented): `['--text', 'Reproduction: lens "3a" finding plugin/bin/x.js:10 not reproduced. Staged to Review Console as low-confidence']`
   - accept — coincidence (documented, lens with spaces): `['--text', 'Reproduction: lens "3f Test quality" findings tests/a.test.js:466 / tests/a.test.js:466 share a location but not substance; both staged unconfirmed']`
   - accept — single-read coverage: `['--text', 'Reproduction: lens "3f" session limit twice; single-read coverage']`
@@ -149,7 +154,7 @@ Wiring: single-entry → `return usageError(\`--text ${reason}\`)`; `entryProble
 **Files:**
 - Modify: `plugin/skills/review/step3-lens-dispatch.md:106`
 - Modify: `plugin/skills/_shared/auto-decision-log.md` (the `**Text from git or a user: \`--text-file\`.**` paragraph, after its "a `--text-file` with an interior line break exits 2." sentence)
-- Modify: `docs/plugin-structure.md:196`
+- Modify: `docs/plugin-structure.md` (lines 37, 39 and 196)
 
 Waived plugin/skills/release/SKILL.md: read-only — Step 4 checks line 194's description of `Reproduction:` lines still reads true; no edit expected.
 
@@ -157,13 +162,13 @@ Waived plugin/skills/release/SKILL.md: read-only — Step 4 checks line 194's de
 - Consumes: the refusal's behavior from Task 2 (exit 2, `--entries` hint). No code.
 
 - [ ] **Step 1: Replace line 106 of `step3-lens-dispatch.md`** with exactly:
-  `> - Findings present in only one agent's output → emit as \`unconfirmed\`, one line per finding (\`--entries\` batches): \`STAGED {HH:MM:SS} — Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.\` They go to Step 3.7 (\`step3-tiebreak.md\`). At \`medium\`, defer this write until \`step3-cross-lens-corroboration.md\`'s pass runs (it may promote it).`
+  `> - Findings present in only one agent's output → emit as \`unconfirmed\`, one line per finding with its full repo-relative path, never one summarizing several (\`--entries\` batches): \`STAGED {HH:MM:SS} — Reproduction: lens "{lens}" finding {path}:{line} not reproduced. Staged to Review Console as low-confidence. Reversibility: high.\` They go to Step 3.7 (\`step3-tiebreak.md\`). At \`medium\`, defer this write until \`step3-cross-lens-corroboration.md\`'s pass runs (it may promote it).`
   (The backslashes above only escape this plan's inline code; the file gets plain backticks.)
 - [ ] **Step 2: Append to `auto-decision-log.md`**, after the `--text-file` paragraph's "exits 2." sentence, one sentence: `A STAGED reproduction entry naming more than one finding — a count (\`10 findings\`), a lens noun phrase (\`lens "3f" findings a.js:1 and b.js:2\`), or two \`lens … finding\` clauses — also exits 2: each finding gets its own line with its lens and full \`{path}:{line}\`, the key a tiebreak verdict settles it by (\`review/step3-tiebreak.md\`); write several at once with \`--entries\`. The documented two-finding coincidence line (full path on both sides) is the one exception.`
-- [ ] **Step 3: Append to `docs/plugin-structure.md:196`**, after `…followed by \`:\` is refused, exit 2`: `; so is a STAGED reproduction entry naming several findings (one line per finding — \`lib/log-decision/aggregate-reproduction.js\`)`.
+- [ ] **Step 3: Update `docs/plugin-structure.md`** — append to line 196, after `…followed by \`:\` is refused, exit 2`: `; so is a STAGED reproduction entry naming several findings (one line per finding — \`lib/log-decision/aggregate-reproduction.js\`)`. Add the two new modules to the module lists in that file: `aggregate-reproduction.js` to the `plugin/bin/lib/log-decision/` line (37, beside `append.js`, `claim-log.js`, `review-routing.js`), and `finding-path.js` to the `plugin/bin/lib/console/` line (39, beside `resolve.js`), each with a one-clause purpose in that line's existing style.
 - [ ] **Step 4: Verify**
   Run: `wc -c plugin/skills/review/step3-lens-dispatch.md`
-  Expected: `52322` (52,336 − 14).
+  Expected: `52386` (52,336 + 50; under the 52,500 rail).
   Run: `grep -c "one line per finding" plugin/skills/review/step3-lens-dispatch.md docs/plugin-structure.md`
   Expected: `1` for each file.
   Run: `grep -c "each finding gets its own line" plugin/skills/_shared/auto-decision-log.md`
