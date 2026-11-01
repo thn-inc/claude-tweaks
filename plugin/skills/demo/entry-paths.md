@@ -101,7 +101,7 @@ and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Pha
 common case now, not an anomaly), recover that **closing
 commit** before reaching for session recall. This is the population `/claude-tweaks:tidy`'s
 `acceptance-gap` sweep surfaces — its `github-pr-scan-acceptance.md` scope under `work-backend:
-github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files` — and it is by construction
+github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent — and it is by construction
 *other* sessions' work. Recall will have nothing, but the commit that closed the record is still
 on disk, and this recovery reads git rather than the backend, so it is identical on both drivers:
 

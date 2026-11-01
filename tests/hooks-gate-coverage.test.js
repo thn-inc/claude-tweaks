@@ -578,9 +578,21 @@ for (const [cmd, files] of [
   ['cp a b -t d e', ['d', 'e']], ['mv a b -t d e', ['d', 'e']], ['cp a -t/main', ['/main', '-t/main']],
   ['cp a b -v', ['b', '-v']], ['cp a b --suffix=.bak', ['b', '--suffix=.bak']],
   ['cp a b --sparse always', ['b', 'always']], ['cp a b --no-preserve mode', ['b', 'mode']],
-  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
 ]) {
   test(`#4449: \`${cmd}\` reports the GNU destination and the BSD destination`, () => {
+    assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
+  });
+}
+// #4449: a trailing -S or --suffix with no value is not a GNU destination. GNU coreutils 9.12 `gcp a b
+// -S` and `gcp a b --suffix` exit 1 ("option requires an argument -- 'S'" and "option '--suffix'
+// requires an argument") and write nothing, while macOS's BSD /bin/cp a b -S exits 1 with `cp: -S: Not
+// a directory`, reading -S as its destination. So -S is the BSD reading's destination (written only if
+// a directory -S exists) and b is the GNU reading's over-read: the gate denies a write that GNU never
+// makes, which only over-denies.
+for (const [cmd, files] of [
+  ['cp a b -S', ['b', '-S']], ['cp a b --suffix', ['b', '--suffix']],
+]) {
+  test(`#4449: \`${cmd}\` reports the BSD destination and over-reads b, which GNU never writes`, () => {
     assert.deepStrictEqual(fileWriteTargets(cmd, '/r').map((t) => t.file), files.map((f) => path.resolve('/r', f)));
   });
 }

@@ -322,12 +322,13 @@ test('AC3.1: stripperVerdict is ok for every plugin/bin file', () => {
   assert.deepEqual(bad, []);
 });
 
-test('AC4.1: the implementation requires only node: built-ins', () => {
-  const text = readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'strip-comments.js'));
-  const required = [...text.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
-  assert.ok(required.length > 0);
+test('AC4.1 (#4648): the implementation requires nothing; the helper adds only node: built-ins', () => {
+  const requiresOf = (text) => [...text.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
+  const lib = requiresOf(readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'strip-comments.js')));
+  assert.deepEqual(lib, []);
+  const helper = requiresOf(readText(path.join(__dirname, 'helpers', 'strip-comments.js')));
   assert.deepEqual(
-    required.filter((r) => !r.startsWith('node:')),
+    helper.filter((r) => !r.startsWith('.') && !r.startsWith('node:')),
     [],
   );
 });
@@ -343,13 +344,26 @@ test('#3903 review: template nesting past the depth cap never overflows the stac
   assert.ok(!stripComments(nested(50, '1 /* zzz */')).includes('zzz'));
 });
 
-test('#3903 AC2.1: the test helper re-exports the plugin/bin/lib implementation — one implementation', () => {
+test('#3903 AC2.1: the test helper re-exports the plugin/bin/lib stripComments — one implementation', () => {
   const lib = require('../plugin/bin/lib/strip-comments');
   const helper = require('./helpers/strip-comments');
-  assert.equal(helper, lib);
+  assert.equal(helper.stripComments, lib.stripComments);
   assert.equal(typeof lib.stripComments, 'function');
   const helperText = readText(path.join(__dirname, 'helpers', 'strip-comments.js'));
   const required = [...helperText.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
-  assert.deepEqual(required, ['../../plugin/bin/lib/strip-comments']);
+  assert.deepEqual(
+    required.filter((r) => r.startsWith('.')),
+    ['../../plugin/bin/lib/strip-comments'],
+  );
   assert.ok(!/function stripComments/.test(helperText), 'the helper must not keep a second copy of the scanner');
+});
+
+test('#4648 AC1.1: the shipped stripper exports only stripComments; the compile oracle lives in the test helper', () => {
+  const lib = require('../plugin/bin/lib/strip-comments');
+  const helper = require('./helpers/strip-comments');
+  assert.deepEqual(Object.keys(lib), ['stripComments']);
+  assert.equal(typeof helper.stripperVerdict, 'function');
+  assert.match(helper.STRIPPER_VERDICT_MESSAGES.misparsed, /see tests\/helpers\/strip-comments\.js$/);
+  const libCode = lib.stripComments(readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'strip-comments.js')));
+  assert.doesNotMatch(libCode, /node:vm|\bvm\.Script\b/);
 });

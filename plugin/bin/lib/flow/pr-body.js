@@ -86,6 +86,15 @@ function resumeLineUnder(body) {
   return line === undefined ? null : line.trimEnd();
 }
 
+// (body, runId) -> { resume, runDir, target, steps } | { resolve: 'no-resume-line' | 'resume-line-shape' };
+// the one Resume verdict, read by bin/stale-claim-pr.js --resume and bin/pr-resume-line.js (#4659).
+function resumeVerdict(body, runId) {
+  const line = resumeLineUnder(body);
+  if (line === null) return { resolve: 'no-resume-line' };
+  const parsed = parseResumeLine(line, runId);
+  return parsed ? { resume: line, ...parsed } : { resolve: 'resume-line-shape' };
+}
+
 // { runId, specSummary, target, nextStep, fixesLines, runDir? } ->
 // the full PR-early body string, matching
 // _shared/pr-early-run-lifecycle.md's Step 3 template byte-for-byte in
@@ -330,6 +339,7 @@ module.exports = {
   RESUME_LINE_RE,
   parseResumeLine,
   resumeLineUnder,
+  resumeVerdict,
   hasRunMarker,
   hasPhasesPair,
   hasFixesPair,
