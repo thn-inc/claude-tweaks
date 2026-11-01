@@ -48,7 +48,8 @@ const OFFLINE_GH = { GH_HOST: 'localhost', GH_TOKEN: 'x', GH_REPO: '' };
 
 function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
   // PIPELINE_RUN_DIR: '' neutralizes any ambient run-dir env var (#1130).
-  const r = spawnSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env } });
+  const r = spawnSync(process.execPath, [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env } });
+  assert.ifError(r.error);
   return { code: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -352,15 +353,22 @@ test('#4834: help wins over an unknown flag in the same call', () => {
 
 test('#4834: an unusable stderr still refuses with exit 1', async () => {
   const realWriteSync = fs.writeSync;
+  let stderrWrites = 0;
   fs.writeSync = (fd, ...rest) => {
-    if (fd === 2) throw Object.assign(new Error('EBADF'), { code: 'EBADF' });
+    if (fd === 2) {
+      stderrWrites += 1;
+      throw Object.assign(new Error('EBADF'), { code: 'EBADF' });
+    }
     return realWriteSync.call(fs, fd, ...rest);
   };
   try {
-    assert.equal(await main(['node', 'hooks.js', 'reconcile', '--bogus']), 1);
+    // resolve-run-dir without --create is read-only: if the guard ever missed
+    // --bogus, this in-process call must not mutate the developer's checkout.
+    assert.equal(await main(['node', 'hooks.js', 'resolve-run-dir', '--bogus']), 1);
   } finally {
     fs.writeSync = realWriteSync;
   }
+  assert.ok(stderrWrites >= 1, 'the refusal reached the throwing fd-2 write');
 });
 
 test('#4834: a captured resolve-run-dir --root-only with a typo yields an empty value and exit 1', () => {
