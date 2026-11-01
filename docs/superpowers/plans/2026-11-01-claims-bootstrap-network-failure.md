@@ -53,9 +53,13 @@ No caller compares a claim-store failure to the literal `'network-failure'` (`gi
 
 ### Task 1: Split a permission outcome out of `classifyGhApiError`
 
+**Role:** integration
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/claim-store.js` (`classifyGhApiError` and its header comment, lines ~109-159; the failure-vocabulary comment at line ~179)
 - Modify: `plugin/bin/list-claims.js` (header comment line ~22 naming the failure values)
+- Modify: `docs/plugin-structure.md` (the `list-claims.js` row, line ~221: its exit-3 list `` `gh-absent`/`network-failure`/`secondary-rate-limit`/`truncated` `` gains `` `permission-denied` ``)
 - Test: `tests/bin-lib/issues/claim-store.test.js`
 
 **Interfaces:**
@@ -98,7 +102,7 @@ The primary-rate-limit test is the guard-discriminating input: deleting the prim
 Run: `node --test tests/bin-lib/issues/claim-store.test.js`
 Expected: FAIL after Step 1 — the two `AC1.1` tests report `network-failure` (actual) vs `permission-denied` (expected); this red run is AC1.2 (it fails against the current classifier). (The `AC6.1` and transport tests pass already; they guard the new branch's ordering.)
 
-- [ ] **Step 3: Implement in `classifyGhApiError`** — keep ENOENT and the secondary-rate-limit check first and the 404/422/409 checks unchanged, then add, in this order, before the final `network-failure` return: (a) primary rate limit — text matching `/API rate limit exceeded|X-RateLimit-Remaining:\s*0\b/i` returns `{ failure: 'network-failure', status: null }`; (b) permission — text matching `/HTTP (401|403)\b/` returns `{ failure: 'permission-denied', status: <401|403 as a number> }`. Extend the function's header comment with one paragraph naming the new outcome, why it is distinct (a refusal, not transport — #4756), and the primary-rate-limit exclusion with its `_shared/github-rate-limit.md` citation. Update the failure-vocabulary comment at `listClaimEntries` (line ~179) and `list-claims.js`'s header list to include `permission-denied`.
+- [ ] **Step 3: Implement in `classifyGhApiError`** — keep ENOENT and the secondary-rate-limit check first and the 404/422/409 checks unchanged, then add, in this order, before the final `network-failure` return: (a) primary rate limit — text matching `/API rate limit exceeded|X-RateLimit-Remaining:\s*0\b/i` returns `{ failure: 'network-failure', status: null }`; (b) permission — text matching `/HTTP (401|403)\b/` returns `{ failure: 'permission-denied', status: <401|403 as a number> }`. Extend the function's header comment with one paragraph naming the new outcome, why it is distinct (a refusal, not transport — #4756), and the primary-rate-limit exclusion with its `_shared/github-rate-limit.md` citation. Update the failure-vocabulary comment at `listClaimEntries` (line ~179), `list-claims.js`'s header list, and `docs/plugin-structure.md`'s `list-claims.js` row to include `permission-denied`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -108,7 +112,7 @@ Expected: PASS except the tests Task 2 rewrites — at this point `ensureClaimsB
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/claim-store.js plugin/bin/list-claims.js tests/bin-lib/issues/claim-store.test.js
+git add plugin/bin/lib/issues/claim-store.js plugin/bin/list-claims.js docs/plugin-structure.md tests/bin-lib/issues/claim-store.test.js
 git commit -m "Split permission-denied out of classifyGhApiError — 401/403 no longer reads as network-failure, refs #4756" -m "Claude-Session: https://claude.ai/code/session_016yg3zqdPwxEVZPAhLXNVtm"
 ```
 
@@ -133,6 +137,7 @@ git commit -m "Split permission-denied out of classifyGhApiError — 401/403 no 
   - **New** `AC11.1: POST git/refs 422 + a primary-rate-limit branch re-read is transient network-failure`: build the branches answer through the real classifier, `const e = new Error('gh: API rate limit exceeded for user ID 1. (HTTP 403)'); branches = { stdout: null, ...classifyGhApiError(e), error: e.message }` → `r.transient === true`, `r.failure === 'network-failure'`.
   - **New** `ensureClaimsBranch: POST git/refs 422 + a secondary-rate-limit re-read is transient secondary-rate-limit` (Deliverable 6) → `r.failure === 'secondary-rate-limit'`.
   - **New** `ensureClaimsBranch: POST git/refs 422 + a gh-absent re-read is a refusal` → no `transient` key.
+  - **New** `ensureClaimsBranch: POST git/refs 422 + a re-read answering 409 with failure null is a refusal, never a lost race` — branches `{stdout:null, failure:null, status:409, error:'HTTP 409: Conflict'}` → `r.ok === false`, no `transient` key, `r.reason` matches `/Reference already exists/`. (Against today's `claimsBranchExists`-based check this returns `{ok:true, created:false}`, so it is red before Step 3.)
   - **Rewrite** `ensureClaimsBranch: a secondary-rate-limit POST is transient (reason verbatim); a 403 network-failure POST is not` as `AC2.1/AC4.1: POST classified secondary-rate-limit / network-failure is transient with its kind; permission-denied is a refusal`:
 
 ```js
@@ -158,7 +163,7 @@ Expected: FAIL after Step 1 — `AC7.1` (no `transient`), `AC11.1`, the secondar
 - [ ] **Step 3: Implement**
   - `apiRefusal(r)`: unchanged `reason`; add `transient: true, failure: r.failure` exactly when `r.failure` is `'network-failure'` or `'secondary-rate-limit'` (one module-level `Set`, named for the rule). Rewrite its comment to state the one rule (Deliverable 3).
   - Split the branch read so its failure kind survives: a private `readClaimsBranch(ghApi, repoSlug) -> { exists: true|false|null, result }` (`result` is the raw ghApi answer), with `claimsBranchExists` returning `readClaimsBranch(...).exists` (behaviour unchanged).
-  - `createClaimsBranchContentsApi`, POST answered 422: re-read with `readClaimsBranch`. `exists === true` → `{ ok: true, created: false }` (lost race, as today). `exists === false` → `apiRefusal(r)` (ruleset refusal, as today). `exists === null` → the re-read's own class: `{ ...apiRefusal(result), reason: \`${apiRefusal(r).reason}; branch re-read: ${apiRefusal(result).reason}\` }`. Every other POST outcome is `apiRefusal(r)` as today (so 409, 404, permission-denied, gh-absent refuse; network-failure and secondary are transient by the rule).
+  - `createClaimsBranchContentsApi`, POST answered 422: re-read with `readClaimsBranch`, then branch on the raw `result` (not on `exists`, whose rule counts any non-404, failure-free answer as `true`): `result.failure === null && result.status === null` → `{ ok: true, created: false }` (the branch exists: lost race, as today). `result.status === 404` → `apiRefusal(r)` (ruleset refusal, as today). `result.failure` set → the re-read's own class: `{ ...apiRefusal(result), reason: \`${apiRefusal(r).reason}; branch re-read: ${apiRefusal(result).reason}\` }`. Any other status with `failure: null` (a 409 or 422 on the GET) → a refusal, `apiRefusal(r)` with the same combined reason (Deliverable 3: a status answer with `failure: null` is a refusal). Every other POST outcome is `apiRefusal(r)` as today (so 409, 404, permission-denied, gh-absent refuse; network-failure and secondary are transient by the rule).
   - `ensureClaimsBranch`: on a failed contents-API leg return `{ ok: false, reason, ...(a.transient ? { transient: true, failure: a.failure } : {}) }`. Update its header comment (it currently says transient means "hit a secondary rate limit").
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -226,7 +231,7 @@ git commit -m "Route a transport-class claims-branch bootstrap failure to exit 4
 
 ### Task 4: Exit-code prose — a bootstrap network failure is exit 4
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/claim-targets/claim-targets.js` (`USAGE`, lines ~52 and ~55-56)
@@ -244,19 +249,19 @@ Each edit is one clause; wording to land (adapt grammar to the sentence, keep ev
 - `flow/claim-targets.md` exit 4 bullet: `... or a bootstrap that hit a secondary rate limit, \`error: 'claims-branch-bootstrap-rate-limited'\`, or a network failure (a primary rate limit included), \`error: 'claims-branch-bootstrap-network-failure'\` — all rendered on the same transient-failure card.`; exit 6 bullet: `the \`claims-registry\` branch was missing on origin and creating it was refused (a permission error, a ruleset, \`gh\` absent — a network failure is exit 4 instead)`. Leave the `## Flow: Claims branch missing` card text unchanged.
 - `settle-and-merge.md`: `(\`claim-targets.js\` exit 6, #4495: the \`claims-registry\` branch is missing on origin and creating it was refused — a network failure during the bootstrap is exit 4, never this stop)`. Keep the phrases `Claims branch missing`, `flow-step-2.8-claims-branch-missing`, `claims-branch-missing stop, skip steps 3-7`, `dispatch-retry-ceiling`, `no failure comment` intact (pinned by `tests/flow-claim-preflight.test.js`).
 - `issue-claims.md`: `a refused creation exits \`6\` naming the branch and the reason verbatim; a network failure or rate limit during it is transient (exit \`4\`).`
-- `plugin-structure.md` row: `4 transient gh failure (incl. a claims-registry bootstrap network failure or rate limit, #4756)`, `6 the claims-registry branch is missing on origin and creating it was refused (...)`.
-- Journey: `... or a creation that hit a network failure or a rate limit, is instead a transient retry ...`.
+- `plugin-structure.md` `claim-targets.js` row: replace `4 transient gh failure,` with `4 transient gh failure (incl. a claims-registry bootstrap network failure or rate limit, #4756),` and `6 the claims-registry branch is missing on origin and could not be created (` with `6 the claims-registry branch is missing on origin and creating it was refused (`; the rest of the row is unchanged.
+- Journey `act-on-a-contested-claim.md` line ~63: replace `or a rate-limited creation, is instead a transient retry` with `or a creation that hit a network failure or a rate limit, is instead a transient retry`.
 
 - [ ] **Step 1: Write the failing check** (scratch, not committed):
 
-Run: `git grep -n -i -e "could not be created" -e "rate-limited by GitHub" -- plugin docs/plugin-structure.md docs/journeys`
+Run: `git grep -n -i -e "could not be created" -e "rate-limited by GitHub" -- plugin docs/plugin-structure.md docs/journeys/act-on-a-contested-claim.md`
 Expected now: hits in the lib `USAGE`, `bin/claim-targets.js`, `flow/claim-targets.md` (twice), `settle-and-merge.md`, `plugin-structure.md` — the old wording that implies any bootstrap failure is exit 6. (The `claim-targets.js:493` stderr line `branch missing on origin and could not be created` is the runtime refusal message, pinned by `REFUSAL_PREFIX` — it stays: it only prints on a refusal.)
 
 - [ ] **Step 2: Make the edits above.**
 
 - [ ] **Step 3: Verify**
 
-Run: `git grep -n -i -e "could not be created" -e "rate-limited by GitHub" -- plugin docs/plugin-structure.md docs/journeys`
+Run: `git grep -n -i -e "could not be created" -e "rate-limited by GitHub" -- plugin docs/plugin-structure.md docs/journeys/act-on-a-contested-claim.md`
 Expected: only `plugin/bin/lib/claim-targets/claim-targets.js` (the stderr refusal message) and `flow/claim-targets.md`'s card line `The \`claims-registry\` branch is missing on origin and could not be created: {reason}.` remain.
 Run: `git grep -n -e "claims-branch-bootstrap-network-failure" -- plugin docs`
 Expected: hits in `claim-targets.js` (lib) and `flow/claim-targets.md`.
@@ -276,7 +281,7 @@ git commit -m "Document bootstrap network failure as exit 4 — exit-code prose 
 
 **Role:** transcription
 
-Plan audit's Check B matched these files on the scope keywords. None needs a change; this task proves the Caller audit table above holds after Tasks 1-3.
+Plan audit's Check B matched these files on the scope keywords. None needs a change; this task proves the Caller audit table above holds after Tasks 1-3. It changes no repository file, so it runs after the SDD tasks without an implementer dispatch: Steps 1-2 are read-only checks, Step 3 edits the PR body.
 
 **Files:**
 - Read: `plugin/bin/lib/reconcile/preflight.js`, `plugin/bin/lib/reconcile/pr-state.js`, `plugin/bin/lib/reconcile/release-merged.js` — each maps `classifyGhApiError(e).failure` through a `=== 'gh-absent'` ternary, so `permission-denied` lands where `network-failure` did.
@@ -295,6 +300,12 @@ Expected: PASS. Any failure means a caller depended on `network-failure` for a 4
 
 Run: `git grep -n -F "=== 'network-failure'" -- plugin/bin`
 Expected: only `pr-state.js`-sourced PR-state comparisons (`reconcile/*.js`, `pr-merge-state.js`) — none reads a `claim-store.js` result.
+
+- [ ] **Step 3 (controller, after Step 1 passes): name the failure-string change in the PR**
+
+The caller audit's Deliverable 1 obligation ("updated deliberately with the change named in the PR"). The controller — not an implementer — appends this sentence to the end of the `### Spec summary` paragraph of PR #4878's body (read with `gh pr view 4878 --json body --jq .body`, write the edited body with the Write tool to a session temp file, then `gh pr edit 4878 --body-file {file}`; every other line of the body unchanged):
+
+`Caller-visible text change: a 401/403 on a claim read or write (claim-targets.js, list-claims.js, dispatch-resume.js, release-claim.js, the dispatch first-call artifact check) now reports \`permission-denied\` where it reported \`network-failure\`; each caller's exit code is unchanged.`
 
 No commit (read-only).
 
