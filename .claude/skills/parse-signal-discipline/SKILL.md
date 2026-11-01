@@ -217,6 +217,12 @@ When mechanizing a prose heuristic into a deterministic check:
    verdict") and let every other outcome keep the stop: item 19's positive recogniser, in prose.
    `tests/issue-claims-stale-open-pr-conformance.test.js` pins that clause and the absence of
    `Otherwise: follow`.
+   A pipe hides a failed probe a third way: the pipeline's exit status is its last stage's, so a
+   producer that fails into a consumer that always succeeds still yields a confident value.
+   #4557's progress probe piped `git diff HEAD` into `git hash-object --stdin`; a failed diff
+   still exits 0 with the empty-blob hash (`e69de29…`), which differs from the previous probe and
+   reads as progress, granting another wait window. Review caught it (`704ff1076` made a `fatal:`
+   line fail the probe). Name each piped stage's own failure signal, never the pipeline's exit.
 10. **A helper's can't-tell answer is safe only for the caller it was written for.** A new caller
    that reads the same answer in the opposite direction has to guard the input itself.
    `plugin/bin/lib/issues/claims.js`'s `isStale` answers `false` whenever it cannot tell. An
