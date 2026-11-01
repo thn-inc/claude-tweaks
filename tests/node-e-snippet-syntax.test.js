@@ -123,6 +123,8 @@ function substituteShellPlaceholders(script) {
   out = out.replace(/=\s*\/\*[\s\S]*?\*\/\s*;/g, '= null;');
   out = out.replace(/\$\([^()]*\)/g, 'null');
   out = out.replace(/\$\{[A-Za-z_][A-Za-z0-9_]*\}/g, 'null');
+  // The `{resolved-limit}` placeholder an agent substitutes with the policy number before running (#4820).
+  out = out.replace(/\{resolved-limit\}/g, '1000');
   return out;
 }
 
@@ -203,6 +205,11 @@ test('substituteShellPlaceholders: neutralizes a $(...) command substitution', (
 
 test('substituteShellPlaceholders: neutralizes an elided-value doc comment used as an expression', () => {
   const result = checkSyntax('const keyFiles = /* parsed elsewhere */;');
+  assert.strictEqual(result.ok, true);
+});
+
+test('substituteShellPlaceholders: neutralizes a {resolved-limit} placeholder (#4820)', () => {
+  const result = checkSyntax('if (rows.length >= {resolved-limit}) console.error("cap");');
   assert.strictEqual(result.ok, true);
 });
 

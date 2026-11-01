@@ -2,7 +2,7 @@
 
 Single source of truth for scanning GitHub pull-request and issue state. Consumed by `/claude-tweaks:help` (Stage 4.5, **`current-pr`** scope; Stage 4.6, **`triage-queue`** scope, held in `_shared/github-pr-scan-triage.md`; Stage 4.7, **`acceptance-queue`** scope; Stage 4.8, which inlines `_shared/forge-detection.md`'s Detection Ladder alone — its fetch and render come from `_shared/trust-table.md`, so it consumes no scope section below) and `/claude-tweaks:tidy` (Step 4.8, **`repo-wide`** scope; Step 4.8, **`acceptance-gap`** scope; Step 4.8, **`parent-gate`** scope). Subagents cannot read this file — the dispatcher inlines the relevant scope section and this file's Output Contract, plus `_shared/forge-detection.md`'s Detection Ladder, into the scan agent's prompt (the same pattern as `tidy/scan-procedures.md`). A scope section is inlined **whole**, its `work-links` resolution and fetch-limit sub-sections included: the `acceptance-gap` and `parent-gate` scopes each carry a `work-links: body-text` / `work-links: native` branch pair, and an agent that cannot resolve `work-links` cannot choose between them — taking the first-listed `body-text` branch on a `native` repo returns zero sub-issues from every parent and makes both scopes silently wrong (see each scope's own resolution sub-section for the failure it produces).
 
-Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — `gh`'s implicit default is 30, which silently truncates instead of erroring. A result count landing exactly at the stated limit means the scan may be incomplete; treat that as a signal to narrow the query (a tighter label/state filter) or re-run with a higher `--limit`, not as a final count.
+Every `gh issue list`/`gh pr list` call below takes `--limit {resolved-limit}` (`backlog-fetch-limit`), never a fixed number: `gh`'s implicit 30, or any fixed cap, truncates silently once the repo outgrows it (#4820). Each scope states its own Fetch limit rule, since a scope is inlined without this preamble.
 
 ## Detection Ladder (fail-open)
 
@@ -31,6 +31,8 @@ Keyed on `updatedAt`. Same scale as /tidy's backlog-record audit:
 
 Deep scan of the current branch's PR only, plus one cheap repo-wide count. Every item below is PR-backed (see Transport above) — on `gh`-absent, this scope has no issue-backed item to fall back to, so it degrades per-item rather than resolving to a blanket "GitHub scan skipped" at check 2: item 1 emits `[pr] PR scan skipped (item) / no MCP fallback for PR reads` and items 2-4 are skipped as a consequence (each depends on item 1's PR number or is the same class of call).
 
+**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope's rows, never suppressed, and render a floor count as `{N}+`.
+
 1. **PR lookup** — `gh pr view --json number,title,isDraft,reviewDecision,statusCheckRollup,closingIssuesReferences,url`. Non-zero exit means no PR for the current branch → emit one info row (`No open PR for current branch`), then run item 4 only.
 2. **Unresolved review threads** — resolve `{owner}` and `{repo}` via `gh repo view --json owner,name -q '.owner.login + " " + .name'`, `{number}` from item 1, then run exactly:
 
@@ -39,7 +41,7 @@ Deep scan of the current branch's PR only, plus one cheap repo-wide count. Every
    ```
 
 3. **CI checks** — `node "${CLAUDE_PLUGIN_ROOT}/bin/pr-checks.js" --pr {number}` (one JSON line, exit 0 in every state) → count from its `state`: `red`/`inherited-red` → failing (`failing.length`); `pending` → pending (`pending.length`); `green`/`no-ci` → passing (0 failing, 0 pending); `read-failed`/`gh-absent` → `CI unavailable`, never passing. The rollup alone reads a partial head run as passing, so this reads the head-sha runs too.
-4. **Repo-wide stale count (maintenance signal only)** — `gh pr list --state open --json number,updatedAt --limit 100` → total open PRs + count stale per the thresholds above. This row is routed to the caller's maintenance-signals rendering, not the Current PR dashboard section.
+4. **Repo-wide stale count (maintenance signal only)** — `gh pr list --state open --json number,updatedAt --limit {resolved-limit}` → total open PRs + count stale per the thresholds above. This row is routed to the caller's maintenance-signals rendering, not the Current PR dashboard section.
 
 Emit `[pr]` rows per the Output Contract.
 
@@ -51,13 +53,15 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
 > **Parallel execution:** Use parallel tool calls aggressively — items 1, 3, 4, 5, 6, 7, 8, and the initial fetches of items 9 and 10 below, plus each open PR's own review-thread query in item 2, are independent gh/bash calls with no dependency on one another and should run concurrently. Item 9's per-candidate thread/link fetches and item 10's per-issue claim-blob reads depend on their own item's earlier filter step, so only those later sub-steps are sequential. Item 11 depends on item 9's initial PR-list fetch (reused, not re-fetched) and runs after it.
 
+**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope's rows, never suppressed, and render a floor count as `{N}+`.
+
 1. **Open PRs** — the fence below lists open PRs with `statusCheckRollup` and prints one `#{n} CI {status}` line per PR (`status` ∈ `passing` / `pending` / `failing` / `unavailable`):
 
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md`:
 
    ```bash
    PR_SCAN_OPEN="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-open.json)"
-   gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url,statusCheckRollup --limit 100 > "$PR_SCAN_OPEN"
+   gh pr list --state open --json number,title,updatedAt,isDraft,reviewDecision,headRefName,url,statusCheckRollup --limit {resolved-limit} > "$PR_SCAN_OPEN"
    PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT}" node -e "
      // Only rollup-green PRs get a pr-checks.js call: the rollup lists registered checks, pr-checks.js adds the head-sha runs (#3469).
      const { execFileSync } = require('child_process');
@@ -83,22 +87,23 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
 
    Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — spans both the `Fresh` and `Review` bands, since neither currently has its own finding for a PR with nothing wrong), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding. A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational — see the Findings and recommendations table below.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
-3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit 100`.
-4. **Merged/closed PRs with local remnants** — `gh pr list --state merged --limit 50 --json number,headRefName` AND `gh pr list --state closed --limit 50 --json number,headRefName` (GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`; both queries are needed to cover "merged or closed without merging"); cross-check each `headRefName` from either result against `git -C "{REPO_ROOT}" branch --list` output.
-5. **Harness-health issues** — `gh issue list --label by:harness-health --state open --json number,title,labels,updatedAt,url --limit 100`.
-6. **Journey-health issues** — `gh issue list --label by:journey-health --state open --json number,title,updatedAt,url --limit 100`.
-7. **Docs-health issues** — `gh issue list --label by:docs-health --state open --json number,title,labels,updatedAt,url --limit 100`.
+3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
+4. **Merged/closed PRs with local remnants** — `gh pr list --state merged --limit {resolved-limit} --json number,headRefName` AND `gh pr list --state closed --limit {resolved-limit} --json number,headRefName` (GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`; both queries are needed to cover "merged or closed without merging"); cross-check each `headRefName` from either result against `git -C "{REPO_ROOT}" branch --list` output.
+5. **Harness-health issues** — `gh issue list --label by:harness-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
+6. **Journey-health issues** — `gh issue list --label by:journey-health --state open --json number,title,updatedAt,url --limit {resolved-limit}`.
+7. **Docs-health issues** — `gh issue list --label by:docs-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
 8. **Grant-queue counts** — one self-contained query feeds three maintenance-signal counts, per `_shared/work-record.md`'s record taxonomy. Not gated on `work-backend` — this scope only runs once the Detection Ladder already confirmed a reachable GitHub remote, regardless of which driver stores records:
 
    Resolve this item's session-scoped temp path first, per `_shared/session-tmp-root.md` (cited throughout this file rather than restated):
 
    ```bash
    PR_SCAN_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-records.json)"
-   gh issue list --state open --json number,title,labels --limit 200 > "$PR_SCAN_RECORDS"
+   gh issue list --state open --json number,title,labels --limit {resolved-limit} > "$PR_SCAN_RECORDS"
    node -e "
      const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
      const { isPendingAuthorization } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/pending-authorization.js');
      const issues = require('$PR_SCAN_RECORDS');
+     if (issues.length >= {resolved-limit}) console.error('WARNING: [queue] fetched ' + issues.length + ' open issues, the backlog-fetch-limit cap — these counts are a floor');
      const faceted = issues.map((i) => parseRecordFacets(i.labels));
      const withFacets = issues.map((i, idx) => ({ number: i.number, title: i.title, facets: faceted[idx] }));
      const pending = withFacets.filter((i) => i.facets.stage === 'ready' && isPendingAuthorization(i.facets)).length;
@@ -125,7 +130,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    UNARMED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values pr-unarmed-age-hours)
    HOUSEKEEPING_GRANT=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values housekeeping-auto-merge)
    ALLOW_AUTO_MERGE=$(gh api repos/{owner}/{repo} -q .allow_auto_merge 2>/dev/null)
-   gh pr list --state open --json number,title,updatedAt,isDraft,body,autoMergeRequest,statusCheckRollup,closingIssuesReferences,url --limit 100 \
+   gh pr list --state open --json number,title,updatedAt,isDraft,body,autoMergeRequest,statusCheckRollup,closingIssuesReferences,url --limit {resolved-limit} \
      > "$PR_SCAN_UNARMED"
 
    UNARMED_AGE="$UNARMED_AGE" node -e "
@@ -256,7 +261,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     #    cleared, or the reverse). Anchored on the issue's own updatedAt, the
     #    best available timestamp once there is no claim blob to read a
     #    claimedAt from.
-    gh issue list --label bot:in-progress --state open --json number,updatedAt --limit 200 \
+    gh issue list --label bot:in-progress --state open --json number,updatedAt --limit {resolved-limit} \
       > "$PR_SCAN_UNSETTLED_LABELLED"
 
     # 3. Every PR, to reverse-join by closingIssuesReferences (the same field
@@ -266,7 +271,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     #    and both together across `--state all --limit 200` exceed GitHub's
     #    500,000-node ceiling above ~50 PRs (reproduced live). Progress is
     #    fetched per matched candidate only, below.
-    gh pr list --state all --json number,url,closingIssuesReferences --limit 200 \
+    gh pr list --state all --json number,url,closingIssuesReferences --limit {resolved-limit} \
       > "$PR_SCAN_UNSETTLED_PRS"
     ```
 
@@ -287,11 +292,14 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         ? fs.readFileSync('$PR_SCAN_UNSETTLED_CLAIMS', 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse)
         : [];
       const claimedNumbers = new Set(claimed.map((c) => c.number));
+      const LIMIT = {resolved-limit};
+      if (require('$PR_SCAN_UNSETTLED_LABELLED').length >= Math.min(LIMIT, 1000)) console.error('WARNING: [unsettled] the bot:in-progress fetch reached its cap — issues past it are unchecked');
       const labelled = require('$PR_SCAN_UNSETTLED_LABELLED')
         .filter((i) => !claimedNumbers.has(i.number))
         .map((i) => ({ number: i.number, claimedAt: i.updatedAt, source: 'label' }));
       const candidates = claimed.concat(labelled);
       const prs = require('$PR_SCAN_UNSETTLED_PRS');
+      const PR_CAPPED = prs.length >= LIMIT ? ' (the PR fetch hit backlog-fetch-limit — an older PR may exist)' : '';
       function matchedPr(issueNumber) {
         return prs.find((pr) => (pr.closingIssuesReferences || []).some((i) => i.number === issueNumber));
       }
@@ -316,7 +324,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         if (ageHours < AGE_HOURS) return;
         const pr = matchedPr(number);
         if (!pr) {
-          console.log('[unsettled] #' + number + ': no PR found ' + Math.round(ageHours) + 'h after claim — resume: node \"\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" reconcile, then re-run /claude-tweaks:dispatch or /claude-tweaks:flow #' + number);
+          console.log('[unsettled] #' + number + ': no PR found ' + Math.round(ageHours) + 'h after claim' + PR_CAPPED + ' — resume: node \"\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" reconcile, then re-run /claude-tweaks:dispatch or /claude-tweaks:flow #' + number);
           return;
         }
         const progress = progressOf(pr.number);
@@ -422,7 +430,7 @@ Two collection prefixes for PR/code-health/harness-health/journey-health/docs-he
 
 - `[pr]` — pull-request findings: `[pr] PR #{n}: {title} — {issue} — {recommendation}`
 - `[gh-issue]` — code-health/harness-health/journey-health/docs-health issue findings: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
-- `[queue]` — grant-queue metrics (item 8 above, `repo-wide` scope only, derived from the single `gh issue list --state open` query already fetched): `[queue] {N} pending authorization, {M} bot:blocked, {K} backlog`
+- `[queue]` — grant-queue metrics (item 8 above, `repo-wide` scope only, derived from the single `gh issue list --state open` query already fetched): `[queue] {N} pending authorization, {M} bot:blocked, {K} backlog` — each count rendered `{N}+` when item 8's block warned that the fetch hit its cap
 - `[acceptance-gap]` — closed records with no acceptance disposition (`acceptance-gap` scope above): `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`
 - `[parent-gate]` — decomposition parents with every sub-issue closed and no acceptance disposition on the parent (`parent-gate` scope above): `[parent-gate] #{n}: {title} — parent complete, no acceptance disposition — Open parent gate, then /claude-tweaks:demo #{n}`, or below the oversight floor: `[parent-gate] #{n}: {title} — parent complete below the oversight floor, still open — Open parent gate (closes it; no brief owed)`
 - `[pr-unarmed]` — a green, gate-passed, plugin-created PR whose `--auto` was never armed, granted or not (`repo-wide` item 9): `[pr-unarmed] PR #{n}: {title} — {granted-or-ungranted content} — {recommendation}`
