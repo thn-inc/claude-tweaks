@@ -10,13 +10,15 @@
 // each validated like the single-entry flags before any is written; exclusive with --status/--text/--text-file/
 // --step/--spec/--reversibility/--lever.
 // Exit 0 appended (every entry echoed to stdout, in order); 2 malformed invocation (incl. a text beginning with
-// its own --step value followed by `:` — formatEntry writes that prefix, so the repeat is refused); 3 run dir missing or not
+// its own --step value followed by `:` — formatEntry writes that prefix, so the repeat is refused — or a STAGED reproduction
+// entry naming several findings (one line per finding — lib/log-decision/aggregate-reproduction.js)); 3 run dir missing or not
 // anchored under the main checkout (a worktree-local shadow — _shared/pipeline-run-dir.md).
 // The decisions.md half of #637; the staged/ half now ships as bin/stage-item.js.
 'use strict';
 
 const fs = require('fs');
 const { STATUSES, formatEntry, resolveTarget, appendEntries } = require('./lib/log-decision/append');
+const { aggregateReproductionProblem } = require('./lib/log-decision/aggregate-reproduction');
 
 const USAGE = 'usage: log-decision.js --run <run-dir> --status AUTO|STAGED|KEPT-PROMPT|SCANNED|REFUSED|SKIP (--text "..." | --text-file <path>) [--spec <n>] [--step <text>] [--reversibility high|med|low|n/a[" (qualifier)"]] [--lever "<k>=<v> (<source>)"] [--section "/<skill>"] [--help]\n'
   + '       log-decision.js --run <run-dir> --entries <file> [--section "/<skill>"]   (<file>: JSON array of { status, text, step?, spec?, reversibility?, lever?, section? })\n';
@@ -83,6 +85,8 @@ function run(argv, deps = realDeps) {
     }
     if (!o.text || !String(o.text).trim()) return usageError('--text or --text-file is required');
     if (repeatsStep(o.step, o.text)) return usageError(repeatsStepMessage(o.step, o.text, false));
+    const aggregate = aggregateReproductionProblem({ status: o.status, step: o.step, text: o.text });
+    if (aggregate) return usageError(`--text ${aggregate}`);
     if (!REVERSIBILITY_RE.test(String(o.reversibility))) return usageError(`--reversibility must be one of ${REVERSIBILITY.join('|')}, optionally followed by " (qualifier)"`);
     if (o.spec !== null && !/^\d+$/.test(String(o.spec))) return usageError('--spec must be a record number');
     specs = [{ status: o.status, step: o.step, spec: o.spec, text: o.text, reversibility: o.reversibility, lever: o.lever, section: o.section }];
@@ -149,6 +153,8 @@ function entryProblem(el) {
     if (el[key] != null && (typeof el[key] !== 'string' || /[\r\n]/.test(el[key]))) return `${key} must be a single-line string`;
   }
   if (repeatsStep(el.step, el.text)) return repeatsStepMessage(el.step, el.text, true);
+  const aggregate = aggregateReproductionProblem({ status: el.status, step: el.step, text: el.text });
+  if (aggregate) return `text ${aggregate}`;
   if (el.reversibility != null && (typeof el.reversibility !== 'string' || !REVERSIBILITY_RE.test(el.reversibility))) return `reversibility must be one of ${REVERSIBILITY.join('|')}, optionally followed by " (qualifier)"`;
   if (el.spec != null && !/^\d+$/.test(String(el.spec))) return 'spec must be a record number';
   return null;
