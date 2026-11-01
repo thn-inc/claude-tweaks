@@ -148,6 +148,14 @@ function ghErrorText(e) {
 // generic network failure (record-697's incident read exactly that way
 // before diagnosis; #787's amendment requires this to classify as its own
 // distinct, transient outcome).
+//
+// An HTTP 401 or 403 that is not a rate limit is `permission-denied` (with
+// `status` the number 401 or 403): the token reached GitHub and was refused,
+// which is a refusal, not transport — folding it into `network-failure` made
+// a permissions problem read as a retryable network one (#4756). A primary
+// rate limit is excluded: "API rate limit exceeded" or `X-RateLimit-Remaining:
+// 0` (a 403 or 429) stays `network-failure`, since waiting clears it and a
+// permission verdict there would be wrong (`_shared/github-rate-limit.md`).
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
   const text = ghErrorText(e);
@@ -155,6 +163,9 @@ function classifyGhApiError(e) {
   if (/HTTP 404|Not Found/.test(text)) return { failure: null, status: 404 };
   if (/HTTP 422|Unprocessable|Validation failed/.test(text)) return { failure: null, status: 422 };
   if (/HTTP 409|Conflict|does not match/i.test(text)) return { failure: null, status: 409 };
+  if (/API rate limit exceeded|X-RateLimit-Remaining:\s*0\b/i.test(text)) return { failure: 'network-failure', status: null };
+  const denied = /HTTP (401|403)\b/.exec(text);
+  if (denied) return { failure: 'permission-denied', status: Number(denied[1]) };
   return { failure: 'network-failure', status: null };
 }
 
@@ -176,7 +187,7 @@ function defaultGhApi(args) {
   }
 }
 
-// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'truncated' }
+// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'permission-denied'|'truncated' }
 // #3098: the Contents-API directory listing this used to make caps at 1000
 // entries (GitHub's own documented limit for that endpoint) — silently, with
 // no truncation signal at all. `claims-registry` long since passed that

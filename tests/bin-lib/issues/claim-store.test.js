@@ -368,9 +368,30 @@ test('classifyGhApiError: Retry-After signature also reads as secondary rate lim
   assert.deepEqual(classifyGhApiError(err), { failure: 'secondary-rate-limit', status: 403 });
 });
 
-test('classifyGhApiError: a plain 403 with no rate-limit text still falls to network-failure', () => {
+test('AC1.1: classifyGhApiError: a plain HTTP 403 (no rate-limit text) -> permission-denied, never network-failure', () => {
   const err = new Error('gh: Resource not accessible by integration (HTTP 403)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 403 });
+});
+
+test('AC1.1: classifyGhApiError: HTTP 401 -> permission-denied', () => {
+  const err = new Error('gh: Bad credentials (HTTP 401)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 401 });
+});
+
+test('AC6.1: classifyGhApiError: a primary rate-limit 403 ("API rate limit exceeded", no Retry-After) is network-failure, never permission-denied', () => {
+  const err = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
   assert.deepEqual(classifyGhApiError(err), { failure: 'network-failure', status: null });
+});
+
+test('AC6.1: classifyGhApiError: a 403/429 carrying X-RateLimit-Remaining: 0 is network-failure', () => {
+  const e403 = new Error('gh: HTTP 403'); e403.stderr = 'HTTP 403\nX-RateLimit-Remaining: 0';
+  const e429 = new Error('gh: HTTP 429'); e429.stderr = 'HTTP 429\nX-RateLimit-Remaining: 0';
+  assert.deepEqual(classifyGhApiError(e403), { failure: 'network-failure', status: null });
+  assert.deepEqual(classifyGhApiError(e429), { failure: 'network-failure', status: null });
+});
+
+test('classifyGhApiError: a transport error with no HTTP status stays network-failure', () => {
+  assert.deepEqual(classifyGhApiError(new Error('connect ETIMEDOUT 140.82.112.6:443')), { failure: 'network-failure', status: null });
 });
 
 // Git-CAS-first, contents-API-fallback behavior (#787's amendment). These

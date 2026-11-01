@@ -19,7 +19,7 @@
 // 2 when `gh` is absent or owner/repo cannot be resolved (no `--repo` and
 // no readable `origin` remote); 3 when the underlying call itself fails —
 // `gh-absent` (environment changed between the availability probe and the
-// call), `network-failure`, `secondary-rate-limit`, or `truncated` (the Git
+// call), `network-failure`, `secondary-rate-limit`, `permission-denied`, or `truncated` (the Git
 // Trees API itself reports `truncated: true` — the one case this CLI must
 // never treat as a complete-but-short list, per #3098's own Acceptance
 // Criteria). Repo root comes from `git remote get-url origin` at the
