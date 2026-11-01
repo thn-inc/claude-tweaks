@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const {
-  CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
+  CLOSE_HEADING, DELIBERATE_SKIP_REASONS, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
 } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
 const GATE_PROSE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'verification-brief-parent-gate.md');
@@ -343,6 +343,36 @@ test('a parent that already carries an acceptance disposition is gated, not clos
   const { gh } = makeGh(happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:pending'] } }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out.skipped, [{ parent: 10, reason: 'gated' }]);
+});
+
+// DELIBERATE_SKIP_REASONS is the deny-direction list post-merge.js reads: every non-failure skip the module
+// can emit must be in it (or the reconciler reports a deliberate gate outcome as a failed close), and it
+// must name nothing the module no longer emits. One world per skipReason branch — each parentGateState
+// non-`due` verdict through the parent's disposition labels — plus the two idempotence skips.
+test('DELIBERATE_SKIP_REASONS is exactly the non-failure skips the module emits', () => {
+  const sibling = (labels) => { const w = happyWorld(); w.issues[12].labels = labels; return w; };
+  const openSibling = () => { const w = happyWorld(); w.issues[12] = { state: 'OPEN', title: 'Twelve' }; return w; };
+  const worlds = [
+    [happyWorld({ parentLabels: { 10: ['enhancement'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'needs:decision'] } })],
+    [happyWorld(), { unsettled: [12] }],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:pending'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:approved'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:changes-requested'] } })],
+    [openSibling()],
+    [sibling(['risk:high'])],
+    [happyWorld({ parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } })],
+    [happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: 'REOPENED', comments: [] } } })],
+  ];
+  const failures = new Set(['gh-failed', 'internal-error', 'invalid-risk-floor']);
+  const emitted = new Set();
+  for (const [world, over] of worlds) {
+    const { gh } = makeGh(world);
+    for (const s of closeBelowFloorParents(base({ gh, ...over })).skipped) emitted.add(s.reason);
+  }
+  for (const reason of failures) assert.ok(!DELIBERATE_SKIP_REASONS.includes(reason), `${reason} is a failure`);
+  assert.ok(Object.isFrozen(DELIBERATE_SKIP_REASONS));
+  assert.deepEqual([...emitted].sort(), [...DELIBERATE_SKIP_REASONS].sort());
 });
 
 test('two closing records sharing a parent evaluate that parent once', () => {

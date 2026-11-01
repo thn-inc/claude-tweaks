@@ -9,6 +9,7 @@ const {
   postMerge, postMergeOne, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
+const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
 
 // The real clock at load: claim-file mtimes the code writes are real, so `now` must agree with them.
 const NOW = Date.now();
@@ -1252,6 +1253,20 @@ test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate 
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }) });
   assert.equal(loop.entries.length, 1);
   assert.ok(!('parentFailures' in loop.entries[0]));
+});
+
+// Driven from the producer's own list, so a member added there is covered here with no edit.
+test('I1: every reason below-floor-parent-close.js exports as deliberate leaves parentFailures empty', async () => {
+  assert.ok(DELIBERATE_SKIP_REASONS.length > 0, 'the producer exports a non-empty list');
+  const root = mainCheckout();
+  for (const [i, reason] of DELIBERATE_SKIP_REASONS.entries()) {
+    const dir = addRun(root, `2026-10-30T09${String(i).padStart(4, '0')}-spec-${i + 1}`);
+    const entry = await postMergeOne(oneArgs(root, dir, {
+      prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 88, reason }] }),
+    }));
+    assert.equal(entry.action, 'ran', reason);
+    assert.deepEqual(entry.parentFailures, [], reason);
+  }
 });
 
 test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, never a garbled #{n}', async () => {

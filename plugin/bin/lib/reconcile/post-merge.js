@@ -78,7 +78,7 @@ const { appendEntries, formatEntry, parseEntry } = require('../log-decision/appe
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { resolveWithin } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
-const { closeBelowFloorParents } = require('../issues/below-floor-parent-close');
+const { closeBelowFloorParents, DELIBERATE_SKIP_REASONS } = require('../issues/below-floor-parent-close');
 const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
@@ -95,14 +95,11 @@ const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIM_FILENAME = '.post-merge.lock';
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
-// Step 4.0b skips that are deliberate gate outcomes, not failures: closeBelowFloorParents' own reasons plus
-// the parentGateState verdicts its skipReason passes through (`resolved`, `gated`, `incomplete`). Every other
-// reason — `gh-failed`, `internal-error`, the step-wide `unreadable-policy` / `invalid-risk-floor`, and any
-// reason added later — is a failure, so a new skip surfaces loudly rather than reading as a clean close.
-const DELIBERATE_PARENT_SKIPS = new Set([
-  'not-parent-issue-labeled', 'needs-label', 'sibling-unsettled', 'resolved', 'gated', 'incomplete',
-  'above-floor', 'already-closed', 'reopened-by-human',
-]);
+// Step 4.0b skips that are deliberate gate outcomes, not failures: below-floor-parent-close.js's own list,
+// owned by the module that emits them. Every other reason — `gh-failed`, `internal-error`, the step-wide
+// `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
+// failure, so a new skip surfaces loudly rather than reading as a clean close.
+const DELIBERATE_PARENT_SKIPS = new Set(DELIBERATE_SKIP_REASONS);
 
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
