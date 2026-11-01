@@ -49,8 +49,10 @@ function runHook(args, { input = '', cwd = HOOK_SANDBOX, env = {} } = {}) {
   }
 }
 
+// stderr is piped, not inherited: clone-of-an-empty-origin warnings and the
+// expected failures asserted below would otherwise print into the test output.
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
 }
 
 // Two-repo fixture: `origin` (bare) + a clone that plays the role of the
