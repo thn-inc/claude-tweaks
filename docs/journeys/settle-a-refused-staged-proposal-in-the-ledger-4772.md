@@ -30,7 +30,11 @@ files:
 - **Should understand:**
   - This is the one reopen `_shared/ledger-format.md`'s Resolution-text requirements allow, and the rule is stated there. The deferral never completed, so returning the row to `open` restores its true state, not a reversal of a decision.
   - Only a `deferred` row reopens. A row in another status, such as an `acknowledged` ops item whose staged proposal was refused, falls through to the no-origin branch.
+  - The staged file is deleted only after the status write lands. When the active ledger does not resolve to one file, or the write fails, neither changes: the proposal stays staged as if no row named it, and its `REFUSED` line keeps the `kept staged.` ending.
   - Under `--dry-run`, the status flip and the staged-file deletion are previewed, not applied.
+  - The producers write the path this step matches. `review/step3-routing.md`'s record-proposal paragraph and `_shared/ledger-format.md`'s Defer/Keep bullets both record the staged path in the row's Resolution, spec-qualified in a multi-spec run.
+  - `ledger/SKILL.md`'s "Reopening resolved items" anti-pattern row points at this exception instead of restating it.
+  - `tests/deferral-gate-conformance.test.js` pins the Ledger origin wording, the exception sentence, the spec-qualified path rule with its step 3 pointer, and the Reopening row. Each pin has a go-red companion test that proves it can fail.
 - **Red flags:**
   - A `deferred` row still naming a `staged/…` file that no longer exists after the run closes. That is the #4772 failure shape: `parseLedger` reads only the Resolution text, so it counted the row complete and the finding was lost.
   - A prefix or glob match reopening the wrong row.
