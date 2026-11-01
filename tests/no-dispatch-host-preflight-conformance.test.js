@@ -54,6 +54,7 @@ const POLICY_FACTS = [
   [/`\{received target\}` is the `#\{n\}` or design-doc path the build received/, 'AC3.1: design-mode build has no record number'],
   [/Under `subagent-only` that line is omitted/, 'AC3.2: subagent-only omits batched'],
   [/--status SKIP --text "condition: no Agent\/Task tool in this host → fallback: run stopped before build; resume from a top-level session"/, 'AC4.1: SKIP line in condition → fallback shape'],
+  [/--run "\$PIPELINE_RUN_DIR" --section "\/\{flow\|build\}" --step "\{Step 2\.4 \| Common Step 1\.5\} dispatch-capability preflight \(skipped\)" /, 'AC4.1: SKIP line carries the canonical --section and --step flags'],
   [/at flow Step 2\.4 only when it already has `config\.yml`/, 'D3: flow 2.4 logs only into a dir with config.yml'],
   [/otherwise the `SKIP` text goes in the stop report only, so a resume never adopts the directory as a recovery \(`flow\/steps-and-gates\.md`'s case 3\)/, 'D3: no config.yml → stop report only, never case 3'],
   [/Under `\/claude-tweaks:dispatch` \(`run-state\.json` `dispatched: true`, headless or not\), report through its existing channel/, 'AC4.2: every dispatched call reports the gate line, not only headless'],

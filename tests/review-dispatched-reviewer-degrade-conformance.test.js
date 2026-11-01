@@ -186,6 +186,7 @@ test('the item-7 cross-reference assertions can go red', () => {
 const RUN_LEVEL_PREFIX = '> **No `Agent` tool in this host (run-level, #4555).**';
 const RUN_LEVEL_FACTS = [
   [/When Step 3 starts, probe once with `_shared\/subagent-dispatch-core\.md`'s no-`Agent` probe/, 'AC6.1: run-level probe at Step 3 start'],
+  [/--run "\$PIPELINE_RUN_DIR" --section "\/review" --step "Step 3 lens dispatch \(degraded\)" /, 'AC6.1: the SKIP line carries the canonical --section and --step flags'],
   [/--status SKIP --text "condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself"/, 'AC6.1: one run-level log line'],
   [/render `review-summary-template\.md`'s \*\*Independence: degraded\*\* line, which the PR verdict comment copies/, 'AC6.1: caveat reaches summary and verdict comment'],
   [/The per-lens single-read lines below and the tiebreak's ` Mode: inline\.`\/`Tiebreak caveat:` lines still write, unchanged/, 'AC6.2: per-lens and tiebreak lines unchanged'],
@@ -249,8 +250,23 @@ test('the compact-Independence assertion can go red', () => {
 const TIEBREAK_CAVEAT_LINE = '{only when a verdict was read inline — `step3-tiebreak.md`\'s Dispatched reviewer section:} **Tiebreak caveat:** {n} verdict(s) read inline by the reviewer, not an independent agent ({reason, e.g. no `Agent` tool, timed out})';
 const COVERAGE_CAVEAT_LINE = '**Coverage caveat:** {every affected lens with its reason, e.g. 3b (timed out), 3c (unavailable)} — single-read coverage, findings unconfirmed';
 
+function unchangedCaveatLinesMissing(text) {
+  const missing = [];
+  if (!text.includes(TIEBREAK_CAVEAT_LINE)) missing.push('the Tiebreak caveat slot line');
+  if (text.split(COVERAGE_CAVEAT_LINE).length - 1 !== 2) missing.push('both Coverage caveat slot lines');
+  return missing;
+}
+
 test('AC6.2: the per-lens and tiebreak caveat lines are unchanged (#4555)', () => {
+  assert.deepEqual(unchangedCaveatLinesMissing(readText(SUMMARY_TEMPLATE)), [], 'the Tiebreak and Coverage caveat slot lines must survive byte-for-byte alongside the Independence line (#4555)');
+});
+
+test('the unchanged-caveat-lines assertion can go red', () => {
   const text = readText(SUMMARY_TEMPLATE);
-  assert.ok(text.includes(TIEBREAK_CAVEAT_LINE), 'the Tiebreak caveat slot line must survive byte-for-byte alongside the Independence line (#4555)');
-  assert.equal(text.split(COVERAGE_CAVEAT_LINE).length - 1, 2, 'both Coverage caveat slot lines must survive (#4555)');
+  const noTiebreak = text.replace(TIEBREAK_CAVEAT_LINE, '');
+  assert.notEqual(noTiebreak, text, 'anchor text for the Tiebreak caveat line not found — proof cannot discriminate');
+  assert.deepEqual(unchangedCaveatLinesMissing(noTiebreak), ['the Tiebreak caveat slot line']);
+  const oneCoverage = text.replace(COVERAGE_CAVEAT_LINE, '');
+  assert.notEqual(oneCoverage, text, 'anchor text for the Coverage caveat line not found — proof cannot discriminate');
+  assert.deepEqual(unchangedCaveatLinesMissing(oneCoverage), ['both Coverage caveat slot lines']);
 });
