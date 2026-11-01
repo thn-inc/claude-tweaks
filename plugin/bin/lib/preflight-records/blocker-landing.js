@@ -1,0 +1,222 @@
+// bin/lib/preflight-records/blocker-landing.js
+// Out-of-run blocker landing check (#4553). /flow's pre-flight used to read a
+// CLOSED blocked-by prerequisite as satisfied even when the commit that closed
+// it never reached the integration branch (a PR merged into `production`, say,
+// while the run builds on `dev`). This module judges each out-of-run blocker
+// with one of five verdicts: `open`, `landed`, `unlanded`, `not-applicable`
+// (closed NOT_PLANNED / DUPLICATE — nothing was meant to land), and
+// `undetermined` (this one blocker cannot be judged: unresolvable number, no
+// candidate commit, or a failed reachability probe). Each result is exactly
+// `{ blocker, verdict, commit, via }`.
+//
+// Candidate commits are the UNION of the recorded closer (a merged PR's
+// mergeCommit, or a closing Commit) and every merged closedByPullRequests
+// reference, closer first, deduped by sha; the blocker is `landed` when ANY
+// candidate is reachable from the integration branch — a fix merged into
+// `dev` by a second PR counts, whatever the closer was.
+//
+// A whole-query failure (the GraphQL call throwing, unparseable output, no
+// data.repository, any non-NOT_FOUND error) is never `undetermined`:
+// fetchBlockerLanding returns `{results: null, error}` and the CLI stops the
+// run. The one recovered throw is NOT_FOUND-only: `gh api graphql` exits 1
+// when any alias fails to resolve but still prints the partial data, so when
+// every error is a NOT_FOUND on a requested `b{n}` alias the call counts as
+// succeeded and that blocker reads `undetermined`/`not-found`.
+//
+// Reachability goes through the REST compare API, not local git: the local
+// clone may be shallow or stale (a cloud sandbox's usually is), and answering
+// locally would need a `git fetch` of the integration branch — a side effect
+// pre-flight must not have. `buildNativeDependencyQuery` is deliberately not
+// reused: it reads a dependent's blockedBy edges, while this needs each
+// blocker's own state, stateReason, and closing sources.
+//
+// The runner is a required parameter (no defaultRunner here): runner(args) is
+// invoked as if `gh ${args.join(' ')}` and returns stdout; a throw is a
+// failed call — the bin/lib/issues/native-dependencies.js contract.
+'use strict';
+
+const { errorText } = require('./preflight-records');
+
+const NOT_APPLICABLE_REASONS = new Set(['NOT_PLANNED', 'DUPLICATE']);
+
+function result(blocker, verdict, commit, via) {
+  return { blocker, verdict, commit, via };
+}
+
+// blockers: number[] -> the aliased query string, or null for empty/non-array.
+function buildBlockerLandingQuery(blockers) {
+  if (!Array.isArray(blockers) || blockers.length === 0) return null;
+  const fields = blockers
+    .map((n) => `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
+    .join(' ');
+  return `query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ ${fields} } }`;
+}
+
+const mergedOid = (p) => (p && p.merged === true && p.mergeCommit && p.mergeCommit.oid) || null;
+
+// A b{n} issue node -> [{sha, via}]: the closer first, then each merged
+// closing-PR reference, deduped by sha keeping the first. An unmerged PR
+// (closer or reference) contributes nothing.
+function candidateCommits(node) {
+  const out = [];
+  const seen = new Set();
+  const add = (sha, via) => {
+    if (typeof sha !== 'string' || !sha || seen.has(sha)) return;
+    seen.add(sha);
+    out.push({ sha, via });
+  };
+  const events = (node && node.timelineItems && Array.isArray(node.timelineItems.nodes)) ? node.timelineItems.nodes : [];
+  const closer = events.length ? events[events.length - 1] && events[events.length - 1].closer : null;
+  if (closer && closer.__typename === 'PullRequest') add(mergedOid(closer), 'closer-pr');
+  else if (closer && closer.__typename === 'Commit') add(closer.oid, 'closer-commit');
+  const refs = (node && node.closedByPullRequestsReferences && Array.isArray(node.closedByPullRequestsReferences.nodes))
+    ? node.closedByPullRequestsReferences.nodes : [];
+  for (const ref of refs) add(mergedOid(ref), 'closing-pr-ref');
+  return out;
+}
+
+// compare API `.status` stdout -> reachable | unreachable | error.
+function reachabilityFromStatus(status) {
+  const s = typeof status === 'string' ? status.trim() : '';
+  if (s === 'identical' || s === 'behind') return 'reachable';
+  if (s === 'ahead' || s === 'diverged') return 'unreachable';
+  return 'error';
+}
+
+// The REST path is caller-built, so its interpolated owner/repo get their own
+// guard (gh-api-module-pattern: no bound-variable escape hatch for a path).
+function repoSegmentError(owner, repo) {
+  for (const [name, v] of [['owner', owner], ['repo', repo]]) {
+    if (typeof v !== 'string' || !v || v === '.' || v === '..') return `invalid ${name} for the compare API path: ${JSON.stringify(v)}`;
+  }
+  return null;
+}
+
+// The reachability read. No -f/-F field (it would flip gh api to POST); the
+// branch is encoded per segment so `#`/`%` cannot address another ref.
+function compareArgs({ owner, repo, host, integrationBranch, sha }) {
+  const bad = repoSegmentError(owner, repo);
+  if (bad) throw new Error(bad);
+  const encodedBase = integrationBranch.split('/').map(encodeURIComponent).join('/');
+  const args = ['api', `repos/${owner}/${repo}/compare/${encodedBase}...${sha}`, '--jq', '.status'];
+  if (host && host !== 'github.com') args.push('--hostname', host);
+  return args;
+}
+
+// blocker, its b{n} node (null/absent when unresolved), sha -> reachability
+// map -> one result. Rules apply in order.
+function classifyBlocker(blocker, node, reach) {
+  if (!node) return result(blocker, 'undetermined', null, 'not-found');
+  if (node.state === 'OPEN') return result(blocker, 'open', null, 'state');
+  if (NOT_APPLICABLE_REASONS.has(node.stateReason)) return result(blocker, 'not-applicable', null, 'state-reason');
+  const candidates = candidateCommits(node);
+  if (!candidates.length) return result(blocker, 'undetermined', null, 'no-candidate');
+  const landed = candidates.find((c) => reach.get(c.sha) === 'reachable');
+  if (landed) return result(blocker, 'landed', landed.sha, landed.via);
+  const failed = candidates.find((c) => reach.get(c.sha) !== 'unreachable');
+  if (failed) return result(blocker, 'undetermined', failed.sha, 'probe-failed');
+  return result(blocker, 'unlanded', candidates[0].sha, candidates[0].via);
+}
+
+function undeterminedAll(blockers, via) {
+  return blockers.map((n) => result(n, 'undetermined', null, via));
+}
+
+// The gh-absent (--blocker-states-json) classifier over one MCP-fetched
+// `{state, stateReason|state_reason}` entry. A closed blocker cannot be
+// judged for landing without gh, so it reads undetermined unless its reason
+// says nothing was meant to land. null = no recognisable state (the CLI
+// turns it into exit 2).
+function classifyFromState(blocker, entry) {
+  if (!entry || typeof entry !== 'object') return null;
+  const state = typeof entry.state === 'string' ? entry.state.toLowerCase() : null;
+  if (state === 'open') return result(blocker, 'open', null, 'records-json');
+  if (state !== 'closed') return null;
+  const reason = entry.stateReason ?? entry.state_reason;
+  if (typeof reason === 'string' && NOT_APPLICABLE_REASONS.has(reason.toUpperCase())) {
+    return result(blocker, 'not-applicable', null, 'state-reason');
+  }
+  return result(blocker, 'undetermined', null, 'records-json');
+}
+
+// parsed response -> the repository object when `errors` is non-empty and
+// every entry is a NOT_FOUND on a requested b{n} alias; else null.
+function notFoundOnlyRepository(parsed, blockers) {
+  const repository = parsed && parsed.data && parsed.data.repository;
+  if (!repository || typeof repository !== 'object') return null;
+  const errors = parsed.errors;
+  if (!Array.isArray(errors) || errors.length === 0) return null;
+  const requested = new Set(blockers.map((n) => `b${n}`));
+  const ok = errors.every((e) => e && e.type === 'NOT_FOUND'
+    && Array.isArray(e.path) && e.path.length === 2 && e.path[0] === 'repository' && requested.has(e.path[1]));
+  return ok ? repository : null;
+}
+
+// A thrown GraphQL call -> the partial repository when its stdout carries a
+// NOT_FOUND-only error list; else null (a whole-query failure).
+function recoverNotFound(err, blockers) {
+  if (!err || err.stdout == null) return null;
+  let parsed;
+  try { parsed = JSON.parse(String(err.stdout)); } catch { return null; }
+  return notFoundOnlyRepository(parsed, blockers);
+}
+
+const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type)) || JSON.stringify(e)).join('; ');
+
+// -> { results: Map<number, result>|null, error: string|null }; results is
+// null exactly when error is set (a whole-query failure — never per-blocker
+// undetermined).
+function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, runner }) {
+  if (!Array.isArray(blockers) || blockers.length === 0) return { results: new Map(), error: null };
+  const bad = repoSegmentError(owner, repo)
+    || (typeof integrationBranch !== 'string' || !integrationBranch ? 'integrationBranch is required' : null);
+  if (bad) return { results: null, error: bad };
+
+  const query = buildBlockerLandingQuery(blockers);
+  const args = ['api', 'graphql', ...(host && host !== 'github.com' ? ['--hostname', host] : []),
+    '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
+  let repository;
+  let out;
+  try {
+    out = runner(args);
+  } catch (err) {
+    repository = recoverNotFound(err, blockers);
+    if (!repository) return { results: null, error: errorText(err) };
+  }
+  if (!repository) {
+    let parsed;
+    try { parsed = JSON.parse(out); } catch (err) {
+      return { results: null, error: `unparseable GraphQL response: ${errorText(err)}` };
+    }
+    const errors = Array.isArray(parsed && parsed.errors) ? parsed.errors : [];
+    repository = parsed && parsed.data && parsed.data.repository;
+    if (!repository || typeof repository !== 'object') {
+      return { results: null, error: `GraphQL response has no data.repository${errors.length ? `: ${errorMessages(errors)}` : ''}` };
+    }
+    if (errors.length && !notFoundOnlyRepository(parsed, blockers)) {
+      return { results: null, error: `GraphQL errors: ${errorMessages(errors)}` };
+    }
+  }
+
+  const reach = new Map();
+  for (const n of blockers) {
+    const node = repository[`b${n}`];
+    if (!node || node.state !== 'CLOSED' || NOT_APPLICABLE_REASONS.has(node.stateReason)) continue;
+    for (const { sha } of candidateCommits(node)) {
+      if (reach.has(sha)) continue;
+      try {
+        reach.set(sha, reachabilityFromStatus(runner(compareArgs({ owner, repo, host, integrationBranch, sha }))));
+      } catch {
+        reach.set(sha, 'error');
+      }
+    }
+  }
+  const results = new Map();
+  for (const n of blockers) results.set(n, classifyBlocker(n, repository[`b${n}`], reach));
+  return { results, error: null };
+}
+
+module.exports = {
+  buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
+  classifyBlocker, undeterminedAll, classifyFromState, recoverNotFound, fetchBlockerLanding,
+};
