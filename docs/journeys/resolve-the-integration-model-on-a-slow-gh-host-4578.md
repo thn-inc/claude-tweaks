@@ -56,4 +56,5 @@ files:
 ## Origin
 - Created during build of #4578 (policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge)
 - Steps 1-4 built in this session; step 5 is the existing pin/timeout override, now named in the degrade line
+- Step 4 extended during build of #4830 (run-scoped forge degrade memo): a hung `gh` now costs the PR-stamp gate one probe per `FORGE_DEGRADE_MEMO_TTL_MS` window instead of one per covered call
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same slow host's draft-PR path), `resolve-a-policy-key.md`
