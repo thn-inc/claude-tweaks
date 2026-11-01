@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793571991813
+    "lastAuditedMs": 1793574408533
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -153,7 +153,7 @@
   },
   "skill:prose-code-twin-pin": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793570452052
+    "lastAuditedMs": 1793574410070
   },
   "skill:code-health-focus-vertical": {
     "lastAuditedSha": null,
