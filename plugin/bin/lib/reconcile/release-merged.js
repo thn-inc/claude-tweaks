@@ -25,6 +25,7 @@ const { readCache, writeCache } = require('./cache');
 const { runWithConcurrency } = require('./gh-pool');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 const { GH_TIMEOUT_MS, runClassified, runClassifiedAsync } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 // Does a MERGED PR actually close issue `issueNumber` in `repoSlug`? Pure.
 // Signals: the PR's `closingIssuesReferences` (matched on number AND
@@ -168,10 +169,11 @@ function buildFailure(e) {
 }
 
 function ghApi(args) {
+  const ghArgs = ['api', ...args];
   return runClassified(
-    () => buildSuccess(execFileSyncTimed('gh', ['api', ...args], {
+    () => buildSuccess(execFileSyncTimed('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-    })),
+    }))),
     buildFailure,
     { retryOnTimeout: true },
   );
@@ -180,7 +182,7 @@ function ghApi(args) {
 // Raw `gh` runner for the shared write path below (ghApi prepends `api` and
 // swallows failures; writeTombstoneShared composes its own argv and needs the throw).
 function ghRunner(args) {
-  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true });
+  return execFileSyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS, windowsHide: true }));
 }
 
 // Both delegate to claim-store.js's one contents-API implementation.
@@ -218,9 +220,10 @@ function readClaim(repoSlug, name, api = ghApi) {
 // execFileSync, which blocks the whole event loop regardless of how the
 // calling code is structured.
 async function ghApiAsync(args) {
+  const ghArgs = ['api', ...args];
   return runClassifiedAsync(
     async () => {
-      const { stdout } = await execFileAsyncTimed('gh', ['api', ...args], { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+      const { stdout } = await execFileAsyncTimed('gh', ghArgs, ghOptions(ghArgs, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }));
       return buildSuccess(stdout);
     },
     buildFailure,

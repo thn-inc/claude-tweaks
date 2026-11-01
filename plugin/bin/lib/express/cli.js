@@ -45,7 +45,7 @@ const { checkFirstCallStamp } = require('../dispatch/first-call-artifact-check')
 const { formatEntry, appendEntry, parseEntry, resolveTarget } = require('../log-decision/append');
 const { hasCanonicalClaimLogFor } = require('../log-decision/claim-log');
 const { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy } = require('./policy');
-const { ghAvailable } = require('../repo-resolve');
+const { ghAvailable, ghOptions } = require('../repo-resolve');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 // Read through the module at call time: GH_TIMEOUT_MS is a lazy getter (a policy read).
 const sharedPrimitives = require('../shared-primitives');
@@ -472,7 +472,7 @@ function run(argv, deps = realDeps) {
 }
 
 const realDeps = {
-  gh: (args, opts = {}) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true }),
+  gh: (args, opts = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: opts.timeout || sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: 64 * 1024 * 1024, windowsHide: true })),
   ghAvailable: () => ghAvailable(),
   git: defaultGit,
   readFile: defaultReadFile,

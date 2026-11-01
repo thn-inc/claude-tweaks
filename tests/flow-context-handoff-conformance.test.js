@@ -5,8 +5,9 @@
 // starts in a fresh agent from {run}/handoff.json. Pins the Step 4 call site,
 // context-handoff.md's two branches (a dispatched call reports
 // `OUTCOME: handoff` + `NEXT_STEPS:` — the contract Task 9's dispatcher reads;
-// a top-level run hands off to one fresh Agent), the fail-open rule, and the
-// template's verbatim copy of dispatch/task-prompt.md's async-wait item.
+// a top-level run hands off to one fresh Agent), the fail-open rule, the
+// template's verbatim copy of dispatch/task-prompt.md's async-wait item, and its
+// worktree shell-constraint item (#4728).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -115,6 +116,47 @@ test('the verbatim-copy check can go red: one changed word in the copy fails it'
   const doctored = squash(tpl).replace('at most 60 (20 minutes)', 'at most 90 (30 minutes)');
   assert.notEqual(doctored, squash(tpl), 'the doctoring anchor is gone from the template');
   assert.ok(!doctored.includes(body));
+});
+
+// #4728: the continuation child inherits the worktree, so the harness's Bash-shape
+// refusals reach it too. The item cites scratch-worktree.md §7 and
+// subagent-dispatch-core.md's "One plain command per Bash call" rather than
+// restating the refusal table, and forwards the constraint to any dispatched agent.
+function shellItemGaps(tpl) {
+  const s = squash(tpl);
+  const gaps = [];
+  if (!/scratch-worktree\.md`?\s*§7/.test(s)) gaps.push('the scratch-worktree.md §7 citation');
+  if (!s.includes('One plain command per Bash call')) gaps.push('the "One plain command per Bash call" citation');
+  if (!/[Ff]orward this constraint to any agent you dispatch/.test(s)) gaps.push('the forward-to-dispatched-agents instruction');
+  return gaps;
+}
+
+test('the continuation template carries the worktree shell-constraint item: cites scratch-worktree.md §7 and "One plain command per Bash call", and forwards it to dispatched agents', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  assert.deepEqual(shellItemGaps(tpl), []);
+});
+
+test('the shell-constraint check can go red: the item removed from the template fails it', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const item = region(tpl, 'Worktree shell constraint:', 'Plugin root:', 'shell-constraint item');
+  const without = tpl.replace(item, '');
+  assert.notEqual(without, tpl, 'the item anchor is gone from the template');
+  assert.ok(shellItemGaps(without).length > 0, 'the check must report the removed item as missing');
+});
+
+test('each sub-check can go red on its own: removing one citation or the forward sentence reports exactly that gap', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const s = squash(tpl);
+  const cases = [
+    ['scratch-worktree.md` §7', 'scratch-worktree.md` (refusal table)', 'the scratch-worktree.md §7 citation'],
+    ['One plain command per Bash call', 'One shell rule', 'the "One plain command per Bash call" citation'],
+    ['Forward this constraint to any agent you dispatch', 'Note this constraint', 'the forward-to-dispatched-agents instruction'],
+  ];
+  for (const [anchor, swap, gap] of cases) {
+    const doctored = s.replace(anchor, swap);
+    assert.notEqual(doctored, s, `the anchor ${JSON.stringify(anchor)} is gone from the template`);
+    assert.deepEqual(shellItemGaps(doctored), [gap]);
+  }
 });
 
 test("steps-and-gates.md's Partial step lists: a handed-off run renders the partial note naming handoff.json", () => {

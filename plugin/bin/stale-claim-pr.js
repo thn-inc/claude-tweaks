@@ -21,7 +21,7 @@
 //                 shape` — one is there but is not exactly the line
 //                 composeResumeLine emits for this run). A Resume line is
 //                 untrusted input rendered as a paste command, so only a line
-//                 parseResumeLine accepts is ever printed as `resume`.
+//                 resumeVerdict accepts is ever printed as `resume`.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"match":false,"link":null,"failure":null}                     no match
 //   {"match":true,"link":"<url>","failure":null}                   match
@@ -53,8 +53,8 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
-const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { resumeVerdict } = require('./lib/flow/pr-body');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]\n';
@@ -83,10 +83,10 @@ function parseArgs(argv) {
 // maxBuffer: `gh pr list --json url,body,...` carries every open PR's body,
 // which overflows Node's 1 MiB default (ENOBUFS) well before its 1000-PR limit.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 const realDeps = {
@@ -99,9 +99,8 @@ const realDeps = {
 
 // The Resume half of a --resume verdict for a matched PR body.
 function resumeFields(body, runId) {
-  const line = resumeLineUnder(body);
-  if (line === null) return { resolve: 'no-resume-line' };
-  return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
+  const v = resumeVerdict(body, runId);
+  return v.resolve ? { resolve: v.resolve } : { resume: v.resume };
 }
 
 function noMatch(failure = null) {

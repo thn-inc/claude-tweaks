@@ -20,10 +20,16 @@ const {
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
-const { repoSlug } = require('../repo-resolve');
+const { repoSlug, ghOptions } = require('../repo-resolve');
+
+// Every call here contacts GitHub, so each is bounded (an unbounded execFileSync
+// hangs pre-flight on a black-holed remote). 30s, not the 5s single-call default:
+// the same runner carries the batched alias GraphQL reads and --blocker-landing's
+// compare fan-out (fetch-sub-issues.js's batched runner is bounded the same way).
+const GH_CALL_TIMEOUT_MS = 30000;
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_CALL_TIMEOUT_MS, windowsHide: true }));
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a
@@ -171,6 +177,26 @@ function buildDirectOverlaps(records) {
   return pairs.sort((x, y) => x.a - y.a || x.b - y.b);
 }
 
+// #4553: the out-of-run blockers behind --blocker-landing. records (the
+// buildRecords output), numbers (the run's positional record numbers) ->
+// { byRecord: Map<number, number[]>, union: number[] }. Per record its
+// blockedBy minus every positional number (order kept) — a blocker that is
+// itself in the run is ordered by the wave/DAG logic, never judged for
+// landing — and the union of those, deduped and ascending, which is the one
+// batch the blocker query takes.
+function outOfRunBlockers(records, numbers) {
+  const inRun = new Set(numbers);
+  const byRecord = new Map();
+  const union = new Set();
+  for (const n of numbers) {
+    const rec = records[String(n)];
+    const out = ((rec && rec.blockedBy) || []).filter((b) => !inRun.has(b));
+    byRecord.set(n, out);
+    for (const b of out) union.add(b);
+  }
+  return { byRecord, union: [...union].sort((a, b) => a - b) };
+}
+
 module.exports = {
-  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups, buildDirectOverlaps,
+  defaultRunner, errorText, fetchIssues, issuesFromRecordsJson, fetchNativeDependencies, buildRecords, buildOverlapGroups, buildDirectOverlaps, outOfRunBlockers,
 };
