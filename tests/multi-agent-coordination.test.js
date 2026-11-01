@@ -1673,8 +1673,8 @@ function assertMode2AutoResolutionMatchesTable(text) {
     assert.ok(sentence, `Auto-resolution does not name \`${outcome}\``);
     assert.ok(sentence.includes(status), `Auto-resolution names \`${outcome}\` without ${status} in its sentence: ${sentence}`);
   }
-  assert.doesNotMatch(paragraph, /all three outcomes auto-resolve/i);
-  assert.ok(paragraph.includes('ask the user inline'));
+  assert.doesNotMatch(paragraph, /all three outcomes auto-resolve/i, 'Mode 2 Auto-resolution restates "all three outcomes auto-resolve"');
+  assert.ok(paragraph.includes('ask the user inline'), 'Mode 2 Auto-resolution still states no outcome is "ask the user inline"');
 }
 
 test('AC1.1: Mode 2 Auto-resolution names each outcome with the status its table gives', () => {
@@ -1686,5 +1686,20 @@ test('go-red: Mode 2 Auto-resolution check fails on the pre-#4810 sentence', () 
   const broken = PRIMITIVE_DOC.replace(mode2AutoResolutionParagraph(PRIMITIVE_DOC), PRE_4810);
   // Control: the fixture's Mode 2 paragraph is the pre-#4810 sentence, so the throw below tests that sentence.
   assert.strictEqual(mode2AutoResolutionParagraph(broken), PRE_4810);
-  assert.throws(() => assertMode2AutoResolutionMatchesTable(broken));
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(broken), { name: 'AssertionError', message: /does not name `confirmed`/ });
+});
+
+test('go-red: Mode 2 Auto-resolution check fails on a restated auto-resolve claim or a dropped inline rule', () => {
+  const LIVE = mode2AutoResolutionParagraph(PRIMITIVE_DOC);
+  // (a) the live paragraph plus a restated auto-resolve claim
+  const SUFFIX = ' All three outcomes auto-resolve.';
+  const restated = PRIMITIVE_DOC.replace(LIVE, LIVE + SUFFIX);
+  // Control: the fixture's Mode 2 paragraph is the live paragraph plus the restated claim, so the throw below tests that claim.
+  assert.strictEqual(mode2AutoResolutionParagraph(restated), LIVE + SUFFIX);
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(restated), { name: 'AssertionError', message: /restates "all three outcomes auto-resolve"/ });
+  // (b) the live paragraph with the inline rule replaced
+  const dropped = PRIMITIVE_DOC.replace(LIVE, LIVE.replace('ask the user inline', 'prompt anyone'));
+  // Control: the fixture's Mode 2 paragraph no longer includes the inline rule, so the throw below tests its absence.
+  assert.ok(!mode2AutoResolutionParagraph(dropped).includes('ask the user inline'));
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(dropped), { name: 'AssertionError', message: /still states no outcome is "ask the user inline"/ });
 });

@@ -126,7 +126,7 @@ Two judging agents each return a verdict. Resolution table:
 
 ### Auto-resolution
 
-No outcome is "ask the user inline." A `confirmed` outcome logs AUTO. An `unconfirmed` or `contested` outcome logs STAGED and goes to the Review Console, which is the user-facing gate (see Anti-Patterns).
+No outcome is "ask the user inline." A `confirmed` outcome logs AUTO. An `unconfirmed` or `contested` outcome logs STAGED. On `/review` it first goes to its tiebreak (`review/step3-tiebreak.md`); the Review Console, the user-facing gate (see Anti-Patterns), handles what is left.
 
 ### Dispatch template (inline in caller's Task() calls)
 
