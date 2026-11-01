@@ -5,7 +5,7 @@
 // all reach it through bin/compose-subject.js. Conventional Commits grammar
 // (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
-// _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
+// _shared/github-pr-scan-triage.md's auto-merged-this-week metric matches the tag
 // anywhere in the message), a required `Release-Note: {line}` paragraph
 // (single-line by construction — see the inline comment at its push site),
 // `Fixes #n` footer lines (`Refs #n` for a `keepOpen` number: it still counts
