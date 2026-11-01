@@ -36,6 +36,7 @@ const { withLock } = require('../file-lock');
 const { writeFileAtomic } = require('../atomic-write');
 const { lstatType } = require('../path-guard');
 const { LEVER_KEYS } = require('./preflight');
+const { FORGE_DEGRADE_REASONS } = require('../policy-schema');
 
 // confirm/hybrid gate the Manifesto on an approval (and may override levers),
 // so they keep manifesto.md's hand procedure; interactive runs no Manifesto.
@@ -43,8 +44,9 @@ const MODES = Object.freeze(['auto']);
 const MODE_SOURCES = Object.freeze(['arg', 'dispatch', 'policy', 'default']);
 const CEREMONIES = Object.freeze(['fast-lane', 'standard']);
 const CEREMONY_SOURCES = Object.freeze(['label', 'judged']);
-// resolve-policy's `degraded` reason codes on a degraded forge detection (#4578).
-const DEGRADED_REASONS = Object.freeze(['timeout', 'timeout-then-exit']);
+// resolve-policy's `degraded` reason codes on a degraded forge detection (#4578),
+// read from the producer's own list (policy-schema.js) so the two cannot drift.
+const DEGRADED_REASONS = FORGE_DEGRADE_REASONS;
 const SECTION = '/flow';
 // `created:` is the run id's timestamp prefix (_shared/run-dir-resolution.md's
 // ISO-timestamp rule: YYYY-MM-DDTHHMMSS, UTC, no colons).

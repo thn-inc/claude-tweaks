@@ -767,10 +767,16 @@ function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
   return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
 }
 
+// The reason codes of detectIntegrationModel's degrade object — the one
+// producer-side list: the producer below and every consumer that validates a
+// reason code (lib/flow/manifesto-write.js) read it, so they cannot drift.
+const FORGE_DEGRADE_REASON = Object.freeze({ TIMEOUT: 'timeout', TIMEOUT_THEN_EXIT: 'timeout-then-exit' });
+const FORGE_DEGRADE_REASONS = Object.freeze(Object.values(FORGE_DEGRADE_REASON));
+
 // Renders detectIntegrationModel's degrade object for a human: one string per
 // reason, shared by every surface that reports it.
 function formatForgeDegrade(degrade) {
-  if (degrade.reason === 'timeout-then-exit') {
+  if (degrade.reason === FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT) {
     return `forge detection timed out after ${degrade.timeoutMs} ms, then gh failed on retry`;
   }
   return `forge detection timed out after ${degrade.timeoutMs} ms (x2)`;
@@ -847,7 +853,7 @@ function detectIntegrationModel(repoRoot, opts = {}) {
   if (second === 'ok') return 'pr-first';
   if (typeof onDegrade === 'function') {
     try {
-      onDegrade({ reason: second === 'timeout' ? 'timeout' : 'timeout-then-exit', timeoutMs: ghTimeoutMs, attempts: 2 });
+      onDegrade({ reason: second === 'timeout' ? FORGE_DEGRADE_REASON.TIMEOUT : FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT, timeoutMs: ghTimeoutMs, attempts: 2 });
     } catch {
       // A reporting callback must never break "never throws".
     }
@@ -989,4 +995,5 @@ module.exports = {
   POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
+  FORGE_DEGRADE_REASONS,
 };

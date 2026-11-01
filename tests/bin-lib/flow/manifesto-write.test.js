@@ -517,9 +517,18 @@ test('CLI: an invalid integration-model in policy.yml (resolves to null) still e
 
 test('CLI: a degraded integration-model resolve exits 0 unpinned and says so on stderr (#4578 Q10)', () => {
   const fx = fixture();
-  const { err, deps } = cliDeps(fx, { resolvePolicy: () => resolved({ 'integration-model': { value: 'local-merge', source: 'default', degraded: 'timeout' } }) });
+  // The real resolve copies `degraded` onto merge-verification too (Task 2's producer).
+  const { err, deps } = cliDeps(fx, {
+    resolvePolicy: () => resolved({
+      'integration-model': { value: 'local-merge', source: 'default', degraded: 'timeout' },
+      'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' },
+    }),
+  });
   assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
-  assert.ok(!/^integration-model:/m.test(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8')));
+  const config = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.ok(!/^integration-model:/m.test(config));
+  assert.match(config, /^merge-verification: wait$/m);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /^- AUTO 17:24:30 — Manifesto: merge-verification derived from a degraded forge detection → written as wait/m);
   assert.match(err.join(''), /integration-model forge detection degraded \(timeout\) — config\.yml written without the run pin \(SKIP logged\)/);
   assert.doesNotMatch(err.join(''), /resolved empty/);
 });

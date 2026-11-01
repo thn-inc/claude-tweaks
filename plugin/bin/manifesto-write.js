@@ -26,7 +26,8 @@
 // (resolve-policy's `degraded` field on the integration-model entry) is never
 // the run pin: config.yml is written without it, a SKIP is logged, and later
 // --run reads detect again; a merge-verification derived from that same
-// detection is written as `wait`, source `degraded` (record #4578 Decision Q10).
+// detection is written as `wait`, source `degraded` (record #4578: Decision Q10;
+// merge-verification → wait per plan review).
 //
 // Case 3 (a run dir with decisions.md content but no config.yml) is the
 // caller's to route to steps-and-gates.md case 3, never here: only an
