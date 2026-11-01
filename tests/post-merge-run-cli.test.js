@@ -197,6 +197,19 @@ test('a postMergeOne that throws prints an error entry and exits 0', async () =>
   assert.match(entry.detail, /seam exploded/);
 });
 
+test('an error entry\'s detail is bounded like post-merge.js\'s skip details: ERR_TEXT_MAX chars plus the … marker', async () => {
+  const { ERR_TEXT_MAX } = require('../plugin/bin/closing-links');
+  const root = mainCheckout();
+  const dir = archivedRun(root);
+  const long = 'x'.repeat(ERR_TEXT_MAX + 50);
+  const r = await runCli(['--run', dir], root, {
+    prStates: fakePrStates({ 11: mergedState }),
+    postMergeDeps: { get gh() { throw new Error(long); } },
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.equal(JSON.parse(r.out).detail, `${'x'.repeat(ERR_TEXT_MAX)}…`);
+});
+
 test('a relative --run resolves to the absolute real path', async () => {
   const root = mainCheckout();
   const dir = archivedRun(root);

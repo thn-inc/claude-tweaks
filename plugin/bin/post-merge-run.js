@@ -43,7 +43,7 @@
 const path = require('path');
 const { resolveTarget } = require('./lib/log-decision/append');
 const { ghAvailable } = require('./lib/repo-resolve');
-const { postMergeOne } = require('./lib/reconcile/post-merge');
+const { postMergeOne, boundDetail } = require('./lib/reconcile/post-merge');
 const { resolvePrStateByNumberAsync } = require('./lib/reconcile/pr-state');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
@@ -130,7 +130,7 @@ async function run(argv, overrides = {}) {
     return print(entry);
   } catch (e) {
     return print({
-      runDir, pr: null, action: 'skipped', reason: 'error', detail: String((e && e.message) || e).slice(0, 300),
+      runDir, pr: null, action: 'skipped', reason: 'error', detail: boundDetail(String((e && e.message) || e)),
     });
   }
 }
