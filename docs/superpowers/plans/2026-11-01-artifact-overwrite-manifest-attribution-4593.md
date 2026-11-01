@@ -276,10 +276,11 @@ git -C "{worktree}" commit -m "Attribute untrailered commits by manifest window 
 ### Task 2: `--run <dir>` on the CLI
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/check-artifact-overwrite.js` (header comment, `USAGE`, `run`)
-- Test: `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` (append only)
+- Test: `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` (append new tests; existing tests unchanged. The file may extend its require/import lines: add `spawnSync` to the `child_process` import, a require of `plugin/bin/lib/flow/manifest.js`'s `manifestInit`/`transitionSpec`, and its own local pinned-date commit helper — Task 1's `commitAt`/`manifestRun` are locals of the other test file and are not shared)
 
 **Interfaces:**
 - Consumes: `checkArtifactOverwrite(opts)` with `opts.manifest` (Task 1), which throws `ArtifactOverwriteCheckError` on an unusable manifest; `parseManifestYaml(text)` from `./lib/flow/manifest.js`.
@@ -317,8 +318,10 @@ test('Q9: --run naming a manifest with an unparseable phases[].at exits 3 naming
 
 test('Q8: --run naming a manifest whose spec has no recorded transition is a verdict (exit 0/1), not exit 3', () => {
   // real repo fixture with the AC1 untrailered history; manifest via manifestInit({ specs: [10, 11] }) + spec 10
-  //   running at 10:00Z only (spec 11 untouched, so no startedAt and no phases[])
-  // spawnSync CLI with --run → status 1 (refs-only overwrite), stdout JSON's overwrites[0].reason includes 'manifest windows off'
+  //   running at 10:00Z and complete at 11:59Z, then rewrite the file so spec 11 reads `status: complete` with no
+  //   startedAt and no phases (a `pending` spec 11 would take the status-off branch first and never reach Q8's)
+  // spawnSync CLI with --run → status 1 (refs-only overwrite, not 3), stdout JSON's overwrites[0].reason
+  //   includes 'manifest windows off: spec #11 has no recorded transition'
 });
 
 test('--run with an empty value, a trailing bare --run, or a flag as its value is malformed (exit 2)', () => {
@@ -370,6 +373,7 @@ git -C "{worktree}" commit -m "Add --run to check-artifact-overwrite for manifes
 ### Task 3: Procedure doc and restated command lines
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/flow/multispec-artifact-namespacing.md` (command block at line 44, test 1 at 51-54, exit paragraph at 83-90)
