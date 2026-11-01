@@ -606,7 +606,7 @@ test('an open below-floor parent without comments or me is exit 1 under --idempo
   assert.match(meless.stderr, /facts file me: /);
 });
 
-test('--idempotence guards parentComments and me only where the verdict reads them', (t) => {
+test('--idempotence guards parentComments and requires me only where the verdict reads them', (t) => {
   const errored = { parentComments: { message: 'Not Found' }, me: { message: 'Bad credentials' } };
   const argv = (file) => ['--parent', '10', '--idempotence', '--facts-json', file];
   // An incomplete parent never reaches the idempotence check: the gh verdict, exit 0.
@@ -637,7 +637,7 @@ test('--idempotence guards parentComments and me only where the verdict reads th
   assert.equal(noLogin.verdict.idempotence, 'comment-and-close');
 });
 
-test('AC1.3: --idempotence with a failing gh login read exits 0 with the degrade note', () => {
+test('#4770 AC1.3 (gh path): --idempotence with a failing gh login read exits 0 with the degrade note', () => {
   const r = go(['--parent', '10', '--idempotence'], { throwWhen: (k) => k.startsWith('api user') });
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.verdict.state, 'due');
@@ -645,7 +645,7 @@ test('AC1.3: --idempotence with a failing gh login read exits 0 with the degrade
   assert.ok(r.verdict.skipped.includes(IDENTITY_PROBE_FAILED_NOTE), JSON.stringify(r.verdict.skipped));
 });
 
-test('AC1.3 (facts-json): --idempotence with me: null exits 0 with the degrade note', (t) => {
+test('#4770 AC1.3 (facts-json me: null): --idempotence with me: null exits 0 with the degrade note', (t) => {
   const facts = { ...worldAsMcp({}, null), me: null };
   const r = go(['--parent', '10', '--idempotence', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
   assert.equal(r.code, 0, r.stderr);

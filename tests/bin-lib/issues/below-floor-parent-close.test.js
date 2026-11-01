@@ -283,14 +283,14 @@ const probeCalls = (calls) => callKeys(calls).filter((k) => k.startsWith('api us
 const liveWith = (comments) => ({ 10: { state: 'OPEN', stateReason: '', comments } });
 const probeFails = (k) => k.startsWith('api user');
 
-test('AC1.4: a throwing identity probe still closes the due parent with the degrade note', () => {
+test('#4770 AC1.4: a throwing identity probe still closes the due parent with the degrade note', () => {
   const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
-test('AC2.2: a failed probe plus a trusted marker closes with no second comment and no note', () => {
+test('#4770 AC2.2: a failed probe plus a trusted marker closes with no second comment and no note', () => {
   const comments = [{ body: `${CLOSE_HEADING}\n\nEvery sub-issue...`, authorAssociation: 'MEMBER', author: { login: 'someone' } }];
   const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith(comments) }));
   const out = closeBelowFloorParents(base({ gh }));
@@ -298,22 +298,23 @@ test('AC2.2: a failed probe plus a trusted marker closes with no second comment 
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
 });
 
-test('AC3.2: a failed probe plus the bot\'s own NONE marker posts a second comment (accepted duplicate)', () => {
+test('#4770 AC3.2: a failed probe plus the bot\'s own NONE marker posts a second comment (accepted duplicate)', () => {
   const comment = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' }, url: 'https://example.test/c/2' };
   const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith([comment]) }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low', notes: [untrustedSkipNote(comment), IDENTITY_PROBE_FAILED_NOTE] }]);
+  assert.deepEqual(out.skipped, []);
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
-test('AC4.2: an empty probe line behaves like a throwing one', () => {
+test('#4770 AC4.2: an empty probe line behaves like a throwing one', () => {
   const { gh, calls } = makeGh(happyWorld({ login: '' }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
-test('AC5.1: the login is read at most once for a run closing two parents, working or throwing', () => {
+test('#4770 AC5.1: the login is read at most once for a run closing two parents, working or throwing', () => {
   const twoParents = (over) => ({
     parentOf: { 11: 10, 21: 20 },
     subs: { 10: [11], 20: [21] },
@@ -322,7 +323,7 @@ test('AC5.1: the login is read at most once for a run closing two parents, worki
   });
   const ok = makeGh(twoParents());
   const okOut = closeBelowFloorParents(base({ closingSet: [11, 21], gh: ok.gh }));
-  assert.deepEqual(okOut.closed.map((c) => c.parent), [10, 20]);
+  assert.deepEqual(okOut.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }]);
   assert.equal(probeCalls(ok.calls).length, 1, callKeys(ok.calls).join(' | '));
 
   const bad = makeGh(twoParents({ throwWhen: probeFails }));

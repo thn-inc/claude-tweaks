@@ -84,6 +84,7 @@ function skipReason(verdict) {
 // the same for the whole run, so a failed probe is not retried per parent).
 function memoizeRead(read) {
   let done = false;
+  let failed = false;
   let value;
   let error;
   return () => {
@@ -91,11 +92,12 @@ function memoizeRead(read) {
       try {
         value = read();
       } catch (err) {
+        failed = true;
         error = err;
       }
       done = true;
     }
-    if (error) throw error;
+    if (failed) throw error;
     return value;
   };
 }

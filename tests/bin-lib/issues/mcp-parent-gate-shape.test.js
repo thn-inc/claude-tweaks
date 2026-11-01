@@ -212,7 +212,7 @@ test('a missing or unrequested key is exit 1', () => {
   assert.equal(noBody.key, 'subIssueGet');
 });
 
-test('comments and me are required and guarded only for an open, non-reopened parent', () => {
+test('comments are guarded and me is required only for an open, non-reopened parent', () => {
   const open = { state: 'OPEN', stateReason: '' };
   // Absent -> exit 1, naming the key.
   const noComments = factsError(() => withIdempotenceReads({ me: { login: 'bot' } }, open));
@@ -240,9 +240,9 @@ test('comments and me are required and guarded only for an open, non-reopened pa
   assert.deepEqual(done, { state: 'OPEN', stateReason: '', comments: [], login: 'bot' });
 });
 
-test("withIdempotenceReads reads any login-less me as login ''", () => {
+test("#4770 withIdempotenceReads reads any login-less me as login ''", () => {
   const open = { state: 'OPEN', stateReason: '' };
-  for (const me of [null, { login: '' }, { message: 'Bad credentials' }, [], 'x']) {
+  for (const me of [null, { login: '' }, { login: 123 }, { message: 'Bad credentials' }, [], 'x']) {
     assert.deepEqual(withIdempotenceReads({ parentComments: [], me }, open), { state: 'OPEN', stateReason: '', comments: [], login: '' }, JSON.stringify(me));
   }
 });

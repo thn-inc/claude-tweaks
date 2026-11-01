@@ -1244,14 +1244,22 @@ const FACTS_4770 = [
 ];
 const missingFacts4770 = (gate, tidy, names = FACTS_4770.map(([n]) => n)) =>
   FACTS_4770.filter(([n, region, lit]) => names.includes(n) && !collapse(region(gate, tidy)).includes(lit)).map(([n]) => n);
-const stripFact4770 = (gate, tidy, name) => {
+// The document with one fact's literal removed from its region (whitespace-tolerant, so a wrapped
+// literal is still found), rebuilt as full gate and tidy texts for the predicate to re-read.
+const withoutLiteral4770 = (gate, tidy, name) => {
   const [, region, lit] = FACTS_4770.find(([n]) => n === name);
-  const hay = collapse(region(gate, tidy));
-  assert.equal(hay.split(lit).length - 1, 1, `${name}: the literal occurs exactly once in its region`);
-  // Strip from the whole (collapsed) document so the predicate re-reads the doctored region.
-  const doctoredRegion = hay.replace(lit, '');
-  assert.notEqual(doctoredRegion, hay);
-  return FACTS_4770.filter(([n, r, l]) => n === name ? !doctoredRegion.includes(l) : !collapse(r(gate, tidy)).includes(l)).map(([n]) => n);
+  const raw = region(gate, tidy);
+  assert.equal(collapse(raw).split(lit).length - 1, 1, `${name}: the literal occurs exactly once in its region`);
+  const wrapped = new RegExp(lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  const doctored = raw.replace(wrapped, '');
+  assert.notEqual(doctored, raw, `${name}: the literal was found in the raw region`);
+  const inGate = gate.includes(raw);
+  assert.ok(inGate || tidy.includes(raw), `${name}: the region is a slice of the gate or tidy text`);
+  return inGate ? { gate: gate.replace(raw, () => doctored), tidy } : { gate, tidy: tidy.replace(raw, () => doctored) };
+};
+const stripFact4770 = (gate, tidy, name) => {
+  const rebuilt = withoutLiteral4770(gate, tidy, name);
+  return missingFacts4770(rebuilt.gate, rebuilt.tidy);
 };
 const goRed4770 = (name) => assert.deepEqual(stripFact4770(read(GATE_REL), read('tidy/SKILL.md'), name), [name], `go-red: dropping ${name} reports exactly it`);
 
@@ -1284,6 +1292,7 @@ test('#4770: the prose note matches the code constant', () => {
   const m = collapse(closeStep1(read(GATE_REL))).match(/`(identity probe failed[^`]*)`/);
   assert.ok(m, 'step 1 carries the note in backticks');
   assert.equal(m[1], IDENTITY_PROBE_FAILED_NOTE);
-  // go-red: a respelled note in prose no longer equals the constant.
-  assert.notEqual(m[1].replace('trusted authors only', 'trusted authors'), IDENTITY_PROBE_FAILED_NOTE);
+  // go-red: rebuild the gate text with the note removed and the same match finds nothing.
+  const rebuilt = withoutLiteral4770(read(GATE_REL), read('tidy/SKILL.md'), 'close-note');
+  assert.equal(collapse(closeStep1(rebuilt.gate)).match(/`(identity probe failed[^`]*)`/), null);
 });

@@ -9,7 +9,7 @@
 // skill); this file is the compute half, and it is a no-op on a gh-shaped entry.
 // The "shape N" numbers below are the gh reads in parent-gate.js's header legend.
 //
-// Every entry is shape-guarded (rule 3): an MCP error object (`{message:'Not
+// Every entry except `me` is shape-guarded (rule 3): an MCP error object (`{message:'Not
 // Found'}`) or a wrapper written as data fails its guard with a FactsError of exit
 // 3 and is never read as content. A required key that is absent, or a
 // `subIssueGets` key set that is not the enumerated numbers, is exit 1: the read
@@ -32,8 +32,9 @@
 //      numbers (1), then each entry guarded in ascending order (3).
 // normalizeMcpFacts stops there. `parentComments` and `me` are read by
 // `withIdempotenceReads`, which the CLI calls only where evaluateIdempotence reads them
-// (the parent due below the floor and neither CLOSED nor REOPENED): presence (1), then
-// guards (3). A gh-path verdict that never reads them must not depend on them.
+// (the parent due below the floor and neither CLOSED nor REOPENED): `parentComments`
+// presence (1) then guard (3); `me` presence (1) only, since a login-less `me` reads as no
+// identity (trusted-author-only dedupe), not as an error. A gh-path verdict that never reads them must not depend on them.
 'use strict';
 
 const { parseSubIssues } = require('./record');
