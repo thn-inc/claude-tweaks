@@ -66,9 +66,17 @@ function assertUndeterminedSkip(text) {
   const skipLine = section.split('\n').find((l) => l.includes('bin/log-decision.js'));
   assert.ok(skipLine, 'SKIP command line present');
   assert.match(skipLine, /--status SKIP --step "Step 2 blocker landing \(undetermined\)"/, 'verbatim SKIP step id');
-  const textArg = skipLine.match(/--text "([^"]*)"/);
-  assert.ok(textArg, 'SKIP --text double-quoted argument present');
-  assert.doesNotMatch(textArg[1], /`/, 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument');
+  // The text interpolates the git-derived {integration-branch}, so it travels via --text-file
+  // (_shared/auto-decision-log.md's "Text from git or a user"), never a quoted --text.
+  assert.ok(skipLine.includes('--text-file "{text-file}"'), 'SKIP passes its text via --text-file "{text-file}"');
+  assert.doesNotMatch(skipLine, /--text\s+["']/, 'SKIP must not pass a quoted --text');
+  const holder = section.match(/`\{text-file\}` holds one line, `([^`\n]+)`/);
+  assert.ok(holder, 'text-file holder line present: `{text-file}` holds one line, `…`');
+  assert.ok(
+    holder[1] === 'condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}',
+    'text-file line carries the condition and fallback wording',
+  );
+  assert.match(section, /Text from git or a user paragraph/, 'cites auto-decision-log.md\'s "Text from git or a user" paragraph');
 }
 
 function assertFailedQueryIsNotUndetermined(orderingText, failureText) {
@@ -145,10 +153,27 @@ test('AC7.1, AC7.2: undetermined proceeds and writes one SKIP per blocker, shell
   assert.throws(() => assertUndeterminedSkip(mutate(text, /one `SKIP` per blocker/, 'one SKIP')), { message: 'one SKIP per blocker' });
   assert.throws(() => assertUndeterminedSkip(mutate(text, /--step "Step 2 blocker landing \(undetermined\)"/, '--step "blocker landing"')), { message: 'verbatim SKIP step id' });
   assert.throws(() => assertUndeterminedSkip(mutate(text, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/log-decision\.js"[^\n]*\n/m, '')), { message: 'SKIP command line present' });
-  assert.throws(() => assertUndeterminedSkip(mutate(text, /--text "condition: /, '--text condition: ')), { message: 'SKIP --text double-quoted argument present' });
+  // Revert to the interpolated quoted form: no --text-file on the line.
   assert.throws(
-    () => assertUndeterminedSkip(mutate(text, /(--text "condition: )#\{blocker\}/, '$1`#{blocker}`')),
-    { message: 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument' },
+    () => assertUndeterminedSkip(mutate(text, / --text-file "\{text-file\}"(?=\n```\n\n`\{text-file\}` holds one line, `condition: #\{blocker\})/, ' --text "condition: #{blocker} undetermined"')),
+    { message: 'SKIP passes its text via --text-file "{text-file}"' },
+  );
+  // Keep --text-file but add a quoted --text beside it.
+  assert.throws(
+    () => assertUndeterminedSkip(mutate(text, /(--reversibility n\/a --text-file "\{text-file\}")(?=\n```\n\n`\{text-file\}` holds one line, `condition: #\{blocker\})/, '$1 --text "x"')),
+    { message: 'SKIP must not pass a quoted --text' },
+  );
+  assert.throws(
+    () => assertUndeterminedSkip(mutate(text, /`\{text-file\}` holds one line, `condition: #\{blocker\}/, '`{text-file}` holds the text: condition: #{blocker}')),
+    { message: 'text-file holder line present: `{text-file}` holds one line, `…`' },
+  );
+  assert.throws(
+    () => assertUndeterminedSkip(mutate(text, /proceeded without confirming its closing commit reached origin\/\{integration-branch\}`/, 'proceeded`')),
+    { message: 'text-file line carries the condition and fallback wording' },
+  );
+  assert.throws(
+    () => assertUndeterminedSkip(mutate(text, /Text from git or a user paragraph/, 'logging paragraph')),
+    { message: 'cites auto-decision-log.md\'s "Text from git or a user" paragraph' },
   );
 });
 

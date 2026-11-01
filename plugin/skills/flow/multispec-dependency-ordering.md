@@ -45,8 +45,10 @@ If record 159 depends on record 142 (not in the run list) — via `blocked-by:` 
 | `undetermined` | proceed — the landing could not be judged for this blocker; once the run directory exists (after Step 3's Manifesto write, as `multispec-merge-gate.md` times its entries) write one `SKIP` per blocker |
 
 ```
-node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2 blocker landing (undetermined)" --text "condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}" --reversibility n/a
+node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2 blocker landing (undetermined)" --reversibility n/a --text-file "{text-file}"
 ```
+
+`{text-file}` holds one line, `condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}`, one file per blocker, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the integration branch is git-derived, so the text never passes through shell quoting.
 
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 
