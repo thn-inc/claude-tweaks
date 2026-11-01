@@ -55,7 +55,7 @@ files:
 ### 5. Pass a flag the verb does not have
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run <dir> --dry-run`
 - **Action:** Ask a mutating verb for a preview it does not support, expecting nothing to happen.
-- **Should feel:** Like a refusal, not a gamble. stdout is empty, stderr is exactly `claude-tweaks: archive-run: unknown flag '--dry-run'` then `claude-tweaks: usage: archive-run [--run <dir>]`, the exit code is 1, and the run directory is still where it was.
+- **Should feel:** Like a refusal, not a gamble. Stdout is empty, stderr is exactly `claude-tweaks: archive-run: unknown flag '--dry-run'` then `claude-tweaks: usage: archive-run [--run <dir>]`, the exit code is 1, and the run directory is still where it was.
 - **Should understand:**
   - `archive-run` has no dry-run mode. The usage line on stderr is the whole answer; to see what would block archival, read the run's `console.json` and `decisions.md` instead.
   - The refusal does not depend on where the flag sits: `--dry-run --run <dir>` is refused the same way.
@@ -71,4 +71,4 @@ files:
 - Step 5 added during build of #4773, which made `archive-run` flag-strict.
 - Steps 4 and 5 updated during build of #4777, which made every verb flag-strict and catches `--help` in a value position.
 - Steps 4–5's stderr/exit-1 flag refusal changed during build of #4834.
-- Related records: #1143 (the `--help` intercept), #1586 (non-zero exit and suggestion for unknown verbs), #1012 (flag-strict verbs), #4773 (`archive-run` joins them), #4777 (every verb is flag-strict).
+- Related records: #1143 (the `--help` intercept), #1586 (non-zero exit and suggestion for unknown verbs), #1012 (flag-strict verbs), #4773 (`archive-run` joins them), #4777 (every verb is flag-strict), #4834 (the unknown-flag refusal moved to stderr with exit 1).
