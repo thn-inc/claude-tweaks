@@ -499,13 +499,13 @@ function recognizeMarkerValue(raw, closedSet) {
 // `roleRaw`/`riskRaw` carry the line's raw trimmed value (or null when the
 // line is absent at all) so a caller validating against the closed set
 // (checks.js's `checkTaskMarkers`) can still name the actual offending
-// value. `markers`
-// is true iff ANY task carries a recognized marker KEY at all — a key
-// present with an unrecognized value still counts (the task is marked, just
-// invalidly), so `markers: false` means "no `**Role:**`/`**Review risk:**`
-// line anywhere", never "no valid one". A marker line inside a fenced code
-// block in a task body is stripped before matching, same as the batched
-// marker's own header-fence handling in `countTasks` above.
+// value. `markers` is true iff ANY task carries a recognized marker KEY at
+// all — a key present with an unrecognized value still counts (the task is
+// marked, just invalidly), so `markers: false` means "no
+// `**Role:**`/`**Review risk:**` line anywhere", never "no valid one". A
+// marker line inside a fenced code block in a task body is stripped before
+// matching, same as the batched marker's own header-fence handling in
+// `countTasks` above.
 function extractTaskMarkers(text) {
   const blocks = extractTaskBlocks(text);
   let markers = false;
