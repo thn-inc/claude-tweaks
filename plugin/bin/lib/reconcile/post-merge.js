@@ -2,9 +2,11 @@
 // _shared/pr-first-merge-post-merge.md's Step 4.0 (closing-links post-merge
 // verification) and Step 4.0b (below-floor parent close) once for a PR GitHub
 // merged AFTER its session ended — an armed auto-merge, a merge-queue merge —
-// so no session ever ran the steps (#4599). Step 4.0 runs bin/closing-links.js;
-// Step 4.0b runs lib/issues/below-floor-parent-close.js. Both stay the prose's
-// mirrors; this file only decides WHEN they run and records that they did.
+// so no session ever ran the steps (#4599). Step 4.0b runs
+// lib/issues/below-floor-parent-close.js over lib/issues/parent-gate.js, the
+// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 stays a
+// bin/closing-links.js run. This file only decides WHEN they run and records
+// that they did.
 //
 // Exactly once per run: a `decisions.md` entry (the marker) is the done-signal,
 // whether the merging session's own Step 4.0b wrote it or this check did. Two
@@ -33,7 +35,10 @@
 // Step 4.0b's after-a-PR-merge rules, from Step 4.0's envelope (#4549): there is
 // no default-branch check (on a non-default base Step 4.0 closes the `Fixes`
 // records itself and `closingSet` holds only the ones it confirmed closed), and
-// a `closeFailed[]` record holds its parent like a `failed[]` one does.
+// a `closeFailed[]` record holds its parent like a `failed[]` one does. A
+// policy.yml that exists but cannot be read, or a risk-floor value it rejects,
+// skips Step 4.0b's close step-wide (`unreadable-policy`, `invalid-risk-floor`)
+// rather than defaulting the floor; Step 4.0 still runs and the marker is written.
 //
 // The caller may pass `budgetExceeded` (the pass's wall-clock budget, index.js's
 // `budget.exceeded`). It is checked before each run's steps, never mid-run; once
@@ -58,7 +63,7 @@ const path = require('path');
 const { execFileSyncTimed } = require('./timing');
 const { listRunDirsWithState } = require('../hooks/context');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
-const { repoSlugOf } = require('../hooks/git-exec');
+const { repoSpecOf } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
@@ -150,8 +155,29 @@ function countAttempts(decisionsText) {
   }).length;
 }
 
+// -> { raw } with the policy file's text, `raw: null` when there is no policy file, or
+// { raw: null, error } for any other read error. Read as "no policy", an unreadable file would
+// resolve risk-floor to the schema default, looser than a configured medium or low floor.
 function readPolicyRaw(root) {
-  try { return fs.readFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'utf8'); } catch { return null; }
+  try {
+    return { raw: fs.readFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'utf8') };
+  } catch (e) {
+    if (e && (e.code === 'ENOENT' || e.code === 'ENOTDIR')) return { raw: null };
+    return { raw: null, error: (e && (e.code || e.message)) || String(e) };
+  }
+}
+
+// Pure: why this pass must not run Step 4.0b's close, or null. An unreadable policy file, or a
+// risk-floor value the schema rejects, skips the close instead of defaulting the floor: the default
+// (`high`) is looser than a configured medium or low one, and would close a parent below the
+// oversight floor with no sign-off. The skip is step-wide, as closeBelowFloorParents' own
+// `invalid-risk-floor` is.
+function policySkipOf(policyFile, riskFloorEntry, rejectedRiskFloor) {
+  if (policyFile.error) return { reason: 'unreadable-policy', detail: `.claude-tweaks/policy.yml: ${policyFile.error}` };
+  if (riskFloorEntry && riskFloorEntry.invalid) {
+    return { reason: 'invalid-risk-floor', detail: `.claude-tweaks/policy.yml risk-floor: ${JSON.stringify(rejectedRiskFloor)}` };
+  }
+  return null;
 }
 
 // Take the per-run claim: `{runDir}/.post-merge.lock`, created exclusively. A
@@ -249,15 +275,23 @@ async function postMerge({
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
   if (readWorkBackend(root) !== 'github-issues') return { entries, deferred, failure: 'not-github-issues' };
-  const slug = repoSlugOf(root);
-  if (!slug) return { entries, deferred, failure: 'no-remote' };
+  // The host too: off github.com, Step 4.0b's gh calls name it (`--repo host/owner/repo`, `--hostname`).
+  const repoSpec = repoSpecOf(root);
+  if (!repoSpec) return { entries, deferred, failure: 'no-remote' };
   // A missing resolver is a caller bug; the per-run catch below must never relabel it a transient network failure.
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
-  const [owner, repo] = slug.split('/');
+  const { host, owner, repo } = repoSpec;
 
-  const policy = resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw: readPolicyRaw(root), runConfigRaw: null });
+  const policyFile = readPolicyRaw(root);
+  let rejectedRiskFloor = null;
+  const policy = resolvePolicyKeys(['work-links', 'risk-floor'], {
+    policyRaw: policyFile.raw,
+    runConfigRaw: null,
+    onInvalid: (key, raw) => { if (key === 'risk-floor') rejectedRiskFloor = raw; },
+  });
   const workLinks = policy['work-links'].value;
   const riskFloor = policy['risk-floor'].value;
+  const policySkip = policySkipOf(policyFile, policy['risk-floor'], rejectedRiskFloor);
 
   const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
@@ -311,7 +345,7 @@ async function postMerge({
       // A pass that finished between the first read and the claim wrote its marker already.
       if (runHasMarker(dir)) continue;
       const entry = processRun({
-        dir, pr, root, owner, repo, workLinks, riskFloor, timedGh, runClosingLinks, closeParents, writeEntries, now,
+        dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
       });
       entries.push(entry);
       if (entry.reason === TRANSIENT_REASON) deferred.push(dir);
@@ -326,7 +360,7 @@ async function postMerge({
 
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 function processRun({
-  dir, pr, root, owner, repo, workLinks, riskFloor, timedGh, runClosingLinks, closeParents, writeEntries, now,
+  dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
 }) {
   let out = '';
   const code = runClosingLinks(
@@ -395,8 +429,9 @@ function processRun({
   ];
   // selfInclude: false — this runs more than MERGE_GRACE_MS after the merge, so every closing record's live
   // state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
-  const { closed, skipped } = closeParents({
-    closingSet, unsettled, mergingPr: pr, owner, repo, workLinks, riskFloor, gh: timedGh,
+  // An unreadable policy or a rejected risk-floor skips the close outright (policySkipOf): no gh call.
+  const { closed, skipped } = policySkip ? { closed: [], skipped: [policySkip] } : closeParents({
+    closingSet, unsettled, mergingPr: pr, owner, repo, host, workLinks, riskFloor, gh: timedGh,
     selfInclude: false,
   });
   const items = closed.map((c) => ({

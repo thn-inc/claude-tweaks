@@ -582,8 +582,9 @@ Decision `docs/decisions/0026-ledger-residue-converges-in-reconcile.md` records 
 --mode post-merge`) and Step 4.0b (`lib/issues/below-floor-parent-close.js`) once for a PR GitHub
 merged after its session ended: an armed auto-merge, a merge-queue merge, or a human clicking merge
 in the browser. No session saw that merge, so no session ran the steps, and a below-floor parent
-whose last sub-issue merged this way used to wait for a human to approve a tidy row. The prose stays
-the source of truth; the module only decides when the steps run and records that they did. Tidy's
+whose last sub-issue merged this way used to wait for a human to approve a tidy row. Step 4.0b's
+gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/parent-gate.js`
+(#4603). The module only decides when the steps run and records that they did. Tidy's
 `parent-gate` backstop is unchanged, and every fail-open path below leaves the parent open for it.
 
 - **Population (keyed on the recorded PR, exactly once).** Every top-level run dir, `clean` status
@@ -697,6 +698,15 @@ the source of truth; the module only decides when the steps run and records that
   and tidy's backstop as the recovery. `--dry-run` writes nothing: no GitHub write and no
   `decisions.md` line; a merged run past the grace window reports `skipped` / `dry-run`, while the
   PR-state reads still run.
+- **Fail-closed policy read, host-qualified repo.** An unreadable `.claude-tweaks/policy.yml`
+  (any read error but ENOENT/ENOTDIR) or a `risk-floor` value the schema rejects skips Step 4.0b's
+  close for the whole pass (`unreadable-policy`, `invalid-risk-floor` on the marker), because the
+  schema default (`high`) is looser than a configured `medium` or `low` floor and would close a
+  parent below the floor with no sign-off; Step 4.0 still runs and the marker is still written, so
+  the run is not retried and tidy's backstop is the recovery. The origin remote's host is kept
+  (`git-exec.js`'s `repoSpecOf`), so on a GitHub Enterprise origin the gate's reads and the two
+  writes name `host/owner/repo` (`--hostname` on the `gh api` reads); a remote `parseRepo` cannot
+  read (an `ssh://` URL) keeps the bare slug it always resolved to.
 - **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
   same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
   the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own

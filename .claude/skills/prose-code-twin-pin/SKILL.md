@@ -250,12 +250,16 @@ step's hand-written `close-out-update: cleared ({reason})` line has the detector
 `consoleReplacedByAutoMerge` row below, since `CLEARED_RE` reads it. Walk the fence line by line,
 and name the constant or regex each line must match before you call the pin complete.
 
-**Behavior-twin instance (#4599):** the code side can mirror a whole prose procedure, not one
-table. `plugin/bin/lib/issues/below-floor-parent-close.js` is a Node mirror of
-`_shared/pr-first-merge-post-merge.md` Step 4.0b running `wrap-up/verification-brief-parent-gate.md`
-from **Resolve the parent** through **Close the parent below the floor**, and its header names the
-prose as the source of truth. No vocabulary spans the two, so step 1's grep finds nothing. Split the
-procedure into the parts that can drift, and pin each the way its shape owes:
+**Behavior-twin instance (#4599, narrowed by #4603):** the code side can drive a whole prose
+procedure, not one table. `plugin/bin/lib/issues/below-floor-parent-close.js` is the reconciler's
+Step 4.0b driver (`_shared/pr-first-merge-post-merge.md`) for `wrap-up/verification-brief-parent-gate.md`,
+from **Resolve the parent** through **Close the parent below the floor**. The gate's evaluation
+(Resolve through Evaluate, and the idempotence check) is one shared module,
+`plugin/bin/lib/issues/parent-gate.js`, that the prose's CLI (`bin/parent-gate.js`) and the reconciler
+both run, so those parts cannot drift apart. What stays a twin is the close's composer, the comment text it
+writes, and the marker line the prose writes and the reconciler reads. No vocabulary spans the
+prose and those, so step 1's grep finds nothing. Split what is left into the parts that can drift, and pin each the way
+its shape owes:
 
 - *Fixed text* is a composer twin. `tests/bin-lib/issues/below-floor-parent-close.test.js` compares
   `composeCloseComment` with the prose's closing-comment fence, substituted, and does the same for
