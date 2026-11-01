@@ -8,6 +8,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { shellQuote } = require('./helpers/shell-quote');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
@@ -1253,6 +1255,94 @@ test('resolveRunPinnedIntegrationModel: exported for reuse by the phase-boundary
   // No policy.yml, no remote configured -> detectIntegrationModel falls back
   // to local-merge (no forge to be pr-first against).
   assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, runDir), 'local-merge');
+});
+
+// --- #4578: timeout + degrade parameters on resolveRunPinnedIntegrationModel ---
+
+const GH_TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+
+// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS deleted so detection's ladder falls
+// to policy / the 5000 ms default, then restores the original value.
+function withoutGhTimeoutEnv(fn) {
+  const original = process.env[GH_TIMEOUT_ENV];
+  delete process.env[GH_TIMEOUT_ENV];
+  try {
+    return fn();
+  } finally {
+    if (original !== undefined) process.env[GH_TIMEOUT_ENV] = original;
+  }
+}
+
+// An unpinned repo whose origin looks like a GitHub remote, so detection reaches the fake `gh`.
+function unpinnedRepoWithOrigin() {
+  const repo = gitRepoWithCommit();
+  execFileSync('git', ['-C', repo, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
+  return repo;
+}
+
+test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detection (#4578 AC8.1, AC13.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const t0 = Date.now();
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000 });
+      const elapsed = Date.now() - t0;
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      // Without forwarding, the 5000 ms default makes two hung attempts take >= 10 s.
+      assert.ok(elapsed < 4500, `expected the 1000 ms bound to apply, took ${elapsed} ms`);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
+  assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
+    'git probe + two gh attempts must fit the 15 s hook budget');
+  const source = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  assert.match(
+    source,
+    /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/,
+    'the gate must bound its forge probe with the hook constant and report degrades (Decision Q3, Q5)',
+  );
+});
+
+test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveRunPinnedIntegrationModel: a pinned model returns before detection — no gh spawn, onDegrade never called (#4578 Q5)', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'integration-model: local-merge\n');
+  const runDir = runDirForId('2026-10-31T000000-spec-4578');
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
+    assert.strictEqual(result, 'local-merge');
+    assert.strictEqual(gh.count(), 0);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
 });
 
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
