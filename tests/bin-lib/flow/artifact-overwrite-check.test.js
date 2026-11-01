@@ -65,11 +65,11 @@ function commit(fx, message) {
 
 const T0 = '2026-01-01T10:00:00.000Z'; // spec 10 first transition
 const T1 = '2026-01-01T12:00:00.000Z'; // spec 11 first transition
-function commitAt(fx, message, iso) {
+function commitAt(fx, message, iso, committerIso = iso) {
   fx.git('add', '-A');
   execFileSync('git', ['commit', '-q', '-m', message], {
     cwd: fx.dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso },
+    env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: committerIso },
   });
   return fx.git('rev-parse', 'HEAD').trim();
 }
@@ -976,6 +976,18 @@ test('AC1.1, AC1.2, AC1.3: untrailered self-edit inside spec 10\'s window is cle
   assert.deepStrictEqual(result, { clean: true, overwrites: [] });
 });
 
+test('window attribution reads the author date, not the committer date', () => {
+  // The modifying commit is authored in spec 10's window but committed in spec
+  // 11's: by author date both commits are spec 10 (clean); by committer date
+  // the modify would be spec 11 (an overwrite).
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.deepStrictEqual(result, { clean: true, overwrites: [] });
+});
+
 test('AC2.1, AC2.2: the modifying commit in spec 11\'s window is still one overwrite, reported as a spec mismatch', () => {
   const fx = repo();
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
@@ -1171,8 +1183,9 @@ test('attributeByWindow: start is inclusive, the next start exclusive; no match 
   assert.deepStrictEqual([...attributeByWindow(windows, 99999)], []);
   assert.deepStrictEqual([...attributeByWindow(windows, NaN)], []);
   assert.deepStrictEqual([...attributeByWindow(null, 150)], []);
-  const tied = [{ id: 10, start: 100, end: Infinity }, { id: 11, start: 100, end: Infinity }];
-  assert.deepStrictEqual([...attributeByWindow(tied, 150)], []);
+  // Whole seconds, so the 2+ matches rule (not the Q10 rule) decides this.
+  const tied = [{ id: 10, start: 100000, end: Infinity }, { id: 11, start: 100000, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(tied, 150000)], []);
 });
 
 test('attributeByWindow (Q10): a commit second equal to a later window start\'s whole second is unattributed', () => {
