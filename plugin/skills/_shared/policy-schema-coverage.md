@@ -1,4 +1,4 @@
-<!-- Sibling of `_shared/policy-schema.md` — its `worktree-always`/teardown gate coverage blocks, the `merge-verification` derivation block, and the `resolveValue` coercion-contract section, split out per #635 when the parent file pushed against the 40,960 B ceiling; the `resolveValue` section moved here per #4847 for Read-rail headroom. -->
+<!-- Sibling of `_shared/policy-schema.md` — its `worktree-always`/teardown gate coverage blocks and the `merge-verification` derivation block, split out per #635 when the parent file pushed against the 40,960 B ceiling; the `resolveValue` section moved here per #4847 for Read-rail headroom. -->
 
 ## `worktree-always` coverage — canonical
 

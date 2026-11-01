@@ -283,7 +283,8 @@ function requireOrder(text, markers, label) {
 
 const FLEET_RESOLVE_SENTENCE = 'First resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`.';
 const FLEET_CHECK_SENTENCE = 'Run the same declaration check `skills/init/bootstrap/step-14-cloud-routine-parity.md`\'s Detect section runs: read this project\'s `.claude/settings.json#enabledPlugins`, confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared.';
-const fleetItem1Order = (step2) => requireOrder(step2, [FLEET_RESOLVE_SENTENCE, FLEET_CHECK_SENTENCE], 'fleet Step 2 item 1');
+const FLEET_AT_TRUE_SENTENCE = 'At `true` (the default) the check is as written.';
+const fleetItem1Order = (step2) => requireOrder(step2, [FLEET_RESOLVE_SENTENCE, FLEET_CHECK_SENTENCE, FLEET_AT_TRUE_SENTENCE], 'fleet Step 2 item 1');
 
 test('F5: fleet Step 2 item 1 resolves the key before the declaration check it qualifies', () => {
   const step2 = fleetStep2(FLEET);
@@ -292,6 +293,10 @@ test('F5: fleet Step 2 item 1 resolves the key before the declaration check it q
   const swapped = step2.replace(`${FLEET_RESOLVE_SENTENCE} ${FLEET_CHECK_SENTENCE}`, `${FLEET_CHECK_SENTENCE} ${FLEET_RESOLVE_SENTENCE}`);
   assert.notEqual(swapped, step2);
   assert.throws(() => fleetItem1Order(swapped), { message: /must come after/ });
+  // Second permutation control: the `At true` sentence now sits before the check it follows.
+  const atTrueFirst = step2.replace(`${FLEET_CHECK_SENTENCE} ${FLEET_AT_TRUE_SENTENCE}`, `${FLEET_AT_TRUE_SENTENCE} ${FLEET_CHECK_SENTENCE}`);
+  assert.notEqual(atTrueFirst, step2);
+  assert.throws(() => fleetItem1Order(atTrueFirst), { message: /At `true` \(the default\) the check is as written\. must come after Run the same declaration check/ });
   // Deletion control: the existence half goes red on its own message.
   const missing = step2.replace(FLEET_RESOLVE_SENTENCE, '');
   assert.notEqual(missing, step2);
