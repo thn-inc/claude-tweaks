@@ -757,8 +757,9 @@ const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
 // Freshness window of the run-scoped forge degrade memo (#4830). While `gh` stays
 // hung, the PreToolUse PR-stamp gate pays at most one hook-bounded probe per TTL of
 // hooked activity: GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS x
-// HOOK_FORGE_PROBE_TIMEOUT_MS = 15 s worst case, then the memo answers for the rest
-// of the window.
+// HOOK_FORGE_PROBE_TIMEOUT_MS = 15 s worst case; the memo then answers for the next
+// TTL. Concurrent hook processes that start with no fresh memo each probe (see
+// resolveRunPinnedIntegrationModel).
 const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 
 // The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:

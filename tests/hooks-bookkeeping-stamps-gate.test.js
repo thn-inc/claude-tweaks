@@ -11,6 +11,7 @@ const ctxLib = require('../plugin/bin/lib/hooks/context');
 const { shellQuote } = require('./helpers/shell-quote');
 const { fakeGh } = require('./helpers/fake-gh');
 const { STUB_SKIP } = require('./helpers/path-stub');
+const { FORGE_DEGRADE_MEMO_TTL_MS } = require('../plugin/bin/lib/policy-schema');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-'));
@@ -1852,7 +1853,7 @@ test('bookkeeping-stamps gate (#4830 AC1): three covered calls inside the TTL pr
 
 test('bookkeeping-stamps gate (#4830 AC3): an expired memo plus a recovered gh clears the memo and persists prExempt', { skip: STUB_SKIP }, () => {
   const { wt, project } = degradeMemoFixture();
-  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 120000 });
+  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS });
   // 'fail' is a definitive answer (exit 1, no timeout): detection resolves local-merge cleanly.
   const gh = fakeGh({ first: 'fail' });
   try {
@@ -1869,7 +1870,7 @@ test('bookkeeping-stamps gate (#4830 AC3): an expired memo plus a recovered gh c
 
 test('bookkeeping-stamps gate (#4830 AC2): an expired memo at the gate re-probes and refreshes the stamp', { skip: STUB_SKIP }, () => {
   const { wt, project } = degradeMemoFixture();
-  const before = Date.now() - 120000;
+  const before = Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS;
   const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: before });
   const gh = fakeGh({ first: 'hang' });
   try {

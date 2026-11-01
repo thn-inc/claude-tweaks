@@ -1731,7 +1731,7 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   };
   const model = detectIntegrationModel(root, detectOpts);
   if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
-  else ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  else if (memoAt != null) ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
   return model;
 }
 
@@ -1918,8 +1918,9 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //      pinned once at run start per `_shared/integration-model.md` and never
 //      re-derived mid-run; decisions.md is append-only, so a logged degrade
 //      line never disappears), so the cache can never produce a false allow
-//      later. See the PR-stamp branch below for the one case that must NOT
-//      be cached (a caught resolution exception).
+//      later. See the PR-stamp branch below for the two cases that must NOT
+//      be cached as `prExempt`: a caught resolution exception, and a degraded
+//      detection (#4578; memoized run-scoped instead, #4830).
 // Ambiguity resolves to allow throughout, same posture as E1.
 //
 // A provably foreign-owned run (isForeignSessionCall above) downgrades either
