@@ -356,7 +356,8 @@ const SETTLE_FACTS = [
   [/treat it as a pre-flight stop, like the claims-branch-missing stop above/, 'D4: pre-flight-stop special case'],
   [/so no claim of this run's exists/, 'D4: no claim of this run\'s exists at the stop'],
   [/Skip steps 1-7: no release, no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: steps 1-7 skipped — no release, classification, retry count or failure comment'],
-  [/read `_shared\/headless-self-report\.md` and follow its dedup-and-file procedure/, 'D4: headless self-report'],
+  [/When `DISPATCH_HEADLESS=1` was set, read /, 'D4: the self-report is gated on DISPATCH_HEADLESS=1'],
+  [/`_shared\/headless-self-report\.md` and follow its dedup-and-file procedure/, 'D4: headless self-report'],
   [/failing-check-name `flow-step-2\.4-no-dispatch-host`/, 'D4: self-report name'],
 ];
 const settleMissing = missingFactsOf(SETTLE_FACTS);

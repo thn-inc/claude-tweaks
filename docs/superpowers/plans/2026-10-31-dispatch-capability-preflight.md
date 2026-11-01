@@ -397,8 +397,10 @@ In `docs/skill-graph.md`'s `## review` table add a row: target `/assess-agent-au
 const SETTLE_FACTS = [
   [/`ISSUE #\{n\}: failed:no-dispatch-host`/, 'D4: Settle recognizes the stop by its gate line'],
   [/treat it as a pre-flight stop, like the claims-branch-missing stop above/, 'D4: pre-flight-stop special case'],
-  [/Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: no classification, retry count or failure comment'],
-  [/When `DISPATCH_HEADLESS=1` was set, read `_shared\/headless-self-report\.md`/, 'D4: headless self-report'],
+  [/so no claim of this run's exists/, 'D4: no claim of this run\'s exists at the stop'],
+  [/Skip steps 1-7: no release, no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: steps 1-7 skipped — no release, classification, retry count or failure comment'],
+  [/When `DISPATCH_HEADLESS=1` was set, read /, 'D4: the self-report is gated on DISPATCH_HEADLESS=1'],
+  [/`_shared\/headless-self-report\.md` and follow its dedup-and-file procedure/, 'D4: headless self-report'],
   [/failing-check-name `flow-step-2\.4-no-dispatch-host`/, 'D4: self-report name'],
 ];
 ```
@@ -413,7 +415,7 @@ Expected: FAIL on the missing `**No-dispatch-host special case (#4555).**` parag
 - [ ] **Step 3: Insert the paragraph**, exactly:
 
 ```markdown
-**No-dispatch-host special case (#4555).** When the failure this call is settling is the dispatch-capability preflight's stop (`ISSUE #{n}: failed:no-dispatch-host`, `build/execution-mode-policy.md`'s No-dispatch host section), treat it as a pre-flight stop, like the claims-branch-missing stop above: the host, not the record, is at fault. Steps 1-2 run as normal and find no claim of this run's to release — a first call stops at `/flow` Step 2.4, before its Step 2.8 claim, and a `dispatch resume` call's fresh run directory is one no earlier claim names — so step 1 skips. Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment, and no PR tombstone. When `DISPATCH_HEADLESS=1` was set, read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`), failing-check-name `flow-step-2.4-no-dispatch-host`, with the stop report as the diagnostic body.
+**No-dispatch-host special case (#4555).** When the failure this call is settling is the dispatch-capability preflight's stop (`ISSUE #{n}: failed:no-dispatch-host`, `build/execution-mode-policy.md`'s No-dispatch host section), treat it as a pre-flight stop, like the claims-branch-missing stop above: the host, not the record, is at fault. It stops before this run's Step 2.8 claim — and a `dispatch resume` call's fresh run directory is one no earlier claim names — so no claim of this run's exists. Skip steps 1-7: no release, no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment, and no PR tombstone. When `DISPATCH_HEADLESS=1` was set, read `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`), failing-check-name `flow-step-2.4-no-dispatch-host`, with the stop report as the diagnostic body.
 ```
 
 In `docs/skill-graph.md`'s `## dispatch` table add a row: target `build/execution-mode-policy.md`; relationship: Since #4555, `settle-and-merge.md`'s No-dispatch-host special case recognizes that file's No-dispatch host stop (`ISSUE #{n}: failed:no-dispatch-host`) and settles it as a pre-flight stop — no `failure-check`, no retry count, no failure comment — filing headless through `_shared/headless-self-report.md` as `flow-step-2.4-no-dispatch-host`.
