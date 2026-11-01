@@ -66,8 +66,8 @@ with
 - Modify: `plugin/skills/_shared/ledger-format.md` (line 65, `**Resolution-text requirements.**`)
 - Modify: `plugin/skills/ledger/SKILL.md` (line 163, Anti-Patterns row)
 - Test: `tests/deferral-gate-conformance.test.js` (new block after the existing `// --- #622` block's last test)
-- Waived `plugin/skills/_shared/auto-decision-log.md`: read-only, classified no-change above
-- Waived `docs/journeys/close-a-run-whose-ledger-holds-an-incomplete-deferral-3327.md`: read-only, classified no-change above
+- Waived `bin/lib/console/residue.js`: the spec's Gotchas cite it only as context for the unattended-console surfacing gap, which is out of scope. No step reads or changes it.
+- Waived `flow/multispec-review-console.md`: the spec's Gotchas cite it as a consumer that inherits the change through its existing `refused-proposals.md` citation. Step 3's multi-spec sentence covers it, and the file itself needs no change.
 
 **Interfaces:**
 - Consumes: the file's existing `read(rel)` helper, its `LEDGER` constant (`ledger-format.md` text), and `DEFER_REASONS`.
@@ -136,7 +136,7 @@ Tests, named with their AC clause ids:
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/deferral-gate-conformance.test.js`
-Expected: FAIL. The AC1.1/AC1.2, AC2.1 and AC3.1 positive tests fail. AC5.2 throws inside its extractor, because `The one exception:` is absent. The three go-red controls pass, since they expect a throw. Existing tests pass.
+Expected: FAIL after Step 1. The AC1.1/AC1.2, AC2.1 and AC3.1 positive tests fail. AC5.2 throws inside its extractor, because `The one exception:` is absent. The three go-red controls pass, since they expect a throw. Existing tests pass.
 
 - [ ] **Step 3: Apply the three prose edits** exactly as written in "Prose decisions" above. Use Edit, anchored on the quoted old text.
 
@@ -151,5 +151,7 @@ Expected: PASS, every test including `refused-proposals.md never hardcodes the v
 git add tests/deferral-gate-conformance.test.js plugin/skills/wrap-up/refused-proposals.md plugin/skills/_shared/ledger-format.md plugin/skills/ledger/SKILL.md
 git commit -m "Reopen a refused staged proposal's ledger row by its path — cover review-followup-, record the one reopen exception"
 ```
+
+AC6.1 (`npm test` passes) is covered by `/claude-tweaks:build` Common Step 5's full verification run, not by a task step.
 
 - [ ] **Step 6: AC4.1 file-revert proof.** For each of the three skill files, one at a time: run `git show HEAD~1:{path}` and write its output over `{path}`. Run `node --test tests/deferral-gate-conformance.test.js > {scratch}/ac4-{n}.txt 2>&1; echo exit=$?`. Confirm a non-zero exit and that the failing test's name is the matching AC1/AC2/AC3 test. Then restore with `git checkout HEAD -- {path}`. Confirm `git status --porcelain` is clean before the next file. Record the three results as one AC-evidence entry: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/build" --status AUTO --step "AC evidence" --text-file "{text-file}"`. The text file holds one line naming `AC4` and each file → its failing test name and exit code. The PR body quotes those red lines at wrap-up.
