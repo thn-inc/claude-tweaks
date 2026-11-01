@@ -668,6 +668,8 @@ test('gatherIdempotenceFacts reads the login only for an open, non-reopened pare
 const GHE = 'ghe.example.com';
 // A github.com argv as the gate sends it to GHE: `--repo` host-qualified, every `gh api` read `--hostname`d.
 const onGhe = (args) => (args[0] === 'api' ? [...args, '--hostname', GHE] : args.map((a) => (a === 'o/r' ? `${GHE}/o/r` : a)));
+// fetch-sub-issues.js sends its GraphQL reads (4a, 4b) with the host right after `graphql`.
+const graphqlOnGhe = (args) => ['api', 'graphql', '--hostname', GHE, ...args.slice(2)];
 // makeGh's world reached through GHE argv: the fake takes the host back off before answering,
 // so a read missing it, or carrying it twice, still shows in the recorded argv.
 function makeGheGh(world) {
@@ -676,10 +678,13 @@ function makeGheGh(world) {
   const gh = (args) => {
     calls.push({ args });
     const n = args.length;
-    const plain = args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
-      ? args.slice(0, -2)
-      : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
-    return inner.gh(plain);
+    if (args[0] === 'api' && args[1] === 'graphql' && args[2] === '--hostname' && args[3] === GHE) {
+      return inner.gh(['api', 'graphql', ...args.slice(4)]);
+    }
+    if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) {
+      return inner.gh(args.slice(0, -2));
+    }
+    return inner.gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
   };
   return { calls, caller: ghCaller(gh) };
 }
@@ -689,7 +694,7 @@ const BODY_WORLD = { bodies: { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [
 test('with an Enterprise host every read carries the host-qualified slug or --hostname', () => {
   let gh = makeGheGh(NATIVE_WORLD);
   assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, host: GHE, caller: gh.caller }).subIssues.map((s) => s.number), [11, 12]);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.parent(11), SHAPE.probe(), SHAPE.page(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [onGhe(SHAPE.parent(11)), graphqlOnGhe(SHAPE.probe()), graphqlOnGhe(SHAPE.page(10)), onGhe(SHAPE.sub(11)), onGhe(SHAPE.sub(12)), onGhe(SHAPE.labels(10))]);
 
   gh = makeGheGh(BODY_WORLD);
   assert.equal(gatherGateFacts({ subIssue: 11, ...OR, workLinks: 'body-text', host: GHE, caller: gh.caller }).parent, 10);
@@ -699,12 +704,12 @@ test('with an Enterprise host every read carries the host-qualified slug or --ho
   const page = Array.from({ length: 100 }, (_, i) => 100 + i);
   gh = makeGheGh({ subs: { 10: page }, hasNextPage: { 10: true }, rest: { 10: [...page, 200] } });
   assert.equal(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }).length, 101);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.page(10), SHAPE.rest(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [graphqlOnGhe(SHAPE.probe()), graphqlOnGhe(SHAPE.page(10)), onGhe(SHAPE.rest(10))]);
 
   // 4d, sent by the gather itself.
   gh = makeGheGh({ probeFields: ['title'], rest: { 10: [11] } });
   assert.deepEqual(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }), [11]);
-  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.rest(10)].map(onGhe));
+  assert.deepEqual(argvOf(gh.calls), [graphqlOnGhe(SHAPE.probe()), onGhe(SHAPE.rest(10))]);
 
   const seen = [];
   const fetcher = (argv, deps) => { seen.push(argv); deps.stdout(`${JSON.stringify({ byParent: { 10: [11] }, retry: [] })}\n`); return 0; };

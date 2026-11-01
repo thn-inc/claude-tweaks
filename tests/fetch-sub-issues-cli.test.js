@@ -264,3 +264,46 @@ test('--repo ../evil is rejected before any gh call', () => {
   assert.match(d.err.join(''), /invalid --repo value/);
   assert.deepStrictEqual(d.calls, []);
 });
+
+// #4806: the schema probe and every GraphQL page reach the --repo / origin host, not github.com.
+// 51 numbers is one probe and two 50-alias pages.
+test('#4806: the schema probe and every GraphQL page carry --hostname right after graphql off github.com, and none on github.com', () => {
+  const nums = Array.from({ length: 51 }, (_, i) => String(i + 1));
+  const probeArgv = ['api', 'graphql', '-f', 'query={ __type(name: "Issue") { fields { name } } }'];
+  const assertHosted = (d) => {
+    const gql = d.calls.filter((a) => a[1] === 'graphql');
+    assert.strictEqual(gql.length, 3);
+    for (const a of gql) {
+      assert.deepStrictEqual(a.slice(0, 4), ['api', 'graphql', '--hostname', 'ghe.example.com']);
+      assert.strictEqual(a.filter((x) => x === '--hostname').length, 1);
+    }
+  };
+
+  // Parent 5 reports a next page, so --resolve-retries sends the REST retry in this same run.
+  const viaRepo = deps({
+    runner(args) {
+      viaRepo.calls.push(args);
+      const q = args.find((a) => a.startsWith('query='));
+      if (q && q.includes('__type')) return probeOk;
+      if (!q) return '6\n9\n';
+      const repository = {};
+      for (const [, n] of q.matchAll(/i(\d+): issue/g)) {
+        repository[`i${n}`] = { number: Number(n), subIssues: { nodes: [], pageInfo: { hasNextPage: n === '5' } } };
+      }
+      return JSON.stringify({ data: { repository } });
+    },
+  });
+  assert.strictEqual(run([...nums, '--repo', 'ghe.example.com/o/r', '--resolve-retries'], viaRepo), 0);
+  assertHosted(viaRepo);
+  const rest = viaRepo.calls.filter((a) => a[1] === '--paginate');
+  assert.deepStrictEqual(rest, [['api', '--paginate', 'repos/o/r/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']]);
+
+  const viaRemote = deps({ remoteUrl: () => 'git@ghe.example.com:acme/widget.git' });
+  assert.strictEqual(run(nums, viaRemote), 0);
+  assertHosted(viaRemote);
+
+  const plain = deps();
+  assert.strictEqual(run([...nums, '--repo', 'o/r'], plain), 0);
+  assert.ok(plain.calls.every((a) => !a.includes('--hostname')));
+  assert.deepStrictEqual(plain.calls[0], probeArgv);
+});

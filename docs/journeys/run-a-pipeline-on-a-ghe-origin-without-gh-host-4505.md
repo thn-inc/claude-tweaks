@@ -6,6 +6,8 @@ files:
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/materialize.js
+  - plugin/bin/fetch-sub-issues.js
+  - plugin/bin/lib/issues/parent-gate.js
 ---
 
 # Run a Pipeline on a GitHub Enterprise Origin Without Exporting GH_HOST
@@ -45,7 +47,15 @@ files:
 - **Should understand:** An explicit `--repo` pins its own host for that CLI's calls, so one record is never read from two hosts. The pin stays out of the record's own Premise-check command, which runs with the environment it had before. An SSH host alias remote (`git@github-work:acme/widgets.git`) gets no injection at all, because gh resolves aliases itself.
 - **Red flags:** An exported `GH_HOST` replaced by the origin host; `materialize --repo owner/name` reading the issue on github.com but its author on the GHE host; `none of the git remotes correspond to the GH_HOST environment variable` on an SSH-alias checkout.
 
+### 5. Sub-issue lookups name their host — `plugin/bin/fetch-sub-issues.js`, `plugin/bin/lib/issues/parent-gate.js`
+- **URL:** —
+- **Action:** The parent gate (`parent-gate.js`), or a maintainer, runs `fetch-sub-issues.js 1095 --repo acme.ghe.com/acme/widgets`. The `subIssues` schema probe and every batched page run as `gh api graphql --hostname acme.ghe.com -f query=…`. A truncated or missing parent falls back to the `--resolve-retries` REST call `gh api --paginate repos/acme/widgets/issues/1095/sub_issues --jq .[].number --hostname acme.ghe.com`. The JSON envelope lists the enterprise repo's real sub-issues.
+- **Should feel:** The sub-issue list matches what the enterprise issue page shows, with no separate host setup for this one CLI.
+- **Should understand:** Each GraphQL call names its own host right after `graphql`, so the result never depends on which `GH_HOST` the process inherited (#4806). A github.com repo sends no `--hostname` at all. The parent gate no longer adds the host to the fetcher's calls itself, because the fetcher already sends it. The gate still adds it to its own parent lookup, REST fallback, and `api user` reads.
+- **Red flags:** A sub-issue list that is empty, or that names github.com issues, for an enterprise parent. A `gh api graphql` argv carrying `--hostname` twice. Any `--hostname` on a github.com run.
+
 ## Origin
 - Created during build of #4505 (bin/ gh calls: GitHub Enterprise host dropped again, regression of #2538)
 - Steps 1-4 built in this session: the `ghOptions` seam, its migration across every `plugin/bin` `gh` spawn, the explicit-`--repo` pin, and `tests/gh-host-seam-behavior.test.js` / `tests/gh-host-seam-conformance.test.js`
+- Step 5 added during build of #4806 (fetch-sub-issues.js's schema probe and GraphQL pages pass `--hostname` off github.com; parent-gate.js drops its `onHost` wrap of the fetcher), pinned by `tests/fetch-sub-issues-cli.test.js`'s #4806 test and the Enterprise-host tests in `tests/bin-lib/issues/parent-gate.test.js` and `tests/parent-gate-cli.test.js`
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
