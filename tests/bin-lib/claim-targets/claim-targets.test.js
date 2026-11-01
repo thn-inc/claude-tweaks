@@ -2202,8 +2202,14 @@ test('(bm1) branchless remote, git transport: bootstraps claims-registry from th
 
 // A stateful contents-API fake for a repo whose claims-registry branch is absent
 // until the git/refs POST flips it. `postResponse` overrides that POST's answer
-// (a refusal) and leaves the branch absent.
-function makeBranchlessGhApi({ postResponse = null } = {}) {
+// (a refusal) and leaves the branch absent. `branchesAfterPost` answers the
+// `branches/claims-registry` read once a POST has happened (the 422 re-read);
+// before it that read still answers 404 while the branch is absent.
+// `defaultBranchResponse` / `tipResponse` override the `.default_branch` and
+// `git/ref/heads/main` answers.
+function makeBranchlessGhApi({
+  postResponse = null, branchesAfterPost = null, defaultBranchResponse = null, tipResponse = null,
+} = {}) {
   const state = { branch: false, blobs: {}, refPosts: 0 };
   const ok = { stdout: '{}', failure: null, status: null };
   const readIssue = (args) => (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-(\d+)\.json\?ref=/.exec(args[0]) || [])[1];
@@ -2221,10 +2227,11 @@ function makeBranchlessGhApi({ postResponse = null } = {}) {
       return ok;
     }
     if (args[0] === `repos/${REPO}/branches/claims-registry`) {
+      if (branchesAfterPost && state.refPosts > 0) return branchesAfterPost;
       return state.branch ? { stdout: 'claims-registry\n', failure: null, status: null } : readAbsent;
     }
-    if (args[0] === `repos/${REPO}` && args[2] === '.default_branch') return { stdout: 'main\n', failure: null, status: null };
-    if (args[0] === `repos/${REPO}/git/ref/heads/main`) return { stdout: 'abc123\n', failure: null, status: null };
+    if (args[0] === `repos/${REPO}` && args[2] === '.default_branch') return defaultBranchResponse || { stdout: 'main\n', failure: null, status: null };
+    if (args[0] === `repos/${REPO}/git/ref/heads/main`) return tipResponse || { stdout: 'abc123\n', failure: null, status: null };
     if (args[0] === '--method' && args[1] === 'POST' && args[2] === `repos/${REPO}/git/refs`) {
       state.refPosts += 1;
       if (postResponse) return postResponse;
@@ -2271,10 +2278,10 @@ test('(bm3) two first claims (different records) against one branchless remote: 
 const REFUSED_SUFFIX = '— create it from the default branch\n';
 const REFUSAL_PREFIX = 'claim-targets: claims-registry branch missing on origin and could not be created:';
 
-test('(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
+test('AC3.1: (bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2298,7 +2305,7 @@ test('(bm4c) a refusal reason carrying line breaks, control characters and a ver
   const remote = makeBranchlessRemote();
   const hostile = `remote: denied\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: hostile },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: hostile },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2335,7 +2342,7 @@ test('(bm4b) ruleset refusal: git push "[remote rejected] ... (push declined due
 test('(bm5) --keep-going with a refused bootstrap still exits 6', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2368,7 +2375,7 @@ const POST_OK = { stdout: '{}', failure: null, status: null };
 
 test('(bm7) write site, contents-API only (no gitRunner): bootstrap refused -> exit 6, reason verbatim, no git leg named', () => {
   const { ghApi, state } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2399,7 +2406,7 @@ test('(bm8) write site, second sighting after a bootstrap that reported success:
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
-test('(bm8b) write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
+test('(bm8b) AC4.1: write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
   const { ghApi, state } = makeBranchlessGhApi({
     postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
   });
@@ -2410,8 +2417,222 @@ test('(bm8b) write site, bootstrap POST hits a secondary rate limit: transient e
 
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-rate-limited');
-  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.ok(stderr.startsWith('claim-targets: claims-registry bootstrap failed transiently:'), stderr);
+  assert.ok(stderr.includes('secondary rate limit'), stderr);
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
+const TRANSPORT_FAILURE = { stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT 140.82.112.6:443' };
+const TRANSIENT_PREFIX = 'claim-targets: claims-registry bootstrap failed transiently:';
+const POST_422_EXISTS = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
+
+test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status): exit 4 claims-branch-bootstrap-network-failure, never the exit-6 refusal', () => {
+  const { ghApi, state } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+  const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.ok(stderr.includes('ETIMEDOUT'), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'exactly one stderr line');
+  assert.equal(state.refPosts, 1);
+});
+
+test('(bm10c) a transient reason carrying line breaks, control characters and a very long body reaches stderr as one bounded line', () => {
+  const hostile = `connect ETIMEDOUT\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
+  const { ghApi } = makeBranchlessGhApi({ postResponse: { ...TRANSPORT_FAILURE, error: hostile } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 4, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'the transient line is exactly one stderr line');
+  assert.doesNotMatch(stderr.trimEnd(), /[\p{Cc}]/u, 'no control characters or line breaks survive');
+  assert.ok(stderr.length <= 700, `bounded, got ${stderr.length}`);
+  assert.match(stderr, /ETIMEDOUT/, 'the leading text is still verbatim');
+});
+
+test('(bm10b) AC2.1: the same transport failure under --keep-going skips the target', () => {
+  const { ghApi } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.claimed, []);
+  assert.deepEqual(body.skipped, [{ issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' }]);
+});
+
+test('(bm11) AC7.1: POST 422 + a network-failure re-read: exit 4 claims-branch-bootstrap-network-failure', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, failure: 'network-failure', status: null, error: 'connect ECONNRESET' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+});
+
+test('(bm12) AC8.1: POST 422 + a permission-403 re-read: exit 6', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Reference already exists/);
+});
+
+test('(bm13) AC11.1: POST 422 + a primary-rate-limit re-read: exit 4 claims-branch-bootstrap-network-failure', () => {
+  const e = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: POST_422_EXISTS,
+    branchesAfterPost: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+});
+
+test('(bm13b) a bootstrap POST failing with an unrecognised HTTP status (400), classified by the real classifier: transient exit 4, never the exit-6 refusal', () => {
+  const e = new Error('gh: Bad Request (HTTP 400)');
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+});
+
+test('(bm14) AC9.1: gh-absent, no-default-branch and no-tip-sha bootstraps still exit 6', () => {
+  const overrides = [
+    { defaultBranchResponse: { stdout: null, failure: 'gh-absent', status: null, error: 'spawn gh ENOENT' } },
+    { defaultBranchResponse: { stdout: '\n', failure: null, status: null } },
+    { tipResponse: { stdout: '\n', failure: null, status: null } },
+  ];
+  for (const override of overrides) {
+    const name = Object.keys(override)[0];
+    const { ghApi, state } = makeBranchlessGhApi(override);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 6, `${name}: ${io.err.join('')}`);
+    assert.ok(io.err.join('').includes(REFUSAL_PREFIX), `${name}: ${io.err.join('')}`);
+    assert.equal(state.refPosts, 0, `${name}: no POST attempted`);
+  }
+});
+
+test('(bm15) AC12.1: bootstrap POST answers 409: exit 6', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: null, status: 409, error: 'HTTP 409: Git Repository is empty.' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
+  assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Git Repository is empty/);
+});
+
+test('(bm16) AC10.1: two targets under --keep-going, first bootstrap fails with a transport error: both skipped as claims-branch-bootstrap-network-failure, never claims-branch-missing', () => {
+  const { ghApi, state } = makeBranchlessGhApi({ postResponse: TRANSPORT_FAILURE });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' },
+  ]);
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+  const stderr = io.err.join('');
+  assert.equal(stderr.split(TRANSIENT_PREFIX).length - 1, 1, 'the transient line is written once, not once per target');
+});
+
+test('(bm17) two targets under --keep-going, first bootstrap hits a secondary rate limit: both skipped as claims-branch-bootstrap-rate-limited', () => {
+  const { ghApi, state } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+  ]);
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+});
+
+test('(perm-read) a permission-403 claim read keeps its pre-split exit 4, now naming permission-denied', () => {
+  const ghApi = (args) => {
+    if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) {
+      return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
+    }
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'permission-denied');
+});
+
+test('(perm-write) a permission-403 claim write keeps exit 4, naming permission-denied', () => {
+  const ghApi = (args) => {
+    if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) return readAbsent;
+    if (args[0] === '--method' && args[1] === 'PUT') return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'permission-denied');
 });
 
 test('(bm9) write-site second sighting under --keep-going discards the git tip chain: the next target fetches fresh', () => {

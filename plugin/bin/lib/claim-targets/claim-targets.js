@@ -49,10 +49,10 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap rate-limited by GitHub)\n'
+  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap that hit a network failure or a rate limit)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
   + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
-  + '  exit 6 = the claims-registry branch is missing on origin and could not be created —\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (e.g. permission, ruleset, gh absent) —\n'
   + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
@@ -468,25 +468,38 @@ function run(argv, deps) {
   // or create-only write look absent/rejected, which used to read as a
   // contest. The branch is created at most once per run: a second sighting
   // after a bootstrap that reported success is transient (the remote has not
-  // caught up yet), never a second bootstrap. A refused bootstrap is
-  // run-level — every target would hit it — so it exits 6 even under
-  // `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
+  // caught up yet), never a second bootstrap. A bootstrap that failed
+  // transiently (a network failure or a rate limit — secondary, or primary
+  // reported as network-failure — a later run may succeed) is remembered in
+  // `bootstrapTransientError`: a later target that finds the branch still
+  // missing reports that same name, not `claims-branch-missing`. A refused
+  // bootstrap is run-level — every target would hit it — so it exits 6 even
+  // under `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
   // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
   // `null` means skipped under `--keep-going`, else the exit code to return).
   let bootstrapAttempted = false;
+  let bootstrapTransientError = null;
   function handleBranchMissing(issue) {
     // Whatever tip this run believed is untrustworthy once the branch is
     // known missing — discard the chain on every path out, a skip included.
     knownTip = null;
     if (bootstrapAttempted) {
-      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-missing' }) };
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError || 'claims-branch-missing' }) };
     }
     bootstrapAttempted = true;
     const b = claimStore.ensureClaimsBranch(deps, repoSlug);
-    // A secondary rate limit on the create is transient, not a refusal: a later
-    // run's bootstrap may succeed, so it is exit 4 (or a --keep-going skip).
+    // A transient bootstrap failure is not a refusal: a later run's bootstrap
+    // may succeed, so it is exit 4 (or a --keep-going skip). A secondary rate
+    // limit keeps its own name; every other transient (a network failure, a
+    // primary rate limit) is a network failure.
     if (!b.ok && b.transient) {
-      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-bootstrap-rate-limited' }) };
+      bootstrapTransientError = b.failure === 'secondary-rate-limit'
+        ? 'claims-branch-bootstrap-rate-limited'
+        : 'claims-branch-bootstrap-network-failure';
+      // The envelope names the class; the underlying reason goes to stderr,
+      // once, on the attempt itself (later sightings reuse the remembered name).
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} bootstrap failed transiently: ${oneLineReason(b.reason)} — re-run later\n`);
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError }) };
     }
     if (!b.ok) {
       const reason = oneLineReason(b.reason);
@@ -501,6 +514,10 @@ function run(argv, deps) {
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
+      // Every read failure, a `permission-denied` one included, stays exit 4
+      // under its own error name: #4756 split the permission refusal out of
+      // `network-failure` only for the bootstrap (exit 6); re-routing the
+      // claim read/write paths is a separate decision, tracked as a follow-up.
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
       continue;
@@ -624,7 +641,8 @@ function run(argv, deps) {
       // (record-697's incident read exactly that way before diagnosis,
       // #787's amendment). Either way this issue's write never confirmed a
       // git tip — discard the chain (see the `knownTip` comment above
-      // `claimedThisRun`).
+      // `claimedThisRun`). A `permission-denied` write failure also lands here
+      // as exit 4 under its own error name, as at the read site above.
       knownTip = null;
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });
