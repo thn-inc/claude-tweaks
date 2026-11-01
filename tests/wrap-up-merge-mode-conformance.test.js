@@ -352,6 +352,8 @@ const CLEANUP_ONLY_FACTS = {
   'never-mints': /it never mints a run dir/,
   'stops-naming-record': /When nothing resolves it stops and names the record/,
   'merged-pointer': /when that record's PR is `MERGED`, the stop names `\/claude-tweaks:wrap-up #\{n\} merge`/,
+  // How cleanup-only learns the PR state when no run-state.json resolves: the flow resume check's lookup, adapted to merged.
+  'merged-pr-lookup': /`gh pr list --search "closes:#\{n\}" --state merged --json number,closingIssuesReferences`, or the MCP equivalent/,
 };
 
 test('AC6.1: flags.md states cleanup-only\'s run-dir lookup', () => {
