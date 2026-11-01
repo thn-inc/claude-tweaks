@@ -57,7 +57,7 @@ not a missing one among them.
 
 ## No-dispatch host (#4555)
 
-A host with no `Agent`/`Task` tool — `_shared/subagent-dispatch-core.md`'s probe, "`ToolSearch` finds none, deferred or otherwise" — is exactly the case this decision forbids silent inline execution for: `subagent` cannot run there, and implementing the plan's tasks in-session would be the unlicensed third path above. The probe's result decides, never the host's shape: a fork or a cwd-pinned Task subagent whose probe finds `Agent` is not a no-dispatch host (#4555 found `Agent` present in a fork).
+A host with no `Agent`/`Task` tool — `_shared/subagent-dispatch-core.md`'s probe, "`ToolSearch` finds none, deferred or otherwise" — is exactly the case this decision forbids silent inline execution for: `subagent` cannot run there, and implementing the plan's tasks in-session would be the unlicensed third path above. The probe's result decides, never the host's shape: a fork or a cwd-pinned Task subagent whose probe finds `Agent` is not a no-dispatch host (#4555 found `Agent` present in a fork). That file's self-judge fallback covers read-only lens and judge units, never plan implementation.
 
 The enforcement point is the dispatch-capability preflight. `/claude-tweaks:flow` Step 2.4 runs it whenever the step list includes `build`, before it claims targets or creates a worktree, fresh or resumed; `/claude-tweaks:build` Common Step 1.5 runs it before Common Step 1.6's plan reviewer and Common Step 2's `subagent` execution. When the probe finds none:
 

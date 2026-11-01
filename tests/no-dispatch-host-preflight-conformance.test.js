@@ -66,6 +66,7 @@ const POLICY_FACTS = [
   [/`assess-agent-autonomy`'s `merge-check` then routes that run's merge to a human/, 'AC10.3: a build-less degraded review routes its merge to a human'],
   [/a choice for a human and never taken automatically/, 'AC3.1: batched is never taken automatically'],
   [/before it claims targets or creates a worktree, fresh or resumed/, 'AC1.2: flow preflight precedes claim and worktree, fresh or resumed'],
+  [/That file's self-judge fallback covers read-only lens and judge units, never plan implementation\./, 'F3: states its departure from the probe\'s self-judge fallback'],
 ];
 const policyMissing = missingFactsOf(POLICY_FACTS);
 
@@ -353,9 +354,9 @@ const settleParaOf = (text) => lineStartingWith(text, SETTLE_PREFIX);
 const SETTLE_FACTS = [
   [/`ISSUE #\{n\}: failed:no-dispatch-host`/, 'D4: Settle recognizes the stop by its gate line'],
   [/treat it as a pre-flight stop, like the claims-branch-missing stop above/, 'D4: pre-flight-stop special case'],
-  [/Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: no classification, retry count or failure comment'],
+  [/so no claim of this run's exists/, 'D4: no claim of this run\'s exists at the stop'],
+  [/Skip steps 1-7: no release, no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: steps 1-7 skipped — no release, classification, retry count or failure comment'],
   [/read `_shared\/headless-self-report\.md` and follow its dedup-and-file procedure/, 'D4: headless self-report'],
-  [/When `DISPATCH_HEADLESS=1` was set, the self-report still runs after step 1's skip: /, 'D4: self-report is not skipped by step 1\'s "move to the next one"'],
   [/failing-check-name `flow-step-2\.4-no-dispatch-host`/, 'D4: self-report name'],
 ];
 const settleMissing = missingFactsOf(SETTLE_FACTS);
@@ -406,4 +407,46 @@ test('AC12.1: Settle and the policy section name the same gate', () => {
   const drifted = paragraph.replaceAll('no-dispatch-host', 'no-dispatch');
   assert.notEqual(drifted, paragraph, 'drift anchor not found — control cannot discriminate');
   assert.ok(!namesGate(drifted), 'a Settle paragraph with a drifted gate token must turn the check red');
+});
+
+// --- dispatch's reporting.md relays the stop to the human (final-review F2) ---
+
+const REPORTING = path.join(SKILLS, 'dispatch', 'reporting.md');
+const RELAY_PREFIX = '**No-dispatch-host stops are relayed (#4555).**';
+const relayParaOf = (text) => lineStartingWith(text, RELAY_PREFIX);
+
+const RELAY_FACTS = [
+  [/When a group's first call reports `ISSUE #\{n\}: failed:no-dispatch-host`/, 'F2: keyed on the gate line'],
+  [/this host has no Agent\/Task tool, so the `subagent` execution strategy cannot run/, 'F2: names the cause'],
+  [/closes with the resume command on its own line, `\/claude-tweaks:dispatch #\{n\}`, to run from a top-level session/, 'F2: closes with the resume command'],
+  [/\(`build\/execution-mode-policy\.md`'s No-dispatch host section\)/, 'F2: cites the policy section'],
+];
+const relayMissing = missingFactsOf(RELAY_FACTS);
+
+test('F2: dispatch reporting.md relays a no-dispatch-host stop to the human (#4555)', () => {
+  const para = relayParaOf(readText(REPORTING));
+  assert.ok(para, `reporting.md has no "${RELAY_PREFIX}" paragraph`);
+  assert.deepEqual(relayMissing(para), [], 'the relay paragraph must state every fact (#4555)');
+});
+
+test('F2: each reporting.md relay fact can go red', () => {
+  const para = relayParaOf(readText(REPORTING));
+  assert.ok(para, `reporting.md has no "${RELAY_PREFIX}" paragraph`);
+  assertEachPatternGoesRed(para, RELAY_FACTS, relayMissing);
+});
+
+test('F2: the relay paragraph sits directly after the plan-review relay paragraph', () => {
+  const PLAN_REVIEW = '**Plan-review questions are relayed, not dropped (#3377).**';
+  const adjacent = (text) => {
+    const lines = text.split('\n');
+    const at = lines.findIndex((line) => line.startsWith(PLAN_REVIEW));
+    return at >= 0 && lines[at + 1] === '' && lines[at + 2] !== undefined && lines[at + 2].startsWith(RELAY_PREFIX);
+  };
+  const text = readText(REPORTING);
+  assert.ok(adjacent(text), 'the relay paragraph must follow the plan-review relay paragraph');
+
+  // Control: a copy with the relay paragraph removed must fail the same check.
+  const without = text.split('\n').filter((line) => !line.startsWith(RELAY_PREFIX)).join('\n');
+  assert.notEqual(without, text, 'the removal control must change the text');
+  assert.ok(!adjacent(without), 'a copy without the relay paragraph must fail the adjacency check');
 });
