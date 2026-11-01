@@ -354,7 +354,8 @@ const SETTLE_FACTS = [
   [/`ISSUE #\{n\}: failed:no-dispatch-host`/, 'D4: Settle recognizes the stop by its gate line'],
   [/treat it as a pre-flight stop, like the claims-branch-missing stop above/, 'D4: pre-flight-stop special case'],
   [/Skip steps 3-7: no `failure-check` classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment/, 'D4: no classification, retry count or failure comment'],
-  [/When `DISPATCH_HEADLESS=1` was set, read `_shared\/headless-self-report\.md`/, 'D4: headless self-report'],
+  [/read `_shared\/headless-self-report\.md` and follow its dedup-and-file procedure/, 'D4: headless self-report'],
+  [/When `DISPATCH_HEADLESS=1` was set, the self-report still runs after step 1's skip: /, 'D4: self-report is not skipped by step 1\'s "move to the next one"'],
   [/failing-check-name `flow-step-2\.4-no-dispatch-host`/, 'D4: self-report name'],
 ];
 const settleMissing = missingFactsOf(SETTLE_FACTS);
@@ -380,10 +381,14 @@ test('AC12.1: the special case sits before Settle step 1', () => {
   assert.ok(text.includes(SETTLE_STEP1), 'Settle step 1 anchor not found');
   assert.ok(placed(text), 'the No-dispatch-host special case must precede Settle step 1');
 
-  // Control: a copy with the paragraph moved after step 1's line must fail the same check.
+  // Control: a copy with the paragraph removed and re-inserted after the END of step 1's full line
+  // must fail the same check.
   const paragraph = settleParaOf(text);
   assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
-  const moved = text.replace(`${paragraph}\n\n`, '').replace(SETTLE_STEP1, `${SETTLE_STEP1}\n\n${paragraph}`);
+  const without = text.replace(`${paragraph}\n\n`, '');
+  const step1End = without.indexOf('\n', without.indexOf(SETTLE_STEP1));
+  assert.notEqual(step1End, -1, 'step 1 line end not found — control cannot discriminate');
+  const moved = `${without.slice(0, step1End)}\n\n${paragraph}${without.slice(step1End)}`;
   assert.notEqual(moved, text, 'move anchor not found — control cannot discriminate');
   assert.ok(!placed(moved), 'a paragraph moved after step 1 must turn the placement check red');
 });
