@@ -8,9 +8,11 @@ files:
   - plugin/bin/lib/issues/record.js
   - plugin/bin/lib/issues/record-vocabulary.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/lib/compose-record/compose.js
   - plugin/skills/_shared/pr-first-merge.md
   - plugin/skills/_shared/local-merge-auto-finish.md
+  - plugin/skills/_shared/local-merge-sequence.md
   - plugin/skills/dispatch/settle-and-merge.md
   - plugin/skills/wrap-up/auto-merge-short-circuit.md
   - plugin/skills/flow/worktree-merge.md
@@ -23,7 +25,7 @@ files:
 
 **Persona:** A claude-tweaks maintainer whose `/claude-tweaks:flow` run has just cleared its last gate and is about to merge — either watching the terminal Review Console click through, or reading `git log` on `main` the next morning to see what landed — and who wants every merge commit to carry a subject the release engines (release-please, the local engine) can parse without a human rewriting it.
 **Goal:** The merge lands on the integration branch as one commit whose subject is `feat|fix|chore[(scope)][!]: {record title} (#N)`, whose body carries a `Release-Note: {line}` paragraph, the `Fixes #N` closing keywords, and (when the record is `breaking`) a trailing `BREAKING CHANGE:` footer — composed by the plugin at merge time, identically on the pr-first and local-merge paths.
-**Entry point:** Any merge site in the plugin: `_shared/pr-first-merge.md` Step 3 (`gh pr merge --squash`), or one of the four `git merge --no-ff` fences (`_shared/local-merge-auto-finish.md`, `wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md`, `flow/worktree-merge.md`).
+**Entry point:** Any merge site in the plugin: `_shared/pr-first-merge.md` Step 3 (`gh pr merge --squash`), or `_shared/local-merge-sequence.md` Step 3's `git merge --no-ff` fence, which `_shared/local-merge-auto-finish.md`, `wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md` and `flow/worktree-merge.md` all run.
 **Success state:** `git log -1 --format=%s` on the integration branch prints `feat: {title} (#N)` (or `fix:`/`chore:`, with `!` when breaking), the body contains a `Release-Note: {line}` paragraph (from the record's own `## Release Note` spec section — required on every record since #2580) and ends with `Fixes #N` (and `BREAKING CHANGE: {note}` last when breaking), the record auto-closes, and `/claude-tweaks:help`'s auto-merged-this-week metric still counts an automated merge because the `[{tag}]` paragraph rides in the body (a `[human-approved]` close-out merge is deliberately left out of that count).
 
 ## Steps

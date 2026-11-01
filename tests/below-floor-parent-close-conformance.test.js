@@ -127,30 +127,32 @@ test('AC1.1: the close section excludes pre-merge github entries, lists sub-issu
 test('AC5.1: the close section is idempotent on a closed parent, a human reopen and a counted heading comment', () => {
   const close = collapse(closeSection(read(GATE_REL)));
   assert.match(close, /already `CLOSED`/);
-  assert.ok(close.includes('gh issue view $PARENT_NUM --json state,stateReason,comments'), 'reads stateReason with the comments');
+  // #4603: the stateReason+comments read and the login read are the CLI's now, pinned by
+  // tests/bin-lib/issues/parent-gate.test.js's `gatherIdempotenceFacts reads the login only for an
+  // open, non-reopened parent` and tests/bin-lib/issues/below-floor-parent-close.test.js's fake gh.
   assert.ok(
     close.includes('An open parent whose `stateReason` is `REOPENED` is a no-op too, reported in the output and never re-closed'),
     'a human reopen is never re-closed',
   );
-  assert.ok(close.includes('gh api user --jq .login'), 'reads the current gh identity');
   assert.ok(
     close.includes(
-      "counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the login printed above)",
+      "counting only a comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors) or from the current `gh` identity (the CLI reads its login)",
     ),
     'a trusted or own-identity heading comment counts',
   );
   assert.ok(close.includes('Any other comment carrying the heading reads as no comment posted'), 'any other heading comment reads as absent');
 });
 
-test('AC1.1: the close reason follows the sub-issues\' stateReason, and the enumeration is paginated', () => {
+test('AC1.1: the close reason follows the sub-issues\' stateReason', () => {
   const gate = read(GATE_REL);
   const close = collapse(closeSection(gate));
   assert.ok(close.includes('Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`'), 'completed only with a completed sub-issue');
   assert.ok(close.includes('gh issue close $PARENT_NUM --reason "not planned"'), 'not planned otherwise');
   assert.ok(close.includes('No sub-issue closed as completed, so this parent closes as not planned.'), 'the comment says so');
-  const enumerate = section(gate, "## Enumerate the parent's sub-issues", '## Self-inclusion rule');
-  assert.ok(enumerate.includes('gh issue view {n} --json state,stateReason,labels,title,closedByPullRequestsReferences'), 'fetches stateReason');
-  assert.ok(enumerate.includes('gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"'), 'native enumeration is paginated');
+  // #4603: the per-sub-issue read and the paginated native enumeration are the CLI's now, pinned by
+  // tests/bin-lib/issues/parent-gate.test.js's `gatherGateFacts (native, from a sub-issue) makes the
+  // call shapes in order` and `AC1.1: a parent past the 100 page size goes through the --paginate
+  // ladder`, and tests/parent-gate-cli.test.js's two AC1.1 enumeration tests.
 });
 
 test('AC2.2: the entry shapes name Step 4.0b as the post-merge sub-issue-side entry', () => {
@@ -195,17 +197,19 @@ test('AC1.1: /demo no longer claims to be the only closer of a parent', () => {
 // Go-red controls: the pre-change files carry the literals the absence assertions above reject, so
 // those assertions can fail. Guarded so an unreachable commit skips only the control tests.
 const PRE_CHANGE_SHA = '1ab4e17d9';
+// #4603's base on main, before the Parent-Gate Procedure ran through bin/parent-gate.js.
+const PRE_4603_SHA = '0baad513d';
 
-// The skill file as of PRE_CHANGE_SHA: { text, skip } where skip is false or the skip reason.
-function preChangeSkillFile(rel) {
+// The skill file as of `sha`: { text, skip } where skip is false or the skip reason.
+function preChangeSkillFile(rel, sha = PRE_CHANGE_SHA) {
   try {
-    const text = execFileSync('git', ['show', `${PRE_CHANGE_SHA}:plugin/skills/${rel}`], {
+    const text = execFileSync('git', ['show', `${sha}:plugin/skills/${rel}`], {
       cwd: ROOT,
       encoding: 'utf8',
     }).replace(/\r\n/g, '\n');
     return { text, skip: false };
   } catch (err) {
-    const skip = `commit ${PRE_CHANGE_SHA} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
+    const skip = `commit ${sha} is not reachable in this checkout's git history — the go-red control needs full history: ${String(err.message).split('\n')[0]}`;
     return { text: null, skip };
   }
 }
@@ -242,16 +246,20 @@ test('AC2.1: Step 4.0b sits between Step 4.0 and Step 4.1 and reads the merge\'s
   }
   assert.ok(
     collapse(body).includes(
-      "A merge no session sees land (an `armed` PR that GitHub merges later) never reaches it either, by design: `/claude-tweaks:tidy`'s `parent-gate` backstop recovers that parent.",
+      "A merge no session sees land (an `armed` PR that GitHub merges later) never reaches it either: the reconciler's `post-merge` check runs Steps 4.0 and 4.0b for that run once, keyed on its recorded PR (`docs/reconcile-checks.md`'s Post-merge closes), and `/claude-tweaks:tidy`'s `parent-gate` backstop stays the last resort.",
     ),
-    'an unseen armed merge is the backstop\'s by design',
+    'an unseen armed merge is the reconciler\'s, with tidy as the last resort',
   );
   assert.ok(
-    collapse(body).includes(
-      'It is also a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch',
-    ),
-    'non-default integration branch is a no-op',
+    !collapse(body).includes('by design: `/claude-tweaks:tidy`'),
+    'the "tidy recovers it by design" sentence is gone',
   );
+  // #4549: the default-branch no-op is scoped to the no-PR local merge entry; a PR merge uses closingSet[] on either branch.
+  const LOCAL_MERGE_NO_OP = 'After a no-PR local merge it is a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch';
+  const PRE_CHANGE_NO_OP = 'It is also a no-op unless the branch the merge landed on — the integration branch (`_shared/integration-branch.md`) — is the repo\'s default branch';
+  const checkLocalMergeNoOp = (text) => assert.ok(collapse(text).includes(LOCAL_MERGE_NO_OP), 'non-default integration branch is a no-op after a local merge only');
+  checkLocalMergeNoOp(body);
+  assert.throws(() => checkLocalMergeNoOp(PRE_CHANGE_NO_OP), /after a local merge only/, 'go-red: the pre-change unscoped sentence fails the check');
 });
 
 test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs:* parent', () => {
@@ -272,7 +280,7 @@ test('AC2.1: Step 4.0b subtracts every record Step 4.0 handled and skips a needs
   assert.ok(!body.includes('minus any record Step 4.0 reopened'), 'the reopened-only subtraction is gone');
   assert.ok(
     body.includes(
-      "Skip a parent carrying a `needs:*` label (the parent labels **Enumerate the parent's sub-issues** fetches) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
+      "Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.",
     ),
     'Step 4.0b honours the Worklist rule',
   );
@@ -321,7 +329,9 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   gh pr view {pr-number} --repo {owner}/{repo} --json closingIssuesReferences --jq '[.closingIssuesReferences[] | select((.repository.owner.login // "" | ascii_downcase) == ("{owner}" | ascii_downcase) and (.repository.name // "" | ascii_downcase) == ("{repo}" | ascii_downcase)) | .number]'
   \`\`\`
 `;
-  const CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)";
+  const CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`)";
+  // #4549: the pre-change action list, kept as the control for the list pinned below.
+  const PRE_4549_CLOSING_SET_READ = "After a PR merge, the set is Step 4.0's `closingSet[]`, which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)";
   assert.ok(!raw.includes('closingIssuesReferences'), 'AC1.1: Step 4.0b no longer reads closingIssuesReferences itself');
   assert.ok(PRE_CHANGE_STEP_40B_READ.includes('closingIssuesReferences'), 'AC1.1 go-red: the pre-change read carries the literal');
   assert.ok(body.includes(CLOSING_SET_READ), 'Step 4.0b reads closingSet[] from Step 4.0');
@@ -333,10 +343,10 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   const unscopedBody = body.replace(SCOPED_SKIP, 'When `closingSet[]` is absent');
   assert.notEqual(unscopedBody, body, 'go-red: the doctored text differs from the live section');
   assert.throws(() => checkScopedSkip(unscopedBody), /Step 4\.0b skips when the field is absent, after a PR merge only/, 'go-red: an unscoped skip sentence fails the check');
-  assert.ok(
-    body.includes('which only an exit-0 `post-merge` action carries (`reopen-failed`, `close-pending`, `reopened` or `nothing-closed`)'),
-    'only an exit-0 post-merge action carries the lists',
-  );
+  const ACTIONS = 'which only an exit-0 `post-merge` action other than `base-unchecked` carries (`reopen-failed`, `close-failed`, `close-pending`, `reopened`, `closed` or `nothing-closed`)';
+  const checkActions = (text) => assert.ok(text.includes(ACTIONS), 'only an exit-0 post-merge action other than base-unchecked carries the lists');
+  checkActions(body);
+  assert.throws(() => checkActions(collapse(PRE_4549_CLOSING_SET_READ)), /carries the lists/, 'go-red: the pre-change action list fails the check');
   assert.ok(body.includes('skip this step entirely, never subtracting nothing, and log it'), 'skips the whole step without the lists');
   assert.ok(raw.includes('--status SKIP --step "pr-first-merge Step 4.0b (skipped)"'), 'the skip is logged through log-decision.js');
   assert.ok(
@@ -352,30 +362,199 @@ test('AC2.1: Step 4.0b keeps same-repo closing records, skips without Step 4.0\'
   assert.ok(!body.includes('AUTO {time} — pr-first-merge Step 4.0b'), 'no hand-composed decisions.md line');
 });
 
-test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close as an exception', () => {
-  const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
+// ---- #4599: the reconciler runs Steps 4.0 and 4.0b for a merge no session saw land ----
+
+const SUMMARY_LINE_START = 'node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status AUTO --step "pr-first-merge Step 4.0b" --reversibility n/a --text "evaluated PR #{pr-number}\'s closing records: {k} parent(s) closed"';
+
+// The always-written summary command's line, found by its text rather than by position.
+function summaryCommand(step40b) {
+  const lines = step40b.split('\n').filter((l) => l.includes('log-decision.js') && l.includes('evaluated PR #{pr-number}'));
+  assert.equal(lines.length, 1, 'exactly one always-written summary command in Step 4.0b');
+  return lines[0];
+}
+
+test('#4599: Step 4.0 says the reconciler\'s post-merge check runs the CLI for an armed merge', () => {
+  const pm = read(POST_MERGE_REL);
+  const body = collapse(section(pm, '### Step 4.0:', STEP_40B));
   assert.ok(
-    collapse(cvm).includes("except for the one record-closing exception that contract's Never-reversible list names:"),
-    'Close-via-merge points at the one named exception',
+    body.includes(
+      "An `armed` outcome never reaches this step in-session: the reconciler's `post-merge` check (`gh` only) runs the CLI for that run once GitHub has merged the PR for 10 minutes (the merge grace), with no settle poll and reopens bounded to 10 minutes after `mergedAt`; with `--keep-open` on the composer,",
+    ),
+    'Step 4.0 names the reconciler\'s post-merge check, gh-only, the merge grace, no settle poll, and the 10-minute reopen bound',
   );
+  // The no-settle-poll claim is the argv the module actually passes: tests/bin-lib/reconcile/post-merge.test.js pins it by running the check.
+  const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000, 'the 10 minutes of merge grace the prose states is MERGE_GRACE_MS');
+  assert.ok(!body.includes('the reconciler does not run the CLI'), 'the "reconciler does not run the CLI" claim is gone');
+  assert.ok(body.includes('only a Development-sidebar link can still close a kept-open record there'), 'the --keep-open clause is kept');
+  // The numbers the prose states are the module's.
+  const { CLOSE_WINDOW_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(CLOSE_WINDOW_MS, 10 * 60 * 1000, 'the 10 minutes the prose states is CLOSE_WINDOW_MS');
+});
+
+test('#4599: the Step 4.2 reconcile call states that post-merge rides along as archive\'s prerequisite', () => {
+  const pm = collapse(read(POST_MERGE_REL));
+  assert.ok(
+    pm.includes(
+      '`--checks mirror,release,archive` scopes the sweep to what this step needs, plus `post-merge`, which `archive` requires and the check expansion adds. When Step 4.0b wrote its marker, `post-merge` skips this run; with no marker (exit 3) the run sits inside the 10-minute merge grace, so `post-merge` defers it and `archive` leaves it in place as `post-merge-pending`. The full unscoped default',
+    ),
+    'the --checks sentence names the post-merge expansion and both marker cases',
+  );
+  assert.ok(!pm.includes('so `post-merge` skips it —'), 'the unconditional "marks this run, so post-merge skips it" run-on is gone');
+  assert.ok(!pm.includes('scopes the sweep to exactly what this step needs'), 'the "exactly what this step needs" claim is gone');
+});
+
+test('#4599: Step 4.0b writes an always-on summary line, after the per-parent line, that the reconciler parses as its marker', () => {
+  const { hasPostMergeMarker } = require('../plugin/bin/lib/reconcile/post-merge');
+  const { formatEntry } = require('../plugin/bin/lib/log-decision/append');
+  const raw = section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+  const line = summaryCommand(raw);
+  assert.ok(line.startsWith(SUMMARY_LINE_START), `the summary command is byte-exact: ${line}`);
+  const parentLine = raw.indexOf('--reversibility "high (gh issue reopen)"');
+  assert.ok(parentLine !== -1 && raw.indexOf(line) > parentLine, 'the summary line follows the per-parent line');
+  const prose = collapse(raw);
+  assert.ok(
+    prose.includes('Then write one summary line when this step evaluated the closing set: after a PR merge that had a `closingSet[]`, or after a no-PR local merge (its non-default-branch no-op included), where `the pushed merge commit` replaces `PR #{pr-number}` in the text:'),
+    'the summary line is written only when the closing set was evaluated',
+  );
+  // #4549: after a PR merge there is no non-default-branch no-op, so the clause names it on the local merge only.
+  assert.ok(!prose.includes('after a PR merge that had a `closingSet[]` (the non-default-branch no-op included)'), 'the PR-merge non-default no-op is gone from the summary clause');
+  assert.ok(!prose.includes('whatever happened above'), 'the unconditional "whatever happened above" is gone');
+  assert.ok(
+    prose.includes('On the no-`closingSet[]` path above, the `(skipped)` SKIP line is the marker and no summary line follows, so a run carries one marker and "0 parent(s) closed" never follows a skipped step. Under `local-files`, or after exit 3, there is no line.'),
+    'the no-closingSet path keeps the SKIP line as its only marker; the no-line cases are stated',
+  );
+  assert.ok(
+    collapse(raw).includes('reconciler\'s `post-merge` check reads this line as the marker that the step already ran'),
+    'the line is explained as the reconciler\'s marker',
+  );
+  // Tie the prose to the parser: build the entry the real writer would from the command's own --step.
+  const step = /--step "([^"]+)"/.exec(line)[1];
+  const text = /--text "([^"]+)"/.exec(line)[1].replace('{pr-number}', '4601').replace('{k}', '0');
+  const now = new Date('2026-10-31T12:00:00Z');
+  const bare = formatEntry({ status: 'AUTO', now, step, text, reversibility: 'n/a' });
+  const withSpec = formatEntry({ status: 'AUTO', now, step, spec: 4599, text, reversibility: 'n/a' });
+  assert.equal(hasPostMergeMarker(bare), true, `the marker parser reads: ${bare}`);
+  assert.equal(hasPostMergeMarker(withSpec), true, `the marker parser reads: ${withSpec}`);
+  // Go-red control: a renamed --step is no marker.
+  assert.equal(hasPostMergeMarker(formatEntry({ status: 'AUTO', now, step: 'pr-first-merge Step 4.0c', text, reversibility: 'n/a' })), false);
+});
+
+test('#4599: the Parent-Gate Procedure says the reconciler closes a merge no session saw land', () => {
+  const below = collapse(belowFloorBullet(read(GATE_REL)));
+  assert.ok(
+    below.includes(
+      "A merge no session saw land is closed by the reconciler's `post-merge` check, which runs this gate's own code (`bin/lib/issues/parent-gate.js`, through `bin/lib/issues/below-floor-parent-close.js`) except that it skips the **Self-inclusion rule**; `/claude-tweaks:tidy`'s `parent-gate` backstop catches whatever that leaves open.",
+    ),
+    'the sub-issue-side bullet names the reconciler check and its one divergence',
+  );
+  assert.ok(!below.includes('backstop catches a merge no session saw land'), 'the "backstop catches the unseen merge" claim is gone');
+});
+
+test('#4599: the Self-inclusion rule names the reconciler as the one caller that skips it, and the code agrees', () => {
+  const rule = collapse(section(read(GATE_REL), '## Self-inclusion rule', '\n## '));
+  assert.ok(
+    rule.includes(
+      "**One caller skips this rule:** the reconciler's late `post-merge` pass judges closing records by live state (`selfInclude: false`), because it runs at least 10 minutes after the merge, when GitHub's state is the truth — a sub-issue a human reopened since keeps its parent open.",
+    ),
+    'the Self-inclusion rule states the reconciler exception',
+  );
+  // The clause's claims are the code's: post-merge passes selfInclude: false (pinned by running the check in
+  // tests/bin-lib/reconcile/post-merge.test.js), and its 10 minutes is MERGE_GRACE_MS.
+  const { MERGE_GRACE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
+});
+
+test('#4599: the auto-merge short-circuit and the journey name the reconciler before tidy', () => {
+  const shortCircuit = collapse(read('wrap-up/auto-merge-short-circuit.md'));
+  assert.ok(
+    shortCircuit.includes(
+      "an `auto:merge`'d sub-issue is exactly the population whose below-floor parent the reconciler's `post-merge` check closes first, with `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.",
+    ),
+    'the short-circuit names the reconciler check, with tidy\'s backstop as the last resort',
+  );
+  assert.ok(!shortCircuit.includes("backstop scope exists to catch"), 'the "backstop exists to catch" framing is gone');
+  // Dispatch's group auto-merge gate states the same population the same way (K6).
+  const settle = collapse(read('dispatch/settle-and-merge.md'));
+  assert.ok(
+    settle.includes(
+      "an `auto:merge`'d sub-issue is exactly the population whose below-floor parent the reconciler's `post-merge` check closes first, with `_shared/github-pr-scan-acceptance.md`'s `parent-gate` backstop scope as the last resort.",
+    ),
+    'settle-and-merge names the reconciler check, with tidy\'s backstop as the last resort',
+  );
+  assert.ok(!settle.includes('backstop scope exists to catch'), 'settle-and-merge drops the "backstop exists to catch" framing');
+  const journey = collapse(readText(path.join(ROOT, 'docs', 'journeys', 'close-a-below-floor-decomposition-parent-4466.md')));
+  assert.ok(
+    journey.includes('is closed by the first reconcile pass at least 10 minutes after the merge (the `post-merge` check'),
+    'the journey states when the reconciler closes an armed merge\'s parent',
+  );
+  assert.ok(!journey.includes('closed by the next reconcile pass'), 'the loose "next reconcile pass" is gone');
+});
+
+// #4549: the pre-change wordings, kept as the go-red controls for the pins below.
+const PRE_4549_CVM_COUNT = "except for the one record-closing exception that contract's Never-reversible list names:";
+const PRE_4549_NETWORK_SENTENCE = "The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet's restore contract";
+const PRE_4549_NEVER_TAIL = "`/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged";
+
+function assertCvmNamesTwoExceptions(cvm) {
+  const c = collapse(cvm);
+  assert.ok(
+    c.includes("except for the two record-closing exceptions that contract's Never-reversible list names:"),
+    'Close-via-merge points at the two named exceptions',
+  );
+  assert.ok(
+    c.includes("`_shared/pr-first-merge-post-merge.md` Step 4.0's post-merge pass, which closes a PR's `Fixes` records after a confirmed PR merge into a base that is not the default branch"),
+    'Close-via-merge names the Step 4.0 post-merge close as the second exception',
+  );
+}
+function assertNeverNamesPostMergeClose(never) {
+  for (const lit of [
+    "The second exception is the post-merge close of a PR's `Fixes` records: `_shared/pr-first-merge-post-merge.md` Step 4.0's `closing-links.js --mode post-merge` pass, after a confirmed PR merge into a base that is not the repo's default branch, closes each still-open `Fixes`-span record with a close comment (#4549).",
+    'It reproduces what GitHub does itself on the default branch, where the closing keyword fires; it never closes a `Refs` record or any record the PR does not name.',
+    "a human runs `gh issue reopen {record}`, and the close comment plus the pass's `AUTO` line in `decisions.md` stay as the audit trail",
+    'as long as this close is still its latest; a later promotion of the base into the default branch that carries the `Fixes` keyword can close it again, which is accepted',
+    "satisfies the Reversibility floor's `high` for this one write, and only for that pass",
+  ]) {
+    assert.ok(never.includes(lit), `the Never-reversible list's second exception carries: ${lit}`);
+  }
+}
+function assertNeverNetworkSentence(never) {
+  assert.ok(
+    never.includes("The two record closes the first bullet names are the other exceptions: each one's comment and close are its two writes, under that bullet's restore contract"),
+    'the network-calls bullet names both record closes as exceptions',
+  );
+}
+
+test('AC2.1: issue-claims\' Close-via-merge names the below-floor parent close and the Step 4.0 post-merge close as its two exceptions', () => {
+  const cvm = section(read('_shared/issue-claims.md'), '## Close-via-merge', '## Dispatch authorization');
+  assertCvmNamesTwoExceptions(cvm);
+  // go-red: the same assertion function, run on the pre-#4549 wording, fails.
+  const preCvm = cvm.replace(/except for the two record-closing exceptions[\s\S]*?each under the restore contract/, `${PRE_4549_CVM_COUNT} the Parent-Gate Procedure's **Close the parent below the floor** under the restore contract`);
+  assert.notEqual(preCvm, cvm, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertCvmNamesTwoExceptions(preCvm), /two named exceptions/, 'go-red: the pre-change "one exception" wording fails the check');
   assert.ok(!collapse(cvm).includes('except where a procedure names its own exception'), 'the open-ended exception wording is gone');
   assert.ok(cvm.includes('**Close the parent below the floor**'));
   assert.ok(collapse(cvm).includes('under the restore contract that `_shared/auto-mode-contract.md` exception states'), 'points at the contract for the restore');
   assert.ok(!collapse(cvm).includes('under the restore contract stated there'), 'the referent-less pointer is gone');
 });
 
-test('AC2.1: the auto-mode contract names the below-floor parent close as an exception with its restore contract', () => {
+test('AC2.1: the auto-mode contract names both exceptions (the below-floor parent close and the non-default-base Fixes close), each with its restore contract', () => {
   const contract = read('_shared/auto-mode-contract.md');
   const never = collapse(section(contract, '### Never-reversible (auto-FORBIDDEN, regardless of mode)', '## What `auto` silences'));
   for (const lit of [
     "- Closing or deleting work records — except the Parent-Gate Procedure's **Close the parent below the floor** (`wrap-up/verification-brief-parent-gate.md`) on a sub-issue-side entry: `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry under `work-backend: github-issues`, or, under `work-backend: local-files`, wrap-up's execution step, the auto-merge short-circuit and dispatch's group auto-merge gate.",
     'Its restore contract — the pipeline never restores automatically: under `github-issues` a human runs `gh issue reopen {parent}` and the comment stays as the audit trail; a reopen deletes nothing, so it restores the parent whatever else has landed on it since, as long as this close is still its latest.',
     'Under `local-files` the close is an ordinary commit on the run\'s branch and `bin/lib/issues/local-store.js` has no reopen primitive, so a human clears the parent record\'s `closed`/`closedAt` facets',
-    'The below-floor parent close the first bullet names is the other exception: its comment and its close are its two writes, under that bullet\'s restore contract',
     "This restore contract is what satisfies the Reversibility floor's `high` for this one write, and only for those sub-issue-side entries: `/claude-tweaks:tidy`'s parent-side `Open parent gate` runs the same section but is not this exception, so it stays staged",
   ]) {
     assert.ok(never.includes(lit), `Never-reversible list carries: ${lit}`);
   }
+  assertNeverNamesPostMergeClose(never);
+  assertNeverNetworkSentence(never);
+  // go-red: the same assertion functions, run on the pre-#4549 text, fail.
+  assert.throws(() => assertNeverNamesPostMergeClose(PRE_4549_NEVER_TAIL), /second exception carries/, 'go-red: the pre-change bullet has no second exception');
+  assert.throws(() => assertNeverNetworkSentence(PRE_4549_NETWORK_SENTENCE), /both record closes/, 'go-red: the pre-change network-calls sentence fails the check');
+  assert.ok(!never.includes(PRE_4549_NETWORK_SENTENCE), 'the one-exception network-calls sentence is gone');
   assert.ok(!never.includes('may delete that comment'), 'the restore no longer deletes the audit-trail comment');
   assert.ok(!never.includes("and only for Step 4.0b's entry"), 'the exception is no longer scoped to Step 4.0b alone');
 });
@@ -392,24 +571,34 @@ test('AC2.1: close-out step 7 and merge-mode step 3 run Step 4.0b on `merged`', 
 // Each local-merge push site runs Step 4.1 against its pushed merge commit; Step 4.0b runs first.
 const LOCAL_MERGE_SITES = [
   ['dispatch/settle-and-merge.md', 'After a successful push, run `_shared/pr-first-merge-post-merge.md`'],
-  ['wrap-up/auto-merge-short-circuit.md', 'The explicit `--no-ff` guarantees a real merge commit exists even when the'],
+  ['wrap-up/auto-merge-short-circuit.md', 'After a successful push, run `_shared/pr-first-merge-post-merge.md`'],
   ['flow/worktree-merge.md', '6. **Push the base branch once'],
 ];
 
+function assertLocalPushSite(text, rel, opener) {
+  const para = paragraph(text, opener);
+  assert.ok(para.includes('--ref {integration-branch}'), `${rel}: the Step 4.1 invocation paragraph`);
+  const a = para.indexOf('Step 4.0b');
+  const b = para.indexOf('Step 4.1');
+  assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
+}
+
 test('AC2.1: every local-merge push site runs Step 4.0b before its Step 4.1', () => {
-  for (const [rel, opener] of LOCAL_MERGE_SITES) {
-    const para = paragraph(read(rel), opener);
-    assert.ok(para.includes('--ref {integration-branch}'), `${rel}: the Step 4.1 invocation paragraph`);
-    const a = para.indexOf('Step 4.0b');
-    const b = para.indexOf('Step 4.1');
-    assert.ok(a !== -1 && b > a, `${rel}: Step 4.0b (${a}) before Step 4.1 (${b})`);
-  }
+  for (const [rel, opener] of LOCAL_MERGE_SITES) assertLocalPushSite(read(rel), rel, opener);
   // local-merge-auto-finish runs no Step 4.1; its push step runs Step 4.0b alone.
   const autoFinish = paragraph(
     read('_shared/local-merge-auto-finish.md'),
     'After a successful push, run `_shared/pr-first-merge-post-merge.md` Step 4.0b',
   );
   assert.ok(collapse(autoFinish).includes('against the pushed merge commit (no PR, so `$MERGING_PR` is empty)'), 'local-merge-auto-finish step 7');
+});
+
+test('go-red: the retargeted short-circuit push-site paragraph fails without Step 4.0b', () => {
+  const rel = 'wrap-up/auto-merge-short-circuit.md';
+  const live = read(rel);
+  const doctored = live.replace('Step 4.0b against the pushed merge commit', 'against the pushed merge commit');
+  assert.notStrictEqual(doctored, live);
+  assert.throws(() => assertLocalPushSite(doctored, rel, LOCAL_MERGE_SITES.find(([r]) => r === rel)[1]), /Step 4\.0b \(-1\)/);
 });
 
 const preChangePostMerge = preChangeSkillFile(POST_MERGE_REL);
@@ -786,7 +975,11 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
 
 test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
   const close = section(read(GATE_REL), '## Close the parent below the floor', '## Compose the parent brief');
-  for (const lit of ['`_shared/github-write-transport.md`', '`get_me`', '`get_comments`', '`state_reason`', '`not_planned`', '`reopened` → `REOPENED`', '`user.login`', 'never pass `labels`']) {
+  // #4603: step 1's MCP sentence went with its reads. `get_me` and `get_comments` stay pinned in the
+  // Transport paragraph (#4602 AC2.1's pairings); the `reopened` → `REOPENED` and `user.login`
+  // normalization is the CLI's, pinned by tests/bin-lib/issues/mcp-parent-gate-shape.test.js's
+  // `normalizes the MCP shape`.
+  for (const lit of ['`_shared/github-write-transport.md`', '`state_reason`', '`not_planned`', 'never pass `labels`']) {
     assert.ok(close.includes(lit), `close section names ${lit}`);
   }
   const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
@@ -806,4 +999,231 @@ test('#4602: settle-and-merge\'s #205 paragraph lists the calls the Parent-Gate 
   for (const call of ghCalls(read(GATE_REL))) assert.ok(parentGate.includes(named(call)), `names ${named(call)} (gate call: ${call})`);
   assert.ok(!p.includes('No separate mapping table entry is needed'), 'the stale no-row claim is gone');
   assert.ok(!p.includes('is one of the three standard shapes'), 'the stale three-shapes claim is gone');
+});
+
+// ---- #4603: the Parent-Gate Procedure runs its gather and evaluate through bin/parent-gate.js ----
+
+const RUN_CLI = '## Run the gate CLI';
+const runCliSection = (gate) => section(gate, RUN_CLI, '## Evaluate the gate');
+const step40bOf = () => section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1');
+const SUB_ISSUES_PATH = 'issues/$PARENT_NUM/sub_issues';
+const preChange4603Gate = preChangeSkillFile(GATE_REL, PRE_4603_SHA);
+
+test('AC2.1 (#4603): the gate file no longer composes the sub-issue enumeration', () => {
+  const gate = read(GATE_REL);
+  assert.ok(!gate.includes(SUB_ISSUES_PATH), 'the raw gate text carries no sub_issues REST path');
+  assert.ok(!collapse(gate).includes(collapse(SUB_ISSUES_PATH)), 'nor does the whitespace-collapsed text');
+  assert.ok(runCliSection(gate).includes('bin/parent-gate.js'), 'the Run the gate CLI section runs the CLI');
+});
+
+test('AC2.1 (#4603) go-red control: the pre-#4603 gate composes the sub-issue enumeration', { skip: preChange4603Gate.skip }, () => {
+  assert.ok(preChange4603Gate.text.includes(SUB_ISSUES_PATH));
+  assert.ok(collapse(preChange4603Gate.text).includes(collapse(SUB_ISSUES_PATH)));
+});
+
+// The command lines that run the CLI, fenced or inline: only these are flag-checked, so a prose
+// mention of a flag (`--risk-floor` in Evaluate, `--facts-json` in the Transport paragraph) is not.
+const CLI_COMMAND = 'node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js"';
+const cliLines = (text) => text.split('\n').filter((l) => l.includes(CLI_COMMAND));
+
+// The facts each invocation region must state: [name, region key, literal], matched over the
+// collapsed `## Run the gate CLI` section (`cli`) or Step 4.0b (`pm`).
+const INVOCATION_FACTS = [
+  ['sub-issue-side line', 'cli', 'bin/parent-gate.js" --sub-issue {n} --closing'],
+  ['parent-side line', 'cli', 'bin/parent-gate.js" --parent {parent-number} --idempotence'],
+  ['facts file', 'cli', '--facts-json'],
+  ['local-files backend', 'cli', '--backend local-files'],
+  [
+    'facts-json exit 2 fails open',
+    'cli',
+    '**Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing` token, an undeterminable repository root and working directory, or an unreadable or invalid `.claude-tweaks/policy.yml` (the stderr line names the file): a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path again, so the two paths cannot loop.',
+  ],
+  [
+    'local-files exit is a reported failure',
+    'cli',
+    '**Under `work-backend: local-files`, any non-zero exit** — report the failure and stop that entry; never fail open.',
+  ],
+  [
+    'a fail-open exit names the stderr line',
+    'cli',
+    "Whenever an exit fails open, quote the CLI's stderr line in the entry's output: exit 1 is a malformed invocation, a bug in the calling skill, and only that line tells it apart from a `gh` outage.",
+  ],
+  ['Step 4.0b line', 'pm', 'bin/parent-gate.js" --sub-issue {n}'],
+  ['Step 4.0b idempotence', 'pm', '--idempotence'],
+  ['Step 4.0b held', 'pm', '--held'],
+  ['Step 4.0b merging PR', 'pm', '--merging-pr'],
+];
+const missingInvocationFacts = (regions) =>
+  INVOCATION_FACTS.filter(([, key, lit]) => !regions[key].includes(lit)).map(([name]) => name);
+
+// Exactly one sub-issue-side github-issues line (no --backend), and it reads no comments or login.
+function assertSubIssueLineWithoutIdempotence(cli) {
+  const lines = cliLines(cli).filter((l) => l.includes('--sub-issue') && !l.includes('--backend'));
+  assert.equal(lines.length, 1, 'exactly one sub-issue-side github-issues command line');
+  assert.ok(!lines[0].includes('--idempotence'), 'the pre-merge sub-issue-side line passes no --idempotence');
+}
+
+// Every ordered pair of markers appears, in order.
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const m of markers) {
+    const at = text.indexOf(m);
+    assert.notStrictEqual(at, -1, `marker missing: ${m}`);
+    assert.ok(at > last, `${m} must come after the marker before it`);
+    last = at;
+  }
+}
+const CLI_ORDER = ['## Self-inclusion rule', RUN_CLI, '## Evaluate the gate'];
+
+test('#4603: the gate file and Step 4.0b invoke bin/parent-gate.js', () => {
+  const gate = read(GATE_REL);
+  const regions = { cli: collapse(runCliSection(gate)), pm: collapse(step40bOf()) };
+  assert.deepEqual(missingInvocationFacts(regions), [], 'every invocation fact is stated');
+  // Each fact can go red: removing its literal from its own region reports it.
+  for (const [name, key, lit] of INVOCATION_FACTS) {
+    const doctored = { ...regions, [key]: regions[key].split(lit).join('') };
+    assert.notEqual(doctored[key], regions[key], `go-red: the doctored ${key} text differs (${name})`);
+    assert.ok(missingInvocationFacts(doctored).includes(name), `go-red: stripping the literal reports ${name}`);
+  }
+  const cli = runCliSection(gate);
+  assertSubIssueLineWithoutIdempotence(cli);
+  const line = cliLines(cli).find((l) => l.includes('--sub-issue') && !l.includes('--backend'));
+  const doctored = cli.replace(line, `${line} --idempotence`);
+  assert.notEqual(doctored, cli);
+  assert.throws(() => assertSubIssueLineWithoutIdempotence(doctored), /passes no --idempotence/, 'go-red: an --idempotence on the pre-merge line fails');
+  requireOrder(gate, CLI_ORDER);
+  const runAt = gate.indexOf(RUN_CLI);
+  const evalAt = gate.indexOf('## Evaluate the gate');
+  const selfAt = gate.indexOf('## Self-inclusion rule');
+  const swapped = gate.slice(0, selfAt) + gate.slice(runAt, evalAt) + gate.slice(selfAt, runAt) + gate.slice(evalAt);
+  assert.notEqual(swapped, gate);
+  assert.throws(() => requireOrder(swapped, CLI_ORDER), /must come after/, 'go-red: the section above Self-inclusion fails the order');
+  const absent = gate.split(RUN_CLI).join('## Run it');
+  assert.notEqual(absent, gate);
+  assert.throws(() => requireOrder(absent, CLI_ORDER), /marker missing/, 'go-red: a missing section fails the existence half');
+});
+
+// Every --flag on a CLI command line, minus the flags USAGE names.
+function unknownCliFlags(lines) {
+  const { USAGE } = require('../plugin/bin/parent-gate');
+  const known = new Set(USAGE.match(/--[a-z][a-z-]*/g));
+  return lines.flatMap((l) => (l.match(/--[a-z][a-z-]*/g) || []).filter((f) => !known.has(f)));
+}
+const missingSpans = (text, names) => names.filter((n) => !text.includes('`' + n + '`'));
+
+test('#4603: the prose names only the CLI\'s own flags, verdict fields and facts keys', () => {
+  const { VERDICT_FIELDS } = require('../plugin/bin/lib/issues/parent-gate');
+  const { FACTS_KEYS } = require('../plugin/bin/lib/issues/mcp-parent-gate-shape');
+  const cli = runCliSection(read(GATE_REL));
+  const lines = [...cliLines(cli), ...cliLines(step40bOf())];
+  assert.ok(lines.length >= 3, `found ${lines.length} bin/parent-gate.js command lines`);
+  assert.deepEqual(unknownCliFlags(lines), [], 'every flag on a command line is one USAGE names');
+  // go-red: a doctored command line with a flag the CLI lacks fails; the same flag in prose does not.
+  const withRepo = cli.replace(lines[0], `${lines[0]} --repo o/r`);
+  assert.notEqual(withRepo, cli);
+  assert.deepEqual(unknownCliFlags(cliLines(withRepo)), ['--repo'], 'go-red: --repo on a command line is unknown');
+  const proseRepo = `${cli}\nThere is no \`--repo\` flag.\n`;
+  assert.deepEqual(unknownCliFlags(cliLines(proseRepo)), [], 'a prose line naming --repo is not a command line');
+  assert.equal(VERDICT_FIELDS.length, 12);
+  assert.equal(FACTS_KEYS.length, 7);
+  assert.deepEqual(missingSpans(cli, [...VERDICT_FIELDS, ...FACTS_KEYS]), [], 'every verdict field and facts key is a code span in the section');
+  for (const name of ['skipped', 'parentComments']) {
+    const stripped = cli.split('`' + name + '`').join(name);
+    assert.notEqual(stripped, cli);
+    assert.deepEqual(missingSpans(stripped, [...VERDICT_FIELDS, ...FACTS_KEYS]), [name], `go-red: dropping the ${name} span reports it`);
+  }
+});
+
+const closeStep1 = (gate) => section(closeSection(gate), '**1. Idempotence', '**2. Compose the closing comment:**');
+
+function assertStep1RoutesOnIdempotence(step1) {
+  const { IDEMPOTENCE_VALUES } = require('../plugin/bin/lib/issues/parent-gate');
+  for (const v of IDEMPOTENCE_VALUES) assert.ok(step1.includes('`' + v + '`'), `step 1 names ${v}`);
+  assert.ok(!collapse(step1).includes('gh api user'), 'step 1 makes no login read of its own');
+}
+
+// The listing lines read the verdict's subIssues[]; the per-sub-issue fetch they once cited left with Enumerate's narration.
+const LISTING_SOURCE = "`{title}` is the verdict's `subIssues[].title`.";
+const PRE_FIX_LISTING_SOURCE = "`{title}` comes from that section's per-sub-issue fetch.";
+function assertListingCitesVerdict(text) {
+  const c = collapse(text);
+  assert.ok(c.includes(LISTING_SOURCE), 'the listing title comes from the verdict');
+  assert.ok(!c.includes('per-sub-issue fetch') && !c.includes('entry from that fetch'), 'no citation of the removed fetch');
+}
+
+test('#4603: the close listing lines cite the verdict, not a removed fetch', () => {
+  assertListingCitesVerdict(closeSection(read(GATE_REL)));
+  assert.throws(() => assertListingCitesVerdict(PRE_FIX_LISTING_SOURCE), /from the verdict/, 'go-red: the pre-fix sentence fails');
+  assert.throws(() => assertListingCitesVerdict(`${LISTING_SOURCE} ${PRE_FIX_LISTING_SOURCE}`), /removed fetch/, 'go-red: a leftover citation beside the fix fails');
+});
+
+test('#4603: Close step 1 routes on the CLI\'s idempotence values', () => {
+  assertStep1RoutesOnIdempotence(closeStep1(read(GATE_REL)));
+});
+
+// Step 4.0b's exit sentence must leave Run the gate CLI's exit-2 gh-absent retry in force: a bare
+// "a non-zero CLI exit is a failing gh call" would skip the parent on a gh-absent local merge.
+const STEP_40B_EXIT = "Any other non-zero CLI exit (after **Run the gate CLI**'s exit-2 `gh`-absent retry) is a failing `gh` call.";
+const PRE_FIX_STEP_40B_EXIT = 'anything other than `merged`. A non-zero CLI exit is a failing `gh` call.';
+function assertStep40bKeepsRetry(text) {
+  const c = collapse(text);
+  assert.ok(c.includes(STEP_40B_EXIT), 'Step 4.0b carves the exit-2 gh-absent retry out of its failing-call rule');
+  assert.ok(!c.includes('. A non-zero CLI exit is a failing `gh` call.'), 'no unqualified non-zero-exit rule');
+}
+
+// Every Step 4.0b held number holds its parent for its own reason: `reopened[]` ones are open again,
+// the other three wait on a hand reopen or close.
+const HELD_SKIP =
+  'A non-empty `held` skips the parent, named in the closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a `failed[]`, `pendingClose[]` or `closeFailed[]` one waits on the hand reopen or close the inputs paragraph above names.';
+const PRE_FIX_HELD_SKIP = 'A non-empty `held` is the skip the inputs paragraph above names: name the parent in the closing summary.';
+const assertHeldSkip = (text) => assert.ok(collapse(text).includes(HELD_SKIP), 'the held skip names every held list accurately');
+
+// Step 4.0b routes a no-parent verdict before the reconciler's order (whose first check, parentIssue,
+// would read a no-parent verdict's null as "labels lack parent-issue"), and ties that no-op to its field.
+const STEP_40B_ROUTING =
+  "Route a `no-parent` verdict first: a record with no resolvable parent follows **Resolve the parent**'s no-parent branch. Route every other verdict in the reconciler's order. A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary. The verdict reports it as `parentIssue: false`.";
+const PRE_FIX_STEP_40B_ROUTING =
+  "Route the verdict in the reconciler's order. A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary. The verdict reports it as `parentIssue: false`.";
+const assertStep40bRouting = (text) => assert.ok(collapse(text).includes(STEP_40B_ROUTING), 'Step 4.0b routes no-parent first and names parentIssue: false');
+
+test('#4603: Step 4.0b routes no-parent first, then the reconciler\'s order, naming parentIssue: false', () => {
+  assertStep40bRouting(step40bOf());
+  assert.throws(() => assertStep40bRouting(PRE_FIX_STEP_40B_ROUTING), /routes no-parent first/, 'go-red: the pre-fix routing fails');
+  const withoutField = STEP_40B_ROUTING.replace(' The verdict reports it as `parentIssue: false`.', '');
+  assert.throws(() => assertStep40bRouting(withoutField), /names parentIssue: false/, 'go-red: dropping the field sentence fails');
+});
+
+test('#4603: Step 4.0b keeps the gh-absent retry and states the held skip accurately', () => {
+  const step40b = step40bOf();
+  assertStep40bKeepsRetry(step40b);
+  assertHeldSkip(step40b);
+  assert.throws(() => assertStep40bKeepsRetry(PRE_FIX_STEP_40B_EXIT), /carves the exit-2/, 'go-red: the unqualified sentence fails');
+  assert.throws(() => assertStep40bKeepsRetry(`${STEP_40B_EXIT} ${PRE_FIX_STEP_40B_EXIT}`), /no unqualified/, 'go-red: the unqualified sentence beside the carve-out fails');
+  assert.throws(() => assertHeldSkip(PRE_FIX_HELD_SKIP), /every held list/, 'go-red: the pre-fix held sentence fails');
+});
+
+// The computation the CLI now owns is not narrated in the prose, and the Transport paragraph no
+// longer lists step 1's comment read (the CLI's `parentComments`) among the agent's `gh issue view` reads.
+const CLI_NARRATION = [
+  ['Enumerate', "## Enumerate the parent's sub-issues", '## Self-inclusion rule', 'no second per-sub-issue round-trip'],
+  ['Enumerate', "## Enumerate the parent's sub-issues", '## Self-inclusion rule', 'to build the `subIssues` array'],
+  ['Evaluate', '**Oversight-floor check (risk only, never size).**', '- **`exceeds: false`**', 'exceedsOversightFloor('],
+  ['Evaluate', '**Oversight-floor check (risk only, never size).**', '- **`exceeds: false`**', 'maxRiskTier'],
+  ['Transport', '**Transport (#4602).**', '**Fail open on every `gh` call', 'the comment reads in **Close the parent below the floor**'],
+];
+const narrationPresent = (gate) =>
+  CLI_NARRATION.filter(([, start, end, lit]) => collapse(section(gate, start, end)).includes(lit)).map(([where, , , lit]) => `${where}: ${lit}`);
+
+test('#4603: the gate prose does not narrate the computation the CLI owns', () => {
+  assert.deepEqual(narrationPresent(read(GATE_REL)), []);
+  assert.ok(read(GATE_REL).includes('**Oversight-floor check (risk only, never size).**'), 'the check keeps its label (verification-brief.md cites it)');
+});
+
+test('#4603 go-red control: the pre-#4603 gate narrates every one of them', { skip: preChange4603Gate.skip }, () => {
+  assert.equal(narrationPresent(preChange4603Gate.text).length, CLI_NARRATION.length);
+});
+
+test('#4603 go-red control: the pre-#4603 Close step 1 reads the login itself', { skip: preChange4603Gate.skip }, () => {
+  assert.throws(() => assertStep1RoutesOnIdempotence(closeStep1(preChange4603Gate.text)), /step 1 names already-closed/);
+  assert.ok(collapse(closeStep1(preChange4603Gate.text)).includes('gh api user'));
 });

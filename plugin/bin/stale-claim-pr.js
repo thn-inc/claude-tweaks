@@ -21,7 +21,7 @@
 //                 shape` — one is there but is not exactly the line
 //                 composeResumeLine emits for this run). A Resume line is
 //                 untrusted input rendered as a paste command, so only a line
-//                 parseResumeLine accepts is ever printed as `resume`. With
+//                 resumeVerdict accepts is ever printed as `resume`. With
 //                 --issue, when the matched run's directory is absent or
 //                 archived, `resume` is instead the dispatch-resume command
 //                 (`/claude-tweaks:dispatch resume #<n>`), since the PR body's
@@ -69,8 +69,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
-const { resumeLineUnder, parseResumeLine } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { resumeVerdict } = require('./lib/flow/pr-body');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { lstatType } = require('./lib/path-guard');
 const { RUN_ID_PREFIX_LENGTH } = require('./lib/dispatch/resume-eligibility');
@@ -107,10 +107,10 @@ function parseArgs(argv) {
 // maxBuffer: `gh pr list --json url,body,...` carries every open PR's body,
 // which overflows Node's 1 MiB default (ENOBUFS) well before its 1000-PR limit.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 const realDeps = {
@@ -128,9 +128,8 @@ const realDeps = {
 
 // The Resume half of a --resume verdict for a matched PR body.
 function resumeFields(body, runId) {
-  const line = resumeLineUnder(body);
-  if (line === null) return { resolve: 'no-resume-line' };
-  return parseResumeLine(line, runId) ? { resume: line } : { resolve: 'resume-line-shape' };
+  const v = resumeVerdict(body, runId);
+  return v.resolve ? { resolve: v.resolve } : { resume: v.resume };
 }
 
 // Is the matched run's directory gone — archived or absent — so the PR body's Resume line names

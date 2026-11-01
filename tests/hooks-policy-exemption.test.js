@@ -185,24 +185,24 @@ test('git push origin :my-branch (refspec-delete form) from a non-isolated check
   assertAllowed(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin --delete feature-x from a non-isolated checkout is allowed', () => {
+test("#3900 AC1.1: git -C '<repo>' push origin --delete feature-x from a non-isolated checkout is allowed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertAllowed(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin feature-x (a content push) stays denied', () => {
+test("#3900 AC1.1: git -C '<repo>' push origin feature-x (a content push) stays denied", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
-test('#3900 AC1.1: git -C "<repo>" push origin --delete a && rm -rf x stays denied, fail-closed', () => {
+test("#3900 AC1.1: git -C '<repo>' push origin --delete a && rm -rf x stays denied, fail-closed", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
+  const out = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete a && rm -rf x`, repo), runDir: null, runState: null, cwd: repo });
   assertDenied(out);
 });
 
@@ -210,9 +210,9 @@ test('#3900 AC1.1: the -C target, not the cwd, is the repo — a delete-only pus
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
   const elsewhere = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-'));
-  const allowed = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const allowed = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertAllowed(allowed);
-  const denied = pre.run({ input: bashInput(`git -C "${repo}" push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
+  const denied = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertDenied(denied);
 });
 
@@ -258,6 +258,7 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     "git -C '/a b/wt' push origin --delete feature-x",
     'git -C /p push origin :feature-x',
     'git -C "/Users/x/Code Workspaces/repo" push origin --delete feature-x',
+    "git -C 'D:\\a\\_temp\\wt' push origin --delete feature-x",
   ];
   for (const command of shouldMatch) {
     assert.ok(DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected a match: ${JSON.stringify(command)}`);
@@ -279,6 +280,7 @@ test('DELETE_ONLY_PUSH_ALLOWLIST matches exactly the admitted shapes', () => {
     'git -C "$WT" push origin --delete x',
     'git -C /p push origin --delete x --force',
     'git -C push origin --delete x',
+    'git -C "D:\\a\\_temp\\wt" push origin --delete feature-x',
   ];
   for (const command of shouldNotMatch) {
     assert.ok(!DELETE_ONLY_PUSH_ALLOWLIST.test(command), `expected no match: ${JSON.stringify(command)}`);

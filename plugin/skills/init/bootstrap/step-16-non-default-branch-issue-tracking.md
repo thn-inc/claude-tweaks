@@ -39,9 +39,10 @@ The generated workflow ships two jobs, both triggered on `push`:
   strips every `fix-on-*` label from matched issues, since GitHub's native parser is
   closing them on this same push.
 
-No `gh issue close` call anywhere in the workflow — the default-branch merge remains
-the sole closing action, consistent with claude-tweaks' own close-via-merge rule (see
-"Close-via-merge" in `_shared/issue-claims.md`).
+No `gh issue close` call anywhere in the workflow — it only labels and comments, and the
+default-branch merge closes the records. A claude-tweaks `pr-first` run is the one case that
+closes sooner: when its PR merges into a non-default base, `pr-first-merge-post-merge.md` Step 4.0
+closes the PR's `Fixes` records itself (see "Close-via-merge" in `_shared/issue-claims.md`).
 
 **Failure handling:** if writing the file fails (e.g. permissions), surface the
 failure and continue `/init` — never abort the rest of bootstrap on this step.

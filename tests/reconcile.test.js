@@ -1067,7 +1067,7 @@ test('reconcile: local-merge project falls back to the legacy ancestry reap, ski
   const r = await reconcile({ cwd: dir });
   assert.strictEqual(r.mirror, null);
   assert.deepStrictEqual(r.worktrees, []); // legacy reap ran, found zero worktrees to consider
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: local-merge with no resolvable integration branch at all resolves no-remote, never crashes', async () => {
@@ -1210,7 +1210,7 @@ test('reconcile: fresh clone with no origin/HEAD repairs it and resolves the int
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'] });
 
   assert.ok(!r.skipped.some((s) => s.reason === 'no-remote'), `expected no no-remote skip, got ${JSON.stringify(r.skipped)}`);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'repaired', branch: 'main' });
   assert.strictEqual(git(['symbolic-ref', 'refs/remotes/origin/HEAD'], mainDir).trim(), 'refs/remotes/origin/main');
 });
@@ -1302,7 +1302,7 @@ test('reconcile: a concurrent-winner origin/HEAD still resolves even under a rec
   const r = await reconcile({ cwd: mainDir, checks: ['mirror'], cache });
 
   assert.deepStrictEqual(r.originHeadRepair, { outcome: 'skipped', reason: 'recent-failure', branch: 'main' });
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: no origin remote keeps the no-remote skip unchanged and attempts no repair (#3132)', async () => {
@@ -1372,7 +1372,7 @@ test('reconcile: checks filter excludes reap -> local-merge project runs nothing
   const r = await reconcile({ cwd: dir, checks: ['mirror'] });
   // 'mirror' was requested but has no local-merge equivalent — nothing runs.
   assert.strictEqual(r.worktrees, null);
-  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
+  assert.deepStrictEqual(r.skipped, [{ check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' }]);
 });
 
 test('reconcile: reap dispatches strictly after release and archive in source order (load-bearing, not incidental — #408)', () => {
@@ -1408,6 +1408,9 @@ test("tidy/scan-procedures.md's explicit reconcile --checks list names exactly A
   const m = /hooks\.js" reconcile --checks ([a-z,-]+) --json/.exec(prose);
   assert.ok(m, 'Reconcile-first call with an explicit --checks list found');
   assert.deepEqual([...m[1].split(',')].sort(), [...ALL_CHECKS].sort());
+  // The count the prose states beside the list is the list's own (#4599 left it at "nine").
+  const words = ['zero', 'one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  assert.ok(prose.includes(`(all ${words[ALL_CHECKS.length]}, \`ALL_CHECKS\` order)`), `the stated count is ${words[ALL_CHECKS.length]}`);
 });
 
 test('reconcile: red-tip dispatches immediately after mirror in source order (load-bearing — reads the ref mirror-ff just fetched)', () => {
@@ -1470,16 +1473,22 @@ test('reconcile(): without a red-tip PREREQUISITES entry the no-fetch-this-pass 
   }
 });
 
-test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens nothing else', () => {
+test('expandChecks (#3630): adds mirror ahead of archive and red-tip, post-merge ahead of archive, and widens nothing else', () => {
   const { expandChecks, ALL_CHECKS } = require('../plugin/bin/lib/reconcile');
-  assert.deepEqual(expandChecks(['archive']), ['mirror', 'archive']);
+  assert.deepEqual(expandChecks(['archive']), ['mirror', 'post-merge', 'archive']);
   assert.deepEqual(expandChecks(['red-tip']), ['mirror', 'red-tip']);
   assert.deepEqual(expandChecks(['reap']), ['reap']);
-  assert.deepEqual(expandChecks(['release', 'archive', 'reap']), ['release', 'mirror', 'archive', 'reap']);
-  assert.deepEqual(expandChecks(['archive', 'remote-prune']), ['archive', 'remote-prune']);
-  assert.deepEqual(expandChecks(['archive', 'archive']), ['mirror', 'archive']);
+  assert.deepEqual(expandChecks(['release', 'archive', 'reap']), ['release', 'mirror', 'post-merge', 'archive', 'reap']);
+  // remote-prune satisfies archive's mirror prerequisite, nothing satisfies its post-merge one (#4599).
+  assert.deepEqual(expandChecks(['archive', 'remote-prune']), ['post-merge', 'archive', 'remote-prune']);
+  assert.deepEqual(expandChecks(['archive', 'archive']), ['mirror', 'post-merge', 'archive']);
+  // A caller that names post-merge itself, in any position, is not widened with a second one.
+  assert.deepEqual(expandChecks(['post-merge', 'archive']), ['post-merge', 'mirror', 'archive']);
+  assert.deepEqual(expandChecks(['archive', 'post-merge']), ['mirror', 'archive', 'post-merge']);
+  // post-merge itself has no prerequisite.
+  assert.deepEqual(expandChecks(['post-merge']), ['post-merge']);
   // Two checks sharing one prerequisite add it once; remote-prune satisfies it for both.
-  assert.deepEqual(expandChecks(['archive', 'red-tip']), ['mirror', 'archive', 'red-tip']);
+  assert.deepEqual(expandChecks(['archive', 'red-tip']), ['mirror', 'post-merge', 'archive', 'red-tip']);
   assert.deepEqual(expandChecks(['red-tip', 'remote-prune']), ['red-tip', 'remote-prune']);
   // Caller-typed names that collide with Object.prototype keys are unknown checks, not entries.
   for (const name of ['constructor', 'toString', '__proto__']) {
@@ -1499,13 +1508,18 @@ test('expandChecks (#3630): adds mirror ahead of archive/red-tip and widens noth
 // the table is told to follow, so it is pinned row for row to the exported object.
 test('docs/reconcile-checks.md prerequisite table matches PREREQUISITES row for row (#3630)', () => {
   const doc = readText(path.join(__dirname, '..', 'docs', 'reconcile-checks.md'));
-  const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+) \|/.exec(line)).filter(Boolean);
+  // A check with several prerequisites (archive: mirror, post-merge — #4599) has one row each; an
+  // empty "Satisfied by" cell is written as an em dash.
+  const rows = doc.split('\n').map((line) => /^\s*\| `([^`]+)` \| `([^`]+)` \| ((?:`[^`]+`(?:, )?)+|—) \|/.exec(line)).filter(Boolean);
   const fromDoc = {};
   for (const [, check, prerequisite, satisfiedBy] of rows) {
-    fromDoc[check] = { check: prerequisite, satisfiedBy: satisfiedBy.split(', ').map((s) => s.replace(/`/g, '')) };
+    (fromDoc[check] = fromDoc[check] || []).push({
+      check: prerequisite, satisfiedBy: satisfiedBy === '—' ? [] : satisfiedBy.split(', ').map((s) => s.replace(/`/g, '')),
+    });
   }
-  assert.ok(rows.length >= 2, 'the table rows were not found in docs/reconcile-checks.md');
-  assert.deepEqual(fromDoc, PREREQUISITES);
+  assert.ok(rows.length >= 3, 'the table rows were not found in docs/reconcile-checks.md');
+  const fromCode = Object.fromEntries(Object.entries(PREREQUISITES).map(([check, entry]) => [check, [].concat(entry)]));
+  assert.deepEqual(fromDoc, fromCode);
 });
 
 test('AC7.2: docs/reconcile-checks.md and docs/hooks.md state the legacy-route removal condition verbatim (#4421)', () => {
@@ -1536,18 +1550,33 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
   const archiveMod = require('../plugin/bin/lib/reconcile/archive-merged');
   const releaseMod = require('../plugin/bin/lib/reconcile/release-merged');
   const reapMod = require('../plugin/bin/lib/reconcile/reap-merged');
+  const postMergeMod = require('../plugin/bin/lib/reconcile/post-merge');
   const original = {
     health: preflight.ghHealthCheck,
     healthAsync: preflight.ghHealthCheckAsync,
     archive: archiveMod.archiveMerged,
     release: releaseMod.releaseMerged,
     reap: reapMod.reapMerged,
+    postMerge: postMergeMod.postMerge,
+    prefetchPostMerge: postMergeMod.prefetchPostMergePrStates,
   };
-  const out = { NEW, mainDir, seenAtArchive: null, archiveCalled: false, reapCalled: false, r: null, fetchCalls: null };
+  // order: which stubbed checks ran, in call order (#4599); postMergeOpts: what post-merge was handed.
+  const out = {
+    NEW, mainDir, seenAtArchive: null, archiveCalled: false, reapCalled: false, r: null, fetchCalls: null, order: [], postMergeOpts: null, archiveOpts: null,
+  };
   const health = extra.health || { ok: true, reason: null };
   preflight.ghHealthCheck = () => health;
   preflight.ghHealthCheckAsync = async () => health;
-  archiveMod.archiveMerged = () => {
+  // The PR-state warm-up (#4032) is its own step: record it, with the resolver it was handed.
+  postMergeMod.prefetchPostMergePrStates = async (root, prStates) => { out.order.push('prefetch'); out.prefetchArgs = { root, prStates }; };
+  postMergeMod.postMerge = async (opts) => {
+    out.order.push('post-merge');
+    out.postMergeOpts = opts;
+    return { entries: [{ runDir: '/x', pr: 1, action: 'ran' }], deferred: extra.postMergeDeferred || [], ...(extra.postMergeFailure ? { failure: extra.postMergeFailure } : {}) };
+  };
+  archiveMod.archiveMerged = (opts) => {
+    out.order.push('archive');
+    out.archiveOpts = opts;
     out.archiveCalled = true;
     out.seenAtArchive = {
       localMain: git(['rev-parse', 'main'], mainDir).trim(),
@@ -1555,11 +1584,12 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     };
     return { archived: [], skipped: [] };
   };
-  releaseMod.releaseMerged = () => ({ released: [], skipped: [] });
+  releaseMod.releaseMerged = () => { out.order.push('release'); return { released: [], skipped: [] }; };
   reapMod.reapMerged = () => {
     out.reapCalled = true;
     return { reaped: [], skipped: [], portsRelease: [] };
   };
+  if (extra.afterStubs) extra.afterStubs(); // lets a test replace one of the stubs above
   const indexPath = require.resolve('../plugin/bin/lib/reconcile/index');
   try {
     delete require.cache[indexPath];
@@ -1571,10 +1601,78 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
     archiveMod.archiveMerged = original.archive;
     releaseMod.releaseMerged = original.release;
     reapMod.reapMerged = original.reap;
+    postMergeMod.postMerge = original.postMerge;
+    postMergeMod.prefetchPostMergePrStates = original.prefetchPostMerge;
     delete require.cache[indexPath];
   }
   return out;
 }
+
+test('AC1 (#4599): reconcile({ checks: [\'archive\'] }) runs post-merge between mirror and archive, handing it prStates and dryRun', async () => {
+  const { r, order, postMergeOpts, archiveOpts } = await reconcileWithAsyncMerge(['archive']);
+  assert.deepEqual(order, ['prefetch', 'post-merge', 'archive']);
+  assert.ok(r.mirror && r.mirror.action === 'fast-forwarded', 'mirror still runs ahead of both');
+  // #4549: after a PR merge Step 4.0b has no default-branch check, so post-merge takes no integration branch.
+  assert.ok(!('integration' in postMergeOpts), 'post-merge is handed no integration branch');
+  assert.equal(postMergeOpts.dryRun, false);
+  assert.ok(postMergeOpts.prStates && typeof postMergeOpts.prStates.persist === 'function', 'the pass-shared PR-state resolver');
+  assert.equal(postMergeOpts.prStates, archiveOpts.prStates, 'post-merge and archive share one resolver');
+  assert.deepEqual(r.postMerge, [{ runDir: '/x', pr: 1, action: 'ran' }]);
+  assert.deepEqual(archiveOpts.postMergeDeferred, []);
+});
+
+test('AC1 (#4599): the pass-shared PR-state resolver is warmed with the main checkout before post-merge runs, and a throwing warm-up never breaks the pass', async () => {
+  const { prefetchArgs, postMergeOpts, mainDir } = await reconcileWithAsyncMerge(['post-merge']);
+  assert.equal(prefetchArgs.root, fs.realpathSync(mainDir));
+  assert.equal(prefetchArgs.prStates, postMergeOpts.prStates, 'the warm-up and the check share one resolver');
+
+  const postMergeMod = require('../plugin/bin/lib/reconcile/post-merge');
+  const original = postMergeMod.prefetchPostMergePrStates;
+  const { r, order } = await reconcileWithAsyncMerge(['post-merge'], {
+    afterStubs: () => { postMergeMod.prefetchPostMergePrStates = async () => { throw new Error('graphql down'); }; },
+  });
+  postMergeMod.prefetchPostMergePrStates = original;
+  assert.deepEqual(order, ['post-merge'], 'post-merge still ran after the failed warm-up');
+  assert.deepEqual(r.postMerge, [{ runDir: '/x', pr: 1, action: 'ran' }]);
+});
+
+test('AC1 (#4599): the dispatch order is release, post-merge, archive when all three are requested', async () => {
+  const { order } = await reconcileWithAsyncMerge(['reap', 'archive', 'post-merge', 'release']);
+  assert.deepEqual(order, ['release', 'prefetch', 'post-merge', 'archive']);
+});
+
+test('M4 (#4599): post-merge is handed a live predicate over the pass\'s own wall-clock budget', async () => {
+  const budgetMod = require('../plugin/bin/lib/reconcile/budget');
+  const original = budgetMod.createBudget;
+  let tripped = false;
+  let made = 0;
+  const { postMergeOpts } = await reconcileWithAsyncMerge(['post-merge'], {
+    afterStubs: () => { budgetMod.createBudget = () => { made += 1; return { exceeded: () => tripped, remainingMs: () => 1 }; }; },
+  }).finally(() => { budgetMod.createBudget = original; });
+  assert.equal(made, 1, 'one budget per pass');
+  assert.equal(typeof postMergeOpts.budgetExceeded, 'function');
+  assert.equal(postMergeOpts.budgetExceeded(), false);
+  tripped = true;
+  assert.equal(postMergeOpts.budgetExceeded(), true, 'it reads the pass budget when called, not a snapshot');
+});
+
+test('AC1 (#4599): post-merge\'s deferred set reaches archiveMerged as postMergeDeferred', async () => {
+  const { archiveOpts } = await reconcileWithAsyncMerge(['archive'], { postMergeDeferred: ['/runs/a', '/runs/b'] });
+  assert.deepEqual(archiveOpts.postMergeDeferred, ['/runs/a', '/runs/b']);
+});
+
+test('AC1 (#4599): a post-merge failure goes to skipped, leaves postMerge null and defers nothing', async () => {
+  const { r, archiveOpts } = await reconcileWithAsyncMerge(['archive'], { postMergeFailure: 'not-github-issues', postMergeDeferred: ['/runs/ignored'] });
+  assert.equal(r.postMerge, null);
+  assert.ok(r.skipped.some((s) => s.check === 'post-merge' && s.reason === 'not-github-issues'), JSON.stringify(r.skipped));
+  assert.deepEqual(archiveOpts.postMergeDeferred, [], 'a failed check holds no run back from archiving');
+});
+
+test('AC1 (#4599): a pass that does not request post-merge or archive leaves postMerge null and does not run it', async () => {
+  const { r, order } = await reconcileWithAsyncMerge(['reap']);
+  assert.deepEqual(order, []);
+  assert.equal(r.postMerge, null);
+});
 
 test('AC1 (#3630): reconcile({ checks: [\'archive\'] }) runs mirror before archive', async () => {
   const { r, seenAtArchive, NEW } = await reconcileWithAsyncMerge(['archive']);
@@ -1645,11 +1743,23 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   preflight.ghHealthCheck = () => ({ ok: true, reason: null });
   preflight.ghHealthCheckAsync = async () => ({ ok: true, reason: null });
   const restore = installStub('gh', ghScript);
+  // extra.deferRun (#4599): stub the post-merge check, deferring this run dir (true) or nothing (false).
+  const postMergeMod = require('../plugin/bin/lib/reconcile/post-merge');
+  const indexPath = require.resolve('../plugin/bin/lib/reconcile/index');
+  const originalPostMerge = postMergeMod.postMerge;
+  let reconcileFn = reconcile;
+  if (extra.deferRun !== undefined) {
+    postMergeMod.postMerge = async () => ({ entries: [], deferred: extra.deferRun ? [fs.realpathSync(runDir)] : [] });
+    delete require.cache[indexPath];
+    reconcileFn = require(indexPath).reconcile;
+  }
   let r;
   try {
-    r = await reconcile({ cwd: mainDir, checks, dryRun: extra.dryRun });
+    r = await reconcileFn({ cwd: mainDir, checks, dryRun: extra.dryRun });
   } finally {
     restore();
+    postMergeMod.postMerge = originalPostMerge;
+    delete require.cache[indexPath];
     preflight.ghHealthCheck = original.health;
     preflight.ghHealthCheckAsync = original.healthAsync;
   }
@@ -1663,6 +1773,21 @@ test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merg
   assert.ok(!(r.runs || []).some((x) => x.reason === 'local-behind-merge'), JSON.stringify(r.runs));
   // basename, not the path: reconcile reports the realpath of the temp dir (/private/var on macOS).
   assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+});
+
+test('#4599 end to end: a run post-merge deferred in the same pass is not archived — it is skipped post-merge-pending and stays at its top-level path', { skip: STUB_SKIP }, async () => {
+  const { r, runDir } = await archiveAsyncMergedRun(['archive'], { deferRun: true });
+  assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action, reason: x.reason })), [
+    { run: path.basename(runDir), action: 'skipped', reason: 'post-merge-pending' },
+  ]);
+  assert.equal(fs.existsSync(runDir), true, 'the run dir still exists at its top-level path');
+  assert.equal(fs.existsSync(path.join(path.dirname(runDir), 'archive', path.basename(runDir))), false, 'nothing was moved to archive/');
+});
+
+test('#4599 end to end: with an empty deferred set the same merged run is archived', { skip: STUB_SKIP }, async () => {
+  const { r, runDir } = await archiveAsyncMergedRun(['archive'], { deferRun: false });
+  assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+  assert.equal(fs.existsSync(runDir), false);
 });
 
 test('#4202 end to end: archiving an escalated stuck run dir edits the consolidated record and clears its entry', { skip: STUB_SKIP }, async () => {
@@ -1692,7 +1817,7 @@ test('(#3630): a gh preflight failure does not run a mirror the caller never nam
   assert.equal(r.mirror, null, 'the added mirror must not run once its dependent check was skipped');
   assert.equal(archiveCalled, false);
   assert.notEqual(git(['rev-parse', 'main'], mainDir).trim(), NEW, 'local main must not move');
-  assert.ok(r.skipped.some((s) => s.check === 'archive' && s.reason === 'preflight-rate-limited'), JSON.stringify(r.skipped));
+  assert.ok(r.skipped.some((s) => s.check.split(',').includes('archive') && s.reason === 'preflight-rate-limited'), JSON.stringify(r.skipped));
 });
 
 test('(#3630): a gh preflight failure still runs a mirror the caller did name', async () => {
@@ -1813,6 +1938,43 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
 });
 
+test('formatSummary: post-merge entries render as "merged run" taken and skipped lines (#4599)', () => {
+  const result = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
+    postMerge: [
+      { runDir: 'r1', pr: 11, action: 'ran' },
+      { runDir: 'r2', pr: 12, action: 'skipped', reason: 'merge-grace' },
+      { runDir: 'r3', pr: 13, action: 'skipped', reason: 'merge-grace' },
+    ],
+    branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  assert.strictEqual(formatSummary(result), [
+    'post-merge steps run: 1 merged run',
+    'skipped: 2 merged runs (merge-grace 2)',
+  ].join('\n'));
+  assert.strictEqual(formatSummary({ ...result, postMerge: [{ runDir: 'r1', pr: 11, action: 'ran' }], skipped: null }), 'post-merge steps run: 1 merged run');
+  assert.strictEqual(formatSummary({ ...result, postMerge: null }), 'reconcile: nothing to do');
+});
+
+test('formatSummary: a post-merge entry whose Step 4.0 failed is reported on its own line, never under "post-merge steps run" (#4599)', () => {
+  const base = {
+    mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null,
+  };
+  const ran = { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 };
+  const failed = { runDir: 'r2', pr: 12, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [ran, failed, { ...failed, runDir: 'r3', pr: 13 }] }), [
+    'post-merge steps run: 1 merged run',
+    'post-merge Step 4.0 failed: 2 merged runs',
+  ].join('\n'));
+  // Only failures: no "steps run" line at all.
+  assert.strictEqual(formatSummary({ ...base, postMerge: [failed] }), 'post-merge Step 4.0 failed: 1 merged run');
+  // A failed entry never lands in the aggregated skip line.
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [failed, { runDir: 'r4', pr: 14, action: 'skipped', reason: 'in-flight' }] }),
+    ['post-merge Step 4.0 failed: 1 merged run', 'skipped: 1 merged run (in-flight 1)'].join('\n'),
+  );
+});
+
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
@@ -1930,6 +2092,23 @@ test('reconcile(): forwards opts.mcpReachable into resolveIntegrationModel (#155
   await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel, mcpReachable: true });
   await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel });
   assert.deepStrictEqual(calls, [{ mcpReachable: true }, { mcpReachable: false }]);
+});
+
+// #4578 Decision Q1: a hook-context caller (SessionStart) passes
+// `forgeProbeTimeoutMs`; reconcile() forwards it as `timeoutMs` ONLY when set,
+// so the callers that never set it (the CLI verb, the background pass) keep
+// the exact `{ mcpReachable }` shape the #1558 test above pins.
+test('reconcile(): forwards opts.forgeProbeTimeoutMs into resolveIntegrationModel as timeoutMs, and only when set (#4578 AC11.1)', async () => {
+  const { mainDir } = pairedFixture();
+  const calls = [];
+  const fakeResolveIntegrationModel = (root, opts) => {
+    calls.push(opts);
+    return 'local-merge';
+  };
+  await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel, forgeProbeTimeoutMs: 5000 });
+  await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel });
+  assert.deepStrictEqual(calls, [{ mcpReachable: false, timeoutMs: 5000 }, { mcpReachable: false }]);
+  assert.ok(!('timeoutMs' in calls[1]), 'an unset forgeProbeTimeoutMs must add no timeoutMs key at all');
 });
 
 test('reconcile(): a failing GitHub-health preflight skips every requested check in one entry, never per-check timeouts (D1)', async () => {
@@ -2344,7 +2523,7 @@ async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipp
   return { calls, spawnCalls, outputs: outputs.map((o) => JSON.parse(o)) };
 }
 
-const INLINE_UNSCOPED_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'archive', 'console'];
+const INLINE_UNSCOPED_CHECKS = ['mirror', 'red-tip', 'reap', 'release', 'post-merge', 'archive', 'console'];
 const DEFERRED_CHECKS = ['archive-branches', 'remote-prune', 'ledger-residue'];
 
 test('AC3.1/AC3.2: hooks.js reconcile: an explicit --checks subset runs unbounded; an unscoped pass keeps the default budget', async () => {
@@ -2393,7 +2572,7 @@ test('unscoped CLI never spawns under --dry-run or on a no-remote fixture (#4032
 });
 
 test('unscoped CLI treats a local-merge-model skip as not converged: no deferral entry, skipped untouched (#4032)', async () => {
-  const lmSkip = { check: 'mirror,release,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' };
+  const lmSkip = { check: 'mirror,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,console', reason: 'local-merge-model' };
   const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
     reconcileResult: () => ({ skipped: [lmSkip] }),
   });
@@ -2928,7 +3107,7 @@ test('AC2: an exhausted budget skips every remaining check as budget-exceeded', 
     preflight.ghHealthCheck = originalHealth;
   }
   // The near-instant bound lives in perf/reconcile-time-bounds.test.js; here, the budget skip it guards.
-  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
+  assert.deepEqual(r.skipped, [{ check: 'mirror,red-tip,console,release,post-merge,archive,archive-branches,remote-prune,ledger-residue,reap', reason: 'budget-exceeded' }]);
 });
 
 // --- per-check timings (#4032) ---
@@ -2992,6 +3171,16 @@ test('AC2.1: reconcile() times each dispatched check', async () => {
 test('reconcile verb: the reconcile-threw fallback carries timings: null (#4032)', () => {
   const src = readText(HOOKS);
   assert.match(src, /reason: 'reconcile-threw' \}\], timings: null \}/);
+});
+
+// The fallback is a hand-maintained twin of reconcile()'s result literal (docs/reconcile-checks.md,
+// "Adding a new check" step 4); post-merge's result key must be in both, or a throw under-reports it.
+test('reconcile verb: the reconcile-threw fallback and reconcile()\'s result literal both carry postMerge: null (#4599)', () => {
+  const fallback = readText(HOOKS).split('\n').find((l) => l.includes("reason: 'reconcile-threw'") && l.includes('out = {'));
+  assert.ok(fallback, 'the reconcile-threw fallback literal was found');
+  assert.match(fallback, /\bclaims: null, postMerge: null, runs: null\b/);
+  const index = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'reconcile', 'index.js'));
+  assert.match(index, /const result = \{[^\n]*\bclaims: null, postMerge: null, runs: null\b/);
 });
 
 // #4032: one PR-state resolver per pass, shared by release, archive and reap,
@@ -3479,8 +3668,8 @@ test('#4421: an over-budget return after archive ran persists ownerlessNonClean 
   const { root, run, mk, cacheJson } = ownerlessFixture();
   for (let i = 1; i <= 3; i++) mk(`2026-10-26T10000${i}-record-${i}`, { status: 'active' }); // owner-less, non-clean
   seedOwnerlessCache(root);
-  // Calls 1-5 are the checks before archive's own; the 6th (after archive) trips.
-  const r = await withBudgetExceededFrom(6, () => run({ checks: ['archive', 'archive-branches'] }));
+  // Calls 1-6 are the checks up to and including archive's own (post-merge adds one, #4599); the 7th (after archive) trips.
+  const r = await withBudgetExceededFrom(7, () => run({ checks: ['archive', 'archive-branches'] }));
   assert.equal(r.ownerlessNonClean, 3, 'archive ran before the budget tripped');
   assert.ok(r.skipped.some((s) => s.check === 'archive-branches' && s.reason === 'budget-exceeded'), 'the pass returned early, before finalize');
   assert.equal(cacheJson().ownerlessNonClean, 3);

@@ -73,3 +73,5 @@ The single prose statement of the derived default (code twin: `bin/lib/merge-ver
 
 Branches 3–4 obtain both branches through the canonical resolution in `_shared/integration-branch.md` (its rank 3 `integration-branch:` policy key, else the rank-5 GitHub-default half) via the shared code resolver, never a hand-rolled detection. Every failed lookup — no `gh`, API error, no upstream, unreadable workflow file — resolves toward `off`, the permissive default, never toward the stricter value.
 <!-- merge-verification-derivation:end -->
+
+A derived `off` still waits on a PR's own pending checks, and parks on a red one, at merge time — `_shared/pr-first-merge.md` Step 2.5's derived-`off` rule — so branches 2 and 4 skip the wait only for a PR whose checks have not reported at merge time.

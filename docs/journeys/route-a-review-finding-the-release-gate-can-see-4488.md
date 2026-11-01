@@ -63,7 +63,7 @@ files:
 - **URL:** `plugin/skills/release/disposition.md`'s Review staging roster and Routing table
 - **Action:** **The release agent** inventories `staged/`. It matches `review-3.patch` to the `review-{n}` row (`confirmed`) and `review-followup-2.md` to the `review-followup-` row (`proposal`). It reads each file's severity from its `Finding:` line and pre-fills one Recommended disposition per row.
 - **Should feel:** Mechanical. Every file the review staged has a row, and none needs a hand-written disposal note.
-- **Should understand:** `review-{n}` covers only `.patch`. The roster↔SECTION_MAP test in `tests/release-run-dir-lifecycle-conformance.test.js` fails if a roster example cannot be staged, or if a `review-*` console prefix has no roster row.
+- **Should understand:** `review-{n}` covers only `.patch`. The roster↔SECTION_MAP test in `tests/release-run-dir-lifecycle-conformance.test.js` fails if a roster example cannot be staged, if a row's Example names no `staged/` file (the example check would pass over it), or if a `review-*` console prefix has no roster row (#4647).
 - **Red flags:** A `review-followup-` file reported as `unrecognised staged file, no route`, or a high record proposal floor-tested as medium because its `Finding:` line is missing.
 
 ## Origin

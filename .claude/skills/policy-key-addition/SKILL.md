@@ -35,6 +35,7 @@ Two flags mirror each other. Pick by which source must never set the key:
 
 - **A typo in a block key is invisible to `auditPolicy`**, because `parseFlatLines` drops a key with an empty value. This predates #4609 and also hits `model-profiles` (ledger row 8, deferred). Do not count on the audit to catch a misspelled block key.
 - **Pin each new validation branch with its own assertion.** #4609's `closedQuote` branch had none at first: removing its `isValidValue` call left the suite green (row 6).
+- **Changing what an existing value does needs two greps, not one.** Grep the key's kebab-case name across `plugin/skills/`, `docs/journeys/` and `README.md`, then grep its Manifesto display name too: `flow/manifesto-overrides.md`'s Override semantics table names levers that way (`` | Merge verification | `off` | ``), so the kebab-case grep never reaches it. #4550 changed what a derived `merge-verification: off` does; at its base `manifesto-overrides.md` had no `merge-verification` hit, and its stale `off` row and a journey's stale wording were caught only by the final whole-branch review.
 
 ## Evidence
 

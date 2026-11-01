@@ -14,7 +14,7 @@ files:
 **Persona:** Maintainer of a `pr-first` claude-tweaks repo whose multi-record `/claude-tweaks:flow` (or `/claude-tweaks:dispatch`) run defers one record's closure (for example, a deferred reason like "follow-up closes #N later") while the rest of the bundle ships. This is the PR #4144 / #2724 shape.
 **Goal:** The finished records close when the run's PR merges. The deferred record stays open, and `decisions.md` says how that was ensured.
 **Entry point:** The run reaches its pre-merge PR body refresh (`_shared/pr-checklist-refresh.md`), then merges through `_shared/pr-first-merge.md`.
-**Success state:** After the merge, `gh issue view {n}` shows the deferred record OPEN. The run's `decisions.md` has the refresh's AUTO entry `rewrote Fixes block for PR #{pr} — {c} complete, {d} deferred, …`. A pre-merge check that found no stray link prints `"action": "clean"` and logs nothing; one that had to unlink a surviving link adds an AUTO entry `unlinked #{n} from PR #{pr} before merge`. If GitHub closed it anyway, there is also an AUTO entry `reopened #{n} after PR #{pr}'s merge closed it`. A clean post-merge pass prints `"action": "nothing-closed"` and logs nothing. The maintainer should feel that deferring a closure inside a bundle is safe.
+**Success state:** After the merge, `gh issue view {n}` shows the deferred record OPEN. The run's `decisions.md` has the refresh's AUTO entry `rewrote Fixes block for PR #{pr} — {c} complete, {d} deferred, …`. A pre-merge check that found no stray link prints `"action": "clean"` and logs nothing; one that had to unlink a surviving link adds an AUTO entry `unlinked #{n} from PR #{pr} before merge`. If GitHub closed it anyway, there is also an AUTO entry `reopened #{n} after PR #{pr}'s merge closed it`. A clean post-merge pass prints `"action": "nothing-closed"` and logs nothing; on a base that is not the repo's default branch it prints `"action": "closed"` instead, with one AUTO entry `closed #{m} after PR #{pr} merged into {base} …` per finished record it closed. The maintainer should feel that deferring a closure inside a bundle is safe.
 
 ## Steps
 
@@ -45,14 +45,19 @@ files:
 - **URL:** `https://github.com/{owner}/{repo}/issues/{n}`
 - **Action:** The CLI polls each candidate that could have closed for a short settle window. It reopens any candidate closed at or after the merge, with a comment naming the PR. It prints the worst outcome as `action`, and logs each reopen, failure, and pending close to `decisions.md`:
   - `reopen-failed`
+  - `close-failed`
+  - `base-unchecked`
   - `close-pending`
   - `reopened`
+  - `closed`
   - `nothing-closed`
 - **Should feel:** Reassuring. Even if GitHub closed the record, it is back open within seconds, and the comment says why.
-- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. The armed-merge (`--auto`) path merges later and is a known gap.
+- **Should understand:** `close-pending` means the record was still open at the end of the window but may close later. Re-check it with `gh issue view {n}`. An armed merge (`--auto`) that GitHub completes after the session ended gets this step later, from the reconciler's `post-merge` check (`docs/reconcile-checks.md`'s Post-merge closes): the first reconcile pass at least 10 minutes after the merge runs it once, with no settle poll, and reopens only a record closed within 10 minutes of `mergedAt`. A record a human closed after that is left closed and listed in `closedAfterWindow[]`. On a base that is not the repo's default branch GitHub acts on none of the PR's closing keywords, so this step closes the merge's `Fixes` records itself (`closed`); a record listed in `closeFailed[]` needs a hand close, and `base-unchecked` means the base could not be read, so the envelope's `unchecked[]` records were not checked.
 - **Red flags:** The deferred record closed with no `reopened` or `reopen-failed` entry; a reopen of a record the run actually finished.
 
 ## Origin
 - Created during build of #4199 (pr-first: rewriting Fixes #N to Refs #N before merge does not stop GitHub closing #N)
 - Steps 1-4 built in this session; mechanism probed live on throwaway PR #4234 / issue #4233
+- Updated by #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a merge into a non-default base, Step 4.0 closes the PR's still-open `Fixes` records itself and reports `closed[]`, `closeFailed[]`, or `base-unchecked` with `unchecked[]`
+- Updated by #4599 (run `2026-10-31T135734-record-4599`): an armed merge GitHub completes later is no longer a gap. The reconciler's `post-merge` check runs Step 4.0 for it once, with reopens bounded to 10 minutes after `mergedAt`
 - Related: #3412 (reconciler keeps an unfinished record's claim when its bundle PR merges early), #2724 (the record PR #4144 closed by mistake)

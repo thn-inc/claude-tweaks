@@ -92,7 +92,10 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/check-pr-bookkeeping.js" --run "$PIPELINE_RUN_DI
 ```
 
 - **Exit 0** — compliant (or nothing to check yet, e.g. no materialize commit landed). Continue to
-  Step 1.
+  Step 1. Stdout `check-pr-bookkeeping.js: ok (degraded-detection)` means forge detection timed out
+  and its retry did not succeed, so the pr-first bookkeeping precondition was not verified: log one `SKIP`
+  (`node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --text "condition: check-pr-bookkeeping.js reported degraded-detection (forge detection timed out) → fallback: pr-first bookkeeping precondition not verified this run" --reversibility n/a`)
+  and continue to Step 1.
 - **Exit 4** — a genuine bookkeeping-precondition violation: this pr-first run's materialize
   commit landed without a recorded worktree assignment, or (under `integration-model: pr-first`)
   without a recorded PR, a durable exemption, or a logged degrade line. **Stop the pipeline** and

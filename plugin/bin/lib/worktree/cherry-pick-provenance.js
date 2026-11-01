@@ -20,6 +20,7 @@
 
 const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 // Bound per gh-api-module-pattern: gh pr list is a network call. `git branch
 // -r --contains` is a local-only read of already-fetched remote-tracking
@@ -43,7 +44,7 @@ function defaultGit(args) {
 }
 
 function defaultGh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }));
 }
 
 // Resolves every remote branch containing `sha`, excluding `ownBranch` (this

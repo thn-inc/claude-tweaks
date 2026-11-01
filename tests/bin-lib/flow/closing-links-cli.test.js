@@ -60,7 +60,8 @@ function body({ runId = RUN_ID, summary = 'The reconcile pass that closes #2724 
 // last entry repeating.
 function makeDeps(main, {
   prReads = [], rereads = [], message = 'fix: x (#3997)\n\nFixes #3997', issues = {}, ghAvailable = true,
-  reopenThrows = null, messageThrows = false, issueThrows = {}, ...over
+  reopenThrows = null, messageThrows = false, issueThrows = {}, defaultBranch = 'main', defaultBranchThrows = false,
+  closeThrows = {}, ...over
 } = {}) {
   const out = []; const err = []; const calls = []; const sleeps = [];
   const next = (queue) => (queue.length > 1 ? queue.shift() : queue[0]);
@@ -77,7 +78,7 @@ function makeDeps(main, {
           if (r instanceof Error) throw r;
           return JSON.stringify(r);
         }
-        if (args[0] === 'pr' && args[1] === 'view' && args[4] === 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit') {
+        if (args[0] === 'pr' && args[1] === 'view' && args[4] === 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName') {
           const r = next(prReads);
           if (r instanceof Error) throw r;
           return JSON.stringify(r);
@@ -102,6 +103,15 @@ function makeDeps(main, {
           if (reopenThrows) throw new Error(reopenThrows);
           return '';
         }
+        if (args[0] === 'repo' && args[1] === 'view' && args[3] === '--json' && args[4] === 'defaultBranchRef'
+          && args[5] === '-q' && args[6] === '.defaultBranchRef.name') {
+          if (defaultBranchThrows) throw new Error('repo view failed');
+          return `${defaultBranch}\n`;
+        }
+        if (args[0] === 'issue' && args[1] === 'close' && args[3] === '--reason' && args[4] === 'completed' && args[5] === '--comment') {
+          if (closeThrows[args[2]]) throw new Error(closeThrows[args[2]]);
+          return '';
+        }
         throw new Error(`unexpected ${key}`);
       },
       sleep: (ms) => sleeps.push(ms),
@@ -113,6 +123,7 @@ function makeDeps(main, {
     json: () => JSON.parse(out.join('')),
     edits: () => calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'edit'),
     reopens: () => calls.filter((c) => c.args[0] === 'issue' && c.args[1] === 'reopen'),
+    closes: () => calls.filter((c) => c.args[0] === 'issue' && c.args[1] === 'close'),
     issueReads: () => calls.filter((c) => c.args[0] === 'issue' && c.args[1] === 'view'),
     log: (runDir) => { try { return fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'); } catch { return ''; } },
   };
@@ -122,14 +133,14 @@ function makeDeps(main, {
 const preView = (b, nums, extra = {}) => ({ body: b, closingIssuesReferences: refsOf(...nums), url: PR_URL, ...extra });
 const mergedView = (b, nums, extra = {}) => ({
   state: 'MERGED', mergedAt: MERGED_AT, body: b, closingIssuesReferences: refsOf(...nums), url: PR_URL,
-  mergeCommit: { oid: 'd36f5f6a0000000000000000000000000000abcd' }, ...extra,
+  mergeCommit: { oid: 'd36f5f6a0000000000000000000000000000abcd' }, baseRefName: 'main', ...extra,
 });
 
 const PRE = ['--mode', 'pre-merge'];
 const POST = ['--mode', 'post-merge'];
 
 test('parseArgs: shapes and rejections', () => {
-  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, help: false });
+  assert.deepEqual(parseArgs(['--run', 'r', '--mode', 'pre-merge']), { run: 'r', mode: 'pre-merge', settleMs: 15000, closeWindowMs: null, help: false });
   assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--settle-ms', '0']).settleMs, 0);
   assert.equal(parseArgs(['--help']).help, true);
   assert.ok(parseArgs(['--bogus']).error);
@@ -368,7 +379,7 @@ test('--help exits 0 without touching gh', () => {
   const usage = h.out.join('');
   assert.match(usage, /usage: closing-links\.js --run <run-dir> --mode/);
   assert.match(usage, /4 run marker mismatch/);
-  assert.match(usage, /reopen-failed > close-pending > reopened > nothing-closed/);
+  assert.match(usage, /reopen-failed > close-failed > base-unchecked > close-pending > reopened > closed > nothing-closed/);
   assert.match(usage, /5 gh pr view \/ gh pr edit failed, or a required read came back malformed/);
   assert.equal(h.calls.length, 0);
 });
@@ -753,12 +764,505 @@ test('post-merge closingSet keeps a linked record closed before the merge', () =
   assert.deepEqual(j.closingSet, [2724, 3997]);
 });
 
+// ---- #4599: --close-window-ms bounds the reopen window for a late post-merge run ----
+
+const CLOSED_IN_WINDOW = '2026-10-24T18:52:34Z'; // MERGED_AT + 2 s
+const CLOSED_PAST_WINDOW = '2026-10-24T21:52:32Z'; // MERGED_AT + 3 h
+const WINDOW = ['--settle-ms', '0', '--close-window-ms', '600000'];
+
+test('parseArgs: --close-window-ms takes a non-negative integer, no cap', () => {
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge']).closeWindowMs, null);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '600000']).closeWindowMs, 600000);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '0']).closeWindowMs, 0);
+  assert.equal(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '99999999999']).closeWindowMs, 99999999999);
+  assert.match(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '-1']).error, /--close-window-ms takes a non-negative integer/);
+  assert.match(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', 'abc']).error, /--close-window-ms takes a non-negative integer/);
+  assert.ok(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms', '1.5']).error);
+  assert.ok(parseArgs(['--run', 'r', '--mode', 'post-merge', '--close-window-ms']).error);
+  // Post-merge only: pre-merge reads no closedAt, so the flag there is a malformed invocation.
+  assert.match(parseArgs(['--run', 'r', '--mode', 'pre-merge', '--close-window-ms', '5']).error, /post-merge/);
+});
+
+test('--close-window-ms with --mode pre-merge exits 2 before touching gh', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main);
+  assert.equal(run(['--run', runDir, ...PRE, '--close-window-ms', '5'], h.deps), 2);
+  assert.match(h.err.join(''), /--close-window-ms/);
+  assert.equal(h.calls.length, 0);
+});
+
+test('post-merge --close-window-ms: a keep-open record closed inside the window is reopened', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_IN_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closedAfterWindow, []);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge --close-window-ms: a record closed after the window is not reopened, listed, and stays in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'nothing-closed');
+  assert.deepEqual(j.reopened, []);
+  assert.deepEqual(j.closedAfterWindow, [2724]);
+  assert.deepEqual(j.closedBefore, []);
+  assert.deepEqual(j.failed, []);
+  assert.deepEqual(j.closingSet, [2724, 3997]);
+  assert.equal(h.reopens().length, 0);
+  assert.equal(h.log(runDir), '');
+});
+
+test('post-merge --close-window-ms: the window boundary is inclusive (closedAt == mergedAt + window reopens)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const atEdge = new Date(Date.parse(MERGED_AT) + 600000).toISOString();
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: atEdge }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  assert.deepEqual(h.json().reopened, [2724]);
+  assert.deepEqual(h.json().closedAfterWindow, []);
+});
+
+test('post-merge --close-window-ms 0: only a close at mergedAt itself is inside the window', () => {
+  const a = fixture({ pr: { number: 7 } });
+  const inside = makeDeps(a.main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: MERGED_AT }] },
+  });
+  assert.equal(run(['--run', a.runDir, ...POST, '--settle-ms', '0', '--close-window-ms', '0'], inside.deps), 0);
+  assert.deepEqual(inside.json().reopened, [2724]);
+
+  const b = fixture({ pr: { number: 7 } });
+  const outside = makeDeps(b.main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', b.runDir, ...POST, '--settle-ms', '0', '--close-window-ms', '0'], outside.deps), 0);
+  assert.deepEqual(outside.json().closedAfterWindow, [2724]);
+  assert.equal(outside.reopens().length, 0);
+});
+
+test('post-merge --close-window-ms: a record closed before the merge is closedBefore, never closedAfterWindow', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.closedBefore, [2724]);
+  assert.deepEqual(j.closedAfterWindow, []);
+});
+
+test('post-merge --close-window-ms: an unparseable or null closedAt stays closedBefore', () => {
+  for (const closedAt of [null, 'not-a-date']) {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, {
+      prReads: [mergedView(body(), [2724, 3997])],
+      issues: { 2724: [{ state: 'CLOSED', closedAt }] },
+    });
+    assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+    assert.deepEqual(h.json().closedBefore, [2724], String(closedAt));
+    assert.deepEqual(h.json().closedAfterWindow, [], String(closedAt));
+    assert.equal(h.reopens().length, 0, String(closedAt));
+  }
+});
+
+test('post-merge --close-window-ms: in-window and late candidates split in one run', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: a', 'Refs #2725 — deferred: b'] }), [2724, 2725, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_IN_WINDOW }], 2725: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closedAfterWindow, [2725]);
+  assert.deepEqual(j.closingSet, [2725, 3997]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge --close-window-ms past the window: a will-close record still OPEN is settledOpen, not pending, with no re-run line', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  const late = () => new Date(Date.parse(MERGED_AT) + 11 * 60 * 1000);
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], { ...h.deps, now: late }), 0);
+  const j = h.json();
+  assert.equal(j.action, 'nothing-closed');
+  assert.deepEqual(j.stillOpen, [2724]);
+  assert.deepEqual(j.pendingClose, []);
+  assert.deepEqual(j.settledOpen, [2724]);
+  // Still open, so never a closing record of this merge.
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.equal(h.log(runDir), '');
+});
+
+test('post-merge --close-window-ms inside the window: a will-close record still OPEN stays pending, logged for a re-run', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  // Exactly mergedAt + window is not past it.
+  const atEdge = () => new Date(Date.parse(MERGED_AT) + 600000);
+  assert.equal(run(['--run', runDir, ...POST, ...WINDOW], { ...h.deps, now: atEdge }), 0);
+  const j = h.json();
+  assert.equal(j.action, 'close-pending');
+  assert.deepEqual(j.pendingClose, [2724]);
+  assert.deepEqual(j.settledOpen, []);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.match(h.log(runDir), /#2724 still open 0s after PR #7 merged though the merge may close it → fallback: re-run --mode post-merge/);
+});
+
+test('post-merge without --close-window-ms: no settledOpen key, and a still-OPEN will-close record stays pending however late', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'OPEN', closedAt: null }] },
+  });
+  const weeksLater = () => new Date(Date.parse(MERGED_AT) + 21 * 24 * 60 * 60 * 1000);
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], { ...h.deps, now: weeksLater }), 0);
+  const j = h.json();
+  assert.equal(Object.hasOwn(j, 'settledOpen'), false);
+  assert.deepEqual(j.pendingClose, [2724]);
+});
+
+test('post-merge without --close-window-ms: no closedAfterWindow key, a 3 h late close still reopens (unbounded, today)', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_PAST_WINDOW }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '0'], h.deps), 0);
+  const j = h.json();
+  assert.equal(Object.hasOwn(j, 'closedAfterWindow'), false);
+  assert.deepEqual(j.reopened, [2724]);
+});
+
 test('post-merge no-fixes-span carries no closingSet', () => {
   const { main, runDir } = fixture({ pr: { number: 7 } });
   const noSpan = '<!-- claude-tweaks-run: 2026-10-25T000001-record-4199 -->\nNo span.\n';
   const h = makeDeps(main, { prReads: [mergedView(noSpan, [3997])] });
   assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
   assert.deepEqual(h.json(), { action: 'no-fixes-span', pr: 7 });
+});
+
+// ---- #4549: a merge into a non-default base closes the Fixes records itself ----
+
+const OPEN_ISSUE = { state: 'OPEN', closedAt: null };
+const NON_DEFAULT = { baseRefName: 'develop' };
+const CLOSE_COMMENT = 'Closed by claude-tweaks: PR #7 merged into develop, which is not the default branch, so GitHub does not act on its closing keywords.';
+const FIXES_ONLY = ['Fixes #3997'];
+
+test('#4549 AC2.1: non-default base closes an open Fixes record, AUTO logged, action closed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 1);
+  assert.deepEqual(h.closes()[0].args, ['issue', 'close', '3997', '--reason', 'completed', '--comment', CLOSE_COMMENT]);
+  assert.deepEqual(j.closed, [3997]);
+  assert.deepEqual(j.closeFailed, []);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.equal(j.nonDefaultBase, true);
+  assert.equal(j.action, 'closed');
+  const lines = h.log(runDir).split('\n').filter((l) => /closed #3997 after PR #7 merged into develop/.test(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /^- AUTO .*closed #3997 after PR #7 merged into develop.*Reversibility: high \(gh issue reopen\)\.$/);
+});
+
+test('#4549 AC3.1: a failing close lands in closeFailed, not closingSet, degraded SKIP, exit 0', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [OPEN_ISSUE] },
+    closeThrows: { 3997: 'HTTP 403' },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.closeFailed.length, 1);
+  assert.equal(j.closeFailed[0].issue, 3997);
+  assert.match(j.closeFailed[0].error, /HTTP 403/);
+  assert.equal(j.closeFailed[0].stage, undefined);
+  assert.deepEqual(j.closed, []);
+  assert.deepEqual(j.closingSet, []);
+  assert.equal(j.action, 'close-failed');
+  assert.match(h.log(runDir), /^- SKIP .*Closing links \(degraded\): condition: could not close #3997 .*→ fallback: close it by hand/m);
+});
+
+test('#4549 AC4.1: an already CLOSED Fixes record gets no close call and counts in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [{ state: 'CLOSED', closedAt: CLOSED_BEFORE }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.deepEqual(j.closed, []);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.equal(j.action, 'nothing-closed');
+});
+
+test('#4549 AC5.1: an unreadable default branch closes nothing and omits closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [OPEN_ISSUE] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, [3997]);
+  assert.ok(!('closingSet' in j));
+  assert.ok(!h.issueReads().some((c) => c.args[2] === '3997'));
+  const lines = h.log(runDir).split('\n').filter((l) => /^- SKIP .*Closing links \(degraded\)/.test(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /could not tell whether PR #7 merged into the default branch/);
+  assert.match(lines[0], /#3997 not checked/);
+});
+
+test('post-merge: a missing baseRefName is treated as unchecked', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], { baseRefName: undefined })],
+    issues: { 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, [3997]);
+  assert.ok(!('closingSet' in j));
+  assert.equal(h.calls.filter((c) => c.args[0] === 'repo').length, 0);
+  assert.ok(!h.issueReads().some((c) => c.args[2] === '3997'));
+});
+
+test('post-merge: an unreadable default branch with no Fixes records is base-unchecked and says there is nothing to close', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: [] }), [], NON_DEFAULT)],
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.unchecked, []);
+  assert.ok(!('closingSet' in j));
+  assert.equal(h.closes().length, 0);
+  assert.equal(h.issueReads().length, 0);
+  const lines = h.log(runDir).split('\n').filter((l) => /^- SKIP .*Closing links \(degraded\)/.test(l));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /could not tell whether PR #7 merged into the default branch/);
+  assert.match(lines[0], /→ fallback: the PR names no Fixes records, so there is nothing to close by hand\./);
+  assert.doesNotMatch(lines[0], /Fixes records #/);
+});
+
+test('post-merge: a GitHub Enterprise PR reads the default branch from its own host', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], { ...NON_DEFAULT, url: 'https://acme.ghe.com/acme/app/pull/7' })],
+    issues: { 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const repoViews = h.calls.filter((c) => c.args[0] === 'repo' && c.args[1] === 'view');
+  assert.equal(repoViews.length, 1);
+  assert.equal(repoViews[0].args[2], 'acme.ghe.com/acme/app');
+  const apiCalls = h.calls.filter((c) => c.args[0] === 'api');
+  assert.equal(apiCalls.length, 1);
+  assert.ok(apiCalls[0].args[1].startsWith('repos/{owner}/{repo}/commits/'));
+  assert.equal(h.json().nonDefaultBase, true);
+});
+
+test('post-merge non-default: keep-open candidates are read once, never polled, never pendingClose', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
+    messageThrows: true,
+    issues: { 2724: [OPEN_ISSUE], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(h.sleeps, []);
+  assert.deepEqual(j.willClose, []);
+  assert.deepEqual(j.pendingClose, []);
+  assert.deepEqual(j.stillOpen, [2724]);
+  assert.equal(h.issueReads().filter((c) => c.args[2] === '2724').length, 1);
+  assert.equal(j.action, 'closed');
+  // A Refs record is never closed, only the Fixes one.
+  assert.ok(!h.closes().some((c) => c.args[2] === '2724'));
+  assert.deepEqual(j.closed, [3997]);
+});
+
+test('post-merge non-default: a linked non-Fixes record is never in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [2724], NON_DEFAULT)],
+    messageThrows: true,
+    issues: { 2724: [OPEN_ISSUE], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.deepEqual(j.closed, [3997]);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.ok(!j.closingSet.includes(2724));
+});
+
+test('post-merge non-default: a keep-open candidate the merge closed is reopened, outranks closed, and is not in closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
+    messageThrows: true,
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopened');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.deepEqual(j.closed, [3997]);
+  assert.equal(h.reopens().length, 1);
+  assert.deepEqual(h.reopens()[0].args, ['issue', 'reopen', '2724', '--comment', REOPEN_COMMENT]);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.ok(!j.closingSet.includes(2724));
+});
+
+test('post-merge: an unchecked base outranks a still-pending close in the action, and the pending close stays listed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [OPEN_ISSUE] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST, '--settle-ms', '6000'], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.pendingClose, [2724]);
+  assert.equal(j.baseUnchecked, true);
+});
+
+test('post-merge: an unchecked base outranks a successful reopen in the action, and the reopen stays listed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body(), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'base-unchecked');
+  assert.deepEqual(j.reopened, [2724]);
+  assert.equal(h.reopens().length, 1);
+});
+
+test('post-merge: an unreadable default branch on a default-base PR with real closing links closes nothing and omits closingSet', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [3997])],
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(j.action, 'base-unchecked');
+  assert.ok(!('closingSet' in j));
+  assert.equal(h.closes().length, 0);
+});
+
+test('#4549 AC6.1: the default base makes no close call and keeps the existing envelope', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [mergedView(body({ span: FIXES_ONLY }), [3997])] });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  for (const key of ['nonDefaultBase', 'closed', 'closeFailed', 'baseUnchecked', 'unchecked']) assert.ok(!(key in j), key);
+  assert.deepEqual(j.closingSet, [3997]);
+  assert.equal(j.action, 'nothing-closed');
+});
+
+test('post-merge non-default: a duplicated Fixes line closes the record once', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Fixes #3997'] }), [], NON_DEFAULT)],
+    issues: { 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.closes().length, 1);
+  assert.deepEqual(h.json().closed, [3997]);
+});
+
+test('post-merge: reopen-failed outranks close-failed', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: ['Fixes #3997', 'Refs #2724 — deferred: x'] }), [], NON_DEFAULT)],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
+    reopenThrows: 'forbidden',
+    closeThrows: { 3997: 'HTTP 403' },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.action, 'reopen-failed');
+  assert.deepEqual(j.failed.map((f) => f.issue), [2724]);
+  assert.deepEqual(j.closeFailed.map((f) => f.issue), [3997]);
+});
+
+test('post-merge non-default: a failed state read is closeFailed with stage read', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issueThrows: { 3997: true },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.equal(j.closeFailed.length, 1);
+  assert.equal(j.closeFailed[0].issue, 3997);
+  assert.equal(j.closeFailed[0].stage, 'read');
+  assert.match(j.closeFailed[0].error, /issue read failed/);
+  assert.deepEqual(j.closingSet, []);
+  assert.equal(j.action, 'close-failed');
+  assert.match(h.log(runDir), /^- SKIP .*Closing links \(degraded\): condition: could not read #3997 after PR #7 merged into develop .*→ fallback: check it and close it by hand if it is still open/m);
+});
+
+test('post-merge non-default: an issue view with no string state is closeFailed with stage read, never closed or counted', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ span: FIXES_ONLY }), [], NON_DEFAULT)],
+    issues: { 3997: [{}] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(h.closes().length, 0);
+  assert.equal(j.closeFailed.length, 1);
+  assert.equal(j.closeFailed[0].issue, 3997);
+  assert.equal(j.closeFailed[0].stage, 'read');
+  assert.match(j.closeFailed[0].error, /no state field/);
+  assert.deepEqual(j.closed, []);
+  assert.deepEqual(j.closingSet, []);
+  assert.equal(j.action, 'close-failed');
 });
 
 // ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----

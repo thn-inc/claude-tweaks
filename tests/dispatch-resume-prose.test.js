@@ -446,7 +446,7 @@ for (const [label, re] of FLOW_CLAIMS) {
 
 test('flow SKILL.md Step 2.8: the exit-code branch is unchanged and never reads resumedPr', () => {
   const step = flowStep28(FLOW_SKILL);
-  assertPinned(step, /Exit 0 → Step 3 \(claimed, or already this run's\)\. Exit 3\/4\/5 \(contested or in-flight \/ transient \/ unverified\) → stop before the Config Manifesto\./, 'exit-code branch');
+  assertPinned(step, /Exit 0 → Step 3 \(claimed, or already this run's\)\. Exit 3\/4\/5\/6 \(contested or in-flight \/ transient \/ unverified \/ claims branch uncreatable\) → stop before the Config Manifesto\./, 'exit-code branch');
   assert.doesNotMatch(step, /resumedPr/);
   assert.match(`${step}\nresumedPr`, /resumedPr/, 'control: the ban pattern detects a planted mention');
 });

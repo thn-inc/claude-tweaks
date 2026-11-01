@@ -251,6 +251,44 @@ test('defaultCreatePr: parses the PR URL gh prints; bad output and failures are 
   assert.strictEqual(defaultCreatePr(arg, () => { throw new Error('HTTP 422'); }), 'network-failure');
 });
 
+function throwTimeout() {
+  const error = new Error('boom');
+  error.code = 'ETIMEDOUT';
+  throw error;
+}
+
+test('timeout policy: defaultListOpenRecords retries once when the gh call times out', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ledger-residue-timeout-records-'));
+  let calls = 0;
+  const exec = () => { calls += 1; if (calls === 1) throwTimeout(); return '[]'; };
+  assert.deepStrictEqual(defaultListOpenRecords(root, exec), []);
+  assert.strictEqual(calls, 2);
+});
+
+test('timeout policy: defaultListRemovalPrs re-runs the whole enumeration once when the matching-refs read times out', () => {
+  const head = 'build/ledger-residue-abcd1234';
+  const pr = { number: 3, state: 'OPEN', headRefName: head, body: 'x', isCrossRepository: false };
+  const fake = fakeGh({ refsOut: `refs/heads/${head}\n`, prsByHead: { [head]: [pr] } });
+  let refsReads = 0;
+  const exec = (bin, args, opts) => {
+    if (args.some((a) => a.includes('matching-refs'))) {
+      refsReads += 1;
+      if (refsReads === 1) throwTimeout();
+    }
+    return fake.exec(bin, args, opts);
+  };
+  assert.deepStrictEqual(defaultListRemovalPrs('/r', exec), [pr]);
+  assert.strictEqual(refsReads, 2);
+});
+
+test('timeout policy: defaultCreatePr never retries — a timed-out create may already have opened the PR', () => {
+  let calls = 0;
+  const exec = () => { calls += 1; throwTimeout(); };
+  const arg = { root: '/r', base: 'main', head: 'build/ledger-residue-x', title: 'T', body: 'B' };
+  assert.strictEqual(defaultCreatePr(arg, exec), 'network-failure');
+  assert.strictEqual(calls, 1);
+});
+
 test('referencingRecords: namedTarget path, ledger filename, or feature slug in an open record\'s body', () => {
   const p = 'docs/plans/2026-10-22-widget-cache-ledger.md';
   assert.deepStrictEqual(referencingRecords(p, [{ number: 1, body: `Ledger ${p} still has follow-ups`, labels: [] }]), [1]);

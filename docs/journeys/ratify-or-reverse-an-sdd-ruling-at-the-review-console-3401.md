@@ -43,7 +43,7 @@ files:
 - **URL:** the console's terminal `AskUserQuestion` (Approve all / Override specific items)
 - **Action:** Choose Approve all to ratify every ruling row, or Override and reply `ratify {#}` / `reverse {#}` per row. Replying `skip {#}` on a ruling row is refused with a one-line notice naming the two valid words.
 - **Should feel:** Binary and decisive. SDD already decided; the maintainer's job is to confirm or overturn, never to leave the question hanging.
-- **Should understand:** `reverse` cannot change code at this point — the fix wave is closed — so it files the reversal as a born-ready record (`specShapedBody`; Current State = the ruling and the finding it ruled on; Deliverables = the reversal; `Defer-reason: genuinely-larger`), staged as `staged/ledger-record-sdd-ruling-{N}.md` and routed through the console's Queue writes step in the same pass.
+- **Should understand:** `reverse` cannot change code at this point — the fix wave is closed — so it files the reversal as a born-ready record (`specShapedBody`; Current State = the ruling and the finding it ruled on; Deliverables = the reversal; `Defer-reason:` derived from `_shared/deferral-gate.md`'s Fix-now criteria — the first criterion the fix fails, or `needs-human-decision` when every one holds, per the appendix's `sdd-ruling-*` bullet), staged as `staged/ledger-record-sdd-ruling-{N}.md` and routed through the console's Queue writes step in the same pass.
 - **Red flags:** A bare `skip` being accepted on a ruling row. A reverse that edits code in-run. A reversal record without a `Defer-reason:`.
 
 ### 4. Confirm the write-back in the run ledger

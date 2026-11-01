@@ -7,7 +7,9 @@
 // #3809 extends this to the human-present multi-run reconciliation (flow/worktree-merge.md): each branch's
 // run closes only after that branch's own pre-merge checks.
 //
-// One SITES entry per procedure; a new site is data only. Live-corpus read (skill-prose-conformance-tests:
+// #4073 moved the sequence into plugin/skills/_shared/local-merge-sequence.md; the four callers cite it.
+// SITES holds that one procedure, where the ordering, extract-and-run and re-protect pins run;
+// CITING_SITES holds its callers' read-order anchors. Live-corpus read (skill-prose-conformance-tests:
 // a documented convention this project wants enforced) plus extract-and-run of the two fences whose
 // behavior matters. Go-red proof [IL-105]: the ordering check also runs against a frozen pre-change
 // excerpt. Whitespace collapsed on haystack and needle [IL-66].
@@ -34,69 +36,22 @@ const WORKTREE = path.join(SCRATCH, 'fixture-worktree'); // never created: recor
 const SUBJECT_DIR = path.join(SCRATCH, 'subject');
 fs.mkdirSync(SUBJECT_DIR, { recursive: true });
 
-// One entry per local-merge auto-merge procedure. `vars` maps each {placeholder} to its fixture value.
-// `readsWorktree`: the procedure reads the worktree from run-state.json itself (settle-and-merge takes
-// `{group-worktree}` from dispatch context and has no read). `logNeedle`: the literal clause, after the
-// re-protect fence, that tells the agent to log a re-stamp that did not print "worktree recorded".
-// `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps. `preservesOwner`:
-// the re-protect runs in another session than the run's owner, so its fence must not re-stamp the run's `sessionId`.
+// The one local-merge procedure under test. `vars` maps each {placeholder} to its fixture value.
+// `readsWorktree`: whether the procedure reads the worktree from run-state.json itself. `logNeedle`: the
+// literal clause, after the re-protect fence, that tells the agent to log a re-stamp that did not print
+// "worktree recorded". `worktreeVar`: the placeholder that names the worktree the re-protect fence re-stamps.
 const SITES = [
   {
-    label: 'auto-merge-short-circuit.md',
-    file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md',
-    readsWorktree: true,
-    logNeedle: 'log any other line',
-    worktreeVar: 'worktree-path',
-    vars: {
-      'integration-branch': 'main',
-      branch: 'feat',
-      issue: '1',
-      tag: 'fast-lane',
-      'subject-dir': posix(SUBJECT_DIR),
-      'worktree-path': posix(WORKTREE),
-    },
-  },
-  {
-    label: 'settle-and-merge.md',
-    file: 'plugin/skills/dispatch/settle-and-merge.md',
+    label: 'local-merge-sequence.md',
+    file: 'plugin/skills/_shared/local-merge-sequence.md',
     readsWorktree: false,
-    logNeedle: 'log any other line',
-    worktreeVar: 'group-worktree',
-    vars: {
-      'integration-branch': 'main',
-      branch: 'feat',
-      issue: '1',
-      'second-issue': '2',
-      'subject-dir': posix(SUBJECT_DIR),
-      'group-worktree': posix(WORKTREE),
-    },
-  },
-  {
-    label: 'local-merge-auto-finish.md',
-    file: 'plugin/skills/_shared/local-merge-auto-finish.md',
-    readsWorktree: true,
-    logNeedle: 'carry it into the log call\'s `{text-file}`',
-    worktreeVar: 'worktree-path',
-    vars: {
-      'base-branch': 'main',
-      'feature-branch': 'feat',
-      issue: '1',
-      'subject-dir': posix(SUBJECT_DIR),
-      'worktree-path': posix(WORKTREE),
-    },
-  },
-  {
-    label: 'worktree-merge.md',
-    file: 'plugin/skills/flow/worktree-merge.md',
-    readsWorktree: true,
-    preservesOwner: true,
-    logNeedle: 'log any other line',
+    logNeedle: 'any other line',
     worktreeVar: 'worktree-path',
     vars: {
       'base-branch': 'main',
       branch: 'feat',
-      issue: '1',
-      'second-issue': '2',
+      issues: '1 2',
+      tag: 'fast-lane',
       'subject-dir': posix(SUBJECT_DIR),
       'worktree-path': posix(WORKTREE),
     },
@@ -106,6 +61,7 @@ const SITES = [
 const PRE_MERGE_NEEDLE = 'git merge-tree --write-tree';
 const CLOSE_RUN_NEEDLE = 'bin/hooks.js" close-run --run';
 const MERGE_NEEDLE = 'git merge --no-ff';
+const PUSH_NEEDLE = 'push origin {base-branch}';
 const REPROTECT_NEEDLE = 'bin/hooks.js" record-worktree --run';
 const WORKTREE_READ_NEEDLE = "run-state.json').worktree";
 
@@ -154,44 +110,47 @@ function locate(text) {
   const P = fenceIndex(text, PRE_MERGE_NEEDLE);
   const C = flat.indexOf(CLOSE_RUN_NEEDLE);
   const M = fenceIndex(text, MERGE_NEEDLE);
+  const U = fenceIndex(text, PUSH_NEEDLE);
   const R = M < 0 ? -1 : fenceIndex(text, REPROTECT_NEEDLE, M);
   const W = flat.lastIndexOf(WORKTREE_READ_NEEDLE); // the LAST read: an earlier ledger-deletion read is fine
   const closeRuns = flat.split(CLOSE_RUN_NEEDLE).length - 1;
-  return { P, C, M, R, W, closeRuns };
+  return { P, C, M, U, R, W, closeRuns };
 }
 
-// Ordering errors; empty when pre-merge checks < close-run < merge < re-protect and no worktree read follows
-// close-run. With `readsWorktree`, the read must also exist and precede close-run (it nulls the field).
+// Ordering errors; empty when pre-merge checks < close-run < merge < push < re-protect and no worktree read
+// follows close-run. With `readsWorktree`, the read must also exist and precede close-run (it nulls the field).
 function checkOrdering(text, { readsWorktree = false } = {}) {
-  const { P, C, M, R, W, closeRuns } = locate(text);
+  const { P, C, M, U, R, W, closeRuns } = locate(text);
   const errors = [];
   if (P < 0) errors.push(`no bash fence containing ${PRE_MERGE_NEEDLE}`);
   if (closeRuns !== 1) errors.push(`expected exactly one ${CLOSE_RUN_NEEDLE}, found ${closeRuns}`);
   if (M < 0) errors.push(`no bash fence containing ${MERGE_NEEDLE}`);
+  if (U < 0) errors.push(`no bash fence containing ${PUSH_NEEDLE}`);
   if (R < 0) errors.push(`no ${REPROTECT_NEEDLE} fence after the merge`);
-  if (P >= 0 && C >= 0 && M >= 0 && R >= 0 && !(P < C && C < M && M < R)) {
-    errors.push(`order is not pre-merge checks < close-run < merge < re-protect (P=${P} C=${C} M=${M} R=${R})`);
+  if (P >= 0 && C >= 0 && M >= 0 && U >= 0 && R >= 0 && !(P < C && C < M && M < U && U < R)) {
+    errors.push(`order is not pre-merge checks < close-run < merge < push < re-protect (P=${P} C=${C} M=${M} U=${U} R=${R})`);
   }
   if (W >= 0 && C >= 0 && W > C) errors.push(`the worktree is read from run-state.json after close-run nulled it (W=${W} C=${C})`);
   if (readsWorktree && !(W >= 0 && C >= 0 && W < C)) errors.push(`the worktree read must exist and precede close-run (W=${W} C=${C})`);
   return errors;
 }
 
-// Move the close-run fence ahead of the pre-merge-checks fence: a pure permutation of two whole fences,
-// so every marker is still present exactly once and only the order changes.
-function closeRunBeforePreMerge(text) {
+// Move the fence containing `moving` ahead of the fence containing `anchor`: a pure permutation of two whole
+// fences, so every marker is still present exactly once and only the order changes.
+function moveFenceBefore(text, moving, anchor) {
   const fences = [...text.matchAll(/^[ \t]*```bash\n[\s\S]*?\n[ \t]*```/gm)];
   const only = (needle) => {
     const hits = fences.filter((m) => m[0].includes(needle));
     assert.strictEqual(hits.length, 1, `expected exactly one bash fence containing ${JSON.stringify(needle)}`);
     return hits[0];
   };
-  const pre = only(PRE_MERGE_NEEDLE);
-  const close = only(CLOSE_RUN_NEEDLE);
-  assert.ok(pre.index < close.index, 'the live close-run fence follows the pre-merge checks fence');
-  const without = text.slice(0, close.index) + text.slice(close.index + close[0].length);
-  return `${without.slice(0, pre.index)}${close[0]}\n\n${without.slice(pre.index)}`;
+  const before = only(anchor);
+  const moved = only(moving);
+  assert.ok(before.index < moved.index, `the live ${moving} fence follows the ${anchor} fence`);
+  const without = text.slice(0, moved.index) + text.slice(moved.index + moved[0].length);
+  return `${without.slice(0, before.index)}${moved[0]}\n\n${without.slice(before.index)}`;
 }
+const closeRunBeforePreMerge = (text) => moveFenceBefore(text, CLOSE_RUN_NEEDLE, PRE_MERGE_NEEDLE);
 
 // Frozen pre-change excerpt: the local-merge opener and the merge fence exactly as they read before
 // #3762 (short-circuit lines 237-242 and 283-289), close-run ahead of the guard and composer.
@@ -286,11 +245,33 @@ function assertKeepsOwner(fence, site) {
   assert.strictEqual(ownerAfterReprotect(fence, site), 'owner-session', "the re-protect re-stamped the reconciler's session as the run's owner");
 }
 
+// Run the re-protect fence against a closed run and assert it restores the worktree assignment and `active`.
+function assertReprotectRestores(fence, vars, worktreeVar) {
+  const { dir, run } = tmpProject();
+  const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
+    cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
+  });
+  const wt = vars[worktreeVar];
+  assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
+  hook('record-worktree', '--run', run, wt);
+  hook('close-run', '--run', run);
+  let state = readRunState(run);
+  assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
+  assert.strictEqual(state.status, 'clean');
+
+  const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars: { ...vars, 'run-dir': posix(run) } });
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.match(r.stdout, /worktree recorded for/);
+  state = readRunState(run);
+  assert.strictEqual(state.worktree, path.resolve(wt));
+  assert.strictEqual(state.status, 'active');
+}
+
 for (const site of SITES) {
   const raw = readText(path.join(ROOT, site.file));
   const { label, vars, readsWorktree, logNeedle, worktreeVar } = site;
 
-  test(`${label}: pre-merge checks, close-run, merge, re-protect appear in that order`, () => {
+  test(`${label}: pre-merge checks, close-run, merge, push, re-protect appear in that order`, () => {
     assert.deepStrictEqual(checkOrdering(raw, site), []);
   });
 
@@ -301,6 +282,55 @@ for (const site of SITES) {
     assert.ok(P >= 0 && C >= 0 && M >= 0 && R >= 0 && closeRuns === 1, 'every marker is still present exactly once');
     const errors = checkOrdering(permuted, site);
     assert.ok(errors.some((e) => /order is not/.test(e)), `expected an "order is not" error, got ${JSON.stringify(errors)}`);
+  });
+
+  test(`go-red: ${label} with the push fence moved ahead of the merge fence fails the ordering check`, () => {
+    const permuted = moveFenceBefore(raw, PUSH_NEEDLE, MERGE_NEEDLE);
+    assert.notStrictEqual(permuted, raw, 'the permutation must change the text');
+    const { P, C, M, U, R, closeRuns } = locate(permuted);
+    assert.ok(P >= 0 && C >= 0 && M >= 0 && U >= 0 && R >= 0 && closeRuns === 1, 'every marker is still present exactly once');
+    const errors = checkOrdering(permuted, site);
+    assert.ok(errors.some((e) => /order is not/.test(e)), `expected an "order is not" error, got ${JSON.stringify(errors)}`);
+  });
+
+  test(`${label}: merge fence, run against a fixture repo — merges when no merge is in progress, refuses a foreign MERGE_HEAD`, () => {
+    const fence = extractFence(raw, MERGE_NEEDLE);
+    const ident = { GIT_AUTHOR_NAME: 'T', GIT_AUTHOR_EMAIL: 't@example.com', GIT_COMMITTER_NAME: 'T', GIT_COMMITTER_EMAIL: 't@example.com' };
+    const run = (body, repo) => {
+      fs.mkdirSync(SUBJECT_DIR, { recursive: true });
+      fs.writeFileSync(path.join(SUBJECT_DIR, 'message.txt'), 'subject\n');
+      return runFence(body, { cwd: repo, env: ident, vars });
+    };
+    const head = (repo, ref = 'HEAD') => git(repo, 'rev-parse', ref).trim();
+
+    const clean = makeRepo();
+    const merged = run(fence, clean);
+    assert.strictEqual(merged.code, 0, merged.stderr);
+    assert.strictEqual(git(clean, 'log', '-1', '--format=%P').trim().split(' ').length, 2, 'a --no-ff merge commit landed');
+
+    // A foreign merge in progress: `other` merged with --no-commit leaves MERGE_HEAD and a clean index.
+    const busyRepo = () => {
+      const repo = makeRepo();
+      git(repo, 'checkout', '-q', '-b', 'other');
+      fs.writeFileSync(path.join(repo, 'c.txt'), 'c\n');
+      git(repo, 'add', 'c.txt');
+      git(repo, 'commit', '-q', '-m', 'other');
+      git(repo, 'checkout', '-q', 'main');
+      fixtureGit(['-C', repo, 'merge', '-q', '--no-ff', '--no-commit', 'other'], { encoding: 'utf8', stdio: 'pipe' });
+      return repo;
+    };
+    const busy = busyRepo();
+    const before = head(busy);
+    const refused = run(fence, busy);
+    assert.strictEqual(refused.code, 1);
+    assert.match(refused.stderr, /A merge is already in progress in the main checkout — not this sequence's\. Abort, do not merge\./);
+    assert.strictEqual(head(busy), before, 'HEAD is unchanged');
+    assert.strictEqual(head(busy, 'MERGE_HEAD'), head(busy, 'other'), "the foreign merge is left exactly as it was");
+
+    // go-red: without the merge-in-progress check, the run never names the foreign merge.
+    const unguarded = fence.replace(/^if git rev-parse -q --verify MERGE_HEAD >\/dev\/null; then\n[\s\S]*?\nfi\n/m, '');
+    assert.notStrictEqual(unguarded, fence, 'the doctor must remove the check');
+    assert.doesNotMatch(run(unguarded, busyRepo()).stderr, /A merge is already in progress in the main checkout/, 'go-red: the unguarded fence must not print the guard line');
   });
 
   test(`${label}: the worktree read ${readsWorktree ? 'precedes close-run (required)' : 'is not required'}`, () => {
@@ -365,32 +395,7 @@ for (const site of SITES) {
 
   test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
     const fence = extractFence(raw, REPROTECT_NEEDLE);
-    const { dir, run } = tmpProject();
-    const hook = (...args) => execFileSync(process.execPath, [HOOKS, ...args], {
-      cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, PIPELINE_RUN_DIR: '', CT_HOOKS_TEST_MODE: '1' },
-    });
-    const wt = vars[worktreeVar];
-    assert.ok(wt, `SITES entry names no ${worktreeVar} fixture value`);
-    hook('record-worktree', '--run', run, wt);
-    hook('close-run', '--run', run);
-    let state = readRunState(run);
-    assert.strictEqual(state.worktree, null, 'close-run clears the worktree assignment');
-    assert.strictEqual(state.status, 'clean');
-
-    const r = runFence(fence, { cwd: dir, env: { CLAUDE_PLUGIN_ROOT: posix(PLUGIN_DIR), RUN_DIR: posix(run) }, vars: { ...vars, 'run-dir': posix(run) } });
-    assert.strictEqual(r.code, 0, r.stderr);
-    assert.match(r.stdout, /worktree recorded for/);
-    state = readRunState(run);
-    assert.strictEqual(state.worktree, path.resolve(wt));
-    assert.strictEqual(state.status, 'active');
-
-    if (site.preservesOwner) {
-      assertKeepsOwner(fence, site);
-      assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
-      const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
-      assert.notStrictEqual(mutated, fence);
-      assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
-    }
+    assertReprotectRestores(fence, vars, worktreeVar);
   });
 
   test(`${label}: the fallback logs a re-stamp that does not print "worktree recorded"`, () => {
@@ -401,6 +406,51 @@ for (const site of SITES) {
     assert.ok(after.includes(collapse(logNeedle)), `a re-stamp that fails must be logged, not ignored: expected ${JSON.stringify(logNeedle)} within the window`);
   });
 }
+
+// #4073: each caller reads run-state.json's `worktree` (when it reads it) before the step that runs the
+// sequence's close-run, since close-run nulls the field. `closeAnchor` is that step's literal, on one line.
+const CITING_SITES = [
+  { label: 'local-merge-auto-finish.md', file: 'plugin/skills/_shared/local-merge-auto-finish.md', readsWorktree: true, closeAnchor: '4. **Close the run**' },
+  { label: 'auto-merge-short-circuit.md', file: 'plugin/skills/wrap-up/auto-merge-short-circuit.md', readsWorktree: true, closeAnchor: "Run the sequence's Steps 1-4 in order" },
+  { label: 'settle-and-merge.md', file: 'plugin/skills/dispatch/settle-and-merge.md', readsWorktree: false, closeAnchor: "Run the sequence's Steps 1-4 in order" },
+  { label: 'worktree-merge.md', file: 'plugin/skills/flow/worktree-merge.md', readsWorktree: true, closeAnchor: "3. **Close this branch's run" },
+];
+function siteReadOrder(text, { readsWorktree, closeAnchor }) {
+  const flat = collapse(text);
+  const C = flat.indexOf(collapse(closeAnchor));
+  const W = flat.lastIndexOf(WORKTREE_READ_NEEDLE);
+  const errors = [];
+  if (C < 0) errors.push('close anchor missing');
+  if (readsWorktree && W < 0) errors.push('worktree read missing');
+  if (C >= 0 && W >= 0 && W > C) errors.push('worktree read follows the close step');
+  return errors;
+}
+for (const site of CITING_SITES) {
+  test(`${site.label}: the run-state.json worktree read precedes the step that closes the run`, () => {
+    const live = readText(path.join(ROOT, site.file));
+    assert.deepStrictEqual(siteReadOrder(live, site), []);
+    const noAnchor = live.split(site.closeAnchor).join('');
+    assert.notStrictEqual(noAnchor, live);
+    assert.deepStrictEqual(siteReadOrder(noAnchor, site), ['close anchor missing']);
+    const moved = `${live.split(WORKTREE_READ_NEEDLE).join('')}\n${WORKTREE_READ_NEEDLE}\n`;
+    assert.deepStrictEqual(siteReadOrder(moved, site), ['worktree read follows the close step'], 'go-red: the order comparison');
+    if (site.readsWorktree) {
+      assert.deepStrictEqual(siteReadOrder(live.split(WORKTREE_READ_NEEDLE).join(''), site), ['worktree read missing']);
+    }
+  });
+}
+
+test("worktree-merge.md: its owner-preserving re-protect fence restores the run and keeps its owner", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/flow/worktree-merge.md'));
+  const fence = extractFence(live, REPROTECT_NEEDLE);
+  const site = { vars: { 'worktree-path': posix(WORKTREE) }, worktreeVar: 'worktree-path' };
+  assertReprotectRestores(fence, site.vars, site.worktreeVar);
+  assertKeepsOwner(fence, site);
+  assert.ok(fence.includes(REPROTECT_OWNER_CLAUSE), 'the fence unsets CLAUDE_CODE_SESSION_ID');
+  const mutated = fence.replace(REPROTECT_OWNER_CLAUSE, '');
+  assert.notStrictEqual(mutated, fence);
+  assert.throws(() => assertKeepsOwner(mutated, site), /re-stamped the reconciler/, 'go-red: a fence that inherits CLAUDE_CODE_SESSION_ID must fail');
+});
 
 const KEEPS_RUN = 'keeps its worktree assignment and `active` status';
 function skipAbortKeepsRun(text) {
@@ -425,9 +475,9 @@ test("AC2.1: worktree-merge.md's Skip and Abort bullets keep the run", () => {
 
 // AC3: every failure that can follow close-run re-protects. The Re-protect section names each trigger, and
 // each failure site carries its own re-protect instruction (prose a fence test cannot reach).
-const REPROTECT_TRIGGERS = ['branch-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
+const REPROTECT_TRIGGERS = ['merge-guard abort', 'merge failure', 'abandoned or stopped before it lands', 'push failure'];
 const REPROTECT_SITES = [
-  ['**The branch guard aborted** (stderr ends', "re-protect this branch's run", 200],
+  ['**The merge guard aborted** (stderr ends', "re-protect this branch's run", 200],
   ['**Failed** — if a `MERGE_HEAD` exists', "re-protect this branch's run", 120],
   ['abandoned or stopped before it lands', 're-protect every run closed for it', 200],
   ['**On push failure**', 're-protect every run step 3 closed', 300],
@@ -454,7 +504,7 @@ test("AC3: worktree-merge.md re-protects after every failure that can follow clo
   assert.ok(reprotectCoverage(dropTrigger).some((e) => /push failure/.test(e)), 'go-red: a trigger dropped from the Re-protect list must fail');
   const dropSite = live.replace("re-protect this branch's run (**Re-protect** below), then stop", 'stop');
   assert.notStrictEqual(dropSite, live);
-  assert.ok(reprotectCoverage(dropSite).some((e) => /branch guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
+  assert.ok(reprotectCoverage(dropSite).some((e) => /merge guard aborted/.test(e)), 'go-red: a guard abort with no re-protect must fail');
   const dropFailed = live.replace("Then re-protect this branch's run (**Re-protect** below). A conflict", 'A conflict');
   assert.notStrictEqual(dropFailed, live);
   assert.ok(reprotectCoverage(dropFailed).some((e) => /Failed/.test(e)), 'go-red: a merge failure with no re-protect must fail');
@@ -479,7 +529,8 @@ test("AC2.1: worktree-merge.md's Skip bullet says a predicted conflict never clo
 // AC3's log call takes its text from a file: the branch name and the hook's output never pass through shell quoting.
 function logFenceErrors(text) {
   const flat = collapse(text);
-  const at = fenceIndex(text, REPROTECT_NEEDLE, fenceIndex(text, MERGE_NEEDLE));
+  const at = fenceIndex(text, REPROTECT_NEEDLE);
+  if (at < 0) return ['no re-protect fence'];
   const fence = fencesOf(text).find((body) => body.includes('bin/log-decision.js') && flat.indexOf(collapse(body)) > at);
   if (!fence) return ['no log-decision.js fence after the re-protect fence'];
   const errors = [];
@@ -494,6 +545,9 @@ test("AC3: worktree-merge.md logs a failed re-stamp through --text-file", () => 
   const quoted = live.replace('--text-file "{text-file}"', "--text 'Re-stamp of {branch}: {output line}'");
   assert.notStrictEqual(quoted, live);
   assert.ok(logFenceErrors(quoted).length > 0, 'go-red: a single-quoted --text fence must fail');
+  const noReprotect = live.split(REPROTECT_NEEDLE).join('record-worktree-zzz-removed');
+  assert.notStrictEqual(noReprotect, live, 'doctoring must change the text');
+  assert.deepStrictEqual(logFenceErrors(noReprotect), ['no re-protect fence'], 'go-red: a flow text with no re-protect fence must fail');
 });
 
 test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a quote in the path cannot break it", () => {
@@ -516,4 +570,23 @@ test('no plugin/ file still carries "Not fixed here; there is no"', () => {
     .filter((rel) => String(rel).endsWith('.md'))
     .filter((rel) => collapse(readText(path.join(PLUGIN_DIR, String(rel)))).includes('Not fixed here; there is no'));
   assert.deepStrictEqual(hits, []);
+});
+
+// #4073 AC4: the shared sequence runs close-run as its own Bash call — one command line, never
+// chained onto the merge or the push (the worktree-always gate inspects the whole command string).
+function closeRunChainErrors(text) {
+  const body = extractFence(text, CLOSE_RUN_NEEDLE).trim();
+  const errors = [];
+  if (body.includes('\n')) errors.push('the close-run fence holds more than one line');
+  if (/&&|\|\||;/.test(body)) errors.push('the close-run command is chained');
+  if (body.includes('git push') || body.includes(MERGE_NEEDLE)) errors.push('the close-run fence also merges or pushes');
+  return errors;
+}
+
+test('#4073 AC4: local-merge-sequence.md runs close-run as its own one-command Bash call, never chained onto the push', () => {
+  const text = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'local-merge-sequence.md'));
+  assert.deepStrictEqual(closeRunChainErrors(text), []);
+  const chained = text.replace(/(bin\/hooks\.js" close-run --run [^\n]*)/, '$1 && git -C "{worktree-path}" push origin {base-branch}');
+  assert.notStrictEqual(chained, text, 'doctoring must change the text');
+  assert.ok(closeRunChainErrors(chained).length > 0, 'a close-run chained onto the push must fail the check');
 });

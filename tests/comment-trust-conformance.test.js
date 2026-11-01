@@ -125,14 +125,27 @@ test('AC5.3: the Trusted authors section carries the jq select and skip-notice j
 
 test('AC5.3: the Trusted authors section states the fixed facts', () => {
   const body = collapse(section(COMMENTS, '## Trusted authors') ?? '');
-  for (const fact of [
+  const facts = [
     '`authorAssociation`',
     '`author_association`',
     'bin/lib/issues/comment-trust.js',
-    'missing',
-    'viewer',
-  ]) {
+    'A missing field is untrusted',
+    'There is no viewer lookup',
+  ];
+  const statesAll = (text) => facts.every((fact) => text.includes(fact));
+  for (const fact of facts) {
     assert.ok(body.includes(fact), `Trusted authors section must mention: ${fact}`);
+  }
+  // Go-red control [IL-105]: deleting one fact sentence (never a global token replace — #4400)
+  // must fail the pin.
+  for (const [sentence, fact] of [
+    ['A missing field is untrusted — a comment with neither field is skipped.', 'A missing field is untrusted'],
+    ['There is no viewer lookup.', 'There is no viewer lookup'],
+  ]) {
+    const doctored = body.replace(sentence, '');
+    assert.notStrictEqual(doctored, body, `doctoring must change the section: ${sentence}`);
+    assert.ok(!doctored.includes(fact), `deleting "${sentence}" must remove its own fact: ${fact}`);
+    assert.ok(!statesAll(doctored), `deleting "${sentence}" must fail the fixed-facts pin`);
   }
 });
 

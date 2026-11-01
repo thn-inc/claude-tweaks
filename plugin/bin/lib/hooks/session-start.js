@@ -10,6 +10,7 @@ const wtDetect = require('./worktree-detect');
 const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
+const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
@@ -29,7 +30,7 @@ function advisoryBanner(header, lines, trailer) {
 }
 // The fast/background split (#820, D8, corrected): SessionStart's own
 // process runs only the cheap read/detect checks inline — everything
-// write-only and janitorial (release/archive/archive-branches/remote-prune/
+// write-only and janitorial (release/post-merge/archive/archive-branches/remote-prune/
 // ledger-residue/reap) is deferred to a detached `reconcile-background` child process (see
 // bin/hooks.js's `reconcile-background` subcommand), whose result is
 // surfaced on a LATER SessionStart firing via the status-file read below.
@@ -228,7 +229,7 @@ async function run(ctx) {
     // anti-pattern for why a linked worktree's own HEAD must never stand in
     // for the shared trunk). FAST_CHECKS restricts this inline call to the
     // cheap read/detect checks only (mirror, red-tip, console) — the
-    // write-only janitorial checks (release/archive/archive-branches/
+    // write-only janitorial checks (release/post-merge/archive/archive-branches/
     // remote-prune/ledger-residue/reap) run in a detached background process instead (see
     // the spawn block below), and their results are surfaced on a LATER
     // SessionStart firing via the status-file read below, not here (#820,
@@ -256,8 +257,10 @@ async function run(ctx) {
     // having none to thread through at all (#1687). Passed here anyway for
     // correctness: this is the one call site in this file that actually calls
     // reconcile() inline, and a real session id is genuinely reachable at it.
+    // forgeProbeTimeoutMs: the same hook bound the PreToolUse PR-stamp gate passes (#4578 Decision Q1).
     const result = await reconcile({
       cwd: ctx.cwd, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
+      forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS,
     });
 
     // One added summary line for what the fast path did — today just mirror
@@ -331,6 +334,20 @@ async function run(ctx) {
         if (s.failed) lines.push(`the pass failed${typeof s.error === 'string' && s.error ? ` (${s.error})` : ''}`);
         if (s.reaped) lines.push(`${s.reaped} finished worktree(s) removed (already merged)`);
         if (s.released) lines.push(`${s.released} issue claim(s) released`);
+        // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); a status file
+        // from before that lacks these fields, and the Number.isInteger guards render nothing for it.
+        // postMergeParentsClosed and postMergeUnmarkedParentsClosed are disjoint: the closes by runs that
+        // wrote their marker, and by runs whose marker write failed.
+        const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
+        const ranClosed = Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0;
+        if (s.postMergeRan) {
+          lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${ranClosed ? `, closing ${ranClosed} parent record(s) below the oversight floor` : ''}`);
+        }
+        // The parents are closed on GitHub; only the run's decisions.md marker is missing.
+        if (unmarkedClosed) lines.push(`post-merge steps closed ${unmarkedClosed} parent record(s) below the oversight floor in run(s) whose decisions.md marker could not be written`);
+        // Step 4.0 failed, or the check threw, for these (counted apart from `postMergeRan`): no parent was
+        // closed, so tidy's parent-gate backstop is the recovery.
+        if (s.postMergeFailed) lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (tidy's parent-gate backstop recovers them)`);
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

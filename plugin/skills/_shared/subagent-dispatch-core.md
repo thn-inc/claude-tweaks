@@ -68,7 +68,8 @@ the child's own reply (headless 2.1.302 and later, above), that child has report
 wait. A dispatched agent may fan
 out nested agents at every tier (lens pairs, single reads, curation judges), but it keeps its own
 turn alive with bounded foreground waits — repeated `sleep 20` Bash calls, at most 60 (20 minutes)
-per wave of children (the set launched together), each wait logged per the bounded-polling
+per wave of children (the set launched together; a child that keeps editing its worktree earns
+more windows, below), each wait logged per the bounded-polling
 paragraph below (what is waited on, the iteration against the bound, how many children are still
 pending), stopping as soon as every child's `<task-notification>` has arrived, never reading or
 tailing a running child's `output_file` (a failed child's output is retrieved per Failed-agent
@@ -95,10 +96,21 @@ per the dispatching skill's own status handling where one exists
 otherwise judge that unit as in the fallback. The self-judge fallback is for a read-only unit (a
 lens, a single read, a judge); a write-capable child (one that edits files) still silent at the
 bound is never redone in-session, because an abandoned child keeps running and may still write —
-stop, and end with `STATUS: BLOCKED` naming that child and its unit. A wait call that is blocked or
-fails (a harness or hook refusal) is not a wait and never counts toward the bound; never retry it in
-another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
-silent at the bound and apply the fallback above.
+stop, and end with `STATUS: BLOCKED` naming that child and its unit. Before that stop (#4557), probe
+the worktree its prompt names, read-only: `git -C "{child-worktree}" rev-parse HEAD`, `git -C
+"{child-worktree}" --no-optional-locks status --porcelain` and `git -C "{child-worktree}"
+--no-optional-locks diff HEAD` piped to `git hash-object --stdin` (a `fatal:` line fails the probe), against the previous probe (taken right
+after launching the wave, then at each bound; lacking one, the first bound's probe sets it and
+grants a window). Per wave, while any child shows a change, log one wait line and grant one more
+60-wait window; stop when a whole window passes with no change, or at a ceiling of 3 windows (60
+minutes) per wave, naming which fired (`no progress for one window` or `ceiling reached while
+progressing`) and every unchanged child. Children sharing a worktree progress together; a child
+whose prompt names no worktree counts as unchanged. A failed wait call counts as no wait but ends its window, and the
+probe runs as at any bound; a failed probe command counts as no change, never retried in another
+form. Read-only units keep the first-bound self-judge. A wait call that is blocked or fails (a
+harness or hook refusal) is not a wait and never counts toward the bound; never retry it in another
+form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the
+bound and apply the fallback above.
 
 **Top-level dispatchers.** A session waiting on its own `Agent`/`Task` children within its turn is
 the pattern `_shared/dispatch-waiting.md` documents; this section restricts only what a dispatched
@@ -141,6 +153,53 @@ project's suite or server races any server the same review started (`/visual-rev
 ephemeral dev server), and it reports failures produced by the wrong harness rather than by the
 diff. #3001 observed exactly this: a Fast-profile lens agent ran a full Playwright e2e suite in
 the background on the framework's default ports.
+
+## Discrimination checks in a scratch checkout
+
+Applies to any dispatch that proves a test discriminates against reverted or edited code:
+`/claude-tweaks:build`'s SDD task reviewers (`build/dispatch.md`, #2740) and `/claude-tweaks:review`'s
+lens 3f Vacuity-evidence diagnostic. The dispatcher pastes these steps into the prompt — the agent
+never reads this file — and substitutes `{plugin-root}`, `{worktree}`, `{reviewed-sha}` and
+`{base-sha}` literally (a caller that pastes before the commit under review exists substitutes
+the first two and leaves the rest to the per-dispatch composer); each agent builds `{id}` from its
+own distinct token (lens and pair member, or task, reviewer role and round). Never mutate the
+shared worktree in place: a sibling agent's in-flight edit there would be lost. For lens 3f these
+steps are the READ-ONLY REVIEW line's Vacuity-evidence exception. One plain command per Bash call,
+literal absolute paths; `{disc-path}` is outside your worktree, so write files there with one
+`node -e` call, never Write/Edit:
+
+1. **Location.** `node "{plugin-root}/bin/session-tmp-resolve.js" --value disc-{id}`
+   (`_shared/session-tmp-root.md`); paste the printed `{disc-path}` literally — never under the run
+   directory or inside the shared worktree. If it already exists, report `BLOCKED` naming it: never
+   write into or delete a path you did not create.
+2. **Create.** `git -C "{worktree}" worktree add --detach "{disc-path}" HEAD`, then
+   `git -C "{disc-path}" rev-parse HEAD` must print `{reviewed-sha}`; otherwise tear down (step 6):
+   the check has no evidence.
+3. **Mutate only there**, once the unmutated checkout passes a step 4 run (red there means it lacks
+   an input the test needs: report that; nothing counts):
+   `git -C "{disc-path}" checkout {base-sha} -- {path}`, or rewrite the file under `{disc-path}`.
+4. **Run the one targeted test there**, reaching dependencies through the language's search-path
+   variable, never a link (`ln -s`, `mklink /J`): a link leaves a path into the shared tree for a
+   mutation or teardown to reach through — for Node (CommonJS `require` only):
+   `NODE_PATH="{worktree}/node_modules" node --test "{disc-path}/{test-file}"`. A green run counts
+   as evidence only after a control has gone red in this same checkout (a rewrite under `{disc-path}`
+   making the mutated file throw at load); a control that stays green means the run did not load the
+   scratch copy (the code ran from the shared tree, or the test never loads the mutated file):
+   no evidence, tear down.
+5. **A run that fails on module or binary resolution** has no evidence: tear down and report that —
+   never fall back to the shared tree.
+6. **Tear down before the status word.** `git -C "{worktree}" worktree remove --force "{disc-path}"`;
+   `git -C "{worktree}" worktree list` then shows no entry for `{disc-path}`. A failed teardown
+   reports `DONE_WITH_CONCERNS` naming the leftover path.
+
+**No-git fallback** — when the guard refuses step 2's create, or the dispatcher says to take it
+outright: write each file the test loads at its repo-relative path under `{disc-path}` (Read for
+unchanged files; for base content, the read-only `git -C "{worktree}" show {base-sha}:{path}`),
+run it per step 4, and delete the copies before the status word: `rm -r "{disc-path}"`; a failed
+delete reports `DONE_WITH_CONCERNS` naming it.
+
+The create, checkout, test-run and teardown shapes passed the worktree guard from a
+worktree-isolated dispatched agent (#4556, 2026-10-31); `_shared/scratch-worktree.md` §7 records them.
 
 ## Model Selection
 

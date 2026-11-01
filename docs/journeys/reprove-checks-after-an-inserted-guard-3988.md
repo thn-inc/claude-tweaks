@@ -25,7 +25,7 @@ files:
   - A plan that tests only the new guard and treats the existing tests as untouched coverage.
 
 ### 2. Re-prove each downstream check by mutating it
-- **URL:** a scratch copy or a scratch `git worktree add`, never the shared worktree.
+- **URL:** a scratch checkout built per `_shared/subagent-dispatch-core.md`'s **Discrimination checks in a scratch checkout** recipe, never the shared worktree.
 - **Action:** For each downstream check, delete or invert that check alone, run its test, and record the red output in the plan. If the test stays green, give it a fixture that passes the new guard and reaches the check.
 - **Should feel:** Mechanical. One mutation and one red run per check.
 - **Should understand:**
@@ -36,7 +36,7 @@ files:
 
 ### 3. Hold the re-review to the same proof
 - **URL:** the SDD scoped re-review of a fix round, or of the final review's fix wave, dispatched under `/claude-tweaks:build`.
-- **Action:** The re-reviewer names each check downstream of the inserted guard and shows its test going red with that check mutated, in the scratch worktree the tree-immutability rule requires.
+- **Action:** The re-reviewer names each check downstream of the inserted guard and shows its test going red with that check mutated, in the scratch checkout the tree-immutability rule requires.
 - **Should feel:** Like a short extra table in the re-review, one row per downstream check.
 - **Should understand:**
   - In #3945, the scoped re-review still marked F2 ADDRESSED while the downstream tests were vacuous. This instruction is what blocks that verdict.
@@ -56,3 +56,4 @@ files:
 - Created during the build of #3988, a reflect hindsight finding from #3945 (squash `f007f1c32`, PR #3954): the sdd-final-review residual (c) and ledger row 12 of spec-3945.
 - Pinned by `tests/plan-authoring-inserted-guard-reprove-prose.test.js`, which pins both rule texts, their positions, the go-red controls, and the cross-boundary move.
 - Related: `probe-a-substituted-command-with-an-empty-value-3592.md`, which made the same kind of sub-file move for the pairing-loop checks.
+- Updated during the build of #4556: step 2's mutation and step 3's re-proof now run in the scratch checkout the shared recipe defines (`prove-a-test-discriminates-in-a-scratch-checkout-4556.md`).

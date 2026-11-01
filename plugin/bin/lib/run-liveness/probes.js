@@ -33,15 +33,29 @@ function lockInUse(worktree) {
   throw new Error(`worktree lock state is ${verdict} for ${worktree}`);
 }
 
+// The newest-own-event rule shared by ownEventRecency and ownEventAt, over lines
+// already read (see ownEventRecency's comment for what "own" excludes).
+function newestOwnMs(lines) {
+  let newest = null;
+  for (const ev of lines) {
+    if (!ev || ev.attribution === 'fallback') continue;
+    const t = Date.parse(ev.ts);
+    if (Number.isNaN(t)) continue;
+    if (newest === null || t > newest) newest = t;
+  }
+  return newest;
+}
+
 // #1737: one read of events.jsonl (via context.js's shared readEventLines)
 // answering both questions archive-merged.js's `isAbandonedInterrupted` used to
 // ask via two separate reads. `readable` is distinct from `lastOwnMs`'s own
 // `null`, which conflates two different things: "the log is readable but has no
 // qualifying (non-fallback, parseable-ts) event" and "the log couldn't be read
 // in the first place." Only callers that must tell those apart read `readable`
-// (archive-merged.js's isAbandonedInterrupted path and `ownEventAt` below; #1673
-// F9 review finding): a genuinely unreadable/absent log is UNKNOWN evidence, not
-// proof of staleness.
+// (archive-merged.js's isAbandonedInterrupted path; `ownEventAt` below tells absent
+// from empty through `readEventLines`'s own `null` vs `[]`; #1673 F9 review
+// finding): a genuinely unreadable/absent log is UNKNOWN evidence, not proof of
+// staleness.
 //
 // `lastOwnMs` is the newest event this run can actually claim as its own, in
 // ms — or null when there are none. Deliberately NOT run-state's `updatedAt`,
@@ -63,14 +77,7 @@ function lockInUse(worktree) {
 function ownEventRecency(runDir) {
   const lines = readEventLines(runDir);
   if (lines === null) return { readable: false, lastOwnMs: null };
-  let newest = null;
-  for (const ev of lines) {
-    if (!ev || ev.attribution === 'fallback') continue;
-    const t = Date.parse(ev.ts);
-    if (Number.isNaN(t)) continue;
-    if (newest === null || t > newest) newest = t;
-  }
-  return { readable: true, lastOwnMs: newest };
+  return { readable: true, lastOwnMs: newestOwnMs(lines) };
 }
 
 // { lastOwnMs, lastSessionEndMs } over the run's events.jsonl. Both ignore
@@ -82,17 +89,17 @@ function ownEventRecency(runDir) {
 // resolving this run with non-fallback attribution can append one; lastOwnMs is
 // unchanged.
 function ownEventAt(runDir, ownerSessionId) {
-  const { readable, lastOwnMs } = ownEventRecency(runDir);
-  if (!readable) throw new Error(`could not read events.jsonl in ${runDir}`);
+  const lines = readEventLines(runDir);
+  if (lines === null) throw new Error(`could not read events.jsonl in ${runDir}`);
   let lastSessionEndMs = null;
-  for (const ev of readEventLines(runDir) || []) {
+  for (const ev of lines) {
     if (!ev || ev.type !== 'session-end' || ev.attribution === 'fallback') continue;
     if (ownerSessionId !== undefined && ev.sessionId !== ownerSessionId) continue;
     const t = Date.parse(ev.ts);
     if (Number.isNaN(t)) continue;
     if (lastSessionEndMs === null || t > lastSessionEndMs) lastSessionEndMs = t;
   }
-  return { lastOwnMs, lastSessionEndMs };
+  return { lastOwnMs: newestOwnMs(lines), lastSessionEndMs };
 }
 
 // Positively identifies an unborn HEAD (a repo or orphan branch with no commit

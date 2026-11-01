@@ -1,7 +1,7 @@
 // bin/lib/release/subject.js — the ONE merge-subject/body composer every merge
-// site calls (#2251): pr-first `gh pr merge --squash -t/--body-file` and the four
-// local-merge `git merge --no-ff -m` sites (settle-and-merge.md,
-// auto-merge-short-circuit.md, local-merge-auto-finish.md, worktree-merge.md)
+// site calls (#2251): pr-first `gh pr merge --squash -t/--body-file` and the local-merge
+// `git merge --no-ff -F` fence in _shared/local-merge-sequence.md (run by
+// settle-and-merge.md, auto-merge-short-circuit.md, local-merge-auto-finish.md, worktree-merge.md)
 // all reach it through bin/compose-subject.js. Conventional Commits grammar
 // (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because

@@ -25,7 +25,9 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const {
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions,
+} = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { parentGateState, dispositionState } = require('../issues/acceptance');
@@ -41,15 +43,16 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
-// had) -- one options object, reused by construction.
-function makeDefaultRunner(cmd) {
+// had) -- one options object, reused by construction. `wrap` transforms that
+// object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
+    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
   };
 }
 
 const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh');
+const defaultGh = makeDefaultRunner('gh', ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -1031,7 +1034,7 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
     if (!m) { failing.push(`could not parse issue URL: ${url}`); continue; }
     const [, owner, repo, number] = m;
     try {
-      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], cwd);
+      deps.gh(['issue', 'view', number, '--repo', repoSlug({ host: 'github.com', owner, repo }), '--json', 'number'], cwd);
     } catch (err) {
       failing.push(`${url}: gh issue view failed (${err.message})`);
     }

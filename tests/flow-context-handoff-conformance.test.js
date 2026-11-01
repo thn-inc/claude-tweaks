@@ -5,8 +5,9 @@
 // starts in a fresh agent from {run}/handoff.json. Pins the Step 4 call site,
 // context-handoff.md's two branches (a dispatched call reports
 // `OUTCOME: handoff` + `NEXT_STEPS:` — the contract Task 9's dispatcher reads;
-// a top-level run hands off to one fresh Agent), the fail-open rule, and the
-// template's verbatim copy of dispatch/task-prompt.md's async-wait item.
+// a top-level run hands off to one fresh Agent), the fail-open rule, the
+// template's verbatim copy of dispatch/task-prompt.md's async-wait item, and its
+// worktree shell-constraint item (#4728).
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -115,6 +116,86 @@ test('the verbatim-copy check can go red: one changed word in the copy fails it'
   const doctored = squash(tpl).replace('at most 60 (20 minutes)', 'at most 90 (30 minutes)');
   assert.notEqual(doctored, squash(tpl), 'the doctoring anchor is gone from the template');
   assert.ok(!doctored.includes(body));
+});
+
+// #4557: the at-bound progress check rides in the template's copy of item 7. The probe targets
+// {child-worktree}, never {worktree}: the handoff substitutes {worktree} with the handing-off
+// agent's own checkout, which is not where the template's dispatched children work.
+const HANDOFF_PROGRESS = [
+  [/`git -C "\{child-worktree\}" rev-parse HEAD`/, 'the template probes the child worktree HEAD'],
+  [/`git -C "\{child-worktree\}" --no-optional-locks status --porcelain`/, 'the template probes porcelain status'],
+  [/`git -C "\{child-worktree\}" --no-optional-locks diff HEAD` piped to `git hash-object --stdin` \(a `fatal:` line fails the probe\)/, 'the template hashes the diff against HEAD'],
+  [/A failed wait call counts as no wait but ends its window, and the probe runs as at any bound/, 'the template states a failed wait call expires the window'],
+  [/against the previous probe \(taken right after launching the wave, then at each bound/, 'the template compares with the previous probe'],
+  [/a child whose prompt names no worktree counts as unchanged/, 'the template states the no-named-worktree rule'],
+  [/Per wave, while any child shows a change, log one wait line and grant one more 60-wait window/, 'the template states the per-wave grant'],
+  [/a failed probe command counts as no change, never retried in another form/, 'the template states a failed probe command counts as no change'],
+  [/stop when a whole window passes with no change/, 'the template states the one-window stall condition'],
+  [/ceiling of 3 windows \(60 minutes\) per wave/, 'the template states the 3-window ceiling'],
+  [/Children sharing a worktree progress together/, 'the template states the shared-worktree rule'],
+];
+const handoffProgressMissing = (tpl) => {
+  const squashed = squash(tpl);
+  return HANDOFF_PROGRESS.filter(([re]) => !re.test(squashed)).map(([, f]) => f);
+};
+
+test('AC4.1: the handoff template carries the progress-check extension, with a child-worktree placeholder the handoff never substitutes (#4557)', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  assert.deepEqual(handoffProgressMissing(tpl), []);
+  assert.doesNotMatch(squash(tpl), /git -C "?\{worktree\}/);
+});
+
+test('AC5.1: each handoff progress-check assertion can go red (discrimination proof)', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const squashed = squash(tpl);
+  for (const [re, fact] of HANDOFF_PROGRESS) {
+    const doctored = squashed.replace(re, '');
+    assert.notEqual(doctored, squashed, `anchor text for "${fact}" not found — proof cannot discriminate`);
+    assert.deepEqual(handoffProgressMissing(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
+  }
+  const swapped = squashed.replace('git -C "{child-worktree}" rev-parse HEAD', 'git -C "{worktree}" rev-parse HEAD');
+  assert.match(swapped, /git -C "?\{worktree\}/, 'the placeholder control must match the wrong placeholder');
+});
+
+// #4728: the continuation child inherits the worktree, so the harness's Bash-shape
+// refusals reach it too. The item cites scratch-worktree.md §7 and
+// subagent-dispatch-core.md's "One plain command per Bash call" rather than
+// restating the refusal table, and forwards the constraint to any dispatched agent.
+function shellItemGaps(tpl) {
+  const s = squash(tpl);
+  const gaps = [];
+  if (!/scratch-worktree\.md`?\s*§7/.test(s)) gaps.push('the scratch-worktree.md §7 citation');
+  if (!s.includes('One plain command per Bash call')) gaps.push('the "One plain command per Bash call" citation');
+  if (!/[Ff]orward this constraint to any agent you dispatch/.test(s)) gaps.push('the forward-to-dispatched-agents instruction');
+  return gaps;
+}
+
+test('the continuation template carries the worktree shell-constraint item: cites scratch-worktree.md §7 and "One plain command per Bash call", and forwards it to dispatched agents', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  assert.deepEqual(shellItemGaps(tpl), []);
+});
+
+test('the shell-constraint check can go red: the item removed from the template fails it', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const item = region(tpl, 'Worktree shell constraint:', 'Plugin root:', 'shell-constraint item');
+  const without = tpl.replace(item, '');
+  assert.notEqual(without, tpl, 'the item anchor is gone from the template');
+  assert.ok(shellItemGaps(without).length > 0, 'the check must report the removed item as missing');
+});
+
+test('each sub-check can go red on its own: removing one citation or the forward sentence reports exactly that gap', () => {
+  const [tpl] = fencedBlocks(read(HANDOFF));
+  const s = squash(tpl);
+  const cases = [
+    ['scratch-worktree.md` §7', 'scratch-worktree.md` (refusal table)', 'the scratch-worktree.md §7 citation'],
+    ['One plain command per Bash call', 'One shell rule', 'the "One plain command per Bash call" citation'],
+    ['Forward this constraint to any agent you dispatch', 'Note this constraint', 'the forward-to-dispatched-agents instruction'],
+  ];
+  for (const [anchor, swap, gap] of cases) {
+    const doctored = s.replace(anchor, swap);
+    assert.notEqual(doctored, s, `the anchor ${JSON.stringify(anchor)} is gone from the template`);
+    assert.deepEqual(shellItemGaps(doctored), [gap]);
+  }
 });
 
 test("steps-and-gates.md's Partial step lists: a handed-off run renders the partial note naming handoff.json", () => {

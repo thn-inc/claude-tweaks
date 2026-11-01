@@ -35,9 +35,14 @@
 const { execFileSync } = require('child_process');
 const { fetchNativeSubIssues } = require('./lib/issues/native-dependencies');
 const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
+
+// Exported for an in-process caller that branches on it (lib/issues/parent-gate.js).
+const EXIT_SUBISSUES_UNAVAILABLE = 4;
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -66,9 +71,12 @@ function parseArgs(argv) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the schema probe and GraphQL batch,
+  // which thread no host, and the REST retry's github.com case.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   // 30s bound: a 50-alias GraphQL batch outweighs the 5s single-call convention
   // (gh-api-module-pattern's "bound every remote-contacting call" rule).
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: 30000, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: 30000, windowsHide: true })),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -91,6 +99,7 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('fetch-sub-issues.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
   // parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..' — review finding
   // (#1153): the --resolve-retries REST call below interpolates owner/repo directly into a path
@@ -112,7 +121,7 @@ function run(argv, deps = realDeps) {
   }
   if (!schema.subIssues) {
     deps.stderr('fetch-sub-issues.js: the subIssues GraphQL field is unavailable on this host — fall back to the per-parent REST loop\n');
-    return 4;
+    return EXIT_SUBISSUES_UNAVAILABLE;
   }
   const byParent = {};
   const retry = [];
@@ -147,6 +156,6 @@ function run(argv, deps = realDeps) {
   return 0;
 }
 
-module.exports = { run, parseArgs, parseRepo };
+module.exports = { run, parseArgs, parseRepo, EXIT_SUBISSUES_UNAVAILABLE };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

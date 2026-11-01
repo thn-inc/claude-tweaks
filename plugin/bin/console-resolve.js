@@ -35,6 +35,7 @@ const { extractPendingGrantedAt, partitionGrantComments } = require('./lib/issue
 const { writeFileAtomic } = require('./lib/atomic-write');
 const { unresolvedItems, splitMissing, formatResidueLines, consoleResidueItems } = require('./lib/console/residue');
 const { REWRITE_FROM, rewriteItemResolution } = require('./lib/console/item-resolution');
+const { ghOptions } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: console-resolve.js --run <dir> --policy console-auto [--dry-run] [--json]\n'
   + '       console-resolve.js --run <dir> --set-item <id> --resolution keep-staged --reason <text>';
@@ -108,7 +109,8 @@ function ghReadGrants(execFile, cwd) {
   return (numbers) => {
     const out = {};
     for (const n of numbers) {
-      const raw = execFile('gh', ['issue', 'view', String(n), '--json', 'labels,comments'], { cwd });
+      const args = ['issue', 'view', String(n), '--json', 'labels,comments'];
+      const raw = execFile('gh', args, ghOptions(args, { cwd }));
       const parsed = JSON.parse(raw);
       const labels = (parsed.labels || []).map((l) => (typeof l === 'string' ? l : l.name));
       // #3358: trusted comments only; each untrusted marker comment passed over is named.
@@ -149,7 +151,8 @@ function checkPatchStack(worktree) {
 // transport failure rather than silently treating it as resolved.
 function ghCheckPrState(execFile, cwd) {
   return (prNumber) => {
-    const raw = execFile('gh', ['pr', 'view', String(prNumber), '--json', 'state'], { cwd });
+    const args = ['pr', 'view', String(prNumber), '--json', 'state'];
+    const raw = execFile('gh', args, ghOptions(args, { cwd }));
     return JSON.parse(raw).state;
   };
 }

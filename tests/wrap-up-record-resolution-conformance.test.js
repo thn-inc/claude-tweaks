@@ -59,8 +59,8 @@ test('Section C step 2 is skipped under integration-model: pr-first', () => {
 test('Section C step 2 takes its issue set from wrap-up-pack.json inputs.closingRecords, with the worktree mirror as fallback', () => {
   const block = step2Block();
   assert.match(block, /`\{run-dir\}\/wrap-up-pack\.json`'s `inputs\.closingRecords`/);
-  assert.match(block, /const c=p\.inputs&&p\.inputs\.closingRecords;if\(!Array\.isArray\(c\)\)process\.exit\(1\);console\.log\(c\.join\(" "\)\)/);
-  assert.match(block, /if \[ -f "\$PACK" \] && CLOSING=\$\(node -e .* "\$PACK" 2>\/dev\/null\); then ISSUES=\(\$CLOSING\) else/);
+  assert.match(block, /const c=p\.inputs&&p\.inputs\.closingRecords;if\(!Array\.isArray\(c\)\)process\.exit\(1\);console\.log\(c\.join\("\\n"\)\)/);
+  assert.match(block, /if \[ -f "\$PACK" \] && CLOSING=\$\(node -e .* "\$PACK" 2>\/dev\/null\); then while IFS= read -r n; do \[ -n "\$n" \] && ISSUES\+=\("\$n"\); done <<<"\$CLOSING" else/);
   assert.match(block, /\{worktree\}\/\.claude-tweaks\/pipelines\/\{run-id\}\/work\/\*-spec\.md/);
 });
 

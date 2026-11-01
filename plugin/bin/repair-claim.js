@@ -25,7 +25,9 @@ const path = require('path');
 const { repairClaim, defaultRunner: repairDefaultRunner } = require('./lib/repair-claim/repair');
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
 const EXIT = { repaired: 0, 'cas-rejected': 3, refused: 4, failed: 1 };
@@ -64,6 +66,9 @@ const realDeps = {
   gitRunner: gitDefaultRunner,
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the claim blob's contents-API
+  // calls, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   now: () => Date.now(),
   cwd: () => process.cwd(),
   mainRoot: undefined,
@@ -98,6 +103,7 @@ function run(argv, deps = realDeps) {
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). repair -> claim-store.js interpolates `${owner}/${repo}`
   // directly into a `gh api repos/{repoSlug}/contents/...` path, the same reachable

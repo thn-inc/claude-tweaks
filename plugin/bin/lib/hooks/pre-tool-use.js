@@ -34,7 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
-const { detectIntegrationModel, resolvePolicyConfig } = require('../policy-schema');
+const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
@@ -897,11 +897,17 @@ function checkReviewConsoleAskGate(ctx, deps = {}) {
 // call proved this by popping a sibling worktree's WIP stash while comparing
 // test discrimination against a baseline; #2065 closed the gap where only
 // the bare/`pop` spellings were covered — the exact hazard, reachable
-// through the equally common explicit `stash push`/`-u`/`-m` forms. This is
-// a WARN, never a deny: unlike E1/worktree-required, there is no provable
-// "whose stash entry is this" signal to gate on — only a heads-up pointing
-// at a non-mutating alternative. `list`/`show`/`apply`/`drop`/`clear`/
-// `branch` stay silent — mirroring git-command.js's own
+// through the equally common explicit `stash push`/`-u`/`-m` forms. #4559
+// added `drop` and `clear`, which destroy stack entries — a sibling
+// worktree's in-flight WIP stash included — and `branch`, which drops the
+// entry it applies (stash@{0} when bare), so all three warn like `pop`; and
+// `store` and `import`, which write onto the stack like `push`. This is a
+// WARN, never a deny: unlike E1/worktree-required, there is no provable "whose
+// stash entry is this" signal to gate on — only a heads-up pointing at a
+// non-mutating alternative. Subcommands that leave the stack untouched stay
+// silent — `list`, `show`, `apply` (which changes the worktree, not the stack),
+// `create` and `export` (/review relies on `git stash create`), and any
+// unrecognized token — mirroring git-command.js's own
 // PLUMBING_WRITE_SUBCOMMANDS comment on why `stash` was deliberately
 // excluded from its one-level subcommand check: a second token has to be
 // resolved to tell the mutating shape from a read-only one; `next.startsWith('-')`
@@ -922,17 +928,21 @@ function checkGitStashWarn(segments, warnings) {
     if (t[index] !== 'stash') continue;
     const next = t[index + 1];
     const mutatesStack = next === undefined || next === 'pop' || next === 'push'
-      || next === 'save' || (typeof next === 'string' && next.startsWith('-'));
+      || next === 'save' || next === 'drop' || next === 'clear' || next === 'branch'
+      || next === 'store' || next === 'import'
+      || (typeof next === 'string' && next.startsWith('-'));
     if (!mutatesStack) continue;
     if (!dir) continue;
     const { isLinkedWorktree, indeterminate } = wtDetect.repoInfo(dir);
     if (indeterminate || !isLinkedWorktree) continue;
     warnings.push(
       'claude-tweaks: git stash is repository-wide, shared by every linked worktree of this '
-      + "checkout — running it here can push onto or pop a SIBLING worktree's stash entry. "
+      + "checkout — running it here can push onto, pop, or drop a SIBLING worktree's stash entry. "
       + 'Compare against a baseline without mutating the tree instead: `git show <rev>:<path>`, '
       + 'or set your own work aside with a temporary WIP commit (`git commit -m wip`, then apply '
-      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash.',
+      + 'it elsewhere by SHA — `git show <sha>` / `git cherry-pick <sha>`) rather than stash. '
+      + 'Exception: putting back a stash entry that `stash-guard.js` reported lost, with the '
+      + '`git stash store -m "<subject>" <sha>` command it printed, is the intended recovery.',
     );
   }
 }
@@ -1645,7 +1655,19 @@ function hasNoUpstreamYet(dir) {
 // runs with no agent turn active, so there is no MCP call this gate could
 // ever source a reachability signal from. This is a permanent, structural
 // gap, not an oversight (docs/incident-log.md IL-63).
-function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
+//
+// `opts.timeoutMs` / `opts.onDegrade` (#4578) are forwarded to
+// detectIntegrationModel, each only when set (an absent opt adds no key), and
+// only the fresh-detection fallback uses them: a pin returns first and never
+// calls `onDegrade`. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
+// rather than inheriting `gh-timeout-ms` (up to 60 s, retried once = 120 s)
+// because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in
+// hooks.json, so Claude Code's default command-hook timeout applies) and must
+// keep docs/hooks.md's never-break-a-session invariant. 5000 ms per attempt
+// gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision
+// Q2). `check-pr-bookkeeping.js` (via pr-bookkeeping/precondition.js) runs as a
+// CLI, not a hook, passes no `timeoutMs`, and so follows the ladder.
+function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const git = () => mainRoot;
   const readFile = (p) => {
     try { return fs.readFileSync(p, 'utf8'); } catch { return null; }
@@ -1656,7 +1678,10 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir) {
   // 'default' (absent, or set-but-invalid) falls through to detection, the
   // same posture resolveIntegrationModel itself documents.
   if (entry && entry.source !== 'default') return entry.value;
-  return detectIntegrationModel(root);
+  const detectOpts = {};
+  if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
+  if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
+  return detectIntegrationModel(root, detectOpts);
 }
 
 // True only on a PROVABLE ownership mismatch: this run's run-state.json was
@@ -2067,14 +2092,26 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // fail-open fallback — only a genuine resolution is a provable verdict
     // safe to cache below; a caught exception is a transient failure (e.g. a
     // flaky `gh` call) that a later, unmemoized call might resolve
-    // differently, including to `pr-first`.
+    // differently, including to `pr-first`. A detection that degraded (#4578
+    // Decision Q5: the forge probe timed out, then failed on retry, so the
+    // `local-merge` it returned is a fallback, not a verdict) is the same kind
+    // of transient failure and clears `modelResolved` too.
     let modelResolved = true;
+    let degraded = false;
+    const onDegrade = () => { degraded = true; };
+    // Hook-bounded, never gh-timeout-ms — see resolveRunPinnedIntegrationModel's
+    // comment (#4578 Q2).
     try {
-      model = override ? override(mainRoot) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);
+      model = override
+        ? override(mainRoot, { onDegrade })
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
+    // Decision Q5: a degraded detection is never cached as `prExempt` — the next
+    // covered call detects again, exactly like the catch branch above.
+    if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
     // before doing anything else in this branch — this is a narrow, one-shot
     // allowance for THIS call only, never persisted as `prExempt`, so a push
@@ -2142,7 +2179,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // it is permanent). Persist the verdict so every later covered call for
     // this run hits the check-1 short-circuit above instead of re-paying
     // repoInfo + hasMaterializeCommit + this same resolution. Skipped when
-    // `modelResolved` is false (the catch above fired) — see its comment.
+    // `modelResolved` is false (the catch above fired, or the forge detection
+    // itself degraded — #4578 Q5) — see its comment.
     if (modelResolved) {
       ctxLib.writeRunState(ctx.runDir, { prExempt: true });
     }

@@ -28,7 +28,7 @@ const { execFileSync } = require('child_process');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
@@ -108,7 +108,7 @@ function errMessage(err) {
 }
 
 const realDeps = {
-  gh: (args) => execFileSync('gh', args, { encoding: 'utf8', windowsHide: true }),
+  gh: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true })),
   ghAvailable,
   remoteUrl,
   readFile: (f) => fs.readFileSync(f, 'utf8'),

@@ -9,7 +9,9 @@
 // sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
 // {inFlight:[{issue,link}]}); 4 = transient gh failure; 5 = a claim write
 // reported success but the post-write read-back did not confirm it
-// ({unverified:[{issue}]}). See bin/lib/claim-targets/claim-targets.js for
+// ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
+// and could not be created ({branchMissing:{branch,reason}}, with or without
+// --keep-going). See bin/lib/claim-targets/claim-targets.js for
 // the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 
@@ -19,15 +21,16 @@ const claimStore = require('./lib/issues/claim-store');
 const { run, defaultAppendClaimLog } = require('./lib/claim-targets/claim-targets');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { ghOptions } = require('./lib/repo-resolve');
 
 // maxBuffer: the stale-claim check's `gh pr list --json url,body,...` carries
 // every open PR's body, which overflows Node's 1 MiB default (ENOBUFS) well
 // before its 1000-PR limit.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 const realDeps = {

@@ -30,7 +30,7 @@
 'use strict';
 
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
-const { isValidBranchName } = require('./lib/init/release-bootstrap');
+const { isValidBranchName } = require('./lib/branch-name');
 const { OUTCOMES, runCatchup, formatLine, makeGit } = require('./lib/worktree/pre-review-catchup');
 
 const SECTION = '/build';

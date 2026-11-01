@@ -136,17 +136,19 @@ When a gate fails, the pipeline stops immediately and renders a failure card. Tw
 
 ### Step 2: Pre-flight Checks
 
-Four checks, then a route, before pipeline starts. Each check can return OK / WARNING / BLOCKED.
+A dispatch-capability preflight, five checks, then a route, before pipeline starts. Each check can return OK / WARNING / BLOCKED.
+- 2.4 — Dispatch-capability preflight (#4555). When the step list includes `build`, on every entry — fresh, or a resume (a step-list resume or an adopted `PIPELINE_RUN_DIR`) — probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before 2.5-2.8, so a host that can never build leaves no claim or draft PR behind. A step list without `build` skips it (review's run-level **Independence: degraded** caveat covers that run). None found → stop BLOCKED per `build/execution-mode-policy.md`'s No-dispatch host section (resume command, `SKIP` line, `build-test-blocked` under dispatch); never implement plan tasks inline.
 - 2.5 — Branch-divergence check (branch ahead/behind)
 - 2.6 — Shape check (structural coupling, hard-fail on cross-task deps)
 - 2.7 — Design-doc rejection (granularity contract — records only, not design docs). **Path / topic input only** — a record reference is never a file path, so this ambiguity doesn't arise for `#N` input; `materialize.md`'s Step 1 hard gate is the equivalent granularity check there.
+- 2.7b — Blocker landing, if invoked with one record; skipped under `work-backend: local-files`, an unresolved topic name, or a step list with neither `build` nor `test`: one `preflight-records.js {n} --blocker-landing` call (none under `body-text` if Step 1's `--check` gave `bodyBlockedBy: []`); an `open`/`unlanded` out-of-run blocker or failed call stops before 2.8 claims (`validation.md`).
 - 2.8 — Claim the targets. Skip all of it — no mint, no call — under `work-backend: local-files`, an unresolved topic name, or a step list with neither `build` nor `test` (`--steps` below is the backstop). Otherwise a direct invocation (`$PIPELINE_RUN_DIR` unset) first mints the run dir and runs the file-overlap warning (`claim-targets.md`'s "Resolve this run's identity" and "File-overlap warning"). Then claim all targets in one call (`{steps}` = Step 1's step list, comma-joined; `--keep-going` only in `keep-going` mode):
   `node "${CLAUDE_PLUGIN_ROOT}/bin/claim-targets.js" --run-id "$(basename "$PIPELINE_RUN_DIR")" --targets {n}[,{m}…] --steps {steps} [--keep-going] --run "$PIPELINE_RUN_DIR" [--resume-pr "$RESUME_PR"]`
   Add the `--resume-pr` pair only when the invocation carries `RESUME_PR=<url>` (`dispatch resume`, #4588).
-  Exit 0 → Step 3 (claimed, or already this run's). Exit 3/4/5 (contested or in-flight / transient / unverified) → stop before the Config Manifesto. Exit 2 → the MCP path when `gh` is absent, else a hard stop. Read `claim-targets.md` only on a non-zero exit or a non-empty `skipped` array (its cards, cleanup, MCP procedure).
+  Exit 0 → Step 3 (claimed, or already this run's). Exit 3/4/5/6 (contested or in-flight / transient / unverified / claims branch uncreatable) → stop before the Config Manifesto. Exit 2 → the MCP path when `gh` is absent, else a hard stop. Read `claim-targets.md` only on a non-zero exit or a non-empty `skipped` array (its cards, cleanup, MCP procedure).
 - 2.9 — Express route. `express-lane` resolves `true` (checked first: `resolve-policy.js --values express-lane`), one record reference, no step list (every `/claude-tweaks:dispatch` call passes one, so a dispatched call never enters it), `PIPELINE_RUN_DIR` unset on entry, mode `auto` and the `worktree` strategy → read `express-entry.md` in this skill's directory and follow it before Step 3: an eligible `express-lane.js gate` verdict takes `_shared/express-lane.md`'s single agent instead of Step 3 onward. Otherwise skip the read.
 
-Any hard fail, rejection, or claim contest stops the pipeline before the Config Manifesto runs. Read `validation.md` in this skill's directory for 2.5-2.7's detailed procedure.
+Any hard fail, rejection, or claim contest stops the pipeline before the Config Manifesto runs. Read `validation.md` in this skill's directory for 2.5-2.7b's detailed procedure.
 
 ### Step 3: Pipeline Config Manifesto (front-loaded policy)
 

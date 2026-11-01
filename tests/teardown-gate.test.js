@@ -911,6 +911,8 @@ test('#2282: CT_HOOKS_TEST_MODE tags the own-cwd wd-guard-refusal event, exclude
     readEvents: frictionEvents.readEvents,
     findRunsByWorktreePath: () => [],
     sessionId: () => null,
+    repoInfo: () => ({ repoRoot: wt, isLinkedWorktree: true, indeterminate: false }), // wt is a linked worktree (addWorktree)
+    realpath: (p) => p,
     findAdHocRunsBySessionId: () => [],
     stdout: (s) => { captured += s; },
     stderr: () => {},

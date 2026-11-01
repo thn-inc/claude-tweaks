@@ -21,6 +21,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolveIntegrationModel } = require('./policy-schema');
 const { resolveIntegrationBranch, bareIntegrationName } = require('./hooks/worktree-reap');
+const { ghOptions } = require('./repo-resolve');
 
 const PR_TRIGGERS = new Set(['pull_request', 'pull_request_target']);
 
@@ -151,7 +152,10 @@ function hasPullRequestCi(repoRoot, { readWorkflows = readWorkflowFiles } = {}) 
 function readDefaultBranch(repoRoot) {
   const opts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
   try {
-    const name = execFileSync('gh', ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'], opts).trim();
+    // windowsHide restated in the call: the windows-hide scan reads a bare
+    // opts, never one wrapped in ghOptions (#4505's GH_HOST seam).
+    const args = ['repo', 'view', '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'];
+    const name = execFileSync('gh', args, ghOptions(args, { ...opts, windowsHide: true })).trim();
     if (name) return name;
   } catch {}
   try {

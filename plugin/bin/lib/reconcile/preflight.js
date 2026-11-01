@@ -5,6 +5,7 @@
 const { execFileSyncTimed, execFileAsyncTimed } = require('./timing');
 const { classifyGhApiError } = require('../issues/claim-store');
 const { runClassified, runClassifiedAsync } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 // #2567: this bound is deliberately its own, smaller value — not GH_TIMEOUT_MS
 // — so a single retry-on-timeout (opted into below) still costs at most 4s
@@ -12,11 +13,11 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 const PREFLIGHT_TIMEOUT_MS = 2000;
 
 function defaultRunner(args, timeoutMs) {
-  return execFileSyncTimed('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true });
+  return execFileSyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: timeoutMs, windowsHide: true }));
 }
 
 async function defaultRunnerAsync(args, timeoutMs) {
-  const { stdout } = await execFileAsyncTimed('gh', args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true });
+  const { stdout } = await execFileAsyncTimed('gh', args, ghOptions(args, { encoding: 'utf8', timeout: timeoutMs, windowsHide: true }));
   return stdout;
 }
 

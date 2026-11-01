@@ -100,6 +100,12 @@ gh api graphql -f query='mutation($id:ID!,$body:String!){ addComment(input:{subj
 eval "$(node /abs/bin/env.js)"
 ```
 
+## source-token
+
+```bash
+grep -n "source" /abs/docs/notes.md
+```
+
 ## gh-computed-input
 
 ```bash

@@ -88,7 +88,7 @@ not the general one-off record) — read `verification-brief-parent-gate.md` in 
 directory and follow it in full, in place of the rest of this file, whenever that condition
 holds. It covers, in order: the two entry shapes, what it deliberately skips (Step 2.5's
 visual-review safety net), Resolve the parent, Enumerate the parent's sub-issues, the
-Self-inclusion rule, Evaluate the gate (including its own Oversight-floor check), Close the
+Self-inclusion rule, Run the gate CLI, Evaluate the gate (including its own Oversight-floor check), Close the
 parent below the floor, Compose the parent brief, and Apply the gate.
 
 **No parent resolvable** — skip straight to Steps 1-4 below and apply `demo:pending` to this
