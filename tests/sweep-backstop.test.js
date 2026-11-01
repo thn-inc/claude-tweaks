@@ -256,19 +256,23 @@ function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText =
   const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
   assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
-  const claimsPath = path.join(dir, 'claims.jsonl');
-  const labelledPath = path.join(dir, 'labelled.json');
-  const prsPath = path.join(dir, 'prs.json');
-  fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
-  fs.writeFileSync(labelledPath, labelledText ?? JSON.stringify(labelled));
-  fs.writeFileSync(prsPath, prsText);
-  const script = scripts[0]
-    .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
-    .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
-    .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
-  const file = path.join(dir, 'item10-eval.js');
-  fs.writeFileSync(file, script);
-  return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });
+  try {
+    const claimsPath = path.join(dir, 'claims.jsonl');
+    const labelledPath = path.join(dir, 'labelled.json');
+    const prsPath = path.join(dir, 'prs.json');
+    fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
+    fs.writeFileSync(labelledPath, labelledText ?? JSON.stringify(labelled));
+    fs.writeFileSync(prsPath, prsText);
+    const script = scripts[0]
+      .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
+      .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
+      .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
+    const file = path.join(dir, 'item10-eval.js');
+    fs.writeFileSync(file, script);
+    return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
@@ -357,15 +361,19 @@ test('item 10: a stale claim past the threshold with no PR is judged like a live
 // win32: a `#!/bin/sh` shim does not run there.
 function runItem10WithFakeGh(committedDate) {
   const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-fakegh-'));
-  const gh = path.join(binDir, 'gh');
-  const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
-  fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
-  fs.chmodSync(gh, 0o755);
-  return runItem10Evaluation({
-    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
-    prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
-    extraEnv: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
-  });
+  try {
+    const gh = path.join(binDir, 'gh');
+    const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
+    fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
+    fs.chmodSync(gh, 0o755);
+    return runItem10Evaluation({
+      claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+      prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
+      extraEnv: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+  } finally {
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
 }
 
 test('item 10: PR progress newer than claimedAt means the claim is not unsettled (#4818)', { skip: process.platform === 'win32' }, () => {
