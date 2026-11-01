@@ -279,7 +279,9 @@ const REVIEW_SKIP_PREFIX = '> **No `Agent` tool in this host (run-level, #4555).
 const SKIP_TEXT = /condition: no Agent tool in this host → fallback: [^"`]+/;
 
 const MERGE_FLOOR_FACTS = [
-  [/if `\$PIPELINE_RUN_DIR\/decisions\.md` — or, when `--pack` was passed, the `decisions\.md` beside that pack — carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line, in a named file'],
+  [/if `\$PIPELINE_RUN_DIR\/decisions\.md` — or, when `--pack` was passed, the `decisions\.md` beside that pack/, 'AC10.3: names the run-dir decisions.md (and the one beside --pack)'],
+  [/, and for a bundle member #\{n\} the `spec-\{n\}\/decisions\.md` under the group run directory/, 'AC10.3: a bundle member\'s spec-{n}/decisions.md under the group run directory is read too'],
+  [/ — carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line'],
   [/`condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`/, 'AC10.3: quotes the exact SKIP text'],
   [/or its review summary rendered the \*\*Independence: degraded\*\* line \(with no run directory to read, that summary line alone decides\), render `needs-human`/, 'AC10.3: renders needs-human; no run dir → summary line decides'],
   [/so its merge routes to a human\. Do not weigh anything else\./, 'AC10.3: merge decision routes to a human, hard floor'],
@@ -317,7 +319,13 @@ test('the Calibration closing sentence lists the Independence floor', () => {
   const NEW_SENTENCE = /Every floor stated above still applies on its own terms: a\s+sensitive-path hit renders `needs-human` with nothing else weighed, and so do any review finding\s+at Medium or above and an `Independence: degraded` review\./;
   const text = readText(MERGE_CHECK);
   assert.match(text, NEW_SENTENCE);
-  assert.ok(!text.includes('Both floors stated above'), 'the "Both floors" wording must be gone');
+  const hasOldWording = (t) => t.includes('Both floors stated above');
+  assert.ok(!hasOldWording(text), 'the "Both floors" wording must be gone');
+
+  // Control: a copy with the old phrase appended must fail the absence check.
+  const withOld = `${text}\nBoth floors stated above`;
+  assert.notEqual(withOld, text, 'control copy must differ');
+  assert.ok(hasOldWording(withOld), 'the absence check must catch a reintroduced "Both floors" wording');
 
   // Control: the pre-change sentence must fail the same assertion.
   const OLD_SENTENCE = 'Both floors stated above still apply on their own terms: a\nsensitive-path hit renders `needs-human` with nothing else weighed, and so does any review finding\nat Medium or above.';
@@ -326,6 +334,11 @@ test('the Calibration closing sentence lists the Independence floor', () => {
 
 test('merge-check Anti-Patterns names the Independence floor', () => {
   const PREFIX = '| Rendering `auto-merge` after a review marked `Independence: degraded` |';
-  assert.ok(lineStartingWith(readText(MERGE_CHECK), PREFIX), `merge-check.md Anti-Patterns has no row starting ${PREFIX}`);
-  assert.equal(lineStartingWith('| Some other row |', PREFIX), '', 'control: an unrelated row must not match');
+  const text = readText(MERGE_CHECK);
+  assert.ok(lineStartingWith(text, PREFIX), `merge-check.md Anti-Patterns has no row starting ${PREFIX}`);
+
+  // Control: a copy of the live text with that row removed must fail the same check.
+  const mutated = text.split('\n').filter((line) => !line.startsWith(PREFIX)).join('\n');
+  assert.notEqual(mutated, text, 'row anchor not found — control cannot discriminate');
+  assert.equal(lineStartingWith(mutated, PREFIX), '', 'removing the row must turn the check red');
 });

@@ -107,7 +107,7 @@ and the diff spans every commit since the fork — which reads as an enormous ch
 - **Review's findings are a hard input, not advisory**: if this run's `/claude-tweaks:review` pass
   produced anything at Medium severity or above, render `needs-human` — this mode never overrides a
   real review finding.
-- **An `Independence: degraded` review is a hard floor (#4555)**: if `$PIPELINE_RUN_DIR/decisions.md` — or, when `--pack` was passed, the `decisions.md` beside that pack — carries `/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line (`review/step3-lens-dispatch.md`'s run-level note, text `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`), or its review summary rendered the **Independence: degraded** line (with no run directory to read, that summary line alone decides), render `needs-human` — no independent agent reviewed this diff, so its merge routes to a human. Do not weigh anything else.
+- **An `Independence: degraded` review is a hard floor (#4555)**: if `$PIPELINE_RUN_DIR/decisions.md` — or, when `--pack` was passed, the `decisions.md` beside that pack, and for a bundle member #{n} the `spec-{n}/decisions.md` under the group run directory — carries `/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line (`review/step3-lens-dispatch.md`'s run-level note, text `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`), or its review summary rendered the **Independence: degraded** line (with no run directory to read, that summary line alone decides), render `needs-human` — no independent agent reviewed this diff, so its merge routes to a human. Do not weigh anything else.
 
 ### Calibration
 
