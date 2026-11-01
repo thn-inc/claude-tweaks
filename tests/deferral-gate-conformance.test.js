@@ -258,7 +258,7 @@ function step3Parenthetical(md) {
   assert.ok(i >= 0, 'step3-routing.md has no spec-qualified parenthetical');
   return f.slice(i, f.indexOf(')', i) + 1);
 }
-const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`\)/;
+const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`/;
 function assertDeferKeepPathsQualified(md) {
   const lines = md.split('\n').filter((l) => DEFER_KEEP_PATH_RE.test(l));
   assert.ok(lines.length >= 4, `expected at least 4 Defer/Keep Resolution-path lines, found ${lines.length}`);
@@ -328,8 +328,17 @@ test('AC1.1 go-red: dropping the "Today\'s producers are" sentence fails the pos
   assert.notEqual(mutated, s);
   assert.throws(() => assertLedgerOrigin(mutated), /Ledger origin is missing/);
 });
+const RATIONALE = 'each number their own';
+function assertRationaleLivesInLedgerFormatOnly(ledgerText, refusedText, step3Text) {
+  assert.ok(resolutionTextParagraph(ledgerText).includes(RATIONALE), 'ledger-format.md no longer states the spec-qualified path rationale');
+  assert.ok(!flat(refusedText).includes(RATIONALE), 'refused-proposals.md restates the spec-qualified path rationale');
+  assert.ok(!flat(step3Text).includes(RATIONALE), 'step3-routing.md restates the spec-qualified path rationale');
+}
 test('AC1.1: the rationale for the spec-qualified path lives in ledger-format.md only', () => {
-  assert.ok(!ledgerOriginSection(REFUSED_MD).includes('never match each other'));
+  assertRationaleLivesInLedgerFormatOnly(LEDGER, REFUSED_MD, STEP3_ROUTING);
+});
+test('AC1.1 go-red: restating the rationale in refused-proposals.md fails the pin', () => {
+  assert.throws(() => assertRationaleLivesInLedgerFormatOnly(LEDGER, REFUSED_MD + ' each number their own', STEP3_ROUTING), /restates/);
 });
 test('AC2.1: ledger-format.md records the refused-proposal reopen as the one exception, deferred rows only', () => {
   assertReopenException(resolutionTextParagraph(LEDGER));
@@ -361,7 +370,7 @@ test('Defer/Keep bullets in ledger-format.md spec-qualify the Resolution path th
   assertDeferKeepPathsQualified(LEDGER);
 });
 test('Defer/Keep go-red: stripping the pointer from one such line fails the pin', () => {
-  const pointer = ' (spec-qualified in a multi-spec run, per the Resolution-text requirements)';
+  const pointer = ', spec-qualified in a multi-spec run per the Resolution-text requirements';
   const lines = LEDGER.split('\n');
   const k = lines.findIndex((l) => DEFER_KEEP_PATH_RE.test(l) && l.includes(pointer));
   assert.ok(k >= 0);
@@ -369,6 +378,21 @@ test('Defer/Keep go-red: stripping the pointer from one such line fails the pin'
   const mutated = lines.join('\n');
   assert.notEqual(mutated, LEDGER);
   assert.throws(() => assertDeferKeepPathsQualified(mutated), /bare staged path/);
+});
+function assertRefusalLogAndDryRun(md) {
+  const f = flat(md);
+  for (const anchor of ['ledger row reopened, staged file removed', 'its reopened ledger row', 'the staged-file deletion are previewed'])
+    assert.ok(f.includes(anchor), `refused-proposals.md is missing: ${anchor}`);
+}
+test('refused-proposals.md: a ledger-origin refusal logs the reopen, names the reopened row as the way out, and previews the deletion under --dry-run', () => {
+  assertRefusalLogAndDryRun(REFUSED_MD);
+});
+test('refused-proposals.md go-red: the pre-fix wording fails the pin', () => {
+  const mutated = REFUSED_MD.replace(/the ledger status flip and the staged-file\s+deletion are previewed/, 'the ledger status flip is previewed');
+  assert.notEqual(mutated, REFUSED_MD);
+  assert.throws(() => assertRefusalLogAndDryRun(mutated), /previewed/);
+  assert.throws(() => assertRefusalLogAndDryRun(REFUSED_MD.replace(/ledger row reopened,\s+staged file removed/, '')), /reopened/);
+  assert.throws(() => assertRefusalLogAndDryRun(REFUSED_MD.replace(/its reopened ledger row/, 'a ledger row')), /reopened ledger row/);
 });
 test('AC5.2: no DEFER_REASONS value in the edited spans', () => {
   const spans = [

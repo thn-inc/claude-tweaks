@@ -31,9 +31,14 @@ staged path and the offending value (or "absent"). Log:
 REFUSED {time} — Queue write {Q#}: no valid Defer-reason on {staged path}; kept staged.
 ```
 
+A ledger-origin item (Ledger origin, below) logs the same line ending `; ledger row reopened,
+staged file removed.` instead.
+
 The row has **no default**. It is excluded from Approve all, from `consoleAutoResolve`, and from
 `queueWriteAutoFile` — no policy lever bypasses it. The only ways out: a human edits the staged
-file's header and re-runs the console for that run, or drops it via Override → Skip.
+file's header and re-runs the console for that run, or drops it via Override → Skip. For a
+ledger-origin item the staged file is gone and the way out is its reopened ledger row (Ledger
+origin, below).
 
 ## Ledger origin
 
@@ -49,8 +54,8 @@ Today's producers are `staged/ledger-record-*.md` (the ledger resolve gate's Def
 stays staged in its run dir and dies with it at `close-run` unless a human rescues it — by design:
 the summary's refused-count line is the signal, and the reasonless deferral should have been a fix.
 
-Under `--dry-run`, the check still runs (it is a read); the ledger status flip is previewed, not
-applied.
+Under `--dry-run`, the check still runs (it is a read); the ledger status flip and the staged-file
+deletion are previewed, not applied.
 
 ## A failed execution is not a refusal
 
