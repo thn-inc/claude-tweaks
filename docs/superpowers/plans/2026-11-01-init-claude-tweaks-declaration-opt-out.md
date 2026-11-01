@@ -108,23 +108,26 @@ Expected: PASS (all). Then `wc -c plugin/skills/_shared/policy-schema.md` prints
 ### Task 2: `/init` Step 14 honors the key
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` (Detect line 17, Present lines 22-23, Apply line 28, template lines 74-76 and 95, the post-template paragraph line 227, Idempotency line 282)
+- Modify: `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` (Detect line 17, the Present follow-up paragraph line 26, Apply line 28, template lines 46-47, 74-76, 84 and 95-96, the post-template paragraph line 227, Idempotency line 282)
+- Modify: `plugin/skills/init/SKILL.md:417` (the "Hand-editing `scripts/claude-cloud-setup.sh`" Anti-Patterns row)
 - Test: `tests/declare-claude-tweaks-opt-out.test.js` (append)
 
 **Interfaces:**
 - Consumes: the key and read command from Task 1.
-- Produces: the template annotation markers `# (begin claude-tweaks declaration` and `# (end claude-tweaks declaration)`, which the test's `renderTemplate` relies on.
+- Produces: the `# (authoring:` note prefix and the markers `# (authoring: begin claude-tweaks declaration` and `# (authoring: end claude-tweaks declaration)`, which the test's `renderTemplate` relies on. Plain `# (` comments are real script comments (`# (claude-tweaks #129: …` at line 106 and `# (/stories, …` at line 217 both ship in the generated script), so only the `# (authoring:` prefix marks a note.
 
 Exact copy to insert (tests pin these literals; copy them from here):
 
 - A new paragraph immediately before `**Detect.**`: `` **Opt-out.** Resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks` once, before reading either settings file. `true` (the default, and what an unset or malformed value resolves to) keeps everything below as written. `false` means this project relies on a user-scope install of claude-tweaks: `superpowers@claude-plugins-official` is then this step's only hard requirement, and `claude-tweaks@claude-tweaks-marketplace` is no candidate of any kind — exclude it from the mirror candidates too, since the user-level file almost always lists it. ``
 - In Detect, after "are this step's two hard requirements", insert ` (one — superpowers — under the Opt-out above)`.
-- After the Present option list, insert: `` Under `declare-claude-tweaks: false`, every "claude-tweaks + superpowers" and "claude-tweaks and superpowers" phrase in these options reads "superpowers" alone. ``
+- Appended to the paragraph after the Present option list (the one starting "When there are zero mirror candidates"): `` Under `declare-claude-tweaks: false`, every "claude-tweaks + superpowers" and "claude-tweaks and superpowers" phrase in the options above, and "the two hard deps" and "the two candidates that are always-included" in this paragraph, read as superpowers alone. ``
 - At the end of the Apply paragraph's first sentence group, before the JSON fence's lead-in, insert: `` Under `declare-claude-tweaks: false`, add only `superpowers@claude-plugins-official: true` (plus the selected mirrors) and skip the `claude-tweaks-marketplace` entry below — never add or re-add either claude-tweaks entry. An entry the project already carries stays as it is, per the non-destructive merge; removing it is the maintainer's edit, not this step's. ``
-- In the template, the line directly above `claude plugin marketplace add thn-inc/claude-tweaks-marketplace …`: `# (begin claude-tweaks declaration — omit through the matching end note when declare-claude-tweaks resolves false)`. The line directly below the `|| echo … claude-tweaks-marketplace …` continuation line: `# (end claude-tweaks declaration)`. The line directly below `PLUGIN_SPECS=…`, before the existing `# (one additional spec …` note: `# (when declare-claude-tweaks resolves false, drop claude-tweaks@claude-tweaks-marketplace from PLUGIN_SPECS)`.
-- Appended to the paragraph starting "Write this to `scripts/claude-cloud-setup.sh`": `` Every `# (…)` note in the template is an authoring note, never written into the generated script. Under `declare-claude-tweaks: false`, also omit the lines between the begin and end claude-tweaks declaration notes, and drop `claude-tweaks@claude-tweaks-marketplace` from `PLUGIN_SPECS`, so the generated script carries no `claude-tweaks-marketplace` line. ``
+- In the template: (a) restyle the two existing authoring notes in place, `# (one additional \`claude plugin marketplace add …` (line 84) → `# (authoring: one additional \`claude plugin marketplace add …` and `# (one additional spec appended …` (line 96) → `# (authoring: one additional spec appended …`. Rewrap their continuation lines only if a line exceeds the neighbors' width. (b) Add these lines: directly above `claude plugin marketplace add thn-inc/claude-tweaks-marketplace …`, `# (authoring: begin claude-tweaks declaration — omit through the matching end note when declare-claude-tweaks resolves false)`; directly below the `|| echo … claude-tweaks-marketplace …` continuation line, `# (authoring: end claude-tweaks declaration)`; directly below `PLUGIN_SPECS=…`, before the restyled line-96 note, `# (authoring: when declare-claude-tweaks resolves false, drop claude-tweaks@claude-tweaks-marketplace from PLUGIN_SPECS)`. (c) After the header's `# customize by changing enabledPlugins/extraKnownMarketplaces instead, then re-run /init.` line (line 47), add the emitted comment line `# declare-claude-tweaks: false in .claude-tweaks/policy.yml leaves claude-tweaks out of this script.`
+- Appended to the paragraph starting "Write this to `scripts/claude-cloud-setup.sh`": `` Every `# (authoring: …)` note in the template is an authoring note, never written into the generated script; every other comment, `# (claude-tweaks #129: …` included, is written as it stands. Under `declare-claude-tweaks: false`, also omit the lines between the begin and end claude-tweaks declaration notes, and drop `claude-tweaks@claude-tweaks-marketplace` from `PLUGIN_SPECS`, so the generated script carries no `claude-tweaks-marketplace` line. That holds even when the project's `.claude/settings.json` still carries a kept claude-tweaks entry: the key, not the entry, decides what the script installs. ``
+- In `init/SKILL.md:417`, replace `` Regenerated on every `/init` run from `.claude/settings.json` `` with `` Regenerated on every `/init` run from `.claude/settings.json` (and `declare-claude-tweaks`) ``.
 - In Idempotency, replace "already declares both hard deps" with `` already declares every hard requirement (both, or superpowers alone under `declare-claude-tweaks: false`) ``.
 
 - [ ] **Step 1: Write the failing tests** (append). The helper and the assertions:
@@ -140,19 +143,21 @@ function extractTemplate(md) {
 }
 
 // Renders the template the way Step 14's prose says to: optedOut drops the bracketed
-// declaration region and the PLUGIN_SPECS entry; both modes drop every `# (…)` note.
+// declaration region and the PLUGIN_SPECS entry; both modes drop every `# (authoring: …)`
+// note (a note may wrap: it runs through the first line ending in `)`). Plain `# (` comments
+// are real script comments and stay.
 function renderTemplate(template, { optedOut }) {
   let lines = template.split(/\r?\n/);
   if (optedOut) {
-    const begin = lines.findIndex((l) => l.startsWith('# (begin claude-tweaks declaration'));
-    const end = lines.findIndex((l) => l === '# (end claude-tweaks declaration)');
+    const begin = lines.findIndex((l) => l.startsWith('# (authoring: begin claude-tweaks declaration'));
+    const end = lines.findIndex((l) => l === '# (authoring: end claude-tweaks declaration)');
     assert.ok(begin !== -1 && end > begin, 'claude-tweaks declaration markers missing');
     lines = [...lines.slice(0, begin), ...lines.slice(end + 1)];
   }
   const out = [];
   let inNote = false;
   for (const l of lines) {
-    if (!inNote && l.startsWith('# (')) inNote = !l.trimEnd().endsWith(')');
+    if (!inNote && l.startsWith('# (authoring:')) inNote = !l.trimEnd().endsWith(')');
     else if (inNote) inNote = !l.trimEnd().endsWith(')');
     else out.push(optedOut && l.startsWith('PLUGIN_SPECS=') ? l.replace('claude-tweaks@claude-tweaks-marketplace ', '') : l);
   }
@@ -161,10 +166,12 @@ function renderTemplate(template, { optedOut }) {
 ```
 
 Tests, named with their AC ids:
-- `AC1.1: default render keeps both claude-tweaks marketplace lines and both specs`: the render with `optedOut: false` includes `claude plugin marketplace add thn-inc/claude-tweaks-marketplace`, `claude plugin marketplace update claude-tweaks-marketplace`, and the line `PLUGIN_SPECS="claude-tweaks@claude-tweaks-marketplace superpowers@claude-plugins-official"`, and no line starts with `# (`.
+- `AC1.1: default render keeps both claude-tweaks marketplace lines, both specs and the real script`: the render with `optedOut: false` includes `claude plugin marketplace add thn-inc/claude-tweaks-marketplace`, `claude plugin marketplace update claude-tweaks-marketplace`, the line `PLUGIN_SPECS="claude-tweaks@claude-tweaks-marketplace superpowers@claude-plugins-official"`, `VERDICT=$(node -e`, `npm install -g @playwright/cli`, `# (claude-tweaks #129:` and `# (/stories, /visual-review,`. No line starts with `# (authoring:`, and no line starts with `# a matching` or `# enabledPlugins lists them` (the wrapped note continuations, which must go with their note).
+- `Review Focus (render keeps real comments) go-red`: the same render assertions as a shared helper `assertDefaultRender(render)`. On a copy of the template where `# (claude-tweaks #129:` is rewritten to `# (authoring: claude-tweaks #129:`, assert `notEqual` and assert `assertDefaultRender(renderTemplate(copy, { optedOut: false }))` throws with its own message `default render lost a real script line`.
 - `AC2.1/AC2.2: opted-out render has no claude-tweaks-marketplace line`: `assertOptedOut(render)` asserts `!render.includes('claude-tweaks-marketplace')` (message `opted-out render still names claude-tweaks-marketplace`), that `PLUGIN_SPECS="superpowers@claude-plugins-official"` is a line, that the `claude-plugins-official` add/update lines remain, and that no line ending in `\` is followed by a line that doesn't start with whitespace. Run it on `renderTemplate(extractTemplate(STEP14), { optedOut: true })`.
-- `AC2.2 go-red: the render keeps the region without its end marker`: drop the `# (end claude-tweaks declaration)` line from the template string, assert `notEqual`, and assert `renderTemplate(…, { optedOut: true })` throws `{ message: /claude-tweaks declaration markers missing/ }`.
-- `AC2.1: Apply never adds or re-adds claude-tweaks under the opt-out`: `collapse(STEP14)` includes the Apply sentence and the "stays as it is" sentence verbatim from the copy above. Also the script paragraph's "so the generated script carries no `claude-tweaks-marketplace` line".
+- `AC2.2 go-red: the render keeps the region without its end marker`: drop the `# (authoring: end claude-tweaks declaration)` line from the template string, assert `notEqual`, and assert `renderTemplate(…, { optedOut: true })` throws `{ message: /claude-tweaks declaration markers missing/ }`.
+- `AC2.1: Apply never adds or re-adds claude-tweaks under the opt-out`: `collapse(STEP14)` includes the Apply sentence and the "stays as it is" sentence verbatim from the copy above. Also the script paragraph's "so the generated script carries no `claude-tweaks-marketplace` line" and "the key, not the entry, decides what the script installs".
+- `Present follow-up reads superpowers alone under the opt-out`: `collapse(STEP14)` includes `"the two candidates that are always-included" in this paragraph, read as superpowers alone`.
 - `AC4.1 / Review Focus 1: Opt-out keeps superpowers and excludes claude-tweaks from mirrors`: select the paragraph starting `**Opt-out.**` (blank-line split), then assert it contains `` is then this step's only hard requirement `` and `exclude it from the mirror candidates too`.
 - `Review Focus 5: idempotent re-run counts superpowers alone as complete`: `collapse(STEP14)` includes `` already declares every hard requirement (both, or superpowers alone under `declare-claude-tweaks: false`) ``.
 
@@ -185,21 +192,23 @@ Expected: PASS (all)
 ### Task 3: `/routine` fleet check honors the key
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/routine/fleet.md` (Step 2 item 1, line 73; Step 5's `### Cloud parity` line, line 131)
+- Modify: `plugin/skills/routine/fleet.md` (Step 2 item 1, line 73; item 4, line 80; Step 5's `### Cloud parity` line, line 131)
 - Test: `tests/declare-claude-tweaks-opt-out.test.js` (append)
 
 **Interfaces:**
 - Consumes: the key and read command from Task 1.
 
 Exact copy:
-- Appended to Step 2 item 1: `` First resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`. At `true` (the default) the check is as written. At `false`, only `superpowers@claude-plugins-official` must be declared — a missing claude-tweaks declaration is no gap and never reaches item 3's prompt. Print instead, and carry into the summary: `Cloud parity: claude-tweaks is not declared at project scope (declare-claude-tweaks: false), so cloud firings in this project will not have claude-tweaks installed by the project declaration.` ``
-- In Step 5's `### Cloud parity` alternatives, add a fourth quoted alternative after the first: `"OK — superpowers declared, setup script present; claude-tweaks not declared (declare-claude-tweaks: false), so cloud firings will not have claude-tweaks installed by the project declaration."`
+- Appended to Step 2 item 1: `` First resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`. At `true` (the default) the check is as written. At `false`, only `superpowers@claude-plugins-official` must be declared — a missing claude-tweaks declaration is no gap and never reaches item 3's prompt. When claude-tweaks is in fact undeclared, print this line instead (it prints whatever items 2-3 find), and on a gap append it to the summary's "Gap acknowledged" line: `Cloud parity: claude-tweaks is not declared at project scope (declare-claude-tweaks: false), so cloud firings in this project will not have claude-tweaks installed by the project declaration.` ``
+- In item 4, replace `Both checks passing is a silent pass-through — no prompt, proceed to Step 3.` with `` Both checks passing is a silent pass-through — no prompt, proceed to Step 3; only item 1's opt-out line prints, when it applies. ``
+- In Step 5's `### Cloud parity` alternatives, add a new quoted alternative after the first: `"OK — superpowers declared, setup script present; claude-tweaks not declared (declare-claude-tweaks: false), so cloud firings will not have claude-tweaks installed by the project declaration."`
 
 - [ ] **Step 1: Write the failing tests** (append):
 - `AC3.1/AC3.2: opted-out fleet check prints the informational line naming the cloud consequence`: slice `fleet.md` from `## Step 2 — Cloud-parity honesty check` to `## Step 3 —`, assert both anchors resolve (`!== -1`), and assert the slice, whitespace-collapsed, includes the exact backticked print line above. A missing anchor is asserted with message `fleet Step 2 anchors missing`.
-- `AC3.1: a missing claude-tweaks declaration is no gap under the opt-out`: the slice includes `a missing claude-tweaks declaration is no gap and never reaches item 3's prompt`.
+- `AC3.1: a missing claude-tweaks declaration is no gap under the opt-out`: the slice includes `a missing claude-tweaks declaration is no gap and never reaches item 3's prompt`, `When claude-tweaks is in fact undeclared, print this line instead` and `` only item 1's opt-out line prints, when it applies ``. Step 5's block includes `"OK — superpowers declared, setup script present; claude-tweaks not declared (declare-claude-tweaks: false)`.
 - `AC4.1 / Review Focus 4: superpowers stays required and gaps still prompt`: the slice includes `` only `superpowers@claude-plugins-official` must be declared `` and still includes `If either check fails, report the specific gap`.
 - `AC3.2 go-red`: strip the print line from the live text, assert `notEqual`, and assert the shared helper `assertFleetOptOut(text)` throws with its own message `fleet opt-out print line missing`. Factor the first test's assertions into `assertFleetOptOut`.
 - `AC1.1: default fleet path unchanged`: the slice still includes `` confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared `` and `Both checks passing is a silent pass-through`.
