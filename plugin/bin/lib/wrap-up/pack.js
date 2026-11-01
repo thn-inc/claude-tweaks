@@ -32,7 +32,7 @@ const BIN = path.join(__dirname, '..', '..');
 // default and comes back as a truncation error) and a 30 s wall clock, so one
 // hung `gh` can never hold the whole pack open.
 // Merged with `cwd` at each call site; never mutated.
-const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
+const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000, windowsHide: true };
 
 // The default `wrap` of execBounded and execSync: hands the options through unchanged.
 const keepOptions = (_args, opts) => opts;

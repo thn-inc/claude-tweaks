@@ -67,7 +67,7 @@ function defaultDeps(cwd) {
     readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } },
     git: (args, opts = {}) => execFileSync('git', args, { cwd: opts.cwd || cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     execFile: (cmd, args, opts = {}) => execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, ...opts, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts })).stdout,
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
     checkResumeFreshness,
     checkStagedInventory,
     readRunState,
