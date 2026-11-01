@@ -306,7 +306,7 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
   const order = ['- 2.7 —', '- 2.7b —', '- 2.8 —'];
   requireOrder(text, order);
   // Permutation, not deletion: the bullet moves below the whole 2.8 bullet (down to the 2.9 bullet).
-  const bullet = text.split('\n').find((l) => l.startsWith('- 2.7b —'));
+  const bullet = skillBullet(text);
   const without = mutate(text, `${bullet}\n`, '');
   const permuted = mutate(without, '- 2.9 —', `${bullet}\n- 2.9 —`);
   assert.throws(() => requireOrder(permuted, order), /must come after/);

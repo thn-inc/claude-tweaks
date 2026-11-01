@@ -18,9 +18,10 @@
 // A whole-query failure (a blocker that is not a positive safe integer, the
 // GraphQL call throwing, unparseable output, no data.repository, any
 // non-NOT_FOUND error, or a `b{n}` alias that is not a non-null, non-array
-// object and that no NOT_FOUND error names) is never `undetermined`: fetchBlockerLanding returns
-// `{results: null, error}` and the CLI stops the run — a malformed response
-// fails whole, as bin/lib/issues/native-dependencies.js's does (#723). The one
+// object and that no NOT_FOUND error names) is never `undetermined`:
+// fetchBlockerLanding returns `{results: null, error}` and the CLI stops the
+// run — a malformed response fails whole, as
+// bin/lib/issues/native-dependencies.js's does (#723). The one
 // recovery is NOT_FOUND-only: `gh api graphql` exits 1 when any alias fails to
 // resolve but still prints the partial data, so when every error (thrown or
 // on exit-0 stdout) is a NOT_FOUND on a requested `b{n}` alias the call counts
@@ -73,7 +74,8 @@ function candidateCommits(node) {
     out.push({ sha, via });
   };
   const events = (node && node.timelineItems && Array.isArray(node.timelineItems.nodes)) ? node.timelineItems.nodes : [];
-  const closer = events.length ? events[events.length - 1] && events[events.length - 1].closer : null;
+  const lastEvent = events[events.length - 1];
+  const closer = lastEvent && lastEvent.closer;
   if (closer && closer.__typename === 'PullRequest') add(mergedOid(closer), 'closer-pr');
   else if (closer && closer.__typename === 'Commit') add(closer.oid, 'closer-commit');
   const refs = (node && node.closedByPullRequestsReferences && Array.isArray(node.closedByPullRequestsReferences.nodes))
@@ -180,40 +182,47 @@ function recoverNotFound(err, blockers) {
 
 const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type)) || JSON.stringify(e)).join('; ');
 
+// Runs the GraphQL call -> { parsed } (a response with a usable data.repository
+// whose errors, if any, are all NOT_FOUND on a requested alias) | { error } (a
+// whole-query failure). A thrown call counts only when its stdout recovers.
+function queryRepository(runner, args, blockers) {
+  let out;
+  try {
+    out = runner(args);
+  } catch (err) {
+    const recovered = recoveredResponse(err, blockers);
+    return recovered ? { parsed: recovered } : { error: errorText(err) };
+  }
+  let parsed;
+  try { parsed = JSON.parse(out); } catch (err) {
+    return { error: `unparseable GraphQL response: ${errorText(err)}` };
+  }
+  const errors = Array.isArray(parsed && parsed.errors) ? parsed.errors : [];
+  const data = parsed && parsed.data;
+  if (!data || !data.repository || typeof data.repository !== 'object') {
+    return { error: `GraphQL response has no data.repository${errors.length ? `: ${errorMessages(errors)}` : ''}` };
+  }
+  if (errors.length && !notFoundOnlyRepository(parsed, blockers)) {
+    return { error: `GraphQL errors: ${errorMessages(errors)}` };
+  }
+  return { parsed };
+}
+
 // -> { results: Map<number, result>|null, error: string|null }; results is
 // null exactly when error is set (a whole-query failure — never per-blocker
 // undetermined).
 function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, runner }) {
   if (!Array.isArray(blockers) || blockers.length === 0) return { results: new Map(), error: null };
-  const bad = repoSegmentError(owner, repo)
-    || (typeof integrationBranch !== 'string' || !integrationBranch ? 'integrationBranch is required' : null);
-  if (bad) return { results: null, error: bad };
+  const repoError = repoSegmentError(owner, repo);
+  if (repoError) return { results: null, error: repoError };
+  if (typeof integrationBranch !== 'string' || !integrationBranch) return { results: null, error: 'integrationBranch is required' };
 
   let query;
   try { query = buildBlockerLandingQuery(blockers); } catch (err) { return { results: null, error: errorText(err) }; }
   const args = ['api', 'graphql', ...(host && host !== 'github.com' ? ['--hostname', host] : []),
     '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
-  let parsed;
-  let out;
-  try {
-    out = runner(args);
-  } catch (err) {
-    parsed = recoveredResponse(err, blockers);
-    if (!parsed) return { results: null, error: errorText(err) };
-  }
-  if (!parsed) {
-    try { parsed = JSON.parse(out); } catch (err) {
-      return { results: null, error: `unparseable GraphQL response: ${errorText(err)}` };
-    }
-    const errors = Array.isArray(parsed && parsed.errors) ? parsed.errors : [];
-    const data = parsed && parsed.data;
-    if (!data || !data.repository || typeof data.repository !== 'object') {
-      return { results: null, error: `GraphQL response has no data.repository${errors.length ? `: ${errorMessages(errors)}` : ''}` };
-    }
-    if (errors.length && !notFoundOnlyRepository(parsed, blockers)) {
-      return { results: null, error: `GraphQL errors: ${errorMessages(errors)}` };
-    }
-  }
+  const { parsed, error } = queryRepository(runner, args, blockers);
+  if (!parsed) return { results: null, error };
   const { repository } = parsed.data;
   // Every error left is a NOT_FOUND on a requested alias; only the aliases those
   // errors name may be anything other than an issue object.
