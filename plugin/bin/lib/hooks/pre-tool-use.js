@@ -2160,10 +2160,11 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
-    // Decision Q5: a degraded detection is never cached as `prExempt` — the next
-    // covered call detects again once the run's degrade memo expires (#4830),
-    // exactly like the catch branch above. A memo hit arrives through `onDegrade`
-    // too, so it never persists `prExempt` either.
+    // Decision Q5: a degraded detection is never cached as `prExempt`, exactly
+    // like the catch branch above. After a degrade the next covered call detects
+    // again once the run's degrade memo expires (#4830); after a catch it detects
+    // at once, since the catch branch writes no memo. A memo hit arrives through
+    // `onDegrade` too, so it never persists `prExempt` either.
     if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
     // before doing anything else in this branch — this is a narrow, one-shot
