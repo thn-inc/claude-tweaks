@@ -433,10 +433,10 @@ function archivedRetryHint(runDir) {
 // 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or
 // `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
-// so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries), `rerun-where-gh`,
-// `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another merge-mode
-// invocation, so a re-run past CLAIM_STALE_MS recovers a dead one), or `none` — a `ran` entry's marker is
-// already written, and every other skip fails the same way again.
+// so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
+// `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
+// merge-mode invocation, so a re-run past CLAIM_STALE_MS recovers a dead one), or `none` — a `ran` entry's
+// marker is already written, and every other skip fails the same way again.
 function classifyEntry(entry, { archived = false } = {}) {
   if (entry.action === 'ran') {
     const step40Failed = entry.step40Failed === true || !CLEAN_CLOSING_LINKS.has(entry.closingLinks);
@@ -599,6 +599,8 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText, boundDetail,
-  CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  composeSkipText, composeSummaryText, boundDetail,
+  CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
+  MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };
