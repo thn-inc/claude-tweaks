@@ -694,6 +694,9 @@ function resolveParent(n, deps, cwd, workLinks) {
   if (workLinks === 'body-text') {
     try {
       const data = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'body'], cwd));
+      // A reply with no `body` key, or a non-string one, is a malformed read (unknown), not a record
+      // with no `Parent:` line; an explicit null body is an issue with no body, so it has no parent.
+      if (!data || (data.body !== null && typeof data.body !== 'string')) return { ok: false, error: `could not parse body for #${n}` };
       return { ok: true, parent: parseParent(data.body) };
     } catch (err) {
       return { ok: false, error: `gh issue view (body) failed for #${n} (${err.message})` };
@@ -773,8 +776,9 @@ function enumerateBodyTextSubIssues(parent, deps, cwd) {
   for (const s of numbers) {
     try {
       const data = JSON.parse(deps.gh(['issue', 'view', String(s), '--json', 'state,labels'], cwd));
-      const rawLabels = Array.isArray(data.labels) ? data.labels : [];
-      if (typeof data.state !== 'string' || !rawLabels.every((l) => l && typeof l === 'object' && typeof l.name === 'string')) {
+      // An absent labels key is an unlabeled issue; any other non-array value is a malformed reply.
+      const rawLabels = data.labels === undefined ? [] : data.labels;
+      if (typeof data.state !== 'string' || !Array.isArray(rawLabels) || !rawLabels.every((l) => l && typeof l === 'object' && typeof l.name === 'string')) {
         return { ok: false, error: `could not parse state/labels for sub-issue #${s} of parent #${parent}` };
       }
       subIssues.push({
@@ -937,7 +941,14 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   // Under `body-text` the parent's task list wins over a record's own `Parent:`
   // line: a record the named parent does not list has no resolvable parent --
   // it stays out of that parent's gate, is checked as its OWN target, and the
-  // disagreement is logged here, appended to every row returned below.
+  // disagreement is logged here, appended to every row returned below. Why the
+  // task list wins: sub-issues are enumerated from the parent side (the gate is
+  // the parent's), so the parent's list is the authoritative membership. The
+  // labeler twins apply the same rule when they pick the record that carries
+  // `demo:pending` (`gatherGateFacts` in issues/parent-gate.js, `normalizeMcpFacts`
+  // in issues/mcp-parent-gate-shape.js), and the prose is wrap-up/verification-brief-parent-gate.md's
+  // "Resolve the parent". One deliberate difference: an empty task list is a gather
+  // failure here (unknown), while the labeler keeps the parent and reports it incomplete.
   const mismatches = [];
   for (const n of checkIssues) {
     const resolved = resolveParent(n, deps, cwd, workLinks);

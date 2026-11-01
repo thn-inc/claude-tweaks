@@ -107,6 +107,15 @@ function distinctAscending(values) {
   return [...new Set(values.filter((v) => Number.isInteger(v) && v > 0))].sort((a, b) => a - b);
 }
 
+// Under body-text a `Parent: #N` line is only honored when the parent's task list lists the
+// sub-issue (the parent's list wins). True when a NON-EMPTY list omits it; an empty or missing
+// list is not an omission and keeps the parent. The one copy both labeler transports (gh here,
+// the MCP shape in mcp-parent-gate-shape.js) apply; engine-verify.js's checker applies the same
+// membership rule to its own enumeration, where an empty list is a gather failure instead.
+function listOmitsSubIssue(numbers, subIssue) {
+  return numbers.length > 0 && !numbers.includes(subIssue);
+}
+
 // A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
 // already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
 // github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
@@ -191,7 +200,7 @@ function gatherGateFacts({
   }
   const slug = repoSlug({ host, owner, repo });
   const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
-  if (!given(parent) && workLinks === 'body-text' && numbers.length > 0 && !numbers.includes(subIssue)) return noParent;
+  if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
   const subIssues = numbers.map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
@@ -399,6 +408,7 @@ module.exports = {
   needsIdempotenceReads,
   positive,
   distinctAscending,
+  listOmitsSubIssue,
   numberSet,
   GhFailure,
   ghCaller,

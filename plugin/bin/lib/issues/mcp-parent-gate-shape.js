@@ -39,7 +39,7 @@
 
 const { parseSubIssues, parseParent } = require('./record');
 const { normalizeLabelNames } = require('./record-vocabulary');
-const { distinctAscending, needsIdempotenceReads } = require('./parent-gate');
+const { distinctAscending, needsIdempotenceReads, listOmitsSubIssue } = require('./parent-gate');
 
 // The agent's seven fact keys, each one MCP result written unreshaped:
 //   parentLink    `get_parent` of the sub-issue in hand, or null when it has none (native).
@@ -178,7 +178,7 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   // Reading B, as parent-gate.js's gatherGateFacts: under body-text a `Parent: #N` whose non-empty
   // task list does not list the sub-issue in hand resolves no parent. An empty or missing list is
   // not an omission: it keeps the parent.
-  if (!given && workLinks === 'body-text' && numbers.length > 0 && !numbers.includes(subIssue)) return noParent();
+  if (!given && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent();
 
   const gets = need(raw, 'subIssueGets');
   if (!isPlainObject(gets)) throw invalid('subIssueGets', 'is not an object keyed by sub-issue number');

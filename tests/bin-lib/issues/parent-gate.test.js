@@ -5,6 +5,7 @@ const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
   enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
   evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
+  listOmitsSubIssue,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../../plugin/bin/fetch-sub-issues');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
@@ -746,4 +747,10 @@ test('closeBelowFloorParents composes the shared core (one implementation)', () 
   for (const gone of ["require('./acceptance')", "require('./oversight-floor')", "require('./native-dependencies')", "require('./comment-trust')", 'sub_issues']) {
     assert.ok(!source.includes(gone), `no longer carries ${gone}`);
   }
+});
+
+test("listOmitsSubIssue: only a non-empty list that lacks the sub-issue is an omission", () => {
+  assert.equal(listOmitsSubIssue([12, 30], 20), true);
+  assert.equal(listOmitsSubIssue([12, 20], 20), false);
+  assert.equal(listOmitsSubIssue([], 20), false, "an empty list keeps the parent");
 });

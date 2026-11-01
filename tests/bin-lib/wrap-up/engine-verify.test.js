@@ -41,6 +41,14 @@ function writePolicy(repoRoot, raw) {
   fs.writeFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), raw);
 }
 
+// A fresh repo root whose policy pins `work-links: native`, for the fixtures that
+// fake the native GraphQL parent / sub_issues calls without needing any other policy key.
+function makeNativeRepoRoot() {
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  return repoRoot;
+}
+
 // plans-ledger's "found, not owned" scoping (#2552) orders residue against
 // the run dir's own creation time via filesystem timestamps -- a plain
 // back-to-back mkdirSync sequence is ordered correctly in practice (this
@@ -1618,7 +1626,7 @@ test('acceptance-labeling check passes when demo:pending label and a brief comme
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
 });
@@ -1632,7 +1640,7 @@ test('acceptance-labeling check fails when demo:pending label missing', () => {
     if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
 });
@@ -1655,7 +1663,7 @@ function acceptanceLabelingRow(labelNames, dirPrefix) {
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   return result.rows.find((r) => r.check === 'acceptance-labeling');
 }
 
@@ -1728,7 +1736,7 @@ test('acceptance-labeling check still fails a non-exempt issue when a sibling is
     if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [] });
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /#901/);
@@ -1754,7 +1762,7 @@ test('acceptance-labeling check resolves issue numbers from verify-expectations.
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass', row.detail);
 });
@@ -1773,7 +1781,7 @@ test('acceptance-labeling check redirects to a resolvable parent, never checking
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
   const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
@@ -1798,7 +1806,7 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
   const issueCalls = calls.filter((a) => a[0] === 'issue' && a.includes('labels,comments'));
@@ -2011,7 +2019,7 @@ function isIssueViewCall(args, n, fields) {
 function bodyCalls(calls, n) {
   return calls.filter((a) => isIssueViewCall(a, n, 'body'));
 }
-function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentComments = [], targetLabels = {}, policyRaw = 'work-links: body-text\n', bodyThrows = false }) {
+function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentComments = [], targetLabels = {}, policyRaw = 'work-links: body-text\n', bodyThrows = false, bodyThrowsFor = [] }) {
   const runDir = makeTmpDir('verify-acceptance-bodytext-');
   const repoRoot = makeCleanRepoRoot();
   if (policyRaw !== null) writePolicy(repoRoot, policyRaw);
@@ -2031,7 +2039,7 @@ function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentCo
     if (args[0] === 'issue' && args[1] === 'view') {
       const n = Number(args[2]);
       if (args[4] === 'body') {
-        if (bodyThrows) throw new Error('gh: body fetch failed');
+        if (bodyThrows || bodyThrowsFor.includes(n)) throw new Error('gh: body fetch failed');
         return JSON.stringify({ body: Object.prototype.hasOwnProperty.call(bodies, n) ? bodies[n] : '' });
       }
       if (args[4] === 'state,labels') {
@@ -2106,6 +2114,24 @@ test('AC5.1: body-text body fetch throw renders unknown, never fail', () => {
   assert.match(row.detail, /#20: gh issue view \(body\) failed/);
 });
 
+// The parent-body read is its own failure point: the run record's body read succeeds,
+// so only enumerateBodyTextSubIssues' catch can turn this into `unknown`.
+test('AC5.2: body-text parent body fetch throw renders unknown, never fail', () => {
+  const { row, calls } = bodyTextRow({ ...BODY_TEXT_AC2, bodyThrowsFor: [12] });
+  assert.ok(bodyCalls(calls, 20).length >= 1, 'the run record #20 body read succeeds first');
+  assert.strictEqual(row.result, 'unknown', row.detail);
+  assert.match(row.detail, /#20: gh issue view \(body\) failed for parent #12 \(gh: body fetch failed\)/);
+});
+
+test('body-text reply with no string body is a gather failure, not a parentless record', () => {
+  for (const reply of [{}, { body: 7 }, { body: ['Parent: #12'] }, null]) {
+    const deps = { git: () => '', gh: () => JSON.stringify(reply) };
+    const result = resolveParent(20, deps, process.cwd(), 'body-text');
+    assert.strictEqual(result.ok, false, JSON.stringify(reply));
+    assert.match(result.error, /could not parse body for #20|failed for #20/, JSON.stringify(reply));
+  }
+});
+
 test('body-text unparseable body JSON is a gather failure, not a fail', () => {
   const calls = [];
   const deps = { git: () => '', gh: (args) => { calls.push(args); return 'not json'; } };
@@ -2142,7 +2168,7 @@ test('body-text sub-issue with a non-string state is a gather failure', () => {
 });
 
 test('body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure', () => {
-  for (const rawLabels of [[null], ['risk:high'], [{ name: 7 }], [{}]]) {
+  for (const rawLabels of [[null], ['risk:high'], [{ name: 7 }], [{}], null, 'x']) {
     const { row } = bodyTextRow({
       records: [20],
       bodies: { 20: 'Parent: #12\n', 12: '- [x] #20\n- [ ] #21\n' },
@@ -2156,7 +2182,7 @@ test('body-text sub-issue with a malformed labels entry renders unknown as a par
 
 test('body-text sub-issue with a missing or empty labels key still enumerates with labels []', () => {
   const body = JSON.stringify({ body: '- [ ] #21\n' });
-  for (const reply of [{ state: 'open' }, { state: 'open', labels: [] }, { state: 'open', labels: null }, { state: 'open', labels: 'x' }]) {
+  for (const reply of [{ state: 'open' }, { state: 'open', labels: [] }]) {
     const deps = { git: () => '', gh: (args) => (args[4] === 'body' ? body : JSON.stringify(reply)) };
     assert.deepStrictEqual(enumerateSubIssues(12, deps, process.cwd(), 'body-text'), {
       ok: true,
@@ -2357,7 +2383,7 @@ test('acceptance-labeling check passes via the pr-first pointer+brief form (full
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'pass');
 });
@@ -2378,7 +2404,7 @@ test('acceptance-labeling check fails when the pr-first pointer is present but t
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /PR #1199/);
@@ -2405,7 +2431,7 @@ function acceptanceTrustRow({ issueComments, prComments, withPr }) {
     if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: issueComments });
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), prViews };
 }
 
@@ -2549,7 +2575,7 @@ test('a failing row still names the comments a passing target skipped', () => {
     }
     return '';
   };
-  const result = runVerify({ runDir, base: 'main', deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
   assert.match(row.detail, /#901: no comment carries a confirmed Verification Brief/);
@@ -2576,7 +2602,7 @@ test('acceptance-labeling check renders unknown when owner/repo cannot be resolv
   const runDir = makeTmpDir('verify-acceptance-noremote-');
   writeSpecFile(runDir, '900', 900);
   const fakeGh = (args) => (args[0] === '--version' ? 'gh version 2.0.0' : '');
-  const result = runVerify({ runDir, base: 'main', deps: { git: () => '', gh: fakeGh } });
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: () => '', gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'unknown');
   assert.match(row.detail, /#900.*could not resolve owner\/repo/);
