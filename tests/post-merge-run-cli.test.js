@@ -139,6 +139,7 @@ test('AC4.1 AC4.2 AC4.3 AC4.4: an archived run is processed and nothing is minte
   assert.equal(entry.runDir, dir);
   assert.equal(entry.pr, 11);
   assert.equal(links.calls.length, 1);
+  assert.equal(links.calls[0].argv[1], dir, "closing-links' --run is the archived dir");
   assert.ok(hasPostMergeMarker(fs.readFileSync(path.join(dir, 'decisions.md'), 'utf8')));
   assert.deepEqual(fs.readdirSync(path.join(root, '.claude-tweaks', 'pipelines')), ['archive']);
 });
@@ -166,6 +167,56 @@ test('gh absent prints a gh-absent skip and makes no lookup', async () => {
   });
   assert.equal(r.code, 0, r.err);
   assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent' });
+});
+
+test('a throwing ghAvailable reads as gh absent: a gh-absent skip, exit 0, no lookup', async () => {
+  const root = mainCheckout();
+  const dir = archivedRun(root);
+  const r = await runCli(['--run', dir], root, {
+    ghAvailable: () => { throw new Error('probe blew up'); },
+    prStates: { byNumberAsync: async () => { throw new Error('lookup made with gh absent'); } },
+  });
+  assert.equal(r.code, 0, r.err);
+  assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent' });
+});
+
+test('a postMergeOne that throws prints an error entry and exits 0', async () => {
+  const root = mainCheckout();
+  const dir = archivedRun(root);
+  // A getter that throws is read inside postMergeOne's setup, outside its per-run guards.
+  const r = await runCli(['--run', dir], root, {
+    prStates: fakePrStates({ 11: mergedState }),
+    postMergeDeps: { get gh() { throw new Error('seam exploded'); } },
+  });
+  assert.equal(r.code, 0, r.err);
+  const entry = JSON.parse(r.out);
+  assert.equal(entry.reason, 'error');
+  assert.equal(entry.action, 'skipped');
+  assert.equal(entry.pr, null);
+  assert.equal(entry.runDir, dir);
+  assert.match(entry.detail, /seam exploded/);
+});
+
+test('a relative --run with a cwd other than the main checkout resolves to the anchored real path (IL-127)', async () => {
+  const root = mainCheckout();
+  const dir = archivedRun(root);
+  const sub = path.join(root, 'sub');
+  fs.mkdirSync(sub);
+  // Relative to the process cwd, which is what resolveTarget reads it against; the cwd seam points elsewhere.
+  const relative = path.relative(process.cwd(), dir);
+  assert.ok(!path.isAbsolute(relative) || process.platform === 'win32', 'the fixture is a relative path');
+  const links = fakeClosingLinks(NOTHING_CLOSED);
+  const r = await runCli(['--run', relative], root, {
+    cwd: () => sub,
+    prStates: fakePrStates({ 11: mergedState }),
+    postMergeDeps: { gh: () => '', closingLinksRun: links, closeParents: () => ({ closed: [], skipped: [] }) },
+  });
+  assert.equal(r.code, 0, r.err);
+  const entry = JSON.parse(r.out);
+  assert.equal(entry.runDir, dir);
+  assert.ok(path.isAbsolute(entry.runDir));
+  assert.equal(entry.action, 'ran');
+  assert.equal(links.calls[0].argv[1], dir);
 });
 
 test('the CLI exits through process.exitCode', () => {
