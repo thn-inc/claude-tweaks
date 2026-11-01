@@ -106,7 +106,7 @@ Expected: FAIL — the AC1.1 and probe B tests (error is still `same commit alre
 Run: `node --test tests/stash-guard.test.js`
 Expected: PASS, 0 failures (including `AC4.1` and the forced-failure FAILED-line test, unchanged).
 
-Discrimination proof (Deliverable 3): revert only `plugin/bin/stash-guard.js` (`git -C {worktree} show HEAD:plugin/bin/stash-guard.js` into the file, no stash), re-run Step 4's command, confirm the AC1.1 and probe B tests go red, then restore the file and re-run green. Quote both runs' summary lines in the task report.
+Discrimination proof (Deliverable 3): after committing, in a scratch checkout (the dispatch prompt's "Discrimination checks in a scratch checkout" steps — never the shared worktree in place), check out the task's base version of `plugin/bin/stash-guard.js` only, run `tests/stash-guard.test.js` there, and confirm the AC1.1, probe B and sibling-drop race tests go red while the unmutated scratch run is green. Quote both runs' summary lines in the task report.
 
 - [ ] **Step 5: Commit**
 
@@ -177,7 +177,7 @@ and in the parenthetical, after `` `{command}` is `restoreFailed[].command` verb
 Run: `node --test tests/stash-guard.test.js tests/dispatch-no-stash-conformance.test.js`
 Expected: PASS, 0 failures.
 
-Discrimination proof (Deliverable 3): revert only the two skill files (`git -C {worktree} show HEAD:plugin/skills/build/dispatch.md` and `HEAD:plugin/skills/build/handoff-template.md` into place, no stash), re-run `node --test tests/dispatch-no-stash-conformance.test.js`, confirm red naming the four AC2.1 facts, restore the files and re-run green. Quote both summary lines.
+Discrimination proof (Deliverable 3): after committing, in a scratch checkout (the dispatch prompt's "Discrimination checks in a scratch checkout" steps — never the shared worktree in place), check out the task's base version of the two skill files only, run `tests/dispatch-no-stash-conformance.test.js` there, and confirm red naming the four AC2.1 facts while the unmutated scratch run is green. Quote both summary lines.
 
 - [ ] **Step 5: Commit**
 
