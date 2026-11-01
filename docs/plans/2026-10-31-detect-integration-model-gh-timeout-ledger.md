@@ -20,3 +20,10 @@
 | 16 | build | SDD ruling — manifesto.md Write-mechanism paragraph left unsplit (readability minor): ratify or reverse at the Review Console (staged/sdd-ruling-5.md) | open | — |
 | 17 | build | SDD ruling — phase-exit realDeps.resolvePolicy missing-entry guard has no test: ratify or reverse at the Review Console (staged/sdd-ruling-6.md) | open | — |
 | 18 | build | SDD ruling — Q5 x Q10: an unpinned degraded run re-detects the forge on every covered PreToolUse call: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
+| 19 | review/code | Forge-probe attempt count (2) hardcoded in detectIntegrationModel, phase-exit's kill timeout and the hook-budget test (3e, low, tiebreak-confirmed) | fixed | FORGE_PROBE_ATTEMPTS single source — `6af814214` |
+| 20 | review/code | Retry classifier `err.code === 'ETIMEDOUT' \|\| err.signal` had no rationale comment (3g, low, reproduction-confirmed) | fixed | Rationale comment added; the breadth stays, the spec prescribes it — `6af814214` |
+| 21 | review/code | resolveForgeProbeTimeoutMs threw on a non-string repoRoot, against the never-throws header (3c, info, tiebreak-confirmed) | fixed | typeof guard plus a test shown red without it — `6af814214` |
+| 22 | review/code | No test pinned the header and Code-twin no-fixed-5-s requirement (3f, low, reproduction-confirmed) | fixed | Pin added in tests/integration-model.test.js — `6af814214` |
+| 23 | review/code | The real preflight resolvePolicy was never exercised with an unstubbed degraded detection (3f, low, tiebreak-confirmed) | fixed | Seam test added in tests/bin-lib/flow/preflight.test.js, shown red with the field dropped — `6af814214` |
+| 24 | review/code | reconcile/index.js passes no onDegrade; express and flow-preflight consumers ignore the degraded field (3e, low, tiebreak-confirmed) | deferred | Filed as #4829 (Defer-reason: genuinely-larger) |
+| 25 | review/code | policy-derived-defaults.js run-pin read called a third copy of the pin ladder (3e, low) | accepted | Independent tiebreak on the same claim refuted it: different input, mcpReachable handling and module; Decision Q8 prescribes the helper |

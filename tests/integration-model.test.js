@@ -296,8 +296,10 @@ test('the gh probe bound is documented as the resolved gh-timeout-ms, not a fixe
   const at = schemaText.indexOf('function detectIntegrationModel(');
   assert.ok(at > 0, 'detectIntegrationModel must exist');
   // The header comment: the contiguous `//` block directly above the function.
-  const header = schemaText.slice(0, at).trimEnd().split('\n').reverse().reduce((acc, line) => (acc.done || !/^\s*\/\//.test(line)
-    ? { ...acc, done: true } : { ...acc, lines: [line, ...acc.lines] }), { lines: [], done: false }).lines.join('\n');
+  const linesAbove = schemaText.slice(0, at).trimEnd().split('\n');
+  const headerLines = [];
+  for (let i = linesAbove.length - 1; i >= 0 && /^\s*\/\//.test(linesAbove[i]); i -= 1) headerLines.unshift(linesAbove[i]);
+  const header = headerLines.join('\n');
   assert.match(header, /gh-timeout-ms/, 'the header must name the timeout source');
   assert.doesNotMatch(header, FIXED_5S, 'the header must not state a fixed 5 s timeout');
   const doc = readText(path.join(__dirname, '..', 'plugin', 'skills', '_shared', 'forge-detection.md'));
