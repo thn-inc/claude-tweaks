@@ -41,17 +41,33 @@ Before treating an `A`-then-`M` path as a HARD-GATE, run the mechanized check in
 hand:
 
 ```bash
-node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --path docs/journeys/ --path stories/
+node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --run "{parent}" --path docs/journeys/ --path stories/
 ```
+
+`{parent}` is the multi-spec parent run dir that holds `manifest.yml` (`$MULTISPEC_PARENT_DIR`).
+Omit `--run` only when this run's `parallel` waves actually ran with two or more members
+(`multispec-parallel-waves.md`'s "Several members" path) — those members build concurrently in
+their own worktrees, so their windows overlap and the check stays refs-only. Every other run
+passes `--run`, including each no-op `parallel` case `multispec-parallel-waves.md` lists and a
+run whose waves each had one member; the tool also turns windows off itself when the manifest's
+transitions interleave, the backstop for a parallel run that reaches it with `--run`.
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
 commit's own deletions on that path (via `git log --numstat`) by five independent tests — any
 one is enough to call the commit an extension rather than an overwrite:
 
 1. **Same-spec self-edit.** Every deleted line traces, via `git blame` on the commit's parent
-   revision, back to a commit carrying the *same* `refs #{N}` trailer as the deleting commit
-   itself — a spec correcting its own prior content (a typo fix, a follow-up within the same
-   build). A deletion that traces to a *different* spec's commit fails this test.
+   revision, back to a commit of the *same* spec as the deleting commit itself — a spec
+   correcting its own prior content (a typo fix, a follow-up within the same build). Attribution
+   sources, in order: the deleting commit's and each blamed commit's own `refs #{N}` trailer
+   first; otherwise the one spec whose `manifest.yml` window (first recorded transition up to the
+   next spec's) holds the commit's author date; otherwise unattributed (a date in no window, in
+   two, or in the same second as a later spec's first transition). Windows are off — refs-only —
+   when a spec is not `complete`/`running` (e.g. `not-run`, `failed`, `pending`), a spec has no
+   recorded transition, or the specs' transitions interleave. A deletion that traces to a
+   *different* spec's commit fails this test, and so does an unattributable one, with a reason
+   saying `unattributable` so the manual ruling can tell a missing attribution from a confirmed
+   cross-spec deletion.
 2. **List reflow.** Every deleted line in the hunk is itself a `- ` list entry (a YAML frontmatter
    `files:` item, or a markdown bookkeeping bullet such as a running "Related specs: …" line), and
    the hunk replaces it with at least as many list-entry lines as it removed. This is the
@@ -82,10 +98,12 @@ add, a list it shrinks rather than reflows, a step-markup change that also alter
 renumbered heading whose text changed, or an `Origin:` rewrite that drops a reference —
 is a real overwrite. HARD-GATE: stop before rendering the
 console and report the offending path, commit, and reason (the tool's `overwrites[]` array — exit
-code `1`) plus both commits' spec ids (`refs #{N}`). A clean run (exit `0`, `overwrites: []`, or no
+code `1`) plus both commits' spec attributions (the `reason` text). A clean run (exit `0`, `overwrites: []`, or no
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
 is a malformed invocation of the tool itself (never a verdict about the walk); exit `3` means the
-walk could not run at all (an unresolvable `{EXPECTED_BASE}`) — treat both as this check's own
+walk could not run at all (an unresolvable `{EXPECTED_BASE}`, or a missing, unreadable,
+unparseable or unusable `manifest.yml` named by `--run` — no specs, or a `startedAt`/`phases[].at`
+that is present but not a valid date) — treat both as this check's own
 failure to run, not as a clean result, and fall back to the raw `git log --name-status` walk above
 plus a manual `git log --numstat` ruling. Algorithm: `bin/lib/flow/artifact-overwrite-check.js`;
 fixture coverage (append-only, self-correction, list reflow, step-markup reformat (pass and

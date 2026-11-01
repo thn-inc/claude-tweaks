@@ -77,3 +77,31 @@ test('go-red proof: a copy missing the completion check, or ordered after the co
   const consoleIdx = wrongOrder.indexOf('Consolidated Review Console (end of run)');
   assert.throws(() => assert.ok(checkIdx < consoleIdx));
 });
+
+// --- #4593: the check reads the multi-spec manifest for untrailered-commit attribution ---
+
+function assertRunFlagInCommand(text) {
+  assert.match(text, /check-artifact-overwrite\.js" --base "\{EXPECTED_BASE\}" --run "\{parent\}"/);
+}
+test('AC9.1: multispec-artifact-namespacing.md passes --run "{parent}" to the check', () => {
+  assertRunFlagInCommand(read(NAMESPACING_FILE));
+});
+test('go-red proof: a command block without --run fails the same assertion', () => {
+  assert.throws(() =>
+    assertRunFlagInCommand(
+      flatten('node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "{EXPECTED_BASE}" --path docs/journeys/'),
+    ),
+  );
+});
+function assertRunOmissionRule(text) {
+  assert.match(
+    flatten(text),
+    /Omit `--run` only when this run's `parallel` waves actually ran with two or more members/,
+  );
+}
+test('Q11: the procedure omits --run only for waves that ran with two or more members', () => {
+  assertRunOmissionRule(read(NAMESPACING_FILE));
+});
+test('go-red proof: the old "a parallel run omits --run" wording fails the Q11 assertion', () => {
+  assert.throws(() => assertRunOmissionRule('a run started with the `parallel` token omits `--run`'));
+});
