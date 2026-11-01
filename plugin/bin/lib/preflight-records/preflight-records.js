@@ -22,8 +22,14 @@ const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issu
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
 const { repoSlug } = require('../repo-resolve');
 
+// Every call here contacts GitHub, so each is bounded (an unbounded execFileSync
+// hangs pre-flight on a black-holed remote). 30s, not the 5s single-call default:
+// the same runner carries the batched alias GraphQL reads and --blocker-landing's
+// compare fan-out (fetch-sub-issues.js's batched runner is bounded the same way).
+const GH_CALL_TIMEOUT_MS = 30000;
+
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_CALL_TIMEOUT_MS, windowsHide: true });
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a

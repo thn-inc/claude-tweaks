@@ -777,6 +777,13 @@ test('--records-json with a --waves dependency cycle exits 2', () => {
 
 // --- CLI: --blocker-landing (#4553) -------------------------------------
 
+test('defaultRunner bounds its gh call (the compare fan-out and the batched GraphQL reads run through it) — source pin, an unbounded execFileSync hangs pre-flight', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../../../plugin/bin/lib/preflight-records/preflight-records'), 'utf8');
+  const body = (src.match(/function defaultRunner\(args\) \{([\s\S]*?)\n\}/) || [])[1] || '';
+  assert.match(body, /execFileSync\('gh', args, \{[^}]*timeout: GH_CALL_TIMEOUT_MS[^}]*\}\)/);
+  assert.match(src, /const GH_CALL_TIMEOUT_MS = \d{5,};/, 'a stated bound, wider than the 5s single-call default');
+});
+
 const isCompare = (args) => args[0] === 'api' && /\/compare\//.test(args[1]);
 const gqlQuery = (args) => (args.find((a) => typeof a === 'string' && a.startsWith('query=')) || '');
 
