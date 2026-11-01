@@ -1717,13 +1717,17 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const state = ctxLib.readRunState(runDir);
   const memoAt = state && state.forgeDegradedAt;
   if (isFreshForgeDegradeMemo(memoAt, now(), ttl)) {
-    if (opts.onDegrade !== undefined) opts.onDegrade({ memoized: true, degradedAt: memoAt });
+    if (typeof opts.onDegrade === 'function') {
+      try { opts.onDegrade({ memoized: true, degradedAt: memoAt }); } catch { /* a reporting callback never breaks the resolver */ }
+    }
     return 'local-merge';
   }
   let degraded = false;
   detectOpts.onDegrade = (d) => {
     degraded = true;
-    if (opts.onDegrade !== undefined) opts.onDegrade(d);
+    if (typeof opts.onDegrade === 'function') {
+      try { opts.onDegrade(d); } catch { /* a reporting callback never breaks the resolver */ }
+    }
   };
   const model = detectIntegrationModel(root, detectOpts);
   if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });

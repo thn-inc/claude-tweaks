@@ -1525,6 +1525,59 @@ test('#4830 memo: without degradeMemoTtlMs (precondition.js call shape) a fresh 
   }
 });
 
+test('#4830 memo: a throwing onDegrade on a memo hit neither throws nor spawns gh', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const before = gh.count();
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, {
+        timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: () => { throw new Error('reporter broke'); },
+      });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), before);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a clean detection with no run-state.json writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const gh = fakeGh({ first: 'fail' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.strictEqual(fs.existsSync(path.join(run, 'run-state.json')), false);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a null runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const gh = fakeGh({ first: 'hang' });
+  const cwd = process.cwd();
+  try {
+    process.chdir(scratch);
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, null, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    assert.strictEqual(fs.existsSync(path.join(scratch, 'run-state.json')), false);
+  } finally {
+    process.chdir(cwd);
+    gh.restore();
+  }
+});
+
 test('#4830 memo: an empty runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
   const repo = unpinnedRepoWithOrigin();
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
