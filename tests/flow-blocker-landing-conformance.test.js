@@ -21,7 +21,7 @@ const outOfRunSection = (text) => {
 };
 // Odd-indexed chunks of a split on the fence lines are the fenced blocks.
 const fencedBlocks = (section) => section.split(/^```.*$/m).filter((_, i) => i % 2 === 1);
-const verdictRow =(section, verdict) => section.split('\n').find((l) => l.startsWith(`| \`${verdict}\` |`)) || '';
+const verdictRow = (section, verdict) => section.split('\n').find((l) => l.startsWith(`| \`${verdict}\` |`)) || '';
 
 // Each helper returns its assertions' own messages so a go-red control can match
 // the throw to the clause it deleted.
@@ -42,10 +42,18 @@ function assertUnlandedCard(text) {
   assert.match(unlanded, /before Step 2\.8/, 'the unlanded row stops before Step 2.8');
   const card = fencedBlocks(section).find((b) => b.includes('#{n}')) || '';
   assert.ok(card, 'unlanded stop card is a fenced block naming #{n}');
-  assert.match(card, /#\{blocker\}/, 'card names the blocker');
-  assert.match(card, /\{commit\}/, 'card names the closing commit');
-  assert.match(card, /origin\/\{integration-branch\}/, 'card names origin/{integration-branch}');
+  // The stop message is the card text before its first "# Escape" heading line; the
+  // escape commands also carry #{blocker}, {commit} and the branch, so searching the
+  // whole card would pass even if the message itself dropped them.
   const lines = card.split('\n');
+  const firstHeading = lines.findIndex((l) => /^# /.test(l));
+  assert.ok(firstHeading > 0, 'card has a message before its first escape heading');
+  const message = lines.slice(0, firstHeading).join('\n');
+  assert.match(message, /#\{blocker\}/, 'card message names the blocker');
+  assert.match(message, /\{commit\}/, 'card message names the closing commit');
+  assert.match(message, /origin\/\{integration-branch\}/, 'card message names origin/{integration-branch}');
+  assert.ok(lines.includes('git fetch origin {integration-branch} {commit}'), 'escape 1: git fetch origin {integration-branch} {commit} on its own line');
+  assert.ok(lines.includes('git merge --ff-only origin/{integration-branch}'), 'escape 1: git merge --ff-only origin/{integration-branch} on its own line');
   assert.ok(lines.includes('git merge {commit}'), 'escape 1: git merge {commit} on its own line');
   assert.ok(lines.some((l) => l.startsWith('gh api -X DELETE')), 'escape 2: gh api -X DELETE on its own line');
   assert.match(section, /cherry-picked landing reads `unlanded`/, 'cherry-pick caveat present');
@@ -82,6 +90,7 @@ function assertStep3PassesBlockerLanding(text) {
   assert.match(step3, /--merge-gate --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, 'step 3 call passes --blocker-landing');
   assert.match(step3, /blockerLanding/, 'step 3 names the blockerLanding key');
   assert.match(step3, /or the blocker-landing query failed/, 'step 3 exit 1 includes the blocker-landing query failure');
+  assert.match(step3, /never a second invocation \(the gh-absent `--blocker-states-json` re-run aside\)/, 'step 3 qualifies "never a second invocation" with the gh-absent re-run');
 }
 
 function assertGhAbsentOpenStop(text) {
@@ -91,6 +100,7 @@ function assertGhAbsentOpenStop(text) {
   assert.match(para, /issue_read/, 'fetches each blocker over MCP issue_read');
   assert.match(para, /open blocker reads `open`/, 'an open blocker reads open');
   assert.match(para, /every other closed blocker `undetermined`/, 'any other closed blocker reads undetermined');
+  assert.match(para, /`issue_read` cannot fetch[^.]*is a \*\*STOP before claiming\*\* that names it/, 'an unfetchable blocker is a STOP naming it');
   assert.match(para, /exit 2 — a \*\*STOP before claiming\*\*/, 'a states-file problem is exit 2');
 }
 
@@ -106,6 +116,7 @@ test('AC5.1: the out-of-run section names all five verdicts and their outcomes',
   assertVerdictTable(text);
   assert.throws(() => assertVerdictTable(mutate(text, /^\| `unlanded` \|[^\n]*\n/m, '')), { message: 'unlanded row is a hard fail' });
   assert.throws(() => assertVerdictTable(mutate(text, /^\| `open` \|([^\n]*)hard fail/m, '| `open` |$1stop')), { message: 'open row is a hard fail' });
+  assert.throws(() => assertVerdictTable(mutate(text, /^\| `landed` \|[^\n]*\n/m, '')), { message: 'landed row is satisfied' });
   assert.throws(() => assertVerdictTable(mutate(text, /^\| `not-applicable` \|[^\n]*\n/m, '')), { message: 'not-applicable row is satisfied' });
   assert.throws(() => assertVerdictTable(mutate(text, /--blocker-landing/g, '--blocker-lookup')), { message: 'the section names the --blocker-landing call' });
 });
@@ -115,7 +126,15 @@ test('AC5.2: the unlanded card carries blocker, commit, integration branch and b
   assertUnlandedCard(text);
   assert.throws(() => assertUnlandedCard(mutate(text, /^git merge \{commit\}$/m, 'git merge {commit} --no-ff')), { message: 'escape 1: git merge {commit} on its own line' });
   assert.throws(() => assertUnlandedCard(mutate(text, /^gh api -X DELETE/m, 'run gh api -X DELETE')), { message: 'escape 2: gh api -X DELETE on its own line' });
-  assert.throws(() => assertUnlandedCard(mutate(text, /origin\/\{integration-branch\}/g, 'the integration branch')), { message: 'card names origin/{integration-branch}' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /origin\/\{integration-branch\}/g, 'the integration branch')), { message: 'card message names origin/{integration-branch}' });
+  // Message-line deletions: the escape lines below still carry each token, so only a
+  // message-scoped assertion can see these go missing.
+  assert.throws(() => assertUnlandedCard(mutate(text, / by #\{blocker\}, which/, ' by it, which')), { message: 'card message names the blocker' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /closing commit \{commit\}/, 'closing commit')), { message: 'card message names the closing commit' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /is not on origin\/\{integration-branch\}\./, 'is not on the integration branch.')), { message: 'card message names origin/{integration-branch}' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /^git fetch origin \{integration-branch\} \{commit\}$/m, 'git fetch origin {integration-branch}')), { message: 'escape 1: git fetch origin {integration-branch} {commit} on its own line' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /^git merge --ff-only origin\/\{integration-branch\}\n/m, '')), { message: 'escape 1: git merge --ff-only origin/{integration-branch} on its own line' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /cherry-picked landing reads `unlanded`/, 'cherry-picked landing reads `landed`')), { message: 'cherry-pick caveat present' });
   assert.throws(() => assertUnlandedCard(mutate(text, /(\| `unlanded` \|[^\n]*)before Step 2\.8/, '$1before claiming')), { message: 'the unlanded row stops before Step 2.8' });
 });
 
@@ -125,6 +144,8 @@ test('AC7.1, AC7.2: undetermined proceeds and writes one SKIP per blocker, shell
   assert.throws(() => assertUndeterminedSkip(mutate(text, /^(\| `undetermined` \|[^\n]*)proceed/m, '$1halt')), { message: 'undetermined proceeds' });
   assert.throws(() => assertUndeterminedSkip(mutate(text, /one `SKIP` per blocker/, 'one SKIP')), { message: 'one SKIP per blocker' });
   assert.throws(() => assertUndeterminedSkip(mutate(text, /--step "Step 2 blocker landing \(undetermined\)"/, '--step "blocker landing"')), { message: 'verbatim SKIP step id' });
+  assert.throws(() => assertUndeterminedSkip(mutate(text, /^node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/log-decision\.js"[^\n]*\n/m, '')), { message: 'SKIP command line present' });
+  assert.throws(() => assertUndeterminedSkip(mutate(text, /--text "condition: /, '--text condition: ')), { message: 'SKIP --text double-quoted argument present' });
   assert.throws(
     () => assertUndeterminedSkip(mutate(text, /(--text "condition: )#\{blocker\}/, '$1`#{blocker}`')),
     { message: 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument' },
@@ -144,7 +165,7 @@ test('AC9.1, AC9.2: a failed blocker query is not undetermined', () => {
     { message: 'Exit 1 paragraph names the CLI line' },
   );
   assert.throws(
-    () => assertFailedQueryIsNotUndetermined(ordering, failure.split('\n').map((l) => (l.startsWith('**Exit 1') ? l.replace(/--blocker-landing/g, '--blocker-lookup') : l)).join('\n')),
+    () => assertFailedQueryIsNotUndetermined(ordering, mutate(failure, /^\*\*Exit 1[^\n]*$/m, (line) => line.replace(/--blocker-landing/g, '--blocker-lookup'))),
     { message: 'Exit 1 paragraph names the --blocker-landing query failure' },
   );
 });
@@ -155,6 +176,7 @@ test("multi-spec.md step 3's call passes --blocker-landing", () => {
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, '--merge-gate --blocker-landing --integration-branch', '--merge-gate --integration-branch')), { message: 'step 3 call passes --blocker-landing' });
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, ' with `blockerLanding` on each record', '')), { message: 'step 3 names the blockerLanding key' });
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, 'or the blocker-landing query failed', 'or something failed')), { message: 'step 3 exit 1 includes the blocker-landing query failure' });
+  assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, ' (the gh-absent `--blocker-states-json` re-run aside)', '')), { message: 'step 3 qualifies "never a second invocation" with the gh-absent re-run' });
 });
 
 test('AC6.1, AC7.1 (gh-absent): multispec-preflight-failure.md keeps the open stop under --records-json', () => {
@@ -164,5 +186,6 @@ test('AC6.1, AC7.1 (gh-absent): multispec-preflight-failure.md keeps the open st
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /`issue_read`/g, 'the MCP read')), { message: 'fetches each blocker over MCP issue_read' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /an open blocker reads `open`/, 'an open blocker proceeds')), { message: 'an open blocker reads open' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /every other closed blocker `undetermined`/, 'every other closed blocker `landed`')), { message: 'any other closed blocker reads undetermined' });
+  assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is a \*\*STOP before claiming\*\* that names it/, 'is skipped')), { message: 'an unfetchable blocker is a STOP naming it' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is exit 2 — a \*\*STOP before claiming\*\*/, 'is ignored')), { message: 'a states-file problem is exit 2' });
 });

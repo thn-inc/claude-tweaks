@@ -58,8 +58,9 @@ Blocker not landed — stopping before any claim.
   is not on origin/{integration-branch}.
 
 # Escape 1 — land it, then re-run (under pr-first, open a PR from a branch carrying that merge instead):
-git fetch origin {integration-branch}
+git fetch origin {integration-branch} {commit}
 git switch {integration-branch}
+git merge --ff-only origin/{integration-branch}
 git merge {commit}
 git push origin {integration-branch}
 
