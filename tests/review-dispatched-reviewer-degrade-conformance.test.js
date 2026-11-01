@@ -192,12 +192,13 @@ const RUN_LEVEL_FACTS = [
   [/The per-lens single-read lines below and the tiebreak's ` Mode: inline\.`\/`Tiebreak caveat:` lines still write, unchanged/, 'AC6.2: per-lens and tiebreak lines unchanged'],
   [/Same session as build is known only inside one `\/claude-tweaks:flow` call that ran `build` too/, 'D5: same-session detection scope'],
   [/effectively unreachable, since flow and build stop a no-dispatch host before building; no session stamp/, 'D5: states it is effectively unreachable, no stamp'],
+  [/\(standalone: one line in the report\)/, 'AC6.1: a standalone review reports the run-level line in its report, not a run directory'],
 ];
 const runLevelMissing = missingFactsOf(RUN_LEVEL_FACTS);
 const INDEPENDENCE_SLOT = [
   [/\{only when Step 3 found no Agent tool — `step3-lens-dispatch\.md`'s run-level no-Agent note:\}/, 'the slot cites the run-level note'],
   [/\*\*Independence: degraded\*\* — no Agent tool in this host; every lens and tiebreak was judged by the reviewer itself/, 'AC6.1: the spec caveat text'],
-  [/\{only when this review runs in the same `\/claude-tweaks:flow` call whose step list also ran `build` — omitted when that is unknown, e\.g\. a standalone review:; the reviewer is the same session that ran this build's implementation\}/, 'AC6.1: same-session clause with its detection signal and unknown-case omission'],
+  [/\{only when this review runs in the same `\/claude-tweaks:flow` call whose step list also ran `build` \(omitted when that is unknown, e\.g\. a standalone review\), append "; the reviewer is the same session that ran this build's implementation"\}/, 'AC6.1: same-session clause with its detection signal and unknown-case omission'],
 ];
 const independenceSlotMissing = missingFactsOf(INDEPENDENCE_SLOT);
 const VERDICT_INDEPENDENCE = [[/then its \*\*Independence: degraded\*\* line verbatim when it rendered/, 'AC6.1: verdict comment copies the Independence line']];

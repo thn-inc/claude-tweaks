@@ -1,11 +1,18 @@
 // tests/no-dispatch-host-preflight-conformance.test.js — pins #4555: a host with no Agent/Task tool
 // stops flow/build cleanly before the `subagent` execution strategy runs, instead of silently
-// implementing the plan inline. Task 1 pins the policy half: build/execution-mode-policy.md's
-// "No-dispatch host (#4555)" section (the stop, the resume command, the SKIP line, the dispatch
-// reporting channel). Later tasks append the call-site pins (flow, build, review, dispatch).
+// implementing the plan inline. Pins, in file order: build/execution-mode-policy.md's "No-dispatch
+// host (#4555)" section (the stop, the resume command, the SKIP line, the dispatch reporting channel),
+// the flow Step 2.4 and build Common Step 1.5 call sites, build/worktree-setup.md's cwd-pinned pointer,
+// skill-graph and journey coverage, merge-check's Independence floor, dispatch's Settle special case
+// and reporting relay. The review-side caveat is pinned in review-dispatched-reviewer-degrade-conformance.test.js.
+// Test-title ids (AC*, D*, F*, Q*) are the acceptance-criterion, plan-review-decision and final-review
+// ids of the #4555 build plan, docs/superpowers/plans/2026-10-31-dispatch-capability-preflight.md, which
+// is retired at close-out: read it at the closing commit (`git log -- <that path>`); the "Decision (plan
+// review)" bullets it cites are in the #4555 record body.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 
@@ -70,6 +77,9 @@ const POLICY_FACTS = [
   [/Settle treats it as a pre-flight stop \(`dispatch\/settle-and-merge\.md`'s No-dispatch-host special case\)/, 'D4: policy points at the Settle special case'],
   [/This stop tears nothing down itself/, 'resume leaves state in place'],
   [/under `current-branch` the open-items ledger flow Step 1 created/, 'current-branch ledger stays in place'],
+  [/for a standalone worktree-mode `\/claude-tweaks:build` the worktree, materialize commit and draft PR that Spec Step 1 created before Common Step 1\.5/, 'review finding: a standalone worktree build leaves its Spec Step 1 state in place'],
+  [/Render the command only when each interpolated part fits its grammar/, 'review finding: the paste-ready resume command is gated on its parts fitting a grammar'],
+  [/is replaced by "re-run your original invocation" — never pasted into a command/, 'review finding: a part that does not fit is never pasted into a command'],
   [/A flow resume whose step list omits `build` is not probed here/, 'AC10.2: build-less resumes proceed'],
   [/`assess-agent-autonomy`'s `merge-check` then routes that run's merge to a human/, 'AC10.3: a build-less degraded review routes its merge to a human'],
   [/a choice for a human and never taken automatically/, 'AC3.1: batched is never taken automatically'],
@@ -84,6 +94,20 @@ test('AC5.1 AC1.2 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC
 
 test('AC8.2: each policy fact can go red', () => {
   assertEachPatternGoesRed(policySection(), POLICY_FACTS, policyMissing);
+});
+
+// The probe the flow, build, review and policy call sites all cite lives in `_shared/subagent-dispatch-core.md`
+// as an unnamed **Fallback:** clause, so the citers' own pins cannot notice it being rewritten away.
+test('AC5.1: subagent-dispatch-core.md still states the no-Agent probe the call sites cite', () => {
+  const CORE = path.join(SKILLS, '_shared', 'subagent-dispatch-core.md');
+  const PROBE = /when no `Agent`\/`Task` tool exists \(`ToolSearch` finds none, deferred or\s+otherwise/;
+  const text = readText(CORE);
+  assert.match(text, PROBE, 'the no-Agent probe clause was rewritten — update every citer (flow 2.4, build 1.5, review Step 3, execution-mode-policy.md)');
+
+  // Control: the clause removed from a copy must fail the same check.
+  const doctored = text.replace(PROBE, '');
+  assert.notEqual(doctored, text, 'probe anchor not found — control cannot discriminate');
+  assert.ok(!PROBE.test(doctored), 'removing the probe clause must turn the check red');
 });
 
 // Item 1's dispatch-route sentence (not item 4's, whose parenthetical adds ", headless or not").
@@ -188,7 +212,7 @@ test('AC1.3: build preflight sits in Common Step 1.5, before Common Step 1.6', (
 });
 
 test('AC2.2: neither SKILL.md tells the agent to implement plan tasks inline', () => {
-  const INLINE = /(?:implement|execute|run)(?:s|ing)? (?:the plan(?:'s tasks)?|plan tasks|the tasks) inline/i;
+  const INLINE = /(?:implement|execute|run)(?:s|ing)? (?:the plan(?:'s tasks)?|plan tasks|the tasks) (?:inline|in-session|in session)/i;
   const offenders = (text) => text.split('\n').filter((line) => INLINE.test(line) && !/never (?:implement|execute|run)/i.test(line));
   for (const file of [FLOW_SKILL, BUILD_SKILL]) {
     assert.deepEqual(offenders(readText(file)), [], `${path.basename(path.dirname(file))}/SKILL.md must not instruct inline implementation of plan tasks`);
@@ -203,8 +227,10 @@ test('AC2.2: neither SKILL.md tells the agent to implement plan tasks inline', (
 test('AC1.3: no build hand-off line skips Common Step 1.5 by proceeding straight to Common Step 2', () => {
   const SKIPS = /Proceed to \*\*Common Step 2\*\*/;
   const offenders = (text) => text.split('\n').filter((line) => SKIPS.test(line));
-  for (const file of [BUILD_SKILL, path.join(SKILLS, 'build', 'micro-plan.md')]) {
-    assert.deepEqual(offenders(readText(file)), [], `${path.basename(file)} must proceed to Common Step 1.5, whose preflight runs before Common Step 2`);
+  const buildMarkdown = fs.readdirSync(path.join(SKILLS, 'build')).filter((name) => name.endsWith('.md'));
+  assert.ok(buildMarkdown.includes('SKILL.md') && buildMarkdown.includes('micro-plan.md'), 'the build sweep must cover SKILL.md and micro-plan.md');
+  for (const name of buildMarkdown) {
+    assert.deepEqual(offenders(readText(path.join(SKILLS, 'build', name))), [], `build/${name} must proceed to Common Step 1.5, whose preflight runs before Common Step 2`);
   }
 
   // Control: appending the skipping line to a copy must be reported.
@@ -277,7 +303,9 @@ const MERGE_FLOOR_FACTS = [
   [/ — carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line'],
   [/`condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`/, 'AC10.3: quotes the exact SKIP text'],
   [/or its review summary rendered the \*\*Independence: degraded\*\* line \(with no run directory to read, that summary line alone decides\), render `needs-human`/, 'AC10.3: renders needs-human; no run dir → summary line decides'],
-  [/so its merge routes to a human\. Do not weigh anything else\./, 'AC10.3: merge decision routes to a human, hard floor'],
+  [/so its merge routes to a human\./, 'AC10.3: merge decision routes to a human'],
+  [/A `decisions\.md` that should exist but cannot be read \(absent or unreadable while a run directory resolves\) cannot rule the floor out either: render `needs-human` there too\./, 'review finding: an unreadable decisions.md fails closed to needs-human'],
+  [/Do not weigh anything else\./, 'AC10.3: hard floor, nothing else weighed'],
 ];
 const mergeFloorMissing = missingFactsOf(MERGE_FLOOR_FACTS);
 
@@ -303,7 +331,7 @@ test('AC10.3: the SKIP text merge-check reads is the text review writes', () => 
 });
 
 test('the Calibration closing sentence lists the Independence floor', () => {
-  const NEW_SENTENCE = /Every floor stated above still applies on its own terms: a\s+sensitive-path hit renders `needs-human` with nothing else weighed, and so do any review finding\s+at Medium or above and an `Independence: degraded` review\./;
+  const NEW_SENTENCE = /Every floor stated above still applies on its own terms:\s+a\s+sensitive-path\s+hit\s+renders\s+`needs-human`\s+with\s+nothing\s+else\s+weighed,\s+and\s+so\s+do\s+any\s+review\s+finding\s+at\s+Medium\s+or\s+above\s+and\s+an\s+`Independence: degraded`\s+review\./;
   const text = readText(MERGE_CHECK);
   assert.match(text, NEW_SENTENCE);
   const hasOldWording = (t) => t.includes('Both floors stated above');
