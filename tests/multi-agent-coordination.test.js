@@ -1650,3 +1650,41 @@ test('multi-agent: the paragraph search still finds its break under CRLF line en
   const at = text.indexOf('**Post-dispatch diff audit (mandatory).**');
   assert.match(text.slice(at, text.indexOf('\n\n', at)), /post-fan-out (untracked-file )?sweep/i);
 });
+
+// ============================================================
+// Mode 2 Auto-resolution agrees with the Comparison rule table (#4810)
+// ============================================================
+
+function mode2AutoResolutionParagraph(text) {
+  const mode2 = text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+  const at = mode2.indexOf('### Auto-resolution');
+  return mode2.slice(at + '### Auto-resolution'.length, mode2.indexOf('\n###', at + 1)).trim();
+}
+
+function assertMode2AutoResolutionMatchesTable(text) {
+  const mode2 = text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+  const comparison = mode2.slice(mode2.indexOf('### Comparison rule'), mode2.indexOf('### Auto-resolution'));
+  const pairs = [...comparison.matchAll(/^\| .+ \| .+ \| `(\w+)` \| (AUTO|STAGED) \|$/gm)].map((m) => [m[1], m[2]]);
+  assert.strictEqual(pairs.length, 3, `expected 3 Mode 2 outcome rows, found ${pairs.length}`);
+  const paragraph = mode2AutoResolutionParagraph(text);
+  const sentences = paragraph.split('. ');
+  for (const [outcome, status] of pairs) {
+    const sentence = sentences.find((s) => s.includes(`\`${outcome}\``));
+    assert.ok(sentence, `Auto-resolution does not name \`${outcome}\``);
+    assert.ok(sentence.includes(status), `Auto-resolution names \`${outcome}\` without ${status} in its sentence: ${sentence}`);
+  }
+  assert.doesNotMatch(paragraph, /all three outcomes auto-resolve/i);
+  assert.ok(paragraph.includes('ask the user inline'));
+}
+
+test('AC1.1: Mode 2 Auto-resolution names each outcome with the status its table gives', () => {
+  assertMode2AutoResolutionMatchesTable(PRIMITIVE_DOC);
+});
+
+test('go-red: Mode 2 Auto-resolution check fails on the pre-#4810 sentence', () => {
+  const PRE_4810 = 'All three outcomes auto-resolve. No "ask the user inline."';
+  const broken = PRIMITIVE_DOC.replace(mode2AutoResolutionParagraph(PRIMITIVE_DOC), PRE_4810);
+  // Control: the fixture's Mode 2 paragraph is the pre-#4810 sentence, so the throw below tests that sentence.
+  assert.strictEqual(mode2AutoResolutionParagraph(broken), PRE_4810);
+  assert.throws(() => assertMode2AutoResolutionMatchesTable(broken));
+});
