@@ -658,8 +658,8 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
 
 - **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
-  or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
-  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. An exit-0
+  or its transport, so it is transient. Exit 3 (run dir not anchored) is deterministic; exit 4 is
+  pre-merge only. An exit-0
   `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base
   or the default branch could not be read, so Step 4.0 closed nothing and printed no closing set,
   #4549) is a failed read, so it is transient too; once its retries are spent its marker entry
@@ -719,8 +719,8 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   parents closed below the floor by those runs), `postMergeUnmarkedParentsClosed` (the parents
   closed by `marker-write-failed` runs, a disjoint count) and `postMergeFailed` (runs
   whose check threw (`skipped` / `error`: no marker, the run is not deferred), or whose Step 4.0 itself failed: the entry carries `step40Failed: true` for a non-zero
-  `closing-links` exit, exit 5 or a `base-unchecked` envelope only once its retries are spent, or
-  an unreadable envelope, a SKIP marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
+  `closing-links` exit, exit 5 or a `base-unchecked` envelope only once its retries are spent, a SKIP
+  marker is written, Step 4.0b never runs, and the parent waits for tidy's backstop; an envelope
   that merely carries no closing set, such as `not-merged`, is not a failure). A failure is never
   counted in `postMergeRan`, and a `transient-failure` retry is in none of them. The next
   SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),

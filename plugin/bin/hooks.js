@@ -1878,7 +1878,7 @@ async function runReconcileBackground(argv) {
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
       postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
+      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit or an unread base: a SKIP
       // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
       // Either way the parent waits for tidy's backstop, so they are never counted as ran.
       postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,

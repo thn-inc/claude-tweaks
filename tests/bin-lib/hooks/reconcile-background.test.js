@@ -249,7 +249,7 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
       { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
       { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
       { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
-      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true },
       { runDir: '/r/g', pr: 7, action: 'skipped', reason: 'error', detail: 'boom' },
     ],
   });
