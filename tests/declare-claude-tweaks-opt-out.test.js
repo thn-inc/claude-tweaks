@@ -177,6 +177,7 @@ const COPY_FACTS = [
   ['header comment names the key', STEP14, '# declare-claude-tweaks: false in .claude-tweaks/policy.yml leaves claude-tweaks out of this script.'],
   ['authoring notes are never written out', STEP14, 'Every `# (authoring: …)` note in the template is an authoring note, never written into the generated script; every other comment, `# (claude-tweaks #129: …` included, is written as it stands.'],
   ['opted-out script omits the declaration region', STEP14, 'also omit the lines between the begin and end claude-tweaks declaration notes, and drop `claude-tweaks@claude-tweaks-marketplace` from `PLUGIN_SPECS`'],
+  ['Apply ensures the marketplace entry unless opted out', STEP14, 'always (unless opted out above) ensure a `claude-tweaks-marketplace` entry'],
   ['Anti-Patterns row names the key', INIT_SKILL, 'Regenerated on every `/init` run from `.claude/settings.json` (and `declare-claude-tweaks`)'],
 ];
 
@@ -207,7 +208,7 @@ const fleetStep2 = (text) => fleetSlice(text, '## Step 2 — Cloud-parity honest
 const fleetStep5 = (text) => fleetSlice(text, '## Step 5 — Fleet summary', '\n## Fleet status (aggregation)', 'fleet Step 5');
 // (the next heading after Step 5 is named, not matched as "\n## ": Step 5's own fenced template opens with a "## Fleet: Provisioning Complete" line)
 
-const FLEET_OPT_OUT_LINE = '`Cloud parity: declare-claude-tweaks is false, so this project does not declare claude-tweaks for cloud firings — they will not have claude-tweaks installed by the project declaration.`';
+const FLEET_OPT_OUT_LINE = '`Cloud parity: declare-claude-tweaks is false, so this project does not declare claude-tweaks for cloud firings — they will not have claude-tweaks installed by the project declaration, and fleet routines need it installed in the sandbox some other way.`';
 
 function assertFleetOptOut(text) {
   assert.ok(fleetStep2(text).includes(FLEET_OPT_OUT_LINE), 'fleet opt-out print line missing');
@@ -240,7 +241,7 @@ test('AC3.1: a missing claude-tweaks declaration is no gap under the opt-out', (
   ]) {
     assert.ok(step2.includes(literal), 'missing: ' + literal);
   }
-  const step5Literal = '"OK — superpowers declared, setup script present; declare-claude-tweaks is false, so cloud firings will not have claude-tweaks installed by the project declaration."';
+  const step5Literal = '"OK — superpowers declared, setup script present; declare-claude-tweaks is false, so cloud firings will not have claude-tweaks installed by the project declaration, and fleet routines need it installed in the sandbox some other way."';
   assert.ok(fleetStep5(FLEET).includes(step5Literal), 'missing: ' + step5Literal);
 });
 
@@ -264,4 +265,72 @@ test('AC1.1: default fleet path unchanged', () => {
   assert.ok(step2.includes('confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared'));
   assert.ok(step2.includes('Both checks passing is a silent pass-through'));
   assert.ok(step2.includes('At `true` (the default) the check is as written'), 'missing: the default-branch sentence');
+});
+
+// Ordering pins (final review): each marker must exist, then positions must increase. The
+// existence half is asserted first so a reworded marker (indexOf -1) cannot pass as "earlier".
+function requireOrder(text, markers, label) {
+  let last = -1;
+  let prev = null;
+  for (const m of markers) {
+    const idx = text.indexOf(m);
+    assert.notStrictEqual(idx, -1, `${label}: marker missing: ${m}`);
+    assert.ok(idx > last, `${label}: ${m} must come after ${prev}`);
+    last = idx;
+    prev = m;
+  }
+}
+
+const FLEET_RESOLVE_SENTENCE = 'First resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`.';
+const FLEET_CHECK_SENTENCE = 'Run the same declaration check `skills/init/bootstrap/step-14-cloud-routine-parity.md`\'s Detect section runs: read this project\'s `.claude/settings.json#enabledPlugins`, confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared.';
+const fleetItem1Order = (step2) => requireOrder(step2, [FLEET_RESOLVE_SENTENCE, FLEET_CHECK_SENTENCE], 'fleet Step 2 item 1');
+
+test('F5: fleet Step 2 item 1 resolves the key before the declaration check it qualifies', () => {
+  const step2 = fleetStep2(FLEET);
+  fleetItem1Order(step2);
+  // Permutation control: both sentences are present, the check now leads the resolve.
+  const swapped = step2.replace(`${FLEET_RESOLVE_SENTENCE} ${FLEET_CHECK_SENTENCE}`, `${FLEET_CHECK_SENTENCE} ${FLEET_RESOLVE_SENTENCE}`);
+  assert.notEqual(swapped, step2);
+  assert.throws(() => fleetItem1Order(swapped), { message: /must come after/ });
+  // Deletion control: the existence half goes red on its own message.
+  const missing = step2.replace(FLEET_RESOLVE_SENTENCE, '');
+  assert.notEqual(missing, step2);
+  assert.throws(() => fleetItem1Order(missing), { message: /marker missing/ });
+});
+
+// Step 14 authoring notes and Apply wording the final review found unpinned.
+const PLUGIN_SPECS_NOTE = '# (authoring: when declare-claude-tweaks resolves false, drop claude-tweaks@claude-tweaks-marketplace from PLUGIN_SPECS)';
+
+function assertPluginSpecsNote(template) {
+  assert.ok(template.split(/\r?\n/).includes(PLUGIN_SPECS_NOTE), 'PLUGIN_SPECS opt-out authoring note missing from the template');
+}
+
+test('F3a: the template carries the PLUGIN_SPECS opt-out authoring note as its own line', () => {
+  assertPluginSpecsNote(TEMPLATE);
+  const stripped = TEMPLATE.split(/\r?\n/).filter((l) => l !== PLUGIN_SPECS_NOTE).join('\n');
+  assert.notEqual(stripped, TEMPLATE);
+  assert.throws(() => assertPluginSpecsNote(stripped), { message: /PLUGIN_SPECS opt-out authoring note missing/ });
+});
+
+const OPT_OUT_PARAGRAPH = '**Opt-out.** Resolve';
+const DETECT_PARAGRAPH = '**Detect.** Read the current project';
+const step14OptOutOrder = (text) => requireOrder(collapse(text), [OPT_OUT_PARAGRAPH, DETECT_PARAGRAPH], 'Step 14');
+
+test('F3c: Step 14 states the Opt-out paragraph before the Detect paragraph', () => {
+  step14OptOutOrder(STEP14);
+  const paragraphs = STEP14.split(/\r?\n\r?\n/);
+  const optIdx = paragraphs.findIndex((p) => p.startsWith('**Opt-out.**'));
+  const detIdx = paragraphs.findIndex((p) => p.startsWith('**Detect.**'));
+  assert.ok(optIdx !== -1 && detIdx > optIdx, 'Opt-out/Detect paragraphs not found in live order');
+  assert.strictEqual(paragraphs.filter((p) => p.startsWith('**Opt-out.**') || p.startsWith('**Detect.**')).length, 2);
+  // Permutation control: swap the two whole paragraphs, so both markers survive in the wrong order.
+  const permuted = paragraphs.slice();
+  [permuted[optIdx], permuted[detIdx]] = [permuted[detIdx], permuted[optIdx]];
+  const swapped = permuted.join('\n\n');
+  assert.notEqual(swapped, STEP14);
+  assert.throws(() => step14OptOutOrder(swapped), { message: /must come after/ });
+  // Deletion control: drop the Opt-out paragraph, the existence half reports it.
+  const kept = paragraphs.filter((p) => !p.startsWith('**Opt-out.**'));
+  assert.strictEqual(paragraphs.length - kept.length, 1);
+  assert.throws(() => step14OptOutOrder(kept.join('\n\n')), { message: /marker missing/ });
 });
