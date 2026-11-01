@@ -160,7 +160,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 | Resolving as "accepted" without a reason | Acceptance requires a stated rationale — "it's fine" is not one |
 | Deferring items introduced by the current build | Fix what you introduced — defer is for pre-existing or genuinely larger scope |
 | Creating duplicate ledger entries | Check semantic duplicates before adding — same phase + similar description = skip |
-| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item |
+| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item. The one exception — a `deferred` row returning to `open` when the console refuses its staged proposal — is defined in `_shared/ledger-format.md`'s Resolution-text requirements |
 | Modifying the ledger file format | Multiple skills parse the table — structural changes break them |
 | Using the ledger for feature tracking | The ledger covers one pipeline run. Cross-spec/cross-run tracking belongs on the decomposition's parent record's `## Cross-Spec Promises` section (`_shared/work-record.md`). |
 | Skipping the resolve gate | Non-negotiable — no pipeline completes with open items |

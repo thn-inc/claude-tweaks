@@ -754,6 +754,13 @@ const FORGE_PROBE_ATTEMPTS = 2;
 // pass as `timeoutMs`. Hook worst case: git 5 s + two 5 s gh attempts = 15 s
 // (record #4578 Decision Q2) — one constant so the two hooks cannot drift.
 const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
+// Freshness window of the run-scoped forge degrade memo (#4830). While `gh` stays
+// hung, the PreToolUse PR-stamp gate pays at most one hook-bounded probe per TTL of
+// hooked activity: GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS x
+// HOOK_FORGE_PROBE_TIMEOUT_MS = 15 s worst case; the memo then answers for the next
+// TTL. Concurrent hook processes that start with no fresh memo each probe (see
+// resolveRunPinnedIntegrationModel).
+const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
 
 // The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
 // explicit positive-integer `opts.timeoutMs` (returns before any file read) >
@@ -1007,5 +1014,5 @@ module.exports = {
   POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
   GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
-  FORGE_DEGRADE_REASONS,
+  FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,
 };
