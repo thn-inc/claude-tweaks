@@ -396,10 +396,13 @@ const PRECONDITION_RAW = readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', '
 const PRECONDITION_CODE = stripComments(PRECONDITION_RAW);
 const FORWARD_RE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*runDir,\s*\{\s*onDegrade\s*\}\)/;
 
-test('precondition.js forwards onDegrade and no timeoutMs to resolveRunPinnedIntegrationModel -- it follows the gh-timeout-ms ladder (#4578 AC13.2, AC13.3, AC21.1)', () => {
+// FORWARD_RE pins the call's argument text to exactly `{ onDegrade }`, so a
+// timeoutMs in the call fails the match -- that is the Q3 property. No
+// whole-file timeoutMs ban: an unrelated timeoutMs elsewhere in the file (a git
+// spawn bound) would not break it.
+test('precondition.js forwards exactly { onDegrade } to resolveRunPinnedIntegrationModel -- it follows the gh-timeout-ms ladder (#4578 AC13.2, AC13.3, AC21.1)', () => {
   assert.strictEqual(stripperVerdict(PRECONDITION_RAW, PRECONDITION_CODE), 'ok', STRIPPER_VERDICT_MESSAGES.misparsed);
   assert.match(PRECONDITION_CODE, FORWARD_RE);
-  assert.doesNotMatch(PRECONDITION_CODE, /timeoutMs/);
 });
 
 test('go-red: the forwarding scan rejects a two-argument call, a timeoutMs call, and a call that exists only in a comment', () => {
@@ -411,8 +414,10 @@ test('go-red: the forwarding scan rejects a two-argument call, a timeoutMs call,
   assert.doesNotMatch(stripComments(withTimeout), FORWARD_RE);
   const commented = `// ${live}\nmodel = resolveRunPinnedIntegrationModel(mainRoot, runDir);`;
   assert.doesNotMatch(stripComments(commented), FORWARD_RE);
-  // a timeoutMs mention in a trailing comment is not code
-  assert.doesNotMatch(stripComments(`${live} // timeoutMs`), /timeoutMs/);
+  // a timeoutMs mention in a trailing comment does not disturb a compliant call
+  assert.match(stripComments(`${live} // timeoutMs`), FORWARD_RE);
+  // timeoutMs listed before onDegrade is also rejected
+  assert.doesNotMatch(stripComments('model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 5000, onDegrade });'), FORWARD_RE);
 });
 
 test('/test Step 0 names the degraded-detection reason the precondition returns (#4578 Q11 prose twin)', () => {
