@@ -514,6 +514,10 @@ function run(argv, deps) {
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
+      // Every read failure, a `permission-denied` one included, stays exit 4
+      // under its own error name: #4756 split the permission refusal out of
+      // `network-failure` only for the bootstrap (exit 6); re-routing the
+      // claim read/write paths is a separate decision, tracked as a follow-up.
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
       continue;
@@ -637,7 +641,8 @@ function run(argv, deps) {
       // (record-697's incident read exactly that way before diagnosis,
       // #787's amendment). Either way this issue's write never confirmed a
       // git tip — discard the chain (see the `knownTip` comment above
-      // `claimedThisRun`).
+      // `claimedThisRun`). A `permission-denied` write failure also lands here
+      // as exit 4 under its own error name, as at the read site above.
       knownTip = null;
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });

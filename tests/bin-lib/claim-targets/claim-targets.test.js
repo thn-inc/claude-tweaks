@@ -2417,7 +2417,10 @@ test('(bm8b) AC4.1: write site, bootstrap POST hits a secondary rate limit: tran
 
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-rate-limited');
-  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  assert.ok(stderr.startsWith('claim-targets: claims-registry bootstrap failed transiently:'), stderr);
+  assert.ok(stderr.includes('secondary rate limit'), stderr);
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
@@ -2440,6 +2443,21 @@ test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status)
   assert.ok(stderr.includes('ETIMEDOUT'), stderr);
   assert.equal(stderr.trimEnd().split('\n').length, 1, 'exactly one stderr line');
   assert.equal(state.refPosts, 1);
+});
+
+test('(bm10c) a transient reason carrying line breaks, control characters and a very long body reaches stderr as one bounded line', () => {
+  const hostile = `connect ETIMEDOUT\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
+  const { ghApi } = makeBranchlessGhApi({ postResponse: { ...TRANSPORT_FAILURE, error: hostile } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  assert.equal(run(['--run-id', 'r1', '--targets', '720'], deps), 4, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'the transient line is exactly one stderr line');
+  assert.doesNotMatch(stderr.trimEnd(), /[\p{Cc}]/u, 'no control characters or line breaks survive');
+  assert.ok(stderr.length <= 700, `bounded, got ${stderr.length}`);
+  assert.match(stderr, /ETIMEDOUT/, 'the leading text is still verbatim');
 });
 
 test('(bm10b) AC2.1: the same transport failure under --keep-going skips the target', () => {
@@ -2499,6 +2517,21 @@ test('(bm13) AC11.1: POST 422 + a primary-rate-limit re-read: exit 4 claims-bran
 
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+});
+
+test('(bm13b) a bootstrap POST failing with an unrecognised HTTP status (400), classified by the real classifier: transient exit 4, never the exit-6 refusal', () => {
+  const e = new Error('gh: Bad Request (HTTP 400)');
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
+  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
 });
 
 test('(bm14) AC9.1: gh-absent, no-default-branch and no-tip-sha bootstraps still exit 6', () => {

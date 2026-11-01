@@ -157,6 +157,13 @@ function ghErrorText(e) {
 // rate limit is excluded: "API rate limit exceeded" or `X-RateLimit-Remaining:
 // 0` (a 403 or 429) stays `network-failure`, since waiting clears it and a
 // permission verdict there would be wrong (`_shared/github-rate-limit.md`).
+//
+// Outcomes by retry class (#4756 — the one rule the claims-branch bootstrap
+// applies, via `TRANSIENT_BOOTSTRAP_FAILURES` below): `network-failure` (also
+// the catch-all for any text no pattern here matches, an unrecognised 4xx
+// included) and `secondary-rate-limit` are transient — a later run may
+// succeed. `permission-denied`, `gh-absent` and every `failure: null` status
+// answer (404, 409, 422) are answers a retry will not change.
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
   const text = ghErrorText(e);
@@ -524,7 +531,9 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // (#4495) Nothing there: either a real contest (the claim was released or
     // swept since) or the claims-registry branch itself does not exist, which
     // makes the PUT fail the same way. Only the branch lookup tells them
-    // apart; an unanswerable one is transient, never a manufactured contest.
+    // apart; an unanswerable one is never a manufactured contest — it reports
+    // the lookup's own failure kind as-is (a network failure, a rate limit, or
+    // `permission-denied`), and the caller decides what that kind means.
     if (!fresh.failure && fresh.absent) {
       const lookup = readClaimsBranch(deps.ghApi, repoSlug);
       if (lookup.exists === false) return { ok: false, branchMissing: true, failure: null };
