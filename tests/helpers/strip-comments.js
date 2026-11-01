@@ -5,10 +5,10 @@
 // `path-containment`, `path-guard`, `phase-exit`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `precondition`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`,
 // `subprocess-timing`, `wall-clock-budget` and `windows-hide-spawn`. tests/strip-comments-callers-twin.test.js
 // pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491),
-// `gh-host-seam` (#4505), `hooks-pre-tool-use` (#4578) and `run-liveness-callers`, also call it in
-// `literals: 'blank'` mode. The implementation lives in
-// plugin/bin/lib/strip-comments.js (#3903) so plugin code can call the same scanner;
-// this file re-exports `stripComments` from it, so every test caller keeps its
+// `gh-host-seam` (#4505), `hooks-pre-tool-use` (#4578), `phase-exit` (#4578) and
+// `run-liveness-callers` also call it in `literals: 'blank'` mode. The implementation
+// lives in plugin/bin/lib/strip-comments.js (#3903) so plugin code can call the same
+// scanner; this file re-exports `stripComments` from it, so every test caller keeps its
 // `./helpers/strip-comments` import path, and itself defines `stripperVerdict`, the
 // compile oracle that only the tests use and the plugin payload does not ship (#4648).
 // Fix a stripper defect in the implementation and add its planted case to
