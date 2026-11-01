@@ -7,7 +7,6 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
-const { ghOptions } = require('./repo-resolve');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
@@ -764,6 +763,9 @@ function riskAllowedSlugs(policyRaw) {
 // resolveRunPinnedIntegrationModel's own comment).
 function detectIntegrationModel(repoRoot, opts = {}) {
   const { mcpReachable } = opts;
+  // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
+  // policy-schema and policy back, so a load-time edge from this file would close a cycle.
+  const { ghOptions } = require('./repo-resolve');
   const execOpts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
   try {
     execFileSync('git', ['remote', 'get-url', 'origin'], execOpts);

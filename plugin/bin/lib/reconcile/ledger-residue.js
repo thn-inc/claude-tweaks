@@ -277,7 +277,7 @@ function defaultListRemovalPrs(root, exec = execFileSyncTimed) {
   return sharedPrimitives.runClassified(
     () => {
       const refsArgs = ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`, '--jq', '.[].ref'];
-      const refsOut = exec('gh', refsArgs, ghOptions(refsArgs, { ...opts, windowsHide: true }));
+      const refsOut = exec('gh', refsArgs, ghOptions(refsArgs, opts));
       const heads = [...new Set(String(refsOut).split(/\r?\n/)
         .filter((ref) => ref.startsWith('refs/heads/'))
         .map((ref) => ref.slice('refs/heads/'.length))
@@ -285,7 +285,7 @@ function defaultListRemovalPrs(root, exec = execFileSyncTimed) {
       const byNumber = new Map();
       for (const head of heads) {
         const prArgs = ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository'];
-        const prs = JSON.parse(exec('gh', prArgs, ghOptions(prArgs, { ...opts, windowsHide: true })));
+        const prs = JSON.parse(exec('gh', prArgs, ghOptions(prArgs, opts)));
         if (!Array.isArray(prs)) throw new Error('gh pr list returned a non-array');
         for (const pr of prs) {
           // `--head` matches the branch name alone, so a fork PR that reuses it is not ours: its body is not ours to trust.

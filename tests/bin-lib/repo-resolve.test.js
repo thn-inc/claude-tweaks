@@ -129,10 +129,10 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
     }
   };
   walk(binDir);
-  // #2567 shifted this line by 2 (a shared-primitives require + its updated
-  // comment above GH_TIMEOUT_MS's own former definition). #4554 shifted it by
-  // 2 more (the timed-out-probe note in ghAvailable's comment).
-  assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:40`]);
+  // The property is "one literal, in repo-resolve.js", not a line number: #2567,
+  // #4554 and #4505 each shifted the line, and a comment edit must not fail this.
+  assert.equal(hits.length, 1, `expected one '--version' literal, got ${hits.join(', ')}`);
+  assert.ok(hits[0].startsWith(`lib${pathModule.sep}repo-resolve.js:`), hits[0]);
 });
 
 // #4505: the gh host seam. Every test resets the per-process memo first and
@@ -212,6 +212,30 @@ test('review focus: memoized per cwd, probe failure is "no host", note logged on
   assert.equal(probes, 2);
   assert.equal(notes.length, 1);
   assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\) — gh calls get GH_HOST=acme\.ghe\.com/);
+});
+test('review (#4505): the enterprise-token clause never admits a non-GitHub forge, so the token is not sent there; a hosts.yml key still does', () => {
+  const tokenEnv = { GH_ENTERPRISE_TOKEN: 't' };
+  for (const url of ['https://gitlab.com/acme/widgets.git', 'https://bitbucket.org/acme/widgets.git', 'https://dev.azure.com/acme/widgets.git',
+    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git']) {
+    _resetGhHostCache();
+    const o = { cwd: '/f' };
+    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: tokenEnv }), o, url);
+  }
+  _resetGhHostCache();
+  const configured = { ...ghe, remoteUrl: () => 'https://gitlab.com/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' }, readFile: () => 'gitlab.com:\n    user: me\n' };
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, configured).env.GH_HOST, 'gitlab.com');
+});
+test('review (#4505): an origin probe timeout is noted once and not memoized, so the next call probes again; no origin stays memoized', () => {
+  _resetGhHostCache();
+  let probes = 0; const notes = [];
+  const timeout = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const d = { ...ghe, remoteUrl: () => { probes++; if (probes === 1 || probes === 2) throw timeout; return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  const o = { cwd: '/s' };
+  assert.strictEqual(ghOptions(['a'], o, d), o);
+  assert.strictEqual(ghOptions(['b'], o, d), o);
+  assert.equal(probes, 2); // a timeout is not memoized
+  assert.equal(notes.filter((n) => /timed out/.test(n)).length, 1); // noted once per cwd
+  assert.equal(ghOptions(['c'], o, d).env.GH_HOST, 'acme.ghe.com'); // the next call probes again and recovers
 });
 test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matched case-insensitively", () => {
   const corp = { ...ghe, remoteUrl: () => 'git@Git.Corp.Example:acme/widgets.git' };
@@ -334,6 +358,10 @@ test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable r
   const out = JSON.parse(execFileSync(process.execPath, ['-e', script, lib], { cwd: require('os').tmpdir(), env, encoding: 'utf8', windowsHide: true }));
   assert.equal(out.policyLoaded, false, 'requiring repo-resolve.js read GH_TIMEOUT_MS at load (the getter loads ./policy)');
   assert.equal(out.timeout, out.expected);
+  // The default alone cannot tell a call-time read from a hardcoded 5000: a non-default
+  // override must reach ghAvailable's spawn.
+  const overridden = JSON.parse(execFileSync(process.execPath, ['-e', script, lib], { cwd: require('os').tmpdir(), env: { ...env, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '7777' }, encoding: 'utf8', windowsHide: true }));
+  assert.equal(overridden.timeout, 7777);
 });
 
 // Re-review: the free-text value flags --comment, --subject, --notes and --description

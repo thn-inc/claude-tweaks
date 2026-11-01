@@ -286,3 +286,23 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
   assert.deepEqual(offenders, [],
     'wrap these gh spawns\' options in repo-resolve.js\'s ghOptions(args, { … }) — without it a GitHub Enterprise origin\'s calls go to github.com');
 });
+
+// An explicit --repo pins its own host (repo-resolve.js's pinExplicitRepoHost), and each CLI that
+// takes --repo wires that by hand: a `pinGhHost` dep in realDeps plus a `deps.pinGhHost(…)` call in
+// run(). The spawn scan above cannot see a CLI that drops either half, and the CLI then splits one
+// record across two hosts on a GHE origin (found in #4505's review), so the roster is pinned here.
+const PIN_WIRED = ['activity-gather.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
+  'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'repair-claim.js', 'resolved-refusal.js'];
+
+test('review (#4505): every CLI that pins its explicit --repo host keeps both halves of the wiring, and no unlisted CLI wires it', () => {
+  for (const rel of PIN_WIRED) {
+    const code = stripComments(readText(path.join(BIN_ROOT, rel)));
+    assert.match(code, /\bpinGhHost:\s*\(repoSpec\)\s*=>\s*pinExplicitRepoHost\(repoSpec\)/, `${rel}: realDeps no longer defines pinGhHost`);
+    assert.match(code, /\bdeps\.pinGhHost\(/, `${rel}: run() no longer calls deps.pinGhHost`);
+  }
+  const wired = walk(BIN_ROOT)
+    .filter((file) => /\bpinGhHost\b/.test(stripComments(readText(file))))
+    .map((file) => path.relative(BIN_ROOT, file).replace(/\\/g, '/'))
+    .sort();
+  assert.deepEqual(wired, [...PIN_WIRED].sort(), 'a CLI wires pinGhHost that PIN_WIRED does not list, or one stopped: settle the roster');
+});

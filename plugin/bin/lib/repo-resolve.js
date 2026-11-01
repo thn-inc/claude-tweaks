@@ -133,6 +133,17 @@ function hostPathOf(url) {
   return `${authority}${m[2]}`;
 }
 
+// Well-known forges that are not GitHub. The enterprise-token clause never admits
+// one: gh sends GH_ENTERPRISE_TOKEN to whatever GH_HOST names, so an origin on
+// gitlab.com would otherwise receive the user's work token (found in #4505's review).
+// A hosts.yml key still wins: the user configured that host for gh themselves.
+const NON_GITHUB_FORGES = new Set(['gitlab.com', 'bitbucket.org', 'dev.azure.com', 'ssh.dev.azure.com',
+  'codeberg.org', 'gitea.com', 'sr.ht', 'git.sr.ht', 'sourceforge.net', 'git.code.sf.net']);
+
+function isNonGithubForge(host) {
+  return NON_GITHUB_FORGES.has(host) || host.endsWith('.visualstudio.com');
+}
+
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
@@ -145,11 +156,21 @@ function resolveGhSpec(cwd, deps = {}) {
       const env = deps.env || process.env;
       const known = host.endsWith('.ghe.com')
         || ghConfigHosts(deps).has(host)
-        || (Boolean(env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN) && !isSshRemote(url));
+        || (Boolean(env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN) && !isSshRemote(url) && !isNonGithubForge(host));
       if (known) spec = { ...parsed, host };
     }
-  } catch {
-    spec = null; // no origin, no git, or a probe timeout: no host
+  } catch (err) {
+    // No origin or no git is an answer (no host), remembered below. A probe timeout
+    // is not: say so once per cwd and leave it unmemoized, so the next call probes
+    // again instead of sending a GHE origin's calls to github.com for the whole process.
+    if (isTimeoutError(err)) {
+      if (!notedGhHosts.has(`timeout:${key}`)) {
+        notedGhHosts.add(`timeout:${key}`);
+        const write = deps.stderr || ((s) => process.stderr.write(s));
+        write(`claude-tweaks: reading origin timed out in ${key} — gh calls there use the default host until it answers\n`);
+      }
+      return null;
+    }
   }
   ghHostSpecs.set(key, spec);
   return spec;
@@ -167,6 +188,8 @@ function resolveGhHost(cwd, deps = {}) {
 // A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
 // and the token after a value-taking flag is its value (a `--body` text that opens
 // `-R`), never a flag. `gh pr review --comment` is gh's one boolean --comment.
+// An exported GH_REPO is deliberately not read as an explicit repo: Decision Q2
+// names args only, so a GHE origin still gets GH_HOST beside it (#4505).
 const GH_VALUE_FLAGS = new Set(['--body', '--title', '-b', '-t', '-f', '-F', '--field', '--raw-field',
   '--jq', '-q', '--search', '--template', '--input', '--comment', '--subject', '--notes', '--description']);
 
