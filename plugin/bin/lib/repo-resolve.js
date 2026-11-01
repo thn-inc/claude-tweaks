@@ -166,17 +166,18 @@ function resolveGhHost(cwd, deps = {}) {
 // pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
 // A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
 // and the token after a value-taking flag is its value (a `--body` text that opens
-// `-R`), never a flag.
+// `-R`), never a flag. `gh pr review --comment` is gh's one boolean --comment.
 const GH_VALUE_FLAGS = new Set(['--body', '--title', '-b', '-t', '-f', '-F', '--field', '--raw-field',
-  '--jq', '-q', '--search', '--template', '--input']);
+  '--jq', '-q', '--search', '--template', '--input', '--comment', '--subject', '--notes', '--description']);
 
 function hasExplicitHostArg(args) {
   const list = args || [];
+  const prReview = list[0] === 'pr' && list[1] === 'review';
   for (let i = 0; i < list.length; i++) {
     const a = list[i];
     if (a === '--') return false;
     if (typeof a !== 'string') continue;
-    if (GH_VALUE_FLAGS.has(a)) { i++; continue; }
+    if (GH_VALUE_FLAGS.has(a) && !(prReview && a === '--comment')) { i++; continue; }
     if (a === '-R' || a === '--repo' || a === '--hostname') return true;
     if (a.startsWith('--repo=') || a.startsWith('--hostname=') || (a.startsWith('-R') && a.length > 2)) return true;
   }

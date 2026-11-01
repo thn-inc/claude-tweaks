@@ -335,3 +335,21 @@ test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable r
   assert.equal(out.policyLoaded, false, 'requiring repo-resolve.js read GH_TIMEOUT_MS at load (the getter loads ./policy)');
   assert.equal(out.timeout, out.expected);
 });
+
+// Re-review: the free-text value flags --comment, --subject, --notes and --description
+// are values too. `gh pr review --comment` is gh's one boolean --comment, so there the
+// next token is still scanned.
+test('re-review: --comment/--subject/--notes/--description values are not an explicit host arg; a real one after them is', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'close', '1', '--comment', '-R is wrong'], ['issue', 'reopen', '1', '--comment', '--repo'],
+    ['pr', 'merge', '1', '--subject', '-Rfoo'], ['release', 'create', 'v1', '--notes', '--hostname=x'],
+    ['label', 'create', 'x', '--description', '--repo=x']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+  for (const args of [['issue', 'close', '1', '--comment', '-R', '--repo', 'acme/widgets'], ['pr', 'merge', '1', '--subject', '--repo', '-Racme/widgets'],
+    ['release', 'edit', 'v1', '--notes', '-R', '--hostname', 'acme.ghe.com'], ['label', 'create', 'x', '--description', '--repo', '--repo=acme/widgets'],
+    ['pr', 'review', '1', '--comment', '--repo', 'acme/widgets'], ['pr', 'review', '1', '--comment', '-b', '-R', '-Racme/widgets']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
+  }
+});
