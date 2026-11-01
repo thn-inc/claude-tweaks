@@ -35,8 +35,8 @@ files:
 - **URL:** —
 - **Action:** Right before each git-capable dispatch, SDD's controller runs `stash-guard.js snapshot --repo {worktree} --out {snapshot}`. As soon as the agent returns, it runs `stash-guard.js compare --repo {worktree} --baseline {snapshot} --restore --run "$PIPELINE_RUN_DIR" --task {k} [--label {role}]`. Exit 0 means the stack is unchanged. Exit 3 means it changed: every removed entry the CLI could restore is back via `git stash store`, keyed by commit sha (never `stash@{n}`), with its subject byte-for-byte. The CLI also self-logs `AUTO … — Stash guard: implementer for task {k} removed stash entry {sha subject}; restored via git stash store.` under `/build`.
 - **Should feel:** Like a quiet safety net: the dropped entry is back before the next dispatch, with no prompt and no stop.
-- **Should understand:** An entry an agent *added* is logged and left on the stack, never popped. An implementer result of `DONE` becomes `DONE_WITH_CONCERNS`, and the stash change is named to that task's reviewer. A `NEEDS_CONTEXT` or `BLOCKED` result keeps its status. A restored entry lands at `stash@{0}`, so positions shift, but nothing is lost. A sibling session's own legitimate drop during the window is also restored: an accepted false positive, undone by the sha the AUTO line names.
-- **Red flags:** An entry restored with a different subject; an index-keyed restore; a no-op `git stash store` reported as `restored`; a new mid-flow stop.
+- **Should understand:** An entry an agent *added* is logged and left on the stack, never popped. An implementer result of `DONE` becomes `DONE_WITH_CONCERNS`, and the stash change is named to that task's reviewer. A `NEEDS_CONTEXT` or `BLOCKED` result keeps its status. A restored entry lands at `stash@{0}`, so positions shift, but nothing is lost. A sibling session's own legitimate drop during the window is also restored: an accepted false positive, undone by the sha the AUTO line names. A store that wrote nothing is a failed restore, never a restored one. It carries no recover command (`nothing to recover`) only when its commit is still on top after every restore in the compare and no other recover command is printed. Otherwise it keeps a working command, with an error saying why: a sibling dropped a copy, a later restore moved it down, the stack could not be re-read, or it must run after the other recover commands.
+- **Red flags:** An entry restored with a different subject; an index-keyed restore; a no-op `git stash store` reported as `restored`; a "nothing to recover" entry whose commit is not on top, or that is printed alongside another recover command; a new mid-flow stop.
 
 ### 4. A reviewer that touched the stash is reviewed again — `build/dispatch.md`
 - **URL:** —
@@ -47,12 +47,13 @@ files:
 
 ### 5. Read what happened in the handoff — `build/handoff-template.md`
 - **URL:** —
-- **Action:** The build handoff's `### Stash guard` section lists each failed restore with its paste-ready, shell-escaped `git stash store -m "…" <sha>` command on its own line. It also lists each entry left on the stack, and each reviewer whose verdict was voided. Successful restores get a line too, for a standalone `/build` (no run dir) or when the decision-log append did not land.
+- **Action:** The build handoff's `### Stash guard` section lists each failed restore with its paste-ready, shell-escaped `git stash store -m "…" <sha>` command on its own line. A failed restore whose `command` is null — the same commit is still at `stash@{0}`, so `git stash store` wrote nothing — is listed as having nothing to recover, with no command. It also lists each entry left on the stack, and each reviewer whose verdict was voided. Successful restores get a line too, for a standalone `/build` (no run dir) or when the decision-log append did not land.
 - **Should feel:** Complete: if anything happened to the stash, the maintainer can find it and undo it from this one place.
 - **Should understand:** Under `/flow` the AUTO/FAILED lines are in `decisions.md` and reach the Review Console. A subject containing `!` must be pasted with history expansion off (`set +H` / `setopt nobanghist`).
-- **Red flags:** A recovery command rebuilt from the raw subject (backticks would run); a reviewer's voided-verdict line missing from the handoff.
+- **Red flags:** A recovery command rebuilt from the raw subject (backticks would run); a reviewer's voided-verdict line missing from the handoff; a nothing-to-recover entry rendered with a `recover with:` line or a literal `null` command.
 
 ## Origin
 - Created during build of #4559 (build dispatch: size:low → Fast puts a cheapest-tier implementer on git-running tasks, and it ignored the no-stash rule)
 - Steps 1-5 built in this session
+- Updated during build of #4787: Steps 3 and 5 gain the failed-restore shapes (`command: null` with "nothing to recover" only when the commit is still on top of the final stack and no other recover command prints; a working command, with its reason, otherwise)
 - Related: `run-shell-loops-without-a-hook-storm-3074.md` (the Bash prefilter that routes compound `git` commands to the stash gate)

@@ -328,6 +328,8 @@ const STASH_GUARD_FACTS = [
   paragraphFact('AC13.3 verdict stands', /verdict stands/),
   paragraphFact('AC13.4 at most one retry per review', /at most one retry per review/),
   paragraphFact('AC13.4 never a third', /never a third/),
+  paragraphFact('AC2.1 a null restoreFailed[].command logs a FAILED line with no recover clause', /or — when that `command` is null because the same commit is still at `stash@\{0\}` and `git stash store` wrote nothing — as a `FAILED` line that says there is nothing to recover and carries no command/),
+  paragraphFact('AC2.1 a null command reaches the handoff in its nothing-to-recover slot', /a null `command` in its nothing-to-recover slot/),
 ];
 
 // The superseded behaviour: a reviewer-side stash change used to BLOCK the task. It must stay gone.
@@ -384,6 +386,8 @@ const HANDOFF_FACTS = [
   ["T5a a reviewer's entries render in its own line only", /a reviewer dispatch's restored and added entries render in its own line only/],
   ['M1 a subject with ! needs history expansion off', /a subject containing `!` must be pasted with history expansion off \(`set \+H` in bash, `setopt nobanghist` in zsh\) or run non-interactively/],
   ["omit rule counts only an implementer or fix dispatch's logged restore as nothing to render", /or every one that changed the stack was an implementer or fix dispatch's restore whose line landed in decisions\.md — a reviewer dispatch's voided-verdict line is always listed/],
+  ['AC2.1 nothing-to-recover slot', /- \{sha\} \{subject\} — restore failed; same commit still at stash@\{0\}, nothing to recover/],
+  ['AC2.1 a null command takes the nothing-to-recover slot', /an entry whose `command` is null takes the nothing-to-recover slot instead, with no command line/],
 ];
 
 // A restore command rebuilt from the raw subject breaks on `\ " $` and backtick, which the CLI escapes.
