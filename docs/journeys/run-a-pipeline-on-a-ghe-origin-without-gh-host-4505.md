@@ -21,8 +21,8 @@ files:
 - **URL:** —
 - **Action:** `pr-checklist.js --run … --phase build` runs `gh pr view <n> --json body`. The `ghOptions` seam reads `origin` once for that working directory, sees a known GitHub host (`acme.ghe.com` ends in `.ghe.com`), and runs the child with `GH_HOST=acme.ghe.com`. stderr shows `claude-tweaks: resolved repo acme.ghe.com/acme/widgets (host: acme.ghe.com) — gh calls get GH_HOST=acme.ghe.com` once per process.
 - **Should feel:** Quiet and visible at once. Nothing to configure, and one line names the host in case it is wrong.
-- **Should understand:** A host is "known" when it ends in `.ghe.com`, is a key in gh's `hosts.yml` (a GHES host after `gh auth login --hostname`), or an enterprise token (`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN`) is set and the remote is not SSH. A github.com origin gets nothing injected, and argv and env stay byte-identical.
-- **Red flags:** `gh pr view failed on PR #N: spawnSync gh ETIMEDOUT` on a GHE origin; the note printed on a github.com origin.
+- **Should understand:** A host is "known" when it ends in `.ghe.com`, is a key in gh's `hosts.yml` (a GHES host after `gh auth login --hostname`), or an enterprise token (`GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN`) is set and the remote is not SSH. A github.com origin gets nothing injected, and argv and env stay byte-identical. The enterprise-token clause never admits a well-known non-GitHub forge (`gitlab.com`, `bitbucket.org`, Azure DevOps, …), because gh sends that token to whatever host `GH_HOST` names; a `hosts.yml` key still counts. An origin read that times out is not remembered: stderr shows `claude-tweaks: reading origin timed out in {dir} — gh calls there use the default host until it answers` once, and the next call reads origin again.
+- **Red flags:** `gh pr view failed on PR #N: spawnSync gh ETIMEDOUT` on a GHE origin; the note printed on a github.com origin; `GH_HOST` injected for a `gitlab.com` origin because an enterprise token is exported.
 
 ### 2. The merge subject composes — `plugin/bin/lib/compose-subject.js`
 - **URL:** —
