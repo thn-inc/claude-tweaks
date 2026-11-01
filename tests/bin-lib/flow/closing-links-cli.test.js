@@ -188,6 +188,19 @@ test('AC1.1: closingLinks returns the pre-merge envelope run() prints', () => {
   assert.deepEqual(b.h.out, []);
 });
 
+test('each mode reads the PR with its own exact --json field list', () => {
+  // The fake gh answers either shape, so only the recorded argv tells the two lists apart.
+  const prView = (h) => h.calls.filter((c) => c.args[0] === 'pr' && c.args[1] === 'view').map((c) => c.args);
+  const pre = fixture({ pr: { number: 7 } });
+  const hPre = makeDeps(pre.main, { prReads: [preView(body(), [3997])] });
+  assert.equal(run(['--run', pre.runDir, ...PRE], hPre.deps), 0);
+  assert.deepEqual(prView(hPre), [['pr', 'view', '7', '--json', 'body,closingIssuesReferences,url']]);
+  const post = fixture({ pr: { number: 7 } });
+  const hPost = makeDeps(post.main, { prReads: [mergedView(body({ span: ['Fixes #3997'] }), [3997])] });
+  assert.equal(run(['--run', post.runDir, ...POST], hPost.deps), 0);
+  assert.deepEqual(prView(hPost), [['pr', 'view', '7', '--json', 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName']]);
+});
+
 test('AC1.1: closingLinks defaults settleMs to the CLI default (5 re-reads) and honors an explicit 0', () => {
   const still = () => {
     const { main, runDir } = fixture({ pr: { number: 7 } });
