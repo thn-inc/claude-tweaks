@@ -395,14 +395,20 @@ const REPO_ROOT = path.join(__dirname, '..', '..', '..');
 const PRECONDITION_RAW = readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'pr-bookkeeping', 'precondition.js'));
 const PRECONDITION_CODE = stripComments(PRECONDITION_RAW);
 const FORWARD_RE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*runDir,\s*\{\s*onDegrade\s*\}\)/;
+const CALL_SITE_RE = /resolveRunPinnedIntegrationModel\(/g;
+const callSiteCount = (code) => (code.match(CALL_SITE_RE) || []).length;
 
 // FORWARD_RE pins the call's argument text to exactly `{ onDegrade }`, so a
 // timeoutMs in the call fails the match -- that is the Q3 property. No
 // whole-file timeoutMs ban: an unrelated timeoutMs elsewhere in the file (a git
-// spawn bound) would not break it.
+// spawn bound) would not break it. The single-call-site count closes the other
+// gap: a second call that carries timeoutMs would not disturb FORWARD_RE's match
+// on the first.
 test('precondition.js forwards exactly { onDegrade } to resolveRunPinnedIntegrationModel -- it follows the gh-timeout-ms ladder (#4578 AC13.2, AC13.3, AC21.1)', () => {
   assert.strictEqual(stripperVerdict(PRECONDITION_RAW, PRECONDITION_CODE), 'ok', STRIPPER_VERDICT_MESSAGES.misparsed);
   assert.match(PRECONDITION_CODE, FORWARD_RE);
+  assert.strictEqual(callSiteCount(PRECONDITION_CODE), 1,
+    'resolveRunPinnedIntegrationModel( must be called exactly once, so no second call can carry timeoutMs');
 });
 
 test('go-red: the forwarding scan rejects a two-argument call, a timeoutMs call, and a call that exists only in a comment', () => {
@@ -418,6 +424,13 @@ test('go-red: the forwarding scan rejects a two-argument call, a timeoutMs call,
   assert.match(stripComments(`${live} // timeoutMs`), FORWARD_RE);
   // timeoutMs listed before onDegrade is also rejected
   assert.doesNotMatch(stripComments('model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 5000, onDegrade });'), FORWARD_RE);
+  // a second call carrying timeoutMs leaves FORWARD_RE matching the first, but the call-site count catches it
+  const twoCalls = `${live}\nother = resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 5000, onDegrade });`;
+  assert.match(stripComments(twoCalls), FORWARD_RE);
+  assert.strictEqual(callSiteCount(stripComments(live)), 1);
+  assert.strictEqual(callSiteCount(stripComments(twoCalls)), 2);
+  // a call mentioned only in a comment is not a call site
+  assert.strictEqual(callSiteCount(stripComments(`${live}\n// resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 1 });`)), 1);
 });
 
 test('/test Step 0 names the degraded-detection reason the precondition returns (#4578 Q11 prose twin)', () => {

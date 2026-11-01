@@ -44,9 +44,6 @@ const MODES = Object.freeze(['auto']);
 const MODE_SOURCES = Object.freeze(['arg', 'dispatch', 'policy', 'default']);
 const CEREMONIES = Object.freeze(['fast-lane', 'standard']);
 const CEREMONY_SOURCES = Object.freeze(['label', 'judged']);
-// resolve-policy's `degraded` reason codes on a degraded forge detection (#4578),
-// read from the producer's own list (policy-schema.js) so the two cannot drift.
-const DEGRADED_REASONS = FORGE_DEGRADE_REASONS;
 const SECTION = '/flow';
 // `created:` is the run id's timestamp prefix (_shared/run-dir-resolution.md's
 // ISO-timestamp rule: YYYY-MM-DDTHHMMSS, UTC, no colons).
@@ -209,8 +206,8 @@ function initDecisions(runDir, header) {
 // resolved run pin, or null/'' when it resolved empty: the pair is then omitted
 // (so the 13 levers still write) and a SKIP is logged — the omit-on-empty rule
 // of manifesto.md's Write mechanism. `integrationModelDegraded` is null or the
-// degraded forge detection's reason code ('timeout' | 'timeout-then-exit', else
-// ManifestoInputError): non-null forces no pin whatever `integrationModel` holds
+// degraded forge detection's reason code (one of policy-schema.js's
+// FORGE_DEGRADE_REASONS, else ManifestoInputError): non-null forces no pin whatever `integrationModel` holds
 // (a degraded detection is never the run's pin, #4578 Q10) and logs a distinct
 // SKIP in place of the empty-value one. A merge-verification lever whose source
 // is `degraded` (computeLevers) logs the AUTO line naming why it is written as
@@ -223,8 +220,8 @@ function writeManifesto({ runDir, records, levers, integrationModel = null, inte
   if (mergeRefusal !== null && mergeRefusal !== 'dispatch-bound' && mergeRefusal !== 'multi-record') {
     throw new ManifestoInputError(`mergeRefusal must be null, dispatch-bound or multi-record, got ${mergeRefusal}`);
   }
-  if (integrationModelDegraded !== null && !DEGRADED_REASONS.includes(integrationModelDegraded)) {
-    throw new ManifestoInputError(`integrationModelDegraded must be null, ${DEGRADED_REASONS.join(' or ')}, got ${integrationModelDegraded}`);
+  if (integrationModelDegraded !== null && !FORGE_DEGRADE_REASONS.includes(integrationModelDegraded)) {
+    throw new ManifestoInputError(`integrationModelDegraded must be null, ${FORGE_DEGRADE_REASONS.join(' or ')}, got ${integrationModelDegraded}`);
   }
   checkRecords(records);
   const created = runCreated(runDir);

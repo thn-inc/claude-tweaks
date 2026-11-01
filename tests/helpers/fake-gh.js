@@ -10,10 +10,10 @@
 //   'ok'       prints the `gh repo view --json owner,name` payload, exit 0
 //   'fail'     exit 1
 //   'hang'     `exec sleep 30` -- the shell becomes the sleep, so the SIGTERM an
-//              execFileSync timeout sends kills the process holding the stdout
-//              pipe; a child left behind would block execFileSync for the full 30 s
-//   { slow: N } sleeps N seconds, then prints the payload; a TERM kills its sleep
-//              first, for the same reason
+//              execFileSync timeout sends kills the sleep itself instead of
+//              leaving an orphaned `sleep` process behind
+//   { slow: N } sleeps N seconds, then prints the payload; a TERM trap kills its
+//              sleep first, for the same reason
 //
 // count() is the number of invocations so far; restore() puts PATH back and
 // removes the counter dir.

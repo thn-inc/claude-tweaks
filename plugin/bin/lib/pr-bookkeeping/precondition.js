@@ -114,10 +114,11 @@ function checkPrBookkeepingPrecondition({ runDir, cwd = process.cwd() }) {
   } catch {
     model = 'local-merge';
   }
-  // A forge detection that timed out, and whose retry did not succeed, cannot prove the run is pr-first or
-  // not, so this fails open like every other ambiguity here -- but under its own
-  // reason, so /test can log that the precondition went unverified rather than
-  // reporting a 'not-pr-first' it never established (record #4578 Decision Q11).
+  // A forge detection that timed out, and whose retry did not succeed, cannot
+  // prove the run is pr-first or not, so this fails open like every other
+  // ambiguity here -- but under its own reason, so /test can log that the
+  // precondition went unverified rather than reporting a 'not-pr-first' it never
+  // established (record #4578 Decision Q11).
   if (degraded) return { ok: true, reason: 'degraded-detection' };
   if (model !== 'pr-first') return { ok: true, reason: 'not-pr-first' };
 

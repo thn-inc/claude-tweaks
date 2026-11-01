@@ -1286,16 +1286,15 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
   const repo = unpinnedRepoWithOrigin();
   const runDir = runDirForId('2026-10-31T000000-spec-4578');
   const gh = fakeGh({ first: 'hang' });
+  const seen = [];
   try {
     withoutGhTimeoutEnv(() => {
-      const t0 = Date.now();
-      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000 });
-      const elapsed = Date.now() - t0;
+      const result = pre.resolveRunPinnedIntegrationModel(repo, runDir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) });
       assert.strictEqual(result, 'local-merge');
       assert.strictEqual(gh.count(), 2);
-      // Without forwarding, the 5000 ms default makes two hung attempts take >= 10 s.
-      assert.ok(elapsed < 4500, `expected the 1000 ms bound to apply, took ${elapsed} ms`);
     });
+    // The recorded timeoutMs proves which bound reached detection (no wall-clock assertion).
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
   } finally {
     gh.restore();
   }
@@ -1328,7 +1327,7 @@ test('the gate call-shape matcher sees live code only (#4578 go-red self-test)',
   // The same text only in a line comment, a block comment, or a string: the live call is gone.
   assert.strictEqual(scan(`// ${live}\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
   assert.strictEqual(scan(`/* ${live} */\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
-  assert.strictEqual(scan(`x = '${live.replace(/'/g, '')}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`x = '${live}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
   // A changed live call shape (no timeoutMs) is not matched even with a comment holding the old one after it.
   assert.strictEqual(scan(`x = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { onDegrade }); // ${live}`), false);
   // The scan still sees the live call after a literal holding a comment opener.

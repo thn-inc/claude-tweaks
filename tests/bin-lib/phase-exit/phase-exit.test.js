@@ -851,13 +851,36 @@ const LADDER_RE = /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbe
 const GUARD_RE = /if\s*\(\s*key\s*!==\s*'integration-model'\s*\)\s*return\s+GIT_TIMEOUT_MS\s*;/;
 const WIRING_RE = /timeout:\s*policyReadTimeoutMs\(\s*key\s*,\s*cwd\s*\)/;
 
+// The text from `function policyReadTimeoutMs` through its closing brace, or null when the function is
+// absent or unbalanced. Braces are counted over blank-mode text (a brace in a string or regex is not
+// code); blank mode keeps offsets, so the same range slices the literal-keeping text the regexes read.
+function policyReadTimeoutMsBody(stripped, blanked) {
+  const start = blanked.search(/function\s+policyReadTimeoutMs\s*\(/);
+  if (start < 0) return null;
+  const open = blanked.indexOf('{', start);
+  if (open < 0) return null;
+  let depth = 0;
+  for (let i = open; i < blanked.length; i += 1) {
+    if (blanked[i] === '{') depth += 1;
+    else if (blanked[i] === '}' && (depth -= 1) === 0) return stripped.slice(start, i + 1);
+  }
+  return null;
+}
+
 function wiringFindings(raw) {
   const stripped = stripComments(raw);
-  const verdict = stripperVerdict(raw, stripped);
-  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  const blanked = stripComments(raw, { literals: 'blank' });
+  for (const text of [stripped, blanked]) {
+    const verdict = stripperVerdict(raw, text);
+    if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  }
   const findings = [];
-  const ladder = stripped.search(LADDER_RE);
-  const guard = stripped.search(GUARD_RE);
+  const body = policyReadTimeoutMsBody(stripped, blanked);
+  if (body === null) return ['no function policyReadTimeoutMs(...) { ... } body found to scan'];
+  // The guard-before-ladder order is checked inside policyReadTimeoutMs only: a same-text guard in
+  // another function does not protect the ladder expression here.
+  const ladder = body.search(LADDER_RE);
+  const guard = body.search(GUARD_RE);
   if (ladder < 0) findings.push('no ladder-sized timeout (GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(...))');
   if (guard < 0) findings.push("the ladder timeout is not guarded to the integration-model key (if (key !== 'integration-model') return GIT_TIMEOUT_MS;)");
   if (ladder >= 0 && guard >= 0 && guard > ladder) findings.push('the integration-model guard must precede the ladder expression');
@@ -877,6 +900,15 @@ test('go-red: the wiring scan flags the ladder applied to every key, a comment-o
   const hiddenInComment = `${unguarded}\n// if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n`;
   assert.match(wiringFindings(hiddenInComment).join('\n'), /not guarded to the integration-model key/);
   assert.match(wiringFindings('const a = (;').join('\n'), /does not compile/);
+  // The guard text living in a different function does not satisfy the scan for policyReadTimeoutMs.
+  const elsewhere = `${unguarded}\nfunction otherKeyGuard(key) {\n  if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n  return 0;\n}\n`;
+  assert.match(wiringFindings(elsewhere).join('\n'), /not guarded to the integration-model key/);
+  // The guard placed after the ladder inside the function is flagged as misordered.
+  const reordered = good.replace(GUARD_RE.exec(good)[0], '').replace(/(return GIT_REMOTE_PROBE_TIMEOUT_MS[^\n]*\n)/, `$1  if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n`);
+  assert.notEqual(reordered, unguarded, 'the control must actually move the guard');
+  assert.match(wiringFindings(reordered).join('\n'), /must precede the ladder expression/);
+  // A file with no policyReadTimeoutMs function has nothing to scan.
+  assert.match(wiringFindings(good.replace(/function\s+policyReadTimeoutMs/, 'function renamedAway')).join('\n'), /no function policyReadTimeoutMs/);
 });
 
 // ---- checklist ----
