@@ -115,7 +115,7 @@ test("auto-merge-short-circuit.md's retained local-merge branch reads the worktr
   const parts = AUTO_MERGE.split('**`integration-model: local-merge`:**');
   const localMergeSection = parts[parts.length - 1];
   assert.ok(localMergeSection, 'local-merge branch must exist');
-  assert.match(localMergeSection.slice(0, 4000), /require\('\$RUN_DIR\/run-state\.json'\)\.worktree/);
+  assert.match(localMergeSection.slice(0, 4000), /require\(process\.argv\[1\]\+'\/run-state\.json'\)\.worktree;[^\n]*"\{run-dir\}"/);
   assert.doesNotMatch(
     localMergeSection.slice(0, 2000),
     /git -C "\$RUN_DIR" (rev-parse|branch)/,

@@ -152,7 +152,7 @@ this step must run before the `pr-first` branch (which never otherwise needs a c
 as before the `local-merge` branch's own later resolution:
 
 ```bash
-WORKTREE_PATH=$(node -e "console.log(require('$RUN_DIR/run-state.json').worktree)")
+WORKTREE_PATH=$(node -e "console.log(require(process.argv[1]+'/run-state.json').worktree)" "{run-dir}")
 node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 ```
 
@@ -276,13 +276,14 @@ the values first and substitute them **literally** into every later call;
 don't carry them in shell variables.
 
 ```bash
-node -e "const w=require('$RUN_DIR/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
+node -e "const w=require(process.argv[1]+'/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)" "{run-dir}"   # -> {worktree-path}
 git -C "{worktree-path}" branch --show-current   # -> {branch}
 node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values integration-branch
 gh api "repos/{owner}/{repo}" -q .default_branch # only when the line above came back empty
 ```
 
-The first command reads `{worktree-path}` from `run-state.json`'s own `worktree` field —
+The first command reads `{worktree-path}` from `run-state.json`'s own `worktree` field, taking
+`{run-dir}` (`$RUN_DIR`'s value) as a literal argument so no path character reaches the script text —
 `record-worktree` (`build/worktree-setup.md` Step 4.5) stamped it there; it is the one value that
 actually names the worktree, unlike `$RUN_DIR` itself (**#299**: `$RUN_DIR` sits inside the main
 checkout per `_shared/pipeline-run-dir.md`'s anchoring rule, so a bare `git -C "$RUN_DIR"`
