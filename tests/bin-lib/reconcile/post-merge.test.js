@@ -1353,7 +1353,8 @@ test('classifyEntry: every next — rerun, rerun-where-gh, rerun-after-stale-cla
 // verdict here. A word added there fails this test until it is classified (deny direction: `failed`).
 test('classifyEntry classifies every action word closing-links.js emits', () => {
   const { stripComments, stripperVerdict } = require('../../helpers/strip-comments');
-  const raw = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'closing-links.js'), 'utf8');
+  const { readText } = require('../../helpers/read-skill');
+  const raw = readText(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'closing-links.js'));
   const src = stripComments(raw);
   assert.equal(stripperVerdict(raw, src), 'ok');
   const words = new Set();
