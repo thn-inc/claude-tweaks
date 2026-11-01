@@ -43,7 +43,7 @@ its own — either `flow/claim-targets.md`'s "Claim contested" stop, or its "Cla
 that card's own routing into `dispatch/resume-confirmation.md` was itself skipped under
 `DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
 call's terminal output), or its "Claims branch missing" stop (`claim-targets.js` exit 6, #4495: the
-`claims-registry` branch is missing on origin and could not be created) — no build or test ever
+`claims-registry` branch is missing on origin and creating it was refused — a network failure during the bootstrap is exit 4, never this stop) — no build or test ever
 ran, the pipeline stopped before the Config Manifesto, this record was never claimed by this run at
 all, so step 1 below's ownership check will correctly find no claim to release (skip is the right
 outcome there, not an error). The one thing this case adds: **when `DISPATCH_HEADLESS=1` was set on

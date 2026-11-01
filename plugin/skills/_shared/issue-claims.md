@@ -44,7 +44,7 @@ PUT whose re-read is absent and whose `GET repos/{owner}/{repo}/branches/claims-
 never contested, never a generic transport failure. `claim-targets.js` bootstraps it once per run
 from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-only git push, else
 `POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
-retries; a refused creation exits `6` naming the branch and the reason verbatim. The MCP transport
+retries; a refused creation exits `6` naming the branch and the reason verbatim; a network failure or rate limit during it is transient (exit `4`). The MCP transport
 bootstraps via the **Bootstrap the branch** bullet below. `release-claim.js` never creates it: a
 branchless remote is exit `3` (a "nothing to release" note, no comment, on either `gh` transport).
 

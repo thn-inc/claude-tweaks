@@ -49,10 +49,10 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 3 = contested, or in flight: a pr-opened tombstone whose linked PR is still open,\n'
   + '           or a stale claim whose run marker sits on an open same-repo PR\n'
   + '           (contested: {contested:[{issue,holder}], ...}; in-flight: {inFlight:[{issue,link}], ...})\n'
-  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap rate-limited by GitHub)\n'
+  + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap that hit a network failure or a rate limit)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
   + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
-  + '  exit 6 = the claims-registry branch is missing on origin and could not be created —\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (permission, ruleset, gh absent) —\n'
   + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
