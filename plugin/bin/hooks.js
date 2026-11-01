@@ -108,9 +108,9 @@ function pluginRoot() {
 // #1143: the one verb table. Each key is a dispatch key — the `hooks.js <verb>`
 // argv token — and each entry carries that verb's usage line and its `run(argv)`
 // handler (the `run{Verb}` functions below, one per verb; see docs/plugin-structure.md's
-// hooks.js line). One table feeds the unknown-flag guard in main() below, which
-// also intercepts `--help`/`-h` (membership: a verb absent from here gets no guard, by design — the EVENTS
-// names are invoked by the harness via stdin JSON, never probed with a `--help`
+// hooks.js line). One table feeds the unknown-flag guard in main() below, which also
+// intercepts `--help`/`-h` (membership: a verb absent from here gets no guard, by design —
+// the EVENTS names are invoked by the harness via stdin JSON, never probed with a `--help`
 // flag, and never fell through to the implicit-run-dir-guess hazard #1143
 // closed), the derived `USAGE` map, dispatch, and the usage listing an unknown
 // or missing verb prints. record-pr's and spec-status's own internal "usage:"
@@ -164,8 +164,8 @@ function usageText() {
 // never declared, so they fall out as "unknown" the same as a genuine typo.
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
-// unambiguousOnly is chosen per call site (resolveOpts), not by this table.
-// That holds for every resolveRunArg caller.
+// unambiguousOnly is chosen per call site (resolveOpts), not by this table,
+// for every resolveRunArg caller.
 const KNOWN_FLAGS = {
   'archive-run': ['--run'],
   'close-run': ['--run'],

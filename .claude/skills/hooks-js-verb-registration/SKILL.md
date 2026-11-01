@@ -34,7 +34,7 @@ Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout,
 
 ## Adding a flag to an existing verb
 
-A new flag on a shipped verb lands in a subset of the verb's sites, and which subset depends on the verb. #3992 (`resolve-console --filing-failed`, flag-strict, takes a value) and #4677 (`resolve-run-dir --archived`, not flag-strict, boolean) touched different ones.
+A new flag on a shipped verb lands in a subset of the verb's sites, and whether the flag takes a value sets that subset: a value-taking flag also lands in row 4. #3992 (`resolve-console --filing-failed`, takes a value) touched row 4; #4677 (`resolve-run-dir --archived`, boolean) did not.
 
 | # | Site | When |
 |---|---|---|
@@ -49,4 +49,4 @@ Decisions each flag owes:
 
 1. **What does a typo do?** Every verb refuses an unknown flag with its usage line (#4777), so a misspelled flag never runs the verb. Keep the without-flag path safe and byte-for-byte unchanged for existing callers (`--archived` is opt-in, and without it the call resolves nothing and its caller stops).
 2. **Refuse bad combinations first.** Check a flag's conflicts and prerequisites before any resolution step or write, so an earlier short-circuit cannot mask them: `--archived` refuses `--create` and a missing `--spec-slug` before step 1, so an inherited `PIPELINE_RUN_DIR` never hides the refusal.
-3. **Removing a flag** from a flag-strict verb follows the two-release order in the comment above `teardown-run`'s `KNOWN_FLAGS` entry: the prose call sites and their pins first, the table entry and usage text a release later.
+3. **Removing a flag** from a verb follows the two-release order in the comment above `teardown-run`'s `KNOWN_FLAGS` entry: the prose call sites and their pins first, the table entry and usage text a release later.
