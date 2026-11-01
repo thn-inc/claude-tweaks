@@ -19,7 +19,8 @@
 - A pinned run (`resolvePolicyConfig` source `run-config` or `policy`) never reads the memo.
 - `precondition.js`'s call (`resolveRunPinnedIntegrationModel(mainRoot, runDir, { onDegrade })`) must behave exactly as today: no memo read, no memo write.
 - Existing tests `bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt` and `... the override receives an onDegrade callback; a clean local-merge still persists prExempt` stay green unchanged.
-- Every new test goes red against pre-change code (prove by reverting the source change).
+- Every new test goes red against pre-change code (prove by reverting the source change) — AC7.1; each task's Step 2 run is that red proof.
+- Waived AC7.2: the full `npm test` run is `/build` Common Step 5's job, not a per-task step.
 - Fake-`gh` tests carry `{ skip: STUB_SKIP }` (`tests/helpers/path-stub.js`), like the existing #4578 tests.
 - No new exemption: a memo hit must reach exactly the gate outcome a fresh degrade reaches (allow, no `prExempt`). `.claude/skills/pre-tool-use-gate-exemptions` governs exemptions on this file's deny gates; this change adds none and changes no allow/deny decision, only whether the probe runs.
 
@@ -65,7 +66,7 @@ test('isFreshForgeDegradeMemo: fresh only for a finite past timestamp younger th
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test --test-name-pattern="4830" tests/hooks-pre-tool-use.test.js`
-Expected: FAIL (`FORGE_DEGRADE_MEMO_TTL_MS` undefined; `pre.isFreshForgeDegradeMemo is not a function`)
+Expected: FAIL after Step 1 (`FORGE_DEGRADE_MEMO_TTL_MS` undefined; `pre.isFreshForgeDegradeMemo is not a function`). Before Step 1 the pattern matches no test, so the run exits 0. Covers AC4.1's freshness rule at the unit level.
 
 - [ ] **Step 3: Add the constant and the predicate**
 
@@ -88,6 +89,9 @@ git commit -m "Add FORGE_DEGRADE_MEMO_TTL_MS and isFreshForgeDegradeMemo — #48
 **Files:**
 - Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (`resolveRunPinnedIntegrationModel`, ~lines 1640-1685, and its header comment)
 - Test: `tests/hooks-pre-tool-use.test.js` (after Task 1's tests)
+
+Waived plugin/bin/lib/hooks/context.js: read only (`readRunState`, `writeRunState` used unchanged)
+Waived tests/helpers/fake-gh.js: read only (the counting fake is used unchanged)
 
 **Interfaces:**
 - Consumes: `isFreshForgeDegradeMemo` (Task 1); `ctxLib.readRunState(runDir)`, `ctxLib.writeRunState(runDir, patchOrFn)`.
@@ -135,7 +139,7 @@ Write each comment block as its own `test(...)` with these exact assertions.
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test --test-name-pattern="#4830 memo" tests/hooks-pre-tool-use.test.js`
-Expected: FAIL. a) fails on `forgeDegradedAt === T` (undefined) and on call 2's count (4); b) and e) fail on their state assertions. f) and g) pass before the change (they pin behavior the change must keep) — confirm they still pass after Step 3.
+Expected: FAIL after Step 1. a) fails on `forgeDegradedAt === T` (undefined) and on call 2's count (4); b) and e) fail on their state assertions. Coverage: b) is AC2.1/AC2.2 (expiry re-probes, stamp refreshed); c) is AC4.1; f) is AC5.1; e) is AC3.1's memo-clearing half at resolver level. f) and g) pass before the change (they pin behavior the change must keep) — confirm they still pass after Step 3.
 
 - [ ] **Step 3: Implement the memo in `resolveRunPinnedIntegrationModel`**
 
@@ -184,7 +188,7 @@ Update `GATE_CALL_SHAPE` to require `degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test --test-name-pattern="4830|4578|call-shape|HOOK_FORGE" tests/hooks-bookkeeping-stamps-gate.test.js tests/hooks-pre-tool-use.test.js`
-Expected: FAIL. AC1 reports a count of 6; AC3 fails on `forgeDegradedAt === null` (undefined); the call-shape test fails until the gate passes the new key. The AC1 test takes about 10 s (two real 5 s hook-bounded attempts); that is expected, so don't shorten it.
+Expected: FAIL. This run is the AC7.1 red proof for the gate-level tests. The AC1 test covers AC1.1, AC1.2, AC1.3 and AC1.4 and reports a count of 6. The AC3 test covers AC3.1. The two unchanged #4578 Q5 gate tests cover AC6.1 and AC6.2. AC1 reports a count of 6; AC3 fails on `forgeDegradedAt === null` (undefined); the call-shape test fails until the gate passes the new key. The AC1 test takes about 10 s (two real 5 s hook-bounded attempts); that is expected, so don't shorten it.
 
 - [ ] **Step 3: Pass the option at the gate**
 
