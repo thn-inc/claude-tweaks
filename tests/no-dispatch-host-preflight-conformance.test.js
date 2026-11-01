@@ -68,7 +68,7 @@ const POLICY_FACTS = [
 ];
 const policyMissing = missingFactsOf(POLICY_FACTS);
 
-test('AC5.1 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', () => {
+test('AC5.1 AC1.2 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC10.3 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', () => {
   const section = sectionOf(readText(POLICY), POLICY_HEADING);
   assert.deepEqual(policyMissing(section), [], 'the No-dispatch host section must state every fact of the stop (#4555)');
 });
@@ -97,4 +97,103 @@ test('AC9.2: the dispatch route never names the prefixed flow invocation', () =>
   const doctored = section.replace(sentence, sentence.replace('to use after', 'to use a.b PIPELINE_RUN_DIR="x" after'));
   assert.notEqual(doctored, section, 'anchor text for the dispatch-route sentence not found — control cannot discriminate');
   assert.ok(dispatchRouteSentence(doctored).includes('PIPELINE_RUN_DIR'), 'the control copy must trip the same check');
+});
+
+// --- Call sites: flow Step 2.4 and build Common Step 1.5 (Task 2) ---
+
+const FLOW_SKILL = path.join(SKILLS, 'flow', 'SKILL.md');
+const BUILD_SKILL = path.join(SKILLS, 'build', 'SKILL.md');
+const FLOW_ITEM_PREFIX = '- 2.4 — Dispatch-capability preflight (#4555).';
+const BUILD_PARA_PREFIX = '**Dispatch-capability preflight (#4555), first, whatever this step\'s skip gate decides:**';
+
+const flowItemOf = (text) => lineStartingWith(text, FLOW_ITEM_PREFIX);
+const buildParaOf = (text) => lineStartingWith(text, BUILD_PARA_PREFIX);
+
+const FLOW_FACTS = [
+  [/When the step list includes `build`/, 'AC10.1: flow gates only a step list with build'],
+  [/on every entry — fresh, or a resume \(a step-list resume or an adopted `PIPELINE_RUN_DIR`\)/, 'AC1.2: flow runs it again on a build resume'],
+  [/`_shared\/subagent-dispatch-core\.md`'s no-`Agent` probe/, 'AC1.1: flow cites the probe'],
+  [/before 2\.5-2\.8, so a host that can never build leaves no claim or draft PR behind/, 'AC1.2: flow runs it before claim and worktree creation'],
+  [/A step list without `build` skips it \(review's run-level \*\*Independence: degraded\*\* caveat covers that run\)/, 'AC10.2: build-less resumes proceed'],
+  [/stop BLOCKED per `build\/execution-mode-policy\.md`'s No-dispatch host section/, 'AC2.1: flow stop cites the policy section'],
+  [/never implement plan tasks inline/, 'AC2.2: flow never inline'],
+];
+const BUILD_FACTS = [
+  [/before Common Step 1\.6's plan reviewer and Common Step 2's `subagent` execution/, 'AC1.3: build runs it before subagent execution (and before 1.6)'],
+  [/`_shared\/subagent-dispatch-core\.md`'s no-`Agent` probe/, 'AC1.1: build cites the probe'],
+  [/stop BLOCKED per `execution-mode-policy\.md`'s No-dispatch host section/, 'AC2.1: build stop cites the policy section'],
+  [/never implement the plan's tasks inline, and never switch to `batched` on the run's behalf/, 'AC2.2: build never inline, never auto-batched'],
+];
+const flowMissing = missingFactsOf(FLOW_FACTS);
+const buildMissing = missingFactsOf(BUILD_FACTS);
+
+test('AC1.1 AC1.2 AC2.1 AC2.2 AC10.1 AC10.2: flow Step 2.4 runs the dispatch-capability preflight (#4555)', () => {
+  const item = flowItemOf(readText(FLOW_SKILL));
+  assert.ok(item, `flow SKILL.md has no "${FLOW_ITEM_PREFIX}" line`);
+  assert.deepEqual(flowMissing(item), [], 'flow Step 2.4 must state every fact of the preflight (#4555)');
+});
+
+test('AC8.2: each flow Step 2.4 fact can go red', () => {
+  const item = flowItemOf(readText(FLOW_SKILL));
+  assert.ok(item, `flow SKILL.md has no "${FLOW_ITEM_PREFIX}" line`);
+  assertEachPatternGoesRed(item, FLOW_FACTS, flowMissing);
+});
+
+test('AC1.1 AC1.3 AC2.1 AC2.2: build Common Step 1.5 runs the dispatch-capability preflight (#4555)', () => {
+  const para = buildParaOf(readText(BUILD_SKILL));
+  assert.ok(para, `build SKILL.md has no "${BUILD_PARA_PREFIX}" paragraph`);
+  assert.deepEqual(buildMissing(para), [], 'build Common Step 1.5 must state every fact of the preflight (#4555)');
+});
+
+test('AC8.2: each build Common Step 1.5 fact can go red', () => {
+  const para = buildParaOf(readText(BUILD_SKILL));
+  assert.ok(para, `build SKILL.md has no "${BUILD_PARA_PREFIX}" paragraph`);
+  assertEachPatternGoesRed(para, BUILD_FACTS, buildMissing);
+});
+
+test('AC1.2: flow 2.4 precedes 2.8 (claim)', () => {
+  const text = readText(FLOW_SKILL);
+  const preflight = '- 2.4 — Dispatch-capability preflight';
+  const claim = '- 2.8 — Claim the targets';
+  const precedes = (t) => t.indexOf(preflight) >= 0 && t.indexOf(preflight) < t.indexOf(claim);
+  assert.ok(precedes(text), 'Step 2.4 must come before the 2.8 claim');
+
+  // Control: swap the two lines in memory — the comparison must flip.
+  const lines = text.split('\n');
+  const a = lines.findIndex((l) => l.startsWith(preflight));
+  const b = lines.findIndex((l) => l.startsWith(claim));
+  assert.ok(a >= 0 && b >= 0, 'both lines must exist for the swap control');
+  [lines[a], lines[b]] = [lines[b], lines[a]];
+  assert.ok(!precedes(lines.join('\n')), 'the swapped copy must fail the ordering check');
+});
+
+test('AC1.3: build preflight sits in Common Step 1.5, before Common Step 1.6', () => {
+  const text = readText(BUILD_SKILL);
+  const h15 = '### Common Step 1.5: Plan Audit';
+  const h16 = '### Common Step 1.6: Plan Review';
+  const placed = (t) => {
+    const at = t.indexOf(buildParaOf(t));
+    return at > t.indexOf(h15) && t.indexOf(h15) >= 0 && at < t.indexOf(h16);
+  };
+  assert.ok(placed(text), 'the preflight paragraph must sit between the 1.5 and 1.6 headings');
+
+  // Control: move the paragraph after the 1.6 heading line in memory — the check must fail.
+  const para = buildParaOf(text);
+  const without = text.replace(`${para}\n`, '');
+  const h16Line = without.split('\n').find((l) => l.startsWith(h16));
+  const moved = without.replace(h16Line, `${h16Line}\n\n${para}`);
+  assert.notEqual(moved, without, 'the move control must change the text');
+  assert.ok(!placed(moved), 'the moved copy must fail the placement check');
+});
+
+test('AC2.2: neither SKILL.md tells the agent to implement plan tasks inline', () => {
+  const INLINE = /implement(?:s|ing)? (?:the plan(?:'s tasks)?|plan tasks) inline/i;
+  const offenders = (text) => text.split('\n').filter((line) => INLINE.test(line) && !/never implement/i.test(line));
+  for (const file of [FLOW_SKILL, BUILD_SKILL]) {
+    assert.deepEqual(offenders(readText(file)), [], `${path.basename(path.dirname(file))}/SKILL.md must not instruct inline implementation of plan tasks`);
+  }
+
+  // Control: an affirmative instruction appended to a copy must be reported.
+  const doctored = `${readText(FLOW_SKILL)}\nImplement plan tasks inline.`;
+  assert.deepEqual(offenders(doctored), ['Implement plan tasks inline.'], 'the sweep must report an affirmative inline instruction');
 });

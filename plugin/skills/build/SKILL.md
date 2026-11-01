@@ -184,6 +184,8 @@ If the user did not specify `worktree`, skip this step.
 
 ### Common Step 1.5: Plan Audit
 
+**Dispatch-capability preflight (#4555), first, whatever this step's skip gate decides:** under `subagent`, probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before Common Step 1.6's plan reviewer and Common Step 2's `subagent` execution. None found → stop BLOCKED per `execution-mode-policy.md`'s No-dispatch host section — never implement the plan's tasks inline, and never switch to `batched` on the run's behalf.
+
 Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage) (`plan-audit.md`). Five checks:
 - **Check A (always):** verify every path in the plan's Files: sections exists (or its parent directory exists for Create/Test, or is created by another Create/Test entry in the same plan).
 - **Check B (conditional):** when the plan declares `Scope keywords:`, an fs-walk sweeps the repo for each keyword and lists any matched files not in the plan.
