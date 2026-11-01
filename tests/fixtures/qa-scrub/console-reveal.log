@@ -1,0 +1,2 @@
+[     812ms] [LOG] app booted @ http://localhost:3000/src/main.js:4
+[    1234ms] [LOG] token issued: FAKE-QA-TOKEN-0000-not-a-real-secret @ http://localhost:3000/src/tokens.js:22

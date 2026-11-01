@@ -8,6 +8,8 @@
 // malformed input.
 'use strict';
 
+const { scrubLine } = require('../qa-scrub/line');
+
 const STATUSES = new Set(['PASS', 'PASS_WITH_CAVEATS', 'FAIL', 'SKIPPED']);
 const CATEGORIES = new Set(['stale-selector', 'code-bug', 'ux-issue', 'flaky-env', 'story-bug']);
 
@@ -50,6 +52,23 @@ function suggestedFix(category, storyId, runDir) {
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
 const orNull = (v) => (v === undefined ? null : v);
+const isCount = (v) => Number.isInteger(v) && v >= 0;
+
+// #4477: the qa-agent forwards bin/qa-scrub.js's whole outcome for a story that
+// declared `secrets:`; only these keys reach report.json, and `line` is always
+// recomposed here, never trusted from the payload.
+function validScrub(s) {
+  return isObject(s) && typeof s.ok === 'boolean'
+    && isCount(s.values_scrubbed) && isCount(s.artifacts_scrubbed) && isCount(s.screenshots_removed)
+    && (s.remaining === undefined || (Array.isArray(s.remaining) && s.remaining.every((p) => typeof p === 'string')));
+}
+
+function composeScrub(s) {
+  const counts = {
+    values_scrubbed: s.values_scrubbed, artifacts_scrubbed: s.artifacts_scrubbed, screenshots_removed: s.screenshots_removed,
+  };
+  return { ok: s.ok, ...counts, remaining: s.remaining || [], line: scrubLine(counts) };
+}
 
 function validate(input) {
   if (!isObject(input)) return 'input-not-object';
@@ -72,6 +91,11 @@ function validate(input) {
       if (list === undefined || list === null) continue;
       const isValid = key === 'caveats' ? (e) => typeof e === 'string' && e !== '' : isObject;
       if (!Array.isArray(list) || !list.every(isValid)) return `invalid-${key}: ${s.id}`;
+    }
+    if (Object.hasOwn(s, 'scrub')) {
+      if (!validScrub(s.scrub)) return `invalid-scrub: ${s.id}`;
+      // A scrub that could not prove the secret gone is never reported clean.
+      if (!s.scrub.ok && s.status !== 'FAIL') return `scrub-failed-not-fail: ${s.id}`;
     }
   }
   return null;
@@ -176,6 +200,9 @@ function composeQaReport(input, opts) {
         caveats: Array.isArray(s.caveats) ? s.caveats : [],
         trace: orNull(s.trace),
         screenshot_dir: orNull(s.screenshot_dir),
+        // Present only for a story that declared `secrets:`, so every other
+        // story's entry stays byte-identical to the pre-#4477 shape.
+        ...(Object.hasOwn(s, 'scrub') ? { scrub: composeScrub(s.scrub) } : {}),
       })),
     },
   };
