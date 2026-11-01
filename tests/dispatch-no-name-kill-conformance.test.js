@@ -189,13 +189,26 @@ test('#4548: the lsof -ti tcp: corpus walk finds a planted offender', () => {
   }
 });
 
+// Each site's line as it read before #4548 replaced it (3a2b73cf5): the frozen control the
+// listener-scoped check below must reject.
+const PRE_CHANGE_TEARDOWN_LINES = [
+  "- **Standalone** (no run dir): the calling skill stops the server before it returns, and notes that it was started for automation. `ephemeral-server.txt` is never written on this path (Step 4 above writes it only \"when a pipeline run dir exists\"), so cleanup stops the server it itself started by PID: on POSIX, `lsof -ti tcp:{port} | xargs kill` — the same port-based mechanism Section D's rule in `wrap-up/cleanup-procedures-execution.md` uses when no lease exists, which is always the case here; on win32, where `lsof` does not exist, `taskkill /PID {pid} /T /F` against the PID this same procedure recorded when it started the server — the same tree kill Section D's win32 branch uses, since a leader-only stop leaves shell-spawned children holding their ports on this platform too.",
+  "4. **Clean up.** If `SERVER_STARTED` is `true`, stop the ephemeral server now (`lsof -ti tcp:{port} | xargs kill`) — this is a standalone invocation with no `/wrap-up` to do it later, per `_shared/dev-url-detection.md`'s \"Standalone\" cleanup rule. (`SERVER_STARTED` is never `true` when sub-step 0 satisfied or resolved the deep tier via QA evidence, since sub-step 1 never ran on that path — this cleanup correctly no-ops.)",
+  "   - **POSIX:** `kill {pid}` — with a port-isolation lease (#1795), the recorded port is known and the PID kill alone is sufficient; the `lsof -ti tcp:{port} | xargs kill` fallback for a stale PID is a no-lease/POSIX-only path (see `dev-url-detection.md`'s Step 0.5). When the trailing `detached:` token reads `detached:yes`, also kill the process group (`kill -- -{pid}`, the negative-pid form) so a detached dev command's own children don't outlive their leader — never do this when the field reads `detached:no`, since a non-detached server shares its process group with whatever spawned it and a group kill there could take down the caller's own shell.",
+];
+
 test('#4548: the three teardown sites use the listener-scoped form', () => {
   const form = '`lsof -nP -iTCP:{port} -sTCP:LISTEN -t | xargs kill`';
-  for (const rel of [
+  const carriesForm = (text) => flat(text).includes(form);
+  const sites = [
     ['plugin', 'skills', '_shared', 'dev-url-detection.md'],
     ['plugin', 'skills', 'journey-health', 'deep-tier.md'],
     ['plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'],
-  ]) {
-    assert.ok(flat(read(...rel)).includes(form), `${rel.slice(2).join('/')} must carry ${form}`);
-  }
+  ];
+  assert.strictEqual(PRE_CHANGE_TEARDOWN_LINES.length, sites.length);
+  sites.forEach((rel, k) => {
+    assert.ok(carriesForm(read(...rel)), `${rel.slice(2).join('/')} must carry ${form}`);
+    assert.ok(!carriesForm(PRE_CHANGE_TEARDOWN_LINES[k]), `the frozen pre-change line for ${rel.slice(2).join('/')} must not carry ${form}`);
+    assert.ok(PRE_CHANGE_TEARDOWN_LINES[k].includes('`lsof -ti tcp:{port} | xargs kill`'), `frozen line ${k} lost its replaced bytes`);
+  });
 });

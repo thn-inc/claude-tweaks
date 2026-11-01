@@ -1193,7 +1193,13 @@ function powershellOpaqueCommand(command, cwd) {
 // Their argument still carries a kill word, which the whitespace-splitting prefilter
 // reads. Command names match case-insensitively because `taskkill` and PowerShell cmdlets
 // are case-insensitive on Windows. A `PID eq {n}` filter is the only silent `/FI` filter.
-// `-EncodedCommand` (base64) is not decoded. Deliberate narrow miss: a command substitution's
+// `-EncodedCommand` (base64) is not decoded. A `kill` is also armed by a process listing piped
+// through `grep` (`ps aux | grep node | … | xargs kill`, `kill $(ps aux | grep node | …)`): a
+// `ps`-led segment anywhere before a `grep`-led one, or a `$(ps …`/backtick opener, arms it like `pgrep`.
+// Deliberate narrow miss: a positional PowerShell command (`powershell "Stop-Process -Name node"`,
+// which Windows PowerShell 5.1 runs as `-Command`) is not scanned, here or in powershellOpaqueCommand —
+// only an explicit `-Command` (here also `-c`) is, like every best-effort parser in this module.
+// Deliberate narrow miss: a command substitution's
 // body (`echo $(pkill node)`, `git commit -m "$(pkill node)"`, backticks) is not scanned — the
 // shared segment walk keeps `$(…)` inside its enclosing segment's tokens and exposes no nested
 // segment, and widening that scanner is out of this parser's scope. Only the pgrep/pidof arming
@@ -1201,7 +1207,14 @@ function powershellOpaqueCommand(command, cwd) {
 const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
 const PROCESS_KILL_MAX_DEPTH = 4;
 // `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
-const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:\S*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
+// The directory part excludes the opener characters, so a run of them inside one word is not rescanned.
+const PGREP_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`$()]*[\/\\])?(?:pgrep|pidof)(?:\.exe)?(?=[\s)`]|$)/i;
+// `$(ps …` or `` `ps … `` — a kill fed by a process listing. The segment walk cuts the substitution
+// at its `|` (`kill -9 $(ps aux` | `grep node` | …), so the opener only arms a later `grep`-led
+// segment; a `|` kept inside one segment's text (a quoted substitution) is searched from the first
+// `ps` opener on, once, with a directory part that excludes `|` so each pipe rescans only its own word.
+const PS_SUBSTITUTION_RE = /(?:\$\(|`)\s*(?:[^\s`$()]*[\/\\])?ps(?:\.exe)?(?=[\s)`]|$)/i;
+const PIPE_TO_GREP_RE = /\|\s*(?:[^\s`$()|]*[\/\\])?grep(?=[\s)`'"]|$)/i;
 const SHELL_COMMAND_FLAG_RE = /^-[A-Za-z]*c[A-Za-z]*$/;
 const CMD_COMMAND_FLAG_RE = /^\/\/?[ck]$/i;
 const TASKKILL_IMAGE_FLAG_RE = /^(\/\/?|-)im$/i;
@@ -1272,13 +1285,20 @@ function processKillLabels(command, cwd, depth) {
   if (typeof command !== 'string' || depth > PROCESS_KILL_MAX_DEPTH || !/kill|stop-process/i.test(command)) return [];
   const slots = []; // one per visited segment, in order: what it reports, and what a later arm could add
   let pgrepSeen = false;
+  let psSeen = false; // a `ps`-led segment so far; a later `grep`-led one arms pgrepSeen (`ps aux | grep node`)
   let getProcessSeen = false;
   forEachCommandSegment(command, cwd, (t, _effCwd, quoting, again) => {
     if (again || !t.length) return;
     const slot = { labels: [], killLed: false, stopConsumer: false };
     slots.push(slot);
     // Joined, because the tokenizer splits a spaced `$( pgrep node )` after its `$(`.
-    if (PGREP_SUBSTITUTION_RE.test(t.join(' '))) pgrepSeen = true;
+    const joined = t.join(' ');
+    if (PGREP_SUBSTITUTION_RE.test(joined)) pgrepSeen = true;
+    const psOpener = PS_SUBSTITUTION_RE.exec(joined);
+    if (psOpener) {
+      psSeen = true;
+      if (PIPE_TO_GREP_RE.test(joined.slice(psOpener.index + psOpener[0].length))) pgrepSeen = true;
+    }
     const i = processKillLead(t, quoting);
     if (i >= t.length) return;
     const names = leadNames(t, quoting, i);
@@ -1286,6 +1306,8 @@ function processKillLabels(command, cwd, depth) {
     const later = (test) => t.slice(i + 1).some((word) => test(word));
     const recurse = (inner) => { if (inner !== undefined) slot.labels.push(...processKillLabels(inner, cwd, depth + 1)); };
     if (is('pgrep', 'pidof')) pgrepSeen = true;
+    else if (is('ps')) psSeen = true;
+    else if (is('grep')) { if (psSeen) pgrepSeen = true; }
     else if (is('pkill', 'killall')) slot.labels.push(names.find((n) => PROCESS_KILL_WORDS.includes(n)));
     else if (is('taskkill')) {
       const filter = t.findIndex((word, j) => j > i && TASKKILL_FILTER_FLAG_RE.test(word) && j + 1 < t.length && !TASKKILL_PID_FILTER_RE.test(t[j + 1].trim()));

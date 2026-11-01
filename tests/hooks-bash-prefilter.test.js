@@ -53,6 +53,7 @@ const DIFFERENTIAL_CORPUS = [
   'Stop-Process -Name node', 'TASKKILL /IM node.exe', 'kill $(pgrep node)', 'pgrep -f x | xargs kill',
   'taskkill /FI "IMAGENAME eq node.exe"', 'Get-Process node | Stop-Process', "sh -c 'pkill node'",
   'cmd /c taskkill /IM node.exe', 'pwsh -c "Stop-Process -Name node"',
+  "ps aux | grep node | awk '{print $2}' | xargs kill -9", "kill -9 $(ps aux | grep '[n]ode' | awk '{print $2}')",
 ];
 const teardown = (command) => teardownTargets({ input: { tool_name: 'Bash', tool_input: { command } }, cwd: CWD });
 const powershell = (command) => (powershellOpaqueCommand(command, CWD) ? [{ action: 'powershell-opaque' }] : []);

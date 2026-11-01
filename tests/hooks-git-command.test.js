@@ -638,14 +638,37 @@ test('#4548: processKillByName does not scan a command substitution body (a deli
   assert.deepStrictEqual(processKillByName('git commit -m "$(pkill node)"', '/repo'), []);
 });
 
+test('#4548: processKillByName does not read a positional PowerShell command (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('powershell "Stop-Process -Name node"', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('powershell Stop-Process -Name node', '/repo'), []);
+  assert.strictEqual(powershellOpaqueCommand('powershell "Stop-Process -Name node"', '/repo'), false);
+});
+
 test('#4548: processKillByName flags pgrep-fed kills, non-PID taskkill filters and Get-Process pipelines', () => {
   for (const c of [
     'kill $(pgrep node)', 'kill `pgrep node`', 'kill -9 $(pgrep -f vite)', 'pgrep -f x | xargs kill',
-    'pgrep node | xargs -n 1 kill', 'P=$(pgrep node); kill $P', 'kill $(pidof node)',
+    'pgrep node | xargs -n 1 kill', 'P=$(pgrep node); kill $P', 'kill $(pidof node)', 'kill $(/usr/bin/pgrep node)',
+    'kill $( /usr/bin/pgrep -f x)', 'kill $(pgrep.exe node)',
     'taskkill /FI "IMAGENAME eq node.exe"', 'taskkill /F /fi "imagename eq node.exe"', 'taskkill /FI "WINDOWTITLE eq dev*"',
     'taskkill /FI "USERNAME eq me" /F', 'taskkill /FI "STATUS eq NOT RESPONDING"', 'taskkill /FI "PID ne 0"',
     'Get-Process node | Stop-Process', 'Get-Process -Name node | Stop-Process -Force',
   ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName flags a kill fed by a ps | grep name search', () => {
+  for (const c of [
+    "ps aux | grep node | awk '{print $2}' | xargs kill -9", "kill -9 $(ps aux | grep '[n]ode' | awk '{print $2}')",
+    "ps -ef | grep vite | awk '{print $2}' | xargs kill", "kill -9 `ps aux | grep node | awk '{print $2}'`",
+    "sudo ps aux | grep node | xargs kill", "kill $(/bin/ps -ef | /usr/bin/grep vite | awk '{print $2}')",
+    "kill $( ps aux | grep node )", 'kill "$(ps aux | grep node)"', "kill '$(ps aux | grep node)'",
+  ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName stays silent on a ps | grep search no kill consumes', () => {
+  for (const c of [
+    'ps aux | grep node', 'ps aux | grep node; echo done', "kill $(ps aux | awk '{print $2}')", "ps aux | awk '{print $2}' | xargs kill",
+    'grep node notes.txt | xargs kill', 'ps aux; kill 123', 'kill 123 | grep x', "echo $(ps aux | grep node)",
+  ]) assert.ok(!hit(c), c);
 });
 
 test('#4548: processKillByName scans each wrapper\'s command argument', () => {
@@ -676,6 +699,24 @@ test('#4548: processKillByName caps wrapper recursion without throwing', () => {
   for (let i = 0; i < 12; i += 1) command = i % 2 ? `bash -c "${command.replace(/(["\\$`])/g, '\\$1')}"` : `sh -c '${command.replace(/'/g, "'\\''")}'`;
   assert.ok(Array.isArray(processKillByName(command, '/repo')));
   assert.deepStrictEqual(processKillByName(`bash -c "sh -c 'pkill node'"`, '/repo'), ['pkill']);
+});
+
+test('#4548: processKillByName stays linear on a long run of substitution openers inside one word', () => {
+  // The pgrep/ps substitution matchers must not re-scan the rest of the word from every opener.
+  // The quadratic form took 2-3 s on the first two shapes; the bound is the fastest of three runs,
+  // so a loaded machine's one slow run does not fail it.
+  for (const command of [
+    'kill ' + '`'.repeat(32000), "kill '" + '$('.repeat(32000), 'kill ' + '$(ps '.repeat(8000),
+    'kill $(ps ' + '|'.repeat(32000), 'kill $(ps aux ' + '|/'.repeat(16000),
+  ]) {
+    let best = Infinity;
+    for (let run = 0; run < 3; run += 1) {
+      const start = process.hrtime.bigint();
+      assert.ok(Array.isArray(processKillByName(command, '/repo')));
+      best = Math.min(best, Number(process.hrtime.bigint() - start) / 1e6);
+    }
+    assert.ok(best < 400, `${command.slice(0, 10)}… took ${best.toFixed(0)} ms at best`);
+  }
 });
 
 test('#4548: processKillByName never throws on a non-string', () => {
