@@ -468,25 +468,35 @@ function run(argv, deps) {
   // or create-only write look absent/rejected, which used to read as a
   // contest. The branch is created at most once per run: a second sighting
   // after a bootstrap that reported success is transient (the remote has not
-  // caught up yet), never a second bootstrap. A refused bootstrap is
-  // run-level — every target would hit it — so it exits 6 even under
-  // `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
-  // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
-  // `null` means skipped under `--keep-going`, else the exit code to return).
+  // caught up yet), never a second bootstrap. A bootstrap that failed
+  // transiently (a transport failure or rate limit, nothing the remote
+  // decided) is remembered in `bootstrapTransientError`: a later target that
+  // finds the branch still missing reports that same name, not
+  // `claims-branch-missing`. A refused bootstrap is run-level — every target
+  // would hit it — so it exits 6 even under `--keep-going`, bypassing
+  // `stopOrSkip`. Returns `{retry: true}` (the caller re-processes the same
+  // target) or `{code}` (a `stopOrSkip` result: `null` means skipped under
+  // `--keep-going`, else the exit code to return).
   let bootstrapAttempted = false;
+  let bootstrapTransientError = null;
   function handleBranchMissing(issue) {
     // Whatever tip this run believed is untrustworthy once the branch is
     // known missing — discard the chain on every path out, a skip included.
     knownTip = null;
     if (bootstrapAttempted) {
-      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-missing' }) };
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError || 'claims-branch-missing' }) };
     }
     bootstrapAttempted = true;
     const b = claimStore.ensureClaimsBranch(deps, repoSlug);
-    // A secondary rate limit on the create is transient, not a refusal: a later
-    // run's bootstrap may succeed, so it is exit 4 (or a --keep-going skip).
+    // A transient bootstrap failure is not a refusal: a later run's bootstrap
+    // may succeed, so it is exit 4 (or a --keep-going skip). A secondary rate
+    // limit keeps its own name; every other transient (a network failure, a
+    // primary rate limit) is a network failure.
     if (!b.ok && b.transient) {
-      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: 'claims-branch-bootstrap-rate-limited' }) };
+      bootstrapTransientError = b.failure === 'secondary-rate-limit'
+        ? 'claims-branch-bootstrap-rate-limited'
+        : 'claims-branch-bootstrap-network-failure';
+      return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError }) };
     }
     if (!b.ok) {
       const reason = oneLineReason(b.reason);
