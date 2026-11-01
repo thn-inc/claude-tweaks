@@ -160,9 +160,11 @@ test('computeLevers refuses an unresolved policy lever rather than guessing', ()
 
 // --- writeManifesto ----------------------------------------------------------
 
-function write(fx, { records = ONE_STANDARD, res = resolved(), integrationModel = 'pr-first', deps } = {}) {
+function write(fx, { records = ONE_STANDARD, res = resolved(), integrationModel = 'pr-first', integrationModelDegraded, deps } = {}) {
   const levers = computeLevers({ mode: 'auto', modeSource: 'default', records, resolved: res });
-  return { levers, out: writeManifesto({ runDir: fx.runDir, records, levers, integrationModel, now: NOW }, deps) };
+  const args = { runDir: fx.runDir, records, levers, integrationModel, now: NOW };
+  if (integrationModelDegraded !== undefined) args.integrationModelDegraded = integrationModelDegraded;
+  return { levers, out: writeManifesto(args, deps) };
 }
 
 test('a decisions.md holding Step 2.8 claim lines keeps them byte-for-byte below the new snapshot header', () => {
@@ -226,6 +228,57 @@ test('an empty integration-model resolve omits the pin, still writes the 13 leve
   const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
   assert.ok(!text.includes('- integration-model:'), 'the snapshot header lists no pin either');
   assert.match(text, /^- SKIP 17:24:30 — Manifesto: condition: integration-model resolved empty .*→ fallback: .*unpinned.*\. Reversibility: n\/a\.$/m);
+});
+
+test('a degraded integration-model resolve omits the pin, still writes the 13 levers, and logs the degraded SKIP, not the empty one (#4578 Q10, AC20.1, AC20.2)', () => {
+  const fx = fixture();
+  write(fx, { integrationModel: null, integrationModelDegraded: 'timeout' });
+  const config = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.ok(!/^integration-model:/m.test(config), config);
+  for (const key of MANIFESTO_LEVERS) assert.match(config, new RegExp(`^${key}: `, 'm'), key);
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.ok(!text.includes('- integration-model:'), 'the snapshot header lists no pin either');
+  assert.match(text, /^- SKIP 17:24:30 — Manifesto: condition: integration-model forge detection degraded \(timeout\) → fallback: config\.yml written without the run pin; later --run reads detect again\. Reversibility: n\/a\.$/m);
+  assert.doesNotMatch(text, /integration-model resolved empty/);
+});
+
+test('writeManifesto: a degraded flag beside a non-null integrationModel still writes no pin; an unknown reason code is refused', () => {
+  const fx = fixture();
+  write(fx, { integrationModel: 'local-merge', integrationModelDegraded: 'timeout-then-exit' });
+  assert.ok(!/^integration-model:/m.test(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8')));
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.ok(!text.includes('- integration-model:'));
+  assert.match(text, /integration-model forge detection degraded \(timeout-then-exit\) → fallback/);
+
+  const bad = fixture({ decisions: CLAIM });
+  const before = snapshot(bad.runDir);
+  assert.throws(() => write(bad, { integrationModel: null, integrationModelDegraded: 'bogus' }), (e) => e instanceof ManifestoInputError);
+  assert.deepStrictEqual(snapshot(bad.runDir), before, 'nothing written');
+});
+
+test('computeLevers: a derived merge-verification from a degraded detection becomes wait (source degraded); a policy value or a clean derived off is untouched (plan review)', () => {
+  const lv = (mv) => lever(computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': mv }) }), 'merge-verification');
+  assert.deepStrictEqual(lv({ value: 'off', source: 'default', degraded: 'timeout' }), { key: 'merge-verification', value: 'wait', source: 'degraded' });
+  assert.deepStrictEqual(lv({ value: 'off', source: 'policy', degraded: 'timeout' }), { key: 'merge-verification', value: 'off', source: 'policy' });
+  assert.deepStrictEqual(lv({ value: 'off', source: 'default' }), { key: 'merge-verification', value: 'off', source: 'default' });
+});
+
+test('writeManifesto: a degraded-sourced merge-verification lever writes wait and logs the AUTO line naming pr-first-merge Step 2.5; a clean one logs none', () => {
+  const fx = fixture();
+  write(fx, { res: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), /^merge-verification: wait$/m);
+  const text = fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8');
+  assert.match(text, /— Manifesto: merge-verification derived from a degraded forge detection → written as wait \(an unresolved lever never becomes off, _shared\/pr-first-merge\.md Step 2\.5\)/);
+  assert.match(text, /^- AUTO 17:24:30 — Manifesto: merge-verification derived/m);
+
+  const clean = fixture();
+  write(clean, { res: resolved({ 'merge-verification': { value: 'off', source: 'default' } }) });
+  assert.ok(!fs.readFileSync(path.join(clean.runDir, 'decisions.md'), 'utf8').includes('derived from a degraded forge detection'));
+});
+
+test('renderFyi shows a degraded-sourced lever with the source column degraded', () => {
+  const levers = computeLevers({ mode: 'auto', modeSource: 'default', records: ONE_STANDARD, resolved: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) });
+  assert.match(renderFyi(levers), /\| Merge verification \| wait \| degraded \|/i);
 });
 
 test('a config.yml write that fails mid-batch removes the partial config.yml, so the run reads as case 3, never case 1', () => {
@@ -460,6 +513,32 @@ test('CLI: an invalid integration-model in policy.yml (resolves to null) still e
   assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
   assert.ok(!/^integration-model:/m.test(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8')));
   assert.match(err.join(''), /integration-model resolved empty — config\.yml written without the run pin/);
+});
+
+test('CLI: a degraded integration-model resolve exits 0 unpinned and says so on stderr (#4578 Q10)', () => {
+  const fx = fixture();
+  // The real resolve copies `degraded` onto merge-verification too (Task 2's producer).
+  const { err, deps } = cliDeps(fx, {
+    resolvePolicy: () => resolved({
+      'integration-model': { value: 'local-merge', source: 'default', degraded: 'timeout' },
+      'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' },
+    }),
+  });
+  assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
+  const config = fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8');
+  assert.ok(!/^integration-model:/m.test(config));
+  assert.match(config, /^merge-verification: wait$/m);
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'decisions.md'), 'utf8'), /^- AUTO 17:24:30 — Manifesto: merge-verification derived from a degraded forge detection → written as wait/m);
+  assert.match(err.join(''), /integration-model forge detection degraded \(timeout\) — config\.yml written without the run pin \(SKIP logged\)/);
+  assert.doesNotMatch(err.join(''), /resolved empty/);
+});
+
+test('CLI: a clean local-merge resolve (no degraded field) still pins integration-model: local-merge', () => {
+  const fx = fixture();
+  const { err, deps } = cliDeps(fx, { resolvePolicy: () => resolved({ 'integration-model': { value: 'local-merge', source: 'default' } }) });
+  assert.strictEqual(run(ARGV(fx), deps), 0, err.join(''));
+  assert.match(fs.readFileSync(path.join(fx.runDir, 'config.yml'), 'utf8'), /^integration-model: local-merge$/m);
+  assert.ok(!err.join('').includes('degraded'), err.join(''));
 });
 
 test('CLI: a policy-resolution failure exits 1 with nothing written', () => {

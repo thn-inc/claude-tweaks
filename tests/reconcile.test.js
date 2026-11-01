@@ -2094,6 +2094,23 @@ test('reconcile(): forwards opts.mcpReachable into resolveIntegrationModel (#155
   assert.deepStrictEqual(calls, [{ mcpReachable: true }, { mcpReachable: false }]);
 });
 
+// #4578 Decision Q1: a hook-context caller (SessionStart) passes
+// `forgeProbeTimeoutMs`; reconcile() forwards it as `timeoutMs` ONLY when set,
+// so the callers that never set it (the CLI verb, the background pass) keep
+// the exact `{ mcpReachable }` shape the #1558 test above pins.
+test('reconcile(): forwards opts.forgeProbeTimeoutMs into resolveIntegrationModel as timeoutMs, and only when set (#4578 AC11.1)', async () => {
+  const { mainDir } = pairedFixture();
+  const calls = [];
+  const fakeResolveIntegrationModel = (root, opts) => {
+    calls.push(opts);
+    return 'local-merge';
+  };
+  await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel, forgeProbeTimeoutMs: 5000 });
+  await reconcile({ cwd: mainDir, resolveIntegrationModel: fakeResolveIntegrationModel });
+  assert.deepStrictEqual(calls, [{ mcpReachable: false, timeoutMs: 5000 }, { mcpReachable: false }]);
+  assert.ok(!('timeoutMs' in calls[1]), 'an unset forgeProbeTimeoutMs must add no timeoutMs key at all');
+});
+
 test('reconcile(): a failing GitHub-health preflight skips every requested check in one entry, never per-check timeouts (D1)', async () => {
   const { seedDir, mainDir } = pairedFixture();
   // pairedFixture()'s origin is a bare local repo, not a GitHub remote, so

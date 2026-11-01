@@ -362,3 +362,199 @@ test('--all with an invalid value writes nothing to stderr (the flag carries it)
   assert.strictEqual(res.stderr, '');
   assert.strictEqual(JSON.parse(res.stdout)['trust-revert-window-days'].invalid, true);
 });
+
+// --- #4578: a degraded forge detection (gh timed out, then failed its retry) is
+// surfaced as one stderr line per key plus an additive `degraded` reason code,
+// and the merge-verification fallback honours a `--run` integration-model pin
+// before any forge detection. A fake `gh` (tests/helpers/fake-gh.js) stands in
+// for the forge; the gh timeout is pinned to the 1000 ms floor via the env var.
+
+const { execFileSync } = require('node:child_process');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
+
+// Built per call, after fakeGh() has put its stub dir on process.env.PATH.
+const timeoutEnv = () => ({ ...process.env, CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000', GH_REPO: '', GH_HOST: '' });
+const PIN_TAIL = 'resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms';
+const TEXT_X2 = 'forge detection timed out after 1000 ms (x2)';
+const TEXT_THEN_EXIT = 'forge detection timed out after 1000 ms, then gh failed on retry';
+const degradedLine = (key, text) => `resolve-policy: degraded — ${key}: ${text}; ${PIN_TAIL}`;
+
+// A real git repo with an `origin` remote (so detection reaches `gh`), optionally
+// a policy.yml and a .github/workflows file.
+function forgeRepo({ policy = null, workflow = null } = {}) {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rp-forge-')));
+  tempDirs.push(dir);
+  const git = (...args) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8' });
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  if (policy !== null) {
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), policy);
+  }
+  if (workflow !== null) {
+    fs.mkdirSync(path.join(dir, '.github', 'workflows'), { recursive: true });
+    fs.writeFileSync(path.join(dir, '.github', 'workflows', 'ci.yml'), workflow);
+  }
+  return dir;
+}
+
+// A run dir outside every checkout (the anchored-or-outside guard accepts it).
+function runDirWith(config) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-rp-run-'));
+  tempDirs.push(dir);
+  if (config !== null) fs.writeFileSync(path.join(dir, 'config.yml'), config);
+  return dir;
+}
+
+const degradedLines = (stderr) => stderr.split('\n').filter((l) => /degraded — /.test(l));
+
+test('degraded detection: JSON mode prints local-merge, source default, a degraded field, and exactly one degraded stderr line (AC6.1)', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const res = runCli(['integration-model'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.deepStrictEqual(JSON.parse(res.stdout)['integration-model'], { value: 'local-merge', source: 'default', degraded: 'timeout' });
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
+    assert.strictEqual(res.stderr, `${degradedLine('integration-model', TEXT_X2)}\n`);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: --values prints only local-merge on stdout (AC6.2)', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const res = runCli(['--values', 'integration-model'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(res.stdout, 'local-merge\n');
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: --all prints the one integration-model degraded line (merge-verification reuses that detection, carrying the field only), stdout still one JSON line', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const res = runCli(['--all'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    const parsed = JSON.parse(res.stdout);
+    assert.strictEqual(parsed['integration-model'].degraded, 'timeout');
+    assert.strictEqual(parsed['merge-verification'].degraded, 'timeout');
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
+    assert.strictEqual(res.stdout, `${res.stdout.trim()}\n`);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: a key requested twice still prints one degraded line', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const res = runCli(['integration-model', 'integration-model'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_X2)]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: timeout then a failed retry prints its own text (Q6, AC16.2)', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  try {
+    const res = runCli(['integration-model'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(JSON.parse(res.stdout)['integration-model'].degraded, 'timeout-then-exit');
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('integration-model', TEXT_THEN_EXIT)]);
+    assert.strictEqual(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: a merge-verification-only request prints its own degraded line and field (Q7, AC17.1, AC19.1)', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.deepStrictEqual(JSON.parse(res.stdout)['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' });
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_X2)]);
+    assert.strictEqual(
+      degradedLines(res.stderr)[0],
+      'resolve-policy: degraded — merge-verification: forge detection timed out after 1000 ms (x2); resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms',
+    );
+  } finally {
+    gh.restore();
+  }
+});
+
+test('degraded detection: merge-verification timeout then a failed retry prints the integration-model key\'s text (Q9, AC19.1, AC19.2)', { skip: STUB_SKIP }, () => {
+  const repo = forgeRepo();
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  try {
+    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(JSON.parse(res.stdout)['merge-verification'].degraded, 'timeout-then-exit');
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_THEN_EXIT)]);
+    assert.doesNotMatch(res.stderr, /derived from/);
+    assert.strictEqual(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('a policy.yml pin or a --run config.yml pin never invokes gh (AC7.1)', { skip: STUB_SKIP }, () => {
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const policyRepo = forgeRepo({ policy: 'integration-model: pr-first\n' });
+    const viaPolicy = runCli(['--values', 'integration-model'], policyRepo, timeoutEnv());
+    assert.strictEqual(viaPolicy.status, 0, viaPolicy.stderr);
+    assert.strictEqual(viaPolicy.stdout, 'pr-first\n');
+    assert.strictEqual(gh.count(), 0);
+
+    const runRepo = forgeRepo();
+    const runDir = runDirWith('integration-model: pr-first\n');
+    const viaRun = runCli(['--values', '--run', runDir, 'integration-model'], runRepo, timeoutEnv());
+    assert.strictEqual(viaRun.status, 0, viaRun.stderr);
+    assert.strictEqual(viaRun.stdout, 'pr-first\n');
+    assert.strictEqual(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('merge-verification-only request: a --run config.yml integration-model pin never invokes gh (Q8, AC18.3)', { skip: STUB_SKIP }, () => {
+  // No .github/workflows: deriveMergeVerification's ladder branch (2) answers
+  // `off` before its own default-branch gh lookup, so any gh call counted here
+  // is forge detection.
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    for (const pin of ['pr-first', 'local-merge']) {
+      const repo = forgeRepo();
+      const runDir = runDirWith(`integration-model: ${pin}\n`);
+      const before = gh.count();
+      const res = runCli(['--run', runDir, 'merge-verification'], repo, timeoutEnv());
+      assert.strictEqual(res.status, 0, res.stderr);
+      assert.deepStrictEqual(JSON.parse(res.stdout)['merge-verification'], { value: 'off', source: 'default' }, pin);
+      assert.deepStrictEqual(degradedLines(res.stderr), [], pin);
+      assert.strictEqual(gh.count(), before, `${pin}: a run pin short-circuits before any gh spawn`);
+    }
+    // Control: the same call with no --run reaches forge detection (2 invocations
+    // — a timeout and its retry) and degrades, so the pinned zero is not vacuous.
+    const repo = forgeRepo();
+    const before = gh.count();
+    const res = runCli(['merge-verification'], repo, timeoutEnv());
+    assert.strictEqual(res.status, 0, res.stderr);
+    assert.strictEqual(gh.count() - before, 2);
+    assert.deepStrictEqual(degradedLines(res.stderr), [degradedLine('merge-verification', TEXT_X2)]);
+  } finally {
+    gh.restore();
+  }
+});

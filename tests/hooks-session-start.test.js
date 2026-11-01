@@ -550,6 +550,35 @@ test('#561: a redTip finding from reconcile() renders as its own additionalConte
   }
 });
 
+// #4578 AC11.2: the inline reconcile() call must carry the hook-bounded forge
+// probe timeout (the same HOOK_FORGE_PROBE_TIMEOUT_MS the PreToolUse PR-stamp
+// gate passes), or a hung `gh` stalls SessionStart for the whole ladder. Same
+// stub-the-reconcile-export shape as the #561 test above — it observes the
+// real call's options rather than scanning source text.
+test('#4578: SessionStart passes HOOK_FORGE_PROBE_TIMEOUT_MS into its inline reconcile() call', async () => {
+  const project = gitProject();
+  const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
+  const reconcileMod = require('../plugin/bin/lib/reconcile');
+  const original = reconcileMod.reconcile;
+  const seen = [];
+  reconcileMod.reconcile = (opts) => {
+    seen.push(opts);
+    return { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, console: null, skipped: [] };
+  };
+  delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+  try {
+    const freshSessionStart = require('../plugin/bin/lib/hooks/session-start');
+    await freshSessionStart.run({ superpowersDeps: NO_INSTALL, input: {}, runDir: null, runState: null, cwd: project });
+    assert.strictEqual(seen.length, 1, 'the inline reconcile() must have been called exactly once');
+    assert.strictEqual(typeof HOOK_FORGE_PROBE_TIMEOUT_MS, 'number');
+    assert.strictEqual(seen[0].forgeProbeTimeoutMs, HOOK_FORGE_PROBE_TIMEOUT_MS);
+  } finally {
+    reconcileMod.reconcile = original;
+    delete require.cache[require.resolve('../plugin/bin/lib/hooks/session-start')];
+    require('../plugin/bin/lib/hooks/session-start');
+  }
+});
+
 test('#561: no redTip finding produces no red-tip line (AC5 — green tip)', async () => {
   const project = gitProject();
   const out = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });

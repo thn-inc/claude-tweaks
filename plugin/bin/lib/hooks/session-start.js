@@ -10,6 +10,7 @@ const wtDetect = require('./worktree-detect');
 const ctxLib = require('./context');
 const sessionResidue = require('./session-residue');
 const { reconcile } = require('../reconcile');
+const { HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
 const { DEFAULT_TTL_MS } = require('../reconcile/cache');
 const { STATUS_FILENAME } = require('../reconcile/background-spawn');
 const portsEnsure = require('../ports/ensure');
@@ -256,8 +257,10 @@ async function run(ctx) {
     // having none to thread through at all (#1687). Passed here anyway for
     // correctness: this is the one call site in this file that actually calls
     // reconcile() inline, and a real session id is genuinely reachable at it.
+    // forgeProbeTimeoutMs: the same hook bound the PreToolUse PR-stamp gate passes (#4578 Decision Q1).
     const result = await reconcile({
       cwd: ctx.cwd, checks: FAST_CHECKS, skipIfFresh: true, ttlMs: DEFAULT_TTL_MS, cache, sessionId,
+      forgeProbeTimeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS,
     });
 
     // One added summary line for what the fast path did — today just mirror

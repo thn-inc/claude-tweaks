@@ -35,8 +35,8 @@ function defaultReadFile(p) {
 // integration-model costs a `git remote get-url` + `gh repo view` probe, so callers on a
 // hot path request only the keys they need).
 function defaultResolvePolicy(keys, { runDir = null } = {}) {
-  const { root, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
-  return computeDerivedDefaults(result, keys, root);
+  const { root, runConfigRaw, result } = resolvePolicyConfig({ git: defaultGit, readFile: defaultReadFile, runDir, keys });
+  return computeDerivedDefaults(result, keys, root, { runConfigRaw });
 }
 
 module.exports = { sensitivePathsOf, defaultGit, defaultReadFile, defaultResolvePolicy };
