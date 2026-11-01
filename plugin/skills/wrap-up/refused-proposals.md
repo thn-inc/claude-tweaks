@@ -37,10 +37,15 @@ file's header and re-runs the console for that run, or drops it via Override →
 
 ## Ledger origin
 
-When the refused proposal came from a ledger item (`staged/ledger-record-*.md`): set that item's
-status back to `open` with note `proposal refused — no defer reason`, so the ledger's own
-nothing-left-behind gate resurfaces it on the next resolve; delete the staged file (the ledger
-item is the durable trace). A refused proposal with **no** ledger origin (a leftover section, a
+When a `deferred` row in the run's active ledger (`_shared/ledger-format.md`'s resolution rule)
+names the refused proposal's staged path in its Resolution — the exact path, spec-qualified in a
+multi-spec run (`spec-{N}/staged/{name}`, so two specs' `staged/review-followup-1.md` never match
+each other's row): set that row's status back to `open` with note
+`proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate resurfaces it on
+the next resolve; delete the staged file (the ledger item is the durable trace). Today's producers
+are `staged/ledger-record-*.md` (the ledger resolve gate's Defer/Keep) and
+`staged/review-followup-*.md` (`/review` Step 3's record proposal). This is the one reopen
+`_shared/ledger-format.md`'s Resolution-text requirements allow. A refused proposal with **no** ledger origin (a leftover section, a
 reflect tangential) stays staged in its run dir and dies with it at `close-run` unless a human
 rescues it — by design: the summary's refused-count line is the signal, and the reasonless
 deferral should have been a fix.

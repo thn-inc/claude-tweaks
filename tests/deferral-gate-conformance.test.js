@@ -216,6 +216,121 @@ test('auto-decision-log.md defines the REFUSED entry kind', () => {
   assert.ok(read('plugin/skills/_shared/auto-decision-log.md').includes('REFUSED'));
 });
 
+// --- #4772: a refused staged proposal reopens the deferred row naming its path — the one named reopen ---
+
+const REFUSED_MD = read('plugin/skills/wrap-up/refused-proposals.md');
+const LEDGER_SKILL = read('plugin/skills/ledger/SKILL.md');
+const STEP3_ROUTING = read('plugin/skills/review/step3-routing.md');
+const flat = (s) => s.replace(/\s+/g, ' ');
+
+function ledgerOriginSection(md) {
+  const start = md.indexOf('\n## Ledger origin\n');
+  assert.ok(start >= 0, 'refused-proposals.md has no "## Ledger origin" section');
+  const end = md.indexOf('\n## ', start + 1);
+  return flat(md.slice(start, end < 0 ? undefined : end));
+}
+function resolutionTextParagraph(md) {
+  const start = md.indexOf('**Resolution-text requirements.**');
+  assert.ok(start >= 0, 'ledger-format.md has no Resolution-text requirements paragraph');
+  const end = md.indexOf('\n\n', start);
+  return flat(md.slice(start, end < 0 ? undefined : end));
+}
+function reopeningRow(md) {
+  const line = md.split('\n').find((l) => l.startsWith('| Reopening resolved items |'));
+  assert.ok(line, 'ledger/SKILL.md has no "Reopening resolved items" row');
+  return line;
+}
+function newOriginSentences(section) {
+  const i = section.indexOf('When a `deferred` row');
+  const j = section.indexOf('A refused proposal with **no**');
+  assert.ok(i >= 0 && j > i, 'new Ledger origin sentences not found');
+  return section.slice(i, j);
+}
+function exceptionSentence(paragraph) {
+  const i = paragraph.indexOf('The one exception:');
+  assert.ok(i >= 0, 'no reopen exception sentence');
+  return paragraph.slice(i, paragraph.indexOf('Ledger origin).', i) + 'Ledger origin).'.length);
+}
+
+function assertLedgerOrigin(section) {
+  assert.ok(!section.includes('came from a ledger item'), 'Ledger origin still keys on the ledger-record-* filename');
+  for (const anchor of [
+    'When a `deferred` row',
+    "the run's active ledger",
+    "names the refused proposal's staged path in its Resolution",
+    'the exact path',
+    '`spec-{N}/staged/{name}`',
+    '`staged/ledger-record-*.md`',
+    '`staged/review-followup-*.md`',
+    '`proposal refused — no defer reason`',
+    'delete the staged file',
+    'with **no** ledger origin',
+    'Under `--dry-run`',
+    "`_shared/ledger-format.md`'s Resolution-text requirements",
+  ]) assert.ok(section.includes(anchor), `Ledger origin is missing: ${anchor}`);
+}
+function assertReopenException(paragraph) {
+  const rule = paragraph.indexOf('never a reopen.');
+  const exception = paragraph.indexOf('The one exception:');
+  assert.ok(rule >= 0, 'the "never a reopen" rule is gone');
+  assert.ok(exception > rule, 'the reopen exception must follow the "never a reopen" rule');
+  for (const anchor of ['a `deferred` row whose Resolution names a staged record proposal', 'returns to `open`', 'its deferral never completed', '`wrap-up/refused-proposals.md`'])
+    assert.ok(paragraph.includes(anchor), `the reopen exception is missing: ${anchor}`);
+}
+function assertSpecQualifiedPath(paragraph) {
+  assert.ok(paragraph.includes('In a multi-spec run,') && paragraph.includes('that path is written spec-qualified — `spec-{N}/staged/{name}`'), 'ledger-format.md does not state the spec-qualified staged path');
+}
+function assertReopeningRowPointer(row) {
+  assert.ok(row.includes("`_shared/ledger-format.md`'s Resolution-text requirements"), 'the anti-pattern row does not point at the exception');
+}
+function assertStep3Pointer(md) {
+  assert.ok(flat(md).includes("(`spec-{N}/staged/review-followup-{n}.md` in a multi-spec run, per `_shared/ledger-format.md`'s Resolution-text requirements)"), 'step3-routing.md does not spec-qualify its ledger Resolution path');
+}
+
+const OLD_FIRST = flat("When the refused proposal came from a ledger item (`staged/ledger-record-*.md`): set that item's status back to `open` with note `proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate resurfaces it on the next resolve; delete the staged file (the ledger item is the durable trace).");
+const OLD_ROW = '| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item |';
+
+test('AC1.1, AC1.2: Ledger origin keys on the deferred row naming the refused staged path, review-followup- included', () => {
+  assertLedgerOrigin(ledgerOriginSection(REFUSED_MD));
+});
+test('AC1.1 go-red: the ledger-record-*-only opening fails the Ledger origin pin', () => {
+  const s = ledgerOriginSection(REFUSED_MD);
+  const end = s.indexOf('(the ledger item is the durable trace).') + '(the ledger item is the durable trace).'.length;
+  const mutated = s.slice(0, s.indexOf('When a `deferred` row')) + OLD_FIRST + s.slice(end);
+  assert.notEqual(mutated, s);
+  assert.throws(() => assertLedgerOrigin(mutated));
+});
+test('AC2.1: ledger-format.md records the refused-proposal reopen as the one exception, deferred rows only', () => {
+  assertReopenException(resolutionTextParagraph(LEDGER));
+});
+test('AC2.1 go-red: removing the exception sentence fails the pin', () => {
+  const p = resolutionTextParagraph(LEDGER);
+  const mutated = p.replace(/ The one exception:[^]*?Ledger origin\)\./, '');
+  assert.notEqual(mutated, p);
+  assert.throws(() => assertReopenException(mutated));
+});
+test('ledger-format.md spec-qualifies a multi-spec staged path, and step3-routing.md points at it (plan-review clarification)', () => {
+  assertSpecQualifiedPath(resolutionTextParagraph(LEDGER));
+  assertStep3Pointer(STEP3_ROUTING);
+});
+test('go-red: dropping the spec-qualification sentence or the step3 pointer fails the pins', () => {
+  const p = resolutionTextParagraph(LEDGER);
+  const mutated = p.replace(/ In a multi-spec run, whose one ledger[^]*?names one proposal\./, '');
+  assert.notEqual(mutated, p);
+  assert.throws(() => assertSpecQualifiedPath(mutated));
+  assert.throws(() => assertStep3Pointer(STEP3_ROUTING.replace(/ \(`spec-\{N\}\/staged\/review-followup-\{n\}\.md` in a multi-spec run[^)]*\)/, '')));
+});
+test('AC3.1: ledger/SKILL.md\'s Reopening row points at the exception', () => {
+  assertReopeningRowPointer(reopeningRow(LEDGER_SKILL));
+});
+test('AC3.1 go-red: the pre-change row fails the pin', () => {
+  assert.throws(() => assertReopeningRowPointer(OLD_ROW));
+});
+test('AC5.2: no DEFER_REASONS value in the edited spans', () => {
+  const spans = [newOriginSentences(ledgerOriginSection(REFUSED_MD)), exceptionSentence(resolutionTextParagraph(LEDGER)), reopeningRow(LEDGER_SKILL)];
+  for (const v of DEFER_REASONS) for (const s of spans) assert.ok(!s.includes(v), `edited text names Defer-reason value ${v}`);
+});
+
 // --- #623: born-shaped matrix rows + composer provenance ---
 
 test('work-record.md carries the born-shaped rows for /wrap-up, /reflect, /review', () => {
