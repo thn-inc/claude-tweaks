@@ -408,14 +408,17 @@ test('computeDerivedDefaults: a merge-verification-only request reports a degrad
 });
 
 test('computeDerivedDefaults: an invalid integration-model entry requested with merge-verification re-detects with onDegrade attached (Q7)', () => {
+  const seen = [];
   const out = computeDerived({
     'integration-model': { value: null, source: 'default', invalid: true },
     'merge-verification': { value: null, source: 'default' },
   }, ['integration-model', 'merge-verification'], '/unused-root', {
     resolveIntegrationModel: (root, opts) => { opts.onDegrade({ ...DEGRADE_TIMEOUT }); return 'local-merge'; },
+    onDegrade: (key, d) => seen.push([key, d]),
   });
   assert.deepEqual(out['integration-model'], { value: null, source: 'default', invalid: true });
   assert.deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' });
+  assert.deepEqual(seen, [['merge-verification', DEGRADE_TIMEOUT]]);
 });
 
 test('computeDerivedDefaults: merge-verification reusing a degraded integration-model carries the same degraded reason, with one onDegrade call (plan review)', () => {

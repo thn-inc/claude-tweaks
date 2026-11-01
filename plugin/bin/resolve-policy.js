@@ -29,7 +29,9 @@
 // exit code unchanged): `resolve-policy: degraded — {key}: {reason text};
 // resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or
 // raise gh-timeout-ms`. It applies to integration-model and to a merge-
-// verification request that runs its own detection; JSON entries gain the
+// verification request that runs its own detection (a merge-verification that
+// reuses a degraded integration-model from the same call carries the field
+// only — no second line); JSON entries gain the
 // additive `degraded: 'timeout' | 'timeout-then-exit'` reason code, and a
 // non-degraded entry keeps exactly { value, source }. merge-verification's
 // own detection honours a valid --run config.yml integration-model pin first.
