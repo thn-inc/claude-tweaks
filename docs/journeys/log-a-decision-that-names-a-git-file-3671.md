@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/bin/log-decision.js
+  - plugin/bin/lib/log-decision/aggregate-reproduction.js
   - plugin/skills/_shared/auto-decision-log.md
   - plugin/skills/flow/steps-and-gates.md
   - plugin/skills/wrap-up/execution-and-verification.md
