@@ -326,12 +326,9 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
       sent.push(args);
       const n = args.length;
       // fetch-sub-issues.js sends its GraphQL reads with the host right after `graphql` (#4806).
-      const plain = leadsHost(args)
-        ? ['api', 'graphql', ...args.slice(4)]
-        : args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
-          ? args.slice(0, -2)
-          : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
-      return gh(plain);
+      if (leadsHost(args)) return gh(['api', 'graphql', ...args.slice(4)]);
+      if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) return gh(args.slice(0, -2));
+      return gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
     };
     const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner });
     assert.equal(r.code, 0, r.stderr);

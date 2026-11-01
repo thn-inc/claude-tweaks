@@ -81,6 +81,18 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
+// The probe and the batch (#4806) build their `gh api graphql` argv without a host, so off
+// github.com the host goes in right after `graphql`; a dropped flag silently queries github.com.
+function withGraphqlHost(runner, host) {
+  if (host === 'github.com') return runner;
+  return (args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return runner(['api', 'graphql', '--hostname', host, ...args.slice(2)]);
+    }
+    return runner(args);
+  };
+}
+
 // argv -> exit code. All I/O through deps so tests never touch gh or git —
 // same seam as bin/resolve-blockers.js's run(argv, deps).
 function run(argv, deps = realDeps) {
@@ -112,11 +124,7 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
-  // The probe and the batch (#4806) build their `gh api graphql` argv without a host, so off
-  // github.com the host goes in right after `graphql`; a dropped flag silently queries github.com.
-  const runner = host === 'github.com'
-    ? deps.runner
-    : (args) => deps.runner(args[0] === 'api' && args[1] === 'graphql' ? ['api', 'graphql', '--hostname', host, ...args.slice(2)] : args);
+  const runner = withGraphqlHost(deps.runner, host);
 
   let schema;
   try {

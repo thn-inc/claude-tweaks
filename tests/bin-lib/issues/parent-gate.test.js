@@ -678,13 +678,13 @@ function makeGheGh(world) {
   const gh = (args) => {
     calls.push({ args });
     const n = args.length;
-    const gqlHost = args[0] === 'api' && args[1] === 'graphql' && args[2] === '--hostname' && args[3] === GHE;
-    const plain = gqlHost
-      ? ['api', 'graphql', ...args.slice(4)]
-      : args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
-        ? args.slice(0, -2)
-        : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
-    return inner.gh(plain);
+    if (args[0] === 'api' && args[1] === 'graphql' && args[2] === '--hostname' && args[3] === GHE) {
+      return inner.gh(['api', 'graphql', ...args.slice(4)]);
+    }
+    if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) {
+      return inner.gh(args.slice(0, -2));
+    }
+    return inner.gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
   };
   return { calls, caller: ghCaller(gh) };
 }
