@@ -81,7 +81,7 @@ it literally into the next call; never carry it in a shell variable across calls
    checkout per `_shared/pipeline-run-dir.md`'s anchoring rule):
 
    ```bash
-   node -e "const w=require('$RUN_DIR/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
+   node -e "const w=require(process.argv[1]+'/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)" "$RUN_DIR"   # -> {worktree-path}
    git -C "{worktree-path}" branch --show-current                       # -> {feature-branch}
    ```
 

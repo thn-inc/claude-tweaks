@@ -389,8 +389,7 @@ for (const site of SITES) {
 
     assert.notStrictEqual(attempt(makeRepo({ conflict: true })).code, 0, 'a predicted conflict aborts');
     assert.notStrictEqual(attempt(makeRepo(), { env: { STUB_EXIT: '1' } }).code, 0, 'a composer failure aborts');
-    const branchVar = 'feature-branch' in vars ? 'feature-branch' : 'branch';
-    assert.notStrictEqual(attempt(makeRepo(), { overrides: { [branchVar]: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
+    assert.notStrictEqual(attempt(makeRepo(), { overrides: { branch: 'nope' } }).code, 0, 'an unknown ref aborts, it does not merge');
   });
 
   test(`${label}: the re-protect fence restores the worktree assignment after close-run`, () => {
@@ -563,6 +562,21 @@ test("worktree-merge.md's run-state read takes {run-dir} as an argument, so a qu
   const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('{run-dir}/run-state.json')").replace(/ "\{run-dir\}"$/, '');
   assert.notStrictEqual(inlined, readLine);
   assert.notStrictEqual(run(inlined).code, 0, 'go-red: a {run-dir} pasted into the script text breaks on a quote in the path');
+});
+
+test("local-merge-auto-finish.md's run-state read takes $RUN_DIR as an argument, so a quote in the path cannot break it", () => {
+  const live = readText(path.join(ROOT, 'plugin/skills/_shared/local-merge-auto-finish.md'));
+  const readLine = extractFence(live, WORKTREE_READ_NEEDLE).split('\n')[0].replace(/\s+# ->.*$/, '');
+  const runDir = path.join(SCRATCH, "o'brien auto-finish run");
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ worktree: '/wt/feat', status: 'active' }));
+  const run = (line) => runFence(line, { cwd: SCRATCH, env: { RUN_DIR: posix(runDir) } });
+  const r = run(readLine);
+  assert.strictEqual(r.code, 0, r.stderr);
+  assert.strictEqual(r.stdout.trim(), '/wt/feat');
+  const inlined = readLine.replace("require(process.argv[1]+'/run-state.json')", "require('$RUN_DIR/run-state.json')").replace(/ "\$RUN_DIR"$/, '');
+  assert.notStrictEqual(inlined, readLine);
+  assert.notStrictEqual(run(inlined).code, 0, 'go-red: a $RUN_DIR pasted into the script text breaks on a quote in the path');
 });
 
 test('no plugin/ file still carries "Not fixed here; there is no"', () => {

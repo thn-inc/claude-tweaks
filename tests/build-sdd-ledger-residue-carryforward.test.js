@@ -128,12 +128,13 @@ test('AC5.1: the appendix maps apply on an sdd-ruling-* item to ratify (ledger a
   assert.match(APPENDIX, ws('composes a born-ready record proposal exactly as `_shared/ledger-format.md`\'s Phase 3 `Keep` does (`specShapedBody`'));
   // #4101: the reversal's Defer-reason is derived from the deferral gate, never a constant.
   assert.match(APPENDIX, ws('`Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant'));
-  assert.match(APPENDIX, ws("run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and stamp the value of the first criterion that fails"));
-  // The mapping runs in the gate's own criterion order, so scope expansion (its 5th) maps last.
-  assert.match(APPENDIX, ws('not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`'));
-  assert.match(APPENDIX, ws('when every criterion holds — the fix would have been fix-now, and only the closed fix wave stops it — stamp `needs-human-decision`'));
-  assert.match(APPENDIX, ws('When the staged ruling carries too little to judge a criterion — no finding text, or a ruling that settled a design choice rather than a defect — stamp `needs-human-decision` too, and say in Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough'));
-  assert.match(APPENDIX, ws('A reversal never stamps `tangential` or `pre-existing-outside-diff`'));
+  // The derivation itself lives in the gate (review of v6.158.0); the appendix cites it and keeps
+  // only what makes a reversal one of its cases.
+  assert.match(APPENDIX, ws("run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and stamp per that file's Deriving the value from the criteria"));
+  assert.match(APPENDIX, ws("the closed fix wave is what makes a reversal whose criteria all hold that section's all-hold case"));
+  assert.match(APPENDIX, ws('a staged ruling with no finding text, or one that settled a design choice rather than a defect, carries too little to judge a criterion'));
+  assert.doesNotMatch(APPENDIX, ws('not localized → `genuinely-larger`'), 'the criterion-to-value mapping is the gate\'s, not restated here');
+  assert.doesNotMatch(APPENDIX, ws('the all-hold stamp is never a silent fallthrough'), 'the all-hold rule is the gate\'s, not restated here');
   assert.doesNotMatch(APPENDIX, ws('`Defer-reason: genuinely-larger`'), 'the reversal Defer-reason is no longer a fixed value');
   assert.match(APPENDIX, ws('stages it as `staged/ledger-record-sdd-ruling-{N}.md`, routes it through step 7 in the same pass, and — once step 7 has created the record — writes the row back to `deferred`, Resolution `reversed → #{new record}`'));
   assert.match(APPENDIX, ws('when step 7 declines or fails to create it (`refused-proposals.md`, a `gh` failure), the row stays `open` with the cause logged'));
@@ -236,11 +237,16 @@ test('#3513: both Pending review headings name ratify/reverse for an sdd-ruling-
   assert.ok(MULTISPEC_TEMPLATE.includes(heading), 'multispec-console-template.md heading');
 });
 
-// #4101: the reversal mapping in review-console-appendix.md is written in the gate's own
-// Fix-now criterion order ("first criterion that fails, in that file's list order"); a
-// reordered or extended gate must turn this red so the mapping is revisited with it.
-test('#4101: the deferral gate still lists its Fix-now criteria in the order the reversal mapping assumes', () => {
+// #4101: the gate's Deriving the value from the criteria section (which the appendix's
+// reversal cites) maps each Fix-now criterion to a value in the criteria's own order; a
+// reordered or extended criteria list must turn this red so the mapping is revisited with it.
+test('#4101: the deferral gate derives a Defer-reason from its Fix-now criteria, in their order, with the all-hold rule', () => {
   const gate = read('plugin', 'skills', '_shared', 'deferral-gate.md');
+  // The mapping runs in the criteria's own order, so scope expansion (the 5th) maps last.
+  assert.match(gate, ws('stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`'));
+  assert.match(gate, ws('The derivation never reaches `tangential` or `pre-existing-outside-diff`'));
+  assert.match(gate, ws('When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`'));
+  assert.match(gate, ws('When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal\'s Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough'));
   const criteria = gate.slice(gate.indexOf('## Fix-now criteria'), gate.indexOf('If the item qualifies')).split('\n').filter((l) => l.startsWith('- '));
   const expected = [
     '- Change is localized',
