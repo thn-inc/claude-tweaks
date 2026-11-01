@@ -271,10 +271,14 @@ function yamlQuoted(value) {
   return JSON.stringify(value).replace(/[\x80-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
+// Quoting alone does not close this: Actions evaluates ${{ }} inside quoted scalars too.
+function containsActionsExpression(branch) {
+  return branch.includes('${{');
+}
+
 function renderWorkflowYaml({ branch } = {}) {
   if (!isValidBranchName(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
-  // Quoting alone does not close this: Actions evaluates ${{ }} inside quoted scalars too.
-  if (branch.includes('${{')) throw new Error(`invalid branch name: ${JSON.stringify(branch)} contains an Actions expression`);
+  if (containsActionsExpression(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)} contains an Actions expression`);
   const b = yamlQuoted(branch);
   // on.push.branches entries are GitHub filter patterns, so '+' and a leading '!' must be escaped to match literally.
   const filter = yamlQuoted(branch.replace(/\+/g, '\\+').replace(/^!/, '\\!'));
@@ -481,6 +485,6 @@ function assertSafeWriteTarget(root, rel, { pathImpl = path, fsImpl = fs } = {})
 module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
-  renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
+  containsActionsExpression, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
   defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf, assertSafeWriteTarget,
 };

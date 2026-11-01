@@ -81,6 +81,14 @@ test('CLI: --branch must be a valid git branch name — usage exit 2 naming the 
   assert.match(r.stderr, /--branch/);
 });
 
+test('CLI: a --branch carrying an Actions expression is a usage error (exit 2), not an unexpected throw — nothing written (#4714)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
+  const r = run(['--root', root, '--integration-model', 'pr-first', '--branch', '${{secrets.RELEASE_PLEASE_TOKEN}}']);
+  assert.equal(r.status, 2, r.stderr);
+  assert.equal(r.stderr.split('\n')[0], 'invalid --branch: ${{secrets.RELEASE_PLEASE_TOKEN}} contains an Actions expression');
+  assert.deepEqual(fs.readdirSync(root), []);
+});
+
 test('CLI: --release-type simple --extra-file <path> overrides detection and seeds the manifest from that file (AC1)', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rb-cli-'));
   fs.writeFileSync(path.join(root, 'package.json'), '{"version":"1.0.0"}');
