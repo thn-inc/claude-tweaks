@@ -152,9 +152,10 @@ function computePhaseA({ candidates, policy, trustRowsArray }) {
 // .claude-tweaks/policy.yml before calling in). `fetch` bundles every
 // injectable I/O dependency: { limit, workLinks, integrationBranch, owner,
 //   repo, runner, nativeRunner?, gitRunner, probeFn?, sessionId?, ttlSeconds? }
-//   (nativeRunner: see resolveSubIssueNumbers) — the last two feed the session-scoped record-snapshot cache (fetchAllRecords
-//   above); omitted or unresolvable, the cache is simply never fresh and
-//   every call fetches live, same as before this cache existed.
+//   — the last two feed the session-scoped record-snapshot cache
+//   (fetchAllRecords above); omitted or unresolvable, the cache is simply
+//   never fresh and every call fetches live, same as before this cache
+//   existed. nativeRunner: see resolveSubIssueNumbers.
 //
 // Returns the full envelope the CLI prints, and the exact shape
 // skills/backlog/refine-headless.md's Step 1 / Step 2 Phase A tmp files need

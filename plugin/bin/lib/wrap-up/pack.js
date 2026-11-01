@@ -34,13 +34,16 @@ const BIN = path.join(__dirname, '..', '..');
 // Merged with `cwd` at each call site; never mutated.
 const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
 
+// The default `wrap` of execBounded and execSync: hands the options through unchanged.
+const keepOptions = (_args, opts) => opts;
+
 // Node reports a timeout kill as the generic `Command failed: …`, which reads
 // as a crash and hid #3479's 0.5 s of headroom — so a timeout kill (the
 // shared isTimeoutError check) is rethrown naming the timeout. Every other
 // rejection (ENOENT for gh-absent, a maxBuffer overflow) passes through
 // unchanged. `wrap` transforms the options per call: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
-async function execBounded(deps, cmd, args, cwd, wrap = (_a, o) => o) {
+async function execBounded(deps, cmd, args, cwd, wrap = keepOptions) {
   try {
     return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
   } catch (err) {
@@ -69,7 +72,7 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // `err.stderr` for any consumer module that classifies a failure by message.
 // `wrap` transforms the options, as execBounded's does: identity by default,
 // ghOptions (#4505's GH_HOST seam) for a gh spawn.
-function execSync(bin, args, { cwd } = {}, wrap = (_a, o) => o) {
+function execSync(bin, args, { cwd } = {}, wrap = keepOptions) {
   return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
