@@ -160,16 +160,18 @@ function usageText() {
 const HELP_FLAGS = new Set(['--help', '-h']);
 
 // #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
-// verbs plus the read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the keys of the
-// table below —
-// consulted by the unknown-flag guard below (which supersedes HELP_FLAGS for
-// exactly these verbs: `--help`/`-h` are simply never declared, so they fall
-// out as "unknown" the same as a genuine typo) and by resolveRunArg's
-// unambiguousOnly resolution path further down. Every other resolveRunArg
-// caller (archive-run, check-resume-freshness, check-staged-inventory) has
-// no entry here and keeps today's HELP_FLAGS-only guard and
-// ctxLib.resolveRunDir fallback, unchanged.
+// verbs (archive-run too, since it moves files and commits — #4773) plus the
+// read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the
+// keys of the table below. The unknown-flag guard in main() consults these
+// sets and supersedes HELP_FLAGS for exactly these verbs: `--help`/`-h` are
+// simply never declared, so they fall out as "unknown" the same as a genuine
+// typo. The table gates flags only: archive-run keeps its ctxLib.resolveRunDir
+// fallback, because unambiguousOnly is chosen per call site (resolveOpts),
+// not by this table. Every other resolveRunArg caller (check-resume-freshness,
+// check-staged-inventory, check-session-residue) has no entry here and keeps
+// today's HELP_FLAGS-only guard and ctxLib.resolveRunDir fallback, unchanged.
 const KNOWN_FLAGS = {
+  'archive-run': ['--run'],
   'close-run': ['--run'],
   'delete-ledger': ['--run', '--ledger'],
   'resolve-ledger': ['--run'],
