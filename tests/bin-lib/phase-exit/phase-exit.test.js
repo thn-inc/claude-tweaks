@@ -9,6 +9,8 @@ const { runPhaseExit, realDeps } = require('../../../plugin/bin/lib/phase-exit/p
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
 
 const RUN_ID = '2026-10-25T000001-record-1';
 const BRANCH = 'worktree-dispatch-record-1';
@@ -696,6 +698,108 @@ test('realDeps.git — output past execFileSync\'s 1 MiB default is returned, no
   git('commit', '-q', '--allow-empty', '-F', message);
   const out = realDeps.git(['-C', repo, 'log', '-1', '--format=%B']);
   assert.ok(out.length >= 2 * 1024 * 1024, `read ${out.length} bytes`);
+});
+
+// ---- the real resolvePolicy seam (#4578 plan review): a degraded integration-model read is unresolved ----
+
+// A real git repo under os.tmpdir() with an `origin` remote (so detection reaches `gh`), and a
+// run dir outside every checkout (resolve-policy.js --run accepts it).
+function forgeFixture(runConfig = null) {
+  const repo = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-forge-')));
+  created.push(repo);
+  const git = (...args) => execFileSync('git', ['-C', repo, ...args], { stdio: ['ignore', 'pipe', 'ignore'], encoding: 'utf8', windowsHide: true });
+  git('init', '-q', '-b', 'main');
+  git('remote', 'add', 'origin', 'https://github.com/o/n.git');
+  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-run-'));
+  created.push(runDir);
+  if (runConfig !== null) fs.writeFileSync(path.join(runDir, 'config.yml'), runConfig);
+  return { repo, runDir };
+}
+
+// The child resolve-policy.js inherits process.env at spawn time, so set the env per test (never at load).
+function withForgeEnv(fn) {
+  const vars = { CLAUDE_TWEAKS_GH_TIMEOUT_MS: '1000', GH_REPO: '', GH_HOST: '' };
+  const saved = {};
+  for (const k of Object.keys(vars)) { saved[k] = process.env[k]; process.env[k] = vars[k]; }
+  try { return fn(); } finally {
+    for (const k of Object.keys(vars)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; }
+  }
+}
+
+test('realDeps.resolvePolicy: a degraded integration-model read throws "forge detection degraded (timeout)" instead of returning local-merge (#4578 plan review)', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout\)/);
+    });
+    assert.equal(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a timeout then a failed retry throws with the timeout-then-exit reason', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  try {
+    withForgeEnv(() => {
+      assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout-then-exit\)/);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a clean detection returns the plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture();
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and a non-forge key still returns its plain value', { skip: STUB_SKIP }, () => {
+  const { repo, runDir } = forgeFixture('integration-model: pr-first\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withForgeEnv(() => {
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-model', repo), 'pr-first');
+      // integration-branch has no default: the --values-equivalent empty string
+      assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), '');
+    });
+    assert.equal(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('realDeps.resolvePolicy: a run-pinned integration-branch returns its string value', () => {
+  const { repo, runDir } = forgeFixture('integration-branch: develop\n');
+  assert.equal(realDeps.resolvePolicy(runDir, 'integration-branch', repo), 'develop');
+});
+
+test('runPhaseExit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
+  const { main, runDir, wt } = fixture();
+  const h = makeDeps(main, wt, {
+    resolvePolicy: (r, key) => {
+      if (key === 'integration-model') throw new Error('forge detection degraded (timeout)');
+      return '';
+    },
+  });
+  const env = runPhaseExit(opts(runDir, wt), h.deps);
+  assert.equal(env.push.state, 'skipped');
+  assert.match(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), /integration-model unresolved \(forge detection degraded \(timeout\)\)/);
+  assert.equal(pushCalls(h.calls).length, 0);
+});
+
+test('phase-exit.js sizes the integration-model resolve timeout from the forge ladder (#4578 plan review)', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'phase-exit', 'phase-exit.js'), 'utf8');
+  assert.match(src, /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbeTimeoutMs\(/);
 });
 
 // ---- checklist ----

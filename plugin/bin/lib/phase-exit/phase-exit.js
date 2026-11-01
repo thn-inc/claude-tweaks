@@ -56,6 +56,7 @@ const { formatEntry, appendEntry } = require('../log-decision/append');
 const { readRunStateWithParent, appendEvent, readEventLines } = require('../hooks/context');
 const { hasLoggedPrDegrade, hasLoggedPrEarlyStep1, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
+const { GIT_REMOTE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs } = require('../policy-schema');
 const { canonicalRealpath } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const prChecklist = require('../../pr-checklist');
@@ -82,9 +83,23 @@ const realDeps = {
   gh: (args, cwd) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   })),
-  resolvePolicy: (runDir, key, cwd) => execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, '--values', key], {
-    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
-  }).split('\n')[0].trim(),
+  // JSON mode (not --values) so a degraded forge detection is visible: a Q10-unpinned run re-detects
+  // `integration-model` here, so that read must outlast the ladder (remote probe + two gh attempts,
+  // plus the old bound as margin) and must not route a degraded `local-merge` -- a degraded entry
+  // throws, which runPhaseExit's unresolved branch logs (record #4578 plan review). The return is
+  // what --values printed: the entry's value, '' for a null/error entry.
+  resolvePolicy: (runDir, key, cwd) => {
+    const timeout = key === 'integration-model'
+      ? GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(cwd) + GIT_TIMEOUT_MS
+      : GIT_TIMEOUT_MS;
+    const out = execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, key], {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, windowsHide: true,
+    });
+    const entry = JSON.parse(out)[key];
+    if (!entry) throw new Error(`resolve-policy.js printed no entry for ${key}`);
+    if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
+    return entry.error === undefined && entry.value != null ? String(entry.value) : '';
+  },
   hooks: (args, cwd) => execFileSync(process.execPath, [HOOKS_JS, ...args], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }),
