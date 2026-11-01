@@ -425,6 +425,9 @@ test('#4581: refuse — coincidence clause followed by an aggregate clause', () 
 
 test('#4581: refuse — colon-terminated lens with a plural subject (real line)', () => refusesAggregate(['--text', 'Step 3 reproduction: lens 3a: three single-agent findings, none reproduced']));
 
+test('#4581: refuse — count-only aggregate (real line)', () => refusesAggregate(['--step', 'Step 3', '--text', 'Reproduction: lens 3f — 6 agent-A findings in tests/bin-lib/claim-targets/claim-targets.test.js and first-call-artifact-check.test.js not reproduced (agent B: no findings)']));
+test('#4581: refuse — coincidence clause plus a third finding', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1 / a/b.js:2 share a location but not substance; lens "3c" finding c/d.js:9 not reproduced']));
+
 test('#4581: refuse — aggregate via --text-file', () => {
   const { main, root, run: runDir } = fixture();
   const file = path.join(root, 'entry.txt');
@@ -464,5 +467,7 @@ test('#4581: accepts a per-finding line followed by lens commentary', () => acce
 test('#4581: accepts a per-finding line whose path contains "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding docs/plans/2026-10-25-short-circuit-tiebreak-findings-4171-ledger.md:6 not reproduced']));
 test('#4581: accept — singular finding whose path segment is "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding findings/x.js:1 not reproduced']));
 test('#4581: accept — per-finding line with a colon-terminated lens in its commentary', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: no findings']));
+test('#4581: accept — zero quantifier later in the lens phrase', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: agents returned no findings']));
+test('#4581: accept — zero quantifier later in the lens phrase without a colon', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c returned no findings']));
 test('#4581: accepts an AUTO aggregate reproduction line (out of scope)', () => acceptsLine(['--text', 'Reproduction: lens "3a" 2 findings reproduced. Confirmed'], 'AUTO'));
 test('#4581: accepts a non-reproduction STAGED line naming several locations', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'findings a/b.js:1 and c/d.js:2 staged to staged/review-1.patch']));

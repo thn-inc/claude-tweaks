@@ -922,6 +922,17 @@ test('#4581: a coincidence line with a multi-word quoted lens keys both location
   assert.deepStrictEqual(findings([singleToken, va.entry, vb.entry].join('\n')), [], 'single-token lens: both verdicts settle it');
 });
 
+test('#4581: a coincidence line keys both locations whatever its case', () => {
+  const a = tbFinding({ path: 'x/y.js', line: 1, claim: 'a' });
+  const b = tbFinding({ path: 'x/y.js', line: 2, claim: 'b' });
+  const va = tbVerdict(a, { verdict: 'confirmed' });
+  const vb = tbVerdict(b, { verdict: 'confirmed' });
+  const line = '- STAGED 09:59:00 — Reproduction: Lens "3a" Findings x/y.js:1 / x/y.js:2 Share a location but not substance; both staged unconfirmed. Reversibility: high.';
+  assert.strictEqual(findings([line, va.entry].join('\n')).length, 1, 'the first key alone leaves the line open');
+  assert.strictEqual(findings([line, vb.entry].join('\n')).length, 1, 'the second key alone leaves the line open');
+  assert.deepStrictEqual(findings([line, va.entry, vb.entry].join('\n')), [], 'both keys settle it');
+});
+
 test('a verdict logged before the STAGED line does not supersede it (#3949)', () => {
   const f = tbFinding();
   assert.strictEqual(findings([tbVerdict(f, { verdict: 'confirmed' }).entry, tbStaged(f)].join('\n')).length, 1);

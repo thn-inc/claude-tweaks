@@ -497,7 +497,7 @@ function approveAllDefault(recommendation) {
 function lineKeys(line) {
   const keys = [findingKey(line)];
   // A quoted multi-word lens (`lens "3f Test quality"`) keys on its first token — the one findingKey yields (#4581).
-  const co = /\blens\s+(?:"([A-Za-z0-9_-]+)[^"]*"|"?([A-Za-z0-9_-]+)"?)\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/.exec(line);
+  const co = /\blens\s+(?:"([A-Za-z0-9_-]+)[^"]*"|"?([A-Za-z0-9_-]+)"?)\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/i.exec(line);
   if (co) keys.push(`${co[1] ?? co[2]}|${co[3]}:${co[4]}`);
   return keys.filter(Boolean);
 }
