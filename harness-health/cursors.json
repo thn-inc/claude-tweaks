@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793456942495
+    "lastAuditedMs": 1793559679891
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -153,7 +153,7 @@
   },
   "skill:prose-code-twin-pin": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793498645244
+    "lastAuditedMs": 1793559554069
   },
   "skill:code-health-focus-vertical": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793498643036
+    "lastAuditedMs": 1793559677997
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
