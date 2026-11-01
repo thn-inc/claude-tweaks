@@ -1,7 +1,7 @@
 {
-  "runId": "2026-10-26T203040-record-3942",
-  "sessionId": "7c02daca-0b93-592d-b41b-12dab8361ade",
-  "claimedAt": "2026-10-26T20:35:40.817Z",
-  "ttlHours": 72,
-  "host": "vm"
+  "released": true,
+  "runId": "2026-10-31T204035-sweep-standalone",
+  "reason": "swept: stale claim",
+  "releasedAt": "2026-11-01T07:37:30.078Z",
+  "sweptFrom": "2026-10-26T203040-record-3942"
 }
