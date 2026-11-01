@@ -199,8 +199,9 @@ const KNOWN_FLAGS = {
 };
 
 // Declared flags that consume the following token as a value — the
-// unknown-flag scan below must skip that token rather than risk misreading
-// it as a flag itself (an argument value could itself start with "--").
+// unknown-flag scan below skips that token rather than reading it as a flag.
+// A "--" token in that position is refused instead: no declared value starts
+// with "--", and the handler would otherwise read the stray flag as the value.
 // One set for every verb: a flag name here takes a value on every verb that
 // declares it, so it must never be a boolean flag on another verb.
 const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
@@ -216,7 +217,12 @@ function firstUnknownFlag(knownFlags, args) {
     const a = args[i];
     if (typeof a !== 'string' || !a.startsWith('--')) continue;
     if (!known.has(a)) return a;
-    if (VALUE_FLAGS.has(a)) i += 1; // skip this flag's own value
+    if (VALUE_FLAGS.has(a)) {
+      // A value flag followed by a "--" token has no value: refuse that token.
+      const next = args[i + 1];
+      if (typeof next === 'string' && next.startsWith('--')) return next;
+      i += 1; // skip this flag's own value
+    }
   }
   return null;
 }

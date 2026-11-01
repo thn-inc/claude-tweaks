@@ -181,13 +181,31 @@ test('#4777: reconcile --json with no typo runs for real (positive control for t
 test('#4777: declared value flags consume their value token', () => {
   const { root } = reconcileFixture();
   for (const args of [
-    ['reconcile', '--dry-run', '--checks', '--json'],
+    ['reconcile', '--dry-run', '--checks', 'mirror'],
     ['reconcile', '--dry-run', '--checks', ''],
-    // Discriminates --checks's VALUE_FLAGS membership: without it, --bogus reads as an undeclared flag.
-    ['reconcile', '--dry-run', '--checks', '--bogus'],
   ]) {
     const result = runHook(args, { cwd: root });
     assert.doesNotMatch(result.stdout, /claude-tweaks: usage:/, args.join(' '));
+  }
+});
+
+test('#4777: a value flag followed by a flag is refused as a missing value', () => {
+  const { root } = reconcileFixture();
+  for (const args of [
+    ['reconcile', '--dry-run', '--checks', '--json'],
+    ['reconcile', '--dry-run', '--checks', '--bogus'],
+  ]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE.reconcile}\n`, args.join(' '));
+  }
+  const fresh = freshRepo();
+  for (const args of [
+    ['resolve-run-dir', '--spec-slug', '--bogus', '--create'],
+    ['resolve-run-dir', '--spec-slug', '--create'],
+  ]) {
+    const result = runHook(args, { cwd: fresh });
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, args.join(' '));
+    assertNoRunDirMinted(fresh);
   }
 });
 
