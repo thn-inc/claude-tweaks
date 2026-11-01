@@ -315,6 +315,7 @@ module.exports = {
   IDEMPOTENCE_VALUES,
   isCloseMarkerComment,
   distinctAscending,
+  numberSet,
   GhFailure,
   ghCaller,
   resolveParent,

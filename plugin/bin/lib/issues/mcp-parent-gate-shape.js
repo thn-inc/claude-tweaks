@@ -110,7 +110,9 @@ function upper(value) {
 function closedByNumbers(entry, key) {
   const raw = entry.closedByPullRequestsReferences ?? entry.closed_by_pull_requests;
   if (raw == null) return [];
-  const refs = Array.isArray(raw) ? raw : isPlainObject(raw) && Array.isArray(raw.references) ? raw.references : null;
+  let refs = null;
+  if (Array.isArray(raw)) refs = raw;
+  else if (isPlainObject(raw) && Array.isArray(raw.references)) refs = raw.references;
   if (refs === null || !refs.every((ref) => isPlainObject(ref) && isPositiveInteger(ref.number))) {
     throw invalid(key, 'closed_by_pull_requests is not a list of { number } references');
   }

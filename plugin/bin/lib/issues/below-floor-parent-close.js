@@ -35,14 +35,15 @@
 //
 // Every gh call goes through the injected `gh(args, input?)`, which returns
 // stdout and throws on failure. Both writes carry `--repo owner/repo`, as the
-// gate's reads do, so a parent is written in the repository it was read from. A failing call skips that one parent (named in
-// `skipped`, reason `gh-failed`) and the next closing record is still
-// processed; a `riskFloor` outside the policy schema's risk-floor enum skips the
-// whole step (`invalid-risk-floor`, no gh call). Never throws.
+// gate's reads do, so a parent is written in the repository it was read from.
+// A failing call skips that one parent (named in `skipped`, reason `gh-failed`)
+// and the next closing record is still processed; a `riskFloor` outside the
+// policy schema's risk-floor enum skips the whole step (`invalid-risk-floor`,
+// no gh call). Never throws.
 'use strict';
 
 const {
-  CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, resolveParent,
+  CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, numberSet, resolveParent,
   gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence,
 } = require('./parent-gate');
 
@@ -56,11 +57,6 @@ function composeCloseComment({ maxTier, riskFloor, notPlanned, lines } = {}) {
   if (notPlanned) parts.push(NOT_PLANNED_LINE);
   if (lines && lines.length) parts.push(lines.join('\n'));
   return `${parts.join('\n\n')}\n`;
-}
-
-function normalizeSet(values) {
-  const numbers = Array.from(values || []).map(Number).filter(Number.isInteger);
-  return new Set(numbers);
 }
 
 // A gate verdict -> the reason this parent is skipped, or null when it is due
@@ -85,8 +81,8 @@ function closeBelowFloorParents({
   }
   try {
     const caller = ghCaller(gh);
-    const closing = normalizeSet(closingSet);
-    const unsettledSet = normalizeSet(unsettled);
+    const closing = numberSet(closingSet);
+    const unsettledSet = numberSet(unsettled);
 
     const handled = new Set();
     for (const n of [...closing].sort((a, b) => a - b)) {

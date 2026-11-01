@@ -290,7 +290,9 @@ function run(argv, deps = realDeps) {
     try { configured = deps.readWorkBackend(root); } catch { configured = null; }
     backend = configured === 'local-files' ? 'local-files' : 'github-issues';
   }
-  const tokens = opts.closing !== null ? opts.closing : opts.subIssue !== null ? [String(opts.subIssue)] : [];
+  let tokens = [];
+  if (opts.closing !== null) tokens = opts.closing;
+  else if (opts.subIssue !== null) tokens = [String(opts.subIssue)];
 
   let policyRaw = null;
   try { policyRaw = deps.readPolicyRaw(root); } catch { policyRaw = null; }
