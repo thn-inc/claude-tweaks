@@ -1725,9 +1725,8 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   let degraded = false;
   detectOpts.onDegrade = (d) => {
     degraded = true;
-    if (typeof opts.onDegrade === 'function') {
-      try { opts.onDegrade(d); } catch { /* a reporting callback never breaks the resolver */ }
-    }
+    // detectIntegrationModel guards and swallows a throwing callback itself.
+    if (typeof opts.onDegrade === 'function') opts.onDegrade(d);
   };
   const model = detectIntegrationModel(root, detectOpts);
   if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
