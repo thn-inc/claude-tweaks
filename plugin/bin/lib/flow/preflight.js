@@ -22,6 +22,7 @@ const { resolveTarget } = require('../stage-item/write');
 const { classifyDecisions } = require('../log-decision/claim-log');
 const { splitNul } = require('../git-z');
 const { toPosix } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 const BIN = path.join(__dirname, '..', '..');
 const VERIFY_JS = path.join(BIN, 'verify.js');
@@ -291,7 +292,8 @@ function buildProbes({ runDirReal, runId, mainRoot, cwd, config, state, deps, ex
     pr: async () => {
       if (!state || !state.pr || !state.pr.number) return null;
       let raw;
-      try { raw = await exec('gh', ['pr', 'view', String(state.pr.number), '--json', 'state,isDraft,body,mergeable,mergeStateStatus'], { cwd: mainRoot }); } catch (err) {
+      const prViewArgs = ['pr', 'view', String(state.pr.number), '--json', 'state,isDraft,body,mergeable,mergeStateStatus'];
+      try { raw = await exec('gh', prViewArgs, ghOptions(prViewArgs, { cwd: mainRoot })); } catch (err) {
         if (err && err.code === 'ENOENT') throw new Error('gh-absent');
         throw err;
       }
