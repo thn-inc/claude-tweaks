@@ -14,6 +14,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { KNOWN_FLAGS, USAGE, VERBS } = require('../plugin/bin/hooks.js');
+const { readText } = require('./helpers/read-skill');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const STATUS = path.join('.claude-tweaks', 'reconcile-background-status.json');
@@ -123,7 +124,7 @@ function assertNoRunDirMinted(root) {
 
 test('#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else', () => {
   assert.deepStrictEqual(Object.keys(KNOWN_FLAGS).sort(), Object.keys(VERBS).sort());
-  assert.ok(fs.readFileSync(HOOKS, 'utf8').includes('\n  reconcile: ['));
+  assert.ok(readText(HOOKS).includes('\n  reconcile: ['));
 });
 
 test('#4777: every VERBS verb refuses an undeclared flag with its usage line', () => {
@@ -296,14 +297,14 @@ test('#4777: check-sibling-sessions --record <id> does not print the usage line 
 });
 
 test('#4777: hooks.js comments no longer describe a lenient verb set', () => {
-  const src = fs.readFileSync(HOOKS, 'utf8');
+  const src = readText(HOOKS);
   assert.doesNotMatch(src, /Every other resolveRunArg caller/);
   assert.doesNotMatch(src, /Every other VERBS-table verb keeps the\s+\/\/ narrower HELP_FLAGS-only guard/);
   assert.doesNotMatch(src, /HELP_FLAGS/);
 });
 
 test('#4777: the registration skill states default-strict membership', () => {
-  const skill = fs.readFileSync(path.join(__dirname, '..', '.claude', 'skills', 'hooks-js-verb-registration', 'SKILL.md'), 'utf8');
+  const skill = readText(path.join(__dirname, '..', '.claude', 'skills', 'hooks-js-verb-registration', 'SKILL.md'));
   assert.doesNotMatch(skill, /Only for a flag-strict verb/);
   assert.doesNotMatch(skill, /The lenient mutating verbs still in `VERBS`/);
   assert.doesNotMatch(skill, /not flag-strict/);
