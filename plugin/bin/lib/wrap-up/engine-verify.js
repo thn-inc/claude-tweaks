@@ -941,13 +941,12 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   // Under `body-text` the parent's task list wins over a record's own `Parent:`
   // line: a record the named parent does not list has no resolvable parent --
   // it stays out of that parent's gate, is checked as its OWN target, and the
-  // disagreement is logged here, appended to every row returned below. Why the
-  // task list wins: sub-issues are enumerated from the parent side (the gate is
-  // the parent's), so the parent's list is the authoritative membership. The
-  // labeler twins apply the same rule when they pick the record that carries
-  // `demo:pending` (`gatherGateFacts` in issues/parent-gate.js, `normalizeMcpFacts`
-  // in issues/mcp-parent-gate-shape.js), and the prose is wrap-up/verification-brief-parent-gate.md's
-  // "Resolve the parent". One deliberate difference: an empty task list is a gather
+  // disagreement is logged here, appended to every row returned below. The
+  // parent's list wins because sub-issues are enumerated from the parent side
+  // (the gate is the parent's). The labeler twins apply the same rule
+  // (`gatherGateFacts` in issues/parent-gate.js, `normalizeMcpFacts` in
+  // issues/mcp-parent-gate-shape.js; prose: wrap-up/verification-brief-parent-gate.md's
+  // "Resolve the parent"). One deliberate difference: an empty task list is a gather
   // failure here (unknown), while the labeler keeps the parent and reports it incomplete.
   const mismatches = [];
   for (const n of checkIssues) {
