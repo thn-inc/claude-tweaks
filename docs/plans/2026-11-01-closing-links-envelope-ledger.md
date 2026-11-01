@@ -5,3 +5,4 @@
 | 1 | build | SDD ruling — post-merge.js header drops "2 malformed invocation" (core never returns exit 2): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 2 | build | SDD ruling — reconcile-checks.md transient-failure paragraph drops "Exits 2 (malformed invocation)": ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 3 | build | SDD ruling — unpinned pre-merge gh pr view field list fixed now (targeted test 0699c14dc), not deferred: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 4 | build/skill | gh-api-module-pattern extended: an in-process caller consumes a CLI module's exported core (an object return) rather than driving run(argv) and parsing stdout; cli-wrapper-contract.md:44 headline updated in this build (#4781) | observation | — |
