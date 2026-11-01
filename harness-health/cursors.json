@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793556302919
+    "lastAuditedMs": 1793563137820
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -169,7 +169,7 @@
   },
   "skill:windows-checkout-test-parity": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793484628486
+    "lastAuditedMs": 1793563132214
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
