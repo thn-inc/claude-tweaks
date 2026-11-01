@@ -45,7 +45,7 @@
   },
   "skill:wrap-up": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1787933140809
+    "lastAuditedMs": 1793567233272
   },
   "skill:transcript-payload-verification": {
     "lastAuditedSha": null,
@@ -53,11 +53,11 @@
   },
   "skill:tidy": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1786900466986
+    "lastAuditedMs": 1793567228238
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793566898397
+    "lastAuditedMs": 1793567223336
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -153,7 +153,7 @@
   },
   "skill:prose-code-twin-pin": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793566700472
+    "lastAuditedMs": 1793567218266
   },
   "skill:code-health-focus-vertical": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793559677997
+    "lastAuditedMs": 1793567213198
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
