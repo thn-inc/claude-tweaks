@@ -108,8 +108,8 @@ function pluginRoot() {
 // #1143: the one verb table. Each key is a dispatch key — the `hooks.js <verb>`
 // argv token — and each entry carries that verb's usage line and its `run(argv)`
 // handler (the `run{Verb}` functions below, one per verb; see docs/plugin-structure.md's
-// hooks.js line). One table feeds the `--help`/`-h` intercept in main() below
-// (membership: a verb absent from here gets no guard, by design — the EVENTS
+// hooks.js line). One table feeds the unknown-flag guard in main() below, which
+// also intercepts `--help`/`-h` (membership: a verb absent from here gets no guard, by design — the EVENTS
 // names are invoked by the harness via stdin JSON, never probed with a `--help`
 // flag, and never fell through to the implicit-run-dir-guess hazard #1143
 // closed), the derived `USAGE` map, dispatch, and the usage listing an unknown
@@ -157,17 +157,15 @@ function usageText() {
     + `  <event>  (harness hook events, JSON on stdin: ${EVENTS.join(', ')})\n`;
 }
 
-// #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
-// verbs (archive-run too, since it moves files and commits — #4773) plus the
-// read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the
-// keys of the table below. The unknown-flag guard in main() consults these
-// sets and supersedes HELP_FLAGS for exactly these verbs: `--help`/`-h` are
-// simply never declared, so they fall out as "unknown" the same as a genuine
-// typo. The table gates flags only: archive-run keeps its ctxLib.resolveRunDir
-// fallback, because unambiguousOnly is chosen per call site (resolveOpts),
-// not by this table. Every other resolveRunArg caller (check-resume-freshness,
-// check-staged-inventory, check-session-residue) has no entry here and keeps
-// today's HELP_FLAGS-only guard and ctxLib.resolveRunDir fallback, unchanged.
+// #1012, #4777: declared-flag sets, one per VERBS verb — exactly the keys of the
+// table below. The unknown-flag guard in main() consults these sets for every
+// verb and fails closed: a verb with no entry refuses every flag, and a flagless
+// verb carries `[]` (reconcile-summary, reconcile-background). `--help`/`-h` are
+// never declared, so they fall out as "unknown" the same as a genuine typo.
+// tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
+// flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
+// unambiguousOnly is chosen per call site (resolveOpts), not by this table.
+// That holds for every resolveRunArg caller.
 const KNOWN_FLAGS = {
   'archive-run': ['--run'],
   'close-run': ['--run'],
@@ -1932,10 +1930,10 @@ async function main(argv) {
   // corruption hazard observed 2026-08-20 (see the now-removed docs/donts.md
   // bridging rule). Checked against the VERBS table, not a hardcoded verb
   // list, so a verb with no table entry gets no guard by design.
-  // #1012: for the flag-strict verbs (the KNOWN_FLAGS table), ANY undeclared --* argument (--help
-  // included — it is never declared) intercepts here, before resolveRunArg
-  // or any lib call ever runs. Every other VERBS-table verb keeps the
-  // narrower HELP_FLAGS-only guard unchanged.
+  // #1012, #4777: ANY undeclared --* argument (--help included — it is never
+  // declared) intercepts here, before resolveRunArg or any lib call ever runs,
+  // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
+  // closed and refuses every flag.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it as a token to classify — checked separately here,

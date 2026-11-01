@@ -272,3 +272,18 @@ test('#4777: resolve-run-dir --create with no typo mints a run dir (positive con
   assert.ok(minted.startsWith(path.join(root, '.claude-tweaks', 'pipelines') + path.sep), `minted run dir is under pipelines: ${minted}`);
   assert.ok(fs.statSync(minted).isDirectory(), 'a real --create run mints the run dir');
 });
+
+test('#4777: hooks.js comments no longer describe a lenient verb set', () => {
+  const src = fs.readFileSync(HOOKS, 'utf8');
+  assert.doesNotMatch(src, /Every other resolveRunArg caller/);
+  assert.doesNotMatch(src, /Every other VERBS-table verb keeps the\s+\/\/ narrower HELP_FLAGS-only guard/);
+});
+
+test('#4777: the registration skill states default-strict membership', () => {
+  const skill = fs.readFileSync(path.join(__dirname, '..', '.claude', 'skills', 'hooks-js-verb-registration', 'SKILL.md'), 'utf8');
+  assert.doesNotMatch(skill, /Only for a flag-strict verb/);
+  assert.doesNotMatch(skill, /The lenient mutating verbs still in `VERBS`/);
+  const row2 = skill.split('\n').find((line) => line.startsWith('| 2 |'));
+  assert.ok(row2, 'registration row 2 is present');
+  assert.match(row2, /every `VERBS` verb/i);
+});
