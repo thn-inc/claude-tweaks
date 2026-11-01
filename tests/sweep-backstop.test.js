@@ -248,7 +248,7 @@ test('the resume file reads the resume command from the PR body when a PR exists
 });
 
 // #4804 review: the resume file cites item 10's print line by shape; pin that item 10 still prints it.
-test("item 10 still prints the reconstructed `no PR found … resume: node … reconcile` line the resume file cites (#4804)", () => {
+test('item 10 still prints the reconstructed `no PR found … resume: node … reconcile` line the resume file cites (#4804)', () => {
   assert.match(ITEM10_OWN, /no PR found '[^\n]*resume: node [^\n]*hooks\.js[^\n]*reconcile/);
 });
 
@@ -279,9 +279,11 @@ test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan 
 // cannot pass vacuously on a misspelled literal.
 const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
 test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4804)', () => {
+  const resumeText = collapseWhitespace(RESUME);
+  const item10Text = collapseWhitespace(ITEM10_OWN);
   for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape', 'Never take `{run-id}` from the PR body\'s own marker', 'Report the `resume` line it prints only when the verdict is `resume`']) {
-    assert.ok(collapseWhitespace(RESUME).includes(literal), `control: "${literal}" must be in the resume file`);
-    assert.ok(!collapseWhitespace(ITEM10_OWN).includes(literal), `item 10 must not carry the moved literal "${literal}"`);
+    assert.ok(resumeText.includes(literal), `control: "${literal}" must be in the resume file`);
+    assert.ok(!item10Text.includes(literal), `item 10 must not carry the moved literal "${literal}"`);
   }
 });
 
