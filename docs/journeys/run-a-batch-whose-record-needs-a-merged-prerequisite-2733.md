@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/preflight-records/merge-gate.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/preflight-records.js
   - plugin/skills/flow/multispec-merge-gate.md
   - plugin/skills/flow/multispec-preflight-failure.md
@@ -50,4 +51,5 @@ files:
 - Related: #2682 (the incident batch whose record demanded #2670/#2681 "actually merged"), `respond-to-multispec-boundary-drift.md` (the later, per-boundary freshness check).
 - Updated during #3351's build (run 2026-10-17T095806-spec-3351): step 4's "proceed unsplit with a SKIP" fallback was replaced by Step 3's failure ruling (`multispec-preflight-failure.md`).
 - Updated during #4369's build (run 2026-10-28T192900-record-4369): the section scan skips heading lines inside fenced blocks (shared `fencedLineMask`, `plugin/bin/lib/issues/record-payload.js`).
+- Updated during #4645's build (run 2026-10-31T221848-record-4645): `fencedLineMask` moved to `plugin/bin/lib/markdown-blocks.js`; `merge-gate.js` imports it from there.
 - Updated during #4553's build (run 2026-10-31T234545-record-4553): step 1's call also passes `--blocker-landing`, judging out-of-run blockers in the same call; see `stop-a-run-whose-closed-blocker-never-landed-4553.md`.

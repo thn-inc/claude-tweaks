@@ -96,7 +96,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
 Standalone `/build` (no run dir): list the skip in the Step 7 handoff instead
 (`handoff-template.md`'s inline-skip listing), naming the composed plan's path.
 
-Proceed to **Common Step 2** exactly as Spec Step 3 would after a normal `/superpowers:writing-plans`
+Proceed to **Common Step 1.5** exactly as Spec Step 3 would after a normal `/superpowers:writing-plans`
 invocation.
 
 ## Escape hatch: NEEDS_CONTEXT re-run

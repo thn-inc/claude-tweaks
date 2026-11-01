@@ -19,7 +19,7 @@
 const { extractKeyFiles } = require('./grouping');
 const { normalizeLabelNames, partitionByOpenLinkedPR } = require('./record');
 const { classifyClaimBlob } = require('./claims');
-const { fencedLineMask } = require('./record-payload');
+const { fencedLineMask } = require('../markdown-blocks');
 
 // Jaccard similarity over lowercased word tokens, at or above this
 // threshold, is the title-similarity signal (#2 below). A screen, not a
