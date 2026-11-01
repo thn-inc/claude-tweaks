@@ -12,3 +12,4 @@
 | 8 | build | SDD ruling — gh-absent moves out of the re-run group to "re-run where gh is available" plus tidy's parent-gate backstop: ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 9 | build | SDD ruling — the 4 residual minors are fixed by the controller in one commit (0b39deb) rather than parked: ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
 | 10 | review | Review (high, Test quality): win32-fragile runDir expectation in post-merge.test.js setup-failures test — staged/review-1.patch (staged/review-1.patch) | open | — |
+| 11 | review/hindsight | Background post-merge summary (hooks.js:1880) counts a failed-close ran entry as ran; classifyEntry calls it failed — deferred, Defer-reason: needs-human-decision (spec holds loop behaviour unchanged; SessionStart recovery wording open) (staged/reflect-1.md) | open | — |
