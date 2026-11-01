@@ -78,10 +78,11 @@ it literally into the next call; never carry it in a shell variable across calls
 2. **Read the worktree path and feature branch** — before `close-run` (step 4), which nulls
    `run-state.json`'s `worktree` field, so a later read returns nothing. Read it from that field
    (`record-worktree` stamped it there), never `$RUN_DIR` itself (`$RUN_DIR` sits inside the main
-   checkout per `_shared/pipeline-run-dir.md`'s anchoring rule):
+   checkout per `_shared/pipeline-run-dir.md`'s anchoring rule). `{run-dir}` is `$RUN_DIR`'s value,
+   pasted as a literal argument, so no path character reaches the script text:
 
    ```bash
-   node -e "const w=require('$RUN_DIR/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)"   # -> {worktree-path}
+   node -e "const w=require(process.argv[1]+'/run-state.json').worktree; if(!w){console.error('claude-tweaks: run-state.json has no worktree field — cannot resolve the worktree to merge'); process.exit(1);} console.log(w)" "{run-dir}"   # -> {worktree-path}
    git -C "{worktree-path}" branch --show-current                       # -> {feature-branch}
    ```
 

@@ -480,20 +480,32 @@ const TASK_MARKER_RISKS = ['high'];
 const ROLE_MARKER_RE = /^\*\*Role:\*\*[ \t]*(.*)$/m;
 const RISK_MARKER_RE = /^\*\*Review risk:\*\*[ \t]*(.*)$/m;
 
+// The recognized value is the raw value's leading whitespace-delimited token
+// when it is in the closed set (so `high (reason)` and `high — reason` read
+// as `high`); a directly attached separator (`high,`, `high-ish`) makes the
+// token something else and stays unrecognized.
+function recognizeMarkerValue(raw, closedSet) {
+  if (raw === null) return null;
+  const lead = raw.split(/\s/, 1)[0];
+  return closedSet.includes(lead) ? lead : null;
+}
+
 // Returns { markers: boolean, tasks: [{ index, title, role, risk, roleRaw,
 // riskRaw }] }. `index` is the task's own declared number (SDD addresses
 // tasks by this identity, not by position in the file) as a Number.
 // `role`/`risk` are the recognized value or null (an absent line, or a
-// present line whose value isn't in the closed set above); `roleRaw`/
-// `riskRaw` carry the line's raw trimmed value (or null when the line is
-// absent at all) so a caller validating against the closed set (checks.js's
-// `checkTaskMarkers`) can still name the actual offending value. `markers`
-// is true iff ANY task carries a recognized marker KEY at all — a key
-// present with an unrecognized value still counts (the task is marked, just
-// invalidly), so `markers: false` means "no `**Role:**`/`**Review risk:**`
-// line anywhere", never "no valid one". A marker line inside a fenced code
-// block in a task body is stripped before matching, same as the batched
-// marker's own header-fence handling in `countTasks` above.
+// present line whose leading whitespace-delimited token isn't in the closed
+// set above — a trailing annotation after a recognized token is ignored);
+// `roleRaw`/`riskRaw` carry the line's raw trimmed value (or null when the
+// line is absent at all) so a caller validating against the closed set
+// (checks.js's `checkTaskMarkers`) can still name the actual offending
+// value. `markers` is true iff ANY task carries a recognized marker KEY at
+// all — a key present with an unrecognized value still counts (the task is
+// marked, just invalidly), so `markers: false` means "no
+// `**Role:**`/`**Review risk:**` line anywhere", never "no valid one". A
+// marker line inside a fenced code block in a task body is stripped before
+// matching, same as the batched marker's own header-fence handling in
+// `countTasks` above.
 function extractTaskMarkers(text) {
   const blocks = extractTaskBlocks(text);
   let markers = false;
@@ -507,8 +519,8 @@ function extractTaskMarkers(text) {
     return {
       index: Number(b.taskNumber),
       title: b.title,
-      role: roleRaw !== null && TASK_MARKER_ROLES.includes(roleRaw) ? roleRaw : null,
-      risk: riskRaw !== null && TASK_MARKER_RISKS.includes(riskRaw) ? riskRaw : null,
+      role: recognizeMarkerValue(roleRaw, TASK_MARKER_ROLES),
+      risk: recognizeMarkerValue(riskRaw, TASK_MARKER_RISKS),
       roleRaw,
       riskRaw,
     };

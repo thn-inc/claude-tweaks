@@ -810,6 +810,9 @@ test('CLI: a gh timeout exits 1 with the timeout hint, never the gh-absent messa
   assert.match(h.err.join(''), /CLAUDE_TWEAKS_GH_TIMEOUT_MS/);
   assert.match(h.err.join(''), /gh-timeout-ms/);
   assert.match(h.err.join(''), /timed out after \d+ ms/);
+  // The ceiling the hint names is the schema's own, not a copy of it.
+  const { max } = require('../../../plugin/bin/lib/policy-schema').POLICY_KEYS.find((k) => k.key === 'gh-timeout-ms');
+  assert.ok(h.err.join('').includes(`(max ${max})`), h.err.join(''));
   assert.doesNotMatch(h.err.join(''), /gh is not available/);
 });
 
