@@ -347,7 +347,9 @@ const IDEMPOTENCE_SOURCES = ['comments', 'body'];
 // Pure: idempotence facts -> { idempotence, skipped }. `source` names the facts' shape:
 // 'comments' (the default) is the gh/MCP `{ state, stateReason, comments, login }`;
 // 'body' is local-files' `{ state, body }`, where the close marker is a heading in the
-// record body. Any other `source` throws a TypeError.
+// record body. Any other `source` throws a TypeError. A `login` of '' means the identity
+// read failed or came back blank: only trusted authors count, and with no close marker
+// counted `skipped` gains IDENTITY_PROBE_FAILED_NOTE.
 function evaluateIdempotence(facts, { source = 'comments' } = {}) {
   if (!IDEMPOTENCE_SOURCES.includes(source)) {
     throw new TypeError(`source must be one of ${IDEMPOTENCE_SOURCES.join(', ')}; got ${String(source)}`);

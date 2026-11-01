@@ -273,7 +273,7 @@ test('comments are guarded and me is required only for an open, non-reopened par
 
 test("#4770 withIdempotenceReads reads any login-less me as login ''", () => {
   const open = { state: 'OPEN', stateReason: '' };
-  for (const me of [null, { login: '' }, { login: 123 }, { message: 'Bad credentials' }, [], 'x']) {
+  for (const me of [null, { login: '' }, { login: '  ' }, { login: 123 }, { message: 'Bad credentials' }, [], 'x']) {
     assert.deepEqual(withIdempotenceReads({ parentComments: [], me }, open), { state: 'OPEN', stateReason: '', comments: [], login: '' }, JSON.stringify(me));
   }
 });

@@ -224,7 +224,8 @@ function withIdempotenceReads(raw, idempotence) {
   const me = need(raw, 'me');
   // A present me without a login is a failed get_me: no identity (login ''), which the core
   // reads as trusted-only dedupe plus a degrade note. Only a missing key is a fact error.
-  const login = isPlainObject(me) && typeof me.login === 'string' ? me.login : '';
+  // Trimmed like the gh path's readLogin, so a blank login is '' on both transports.
+  const login = isPlainObject(me) && typeof me.login === 'string' ? me.login.trim() : '';
   return { ...idempotence, comments, login };
 }
 
