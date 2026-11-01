@@ -575,14 +575,51 @@ test('a marker edit on every line of a full body leaves it at or under maxChars'
   const rows = Array.from({ length: 9 }, (_, i) => findingLine(i));
   const lineLength = stamped(rows[0]).length;
   assert.ok(rows.every((r) => stamped(r).length === lineLength));
-  const maxChars = 5 * lineLength + 10; // five lines fit with no room to spare for marks
+  // The longest mark: `→ #` and ten digits, with its space, is 14 characters. The cap leaves room for five
+  // lines carrying 13 each, so a reserve below 14 packs five and the edited bodies overrun.
+  const longest = '→ #1234567890';
+  const maxChars = 5 * lineLength + 4 + 5 * (longest.length);
   const old = [posted(rows.join('\n'))];
   const fresh = postBodies(planOf(old, [], { maxChars }));
   assert.ok(fresh.length >= 2);
-  const old2 = [{ ...old[0], body: rows.map((l) => `${l} → expired`).join('\n') }];
-  const p = planOf(old2, fresh, { maxChars });
-  assert.strictEqual(p.markerEdits.length, fresh.length);
-  for (const edit of p.markerEdits) assert.ok(edit.body.length <= maxChars, `${edit.body.length} > ${maxChars}`);
+  for (const mark of [longest, '→ expired', '→ #4848']) {
+    const old2 = [{ ...old[0], body: rows.map((l) => `${l} ${mark}`).join('\n') }];
+    const p = planOf(old2, fresh, { maxChars });
+    assert.strictEqual(p.markerEdits.length, fresh.length, mark);
+    for (const edit of p.markerEdits) assert.ok(edit.body.length <= maxChars, `${mark}: ${edit.body.length} > ${maxChars}`);
+  }
+});
+
+test('a re-plan after the selected live line moved posts the item marker the carried copy lacks', () => {
+  const base = findingLine(1);
+  const item = '<!-- consolebackfill-item: item2 -->';
+  const old = [posted(`${base}\n${base} ${item}`)];
+  const first = planOf(old);
+  assert.deepStrictEqual(tombstoneLines(first.bodies), [item]);
+  const entriesOnly = [posted(first.bodies[0])]; // interrupted before the tombstone body
+  assert.ok(!first.bodies[0].includes(item));
+  // The first line is promoted meanwhile: the line with the item marker is now the selected one.
+  const old2 = [{ ...old[0], body: `${base} → #5\n${base} ${item}` }];
+  const again = planOf(old2, entriesOnly);
+  assert.strictEqual(again.live, 1);
+  assert.strictEqual(again.carried, 1);
+  assert.deepStrictEqual(again.markerEdits, []);
+  assert.deepStrictEqual(again.tombstonesPending, [item]);
+  assert.strictEqual(again.verified, false, 'the item marker is on neither side yet');
+  assert.deepStrictEqual(tombstoneLines(again.bodies), [item]);
+  const done = planOf(old2, [...entriesOnly, ...postBodies({ bodies: again.bodies })]);
+  assert.strictEqual(done.verified, true);
+  assert.deepStrictEqual(done.bodies, []);
+  assert.strictEqual(done.tombstones, done.tombstonesCarried);
+});
+
+test('a fingerprint-less live duplicate is not counted in unfingerprintedMarked', () => {
+  const bare = '- [tests] no marker here — f.js — Defer-reason: x — run';
+  const p = planOf([posted(`${bare}\n${bare}`)]);
+  assert.strictEqual(p.live, 1);
+  assert.strictEqual(p.unfingerprintedMarked, 0);
+  assert.strictEqual(p.tombstones, 0);
+  assert.strictEqual(planOf([posted(`${bare}\n${bare} → #7`)]).unfingerprintedMarked, 1, 'a marked fingerprint-less line still counts');
 });
 
 // --- classifyRolloverResume: replacement identity ---
@@ -653,6 +690,22 @@ test('classifyRolloverResume refuses a non-array candidate list and a non-object
   const refused = { name: 'CarryOverInputError' };
   for (const bad of [{}, 'x', null, undefined]) assert.throws(() => classifyRolloverResume(bad, OLD_ISSUE), refused, String(bad));
   for (const bad of [null, 'x', [], undefined, {}]) assert.throws(() => classifyRolloverResume([candidate(10)], bad), refused, JSON.stringify(bad));
+});
+
+test('classifyRolloverResume ignores a candidate without an integer number and the old issue itself', () => {
+  const none = { state: 'none', replacement: null, extras: [] };
+  assert.deepStrictEqual(classifyRolloverResume([candidate(undefined)], OLD_ISSUE), none);
+  assert.deepStrictEqual(classifyRolloverResume([candidate('10')], OLD_ISSUE), none);
+  assert.deepStrictEqual(classifyRolloverResume([candidate('11'), candidate(12)], OLD_ISSUE), { state: 'resume', replacement: 12, extras: [] });
+  assert.deepStrictEqual(classifyRolloverResume([candidate(123)], OLD_ISSUE), none, 'the old issue is never its own replacement');
+  assert.deepStrictEqual(classifyRolloverResume([candidate(123), candidate(10)], OLD_ISSUE), { state: 'resume', replacement: 10, extras: [] });
+});
+
+test('classifyRolloverResume reads the state casing gh returns', () => {
+  const labeled = candidate(10, { labels: [{ name: 'digest' }] });
+  assert.strictEqual(classifyRolloverResume([candidate(10)], { ...OLD_ISSUE, state: 'OPEN' }).state, 'resume');
+  assert.strictEqual(classifyRolloverResume([labeled], { ...OLD_ISSUE, state: 'OPEN', labels: [] }).state, 'resume', 'an OPEN old issue is not finished');
+  assert.strictEqual(classifyRolloverResume([labeled], { ...OLD_ISSUE, state: 'CLOSED', labels: [] }).state, 'finished');
 });
 
 test('classifyRolloverResume refuses a candidate with no author association and an old issue with no state', () => {

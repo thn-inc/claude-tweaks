@@ -36,9 +36,9 @@ const FIRST_SEEN_MARKER = new RegExp(`<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: (\\
 const FIRST_SEEN_STRIP = new RegExp(`\\s*<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: \\S+? -->`, 'g');
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DEFAULT_MAX_CHARS = 60000;
-// Room each carried entry line keeps for a marker edit: a space plus `→ expired`, or `→ #` and up
-// to ten digits.
-const MARK_RESERVE = 12;
+// Room each carried entry line keeps for a marker edit: a space, then `→ expired` (10 characters)
+// or `→ #` and up to ten digits (13).
+const MARK_RESERVE = 14;
 const TOMBSTONE_HEADER = 'Fingerprint-only tombstones: promoted or expired findings kept for dedup (tidy/digest-sweep.md\'s Container rollover).';
 
 // A bare-string array element is the pre-#3766 contract shape (`.comments[].body`): it has no
@@ -265,7 +265,9 @@ function commentIdOf(comment) {
 // Packs lines into bodies of at most maxChars, splitting only at line boundaries; a single line
 // over the cap gets a body of its own. header, when given, opens every body. reserve: characters
 // each line may still grow by (a marker edit appends a `→` mark to an entry line), counted against
-// the cap up front so a later edit cannot push a posted body past it.
+// the cap up front so a later edit cannot push a body of two or more lines past it. A body of one
+// line cannot be split further, so a line over the cap, or within `reserve` of it, can still exceed
+// it.
 function packBodies(lines, maxChars, header, reserve = 0) {
   const bodies = [];
   let current = header ? [header] : [];
@@ -338,6 +340,23 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   const newLines = newSide.lines.map((l) => ({ ...l, d: describeLine(l.text) }));
   const newEntryKeys = new Set(newLines.filter(({ d }) => d.entry).map(({ d }) => d.key));
   const newMarkers = new Set(newLines.flatMap(({ d }) => d.markers));
+
+  // A selected live entry whose key the new side already holds, but on a line missing some of its
+  // markers: the selection moved after the copy was posted (the first live line was promoted, so a
+  // later duplicate with an extra marker is now the one carried). Those markers are tombstoned
+  // rather than assumed to be on the new side.
+  const newEntryMarkers = new Map();
+  for (const { d } of newLines) {
+    if (!d.entry) continue;
+    if (!newEntryMarkers.has(d.key)) newEntryMarkers.set(d.key, new Set());
+    for (const m of d.markers) newEntryMarkers.get(d.key).add(m);
+  }
+  for (const e of live) {
+    if (!newEntryMarkers.has(e.key)) continue;
+    const rest = (e.line.match(DEDUP_MARKER) || []).filter((m) => !newEntryMarkers.get(e.key).has(m) && !taken.has(m));
+    for (const m of rest) taken.add(m);
+    if (rest.length > 0) tombstones.push(rest);
+  }
 
   const pendingEntries = live.filter((e) => !newEntryKeys.has(e.key));
   const pending = pendingEntries.map((e) => e.line);
@@ -412,7 +431,6 @@ function classifyRolloverResume(candidates, oldIssue) {
     throw new CarryOverInputError('oldIssue: no state — cannot tell an open issue from a closed one');
   }
   candidates.forEach((c, index) => {
-    if (!c || typeof c !== 'object' || Array.isArray(c)) throw new CarryOverInputError(`candidates[${index}]: not an issue object`);
     if (commentAssociation(c) === null) throw new CarryOverInputError(`candidates[${index}]: no author association`);
   });
   const marker = digestReplacementMarker(oldIssue.number);
