@@ -11,6 +11,7 @@ const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
 const { hasPrEarlyStep1LineFor, hasLoggedPrDegrade } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const logDecision = require('../../../plugin/bin/log-decision');
 const { gitRepo } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 
 const RUN_ID = '2026-10-25T000001-record-4027';
 const BRANCH = 'worktree-dispatch-record-4027';
@@ -304,7 +305,7 @@ test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-ru
         .split('HTTP 422').join('{error}'));
     }
   }
-  const liveDoc = collapse(fs.readFileSync(LIFECYCLE_DOC, 'utf8'));
+  const liveDoc = collapse(readText(LIFECYCLE_DOC));
   assertRebindTwins(liveDoc, emitted);
 
   const reworded = liveDoc.replace('phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.', 'phase-checklist updates will exit 4. Reversibility: n/a.');
