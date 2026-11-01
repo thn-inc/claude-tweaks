@@ -94,7 +94,6 @@ const ALLOWLIST = [
   ratchet('_shared/github-pr-scan-acceptance.md', 'gh-computed-input', 'SUB_ISSUES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-sub-iss'),
   ratchet('_shared/github-pr-scan.md', 'gh-computed-input', ': > "$PR_SCAN_UNARMED_LINKS"'),
   ratchet('_shared/github-pr-scan.md', 'git-text-redirect-var', 'UNSETTLED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values unsettled-age-'),
-  ratchet('_shared/github-pr-scan.md', 'gh-computed-input', 'UNSETTLED_AGE=$(node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values unsettled-age-'),
   ratchet('_shared/github-pr-scan.md', 'gh-computed-input', 'SINCE=$(node -e "console.log(new Date(Date.now() - 7*24*60*60*1000).toISOString())")'),
   ratchet('_shared/health-filing-mechanics.md', 'gh-computed-input', 'gh issue reopen <issue_number>'),
   ratchet('_shared/issue-claims.md', 'gh-computed-input', 'if RAW=$(gh api "repos/{owner}/{repo}/contents/${CLAIM_PATH}?ref=${CLAIMS_BRANCH}" \\'),

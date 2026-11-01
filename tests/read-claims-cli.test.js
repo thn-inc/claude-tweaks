@@ -1,0 +1,251 @@
+// tests/read-claims-cli.test.js — in-process tests for bin/read-claims.js's
+// run(argv, deps) (#4818), mirroring tests/list-claims-cli.test.js's deps
+// injection. The git runner is faked with a dispatch table over the git
+// subcommands the CLI issues, except the one real-git round trip at the end,
+// which spawns the CLI against a temp bare origin holding a claims-registry
+// branch.
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { execFileSync, spawnSync } = require('child_process');
+const { run } = require('../plugin/bin/read-claims');
+
+const NOW = Date.parse('2026-11-01T12:00:00Z');
+const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'read-claims.js');
+
+// Blob content keyed by issue number.
+const BLOBS = {
+  3: JSON.stringify({ issueNumber: 3, claimedAt: '2026-11-01T11:00:00Z', runId: 'r3' }), // live
+  5: JSON.stringify({ issueNumber: 5, claimedAt: '2026-10-01T00:00:00Z', ttlHours: 1, runId: 'r5' }), // stale
+  8: JSON.stringify({ issueNumber: 8, claimedAt: '2026-10-01T00:00:00Z', released: true }), // tombstone
+  9: 'not json {', // unreadable
+};
+
+// `git cat-file --batch`: one `{sha} {type} {size}` header, the content, a newline per object.
+function catFile(input, contentBySha) {
+  const shas = Buffer.from(input).toString('utf8').split('\n').filter(Boolean);
+  return Buffer.concat(shas.map((sha) => {
+    const body = contentBySha[sha];
+    if (body === undefined) return Buffer.from(`${sha} missing\n`);
+    return Buffer.from(`${sha} blob ${Buffer.byteLength(body)}\n${body}\n`);
+  }));
+}
+
+function fakeGit(overrides = {}, blobs = BLOBS) {
+  const calls = [];
+  const lsTree = Object.keys(blobs).map((n) => `100644 blob sha${n}\tclaims/issue-${n}.json\0`).join('');
+  const contentBySha = Object.fromEntries(Object.entries(blobs).map(([n, c]) => [`sha${n}`, c]));
+  const handlers = {
+    fetch: () => '',
+    'rev-parse': () => 'tip-sha\n',
+    'ls-tree': () => lsTree,
+    'cat-file': (args, opts) => catFile(opts.input, contentBySha),
+    'update-ref': () => '',
+    ...overrides,
+  };
+  const runner = (args, opts = {}) => {
+    calls.push(args);
+    const handler = handlers[args[0]];
+    if (!handler) throw new Error(`unexpected git ${args[0]}`);
+    return handler(args, opts);
+  };
+  return { runner, calls };
+}
+
+function harness(git) {
+  const out = { stdout: [], stderr: [] };
+  const deps = {
+    runner: git.runner,
+    now: () => NOW,
+    stdout: (s) => out.stdout.push(s),
+    stderr: (s) => out.stderr.push(s),
+  };
+  return { out, deps };
+}
+
+const rowsOf = (out) => out.stdout.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+const REGISTRY_ROW = { number: null, state: 'could-not-read', reason: 'transport-failure' };
+
+// The scratch ref is the refspec's destination in the fetch call.
+function scratchRefOf(calls) {
+  const fetch = calls.find((c) => c[0] === 'fetch');
+  const refspec = fetch[3];
+  return refspec.slice(refspec.indexOf(':') + 1);
+}
+
+test('a git fetch refused with a 403 is one could-not-read registry row, exit 3, no terminator, and stderr names the 403 (#4818)', () => {
+  // execFileSync's real shape: the message line is only the command; git's own reason is on err.stderr.
+  const refused = Object.assign(
+    new Error('Command failed: git fetch -q origin claims-registry:refs/claims-scan-read/x\nfatal: unable to access'),
+    { stderr: "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403\n" },
+  );
+  const git = fakeGit({ fetch: () => { throw refused; } });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
+  assert.match(out.stderr.join(''), /read-claims\.js: could not read claims-registry: fatal: unable to access .*error: 403/);
+});
+
+test('a registry too large for execFileSync\'s 1 MiB default still reads: the batched reads lift the buffer cap (#4818)', () => {
+  // 25000 claims: past 1 MiB for both the ls-tree listing and the cat-file stream, so each read's cap is exercised.
+  const COUNT = 25000;
+  const big = {};
+  for (let n = 1; n <= COUNT; n++) big[n] = JSON.stringify({ issueNumber: n, claimedAt: '2026-11-01T11:00:00Z' });
+  const inner = fakeGit({}, big);
+  // execFileSync throws ENOBUFS when stdout outgrows maxBuffer (1 MiB when unset).
+  const runner = (args, opts = {}) => {
+    const outText = inner.runner(args, opts);
+    if (Buffer.byteLength(outText) > (opts.maxBuffer ?? 1024 * 1024)) throw Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+    return outText;
+  };
+  const { out, deps } = harness({ runner });
+  assert.equal(run([], deps), 0);
+  const rows = rowsOf(out);
+  assert.equal(rows.length, COUNT + 1);
+  assert.ok(rows.slice(0, COUNT).every((r) => r.state === 'live'), 'no blob row may be could-not-read');
+  assert.deepEqual(rows[COUNT], { number: null, state: 'complete', count: COUNT });
+});
+
+test('a listed blob that cat-file --batch reports missing is could-not-read, never absent (#4818)', () => {
+  const git = fakeGit({ 'cat-file': (args, opts) => catFile(opts.input, { sha5: BLOBS[5] }) });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 0);
+  assert.deepEqual(rowsOf(out), [
+    { number: 3, state: 'could-not-read', reason: 'transport-failure' },
+    { number: 5, state: 'stale', claimedAt: '2026-10-01T00:00:00Z' },
+    { number: 8, state: 'could-not-read', reason: 'transport-failure' },
+    { number: 9, state: 'could-not-read', reason: 'transport-failure' },
+    { number: null, state: 'complete', count: 4 },
+  ]);
+});
+
+test('a fetch timeout carries timedOut: true on the registry row', () => {
+  const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
+  const { out, deps } = harness(fakeGit({ fetch: () => { throw err; } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [{ ...REGISTRY_ROW, timedOut: true }]);
+});
+
+test('an ls-tree failure is the registry row, exit 3 — no blob rows, no terminator', () => {
+  const { out, deps } = harness(fakeGit({ 'ls-tree': () => { throw new Error('fatal: unable to read tree'); } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
+  assert.match(out.stderr.join(''), /could not read claims-registry: transport-failure/);
+});
+
+test('an ls-tree timeout carries timedOut: true on the registry row', () => {
+  const err = Object.assign(new Error('spawnSync git ETIMEDOUT'), { killed: true });
+  const { out, deps } = harness(fakeGit({ 'ls-tree': () => { throw err; } }));
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [{ ...REGISTRY_ROW, timedOut: true }]);
+});
+
+test('a cat-file --batch failure reads every listed claim as could-not-read, then the terminator, exit 0', () => {
+  const git = fakeGit({ 'cat-file': () => { throw new Error('fatal: cat-file died'); } });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 0);
+  assert.deepEqual(rowsOf(out), [
+    ...[3, 5, 8, 9].map((n) => ({ number: n, state: 'could-not-read', reason: 'transport-failure' })),
+    { number: null, state: 'complete', count: 4 },
+  ]);
+});
+
+test('happy path: live, stale, tombstone and unreadable blobs classify to their states, then the terminator', () => {
+  const { out, deps } = harness(fakeGit());
+  assert.equal(run([], deps), 0);
+  assert.deepEqual(rowsOf(out), [
+    { number: 3, state: 'live', claimedAt: '2026-11-01T11:00:00Z' },
+    { number: 5, state: 'stale', claimedAt: '2026-10-01T00:00:00Z' },
+    { number: 8, state: 'tombstone', claimedAt: '2026-10-01T00:00:00Z' },
+    { number: 9, state: 'unreadable' },
+    { number: null, state: 'complete', count: 4 },
+  ]);
+});
+
+test('a registry with no claims-registry branch is an empty registry: exit 0, the terminator with count 0', () => {
+  const git = fakeGit({ fetch: () => { throw new Error("fatal: couldn't find remote ref claims-registry"); } });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 0);
+  assert.deepEqual(rowsOf(out), [{ number: null, state: 'complete', count: 0 }]);
+  assert.deepEqual(out.stderr, []);
+});
+
+test('the scratch ref is deleted after a successful read', () => {
+  const git = fakeGit();
+  const { deps } = harness(git);
+  run([], deps);
+  const ref = scratchRefOf(git.calls);
+  assert.match(ref, /^refs\/claims-scan-read\//);
+  assert.deepEqual(git.calls.filter((c) => c[0] === 'update-ref'), [['update-ref', '-d', ref]]);
+});
+
+test('the scratch ref is deleted when rev-parse fails, and the failure is the registry row', () => {
+  const git = fakeGit({ 'rev-parse': () => { throw new Error('fatal: bad revision'); } });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 3);
+  assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
+  const ref = scratchRefOf(git.calls);
+  assert.deepEqual(git.calls.filter((c) => c[0] === 'update-ref'), [['update-ref', '-d', ref]]);
+});
+
+test('--help prints usage, exit 0, git never called', () => {
+  const git = fakeGit();
+  const { out, deps } = harness(git);
+  assert.equal(run(['--help'], deps), 0);
+  assert.match(out.stdout.join(''), /usage: read-claims\.js/);
+  assert.equal(git.calls.length, 0);
+});
+
+test('an unknown flag is a malformed invocation: exit 1, git never called', () => {
+  const git = fakeGit();
+  const { out, deps } = harness(git);
+  assert.equal(run(['--bogus'], deps), 1);
+  assert.match(out.stderr.join(''), /unknown argument: --bogus/);
+  assert.equal(git.calls.length, 0);
+});
+
+test('--remote with no value is a malformed invocation: exit 1, git never called', () => {
+  const git = fakeGit();
+  const { out, deps } = harness(git);
+  assert.equal(run(['--remote'], deps), 1);
+  assert.equal(run(['--remote', ''], deps), 1);
+  // a leading dash of either kind would reach `git fetch` as an option
+  assert.equal(run(['--remote', '-x'], deps), 1);
+  assert.equal(run(['--remote', '--upload-pack=evil'], deps), 1);
+  assert.equal(git.calls.length, 0);
+  assert.match(out.stderr.join(''), /--remote needs a remote name/);
+});
+
+test('real git: a temp origin with two live claim blobs reads as two rows and the terminator through the spawned CLI', (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'read-claims-cli-'));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const origin = path.join(root, 'origin.git');
+  const work = path.join(root, 'work');
+  const git = (args, cwd = work) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: 'pipe' });
+  git(['init', '--bare', '-q', origin], root);
+  git(['clone', '-q', origin, work], root);
+  git(['config', 'user.email', 'test@example.com']);
+  git(['config', 'user.name', 'Test']);
+  git(['config', 'commit.gpgsign', 'false']);
+  git(['checkout', '-q', '--orphan', 'claims-registry']);
+  fs.mkdirSync(path.join(work, 'claims'));
+  const claimedAt = new Date().toISOString();
+  const claim = JSON.stringify({ issueNumber: 7, claimedAt, runId: 'r7' }, null, 2);
+  fs.writeFileSync(path.join(work, 'claims', 'issue-7.json'), claim);
+  fs.writeFileSync(path.join(work, 'claims', 'issue-9.json'), claim);
+  git(['add', 'claims']);
+  git(['commit', '-q', '-m', 'seed claims']);
+  git(['push', '-q', 'origin', 'claims-registry']);
+
+  const child = spawnSync(process.execPath, [CLI], { cwd: work, encoding: 'utf8' });
+  assert.equal(child.status, 0, child.stderr);
+  const rows = child.stdout.split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  assert.deepEqual(rows, [
+    { number: 7, state: 'live', claimedAt },
+    { number: 9, state: 'live', claimedAt },
+    { number: null, state: 'complete', count: 2 },
+  ]);
+});
