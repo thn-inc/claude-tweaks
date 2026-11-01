@@ -129,18 +129,19 @@ test('#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else', () 
 });
 
 test('#4777: every flag a usage line names is declared, and VALUE_FLAGS matches the usage lines', () => {
-  const valueFlags = new Set();
+  let valueFlagCount = 0;
   for (const [verb, usage] of Object.entries(USAGE)) {
     for (const [, flag, value] of usage.matchAll(/(--[a-z][a-z-]*)(\s+<[^>]+>)?/g)) {
       assert.ok(KNOWN_FLAGS[verb].includes(flag), `${verb}: usage names ${flag} but KNOWN_FLAGS does not declare it`);
-      assert.equal(VALUE_FLAGS.has(flag), Boolean(value), `${verb}: ${flag} ${value ? 'takes a value but is not' : 'is boolean but is'} in VALUE_FLAGS`);
-      if (value) valueFlags.add(flag);
+      const mismatch = value ? 'takes a value but is not' : 'is boolean but is';
+      assert.equal(VALUE_FLAGS.has(flag), Boolean(value), `${verb}: ${flag} ${mismatch} in VALUE_FLAGS`);
+      if (value) valueFlagCount += 1;
     }
   }
   for (const flag of VALUE_FLAGS) {
     assert.ok(Object.values(KNOWN_FLAGS).some((flags) => flags.includes(flag)), `VALUE_FLAGS member ${flag} is declared by no verb`);
   }
-  assert.ok(valueFlags.size > 0, 'the usage lines were parsed');
+  assert.ok(valueFlagCount > 0, 'the usage lines were parsed');
 });
 
 test('#4777: every VERBS verb refuses an undeclared flag with its usage line', () => {
