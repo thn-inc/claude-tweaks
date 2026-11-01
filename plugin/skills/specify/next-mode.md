@@ -184,7 +184,7 @@ Resolve this fence's session-scoped temp paths first (`_shared/session-tmp-root.
 ```bash
 RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-raw.json)"
 CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-candidates.json)"
-gh issue list --state open --json number,title,labels,createdAt --limit 500 > "$RAW"
+gh issue list --state open --json number,title,labels,createdAt,body --limit 500 > "$RAW"
 RAW_COUNT=$(node -e "console.log(require('$RAW').length)")
 if [ "$RAW_COUNT" -ge 500 ]; then
   echo "Warning: the open-issue pull for a bare /claude-tweaks:specify drain (or its deprecated next alias) returned exactly the --limit cap (500) — this repo may have more open records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST ones, exactly what bare drain's own oldest-first tie-break exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the backlog down." >&2
@@ -194,10 +194,15 @@ node -e "
   const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest']);
   const eligible = records.filter((r) =>
     !r.labels.some((l) => EXCLUDE.has(l.name) || l.name.startsWith('needs:'))
-  );
+  ).map(({ body, ...r }) => {
+    const hit = /^<!-- digest-rollover-of: (\d+) -->\s*$/m.exec(body || '');
+    return hit ? { ...r, digestRolloverOf: Number(hit[1]) } : r;
+  });
   console.log(JSON.stringify(eligible));
 " > "$CANDIDATES"
 ```
+
+A candidate carrying `digestRolloverOf` may be a digest rollover's unfinished replacement, not yet labeled. Before shaping it, read it and that `{old}` through REST and run `classifyRolloverResume` (`tidy/digest-sweep.md`'s Resume an unfinished rollover): with `{old}` still open and a `resume` or `stalled` verdict, drop it from the drain. Any other verdict makes it an ordinary record, since the line alone proves nothing.
 
 No further claim-state filtering runs here — the `bot:in-progress`
 exclusion above is a cheap label pre-filter only, same posture as

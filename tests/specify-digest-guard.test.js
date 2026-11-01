@@ -77,3 +77,12 @@ test('work-record-permission-matrix.md /specify row grants the residue strip fro
   const src = readFlat('plugin/skills/_shared/work-record-permission-matrix.md');
   assert.ok(src.includes('a `digest`-labeled record only (case-1 digest-container guard cleanup'), 'digest-labeled residue-strip grant missing from the /specify row');
 });
+
+test("next-mode.md's bare drain skips an unfinished digest rollover replacement by its body marker, not its title", () => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  assert.ok(src.includes('--json number,title,labels,createdAt,body --limit 500'), 'the drain fetch must read the body');
+  assert.ok(src.includes('/^<!-- digest-rollover-of: (\\d+) -->\\s*$/m'), 'body-marker read missing from the bare-drain filter');
+  assert.ok(src.includes('digestRolloverOf'), 'a marker hit must reach the trust check, not be dropped by the filter');
+  assert.ok(src.includes('`classifyRolloverResume`'), 'the marker alone never exempts: the trust check must decide');
+  assert.ok(!src.includes('continues #'), 'a title never exempts a record');
+});

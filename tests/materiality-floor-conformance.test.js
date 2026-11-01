@@ -383,3 +383,99 @@ test('the four health sweeps report a materiality-digest count distinct from the
     );
   }
 });
+
+const rollover = () => SWEEP.slice(SWEEP.indexOf('### Container rollover'));
+
+test('AC4.1: digest-sweep.md names the ordering, the count verification before the close, and the threshold rationale', () => {
+  const r = rollover();
+  const order = [
+    'without the `digest` label',
+    'post each printed `paths` file',
+    'Verify the count',
+    'Move the label',
+    'Close the old issue',
+  ].map((s) => r.indexOf(s));
+  assert.ok(order.every((i) => i !== -1), `missing a step: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, `steps out of order: ${order}`);
+  assert.ok(r.includes('Continue only when `verified` is `true`'));
+  assert.ok(r.includes('A mismatch stops here'));
+  assert.ok(r.includes('compacts promoted and expired lines out of every sweep'));
+  assert.ok(r.includes('truncates'));
+});
+
+test('digest-sweep.md verifies both counts, carries tombstones, and refuses a bad read', () => {
+  const r = rollover();
+  assert.ok(r.includes('both the live-entry count and the tombstone count'));
+  assert.ok(r.includes('fingerprint-only tombstone'));
+  assert.ok(r.includes('consolebackfill-item'));
+  assert.ok(r.includes('A non-zero exit is a refused read'));
+  assert.ok(r.indexOf('Remove `digest` from the old issue') < r.indexOf('add it to the replacement'), 'label removal must precede the add');
+});
+
+test('digest-sweep.md reads the true count and paginates every digest read', () => {
+  const r = rollover();
+  assert.ok(r.includes('gh api repos/{owner}/{repo}/issues/{n} --jq .comments'));
+  assert.ok(r.includes('gh issue view {n} --json comments --jq .comments'));
+  assert.ok(r.includes('`get_comments`'));
+  assert.ok(r.includes('Never `gh issue list --json comments`'));
+});
+
+test('digest-sweep.md resumes an unfinished rollover before its no-op, by trusted body marker, never by title', () => {
+  const start = SWEEP.indexOf('**Resume an unfinished rollover.**');
+  assert.ok(start !== -1, 'resume paragraph must exist');
+  assert.ok(start < SWEEP.indexOf('No-ops silently'), 'resume must run before the no-op that would otherwise skip it');
+  assert.ok(SWEEP.includes('<!-- digest-rollover-of: {old} -->'));
+  assert.ok(SWEEP.includes('classifyRolloverResume'));
+  assert.ok(SWEEP.includes('no `--search`'));
+  assert.ok(SWEEP.includes('A title alone never identifies a replacement'));
+  assert.ok(SWEEP.includes('`stalled`'), 'the interrupted label move must be named');
+  assert.ok(SWEEP.includes('list open `digest` issues first'), 'a stalled move must look for a bootstrapped issue before naming the add');
+  assert.ok(SWEEP.includes('`finished`') && SWEEP.includes('propose finishing when `verified` is `false` or `extras` is non-empty'), 'a closed old issue must be re-checked, not ignored');
+});
+
+test('digest-sweep.md re-lists before creating, picks the lowest-numbered, and closes the others after carrying', () => {
+  const r = rollover();
+  assert.ok(r.includes('Re-list immediately before creating'));
+  assert.ok(r.includes('lowest-numbered'));
+  assert.ok(r.includes('`extras`'));
+});
+
+test('digest-sweep.md skips the carry for a zero-comment issue and re-reads the count after the close', () => {
+  const r = rollover();
+  assert.ok(r.includes('A digest issue with zero comments has nothing to carry'));
+  const close = r.indexOf('Close the old issue');
+  const recount = r.indexOf('Re-read its true comment count');
+  assert.ok(recount !== -1 && close < recount, 'the post-close recount must follow the close');
+  assert.ok(r.includes('name any gap that remains in the report'));
+});
+
+test('digest-sweep.md Expiry dates a github-issues line through materialityEntryDate and leaves local-files alone', () => {
+  const expiry = SWEEP.slice(SWEEP.indexOf('### Expiry'), SWEEP.indexOf('### Container rollover'));
+  assert.ok(expiry.includes('materialityEntryDate'));
+  assert.ok(expiry.includes('materiality-first-seen'));
+  assert.ok(expiry.includes('On `local-files`, the age comes from'));
+});
+
+test('a re-run reaches a mark made on the old issue, and a later approval marks the carried copy', () => {
+  const r = rollover();
+  assert.ok(r.includes('apply each printed `edits` entry'));
+  assert.ok(r.includes('marks the carried copy in the current container'));
+});
+
+test('every rollover restatement carries the carry-over, not a bare bootstrap', () => {
+  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Rollover digest container**'));
+  assert.ok(row.includes('carry every trusted live entry and a tombstone per promoted or expired entry'));
+  assert.ok(!row.includes('bootstrap a fresh issue'));
+  assert.ok(!FLOOR.includes('it bootstraps the\nreplacement in the same move'));
+  assert.ok(!TIDY_RECORDS.includes('it bootstraps the replacement in the same move'));
+  assert.ok(FLOOR.includes('materiality-first-seen'));
+  assert.ok(FLOOR.includes('fingerprint-only tombstone'));
+  const tier = TIDY_STEP6_AUTO.split('\n').find((l) => l.startsWith('| **Rollover digest container**'));
+  assert.match(tier, /\| Stage \| Stage \| Stage — /);
+});
+
+test('tidy Shape 1 keeps an unfinished rollover replacement by its trusted body marker', () => {
+  assert.ok(TIDY_RECORDS.includes('`<!-- digest-rollover-of: {old} -->`'));
+  assert.ok(TIDY_RECORDS.includes('`classifyRolloverResume`'));
+  assert.ok(!TIDY_RECORDS.includes('(continues #{old})'));
+});

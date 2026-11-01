@@ -39,6 +39,8 @@ fails toward filing an ordinary issue, never toward the digest.
 
 A line console backfill writes for a finding (`tidy/console-backfill.md`) carries one more marker after the materiality marker, `<!-- consolebackfill-item: {fp} -->`, so its next pass finds the line after a claim-heuristic change; `{provenance}` stays the bare run id.
 
+A line a rollover carried (`tidy/digest-sweep.md`, `github-issues` only) carries one more trailing marker, `<!-- materiality-first-seen: {ISO} -->`, holding the timestamp of the comment it came from; its fields and fingerprint are unchanged, so Dedup still matches it in the new container. A promoted or expired entry moves as a fingerprint-only tombstone, its `materiality-fingerprint` and `consolebackfill-item` markers alone on a line: Dedup and console backfill's held check match it, and with no entry line it is never in the active set.
+
 `{area}` is the subsystem the finding belongs to, written as a stable, low-cardinality, lowercase
 token: the skill name (`tidy`, `review`), the `bin/lib/` module (`issues`, `hooks`), or the
 top-level tree (`docs`, `tests`) the `{file refs}` sit under — never a sentence and never a
@@ -66,7 +68,7 @@ issue and inverting this floor's entire purpose. Before routing a candidate entr
 skill calls `isMaterialityDuplicate(existingComments, candidate)`
 (`bin/lib/health-core/materiality-digest.js`). On `github-issues` the caller passes the open digest
 issue's comment *objects*, each with its `body` and author association (`authorAssociation` from
-`gh issue view {n} --json comments`, `author_association` from REST and MCP), never bare bodies.
+`gh issue view {n} --json comments`, `author_association` from REST and MCP), never bare bodies. The read is paginated (`tidy/digest-sweep.md`'s Container rollover).
 Only a comment whose author is `OWNER`, `MEMBER`, or `COLLABORATOR` counts
 (`_shared/pr-run-comments.md`'s Trusted authors, implemented by `bin/lib/issues/comment-trust.js`),
 so a marker planted by any other commenter cannot suppress a finding: it is routed as new. The
@@ -156,8 +158,7 @@ exempts `parent-issue` (`tidy/step-1-records.md`): a digest issue is never shape
 promoted, or closed as a record. Without that exemption the container is `isBacklog` forever and
 crosses any staleness threshold, where Shape 1's default recommendation is `Delete or Promote` —
 closing the container out from under every entry it holds. Only the digest sweep's own lifecycle
-(`tidy/digest-sweep.md`'s 100-comment rollover) ever closes a digest issue, and it bootstraps the
-replacement in the same move.
+(`tidy/digest-sweep.md`'s 100-comment rollover) ever closes a digest issue, and it carries the entries into the replacement before it closes anything.
 
 **`work-backend: local-files`:** `specs/digest.md`, entries appended in place (single-writer
 backend, no rollover needed). Promotion marks the entry line with a trailing `→ {id}`. Expiry
