@@ -12,6 +12,7 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
+const { aggregateReproductionProblem } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'aggregate-reproduction'));
 const { readText } = require('../../helpers/read-skill');
 const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
@@ -933,6 +934,29 @@ test('#4581: a coincidence line keys both locations whatever its case', () => {
   assert.deepStrictEqual(findings([line, va.entry, vb.entry].join('\n')), [], 'both keys settle it');
 });
 
+// The writer (log-decision's aggregate detector) exempts a coincidence line exactly when the reader keys both of its
+// locations: both build their regex from console/finding-path.js's COINCIDENCE. The empty quoted lens is where the two
+// earlier copies split (the writer exempted it, the reader keys no lens from it).
+test('#4581: the aggregate detector exempts exactly the coincidence lines the reader keys on both locations', () => {
+  const va = tbVerdict(tbFinding({ line: 4, claim: 'a' }), { verdict: 'confirmed' }).entry;
+  const vb = tbVerdict(tbFinding({ line: 9, claim: 'b' }), { verdict: 'confirmed' }).entry;
+  const cases = [
+    ['lens "3a Test quality" findings src/a.js:4 / src/a.js:9', true],
+    ['Lens "3a" Findings src/a.js:4 / src/a.js:9 Share a location', true],
+    ['lens 3a findings src/a.js:4 / src/a.js:9', true],
+    ['lens "3a" findings src/a.js:4 / :9', false],
+    ['lens "3a" findings src/a.js:4 / src/a:9', false],
+    ['lens "" findings src/a.js:4 / src/a.js:9', false],
+  ];
+  for (const [clause, keyed] of cases) {
+    const text = `Reproduction: ${/share a location/i.test(clause) ? clause : `${clause} share a location`} but not substance; both staged unconfirmed`;
+    const line = `- STAGED 09:59:00 — ${text}. Reversibility: high.`;
+    const readerKeysBoth = findings([line, va].join('\n')).length === 1 && findings([line, va, vb].join('\n')).length === 0;
+    const writerExempts = aggregateReproductionProblem({ status: 'STAGED', text }) === null;
+    assert.deepStrictEqual([clause, readerKeysBoth, writerExempts], [clause, keyed, keyed]);
+  }
+});
+
 test('a verdict logged before the STAGED line does not supersede it (#3949)', () => {
   const f = tbFinding();
   assert.strictEqual(findings([tbVerdict(f, { verdict: 'confirmed' }).entry, tbStaged(f)].join('\n')).length, 1);
@@ -1175,6 +1199,10 @@ test('the Positions read stops at the next heading: a bullet under a later secti
 });
 test('a lens token in a converged-positive debate entry matches case-insensitively, like findingKey (#4563)', () => {
   const d = [stagedLow('3a', 'src/a.js:5'), debatePositive(' (Lens "3a" finding src/a.js:5 — confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
+});
+test('#4581: a multi-word quoted lens in a converged-positive debate entry keys on its first token, like findingKey', () => {
+  const d = [stagedLow('3f Test quality', 'src/a.js:5'), debatePositive(' (lens "3f Test quality" finding src/a.js:5 — confirmed)')].join('\n');
   assert.deepStrictEqual(findings(d), []);
 });
 test('an unsettled contested file leaves its partner keep-staged (#4563 AC4)', () => {

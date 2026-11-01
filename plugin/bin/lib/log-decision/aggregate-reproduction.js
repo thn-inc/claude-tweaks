@@ -4,9 +4,12 @@
 // stays as residue. Detection is by grammar — a plural `findings` subject (a count, a lens noun phrase, or the
 // marker's own subject) or two `lens … finding` clauses — with the location shape shared with that reader
 // (console/finding-path.js), and lineKeys's two-full-path coincidence clause exempted. Pure, no I/O.
+// The word windows below were sized against the real archive. Before widening or narrowing one, run this from the
+// main checkout's root; the refused count (124 of 1388 lines on 2026-11-01) should move only by the lines you meant:
+//   node -e "const fs=require('fs'),{aggregateReproductionProblem:f}=require('./plugin/bin/lib/log-decision/aggregate-reproduction'),d=process.argv[1];let n=0,r=0;for(const p of fs.readdirSync(d,{recursive:true}))if(/(^|\/)decisions\.md$/.test(p))for(const l of fs.readFileSync(d+'/'+p,'utf8').split('\n')){const m=/^- STAGED \d\d:\d\d:\d\d — (.*)$/.exec(l);if(m&&/\breproduction:\s/i.test(m[1])){n++;if(f({status:'STAGED',text:m[1]}))r++}}console.log(n,r)" .claude-tweaks/pipelines
 'use strict';
 
-const { FINDING_PATH } = require('../console/finding-path');
+const { FINDING_PATH, COINCIDENCE } = require('../console/finding-path');
 
 const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // A plural phrase with a zero quantifier (`no`, `zero`, `0`) anywhere before `findings` names no findings, not
@@ -14,13 +17,22 @@ const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // including one written after `(`, which WORD admits (`Lens 3c (no findings)`).
 const NOT_ZERO = String.raw`(?!\(?(?:no|zero|0)\s)`;
 const WORD = String.raw`${NOT_ZERO}[\w/()-]+\s+`;
-const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`, 'i');
-const PATH_RE = new RegExp(String.raw`${FINDING_PATH}(?::\d+)?`, 'g');
+const COINCIDENCE_RE = new RegExp(COINCIDENCE, 'i');
+// A match starts only where the previous character cannot be part of a path: without that left edge a global scan
+// restarts inside every long dot-free token and runs quadratic (158 s on a 200k-character token).
+const PATH_RE = new RegExp(String.raw`(?<![A-Za-z0-9_./@+~%$\[\]()-])${FINDING_PATH}(?::\d+)?`, 'g');
+// Words allowed between the subject and `findings`. Count: three, for the archive's
+// `lenses 3b/3c/3d/3e - 8 single-agent or same-location-different-substance findings` (at two it is accepted).
+// Lens: real lines need two (`lens 3a: three single-agent findings`); three matches the count arm. Marker: the count
+// arm's number plus its three words (`Reproduction: 8 single-agent (unconfirmed) low findings`), so the marker arm
+// stands alone; at three no archive verdict changes, since the count or lens arm also catches each such line.
 const PLURAL_SUBJECT_RES = [
   new RegExp(String.raw`\b${NOT_ZERO}\d+\s+(?:${WORD}){0,3}findings\b`, 'i'),
   new RegExp(String.raw`\b${LENS}\s+(?:${WORD}){0,3}findings\b`, 'i'),
   new RegExp(String.raw`\breproduction:\s+(?:${WORD}){0,4}findings\b`, 'i'),
 ];
+// The optional word is a qualifier between the lens and `finding` (`lens 3b Security finding`, `lens "3a" single-agent
+// finding`, four archive lines), so a qualified second clause still counts.
 const LENS_FINDING_RE = new RegExp(String.raw`\b${LENS}\s+(?:[\w-]+\s+)?finding\b`, 'gi');
 
 // null when the entry may be written; otherwise the refusal reason. The entry is checked as formatEntry
@@ -32,7 +44,9 @@ function aggregateReproductionProblem({ status, step, text }) {
   // A quoted marker (`see "Reproduction: 3 findings" above`) is another line citing one, not a marker.
   const at = entry.search(/(?<!["'`])\breproduction:\s/i);
   if (at < 0) return null;
-  // The coincidence clause is exempt, not the whole line: drop it and judge whatever else the line says.
+  // The coincidence clause is exempt, not the whole line: drop it and judge whatever else the line says. This runs on
+  // the real paths, before PATH_RE: COINCIDENCE needs FINDING_PATH's `.ext`, which a neutralized `PATH` lacks
+  // (pinned by cli.test.js's `accepts the documented coincidence line (lens with spaces)`).
   const marked = entry.slice(at);
   const coincidence = COINCIDENCE_RE.test(marked);
   const tail = marked.replace(COINCIDENCE_RE, ' ');

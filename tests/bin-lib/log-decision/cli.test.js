@@ -1,5 +1,5 @@
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -9,8 +9,12 @@ const { run } = require('../../../plugin/bin/log-decision');
 const SCHEMA = /^- (AUTO|STAGED|KEPT-PROMPT|SCANNED|SKIP) (\d{2}:\d{2}:\d{2}) — (.+?): (.+)\. Reversibility: (high|med|low|n\/a)\.(?: \[lever: .+\])?$/;
 const NOW = new Date(2026, 7, 16, 9, 5, 7).getTime();
 
+const roots = [];
+after(() => { for (const r of roots) fs.rmSync(r, { recursive: true, force: true }); });
+
 function fixture() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ldcli-'));
+  roots.push(root);
   const main = path.join(root, 'main');
   const run = path.join(main, '.claude-tweaks', 'pipelines', '2026-08-16T090000-spec-12');
   const shadow = path.join(main, '.claude', 'worktrees', 'flow-spec-12', '.claude-tweaks', 'pipelines', '2026-08-16T090000-spec-12');
@@ -388,7 +392,8 @@ test('AC3.1: a step-shaped text with no --step is accepted', () => {
   assert.equal(fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8'), '- AUTO 09:05:07 — log-decision: Step 3 Routing: x. Reversibility: n/a.\n');
 });
 
-// #4581: the two observed aggregate reproduction lines (real decisions.md text, prefix and `. Reversibility: …` suffix removed).
+// #4581: the two observed aggregate reproduction lines, condensed from their real decisions.md text (prefix and
+// `. Reversibility: …` suffix removed, the finding lists shortened).
 const RUN_4481_TEXT = 'Reproduction: lens "3a" 10 findings not reproduced (A: journey:89 medium, test:1921 low, git-command.js:2253 low, :2433 info, journey:34 info; B: ledger:5 medium, policy-schema-coverage.md:30 medium, git-command.js:2066 low, :2475 low, :2008 low). Staged to Review Console as low-confidence; handed to the tiebreak';
 const SPEC_1921_TEXT = 'Reproduction: lens "3f Test quality" 4 findings not reproduced (A only; B: no findings): cli.test.js:338 critical claim; cli.test.js:15 tmpDir never cleaned up. Staged to Review Console as low-confidence';
 
@@ -420,6 +425,8 @@ test('#4581: refuses an unquoted lens noun phrase', () => refusesAggregate(['--t
 test('#4581: refuses two lens … finding clauses in one line', () => refusesAggregate(['--text', 'Reproduction: lens 3a finding plugin/bin/lib/reconcile/index.js:412 and lens 3f finding plugin/bin/lib/reconcile/index.js:334 not reproduced']));
 test('#4581: refuses a coincidence line with a shortened second location', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings plugin/bin/lib/reconcile/release-merged.js:46 / :46 share a location but not substance; both staged unconfirmed']));
 test('#4581: refuses an aggregate behind a lowercase marker', () => refusesAggregate(['--text', '/review reproduction: lens "3a" findings a/b.js:1 and c/d.js:2 surfaced by one agent only']));
+test('#4581: refuses `findings` directly after the marker (the marker arm with zero words)', () => refusesAggregate(['--text', 'Reproduction: findings a/b.js:1 and c/d.js:2 not reproduced']));
+test('#4581: refuses a coincidence line whose quoted lens is empty — the reader keys no lens from `lens ""`', () => refusesAggregate(['--text', 'Reproduction: lens "" findings a/b.js:1 / a/b.js:2 share a location but not substance; both staged unconfirmed']));
 
 test('#4581: refuse — coincidence clause followed by an aggregate clause', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1 / a/b.js:2 share a location but not substance; lens "3c" 4 findings not reproduced']));
 
@@ -464,13 +471,23 @@ test('#4581: accepts the single-read coverage line', () => acceptsLine(['--text'
 test('#4581: accepts the lens 3f vacuity downgrade line', () => acceptsLine(['--text', 'Reproduction: lens "3f" vacuity finding tests/a.test.js:5 downgraded to unconfirmed — reproduction agreement overridden, no execution evidence. Staged to Review Console as low-confidence']));
 test('#4581: accepts the coordination-form per-finding line', () => acceptsLine(['--text', '/review reproduction: lens "3a" finding plugin/x.js:3 surfaced by one agent only. Stage path: staged/review-unconfirmed-1.md']));
 test('#4581: accepts a per-finding line followed by lens commentary', () => acceptsLine(['--step', 'Step 3 reproduction', '--text', 'Reproduction: lens "3b" finding plugin/bin/lib/init/release-bootstrap.js:276 not reproduced. Staged to Review Console as low-confidence. Lenses 3a, 3c, 3f: both pair agents returned No findings (6 agents)']));
-test('#4581: accepts a per-finding line whose path contains "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding docs/plans/2026-10-25-short-circuit-tiebreak-findings-4171-ledger.md:6 not reproduced']));
+test('#4581: accepts a real ledger path whose filename contains "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding docs/plans/2026-10-25-short-circuit-tiebreak-findings-4171-ledger.md:6 not reproduced']));
 test('#4581: accept — singular finding whose path segment is "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding findings/x.js:1 not reproduced']));
 test('#4581: accept — per-finding line with a colon-terminated lens in its commentary', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: no findings']));
 test('#4581: accept — zero quantifier later in the lens phrase', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: agents returned no findings']));
 test('#4581: accept — zero quantifier later in the lens phrase without a colon', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c returned no findings']));
 test('#4581: accept — parenthesised zero quantifier (no)', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c (no findings)']));
 test('#4581: accept — parenthesised zero quantifier (0)', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c (0 findings)']));
+test('#4581: accept — zero quantifier (zero) after a colon-terminated lens', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: zero findings']));
+test('#4581: accept — bare zero quantifier (0) with no parenthesis', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c 0 findings']));
+test('#4581: accepts the documented AUTO severity-contested line', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding a/b.js:1 reproduced, severity contested (took the lower of the two). Confirmed'], 'AUTO'));
+test('#4581: accepts the documented AUTO absence-claim-refuted line', () => acceptsLine(['--text', 'Reproduction: lens "3a" absence claim a/b.js:foo refuted by ground-truth check (grep -n found it at a/b.js:9). Not staged'], 'AUTO'));
+test('#4581: a per-finding line followed by a 200k-character path-shaped token is judged in linear time', () => {
+  const started = Date.now();
+  acceptsLine(['--text', `Reproduction: lens "3a" finding a.js:1 ${'a'.repeat(200000)}`]);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+});
 test('#4581: accept — capitalised coincidence line the reader keys', () => acceptsLine(['--text', 'Reproduction: Lens "3a" Findings plugin/a.js:1 / plugin/a.js:2 Share a location but not substance; both staged unconfirmed']));
 test('#4581: accepts an AUTO aggregate reproduction line (out of scope)', () => acceptsLine(['--text', 'Reproduction: lens "3a" 2 findings reproduced. Confirmed'], 'AUTO'));
 test('#4581: accepts a non-reproduction STAGED line naming several locations', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'findings a/b.js:1 and c/d.js:2 staged to staged/review-1.patch']));

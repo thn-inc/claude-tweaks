@@ -13,7 +13,7 @@ const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
-const { FINDING_PATH } = require('./finding-path');
+const { FINDING_PATH, FINDING_LENS, COINCIDENCE } = require('./finding-path');
 const { FINDINGS_ARTIFACT } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
@@ -492,12 +492,12 @@ function approveAllDefault(recommendation) {
   return recommendation === 'drop' ? 'dropped' : 'filed';
 }
 
+const COINCIDENCE_RE = new RegExp(COINCIDENCE, 'i');
 // A STAGED line's finding keys: its first location's, plus the second location of a
-// two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
+// two-finding coincidence line (finding-path.js COINCIDENCE, the pattern the aggregate detector exempts).
 function lineKeys(line) {
   const keys = [findingKey(line)];
-  // A quoted multi-word lens (`lens "3f Test quality"`) keys on its first token — the one findingKey yields (#4581).
-  const co = /\blens\s+(?:"([A-Za-z0-9_-]+)[^"]*"|"?([A-Za-z0-9_-]+)"?)\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/i.exec(line);
+  const co = COINCIDENCE_RE.exec(line);
   if (co) keys.push(`${co[1] ?? co[2]}|${co[3]}:${co[4]}`);
   return keys.filter(Boolean);
 }
@@ -505,15 +505,16 @@ function lineKeys(line) {
 // A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
 // converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
-// as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
+// as-recorded `lens 3a :5` shape); a quoted multi-word lens keys on its first token (FINDING_LENS, #4581).
+// A line with no lens list, or any other debate outcome, names nothing.
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
-const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\b${FINDING_LENS}\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
 const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1] ?? e[2]}|${e[3] || m[1]}:${e[4]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
