@@ -2,9 +2,10 @@
 // gh CLIs: the one parseRepo (#1177), the injectable `gh --version` probe, and the
 // gh host seam (#4505). ghOptions(args, opts) returns opts itself when GH_HOST is set,
 // args name -R/--repo/--hostname, or origin's host is not a known GHE host; a known
-// one (*.ghe.com, a gh hosts.yml key, a token on a non-SSH remote) gets a copy whose
-// env adds GH_HOST, memoized per cwd. It adds no timeout or windowsHide and there is
-// no seam spawn helper: each wrapped site's own `timeout` carries its bound.
+// one (*.ghe.com or a gh hosts.yml key) gets a copy whose env adds GH_HOST, memoized
+// per cwd. An enterprise token alone admits nothing, because gh sends it to whatever
+// GH_HOST names (#4854). It adds no timeout or windowsHide and there is no seam
+// spawn helper: each wrapped site's own `timeout` carries its bound.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -88,18 +89,6 @@ function originUrl(cwd) {
   });
 }
 
-// scp-style `[user@]host:path` (a colon before any slash, no `://`) or an
-// `ssh://` URL. An SSH remote's host may be a ~/.ssh/config alias, which gh
-// cannot reach, so the enterprise-token clause never admits one (Decision Q1).
-function isSshRemote(url) {
-  const u = String(url || '').trim();
-  if (/^ssh:\/\//i.test(u)) return true;
-  if (u.includes('://')) return false;
-  const colon = u.indexOf(':');
-  const slash = u.indexOf('/');
-  return colon > 0 && (slash === -1 || colon < slash);
-}
-
 // gh's own config-dir order: GH_CONFIG_DIR, $XDG_CONFIG_HOME/gh, %AppData%/GitHub CLI
 // (Windows only), then ~/.config/gh.
 function ghConfigDir(deps) {
@@ -110,7 +99,13 @@ function ghConfigDir(deps) {
   return path.join(deps.homedir || os.homedir(), '.config', 'gh');
 }
 
-// Lower-cased top-level keys of gh's hosts.yml; an unreadable file has none.
+// A host as the known-host checks compare it: lower-cased, trailing dots (an FQDN's
+// root label) stripped, so `ACME.ghe.com.` reads as `acme.ghe.com`.
+function normalizeHost(host) {
+  return String(host).toLowerCase().replace(/\.+$/, '');
+}
+
+// Normalized top-level keys of gh's hosts.yml; an unreadable file has none.
 function ghConfigHosts(deps) {
   const readFile = deps.readFile || ((p) => fs.readFileSync(p, 'utf8'));
   let text;
@@ -119,7 +114,7 @@ function ghConfigHosts(deps) {
   } catch {
     return new Set();
   }
-  return new Set([...String(text).matchAll(/^([^\s#:][^:\s]*):\s*$/gm)].map((m) => m[1].toLowerCase()));
+  return new Set([...String(text).matchAll(/^([^\s#:][^:\s]*):\s*$/gm)].map((m) => normalizeHost(m[1])));
 }
 
 // A `scheme://[user[:pass]@]host[:port]/path` URL -> `host/path`, the shape
@@ -133,17 +128,6 @@ function hostPathOf(url) {
   return `${authority}${m[2]}`;
 }
 
-// Well-known forges that are not GitHub. The enterprise-token clause never admits
-// one: gh sends GH_ENTERPRISE_TOKEN to whatever GH_HOST names, so an origin on
-// gitlab.com would otherwise receive the user's work token (found in #4505's review).
-// A hosts.yml key still wins: the user configured that host for gh themselves.
-const NON_GITHUB_FORGES = new Set(['gitlab.com', 'bitbucket.org', 'dev.azure.com', 'ssh.dev.azure.com',
-  'codeberg.org', 'gitea.com', 'sr.ht', 'git.sr.ht', 'sourceforge.net', 'git.code.sf.net']);
-
-function isNonGithubForge(host) {
-  return NON_GITHUB_FORGES.has(host) || host.endsWith('.visualstudio.com');
-}
-
 function resolveGhSpec(cwd, deps = {}) {
   const key = path.resolve(cwd);
   if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
@@ -151,12 +135,12 @@ function resolveGhSpec(cwd, deps = {}) {
   try {
     const url = (deps.remoteUrl || originUrl)(key);
     const parsed = parseRepo(hostPathOf(url));
-    const host = parsed && parsed.host.toLowerCase();
+    const host = parsed && normalizeHost(parsed.host);
     if (host && host !== 'github.com') {
-      const env = deps.env || process.env;
-      const known = host.endsWith('.ghe.com')
-        || ghConfigHosts(deps).has(host)
-        || (Boolean(env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN) && !isSshRemote(url) && !isNonGithubForge(host));
+      // Positive signals only. Any other host stays silent (no note), token or not,
+      // decided at #4854's plan review; its opt-in is an exported GH_HOST, or a
+      // hosts.yml key from `gh auth login --hostname` (run with the token unset).
+      const known = host.endsWith('.ghe.com') || ghConfigHosts(deps).has(host);
       if (known) spec = { ...parsed, host };
     }
   } catch (err) {
@@ -236,7 +220,7 @@ function ghOptions(args, opts, deps = {}) {
 function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
   const env = deps.env || process.env;
   if (!repoSpec || 'GH_HOST' in env) return null;
-  const host = String(repoSpec.host || 'github.com').toLowerCase();
+  const host = normalizeHost(repoSpec.host || 'github.com');
   return host === (resolveGhHost(cwd || process.cwd(), deps) || 'github.com') ? null : host;
 }
 
