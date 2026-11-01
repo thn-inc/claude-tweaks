@@ -2434,8 +2434,8 @@ test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status)
 
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
-  assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
   const stderr = io.err.join('');
+  assert.ok(!stderr.includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
   assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
   assert.ok(stderr.includes('ETIMEDOUT'), stderr);
   assert.equal(stderr.trimEnd().split('\n').length, 1, 'exactly one stderr line');

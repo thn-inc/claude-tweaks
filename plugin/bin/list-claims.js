@@ -22,8 +22,8 @@
 // call), `network-failure`, `secondary-rate-limit`, `permission-denied`, or
 // `truncated` (the Git Trees API itself reports `truncated: true` — the one
 // case this CLI must never treat as a complete-but-short list, per #3098's
-// own Acceptance Criteria). Repo root comes from `git remote get-url origin` at the
-// process cwd — never from CLAUDE_PLUGIN_ROOT (unset in Bash tool
+// own Acceptance Criteria). Repo root comes from `git remote get-url origin`
+// at the process cwd — never from CLAUDE_PLUGIN_ROOT (unset in Bash tool
 // environments, #170) — mirroring bin/materialize.js's --repo override +
 // remote-url fallback.
 'use strict';

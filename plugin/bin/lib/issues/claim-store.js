@@ -598,12 +598,13 @@ function createClaimsBranchContentsApi(ghApi, repoSlug) {
     // non-404 answer as "there"): only a clean answer proves the lost race.
     const { result } = readClaimsBranch(ghApi, repoSlug);
     if (result.failure === null && result.status === null) return { ok: true, created: false };
-    if (result.status === 404) return apiRefusal(r);
+    const postRefusal = apiRefusal(r);
+    if (result.status === 404) return postRefusal;
     // The re-read could not settle it: its own failure kind decides transient
     // vs refusal, and the POST's reason stays in front. A status answer with
     // `failure: null` (a 409, a 422) is a refusal, never a guessed lost race.
     const reread = apiRefusal(result);
-    return { ...reread, reason: `${apiRefusal(r).reason}; branch re-read: ${reread.reason}` };
+    return { ...reread, reason: `${postRefusal.reason}; branch re-read: ${reread.reason}` };
   }
   return apiRefusal(r);
 }
