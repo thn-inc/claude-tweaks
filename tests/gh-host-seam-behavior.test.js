@@ -98,6 +98,21 @@ function withoutGhHost(t) {
   });
 }
 
+// The seam's once-per-host stderr note, captured for an in-process case so it
+// stays out of the runner's output; any other stderr write passes through.
+const SEAM_NOTE = 'claude-tweaks: resolved repo acme.ghe.com/acme/widgets (host: acme.ghe.com) — gh calls get GH_HOST=acme.ghe.com\n';
+function captureSeamNotes(t) {
+  const write = process.stderr.write;
+  const notes = [];
+  process.stderr.write = function capture(chunk, ...rest) {
+    if (String(chunk).startsWith('claude-tweaks: resolved repo ')) { notes.push(String(chunk)); return true; }
+    return write.call(this, chunk, ...rest);
+  };
+  const restore = () => { process.stderr.write = write; };
+  t.after(restore);
+  return { notes, restore };
+}
+
 function node(cwd, args) {
   return execFileSync(process.execPath, args, { cwd, env: childEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 }
@@ -146,8 +161,11 @@ test('AC1.1: wrap-up-engine verify\'s gh runner reaches the enterprise host', { 
   const { repo } = makeRepo(t, GHE_ORIGIN);
   withoutGhHost(t);
   const { defaultGh } = require('../plugin/bin/lib/wrap-up/engine-verify');
+  const stderr = captureSeamNotes(t);
   defaultGh(['api', 'graphql', '-f', 'query=q'], repo);
+  stderr.restore();
   assert.deepEqual(readLog(), ['GH_HOST=acme.ghe.com ARGS=api graphql -f query=q']);
+  assert.deepEqual(stderr.notes, [SEAM_NOTE]);
 });
 
 test('AC1.1: the wrap-up pack\'s gh probe reaches the enterprise host', { skip: STUB_SKIP }, async (t) => {
@@ -157,7 +175,10 @@ test('AC1.1: the wrap-up pack\'s gh probe reaches the enterprise host', { skip: 
   fs.writeFileSync(path.join(runDir, 'work', '7-spec.md'), '---\nrecord: 7\n---\n');
   withoutGhHost(t);
   const { gatherPack } = require('../plugin/bin/lib/wrap-up/pack');
+  const stderr = captureSeamNotes(t);
   const pack = await gatherPack({ runDir, cwd: repo, only: ['recordLabels'] });
+  stderr.restore();
+  assert.deepEqual(stderr.notes, [SEAM_NOTE]); // two gh calls, one host: one note
   assert.deepEqual(pack.recordLabels.value, { 7: ['type:bug'] }, JSON.stringify(pack.recordLabels));
   const lines = readLog();
   // The recordLabels probe's own gh call (async execBounded path) and the
@@ -221,4 +242,53 @@ test('fix round 1: materialize.js --repo owner/name on a *.ghe.com origin sends 
 test('fix round 1: materialize.js --repo owner/name on a github.com origin leaves GH_HOST unset', { skip: STUB_SKIP }, (t) => {
   const lines = materializeLines(t, DOTCOM_ORIGIN);
   for (const line of lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST set on github.com: ${line}`);
+});
+
+// Final review item 7: backlog-grant-gate.js's nativeRunnerFor. A bare `--repo
+// owner/name` means github.com, so its owner/repo-addressed native calls (the
+// schema probe, the REST sub-issue retry) carry GH_HOST=github.com, while the
+// issue lists read cwd's own repo and keep the origin host. An exported GH_HOST
+// reaches every call unchanged (AC4).
+function grantGateLines(t, extraEnv = {}) {
+  const dir = tmp(t, 'ct-gh-seam-fake-');
+  const log = path.join(dir, 'gh.log');
+  t.after(installStub('gh', [
+    '#!/bin/sh',
+    `printf 'GH_HOST=%s ARGS=%s\\n' "\${GH_HOST-unset}" "$*" >> '${log}'`,
+    'case "$*" in',
+    '  --version) echo "gh version 2.0.0" ;;',
+    `  *parent-issue*) echo '[{"number":1}]' ;;`,
+    `  "api graphql"*) echo '{"data":{"__type":{"fields":[]}}}' ;;`,
+    '  "api --paginate"*) ;;',
+    "  *) echo '[]' ;;",
+    'esac',
+    'exit 0',
+    '',
+  ].join('\n')));
+  const { repo } = makeRepo(t, GHE_ORIGIN);
+  git(repo, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  git(repo, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-q', '-m', 'init']);
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'),
+    'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n');
+  const env = { ...childEnv(), ...extraEnv };
+  delete env.CLAUDE_CODE_SESSION_ID; // no session-scoped record snapshot
+  execFileSync(process.execPath, [path.join(BIN, 'backlog-grant-gate.js'), '--repo', 'acme/widgets'],
+    { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  const lines = networkLines(fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+  const native = lines.filter((l) => / ARGS=api (?:graphql|--paginate repos\/acme\/widgets\/issues\/1\/sub_issues) /.test(l));
+  const lists = lines.filter((l) => / ARGS=issue list /.test(l));
+  assert.equal(native.length, 2, `expected the schema probe and the REST retry, log:\n${lines.join('\n')}`);
+  assert.equal(lists.length, 3, `expected the --state all, ready and parent-issue lists, log:\n${lines.join('\n')}`);
+  return { native, lists };
+}
+
+test('final review: backlog-grant-gate.js --repo owner/name on a *.ghe.com origin sends its native calls to github.com, its issue lists to the origin host', { skip: STUB_SKIP }, (t) => {
+  const { native, lists } = grantGateLines(t);
+  for (const line of native) assert.ok(line.startsWith('GH_HOST=github.com '), `native call did not reach github.com: ${line}`);
+  for (const line of lists) assert.ok(line.startsWith('GH_HOST=acme.ghe.com '), `issue list did not reach the origin host: ${line}`);
+});
+
+test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every call', { skip: STUB_SKIP }, (t) => {
+  const { native, lists } = grantGateLines(t, { GH_HOST: 'mine.example' });
+  for (const line of [...native, ...lists]) assert.ok(line.startsWith('GH_HOST=mine.example '), `exported GH_HOST overridden: ${line}`);
 });

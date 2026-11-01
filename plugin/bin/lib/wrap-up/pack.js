@@ -67,8 +67,10 @@ const POLICY_KEYS = ['integration-branch', 'work-links'];
 // stderr is piped rather than inherited or ignored: a failing call cannot
 // spray the CLI's own stderr, and its diagnostic still survives on
 // `err.stderr` for any consumer module that classifies a failure by message.
-function execSync(bin, args, { cwd } = {}) {
-  return execFileSync(bin, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+// `wrap` transforms the options, as execBounded's does: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+function execSync(bin, args, { cwd } = {}, wrap = (_a, o) => o) {
+  return execFileSync(bin, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 function defaultGit(args, opts) {
@@ -77,8 +79,8 @@ function defaultGit(args, opts) {
 
 // Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
 // needs `gh` before resolveInputs has anything async to await.
-function defaultGhSync(args, { cwd } = {}) {
-  return execFileSync('gh', args, ghOptions(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
+function defaultGhSync(args, opts) {
+  return execSync('gh', args, opts, ghOptions);
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930

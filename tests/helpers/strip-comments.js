@@ -4,8 +4,8 @@
 // `cli`, `exit-code`, `gh-host-seam`, `git-status-optional-locks`, `hooks-harness-refusal`, `owner-pid-probe`,
 // `path-containment`, `path-guard`, `phase-exit-call-sites`, `porcelain-cwd-compare`, `raw-markdown-read`, `run-liveness-callers`, `staged-id-producers`,
 // `subprocess-timing`, `wall-clock-budget` and `windows-hide-spawn`. tests/strip-comments-callers-twin.test.js
-// pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491) also
-// call it in `literals: 'blank'` mode. The implementation lives in
+// pins this list to the tree. `raw-markdown-read` and `wall-clock-budget` (#3491), and
+// `gh-host-seam` (#4505), also call it in `literals: 'blank'` mode. The implementation lives in
 // plugin/bin/lib/strip-comments.js (#3903) so plugin code can call the same scanner;
 // this file re-exports `stripComments` from it, so every test caller keeps its
 // `./helpers/strip-comments` import path, and itself defines `stripperVerdict`, the
