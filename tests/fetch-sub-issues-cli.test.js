@@ -279,9 +279,24 @@ test('#4806: the schema probe and every GraphQL page carry --hostname right afte
     }
   };
 
-  const viaRepo = deps();
-  assert.strictEqual(run([...nums, '--repo', 'ghe.example.com/o/r'], viaRepo), 0);
+  // Parent 5 reports a next page, so --resolve-retries sends the REST retry in this same run.
+  const viaRepo = deps({
+    runner(args) {
+      viaRepo.calls.push(args);
+      const q = args.find((a) => a.startsWith('query='));
+      if (q && q.includes('__type')) return probeOk;
+      if (!q) return '6\n9\n';
+      const repository = {};
+      for (const [, n] of q.matchAll(/i(\d+): issue/g)) {
+        repository[`i${n}`] = { number: Number(n), subIssues: { nodes: [], pageInfo: { hasNextPage: n === '5' } } };
+      }
+      return JSON.stringify({ data: { repository } });
+    },
+  });
+  assert.strictEqual(run([...nums, '--repo', 'ghe.example.com/o/r', '--resolve-retries'], viaRepo), 0);
   assertHosted(viaRepo);
+  const rest = viaRepo.calls.filter((a) => a[1] === '--paginate');
+  assert.deepStrictEqual(rest, [['api', '--paginate', 'repos/o/r/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']]);
 
   const viaRemote = deps({ remoteUrl: () => 'git@ghe.example.com:acme/widget.git' });
   assert.strictEqual(run(nums, viaRemote), 0);

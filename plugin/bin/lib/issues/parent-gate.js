@@ -117,12 +117,12 @@ function listOmitsSubIssue(numbers, subIssue) {
   return numbers.length > 0 && !numbers.includes(subIssue);
 }
 
-// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
-// already carries one. Any other argv, or no host or github.com, is returned unchanged.
-// fetchNativeParent's GraphQL read and this file's own REST and `api user` reads take no host,
-// so they pass through this; fetch-sub-issues.js sends its own (4a, 4b, 4c).
+// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com. Any other argv,
+// or no host or github.com, is returned unchanged. fetchNativeParent's GraphQL read and this
+// file's own REST and `api user` reads take no host, so they pass through this;
+// fetch-sub-issues.js sends its own (4a, 4b, 4c).
 function onHost(args, host) {
-  if (!host || host === 'github.com' || args[0] !== 'api' || args.includes('--hostname')) return args;
+  if (!host || host === 'github.com' || args[0] !== 'api') return args;
   return [...args, '--hostname', host];
 }
 
