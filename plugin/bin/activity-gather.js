@@ -26,7 +26,7 @@
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { gather, PeriodError, ACTIVITY_GH_TIMEOUT_MS, resolvePeriod, QUERY_KEYS } = require('./lib/activity/gather');
-const { parseRepo, ghAvailable, remoteUrl, repoSlug } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: activity-gather.js --period <1d|7d|14d|month|quarter|<from>..<to>> [--repo <owner/name>[,<owner/name>...]] [--actor <login>] --out <facts.json path> [--help]\n';
 
@@ -65,9 +65,12 @@ function errorText(err) {
 }
 
 const realDeps = {
-  runner: (args, opts) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, windowsHide: true }),
+  runner: (args, opts) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...opts, windowsHide: true })),
   ghAvailable: () => ghAvailable(),
-  ghAuthOk: () => execFileSync('gh', ['auth', 'status'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS, windowsHide: true }),
+  ghAuthOk: () => {
+    const args = ['auth', 'status'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS, windowsHide: true }));
+  },
   remoteUrl: () => remoteUrl(),
   writeFile: (p, text) => fs.writeFileSync(p, text),
   stdout: (s) => process.stdout.write(s),
