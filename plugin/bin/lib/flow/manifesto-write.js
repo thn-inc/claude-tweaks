@@ -207,12 +207,13 @@ function initDecisions(runDir, header) {
 // (so the 13 levers still write) and a SKIP is logged — the omit-on-empty rule
 // of manifesto.md's Write mechanism. `integrationModelDegraded` is null or the
 // degraded forge detection's reason code (one of policy-schema.js's
-// FORGE_DEGRADE_REASONS, else ManifestoInputError): non-null forces no pin whatever `integrationModel` holds
-// (a degraded detection is never the run's pin, #4578 Q10) and logs a distinct
-// SKIP in place of the empty-value one. A merge-verification lever whose source
-// is `degraded` (computeLevers) logs the AUTO line naming why it is written as
-// wait. `mergeRefusal` is mergeAuthorizationRefusal's answer; a non-null one logs
-// manifesto.md's merge-authorization SKIP line.
+// FORGE_DEGRADE_REASONS, else ManifestoInputError): non-null forces no pin
+// whatever `integrationModel` holds (a degraded detection is never the run's
+// pin, #4578 Q10) and logs a distinct SKIP in place of the empty-value one. A
+// merge-verification lever whose source is `degraded` (computeLevers) logs the
+// AUTO line naming why it is written as wait. `mergeRefusal` is
+// mergeAuthorizationRefusal's answer; a non-null one logs manifesto.md's
+// merge-authorization SKIP line.
 function writeManifesto({ runDir, records, levers, integrationModel = null, integrationModelDegraded = null, mergeRefusal = null, now }, deps = {}) {
   const set = deps.setConfigLever || setConfigLever;
   const append = deps.appendEntry || appendEntry;
