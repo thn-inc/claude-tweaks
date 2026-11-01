@@ -32,7 +32,7 @@ const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
 const { parentGateState, dispositionState } = require('../issues/acceptance');
 const { exceedsOversightFloor, maxRiskTier } = require('../issues/oversight-floor');
-const { parseRecordFacets, LABELS } = require('../issues/record');
+const { parseRecordFacets, LABELS, parseParent, parseSubIssues } = require('../issues/record');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
@@ -680,7 +680,25 @@ function ghAvailable(deps, cwd) {
 // {owner}/{repo} placeholder substitution (gh-api-module-pattern skill) --
 // the repo slug has to be resolved locally first, via the same `deps.git`
 // seam every other check in this file already uses.
-function resolveParent(n, deps, cwd) {
+//
+// #4551: two link models. `native` (the shape above) reads GitHub's native
+// sub-issue relationship; `body-text` reads the record's own `Parent: #N`
+// metadata line (`parseParent`) from `gh issue view N --json body` -- no
+// `git remote` call and no GraphQL call, since a body-text project has no
+// native relationship to query. `workLinks` is the `work-links` policy value
+// (`resolveWorkLinks`); an absent argument means `native`, so a direct caller
+// that predates it keeps its behavior. A record with no `Parent:` line resolves
+// `parent: null` (a collapsed decomposition legitimately produces parentless
+// records), never an error.
+function resolveParent(n, deps, cwd, workLinks) {
+  if (workLinks === 'body-text') {
+    try {
+      const data = JSON.parse(deps.gh(['issue', 'view', String(n), '--json', 'body'], cwd));
+      return { ok: true, parent: parseParent(data.body) };
+    } catch (err) {
+      return { ok: false, error: `gh issue view (body) failed for #${n} (${err.message})` };
+    }
+  }
   let remote;
   try {
     remote = deps.git(['remote', 'get-url', 'origin'], cwd);
@@ -709,7 +727,15 @@ function resolveParent(n, deps, cwd) {
 // as resolveParent. One JSON object per output line; `state` is upper-cased to
 // the vocabulary parentGateState reads. Zero sub-issues is a gather failure,
 // never a due gate -- an empty answer must not read as "every sub-issue closed".
-function enumerateSubIssues(parent, deps, cwd) {
+//
+// #4551: under `workLinks === 'body-text'` the sub-issues are the parent body's
+// task list (`parseSubIssues`), each one's state and labels read with one
+// `gh issue view {n} --json state,labels` call (per number, not `gh issue
+// list`: its default 30-row limit would silently truncate). An empty task list
+// is the same gather failure, with the same text. A missing `workLinks` means
+// `native`.
+function enumerateSubIssues(parent, deps, cwd, workLinks) {
+  if (workLinks === 'body-text') return enumerateBodyTextSubIssues(parent, deps, cwd);
   let out;
   try {
     const repoSpec = parseRepo(deps.git(['remote', 'get-url', 'origin'], cwd));
@@ -734,6 +760,34 @@ function enumerateSubIssues(parent, deps, cwd) {
   return { ok: true, subIssues };
 }
 
+function enumerateBodyTextSubIssues(parent, deps, cwd) {
+  let numbers;
+  try {
+    const data = JSON.parse(deps.gh(['issue', 'view', String(parent), '--json', 'body'], cwd));
+    numbers = parseSubIssues(data.body);
+  } catch (err) {
+    return { ok: false, error: `gh issue view (body) failed for parent #${parent} (${err.message})` };
+  }
+  if (!numbers.length) return { ok: false, error: `no sub-issues enumerated for parent #${parent}` };
+  const subIssues = [];
+  for (const s of numbers) {
+    try {
+      const data = JSON.parse(deps.gh(['issue', 'view', String(s), '--json', 'state,labels'], cwd));
+      if (typeof data.state !== 'string') {
+        return { ok: false, error: `could not parse state/labels for sub-issue #${s} of parent #${parent}` };
+      }
+      subIssues.push({
+        number: s,
+        state: data.state.toUpperCase(),
+        labels: (Array.isArray(data.labels) ? data.labels : []).map((l) => l.name),
+      });
+    } catch (err) {
+      return { ok: false, error: `gh issue view (state,labels) failed for sub-issue #${s} of parent #${parent} (${err.message})` };
+    }
+  }
+  return { ok: true, subIssues };
+}
+
 // #3222: the risk-floor policy key, from the repo root's own policy.yml (a
 // missing file, or a set-but-invalid value, falls back to the schema default).
 function resolveRiskFloor(repoRoot) {
@@ -742,6 +796,18 @@ function resolveRiskFloor(repoRoot) {
     policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
   } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
   return resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'].value;
+}
+
+// #4551: the work-links policy key (`native` | `body-text`), read the same way
+// and from the same place as resolveRiskFloor -- the repo root's own
+// policy.yml, never the worktree cwd (a worktree's copy can lag main). A
+// missing file falls back to the schema default, `body-text`.
+function resolveWorkLinks(repoRoot) {
+  let policyRaw = null;
+  try {
+    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
+  return resolvePolicyKeys(['work-links'], { policyRaw })['work-links'].value;
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -860,23 +926,46 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   const seenTargets = new Set();
   const gatherFailures = [];
   const parentSubIssues = new Map(); // parent number -> gate input (its enumerated sub-issues, run records forced CLOSED)
+  // #4551: the link model, once per check run (policy.yml at the repo root).
+  const workLinks = resolveWorkLinks(repoRoot);
+  // Each parent is enumerated once, however many run records name it: every one
+  // of those records is still membership-checked against the same result.
+  const enumerations = new Map(); // parent number -> enumerateSubIssues result
+  // Under `body-text` the parent's task list wins over a record's own `Parent:`
+  // line: a record the named parent does not list has no resolvable parent --
+  // it stays out of that parent's gate, is checked as its OWN target, and the
+  // disagreement is logged here, appended to every row returned below.
+  const mismatches = [];
   for (const n of checkIssues) {
-    const resolved = resolveParent(n, deps, cwd);
+    const resolved = resolveParent(n, deps, cwd, workLinks);
     if (!resolved.ok) {
       gatherFailures.push(`#${n}: ${resolved.error}`);
       continue;
     }
-    const target = resolved.parent || n;
+    let target = n;
+    let isParent = false;
+    if (resolved.parent) {
+      const p = resolved.parent;
+      const cached = enumerations.has(p);
+      if (!cached) enumerations.set(p, enumerateSubIssues(p, deps, cwd, workLinks));
+      const enumerated = enumerations.get(p);
+      if (!enumerated.ok) {
+        // A failed enumeration is a gather failure, never a fallback to standalone;
+        // recorded once per parent -- a later record naming it adds no second line.
+        if (!cached) gatherFailures.push(`#${n}: ${enumerated.error}`);
+        continue;
+      }
+      if (workLinks === 'body-text' && !enumerated.subIssues.some((s) => s.number === n)) {
+        mismatches.push(`#${n}: Parent: #${p} line not in #${p}'s task list — mismatch, not counted in #${p}'s gate; checked as its own target`);
+      } else {
+        target = p;
+        isParent = true;
+        parentSubIssues.set(p, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
+      }
+    }
     if (seenTargets.has(target)) continue;
     seenTargets.add(target);
-    targets.push({ target, parent: Boolean(resolved.parent) });
-    if (!resolved.parent) continue;
-    const enumerated = enumerateSubIssues(target, deps, cwd);
-    if (!enumerated.ok) {
-      gatherFailures.push(`#${n}: ${enumerated.error}`);
-      continue;
-    }
-    parentSubIssues.set(target, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
+    targets.push({ target, parent: isParent });
   }
   if (gatherFailures.length) return { result: 'unknown', detail: gatherFailures.join('; ') };
 
@@ -984,14 +1073,14 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   // comments after the failing lines; an all-pass row's detail is the notes.
   if (failing.length) {
     const passingNotes = passedNotes.flatMap((p) => p.ignored.map((note) => `ignored (#${p.target}): ${note}`));
-    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped].join('; ') };
+    return { result: 'fail', detail: [...failing, ...passingNotes, ...skipped, ...mismatches].join('; ') };
   }
   // Every target skipped by the parent gate -- nothing was checked, so the row
   // is a skip, not a pass.
-  if (skipped.length === targets.length) return { result: 'skip', detail: skipped.join('; ') };
+  if (skipped.length === targets.length) return { result: 'skip', detail: [...skipped, ...mismatches].join('; ') };
   const notes = passedNotes.flatMap((p) => p.ignored);
   const detailParts = notes.length ? [`ignored: ${notes.join('; ')}`, ...skipped] : skipped;
-  return { result: 'pass', detail: detailParts.join('; ') };
+  return { result: 'pass', detail: [...detailParts, ...mismatches].join('; ') };
 });
 
 // ---- memory updates -----------------------------------------------------------
