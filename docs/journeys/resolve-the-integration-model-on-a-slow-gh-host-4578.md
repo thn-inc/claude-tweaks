@@ -43,8 +43,8 @@ files:
 - **URL:** —
 - **Action:** The PreToolUse PR-stamp gate's fallback detection passes `HOOK_FORGE_PROBE_TIMEOUT_MS` (5000 ms per attempt). That gives a worst case of 15 s with the retry and the git probe, whatever `gh-timeout-ms` says. A degraded result never caches `prExempt`. SessionStart's reconcile gets the same bound. `/claude-tweaks:test` Step 0's `check-pr-bookkeeping.js` returns `degraded-detection` (logged as a `SKIP`), never `not-pr-first`. `phase-exit.js` treats a degraded read as unresolved.
 - **Should feel:** The session never hangs on a hook for a minute, and no gate passes silently on a guess.
-- **Should understand:** While `gh` stays hung, every covered tool call in an unpinned degraded run detects again, at up to 15 s each. That cost is a known, undecided follow-up (#4830): whether a run should remember a degraded detection for a while (a degrade memo with a TTL) instead of re-probing on every call.
-- **Red flags:** A hook call that waits on the full `gh-timeout-ms`. A `prExempt` stamp written after a degrade. The `/test` gate reporting `not-pr-first` on a degraded read.
+- **Should understand:** While `gh` stays hung, an unpinned degraded run probes at most once per `FORGE_DEGRADE_MEMO_TTL_MS` (60 s) per run. Covered calls inside that window skip the probe and allow the call without a `prExempt` stamp. The first covered call after the window detects again, so a recovered `gh` is noticed within one window.
+- **Red flags:** A hook call that waits on the full `gh-timeout-ms`. A `prExempt` stamp written after a degrade. The `/test` gate reporting `not-pr-first` on a degraded read. A `prExempt` written by an unpinned run while its `forgeDegradedAt` is still fresh. (A stale `forgeDegradedAt` beside `prExempt` after the user pins `integration-model` mid-run is legitimate: a pinned run never reads or clears the memo.)
 
 ### 5. Fix it for good
 - **URL:** `.claude-tweaks/policy.yml`
