@@ -470,13 +470,13 @@ function run(argv, deps) {
   // after a bootstrap that reported success is transient (the remote has not
   // caught up yet), never a second bootstrap. A bootstrap that failed
   // transiently (a network failure or a rate limit — secondary, or primary
-  // reported as network-failure — a later run may succeed) is remembered in `bootstrapTransientError`: a later target that
-  // finds the branch still missing reports that same name, not
-  // `claims-branch-missing`. A refused bootstrap is run-level — every target
-  // would hit it — so it exits 6 even under `--keep-going`, bypassing
-  // `stopOrSkip`. Returns `{retry: true}` (the caller re-processes the same
-  // target) or `{code}` (a `stopOrSkip` result: `null` means skipped under
-  // `--keep-going`, else the exit code to return).
+  // reported as network-failure — a later run may succeed) is remembered in
+  // `bootstrapTransientError`: a later target that finds the branch still
+  // missing reports that same name, not `claims-branch-missing`. A refused
+  // bootstrap is run-level — every target would hit it — so it exits 6 even
+  // under `--keep-going`, bypassing `stopOrSkip`. Returns `{retry: true}` (the
+  // caller re-processes the same target) or `{code}` (a `stopOrSkip` result:
+  // `null` means skipped under `--keep-going`, else the exit code to return).
   let bootstrapAttempted = false;
   let bootstrapTransientError = null;
   function handleBranchMissing(issue) {
