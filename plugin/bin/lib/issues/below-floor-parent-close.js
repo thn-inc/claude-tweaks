@@ -42,11 +42,17 @@
 // (named in `skipped`, reason `gh-failed`) and the next closing record is still
 // processed; a `riskFloor` outside the policy schema's risk-floor enum skips the
 // whole step (`invalid-risk-floor`, no gh call). Never throws.
+//
+// The gh identity read (`api user`, only when the idempotence check needs it) does
+// not gate the close: a failed or blank read closes with trusted-only marker
+// matching and puts parent-gate.js's IDENTITY_PROBE_FAILED_NOTE in the closed
+// entry's `notes` (#4770). It is read once per call, success or failure, and
+// replayed to every later parent.
 'use strict';
 
 const {
   CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, numberSet, resolveParent,
-  gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence,
+  gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence, readLogin,
 } = require('./parent-gate');
 const { repoSlug } = require('../repo-resolve');
 
@@ -73,6 +79,27 @@ function skipReason(verdict) {
   return null;
 }
 
+// A read taken at most once per closeBelowFloorParents call: the first invocation's
+// result, or its thrown error, is replayed to every later parent (the gh identity is
+// the same for the whole run, so a failed probe is not retried per parent).
+function memoizeRead(read) {
+  let done = false;
+  let value;
+  let error;
+  return () => {
+    if (!done) {
+      try {
+        value = read();
+      } catch (err) {
+        error = err;
+      }
+      done = true;
+    }
+    if (error) throw error;
+    return value;
+  };
+}
+
 function closeBelowFloorParents({
   closingSet, unsettled, mergingPr, owner, repo, host, workLinks, riskFloor, gh, selfInclude = true,
 } = {}) {
@@ -87,6 +114,7 @@ function closeBelowFloorParents({
     const closing = numberSet(closingSet);
     const unsettledSet = numberSet(unsettled);
     const slug = repoSlug({ host, owner, repo });
+    const readLoginOnce = memoizeRead(() => readLogin({ caller, host }));
 
     const handled = new Set();
     for (const n of [...closing].sort((a, b) => a - b)) {
@@ -108,7 +136,7 @@ function closeBelowFloorParents({
         }
 
         // Idempotence: read before writing anything.
-        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, owner, repo, host, caller }));
+        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, owner, repo, host, caller, readLogin: readLoginOnce }));
         if (idempotence === 'already-closed') {
           skipped.push({ parent, reason: 'already-closed' });
           continue;
