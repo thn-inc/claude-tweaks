@@ -207,7 +207,7 @@ const fleetStep2 = (text) => fleetSlice(text, '## Step 2 — Cloud-parity honest
 const fleetStep5 = (text) => fleetSlice(text, '## Step 5 — Fleet summary', '\n## Fleet status (aggregation)', 'fleet Step 5');
 // (the next heading after Step 5 is named, not matched as "\n## ": Step 5's own fenced template opens with a "## Fleet: Provisioning Complete" line)
 
-const FLEET_OPT_OUT_LINE = '`Cloud parity: claude-tweaks is not declared at project scope (declare-claude-tweaks: false), so cloud firings in this project will not have claude-tweaks installed by the project declaration.`';
+const FLEET_OPT_OUT_LINE = '`Cloud parity: declare-claude-tweaks is false, so this project does not declare claude-tweaks for cloud firings — they will not have claude-tweaks installed by the project declaration.`';
 
 function assertFleetOptOut(text) {
   assert.ok(fleetStep2(text).includes(FLEET_OPT_OUT_LINE), 'fleet opt-out print line missing');
@@ -221,13 +221,14 @@ test('AC3.1: a missing claude-tweaks declaration is no gap under the opt-out', (
   const step2 = fleetStep2(FLEET);
   for (const literal of [
     'a missing claude-tweaks declaration is no gap and never reaches item 3\'s prompt',
-    'When claude-tweaks is in fact undeclared, print this line instead',
+    'Step 14\'s setup script leaves claude-tweaks out at `false` even when a kept claude-tweaks entry remains, so print this line at `false` whatever items 2-3 find',
     '`node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`',
     'only item 1\'s opt-out line prints, when it applies',
   ]) {
     assert.ok(step2.includes(literal), 'missing: ' + literal);
   }
-  assert.ok(fleetStep5(FLEET).includes('"OK — superpowers declared, setup script present; claude-tweaks not declared (declare-claude-tweaks: false)'));
+  const step5Literal = '"OK — superpowers declared, setup script present; declare-claude-tweaks is false, so cloud firings will not have claude-tweaks installed by the project declaration."';
+  assert.ok(fleetStep5(FLEET).includes(step5Literal), 'missing: ' + step5Literal);
 });
 
 test('AC4.1 / Review Focus 4: superpowers stays required and gaps still prompt', () => {
@@ -249,4 +250,5 @@ test('AC1.1: default fleet path unchanged', () => {
   const step2 = fleetStep2(FLEET);
   assert.ok(step2.includes('confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared'));
   assert.ok(step2.includes('Both checks passing is a silent pass-through'));
+  assert.ok(step2.includes('At `true` (the default) the check is as written'), 'missing: the default-branch sentence');
 });
