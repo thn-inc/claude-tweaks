@@ -529,6 +529,24 @@ test('gatherGateFacts with no resolvable parent stops after resolution', () => {
   assert.equal(bodyText.calls.length, 1);
 });
 
+test("gatherGateFacts body-text: a Parent line the parent's task list omits resolves no parent (Reading B)", () => {
+  const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: '- [ ] #12\n' } });
+  const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+  assert.deepEqual(got, { parent: null, parentLabels: [], subIssues: [] });
+  assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10)], 'no shape 5 or 6 read');
+  // Only the sub-issue side: the same unlisted record, named as the parent's own `parent`, is gathered as before.
+  const fromParent = gatherGateFacts({ parent: 10, owner: 'o', repo: 'r', workLinks: 'body-text', caller: makeGh({ bodies: { 10: '- [ ] #12\n' } }).caller });
+  assert.equal(fromParent.parent, 10);
+  assert.deepEqual(fromParent.subIssues.map((s) => s.number), [12]);
+});
+
+test("gatherGateFacts native: a sub-issue list omitting the sub-issue keeps the parent (Reading B is body-text only)", () => {
+  const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [12] } });
+  const got = gatherGateFacts({ subIssue: 11, ...NATIVE, caller });
+  assert.equal(got.parent, 10);
+  assert.deepEqual(got.subIssues.map((s) => s.number), [12]);
+});
+
 test('gatherGateFacts from a parent skips resolution', () => {
   const { calls, caller } = makeGh({ subs: { 10: [11, 12] } });
   const got = gatherGateFacts({ parent: 10, ...NATIVE, caller });
