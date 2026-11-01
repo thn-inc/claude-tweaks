@@ -74,6 +74,23 @@ Three conventions follow from how this repo works, and all are visible below:
 * plan-audit: --task-markers reads '**Review risk:** high… ([#4640](https://github.com/thn-inc/claude-tweaks/issues/4640)) ([277ed30](https://github.com/thn-inc/claude-tweaks/commit/277ed30e2db95d7c3c0fad6377f09ac562cd8e6d))
 * policy-schema detectIntegrationModel: ignores… ([#4578](https://github.com/thn-inc/claude-tweaks/issues/4578)) ([55c4a81](https://github.com/thn-inc/claude-tweaks/commit/55c4a8123f916bfc6c1c1c5c15afc8b60111a7c9))
 
+### Highlights
+* A mistyped flag on any plugin run-management command now stops with a usage message instead of running the command as if the flag were absent.
+* Tidy now suggests the one-command dispatch resume for a stalled build whose run directory is already gone.
+* Fix plan-audit's task markers silently ignoring `**Review risk:** high` when a reason follows the value on the same line, and warn about unrecognized marker values instead of dropping them quietly.
+* Review fixes for v6.158.0. The near-duplicate refusal fence's `deep` output is now exercised by a test. CI runs the zsh shell cases. The fix-now-to-`Defer-reason` derivation lives once, in `_shared/deferral-gate.md`. The local-merge worktree reads take the run directory as an argument, so a quote in its path cannot break them.
+* Keep waiting on a dispatched implementer that is still committing or changing files at the 20-minute wait bound, instead of stopping the build as blocked — up to 60 minutes, then stop as before.
+* No user-visible change.
+* Forge detection for `integration-model` now honours `gh-timeout-ms`, retries once on a timeout, and reports a degraded detection instead of silently resolving `local-merge` on a slow GitHub host.
+* Stop flow and build cleanly, with a resume command, when they run in a host that cannot dispatch subagents, and flag reviews whose independence was lost.
+* Closing and gating a decomposed feature's parent now runs on tested code instead of instructions an agent re-composes each run, so edge cases like long sub-issue lists and cancelled sub-issues behave the same every time.
+* An unrecognized flag passed to the run-archiving command, such as `--dry-run`, now stops with a usage message instead of archiving the run anyway.
+* Retrying dispatch resume in the same session after a crash mid-resume now names the close-run command that clears the leftover run, instead of telling you to wait for a run that will never end.
+* On GitHub Enterprise remotes, the PR checklist, merge-subject, wrap-up verification and wrap-up probes now talk to your enterprise host without exporting `GH_HOST` by hand.
+* Stop `/flow` before it builds when a closed blocker's merge never reached the integration branch.
+* Protect the shared git stash during builds: `/build` now snapshots the stash before each implementer task and restores any entry the implementer dropped, and the stash warning hook now fires on `git stash drop` and `git stash clear`.
+* No user-visible change.
+
 ## [6.159.0](https://github.com/thn-inc/claude-tweaks/compare/v6.158.1...v6.159.0) (2026-10-31)
 
 
