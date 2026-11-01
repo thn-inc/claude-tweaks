@@ -168,8 +168,10 @@ function serializeLedgerTable(table) {
 // leaving the `#`/Phase/Item cells and every other row untouched. Throws
 // when `item` has no matching row, or `status` is not one of the five
 // terminal statuses (`open` is never a valid target here — this function
-// only resolves items, never reopens one; ledger-format.md's lifecycle has
-// no terminal-to-open transition). `resolution` is required unless `status`
+// only resolves items, never reopens one. ledger-format.md's one
+// terminal-to-open transition, a `deferred` row whose staged proposal the
+// Review Console refuses, is applied by wrap-up/refused-proposals.md's
+// Ledger origin, not here). `resolution` is required unless `status`
 // is `observation`, matching ledger-format.md's Resolution-text requirement.
 function flipLedgerRow(text, { item, status, resolution }) {
   if (!TERMINAL_STATUSES.includes(status)) {
