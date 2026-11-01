@@ -346,6 +346,23 @@ test('docs/plugin-structure.md states the narrowed merge-mode.md read condition'
   assert.match(structure, /merge-mode\.md \(the `#N merge` same-session merge entry, read only when `\$ARGUMENTS` is only the `merge` token, at most one record reference, and the skill's own flags\)/);
 });
 
+// flags.md's cleanup-only bullet states its own run-dir lookup so teardown never mints a stray -standalone dir.
+const CLEANUP_ONLY_FACTS = {
+  'lookup-order': /`cleanup-only` resolves its run dir from an inherited `PIPELINE_RUN_DIR` first, else `resolve-run-dir --spec-slug \{slug\}` with no `--create`/,
+  'never-mints': /it never mints a run dir/,
+  'stops-naming-record': /When nothing resolves it stops and names the record/,
+  'merged-pointer': /when that record's PR is `MERGED`, the stop names `\/claude-tweaks:wrap-up #\{n\} merge`/,
+};
+
+test('AC6.1: flags.md states cleanup-only\'s run-dir lookup', () => {
+  const flags = flat(read('plugin', 'skills', 'wrap-up', 'flags.md'));
+  assert.deepStrictEqual(missingFactsOf(flags, CLEANUP_ONLY_FACTS), []);
+});
+
+test('AC6.1: cleanup-only facts each go red when stripped', () => {
+  assertEachFactGoesRed(flat(read('plugin', 'skills', 'wrap-up', 'flags.md')), CLEANUP_ONLY_FACTS);
+});
+
 test('summary-template.md Next Actions list line backticks consoleAutoResolve', () => {
   const region = summaryNextActionsRegion();
   assert.ok(!/grants consoleAutoResolve/.test(region), 'unbackticked consoleAutoResolve');
