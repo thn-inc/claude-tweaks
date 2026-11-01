@@ -272,13 +272,72 @@ test('the policy file supplies the floor and work-links; flags override', () => 
   assert.equal(bodyText.calls.filter((a) => a[1] === 'graphql').length, 0);
 });
 
-test('an unreadable policy file and repo root fall back to the schema defaults', () => {
-  const boom = () => { throw new Error('boom'); };
-  const r = go(['--sub-issue', '11'], { bodies: { 11: 'Parent: #10', 10: '- [ ] #11\n- [x] #12\n' } }, { readPolicyRaw: boom, repoRoot: boom });
-  assert.equal(r.code, 0);
-  assert.equal(r.verdict.parent, 10);
-  assert.equal(r.verdict.riskFloor, 'high');
-  assert.equal(r.calls.filter((a) => a[1] === 'graphql').length, 0);
+test('exit 2: an unreadable policy file fails closed, never the schema default', () => {
+  const denied = () => { throw Object.assign(new Error('EACCES: permission denied'), { code: 'EACCES' }); };
+  for (const argv of [['--sub-issue', '11'], ['--sub-issue', '11', '--work-links', 'native'], ['--sub-issue', '11', '--risk-floor', 'high']]) {
+    const r = go(argv, {}, { readPolicyRaw: denied });
+    assert.equal(r.code, 2, JSON.stringify(argv));
+    assert.equal(r.stdout, '', JSON.stringify(argv));
+    assert.equal(r.stderr, 'parent-gate.js: cannot read .claude-tweaks/policy.yml: EACCES: permission denied\n');
+    assert.equal(r.calls.length, 0);
+  }
+  // With both keys given as flags the policy is never read.
+  const flagged = go(['--parent', '10', '--work-links', 'native', '--risk-floor', 'medium'], {}, { readPolicyRaw: () => { throw new Error('read'); } });
+  assert.equal(flagged.code, 0, flagged.stderr);
+  assert.equal(flagged.verdict.riskFloor, 'medium');
+  // An absent policy file (readPolicyRaw's null) is the schema defaults, as before.
+  const absent = go(['--parent', '10'], {}, { readPolicyRaw: () => null });
+  assert.equal(absent.code, 0, absent.stderr);
+  assert.equal(absent.verdict.riskFloor, 'high');
+});
+
+test('exit 2: an invalid configured value for a key the run draws from the policy', () => {
+  const r = go(['--parent', '10'], {}, { readPolicyRaw: () => 'work-links: native\nrisk-floor: meduim\n' });
+  assert.equal(r.code, 2);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /^parent-gate\.js: \.claude-tweaks\/policy\.yml: invalid risk-floor "meduim" \(must be one of /);
+  assert.equal(r.calls.length, 0);
+  const links = go(['--parent', '10'], {}, { readPolicyRaw: () => 'work-links: bodytext\nrisk-floor: high\n' });
+  assert.equal(links.code, 2);
+  assert.equal(links.stdout, '');
+  assert.match(links.stderr, /invalid work-links "bodytext"/);
+});
+
+test('a flag override skips the policy check for its own key only', () => {
+  const badFloor = { readPolicyRaw: () => 'work-links: native\nrisk-floor: meduim\n' };
+  const floor = go(['--parent', '10', '--risk-floor', 'high'], {}, badFloor);
+  assert.equal(floor.code, 0, floor.stderr);
+  assert.equal(floor.verdict.riskFloor, 'high');
+  // The flag names the floor, not work-links: an invalid work-links still fails.
+  const badLinks = { readPolicyRaw: () => 'work-links: bodytext\nrisk-floor: high\n' };
+  assert.equal(go(['--parent', '10', '--risk-floor', 'high'], {}, badLinks).code, 2);
+  assert.equal(go(['--parent', '10', '--work-links', 'native'], {}, badLinks).code, 0);
+});
+
+test('an Enterprise origin puts the host on every gh read; the verdict is the github.com one', () => {
+  const GHE = 'ghe.example.com';
+  const bodies = { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [x] #12\n' };
+  for (const [argv, world] of [[['--sub-issue', '11', '--idempotence'], {}], [['--sub-issue', '11', '--work-links', 'body-text', '--idempotence'], { bodies }]]) {
+    const { gh } = makeGh({ parentOf: { 11: 10, 12: 10 }, subs: { 10: [11, 12] }, ...world });
+    const sent = [];
+    // Takes the host back off before the github.com fake answers, so a read missing it shows in `sent`.
+    const runner = (args) => {
+      sent.push(args);
+      const n = args.length;
+      const plain = args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
+        ? args.slice(0, -2)
+        : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
+      return gh(plain);
+    };
+    const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner });
+    assert.equal(r.code, 0, r.stderr);
+    assert.deepEqual(r.verdict, go(argv, world).verdict);
+    assert.ok(sent.some(isShape8), 'the login read is reached');
+    for (const a of sent) {
+      if (a[0] === 'api') assert.deepEqual([a.filter((x) => x === '--hostname').length, a.slice(-2)], [1, ['--hostname', GHE]], a.join(' '));
+      else assert.deepEqual(a.slice(3, 5), ['--repo', `${GHE}/o/r`], a.join(' '));
+    }
+  }
 });
 
 test('stdout is one JSON line in VERDICT_FIELDS order', () => {
@@ -920,4 +979,15 @@ test('--records-dir without local-files is exit 1; USAGE names both new flags', 
   assert.equal(r.calls.length, 0);
   assert.match(go(['--parent', '10', '--records-dir']).stderr, /missing value for --records-dir/);
   assert.match(USAGE, /\[--backend github-issues\|local-files\] \[--records-dir <dir>\]/);
+});
+
+test('local-files never draws work-links, so an invalid one there is no failure', (t) => {
+  const { dir, parent } = family(t);
+  const r = goLocal(['--parent', String(parent.id)], dir, { readPolicyRaw: () => 'work-links: bodytext\nrisk-floor: medium\n' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.riskFloor, 'medium');
+  const badFloor = goLocal(['--parent', String(parent.id)], dir, { readPolicyRaw: () => 'risk-floor: meduim\n' });
+  assert.equal(badFloor.code, 2);
+  assert.equal(badFloor.stdout, '');
+  assert.match(badFloor.stderr, /invalid risk-floor "meduim"/);
 });

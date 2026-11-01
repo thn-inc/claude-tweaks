@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
   enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
-  evaluateIdempotence, parseClosingTokens,
+  evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../../plugin/bin/fetch-sub-issues');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
@@ -242,6 +242,16 @@ test('AC1.4: a human-reopened parent is never re-closed', () => {
   );
 });
 
+test("AC1.4: a reopen holds over the bot's own close marker, checked before the comment scan", () => {
+  // A trusted marker (would count: close-only) beside an untrusted one (would be named in
+  // skipped): a reopened check after the scan, or a counted marker returned first, goes red.
+  const comments = [headingComment(), headingComment({ authorAssociation: 'NONE', author: { login: 'stranger' }, url: 'u4' })];
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: 'REOPENED', comments, login: 'bot' }),
+    { idempotence: 'reopened', skipped: [] },
+  );
+});
+
 test('an already-closed parent is a no-op, checked before reopened', () => {
   assert.deepEqual(
     evaluateIdempotence({ state: 'CLOSED', stateReason: 'REOPENED', comments: [], login: null }),
@@ -285,12 +295,93 @@ test('a counted heading comment still names an untrusted one beside it', () => {
 
 test('the local-files body variant ignores comments', () => {
   const untrusted = headingComment({ authorAssociation: 'CONTRIBUTOR', url: 'u3' });
+  const body = { source: 'body' };
   assert.deepEqual(
-    evaluateIdempotence({ state: 'OPEN', body: 'x\n## Closed below the oversight floor\n', comments: [untrusted] }),
+    evaluateIdempotence({ state: 'OPEN', body: 'x\n## Closed below the oversight floor\n', comments: [untrusted] }, body),
     { idempotence: 'close-only', skipped: [] },
   );
-  assert.deepEqual(evaluateIdempotence({ state: 'CLOSED', body: 'x' }), { idempotence: 'already-closed', skipped: [] });
-  assert.deepEqual(evaluateIdempotence({ state: 'OPEN', body: 'x' }), { idempotence: 'comment-and-close', skipped: [] });
+  assert.deepEqual(evaluateIdempotence({ state: 'CLOSED', body: 'x' }, body), { idempotence: 'already-closed', skipped: [] });
+  assert.deepEqual(evaluateIdempotence({ state: 'OPEN', body: 'x' }, body), { idempotence: 'comment-and-close', skipped: [] });
+});
+
+test('the facts shape is the explicit source, never sniffed from a body field', () => {
+  // The default source reads comments even when a body string is present.
+  const facts = { state: 'OPEN', stateReason: '', body: `x\n${CLOSE_HEADING}\n`, comments: [], login: 'bot' };
+  assert.deepEqual(evaluateIdempotence(facts), { idempotence: 'comment-and-close', skipped: [] });
+  assert.deepEqual(evaluateIdempotence(facts, { source: 'comments' }), { idempotence: 'comment-and-close', skipped: [] });
+  assert.deepEqual(evaluateIdempotence(facts, { source: 'body' }), { idempotence: 'close-only', skipped: [] });
+  for (const source of ['Body', 'local-files', '', null]) {
+    assert.throws(() => evaluateIdempotence(facts, { source }), TypeError, String(source));
+  }
+});
+
+test('needsIdempotenceReads: only a parent neither CLOSED nor REOPENED reads comments and login', () => {
+  assert.equal(needsIdempotenceReads('OPEN', ''), true);
+  assert.equal(needsIdempotenceReads('OPEN', 'COMPLETED'), true);
+  assert.equal(needsIdempotenceReads('CLOSED', ''), false);
+  assert.equal(needsIdempotenceReads('CLOSED', 'COMPLETED'), false);
+  assert.equal(needsIdempotenceReads('OPEN', 'REOPENED'), false);
+  assert.equal(needsIdempotenceReads('CLOSED', 'REOPENED'), false);
+});
+
+// --- evaluateGateWithIdempotence ---
+
+// A reader that records each verdict it is handed and returns `out`.
+const reader = (out) => {
+  const seen = [];
+  const read = (verdict) => { seen.push(verdict); return out; };
+  return { read, seen };
+};
+const OPEN_FACTS = { state: 'OPEN', stateReason: '', comments: [], login: 'bot' };
+
+test('evaluateGateWithIdempotence: without the flag it is evaluateParentGate, and reads nothing', () => {
+  const r = reader(OPEN_FACTS);
+  assert.deepEqual(evaluateGateWithIdempotence(facts(), { readIdempotenceFacts: r.read }), evaluateParentGate(facts()));
+  assert.deepEqual(evaluateGateWithIdempotence(facts()), evaluateParentGate(facts()));
+  assert.equal(r.seen.length, 0);
+});
+
+test('evaluateGateWithIdempotence reads only for a parent due below the floor', () => {
+  const notDue = [
+    facts({ subIssues: [sub(11), sub(12, { state: 'OPEN', stateReason: '' })] }),
+    facts({ subIssues: [sub(11), sub(12, { labels: ['risk:high'] })] }),
+    facts({ parentLabels: ['parent-issue', 'accept:pending'] }),
+    facts({ parent: null, parentLabels: [], subIssues: [] }),
+  ];
+  for (const input of notDue) {
+    const r = reader(OPEN_FACTS);
+    const v = evaluateGateWithIdempotence(input, { idempotence: true, readIdempotenceFacts: r.read });
+    assert.deepEqual(v, evaluateParentGate(input), JSON.stringify(input));
+    assert.equal(r.seen.length, 0, JSON.stringify(input));
+  }
+  // Without a reader too: nothing is read, so nothing is missing.
+  assert.equal(evaluateGateWithIdempotence(notDue[1], { idempotence: true }).exceeds, true);
+});
+
+test('evaluateGateWithIdempotence merges the idempotence check into a due-below-floor verdict', () => {
+  const planted = { body: `x\n${CLOSE_HEADING}\n`, authorAssociation: 'NONE', author: { login: 'stranger' }, url: 'u-planted' };
+  const r = reader({ ...OPEN_FACTS, comments: [planted] });
+  const v = evaluateGateWithIdempotence(facts(), { idempotence: true, readIdempotenceFacts: r.read });
+  const plain = evaluateParentGate(facts());
+  assert.deepEqual(r.seen, [plain]);
+  assert.equal(v.idempotence, 'comment-and-close');
+  assert.equal(v.skipped.length, 1);
+  assert.deepEqual({ ...v, idempotence: null, skipped: [] }, plain);
+  assert.deepEqual(Object.keys(v), VERDICT_FIELDS);
+});
+
+test("evaluateGateWithIdempotence passes `source` through: the local-files body shape", () => {
+  const body = { state: 'OPEN', body: `x\n${CLOSE_HEADING}\n` };
+  assert.equal(evaluateGateWithIdempotence(facts(), { idempotence: true, readIdempotenceFacts: () => body, source: 'body' }).idempotence, 'close-only');
+  // The same facts under the default source read comments, of which there are none.
+  assert.equal(evaluateGateWithIdempotence(facts(), { idempotence: true, readIdempotenceFacts: () => body }).idempotence, 'comment-and-close');
+  assert.throws(() => evaluateGateWithIdempotence(facts(), { idempotence: true, readIdempotenceFacts: () => body, source: 'local-files' }), TypeError);
+});
+
+test("evaluateGateWithIdempotence propagates the reader's throw and needs a reader where it reads", () => {
+  const failing = () => { throw new GhFailure('gh issue view 10: boom'); };
+  assert.throws(() => evaluateGateWithIdempotence(facts(), { idempotence: true, readIdempotenceFacts: failing }), ghFailure('gh issue view 10: boom'));
+  assert.throws(() => evaluateGateWithIdempotence(facts(), { idempotence: true }), TypeError);
 });
 
 test('IDEMPOTENCE_VALUES lists the four values in check order', () => {
@@ -317,6 +408,14 @@ test('parseClosingTokens de-duplicates and sorts the union', () => {
 
 test('parseClosingTokens keeps an unqualified token with no owner/repo (local-files)', () => {
   assert.deepEqual(parseClosingTokens(['7'], { owner: null, repo: null }), { numbers: [7] });
+});
+
+test('positive takes a digit string only', () => {
+  assert.equal(positive('5'), 5);
+  assert.equal(positive('4603'), 4603);
+  for (const text of ['', ' 5', '5 ', '0x5', '0', '00', '-1', '1e3', '5.0', '9007199254740993']) {
+    assert.equal(positive(text), null, JSON.stringify(text));
+  }
 });
 
 // --- gathers ---
@@ -481,6 +580,29 @@ test('shape 7: a parent live read that is not a JSON object is a GhFailure', () 
   }
 });
 
+// Read as '' or [], each of these would make an open parent comment-and-close: a duplicate public comment.
+test('shape 7: a malformed state, stateReason or comments is a GhFailure naming the field', () => {
+  const cases = [
+    [{ stateReason: '', comments: [] }, 'state is not a string: undefined'],
+    [{ state: null, stateReason: '', comments: [] }, 'state is not a string: null'],
+    [{ state: 7, stateReason: '', comments: [] }, 'state is not a string: 7'],
+    [{ state: 'OPEN', stateReason: 5, comments: [] }, 'stateReason is not a string: 5'],
+    [{ state: 'OPEN', stateReason: '', comments: 'not-an-array' }, 'comments is not an array: "not-an-array"'],
+    [{ state: 'OPEN', stateReason: '' }, 'comments is not an array: undefined'],
+    [{ state: 'OPEN', stateReason: '', comments: { nodes: [] } }, 'comments is not an array: {"nodes":[]}'],
+  ];
+  for (const [live, field] of cases) {
+    const gh = makeGh({ parentLive: { 10: live } });
+    assert.throws(() => gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), ghFailure(`gh issue view 10: unexpected output (${field})`), JSON.stringify(live));
+    assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)], `no login read: ${JSON.stringify(live)}`);
+  }
+  // A valid read is unchanged: state and stateReason uppercased, a null stateReason read as ''.
+  const comments = [headingComment()];
+  const gh = makeGh({ parentLive: { 10: { state: 'open', stateReason: null, comments } } });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments, login: 'bot' });
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10), SHAPE.login()]);
+});
+
 test('a failing or unparseable read throws GhFailure', () => {
   const world = { parentOf: { 11: 10 }, subs: { 10: [11, 12] } };
   let { caller } = makeGh({ ...world, throwWhen: (k) => k.startsWith('issue view 12 --repo') });
@@ -506,6 +628,79 @@ test('gatherIdempotenceFacts reads the login only for an open, non-reopened pare
   assert.equal(reopened.login, null);
   assert.deepEqual(reopened.comments, []);
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
+});
+
+// --- the origin host (GitHub Enterprise Server) ---
+
+const GHE = 'ghe.example.com';
+// A github.com argv as the gate sends it to GHE: `--repo` host-qualified, every `gh api` read `--hostname`d.
+const onGhe = (args) => (args[0] === 'api' ? [...args, '--hostname', GHE] : args.map((a) => (a === 'o/r' ? `${GHE}/o/r` : a)));
+// makeGh's world reached through GHE argv: the fake takes the host back off before answering,
+// so a read missing it, or carrying it twice, still shows in the recorded argv.
+function makeGheGh(world) {
+  const inner = makeGh(world);
+  const calls = [];
+  const gh = (args) => {
+    calls.push({ args });
+    const n = args.length;
+    const plain = args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
+      ? args.slice(0, -2)
+      : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
+    return inner.gh(plain);
+  };
+  return { calls, caller: ghCaller(gh) };
+}
+const NATIVE_WORLD = { parentOf: { 11: 10 }, subs: { 10: [12, 11] } };
+const BODY_WORLD = { bodies: { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [x] #12\n' } };
+
+test('with an Enterprise host every read carries the host-qualified slug or --hostname', () => {
+  let gh = makeGheGh(NATIVE_WORLD);
+  assert.deepEqual(gatherGateFacts({ subIssue: 11, ...NATIVE, host: GHE, caller: gh.caller }).subIssues.map((s) => s.number), [11, 12]);
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.parent(11), SHAPE.probe(), SHAPE.page(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)].map(onGhe));
+
+  gh = makeGheGh(BODY_WORLD);
+  assert.equal(gatherGateFacts({ subIssue: 11, ...OR, workLinks: 'body-text', host: GHE, caller: gh.caller }).parent, 10);
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.body(11), SHAPE.body(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)].map(onGhe));
+
+  // 4c: fetch-sub-issues.js adds its own --hostname to the REST ladder; it is not added twice.
+  const page = Array.from({ length: 100 }, (_, i) => 100 + i);
+  gh = makeGheGh({ subs: { 10: page }, hasNextPage: { 10: true }, rest: { 10: [...page, 200] } });
+  assert.equal(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }).length, 101);
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.page(10), SHAPE.rest(10)].map(onGhe));
+
+  // 4d, sent by the gather itself.
+  gh = makeGheGh({ probeFields: ['title'], rest: { 10: [11] } });
+  assert.deepEqual(enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: gh.caller }), [11]);
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.rest(10)].map(onGhe));
+
+  const seen = [];
+  const fetcher = (argv, deps) => { seen.push(argv); deps.stdout(`${JSON.stringify({ byParent: { 10: [11] }, retry: [] })}\n`); return 0; };
+  enumerateSubIssues({ parent: 10, ...NATIVE, host: GHE, caller: makeGheGh({}).caller, fetcher });
+  assert.deepEqual(seen, [['10', '--repo', `${GHE}/o/r`, '--resolve-retries']]);
+
+  gh = makeGheGh({});
+  assert.equal(gatherIdempotenceFacts({ parent: 10, ...OR, host: GHE, caller: gh.caller }).login, 'bot');
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10), SHAPE.login()].map(onGhe));
+});
+
+test('with no host, or github.com, the argv is the github.com argv', () => {
+  for (const host of [undefined, null, 'github.com']) {
+    let gh = makeGh(NATIVE_WORLD);
+    gatherGateFacts({ subIssue: 11, ...NATIVE, host, caller: gh.caller });
+    assert.deepEqual(argvOf(gh.calls), [SHAPE.parent(11), SHAPE.probe(), SHAPE.page(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)], String(host));
+
+    gh = makeGh(BODY_WORLD);
+    gatherGateFacts({ subIssue: 11, ...OR, workLinks: 'body-text', host, caller: gh.caller });
+    assert.deepEqual(argvOf(gh.calls), [SHAPE.body(11), SHAPE.body(10), SHAPE.sub(11), SHAPE.sub(12), SHAPE.labels(10)], String(host));
+
+    gh = makeGh({ probeFields: ['title'], rest: { 10: [11] } });
+    enumerateSubIssues({ parent: 10, ...NATIVE, host, caller: gh.caller });
+    assert.deepEqual(argvOf(gh.calls), [SHAPE.probe(), SHAPE.rest(10)], String(host));
+
+    gh = makeGh({});
+    gatherIdempotenceFacts({ parent: 10, ...OR, host, caller: gh.caller });
+    assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10), SHAPE.login()], String(host));
+  }
 });
 
 test('closeBelowFloorParents composes the shared core (one implementation)', () => {

@@ -2,9 +2,13 @@
 // bin/parent-gate.js — the Parent-Gate Procedure's gather and evaluate as one
 // command (#4603): Resolve the parent, Enumerate the parent's sub-issues, the
 // Self-inclusion rule and Evaluate the gate (wrap-up/verification-brief-parent-gate.md),
-// plus the below-floor close's idempotence check. A thin argument-parsing shell over
-// bin/lib/issues/parent-gate.js, which the reconciler's below-floor-parent-close.js
-// composes too, so the prose and the reconciler run one implementation.
+// plus the below-floor close's idempotence check. This file parses the arguments, resolves
+// the root, policy, backend and origin, makes the reads through its deps and prints the
+// verdict. Every gate rule lives under bin/lib/issues/: the gathers and evaluators, and the
+// evaluate-then-idempotence sequence (evaluateGateWithIdempotence), in parent-gate.js, which
+// the reconciler's below-floor-parent-close.js composes too, so the prose and the reconciler
+// run one implementation; the facts file's normalization in mcp-parent-gate-shape.js; and the
+// record store's mapping in local-parent-gate-shape.js.
 //
 // Usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]]
 //   [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text]
@@ -18,7 +22,10 @@
 //                (Step 4.0b, tidy's parent-side entry): it adds the two idempotence reads
 //                (the parent's comments and the gh login), and only for a parent that is
 //                due below the floor. Without it `idempotence` is null and `skipped` is [].
-//   --work-links, --risk-floor  default to .claude-tweaks/policy.yml at the repo root.
+//   --work-links, --risk-floor  default to .claude-tweaks/policy.yml at the repo root. The
+//                policy is read only for a key no flag gives (work-links never under local-files),
+//                and it fails closed: an unreadable file, or an invalid value for a key it
+//                supplies, is exit 2, never the schema default.
 //   --backend    github-issues|local-files; defaults to CLAUDE.md's `work-backend:`. local-files
 //                reads the gate's facts from the record store (bin/lib/issues/local-store.js):
 //                no gh call, no gh probe, no remote read. A record's `parent` facet is its
@@ -42,11 +49,12 @@
 // never an exit code: every `state`, `no-parent` included, is exit 0.
 //
 // Exit codes (Split-1/2, fetch-sub-issues.js's vocabulary): 0 a verdict was printed;
-// 1 a malformed invocation; 2 `gh` is absent, or owner/repo or the repo root cannot be
-// resolved; 3 a gh call failed, or under --backend local-files the record store could not be
-// read (the message goes to stderr). On every non-zero exit nothing goes to stdout. Only a
-// GhFailure or a FactsError maps to an exit code, and a thrown store read under local-files:
-// any other throw is a bug and propagates. Under --backend local-files a sub-issue or parent
+// 1 a malformed invocation; 2 `gh` is absent, owner/repo or the repo root cannot be
+// resolved, or .claude-tweaks/policy.yml will not read or holds an invalid value for a key
+// the run draws from it; 3 a gh call failed, or under --backend local-files the record store
+// could not be read (the message goes to stderr). On every non-zero exit nothing goes to
+// stdout. Only a GhFailure, a FactsError or a LocalRecordError maps to an exit code, and a
+// thrown store read under local-files: any other throw is a bug and propagates. Under --backend local-files a sub-issue or parent
 // id the store does not hold, or a closing token that names a repository, is exit 1; an absent
 // records dir is an empty store, and a records dir that will not read for any other reason is 3.
 //
@@ -54,17 +62,19 @@
 // 1 a facts file that will not read, parse or hold a JSON object, a required key that is
 // absent, or a subIssueGets key set that is not the enumerated numbers (the fetch never
 // happened); 3 a present entry that fails its shape guard (an MCP error or a wrapper the
-// agent wrote as data). 2 can only mean no GitHub remote for a qualified --closing token, or an
-// undeterminable repository root and working directory. This deliberately departs from
-// cli-wrapper-contract.md's gh-absent rule (every problem with the file on the
+// agent wrote as data). 2 can only mean no GitHub remote for a qualified --closing token, an
+// undeterminable repository root and working directory, or the policy failure above. This
+// deliberately departs from cli-wrapper-contract.md's gh-absent rule (every problem with the file on the
 // malformed-invocation code, as materialize.js and preflight-records.js do): a file problem and
 // a guard failure are different recoveries for the prose that branches on them, and
 // mcp-agent-fetch-node-compute rule 3 maps a guard failure to a failed read, never to content,
 // which is this CLI's 3.
 //
-// There is no `--repo` flag. Owner/repo come from the origin remote, and every gh read of
-// the gate names them (`--repo` on each `gh issue view`, the GraphQL variables, the REST
-// path), so one gate reads one repository however many remotes the checkout has.
+// There is no `--repo` flag. Host, owner and repo come from the origin remote, and every gh
+// read of the gate names them (`--repo` on each `gh issue view`, host-qualified off
+// github.com; the GraphQL variables and the REST path, with `--hostname` on each `gh api`
+// read off github.com), so one gate reads one repository on one host however many remotes
+// the checkout has. On github.com every argv is the bare `owner/repo` one.
 'use strict';
 
 const fs = require('fs');
@@ -76,30 +86,17 @@ const { readWorkBackend } = require('./lib/work-backend');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const {
   VALID_RISK_FLOORS, VERDICT_FIELDS, GhFailure, ghCaller, gatherGateFacts, gatherIdempotenceFacts,
-  evaluateParentGate, evaluateIdempotence, parseClosingTokens,
+  evaluateGateWithIdempotence, parseClosingTokens, positive,
 } = require('./lib/issues/parent-gate');
 const { FactsError, normalizeMcpFacts, withIdempotenceReads } = require('./lib/issues/mcp-parent-gate-shape');
+const { LocalRecordError, localGateFacts } = require('./lib/issues/local-parent-gate-shape');
 const { queryRecords, DEFAULT_DIR } = require('./lib/issues/local-store');
-const { LABELS } = require('./lib/issues/record-vocabulary');
 
 const USAGE = 'usage: parent-gate.js (--sub-issue <n> | --parent <n>) [--closing <tok>[,<tok>...]] [--held <n>[,<n>...]] [--merging-pr <n>] [--idempotence] [--work-links native|body-text] [--risk-floor low|medium|high|always] [--facts-json <file>] [--backend github-issues|local-files] [--records-dir <dir>] [--help]\n';
 
 const WORK_LINKS = POLICY_KEYS.find((k) => k.key === 'work-links').values;
 const BACKENDS = ['github-issues', 'local-files'];
 const VALUE_FLAGS = new Set(['--sub-issue', '--parent', '--closing', '--held', '--merging-pr', '--work-links', '--risk-floor', '--backend', '--facts-json', '--records-dir']);
-// A record's `acceptance` facet, as the label the gate reads it from.
-const ACCEPTANCE_LABELS = {
-  pending: LABELS.ACCEPT_PENDING,
-  approved: LABELS.ACCEPT_APPROVED,
-  'changes-requested': LABELS.ACCEPT_CHANGES_REQUESTED,
-};
-
-// A digit string -> its positive safe-integer value, or null (`Number('')` is 0, so test the digits first).
-function positive(text) {
-  if (!/^\d+$/.test(text)) return null;
-  const n = Number(text);
-  return Number.isSafeInteger(n) && n > 0 ? n : null;
-}
 
 // The value of one value-taking flag, validated -> { value } or { error }.
 function flagValue(flag, text) {
@@ -203,11 +200,8 @@ function printVerdict(deps, verdict) {
   deps.stdout(`${JSON.stringify(Object.fromEntries(VERDICT_FIELDS.map((key) => [key, verdict[key]])))}\n`);
 }
 
-// --backend local-files: the same gate over the record store -> exit code. A record's `parent`
-// facet is its parent, `closed`/`not-planned` give a sub-issue's state, and the `risk`,
-// `is-parent-issue` and `acceptance` facets stand in for the labels the gh path reads. The
-// store is read in two scans, open then closed; a record both return (closed between them)
-// is kept once, as the later closed scan read it.
+// --backend local-files: the same gate over the record store -> exit code. The store is read
+// in two scans, open then closed; local-parent-gate-shape.js maps them to the gate's facts.
 function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
   const closing = parseClosingTokens(tokens, { owner: null, repo: null });
   if (closing.error) {
@@ -219,51 +213,23 @@ function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
   try {
     // An absent dir is an empty store; any other readdir error would otherwise read as one too.
     try { deps.probeRecordsDir(dir); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
-    records = [...deps.queryRecords(dir, {}), ...deps.queryRecords(dir, { closed: true })];
+    records = { open: deps.queryRecords(dir, {}), closed: deps.queryRecords(dir, { closed: true }) };
   } catch (err) {
     deps.stderr(`parent-gate.js: could not read the records in ${dir}: ${err && err.message}\n`);
     return 3;
   }
-  const byId = new Map(records.map((record) => [record.id, record]));
-
-  let parentId = opts.parent;
-  if (parentId === null) {
-    const sub = byId.get(opts.subIssue);
-    if (!sub) { deps.stderr(`parent-gate.js: sub-issue #${opts.subIssue} is not a record in ${dir}\n`); return 1; }
-    parentId = sub.facets.parent;
-  }
-  let facts = { parent: null, parentLabels: [], subIssues: [] };
-  let parentRecord = null;
-  if (parentId !== null && parentId !== undefined) {
-    parentRecord = byId.get(parentId);
-    if (!parentRecord) { deps.stderr(`parent-gate.js: parent #${parentId} is not a record in ${dir}\n`); return 1; }
-    const parentLabels = [];
-    if (parentRecord.facets.isParentIssue === true) parentLabels.push(LABELS.PARENT_ISSUE);
-    const acceptance = parentRecord.facets.acceptance;
-    if (Object.prototype.hasOwnProperty.call(ACCEPTANCE_LABELS, acceptance)) parentLabels.push(ACCEPTANCE_LABELS[acceptance]);
-    facts = {
-      parent: parentId,
-      parentLabels,
-      subIssues: [...byId.values()].filter((r) => r.facets.parent === parentId).map((r) => ({
-        number: r.id,
-        title: r.title,
-        state: r.facets.closed ? 'CLOSED' : 'OPEN',
-        stateReason: r.facets.closed ? (r.facets.notPlanned ? 'NOT_PLANNED' : 'COMPLETED') : '',
-        labels: r.facets.risk ? [`risk:${r.facets.risk}`] : [],
-        closedBy: [],
-      })),
-    };
+  let local;
+  try {
+    local = localGateFacts(records, { subIssue: opts.subIssue, parent: opts.parent });
+  } catch (err) {
+    if (!(err instanceof LocalRecordError)) throw err;
+    deps.stderr(`parent-gate.js: ${err.message} in ${dir}\n`);
+    return err.exit;
   }
 
-  let verdict = evaluateParentGate({
-    ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
-  });
-  if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
-    const { idempotence, skipped } = evaluateIdempotence({
-      state: parentRecord.facets.closed ? 'CLOSED' : 'OPEN', body: parentRecord.body,
-    });
-    verdict = { ...verdict, idempotence, skipped };
-  }
+  const verdict = evaluateGateWithIdempotence({
+    ...local.gate, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
+  }, { idempotence: opts.idempotence, readIdempotenceFacts: () => local.idempotence, source: 'body' });
   printVerdict(deps, verdict);
   return 0;
 }
@@ -294,23 +260,48 @@ function run(argv, deps = realDeps) {
   if (opts.closing !== null) tokens = opts.closing;
   else if (opts.subIssue !== null) tokens = [String(opts.subIssue)];
 
-  let policyRaw = null;
-  try { policyRaw = deps.readPolicyRaw(root); } catch { policyRaw = null; }
-  const policy = resolvePolicyKeys(['work-links', 'risk-floor'], { policyRaw });
-  const workLinks = opts.workLinks || policy['work-links'].value;
-  const riskFloor = opts.riskFloor || policy['risk-floor'].value;
-
-  if (backend === 'local-files') {
-    if (opts.factsJson !== null) {
-      deps.stderr('parent-gate.js: --facts-json cannot be combined with --backend local-files\n');
-      return 1;
-    }
-    return runLocalFiles(opts, deps, { root, tokens, riskFloor });
+  if (backend === 'local-files' && opts.factsJson !== null) {
+    deps.stderr('parent-gate.js: --facts-json cannot be combined with --backend local-files\n');
+    return 1;
   }
-  if (opts.recordsDir !== null) {
+  if (backend !== 'local-files' && opts.recordsDir !== null) {
     deps.stderr('parent-gate.js: --records-dir only applies to --backend local-files\n');
     return 1;
   }
+
+  // This CLI reads the policy itself rather than through policy-schema.js's resolvePolicyConfig:
+  // that helper resolves its own root, falling back to process.cwd() silently and outside the
+  // deps seam, so it cannot give the exit 2 above for an undeterminable root; and it reads the
+  // policy for every run, with no place for the fail-closed rule here. The policy is read only
+  // for a key no flag gives (local-files never uses work-links), and an unreadable file or an
+  // invalid value for such a key is exit 2: the schema default (`risk-floor: high`) would be
+  // looser than a configured medium or low.
+  let workLinks = opts.workLinks;
+  let riskFloor = opts.riskFloor;
+  const fromPolicy = [];
+  if (workLinks === null && backend !== 'local-files') fromPolicy.push('work-links');
+  if (riskFloor === null) fromPolicy.push('risk-floor');
+  if (fromPolicy.length > 0) {
+    let policyRaw;
+    try {
+      policyRaw = deps.readPolicyRaw(root);
+    } catch (err) {
+      deps.stderr(`parent-gate.js: cannot read .claude-tweaks/policy.yml: ${err && err.message}\n`);
+      return 2;
+    }
+    const rejected = {};
+    const policy = resolvePolicyKeys(fromPolicy, { policyRaw, onInvalid: (key, raw) => { rejected[key] = raw; } });
+    const bad = fromPolicy.find((key) => policy[key].invalid);
+    if (bad) {
+      const allowed = POLICY_KEYS.find((k) => k.key === bad).values;
+      deps.stderr(`parent-gate.js: .claude-tweaks/policy.yml: invalid ${bad} ${JSON.stringify(rejected[bad])} (must be one of ${allowed.join(', ')})\n`);
+      return 2;
+    }
+    if (workLinks === null && policy['work-links']) workLinks = policy['work-links'].value;
+    if (riskFloor === null) riskFloor = policy['risk-floor'].value;
+  }
+
+  if (backend === 'local-files') return runLocalFiles(opts, deps, { root, tokens, riskFloor });
 
   // The facts file path makes no gh call and never probes for gh. It needs owner/repo only to
   // judge a qualified --closing token (an unqualified one skips sameRepoNumbers), so it reads
@@ -324,6 +315,7 @@ function run(argv, deps = realDeps) {
     }
   }
 
+  let host = null;
   let owner = null;
   let repo = null;
   if (opts.factsJson === null || tokens.some((token) => !/^\d+$/.test(token))) {
@@ -331,7 +323,7 @@ function run(argv, deps = realDeps) {
     try { remote = deps.remoteUrl(); } catch { remote = null; }
     const repoSpec = parseRepo(remote);
     if (!repoSpec) { deps.stderr('parent-gate.js: could not resolve owner/repo from the origin remote\n'); return 2; }
-    ({ owner, repo } = repoSpec);
+    ({ host, owner, repo } = repoSpec);
     // parseRepo accepts any non-'/' segment, '.' and '..' included; the gate's REST paths interpolate
     // owner/repo (the same guard as fetch-sub-issues.js).
     if (owner === '.' || owner === '..' || repo === '.' || repo === '..') {
@@ -372,18 +364,16 @@ function run(argv, deps = realDeps) {
   let verdict;
   try {
     const facts = mcp ? mcp.gate : gatherGateFacts({
-      subIssue: opts.subIssue, parent: opts.parent, owner, repo, workLinks, caller,
+      subIssue: opts.subIssue, parent: opts.parent, owner, repo, host, workLinks, caller,
     });
-    verdict = evaluateParentGate({
+    // The facts file's two idempotence reads are guarded in this reader and nowhere earlier: a
+    // verdict that never reads them (the gh path makes no such call) must not depend on them.
+    const readIdempotenceFacts = (gate) => (mcp
+      ? withIdempotenceReads(mcp.raw, mcp.idempotence)
+      : gatherIdempotenceFacts({ parent: gate.parent, owner, repo, host, caller }));
+    verdict = evaluateGateWithIdempotence({
       ...facts, closingSet: closing.numbers, held: opts.held, mergingPr: opts.mergingPr, riskFloor,
-    });
-    if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
-      // The facts file's two idempotence reads are guarded here and nowhere earlier: a verdict that
-      // never reads them (the gh path makes no such call) must not depend on them.
-      const idempotenceFacts = mcp ? withIdempotenceReads(mcp.raw, mcp.idempotence) : gatherIdempotenceFacts({ parent: verdict.parent, owner, repo, caller });
-      const { idempotence, skipped } = evaluateIdempotence(idempotenceFacts);
-      verdict = { ...verdict, idempotence, skipped };
-    }
+    }, { idempotence: opts.idempotence, readIdempotenceFacts });
   } catch (err) {
     if (err instanceof FactsError) {
       deps.stderr(`parent-gate.js: facts file ${err.key}: ${err.message}\n`);

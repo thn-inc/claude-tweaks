@@ -24,11 +24,12 @@ function git(root, ...args) {
 }
 
 // A temp main checkout: a real git repo with an origin, a CLAUDE.md, and no run dirs yet.
+// `origin`: true for the github.com default, a string for that URL, false for none.
 function mainCheckout({ claudeMd = '## Work records\n\nwork-backend: github-issues\n', origin = true } = {}) {
   const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'post-merge-')));
   tempRoots.push(root);
   git(root, 'init', '-q');
-  if (origin) git(root, 'remote', 'add', 'origin', 'git@github.com:acme/w.git');
+  if (origin) git(root, 'remote', 'add', 'origin', origin === true ? 'git@github.com:acme/w.git' : origin);
   if (claudeMd !== null) fs.writeFileSync(path.join(root, 'CLAUDE.md'), claudeMd);
   return root;
 }
@@ -118,6 +119,7 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
     mergingPr: 11,
     owner: 'acme',
     repo: 'w',
+    host: 'github.com',
     workLinks: 'body-text',
     riskFloor: 'high',
     gh: d.gh,
@@ -672,6 +674,64 @@ test('R2: the default gh runs through the timed wrapper with cwd at the main che
   assert.equal(seen[0].opts.input, 'body');
   assert.equal(seen[0].opts.windowsHide, true);
   assert.equal(typeof seen[0].opts.timeout, 'number');
+});
+
+test('a GitHub Enterprise origin hands Step 4.0b its host; a github.com origin hands it github.com', async () => {
+  for (const [origin, host] of [
+    ['git@ghe.example.com:acme/w.git', 'ghe.example.com'],
+    ['https://ghe.example.com/acme/w.git', 'ghe.example.com'],
+    ['https://github.com/acme/w.git', 'github.com'],
+  ]) {
+    const root = mainCheckout({ origin });
+    addRun(root, '2026-10-30T090000-spec-1');
+    const close = fakeCloseParents();
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    assert.equal(close.calls.length, 1, origin);
+    assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], [host, 'acme', 'w'], origin);
+  }
+});
+
+// A fresh checkout with one unmarked run and `policyText` as its policy.yml (null: no file).
+function policyCheckout(policyText) {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  if (policyText !== null) fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), policyText);
+  return { root, dir };
+}
+
+test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, the skip named on the marker', async () => {
+  const { root, dir } = policyCheckout(null);
+  // A directory where the file belongs: the read fails EISDIR, an error that is not "no policy file".
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  const r = await run(root, { prs: { 11: merged() }, links, close });
+  assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]);
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
+  assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
+});
+
+test('a risk-floor value policy.yml rejects skips Step 4.0b fail-closed, never the looser schema default', async () => {
+  const { root, dir } = policyCheckout('risk-floor: hgih\nwork-links: native\n');
+  const close = fakeCloseParents({ closed: [{ parent: 77, maxTier: 'low' }], skipped: [] });
+  await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+  assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
+  const lines = entriesOf(dir);
+  assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP]);
+  assert.match(lines[0].action, /; skipped step \(invalid-risk-floor: \.claude-tweaks\/policy\.yml risk-floor: "hgih"\)\./);
+});
+
+test('no policy.yml at all (and a policy.yml without risk-floor) keeps the schema default: the close runs with risk-floor high', async () => {
+  for (const policyText of [null, 'work-links: native\n']) {
+    const { root } = policyCheckout(policyText);
+    const close = fakeCloseParents();
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    assert.equal(close.calls.length, 1, String(policyText));
+    assert.equal(close.calls[0].riskFloor, 'high', String(policyText));
+  }
 });
 
 test('dryRun: a merged unmarked run past the grace window gives dry-run and writes nothing, the claim included', async () => {

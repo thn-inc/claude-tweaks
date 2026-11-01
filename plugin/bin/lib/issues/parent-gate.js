@@ -5,7 +5,7 @@
 // close's idempotence check (#4603). The gathers keep #4599's gh call shapes,
 // except that native enumeration runs through bin/fetch-sub-issues.js's `run`,
 // called in-process, so its probe, page and retry ladder are reused, not
-// re-derived, and that every `gh issue view` read carries `--repo owner/repo`,
+// re-derived, and that every `gh issue view` read carries `--repo {slug}` (the legend below),
 // so one gate never splits its reads between gh's base repo and the caller's.
 // bin/parent-gate.js and below-floor-parent-close.js both compose it. It
 // replaces the prose snippets that #4466's review found eight defects in.
@@ -13,7 +13,24 @@
 // Four parts: two gh gathers (gatherGateFacts, gatherIdempotenceFacts) that
 // take a `caller` from ghCaller(gh) and throw GhFailure on a failing or
 // unreadable read, and two pure evaluators (evaluateParentGate,
-// evaluateIdempotence) that turn the gathered facts into the verdict.
+// evaluateIdempotence) that turn the gathered facts into the verdict, which
+// evaluateGateWithIdempotence sequences for bin/parent-gate.js.
+//
+// The gh reads, numbered as the comments below and the tests' `shape N:` labels cite them.
+// {slug} is repoSlug({ host, owner, repo }) (`owner/repo` on github.com, `host/owner/repo`
+// off it); off github.com every `gh api` read also carries `--hostname {host}`.
+//   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then PARENT_LINE_RE.
+//   2   sub-issue -> parent, native: fetchNativeParent's api graphql -f query=<parent> -f owner= -f repo=.
+//   3   parent -> sub-issues, body-text: issue view {parent} --repo {slug} --json body -q .body, then parseSubIssues.
+//   4   parent -> sub-issues, native: fetch-sub-issues.js's run([parent, --repo {slug}, --resolve-retries]), whose runner sends
+//   4a    the schema probe: api graphql -f query={ __type(name: "Issue") { fields { name } } };
+//   4b    the batched page: api graphql -f query=<subIssues(first:100)> -f owner= -f repo=;
+//   4c    on hasNextPage or a missing alias only: api --paginate repos/{owner}/{repo}/issues/{parent}/sub_issues --jq .[].number;
+//   4d  when run exits EXIT_SUBISSUES_UNAVAILABLE: 4c's argv, sent by this file instead.
+//   5   each sub-issue, ascending: issue view {n} --repo {slug} --json state,stateReason,labels,title,closedByPullRequestsReferences.
+//   6   the parent's labels: issue view {parent} --repo {slug} --json labels -q [.labels[].name].
+//   7   idempotence: issue view {parent} --repo {slug} --json state,stateReason,comments.
+//   8   the login: api user --jq .login, only when needsIdempotenceReads(7's state, stateReason).
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
@@ -24,6 +41,7 @@ const { maxRiskTier, exceedsOversightFloor } = require('./oversight-floor');
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
 const { sameRepoNumbers } = require('../flow/closing-links');
 const { POLICY_KEYS } = require('../policy-schema');
+const { repoSlug } = require('../repo-resolve');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../fetch-sub-issues');
 
 const CLOSE_HEADING = '## Closed below the oversight floor';
@@ -90,15 +108,30 @@ function distinctAscending(values) {
   return [...new Set(values.filter((v) => Number.isInteger(v) && v > 0))].sort((a, b) => a - b);
 }
 
+// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
+// already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
+// github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
+// take no host, so their runners pass each argv through this.
+function onHost(args, host) {
+  if (!host || host === 'github.com' || args[0] !== 'api' || args.includes('--hostname')) return args;
+  return [...args, '--hostname', host];
+}
+
+// Whether the idempotence check needs the parent's comments and the gh login (7's comments, 8):
+// only for a parent neither CLOSED nor REOPENED. Takes the uppercased state and stateReason.
+function needsIdempotenceReads(state, stateReason) {
+  return state !== 'CLOSED' && stateReason !== 'REOPENED';
+}
+
 // Shape 1 (body-text) or 2 (native): the sub-issue's parent number, or null.
-function resolveParent({ subIssue, owner, repo, workLinks, caller }) {
+function resolveParent({ subIssue, owner, repo, host, workLinks, caller }) {
   if (workLinks === 'body-text') {
-    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--repo', `${owner}/${repo}`, '--json', 'body', '-q', '.body'])));
+    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--repo', repoSlug({ host, owner, repo }), '--json', 'body', '-q', '.body'])));
     return match ? Number(match[1]) : null;
   }
   // fetchNativeParent throws only for a failed or malformed GraphQL read.
   try {
-    return fetchNativeParent({ number: subIssue, owner, repo, runner: (args) => caller.call(args) });
+    return fetchNativeParent({ number: subIssue, owner, repo, runner: (args) => caller.call(onHost(args, host)) });
   } catch (err) {
     throw err instanceof GhFailure ? err : new GhFailure(`gh api graphql (parent): ${err.message}`);
   }
@@ -109,18 +142,19 @@ function resolveParent({ subIssue, owner, repo, workLinks, caller }) {
 // -> the parent's sub-issue numbers, ascending. `fetcher` is that `run`; tests inject
 // one to reach the exit-0 branches the real CLI never takes (unparseable stdout, no key).
 function enumerateSubIssues({
-  parent, owner, repo, workLinks, caller, fetcher = runFetchSubIssues,
+  parent, owner, repo, host, workLinks, caller, fetcher = runFetchSubIssues,
 }) {
+  const slug = repoSlug({ host, owner, repo });
   if (workLinks === 'body-text') {
-    return distinctAscending(parseSubIssues(String(caller.call(['issue', 'view', String(parent), '--repo', `${owner}/${repo}`, '--json', 'body', '-q', '.body']))));
+    return distinctAscending(parseSubIssues(String(caller.call(['issue', 'view', String(parent), '--repo', slug, '--json', 'body', '-q', '.body']))));
   }
-  const restArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parent}/sub_issues`, '--jq', '.[].number'];
+  const restArgs = onHost(['api', '--paginate', `repos/${owner}/${repo}/issues/${parent}/sub_issues`, '--jq', '.[].number'], host);
   let out = '';
   let err = '';
-  const code = fetcher([String(parent), '--repo', `${owner}/${repo}`, '--resolve-retries'], {
+  const code = fetcher([String(parent), '--repo', slug, '--resolve-retries'], {
     ghAvailable: () => true,
     remoteUrl: () => null,
-    runner: (args) => caller.call(args),
+    runner: (args) => caller.call(onHost(args, host)),
     stdout: (s) => { out += s; },
     stderr: (s) => { err += s; },
   });
@@ -140,19 +174,22 @@ function enumerateSubIssues({
 }
 
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
-// With no resolvable parent it stops after resolution.
-function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
+// With no resolvable parent it stops after resolution. `host` is the origin's host; absent or
+// 'github.com' leaves every argv as on github.com.
+function gatherGateFacts({
+  subIssue, parent, owner, repo, host, workLinks, caller,
+}) {
   const given = (v) => v !== null && v !== undefined;
   if (given(subIssue) === given(parent)) {
     throw new TypeError('gatherGateFacts takes exactly one of subIssue and parent');
   }
   let resolved = parent;
   if (resolved === null || resolved === undefined) {
-    resolved = resolveParent({ subIssue, owner, repo, workLinks, caller });
+    resolved = resolveParent({ subIssue, owner, repo, host, workLinks, caller });
     if (resolved === null || resolved === undefined) return { parent: null, parentLabels: [], subIssues: [] };
   }
-  const slug = `${owner}/${repo}`;
-  const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, workLinks, caller }).map((num) => {
+  const slug = repoSlug({ host, owner, repo });
+  const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller }).map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
     const rawRefs = live.closedByPullRequestsReferences;
@@ -174,15 +211,25 @@ function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
 }
 
 // Shapes 7 and 8: the parent's live state and comments, and the current gh login,
-// read only when the parent is neither CLOSED nor REOPENED.
-function gatherIdempotenceFacts({ parent, owner, repo, caller }) {
-  const live = caller.callJson(['issue', 'view', String(parent), '--repo', `${owner}/${repo}`, '--json', 'state,stateReason,comments'], 'object');
-  const state = String(live.state || '').toUpperCase();
+// read only when the parent is neither CLOSED nor REOPENED. A state that is not a
+// string, a present stateReason that is not one, or (when the comments are read) a
+// comments value that is not an array is a GhFailure: read as '' or [], it would
+// post a duplicate close comment.
+function gatherIdempotenceFacts({
+  parent, owner, repo, host, caller,
+}) {
+  const live = caller.callJson(['issue', 'view', String(parent), '--repo', repoSlug({ host, owner, repo }), '--json', 'state,stateReason,comments'], 'object');
+  const malformed = (what, value) => new GhFailure(`gh issue view ${parent}: unexpected output (${what}: ${JSON.stringify(value)})`);
+  if (typeof live.state !== 'string') throw malformed('state is not a string', live.state);
+  if (live.stateReason !== undefined && live.stateReason !== null && typeof live.stateReason !== 'string') {
+    throw malformed('stateReason is not a string', live.stateReason);
+  }
+  const state = live.state.toUpperCase();
   const stateReason = String(live.stateReason || '').toUpperCase();
+  const reads = needsIdempotenceReads(state, stateReason);
+  if (reads && !Array.isArray(live.comments)) throw malformed('comments is not an array', live.comments);
   const comments = Array.isArray(live.comments) ? live.comments : [];
-  const login = state === 'CLOSED' || stateReason === 'REOPENED'
-    ? null
-    : String(caller.call(['api', 'user', '--jq', '.login'])).trim();
+  const login = reads ? String(caller.call(onHost(['api', 'user', '--jq', '.login'], host))).trim() : null;
   return { state, stateReason, comments, login };
 }
 
@@ -222,6 +269,10 @@ function evaluateParentGate({
         title: s.title,
         state: selfIncluded ? 'CLOSED' : s.state,
         stateReason: selfIncluded ? 'COMPLETED' : s.stateReason,
+        // Keyed on inClosingSet, not selfIncluded: the merging PR is known only for the members
+        // this merge closes, and it names them even under selfInclude: false (the reconciler's
+        // listing lines). Any other sub-issue's live closedBy is all there is; its last entry is
+        // the latest closing PR.
         pr: inClosingSet && mergingPr ? mergingPr : closedBy[closedBy.length - 1] || null,
         facets: parseRecordFacets(s.labels),
       };
@@ -254,17 +305,25 @@ function evaluateParentGate({
   };
 }
 
-// Pure: idempotence facts -> { idempotence, skipped }. `{ state, body }` is the
-// local-files shape (the close marker is a heading in the record body);
-// `{ state, stateReason, comments, login }` is the gh/MCP shape.
-function evaluateIdempotence(facts) {
+// The `source` values evaluateIdempotence takes.
+const IDEMPOTENCE_SOURCES = ['comments', 'body'];
+
+// Pure: idempotence facts -> { idempotence, skipped }. `source` names the facts' shape:
+// 'comments' (the default) is the gh/MCP `{ state, stateReason, comments, login }`;
+// 'body' is local-files' `{ state, body }`, where the close marker is a heading in the
+// record body. Any other `source` throws a TypeError.
+function evaluateIdempotence(facts, { source = 'comments' } = {}) {
+  if (!IDEMPOTENCE_SOURCES.includes(source)) {
+    throw new TypeError(`source must be one of ${IDEMPOTENCE_SOURCES.join(', ')}; got ${String(source)}`);
+  }
   const f = facts || {};
   const state = String(f.state || '').toUpperCase();
   if (state === 'CLOSED') return { idempotence: 'already-closed', skipped: [] };
-  if (typeof f.body === 'string') {
-    return { idempotence: HEADING_LINE_RE.test(f.body) ? 'close-only' : 'comment-and-close', skipped: [] };
+  if (source === 'body') {
+    return { idempotence: HEADING_LINE_RE.test(String(f.body || '')) ? 'close-only' : 'comment-and-close', skipped: [] };
   }
-  if (String(f.stateReason || '').toUpperCase() === 'REOPENED') return { idempotence: 'reopened', skipped: [] };
+  // Before the comment scan: a human's reopen holds even over the bot's own close marker.
+  if (!needsIdempotenceReads(state, String(f.stateReason || '').toUpperCase())) return { idempotence: 'reopened', skipped: [] };
   let counted = false;
   const skipped = [];
   for (const comment of Array.isArray(f.comments) ? f.comments : []) {
@@ -275,9 +334,25 @@ function evaluateIdempotence(facts) {
   return { idempotence: counted ? 'close-only' : 'comment-and-close', skipped };
 }
 
-// A digit string -> its positive safe-integer value, or null.
-function positive(digits) {
-  const n = Number(digits);
+// evaluateParentGate(gateInput), then, when `idempotence` is true and the parent is due below
+// the floor, evaluateIdempotence merged into the verdict -> the verdict. `readIdempotenceFacts`
+// (verdict -> idempotence facts) is called for that verdict only, so a caller's idempotence
+// reads (gh shapes 7-8, the facts file's two keys) never run for any other; whatever it throws
+// propagates. `source` passes through to evaluateIdempotence. bin/parent-gate.js's paths share
+// it; the reconciler does not (its skip reasons need the steps apart).
+function evaluateGateWithIdempotence(gateInput, { idempotence = false, readIdempotenceFacts, source } = {}) {
+  const verdict = evaluateParentGate(gateInput);
+  if (!idempotence || verdict.state !== 'due' || verdict.exceeds !== false) return verdict;
+  if (typeof readIdempotenceFacts !== 'function') throw new TypeError('readIdempotenceFacts must be a function');
+  const checked = evaluateIdempotence(readIdempotenceFacts(verdict), { source });
+  return { ...verdict, idempotence: checked.idempotence, skipped: checked.skipped };
+}
+
+// A digit string -> its positive safe-integer value, or null (`Number('')` is 0 and
+// `Number(' 5')`/`Number('0x5')` parse, so test the digits first). bin/parent-gate.js's flags share it.
+function positive(text) {
+  if (!/^\d+$/.test(text)) return null;
+  const n = Number(text);
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
@@ -313,7 +388,10 @@ module.exports = {
   VALID_RISK_FLOORS,
   VERDICT_FIELDS,
   IDEMPOTENCE_VALUES,
+  IDEMPOTENCE_SOURCES,
   isCloseMarkerComment,
+  needsIdempotenceReads,
+  positive,
   distinctAscending,
   numberSet,
   GhFailure,
@@ -324,5 +402,6 @@ module.exports = {
   gatherIdempotenceFacts,
   evaluateParentGate,
   evaluateIdempotence,
+  evaluateGateWithIdempotence,
   parseClosingTokens,
 };

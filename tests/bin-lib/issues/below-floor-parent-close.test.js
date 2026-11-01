@@ -166,6 +166,59 @@ test('happy path, native: comments through stdin, then closes the parent complet
   assert.ok(!w[0].input.includes('closes as not planned'));
 });
 
+// A GitHub Enterprise world: every argv is recorded as sent, then answered by makeGh with the
+// host-qualified `--repo` and the `--hostname` pair taken back out.
+const TASK_LIST_BODIES = { 11: 'Intro\n\nParent: #10\n', 10: '## Tasks\n- [ ] #11 Eleven\n- [x] #12 Twelve\n' };
+function makeHostGh(world, host) {
+  const inner = makeGh(world);
+  const sent = [];
+  const gh = (args, input) => {
+    sent.push(args);
+    const plain = [];
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === '--hostname' && args[i + 1] === host) { i += 1; continue; }
+      plain.push(args[i]);
+      if (args[i] === '--repo') { plain.push(args[i + 1].replace(`${host}/`, '')); i += 1; }
+    }
+    return inner.gh(plain, input);
+  };
+  return { gh, sent };
+}
+
+test('a GitHub Enterprise host: both writes carry the host-qualified --repo and every gh api read carries --hostname', () => {
+  const host = 'ghe.example.com';
+  for (const workLinks of ['native', 'body-text']) {
+    const world = happyWorld({ bodies: TASK_LIST_BODIES });
+    const { gh, sent } = makeHostGh(world, host);
+    const out = closeBelowFloorParents(base({ gh, host, workLinks }));
+    assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] }, workLinks);
+    const lines = sent.map((a) => a.join(' '));
+    assert.deepEqual(lines.filter((l) => /^issue (comment|close) /.test(l)), [
+      `issue comment 10 --repo ${host}/o/r --body-file -`, `issue close 10 --repo ${host}/o/r --reason completed`,
+    ], workLinks);
+    const issueCalls = sent.filter((a) => a[0] === 'issue');
+    assert.ok(issueCalls.length > 2, workLinks);
+    for (const a of issueCalls) assert.equal(a[a.indexOf('--repo') + 1], `${host}/o/r`, a.join(' '));
+    const apiCalls = sent.filter((a) => a[0] === 'api');
+    if (workLinks === 'native') assert.ok(apiCalls.length > 0, 'the native world reads through gh api');
+    for (const a of apiCalls) assert.equal(a[a.indexOf('--hostname') + 1], host, a.join(' '));
+    assert.ok(lines.includes(`api user --jq .login --hostname ${host}`), workLinks);
+  }
+});
+
+test('host github.com, or no host, leaves every gh argv byte-identical', () => {
+  for (const workLinks of ['native', 'body-text']) {
+    const world = () => happyWorld({ bodies: TASK_LIST_BODIES });
+    const bare = makeGh(world());
+    closeBelowFloorParents(base({ gh: bare.gh, workLinks }));
+    const dotCom = makeGh(world());
+    closeBelowFloorParents(base({ gh: dotCom.gh, workLinks, host: 'github.com' }));
+    assert.deepEqual(dotCom.calls.map((c) => c.args), bare.calls.map((c) => c.args), workLinks);
+    assert.ok(bare.calls.every((c) => !c.args.includes('--hostname') && !c.args.includes('github.com/o/r')), workLinks);
+    assert.equal(writes(bare.calls).length, 2, workLinks);
+  }
+});
+
 test('a closing-set member with no merging PR falls back to its closing PR reference, else no suffix', () => {
   const world = happyWorld();
   world.issues[11].refs = [3];

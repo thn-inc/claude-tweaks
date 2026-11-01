@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   FACTS_KEYS, FactsError, normalizeMcpFacts, withIdempotenceReads,
 } = require('../../../plugin/bin/lib/issues/mcp-parent-gate-shape');
+const { needsIdempotenceReads } = require('../../../plugin/bin/lib/issues/parent-gate');
 
 // One MCP `issue_read` get result, written unreshaped: lowercase enums, label objects, snake_case.
 const issue = (n, over = {}) => ({
@@ -239,6 +240,15 @@ test('comments and me are required and guarded only for an open, non-reopened pa
   // Complete -> the gh idempotence shape.
   const done = withIdempotenceReads({ parentComments: [], me: { login: 'bot' } }, open);
   assert.deepEqual(done, { state: 'OPEN', stateReason: '', comments: [], login: 'bot' });
+});
+
+test('withIdempotenceReads reads comments and me exactly where needsIdempotenceReads says, as the gh gather does', () => {
+  for (const state of ['OPEN', 'CLOSED']) {
+    for (const stateReason of ['', 'COMPLETED', 'NOT_PLANNED', 'REOPENED']) {
+      const out = withIdempotenceReads({ parentComments: [], me: { login: 'bot' } }, { state, stateReason });
+      assert.equal('login' in out, needsIdempotenceReads(state, stateReason), `${state}/${stateReason}`);
+    }
+  }
 });
 
 test('FACTS_KEYS lists the seven keys', () => {

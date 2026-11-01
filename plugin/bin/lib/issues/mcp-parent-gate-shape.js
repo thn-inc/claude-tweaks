@@ -7,6 +7,7 @@
 // no I/O: the CLI reads the file. A Node subprocess cannot call MCP, so the agent
 // fetches and writes each result unreshaped (the mcp-agent-fetch-node-compute
 // skill); this file is the compute half, and it is a no-op on a gh-shaped entry.
+// The "shape N" numbers below are the gh reads in parent-gate.js's header legend.
 //
 // Every entry is shape-guarded (rule 3): an MCP error object (`{message:'Not
 // Found'}`) or a wrapper written as data fails its guard with a FactsError of exit
@@ -37,7 +38,7 @@
 
 const { parseSubIssues } = require('./record');
 const { normalizeLabelNames } = require('./record-vocabulary');
-const { PARENT_LINE_RE, distinctAscending } = require('./parent-gate');
+const { PARENT_LINE_RE, distinctAscending, needsIdempotenceReads } = require('./parent-gate');
 
 // The agent's seven fact keys, each one MCP result written unreshaped:
 //   parentLink    `get_parent` of the sub-issue in hand, or null when it has none (native).
@@ -203,7 +204,7 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
 // (evaluateIdempotence), so any other parent returns `idempotence` unchanged without looking at
 // the file's two keys. A missing key is exit 1, a present one that fails its guard exit 3.
 function withIdempotenceReads(raw, idempotence) {
-  if (idempotence.state === 'CLOSED' || idempotence.stateReason === 'REOPENED') return idempotence;
+  if (!needsIdempotenceReads(idempotence.state, idempotence.stateReason)) return idempotence;
   const list = need(raw, 'parentComments');
   if (!Array.isArray(list)) throw invalid('parentComments', 'is not an array');
   const comments = list.map((c, i) => {

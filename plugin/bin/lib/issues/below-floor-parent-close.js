@@ -34,10 +34,12 @@
 // is skipped (`sibling-unsettled`).
 //
 // Every gh call goes through the injected `gh(args, input?)`, which returns
-// stdout and throws on failure. Both writes carry `--repo owner/repo`, as the
-// gate's reads do, so a parent is written in the repository it was read from.
-// A failing call skips that one parent (named in `skipped`, reason `gh-failed`)
-// and the next closing record is still processed; a `riskFloor` outside the
+// stdout and throws on failure. Both writes carry `--repo`, as the gate's reads
+// do, so a parent is written in the repository it was read from. `host` is the
+// origin's host: off github.com that `--repo` is `host/owner/repo` and the
+// gate's `gh api` reads carry `--hostname host`; absent or github.com, every
+// argv is the bare `owner/repo` one. A failing call skips that one parent
+// (named in `skipped`, reason `gh-failed`) and the next closing record is still processed; a `riskFloor` outside the
 // policy schema's risk-floor enum skips the whole step (`invalid-risk-floor`,
 // no gh call). Never throws.
 'use strict';
@@ -46,6 +48,7 @@ const {
   CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, numberSet, resolveParent,
   gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence,
 } = require('./parent-gate');
+const { repoSlug } = require('../repo-resolve');
 
 const NOT_PLANNED_LINE = 'No sub-issue closed as completed, so this parent closes as not planned.';
 
@@ -71,7 +74,7 @@ function skipReason(verdict) {
 }
 
 function closeBelowFloorParents({
-  closingSet, unsettled, mergingPr, owner, repo, workLinks, riskFloor, gh, selfInclude = true,
+  closingSet, unsettled, mergingPr, owner, repo, host, workLinks, riskFloor, gh, selfInclude = true,
 } = {}) {
   const closed = [];
   const skipped = [];
@@ -83,17 +86,18 @@ function closeBelowFloorParents({
     const caller = ghCaller(gh);
     const closing = numberSet(closingSet);
     const unsettledSet = numberSet(unsettled);
+    const slug = repoSlug({ host, owner, repo });
 
     const handled = new Set();
     for (const n of [...closing].sort((a, b) => a - b)) {
       let parent = null;
       try {
-        parent = resolveParent({ subIssue: n, owner, repo, workLinks, caller });
+        parent = resolveParent({ subIssue: n, owner, repo, host, workLinks, caller });
         if (parent === null || parent === undefined) continue; // no resolvable parent: a silent no-op
         if (handled.has(parent)) continue; // each parent is evaluated once
         handled.add(parent);
 
-        const facts = gatherGateFacts({ parent, owner, repo, workLinks, caller });
+        const facts = gatherGateFacts({ parent, owner, repo, host, workLinks, caller });
         const verdict = evaluateParentGate({
           ...facts, closingSet: [...closing], selfInclude, held: [...unsettledSet], mergingPr, riskFloor,
         });
@@ -104,7 +108,7 @@ function closeBelowFloorParents({
         }
 
         // Idempotence: read before writing anything.
-        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, owner, repo, caller }));
+        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, owner, repo, host, caller }));
         if (idempotence === 'already-closed') {
           skipped.push({ parent, reason: 'already-closed' });
           continue;
@@ -117,9 +121,9 @@ function closeBelowFloorParents({
         const { maxTier, closeReason } = verdict;
         if (idempotence !== 'close-only') {
           const lines = verdict.subIssues.map((s) => `- #${s.number}${s.title ? ` ${s.title}` : ''}${s.pr ? ` — closed by PR #${s.pr}` : ''}`);
-          caller.call(['issue', 'comment', String(parent), '--repo', `${owner}/${repo}`, '--body-file', '-'], composeCloseComment({ maxTier, riskFloor, notPlanned: closeReason === 'not planned', lines }));
+          caller.call(['issue', 'comment', String(parent), '--repo', slug, '--body-file', '-'], composeCloseComment({ maxTier, riskFloor, notPlanned: closeReason === 'not planned', lines }));
         }
-        caller.call(['issue', 'close', String(parent), '--repo', `${owner}/${repo}`, '--reason', closeReason]);
+        caller.call(['issue', 'close', String(parent), '--repo', slug, '--reason', closeReason]);
         closed.push(notes.length ? { parent, maxTier, notes } : { parent, maxTier });
       } catch (err) {
         const target = parent === null || parent === undefined ? { issue: n } : { parent };

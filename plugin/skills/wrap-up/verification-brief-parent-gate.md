@@ -310,7 +310,8 @@ Route on its exit code:
 - **Exit 2 on the `gh` path with `gh` absent** (its message names `--facts-json`) — take the
   gh-absent path above, once.
 - **Exit 2 under `--facts-json`** — it can only mean no GitHub remote for a qualified `--closing`
-  token, or an undeterminable repository root and working directory: a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path
+  token, an undeterminable repository root and working directory, or an unreadable or invalid
+  `.claude-tweaks/policy.yml` (the stderr line names the file): a failing `gh` call under **Fail open on every `gh` call**, never the gh-absent path
   again, so the two paths cannot loop.
 - **Any other non-zero exit on the `gh` or `--facts-json` path** — a failing `gh` call under
   **Fail open on every `gh` call**.
