@@ -107,6 +107,7 @@ and the diff spans every commit since the fork — which reads as an enormous ch
 - **Review's findings are a hard input, not advisory**: if this run's `/claude-tweaks:review` pass
   produced anything at Medium severity or above, render `needs-human` — this mode never overrides a
   real review finding.
+- **An `Independence: degraded` review is a hard floor (#4555)**: if `$PIPELINE_RUN_DIR/decisions.md` — or, when `--pack` was passed, the `decisions.md` beside that pack, and for a bundle member #{n} the `spec-{n}/decisions.md` under the group run directory — carries `/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line (`review/step3-lens-dispatch.md`'s run-level note, text `condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`), or its review summary rendered the **Independence: degraded** line (with no run directory to read, that summary line alone decides), render `needs-human` — no independent agent reviewed this diff, so its merge routes to a human. A `decisions.md` that should exist but cannot be read (absent or unreadable while a run directory resolves) cannot rule the floor out either: render `needs-human` there too. Do not weigh anything else.
 
 ### Calibration
 
@@ -124,9 +125,9 @@ fixed, and calibration anchored to one then describes a state that no longer exi
 | A rename spanning many files where one hunk also changes a default | `needs-human` | One non-conforming hunk makes the whole diff behavior-carrying — the guideline binds again. |
 
 `auto-merge` eligible means the refutation attempt came up empty for the agent-instruction floor
-alone — necessary, never sufficient. Both floors stated above still apply on their own terms: a
-sensitive-path hit renders `needs-human` with nothing else weighed, and so does any review finding
-at Medium or above. Match a row here and you have cleared one gate, not the step.
+alone — necessary, never sufficient. Every floor stated above still applies on its own terms: a
+sensitive-path hit renders `needs-human` with nothing else weighed, and so do any review finding
+at Medium or above and an `Independence: degraded` review. Match a row here and you have cleared one gate, not the step.
 
 **Ruling on the reworded-instruction / cross-reference-repair overlap.** A diff that both
 relocates a pointer and rewords surrounding prose is not a gap in these two rows — it fails the
@@ -155,3 +156,4 @@ RATIONALE: {one paragraph, naming the specific factors weighed}
 | Skipping the sensitive-path hard floor because the content judgment "looks fine" | A floor exactly because content judgment isn't sufficient signal there — never overridden. |
 | Rendering `auto-merge` on an agent-instruction change without attempting to refute it | The escape is a refutation attempt, not a classification: name a behavior an agent could take differently; pass only if it comes up empty. "Looks small and tidy" isn't an attempt. |
 | Treating a correction as safe because it is factually true and verifiable | Behavior delta is the test, not truth — a claim corrected wrong→right still changes what agents reason from. |
+| Rendering `auto-merge` after a review marked `Independence: degraded` | No independent agent reviewed that diff; the floor routes its merge to a human whatever the diff looks like. |

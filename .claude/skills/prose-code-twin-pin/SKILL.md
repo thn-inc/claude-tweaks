@@ -250,6 +250,36 @@ step's hand-written `close-out-update: cleared ({reason})` line has the detector
 `consoleReplacedByAutoMerge` row below, since `CLEARED_RE` reads it. Walk the fence line by line,
 and name the constant or regex each line must match before you call the pin complete.
 
+**Behavior-twin instance (#4599, narrowed by #4603):** the code side can drive a whole prose
+procedure, not one table. `plugin/bin/lib/issues/below-floor-parent-close.js` is the reconciler's
+Step 4.0b driver (`_shared/pr-first-merge-post-merge.md`) for `wrap-up/verification-brief-parent-gate.md`,
+from **Resolve the parent** through **Close the parent below the floor**. The gate's evaluation
+(Resolve through Evaluate, and the idempotence check) is one shared module,
+`plugin/bin/lib/issues/parent-gate.js`, that the prose's CLI (`bin/parent-gate.js`) and the reconciler
+both run, so those parts cannot drift apart. What stays a twin is the close's composer, the comment text it
+writes, and the marker line the prose writes and the reconciler reads. No vocabulary spans the
+prose and those, so step 1's grep finds nothing. Split what is left into the parts that can drift, and pin each the way
+its shape owes:
+
+- *Fixed text* is a composer twin. `tests/bin-lib/issues/below-floor-parent-close.test.js` compares
+  `composeCloseComment` with the prose's closing-comment fence, substituted, and does the same for
+  the listing line, the bare listing line and the not-planned line.
+- *A number the prose states* is an exported constant. `tests/below-floor-parent-close-conformance.test.js`
+  pins the prose's "10 minutes" and asserts `MERGE_GRACE_MS` and `CLOSE_WINDOW_MS` equal it.
+- *A marker line the prose writes and the code reads* is the writer/reader row in Anti-Patterns. The
+  same suite parses `--step` and `--text` out of Step 4.0b's summary command, runs them through
+  `formatEntry`, and asserts `hasPostMergeMarker` reads the result, with a renamed `--step` as the
+  go-red control. The `(skipped)` SKIP line, which the prose also calls the marker, reaches the
+  reader only through a step string `tests/bin-lib/reconcile/post-merge.test.js` retypes.
+- *A declared divergence* is stated on both sides: the prose's "except that it skips the
+  **Self-inclusion rule**" clause, and the `selfInclude: false` the check passes, pinned by running it.
+- *Skip rules* stay unpinned today. The prose's sentences (no `parent-issue` label, a `needs:*`
+  label, a parent already handled, `CLOSED`, `REOPENED`) are pinned by wording, and the module's
+  `skipped` reasons by its own fixtures, so a skip rule added to the prose leaves every suite green.
+
+Walk the procedure section by section, and name the shape each part takes, before you call the
+mirror pinned.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.

@@ -101,7 +101,7 @@ and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Pha
 common case now, not an anomaly), recover that **closing
 commit** before reaching for session recall. This is the population `/claude-tweaks:tidy`'s
 `acceptance-gap` sweep surfaces — its `github-pr-scan-acceptance.md` scope under `work-backend:
-github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files` — and it is by construction
+github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent — and it is by construction
 *other* sessions' work. Recall will have nothing, but the commit that closed the record is still
 on disk, and this recovery reads git rather than the backend, so it is identical on both drivers:
 
@@ -251,9 +251,10 @@ session-recall fallback, both above — stated once, run from either.
    substituting gh's literal `{owner}`/`{repo}` placeholder syntax inside a field *value* — a
    different mechanism a GraphQL variable never uses (`gh-api-module-pattern` skill). **No parent
    resolvable** — omit the block entirely; nothing renders.
-2. **Enumerate siblings and their state**, from the parent side — reusing
-   `wrap-up/verification-brief-parent-gate.md`'s "Enumerate the parent's sub-issues"
-   enumeration: `native` — `gh api "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, whose
+2. **Enumerate siblings and their state**, from the parent side — the rule
+   `wrap-up/verification-brief-parent-gate.md`'s "Enumerate the parent's sub-issues" states, which
+   `bin/parent-gate.js` runs for that procedure: `native` —
+   `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, every page, whose
    response already carries every sibling's `number`, `title`, and `state`, so no per-sibling
    fetch is needed here (normalize its lowercase `open`/`closed` to `OPEN`/`CLOSED` —
    `_shared/github-pr-scan-acceptance.md`); `body-text` — one `gh issue view {n} --json
@@ -270,8 +271,7 @@ session-recall fallback, both above — stated once, run from either.
    so calling it with the record-in-hand excluded would wrongly report `due` whenever every
    *other* sibling has closed but the record in hand is itself still open — a real case (a
    session-recall entry may run on one still-open record). Bounded by decomposition size —
-   `/specify`'s sizing keeps a parent to a handful of sub-issues, so nothing here paginates or
-   fans out.
+   `/specify`'s sizing keeps a parent to a handful of sub-issues, so nothing here fans out.
 3. **Compose the block** per `_shared/observation-plan.md`'s schema and grammar rules.
 4. **Extend `### Confirmed`** with one sentence — end-to-end behavior was not observable at this
    slice; see the plan's Full verification block — in whichever composer produced this brief:
