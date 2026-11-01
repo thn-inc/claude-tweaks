@@ -275,11 +275,11 @@ never reshaped, and write only the keys this entry's mode needs:
 - `subIssueGets` — an object keyed by each enumerated sub-issue's number, its value that
   sub-issue's `get`: exactly one key per number the parent's sub-issue list or task list names.
 - `parentComments` — every `get_comments` entry of the parent, all pages concatenated.
-- `me` — `get_me`.
+- `me` — `get_me`, recorded whole even when it fails: a `me` with no login reads as no identity.
 
 `parentComments` and `me` are needed only on an `--idempotence` call whose `parentGet` reads open
 and not `reopened`. Then add `--facts-json {facts-file}` to the entry's command line above, with the
-printed path in place of `{facts-file}`. If any MCP read fails, write no file: that is a failing
+printed path in place of `{facts-file}`. If any MCP read other than `get_me` fails, write no file: that is a failing
 call under the **Fail open on every `gh` call** paragraph.
 
 The verdict carries one field each:
@@ -299,7 +299,8 @@ The verdict carries one field each:
 - `held` — the enumerated sub-issues that `--held` names.
 - `subIssues` — each enumerated sub-issue in number order, after the **Self-inclusion rule**:
   `number`, `title`, `state`, `stateReason` and `pr` (`null` with no PR).
-- `skipped` — each untrusted heading comment step 1 did not count.
+- `skipped` — each untrusted heading comment step 1 did not count, plus the identity-probe degrade note when
+  the login read failed or printed none.
 
 Route on its exit code:
 
@@ -388,6 +389,12 @@ and comments, and the current `gh` identity, and its `idempotence` field says wh
   the current `gh` identity (the CLI reads its login), since the plugin's own bot or app token can
   post under an untrusted author association. An earlier run posted the comment and its close
   then failed: run only step 3's close call, with no second comment.
+- A failed identity read: when the login read fails or prints none (a failed `get_me` leaves `me`
+  without one), the CLI never skips the parent: only a trusted author's heading comment counts, so
+  a `close-only` needs one, and on `comment-and-close` the verdict's `skipped` adds
+  `identity probe failed — close marker matched against trusted authors only`, named in the output
+  like the other skips. The accepted risk is one duplicate close comment when an earlier attempt
+  posted under an untrusted association and its close then failed.
 - `comment-and-close`: run steps 2 and 3. Any other comment carrying the heading reads as no
   comment posted, and the verdict's `skipped` names each one; name each in that section's skip
   notice in the output, since planting a heading must not suppress the real comment.

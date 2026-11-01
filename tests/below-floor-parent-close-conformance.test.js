@@ -1227,3 +1227,63 @@ test('#4603 go-red control: the pre-#4603 Close step 1 reads the login itself', 
   assert.throws(() => assertStep1RoutesOnIdempotence(closeStep1(preChange4603Gate.text)), /step 1 names already-closed/);
   assert.ok(collapse(closeStep1(preChange4603Gate.text)).includes('gh api user'));
 });
+
+// ---- #4770: a failed identity read counts trusted authors only, and the prose says so ----
+//
+// New prose, so no frozen pre-change excerpt exists: every go-red control strips exactly one fact's
+// literal from the live region in memory and asserts the predicate reports exactly that fact.
+const IDENTITY_NOTE_4770 = '`identity probe failed — close marker matched against trusted authors only`';
+const TIDY_LINE_4770 = (tidy) => tidy.split('\n').find((l) => l.startsWith('- [x] Closed parent below the floor:') && l.includes('`github-issues`'));
+const FACTS_4770 = [
+  ['close-note', (g) => closeStep1(g), IDENTITY_NOTE_4770],
+  ['never-skips', (g) => closeStep1(g), 'the CLI never skips the parent'],
+  ['facts-me', (g) => section(g, '- `parentComments` —', 'The verdict carries one field each:'), '- `me` — `get_me`, recorded whole even when it fails'],
+  ['facts-exception', (g) => section(g, '- `parentComments` —', 'The verdict carries one field each:'), 'If any MCP read other than `get_me` fails, write no file'],
+  ['skipped-note', (g) => section(g, '- `skipped` —', 'Route on its exit code:'), 'plus the identity-probe degrade note when the login read failed or printed none'],
+  ['tidy', (_g, t) => TIDY_LINE_4770(t), 'when the identity read fails'],
+];
+const missingFacts4770 = (gate, tidy, names = FACTS_4770.map(([n]) => n)) =>
+  FACTS_4770.filter(([n, region, lit]) => names.includes(n) && !collapse(region(gate, tidy)).includes(lit)).map(([n]) => n);
+const stripFact4770 = (gate, tidy, name) => {
+  const [, region, lit] = FACTS_4770.find(([n]) => n === name);
+  const hay = collapse(region(gate, tidy));
+  assert.equal(hay.split(lit).length - 1, 1, `${name}: the literal occurs exactly once in its region`);
+  // Strip from the whole (collapsed) document so the predicate re-reads the doctored region.
+  const doctoredRegion = hay.replace(lit, '');
+  assert.notEqual(doctoredRegion, hay);
+  return FACTS_4770.filter(([n, r, l]) => n === name ? !doctoredRegion.includes(l) : !collapse(r(gate, tidy)).includes(l)).map(([n]) => n);
+};
+const goRed4770 = (name) => assert.deepEqual(stripFact4770(read(GATE_REL), read('tidy/SKILL.md'), name), [name], `go-red: dropping ${name} reports exactly it`);
+
+test('#4770: a failed identity read counts trusted authors only and is noted', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['close-note', 'never-skips']), []);
+  assert.ok(!collapse(closeStep1(read(GATE_REL))).includes('gh api user'), 'step 1 still makes no login read of its own');
+  goRed4770('close-note');
+  goRed4770('never-skips');
+});
+
+test('#4770: the MCP facts list keeps a failed get_me', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['facts-me', 'facts-exception']), []);
+  goRed4770('facts-me');
+  goRed4770('facts-exception');
+});
+
+test('#4770: the verdict\'s skipped field names the degrade note', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['skipped-note']), []);
+  goRed4770('skipped-note');
+});
+
+test('#4770: tidy\'s below-floor verify line accepts a trusted comment alone when the identity read fails', () => {
+  assert.ok(TIDY_LINE_4770(read('tidy/SKILL.md')), 'the github-issues form exists');
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['tidy']), []);
+  goRed4770('tidy');
+});
+
+test('#4770: the prose note matches the code constant', () => {
+  const { IDENTITY_PROBE_FAILED_NOTE } = require('../plugin/bin/lib/issues/parent-gate');
+  const m = collapse(closeStep1(read(GATE_REL))).match(/`(identity probe failed[^`]*)`/);
+  assert.ok(m, 'step 1 carries the note in backticks');
+  assert.equal(m[1], IDENTITY_PROBE_FAILED_NOTE);
+  // go-red: a respelled note in prose no longer equals the constant.
+  assert.notEqual(m[1].replace('trusted authors only', 'trusted authors'), IDENTITY_PROBE_FAILED_NOTE);
+});
