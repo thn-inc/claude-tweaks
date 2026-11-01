@@ -141,7 +141,7 @@ test('review-console.md: the "On approval" steps are not renumbered (7, 10, 12, 
   assert.match(body, /\n7\. `Q#` queue writes/);
   assert.match(body, /\n10\. \*\*Reflection insights \(#2547\)\.\*\*/);
   assert.match(body, /\n12\. Commit with a wrap-up message/);
-  assert.match(body, /\n13\. \*\*Branch finish/);
+  assert.match(body, /\n13\. \*\*Ledger close-out/);
 });
 
 test('review-console-appendix.md: the approve bullet routes a staged/reflect- row to step 2', () => {

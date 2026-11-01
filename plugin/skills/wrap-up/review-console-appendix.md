@@ -125,7 +125,7 @@ procedure — no row is left unrouted:
 - `approve` — the curation steps: step 2 (Skill updates), step 3 (Documentation updates), step 4
   (Journey updates), step 5 (Configuration updates). A **Reference repairs** row has no numbered
   step of its own — it is applied by Phase 4's execution step, per
-  `execution-and-verification.md`'s Reference repairs bullet. Cleanup actions run at step 6.
+  `execution-and-verification.md`'s Reference repairs bullet, ahead of that step's Branch finish. Cleanup actions run at step 6.
   A **Reflection insights** row (`staged/wrap-up-reflect-insights.md`) runs at step 10. A Skill
   updates row for `staged/reflect-{n}.md` runs at step 2's reflect clause (`bin/reflect-apply.js`),
   not the Skills curation patch path.
