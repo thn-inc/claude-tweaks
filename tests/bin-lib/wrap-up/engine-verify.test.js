@@ -2280,6 +2280,30 @@ test('native: records [898, 900] with 900 under run record 898 check 898 standal
   assert.strictEqual(calls.filter((a) => a.includes('labels,comments') && a[2] === '900').length, 0, '#900 is deduped into target #898');
 });
 
+// A parent whose enumeration fails is one gather failure, however many run
+// records name it: the first record's line carries it, a later record naming
+// the same parent adds no second line (the per-parent `cached` guard).
+test('native: two run records under one parent whose sub_issues call throws yield exactly one failure line', () => {
+  const { row } = parentGateRow({
+    records: [900, 901],
+    subIssuesReply: () => { throw new Error('gh: sub_issues unavailable'); },
+  });
+  assert.strictEqual(row.result, 'unknown', row.detail);
+  assert.strictEqual(row.detail.split('; ').length, 1, `expected one failure line, got: ${row.detail}`);
+  assert.match(row.detail, /^#900: gh api sub_issues failed for parent #898 \(gh: sub_issues unavailable\)$/);
+});
+
+test('body-text: two run records under one parent with no task list yield exactly one failure line', () => {
+  const { row, calls } = bodyTextRow({
+    records: [20, 22],
+    bodies: { 20: 'Parent: #12\n', 22: 'Parent: #12\n', 12: 'no task list' },
+  });
+  assert.strictEqual(row.result, 'unknown', row.detail);
+  assert.strictEqual(row.detail.split('; ').length, 1, `expected one failure line, got: ${row.detail}`);
+  assert.match(row.detail, /^#20: no sub-issues enumerated for parent #12$/);
+  assert.strictEqual(bodyCalls(calls, 12).length, 1, 'the failed enumeration is cached, not refetched for #22');
+});
+
 test('acceptance-labeling renders unknown when a sub-issue line carries no string state', () => {
   const { row } = parentGateRow({
     records: [900],
