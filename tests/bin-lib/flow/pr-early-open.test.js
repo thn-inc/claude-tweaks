@@ -250,6 +250,29 @@ test('AC4.1: a failing gh pr edit on a reused PR logs the SKIP degrade and still
   assert.ok(recorded.lines.some((l) => l.startsWith('- SKIP ') && l.includes('rebind of reused PR #9 failed (HTTP 422)')));
 });
 
+test('AC1.1: a reused-PR rebind whose body write fails its first-line check is a logged SKIP, never a stop, on either reuse path', async () => {
+  const mismatchBody = (h) => {
+    h.deps.writeBodyFile = (name, text) => {
+      const p = path.join(h.bodyDir, name);
+      fs.writeFileSync(p, text.replace(RUN_ID, '2026-01-01T000000-record-9'));
+      return p;
+    };
+  };
+  const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] });
+  mismatchBody(listed);
+  assert.deepEqual(await openPrEarly(OPTS, listed.deps), { outcome: 'reused', number: 7, url: URL7 });
+  const recorded = harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body: bodyFor(OTHER_RUN) } });
+  mismatchBody(recorded);
+  assert.deepEqual(await openPrEarly(OPTS, recorded.deps), { outcome: 'reused', number: 9, url: URL7 });
+  for (const [h, n] of [[listed, 7], [recorded, 9]]) {
+    assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'a refused body is never written to the PR');
+    assert.ok(h.lines.some((l) => l.startsWith('- SKIP ') && l.includes(`rebind of reused PR #${n} failed (PR body first line is`)
+      && l.includes(`until its body names run ${RUN_ID}`)), `SKIP line for #${n}`);
+  }
+  assert.deepEqual(listed.records, [{ number: 7, url: URL7 }]);
+  assert.ok(listed.calls.findIndex((c) => c[0] === 'record') < listed.calls.findIndex(isPush), 'the listed path still records, then pushes');
+});
+
 test('a rejected reopen falls through to creation with its own Step 1 line', async () => {
   const h = harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], reopen: new Error('GraphQL: Could not open the pull request') });
   const res = await openPrEarly(OPTS, h.deps);
