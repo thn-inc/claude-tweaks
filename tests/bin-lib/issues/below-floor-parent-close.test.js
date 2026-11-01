@@ -323,6 +323,43 @@ test('a parent without the parent-issue label is skipped, a needs:* label is ski
   assert.equal(writes(calls).length, 0);
 });
 
+// #4799: a parent the gate skips before enumeration costs no per-sibling read, and a parent
+// skipped on its labels costs no enumeration either.
+const SIBLING_VIEW = /^issue view \d+ --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/;
+function assertNoSiblingReads(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!argv.some((a) => SIBLING_VIEW.test(a)), `no per-sibling read: ${argv.join(' | ')}`);
+}
+function assertNoEnumeration(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && (c.args[3].startsWith('query={ __type') || c.args[3].includes('subIssues(first:100)'))), `no GraphQL enumeration: ${argv.join(' | ')}`);
+  assert.ok(!argv.some((a) => a.includes('sub_issues')), `no REST enumeration: ${argv.join(' | ')}`);
+}
+
+test('#4799: a parent without the parent-issue label is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['enhancement'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'not-parent-issue-labeled' }] });
+  assert.equal(calls.length, 2, calls.map((c) => c.args.join(' ')).join(' | '));
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a parent carrying needs:* is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['parent-issue', 'needs:decision'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'needs-label' }] });
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a sibling in unsettled is gated before any sub-issue is read (the numbers are enumerated first)', () => {
+  const { gh, calls } = makeGh(happyWorld());
+  const out = closeBelowFloorParents(base({ unsettled: [12], gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'sibling-unsettled' }] });
+  assertNoSiblingReads(calls);
+});
+
 test('a sibling still open and outside the closing set is incomplete', () => {
   const world = happyWorld();
   world.issues[12] = { state: 'OPEN', title: 'Twelve' };
