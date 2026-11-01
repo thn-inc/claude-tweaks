@@ -189,3 +189,167 @@ test('AC6.1, AC7.1 (gh-absent): multispec-preflight-failure.md keeps the open st
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is a \*\*STOP before claiming\*\* that names it/, 'is skipped')), { message: 'an unfetchable blocker is a STOP naming it' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is exit 2 — a \*\*STOP before claiming\*\*/, 'is ignored')), { message: 'a states-file problem is exit 2' });
 });
+
+// ---- Task 5: the single-record substep 2.7b (validation.md, SKILL.md, express-entry.md) ----
+const SKILL_MD = path.join(FLOW_DIR, 'SKILL.md');
+const VALIDATION = path.join(FLOW_DIR, 'validation.md');
+const EXPRESS_ENTRY = path.join(FLOW_DIR, 'express-entry.md');
+
+const SEC_HEADING = '## 2.7b — Blocker landing (single-record)';
+
+// Every marker must exist before positions are compared: indexOf's -1 is below every
+// real position, so a reworded marker would otherwise leave the pin green.
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    assert.notStrictEqual(idx, -1, `marker missing: ${marker}`);
+    assert.ok(idx > last, `${marker} must come after the previous marker`);
+    last = idx;
+  }
+}
+
+const section27b = (text) => {
+  const at = text.indexOf(SEC_HEADING);
+  assert.notStrictEqual(at, -1, `marker missing: ${SEC_HEADING}`);
+  return text.slice(at);
+};
+const assertFacts = (haystack, facts) => {
+  for (const f of facts) assert.match(haystack, f.re, f.msg);
+};
+const skillBullet = (text) => text.split('\n').find((l) => l.startsWith('- 2.7b —')) || '';
+
+test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
+  const text = readText(SKILL_MD);
+  const order = ['- 2.7 —', '- 2.7b —', '- 2.8 —'];
+  requireOrder(text, order);
+  // Permutation, not deletion: the bullet moves below the whole 2.8 bullet (down to the 2.9 bullet).
+  const bullet = text.split('\n').find((l) => l.startsWith('- 2.7b —'));
+  const without = mutate(text, `${bullet}\n`, '');
+  const permuted = mutate(without, '- 2.9 —', `${bullet}\n- 2.9 —`);
+  assert.throws(() => requireOrder(permuted, order), /must come after/);
+  assert.throws(() => requireOrder(without, order), /marker missing: - 2\.7b —/);
+  // Step 2's count word and detailed-procedure pointer track the list.
+  assert.match(text, /\nFive checks, then a route, before pipeline starts\./);
+  assert.match(text, /for 2\.5-2\.7b's detailed procedure/);
+});
+
+const RUN_FACTS = [
+  { re: /preflight-records\.js" \{n\} --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, msg: '2.7b runs the --blocker-landing call with $INTEGRATION_BRANCH', from: ' --blocker-landing --integration-branch "$INTEGRATION_BRANCH"', to: ' --integration-branch "$INTEGRATION_BRANCH"' },
+  { re: /BLOCKED[^\n]*before Step 2\.8 claims/, msg: '2.7b stops before Step 2.8 claims', from: / before Step 2\.8 claims/, to: ' before the build' },
+  { re: /`multispec-dependency-ordering\.md`'s out-of-run verdict table/, msg: '2.7b applies the out-of-run verdict table', from: "`multispec-dependency-ordering.md`'s out-of-run verdict table", to: 'the verdict table' },
+  { re: /`_shared\/integration-branch\.md`/, msg: '2.7b resolves $INTEGRATION_BRANCH per _shared/integration-branch.md', from: ' per `_shared/integration-branch.md`', to: '' },
+];
+function assertRunsAndStops(text) {
+  requireOrder(text, ['## 2.7 —', SEC_HEADING]);
+  assert.match(text, /^Run substeps 2\.5, 2\.6, 2\.7, and 2\.7b in order\./m, 'line 5 names 2.7b');
+  assertFacts(section27b(text), RUN_FACTS);
+}
+test("AC6.1: validation.md's 2.7b runs the landing call and stops before Step 2.8", () => {
+  const text = readText(VALIDATION);
+  assertRunsAndStops(text);
+  for (const f of RUN_FACTS) assert.throws(() => assertRunsAndStops(mutate(text, f.from, f.to)), { message: f.msg });
+  assert.throws(() => assertRunsAndStops(mutate(text, 'Run substeps 2.5, 2.6, 2.7, and 2.7b in order.', 'Run substeps 2.5, 2.6, and 2.7 in order.')), { message: 'line 5 names 2.7b' });
+  assert.throws(() => assertRunsAndStops(mutate(text, SEC_HEADING, '## 2.7c — Blocker landing (single-record)')), /marker missing/);
+});
+
+const GATE_FACTS = [
+  { re: /`bodyBlockedBy: \[\]`, the substep is a no-op/, msg: 'body-text with bodyBlockedBy: [] is a no-op', from: ', the substep is a no-op', to: ', the substep runs' },
+  { re: /Under `native` the call always runs/, msg: 'native always makes the call', from: 'Under `native` the call always runs', to: 'Under `native` the call may run' },
+  { re: /`records\["\{n\}"\]\.blockerLanding: \[\]` → no-op/, msg: 'blockerLanding: [] is a no-op', from: ' → no-op', to: ' → stop' },
+  { re: /Read `work-links`/, msg: 'the substep reads work-links', from: 'Read `work-links`', to: 'Read the links policy' },
+];
+function assertGate(text) { assertFacts(section27b(text), GATE_FACTS); }
+test('AC11.1, AC11.2, AC6.2: the call is skipped only under body-text with bodyBlockedBy: [], and native is a no-op on blockerLanding: []', () => {
+  const text = readText(VALIDATION);
+  assertGate(text);
+  for (const f of GATE_FACTS) assert.throws(() => assertGate(mutate(text, f.from, f.to)), { message: f.msg });
+});
+
+const EXIT_FACTS = [
+  { re: /`multispec-preflight-failure\.md`'s Exit 1 and Exit 2 paragraphs/, msg: 'a non-zero exit is handled per Exit 1 and Exit 2', from: "`multispec-preflight-failure.md`'s Exit 1 and Exit 2 paragraphs", to: 'the failure paragraphs' },
+  { re: /re-run once on exit 1[^\n]*STOP before claiming[^\n]*quoting stderr/, msg: 'exit 1 re-runs once then stops before claiming, quoting stderr', from: 'quoting stderr', to: 'quietly' },
+  { re: /exit 2 is a STOP at once/, msg: 'exit 2 stops at once', from: 'exit 2 is a STOP at once', to: 'exit 2 is retried' },
+  { re: /never read as "no blockers"/, msg: 'a non-zero exit is never read as "no blockers"', from: 'never read as "no blockers"', to: 'treated as clean' },
+  { re: /Decide on the exit code and the `preflight-records\.js:` line/, msg: 'the verdict rests on the exit code and the prefixed line, not on stderr being one line', from: 'Decide on the exit code and the `preflight-records.js:` line', to: 'Decide on stderr' },
+  { re: /so never assume stderr is one line or empty/, msg: 'stderr is never assumed to be one line or empty', from: ', so never assume stderr is one line or empty', to: '' },
+];
+function assertExit(text) { assertFacts(section27b(text), EXIT_FACTS); }
+test('AC9.1: a non-zero 2.7b exit stops before claiming and is never "no blockers"', () => {
+  const text = readText(VALIDATION);
+  assertExit(text);
+  for (const f of EXIT_FACTS) assert.throws(() => assertExit(mutate(text, f.from, f.to)), { message: f.msg });
+});
+
+const PLAN_REVIEW_FACTS = [
+  { re: /neither `build` nor `test`/, msg: '2.7b skips on a step list with neither build nor test', from: 'neither `build` nor `test`', to: 'no steps' },
+  { re: /`nativeLinksUnchecked: true`[^\n]*never "no blockers"/, msg: 'nativeLinksUnchecked: true is never "no blockers"', from: ', which is never "no blockers"', to: '' },
+  { re: /`express-entry\.md`'s Bind step/, msg: 'SKIPs on the express route are written after express-entry.md Bind step', from: "`express-entry.md`'s Bind step", to: 'the express route' },
+  { re: /right after Step 3's Manifesto write or adoption/, msg: 'SKIPs are written right after Step 3', from: "right after Step 3's Manifesto write or adoption", to: 'right away' },
+  { re: /never before[^\n]*Step 2\.8's claim lines/, msg: 'SKIPs are never written before Step 3 (adoption tolerates only claim lines)', from: /never before[^\n]*claim lines in `decisions\.md`/, to: 'at any time' },
+];
+function assertPlanReview(valText, expText) {
+  assertFacts(section27b(valText), PLAN_REVIEW_FACTS);
+  assert.match(expText, /`validation\.md`'s 2\.7b/, 'express-entry.md Bind step names 2.7b');
+}
+test('plan-review: 2.7b skips on a step list with neither build nor test, writes its SKIPs after Step 3 or after express Bind, and treats nativeLinksUnchecked as never "no blockers"', () => {
+  const val = readText(VALIDATION);
+  const exp = readText(EXPRESS_ENTRY);
+  assertPlanReview(val, exp);
+  for (const f of PLAN_REVIEW_FACTS) assert.throws(() => assertPlanReview(mutate(val, f.from, f.to), exp), { message: f.msg });
+  assert.throws(() => assertPlanReview(val, mutate(exp, "`validation.md`'s 2.7b", '`validation.md`')), { message: 'express-entry.md Bind step names 2.7b' });
+  // The sentence sits in the Bind step (step 2 of the Express path), before step 3's Procedure.
+  const BIND_ORDER = ['2. **Bind.**', "`validation.md`'s 2.7b", '3. **Procedure.**'];
+  requireOrder(exp, BIND_ORDER);
+  const misplaced = mutate(mutate(exp, "`validation.md`'s 2.7b", '`validation.md`'), '3. **Procedure.**', "3. **Procedure.** `validation.md`'s 2.7b");
+  assert.throws(() => requireOrder(misplaced, BIND_ORDER), /must come after/);
+});
+
+test('AC12.1: under work-backend: local-files 2.7b is skipped entirely, ahead of the work-links read', () => {
+  const text = readText(VALIDATION);
+  const sec = section27b(text);
+  const LOCAL = { re: /work-backend: local-files`\*\* — skip the substep entirely[^\n]*no `preflight-records\.js` call and no log line/, msg: 'local-files skip: no preflight-records.js call and no log line' };
+  const WORK_LINKS_READ = 'resolve-policy.js" --values work-links';
+  assertFacts(sec, [LOCAL]);
+  requireOrder(sec, ['work-backend: local-files', WORK_LINKS_READ]);
+  assert.throws(() => assertFacts(section27b(mutate(text, ' and no log line', '')), [LOCAL]), { message: LOCAL.msg });
+  // Deletion control: the whole local-files step gone -> the existence half throws.
+  const step1 = sec.match(/^1\. [^\n]*\n/m)[0];
+  assert.ok(step1.includes('work-backend: local-files'), 'step 1 is the local-files step');
+  const deleted = mutate(text, step1, '');
+  assert.throws(() => requireOrder(section27b(deleted), ['work-backend: local-files', WORK_LINKS_READ]), /marker missing: work-backend: local-files/);
+  // Permutation control: the same step moved below the work-links read.
+  const moved = mutate(deleted, '4. **Call.**', `${step1}4. **Call.**`);
+  assert.throws(() => requireOrder(section27b(moved), ['work-backend: local-files', WORK_LINKS_READ]), /must come after/);
+  // The SKILL.md bullet names the skip.
+  const skill = readText(SKILL_MD);
+  const BULLET_MSG = 'SKILL.md 2.7b bullet names work-backend: local-files';
+  assert.match(skillBullet(skill), /work-backend: local-files/, BULLET_MSG);
+  assert.throws(() => assert.match(skillBullet(mutate(skill, 'skipped under `work-backend: local-files`', 'skipped under some backends')), /work-backend: local-files/, BULLET_MSG), { message: BULLET_MSG });
+});
+
+test('2.7b checks run in the stated order: local-files, step list, work-links read, bodyBlockedBy, call, exit, nativeLinksUnchecked, verdict table, SKIP timing', () => {
+  const sec = section27b(readText(VALIDATION));
+  const CHAIN = [
+    'work-backend: local-files',
+    'neither `build` nor `test`',
+    'resolve-policy.js" --values work-links',
+    '`bodyBlockedBy: []`',
+    'preflight-records.js" {n} --blocker-landing',
+    'Exit 1 and Exit 2',
+    '`nativeLinksUnchecked: true`',
+    'multispec-dependency-ordering.md',
+    'after Step 3',
+  ];
+  requireOrder(sec, CHAIN);
+  // One permutation per adjacent pair: swap neighbouring numbered steps.
+  const blocks = sec.split(/^(?=\d\. \*\*)/m);
+  assert.equal(blocks.length, 8, 'intro plus seven numbered steps');
+  for (let i = 1; i < 7; i++) {
+    const swapped = blocks.slice();
+    [swapped[i], swapped[i + 1]] = [swapped[i + 1], swapped[i]];
+    const permuted = swapped.join('');
+    assert.notEqual(permuted, sec, `swap ${i}/${i + 1} changed nothing`);
+    assert.throws(() => requireOrder(permuted, CHAIN), /must come after/, `swapping steps ${i} and ${i + 1} must go red`);
+  }
+});
