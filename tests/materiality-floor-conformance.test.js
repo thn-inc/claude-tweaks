@@ -538,9 +538,10 @@ test('step 4 gives the digest label only to the replacement step 1 identified, n
   assert.ok(!s.includes('--search') && !/in:title/.test(s), 'step 4 never selects an issue by title');
 });
 
-test('the MCP carry form passes --new-count with the replacement\'s paged count, and a refusal means re-page', () => {
+test('the MCP carry form passes --new-count read independently of the paged array, and a refusal means re-page', () => {
   const s = stepText(2);
-  assert.ok(s.includes('take the number of comments in the replacement\'s joined array as `{newCount}`'));
+  assert.ok(s.includes('read the replacement\'s own true count the same way (`issue_read` get mode, never the length of the array just paged'));
+  assert.ok(!s.includes('the number of comments in the replacement\'s joined array'), 'the count is never derived from the array it checks');
   assert.ok(s.includes('--count {count} --new-count {newCount} --old-json'), 'the file-form fence passes the flag');
   assert.ok(s.includes('A refusal naming `--new-count` means the replacement\'s comments were paged short: re-page them.'));
 });
