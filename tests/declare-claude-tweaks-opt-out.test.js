@@ -74,9 +74,8 @@ function renderTemplate(template, { optedOut }) {
 const TEMPLATE = extractTemplate(STEP14);
 
 function assertDefaultRender(render) {
-  const lost = 'default render lost a real script line';
   const lines = render.split('\n');
-  const lostMsg = (what) => `${lost}: ${what}`;
+  const lostMsg = (what) => `default render lost a real script line: ${what}`;
   for (const needle of [
     'claude plugin marketplace add thn-inc/claude-tweaks-marketplace',
     'claude plugin marketplace update claude-tweaks-marketplace',
