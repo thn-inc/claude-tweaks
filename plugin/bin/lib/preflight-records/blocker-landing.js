@@ -6,8 +6,11 @@
 // with one of five verdicts: `open`, `landed`, `unlanded`, `not-applicable`
 // (closed NOT_PLANNED / DUPLICATE — nothing was meant to land), and
 // `undetermined` (this one blocker cannot be judged: unresolvable number, no
-// candidate commit, or a failed reachability probe). Each result is exactly
-// `{ blocker, verdict, commit, via }`.
+// candidate commit, a failed reachability probe, or a closing-PR read cut at
+// first:10 with nothing reachable). Each result is exactly
+// `{ blocker, verdict, commit, via }`; `via` says why — closer-pr, closer-commit
+// or closing-pr-ref (where the deciding commit came from), state, state-reason,
+// no-candidate, probe-failed, references-truncated, not-found, or records-json.
 //
 // Candidate commits are the UNION of the recorded closer (a merged PR's
 // mergeCommit, or a closing Commit) and every merged closedByPullRequests
@@ -50,12 +53,16 @@ function result(blocker, verdict, commit, via) {
 
 // blockers: number[] -> the aliased query string, or null for empty/non-array.
 // Each blocker is interpolated, so one that is not a positive safe integer throws.
+// closedByPullRequestsReferences is read first:10 — a blocker closed by more PRs
+// than that is far outside realistic range, and pageInfo{hasNextPage} marks the
+// cut so classifyBlocker reads an otherwise-unlanded verdict as undetermined
+// instead of stopping the run on a commit it never saw.
 function buildBlockerLandingQuery(blockers) {
   if (!Array.isArray(blockers) || blockers.length === 0) return null;
   const bad = blockers.findIndex((n) => !(Number.isSafeInteger(n) && n > 0));
   if (bad !== -1) throw new Error(`invalid blocker number: ${String(blockers[bad])}`);
   const fields = blockers
-    .map((n) => `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
+    .map((n) => `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
     .join(' ');
   return `query($owner:String!,$repo:String!){ repository(owner:$owner,name:$repo){ ${fields} } }`;
 }
@@ -127,6 +134,12 @@ function classifyBlocker(blocker, node, reach) {
   if (landed) return result(blocker, 'landed', landed.sha, landed.via);
   const failed = candidates.find((c) => reach.get(c.sha) !== 'unreachable');
   if (failed) return result(blocker, 'undetermined', failed.sha, 'probe-failed');
+  // `unlanded` claims no candidate is reachable; a references read cut at first:10
+  // has not seen them all, so it cannot make that claim.
+  const refs = node.closedByPullRequestsReferences;
+  if (refs && refs.pageInfo && refs.pageInfo.hasNextPage === true) {
+    return result(blocker, 'undetermined', candidates[0].sha, 'references-truncated');
+  }
   return result(blocker, 'unlanded', candidates[0].sha, candidates[0].via);
 }
 
@@ -173,13 +186,6 @@ function recoveredResponse(err, blockers) {
   return notFoundOnlyRepository(parsed, blockers) ? parsed : null;
 }
 
-// A thrown GraphQL call -> the partial repository when its stdout carries a
-// NOT_FOUND-only error list; else null (a whole-query failure).
-function recoverNotFound(err, blockers) {
-  const parsed = recoveredResponse(err, blockers);
-  return parsed ? parsed.data.repository : null;
-}
-
 const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type)) || JSON.stringify(e)).join('; ');
 
 // Runs the GraphQL call -> { parsed } (a response with a usable data.repository
@@ -208,11 +214,13 @@ function queryRepository(runner, args, blockers) {
   return { parsed };
 }
 
-// -> { results: Map<number, result>|null, error: string|null }; results is
-// null exactly when error is set (a whole-query failure — never per-blocker
-// undetermined).
+// -> { results: Map<number, result>|null, error: string|null, probeErrors? };
+// results is null exactly when error is set (a whole-query failure — never
+// per-blocker undetermined). probeErrors lists each compare call that threw,
+// {sha, message}: the verdict stays per-blocker undetermined, but a systematic
+// failure (a wrong integration branch, a 403, a rate limit) is no longer silent.
 function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, runner }) {
-  if (!Array.isArray(blockers) || blockers.length === 0) return { results: new Map(), error: null };
+  if (!Array.isArray(blockers) || blockers.length === 0) return { results: new Map(), error: null, probeErrors: [] };
   const repoError = repoSegmentError(owner, repo);
   if (repoError) return { results: null, error: repoError };
   if (typeof integrationBranch !== 'string' || !integrationBranch) return { results: null, error: 'integrationBranch is required' };
@@ -232,25 +240,34 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
     return { results: null, error: `GraphQL response has no node for ${missing.join(', ')} and no NOT_FOUND error naming it` };
   }
 
+  // One compare call per distinct candidate sha. Only a CLOSED blocker that
+  // carries code is probed — the same cases classifyBlocker's rules 1-3 leave
+  // to rule 4 onward (keep the two in step). A blocker stops probing at its
+  // first reachable candidate: classifyBlocker reads `landed` off the first
+  // reachable one in candidate order, so later probes could not change it.
   const reach = new Map();
+  const probeErrors = [];
   for (const n of blockers) {
     const node = repository[`b${n}`];
     if (!node || node.state !== 'CLOSED' || NOT_APPLICABLE_REASONS.has(node.stateReason)) continue;
     for (const { sha } of candidateCommits(node)) {
-      if (reach.has(sha)) continue;
-      try {
-        reach.set(sha, reachabilityFromStatus(runner(compareArgs({ owner, repo, host, integrationBranch, sha }))));
-      } catch {
-        reach.set(sha, 'error');
+      if (!reach.has(sha)) {
+        try {
+          reach.set(sha, reachabilityFromStatus(runner(compareArgs({ owner, repo, host, integrationBranch, sha }))));
+        } catch (err) {
+          reach.set(sha, 'error');
+          probeErrors.push({ sha, message: errorText(err) });
+        }
       }
+      if (reach.get(sha) === 'reachable') break;
     }
   }
   const results = new Map();
   for (const n of blockers) results.set(n, classifyBlocker(n, repository[`b${n}`], reach));
-  return { results, error: null };
+  return { results, error: null, probeErrors };
 }
 
 module.exports = {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, undeterminedAll, classifyFromState, recoverNotFound, fetchBlockerLanding,
+  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding,
 };

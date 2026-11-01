@@ -34,7 +34,7 @@ A target may declare prerequisite records — `blocked-by:` on the record (mater
 
 ## Targets with a dependency on a target NOT in the run
 
-If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict:
+If record 159 depends on record 142 (not in the run list) — via `blocked-by:` — Validation step 3's `--blocker-landing` call has already judged 142: each record's `blockerLanding` lists `{blocker, verdict, commit, via}` for every blocker that is not one of the run's targets. A closed blocker is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received. Read the verdict (a call that carried no `--blocker-landing` — a multi-record resume whose step list has neither `build` nor `test`, as `validation.md`'s 2.7b skips — leaves no `blockerLanding` to read, and nothing here applies):
 
 | Verdict | Outcome |
 |---|---|
@@ -70,8 +70,8 @@ git push origin {integration-branch}
 # Escape 2 — remove the edge, then re-run. work-links: native:
 gh api -X DELETE "repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by/$(gh api repos/{owner}/{repo}/issues/{blocker} --jq .id)"
 
-# Escape 2 — work-links: body-text: edit the record and delete the "Blocked by #{blocker}" line:
-gh issue edit {n}
+# Escape 2 — work-links: body-text: rewrite the record body without the "Blocked by #{blocker}" line:
+gh issue view {n} --json body -q .body | grep -vE "^Blocked by #{blocker}([^0-9]|$)" | gh issue edit {n} --body-file -
 ```
 
 A cherry-picked landing reads `unlanded` (different sha) — confirm by hand, then take escape 2.

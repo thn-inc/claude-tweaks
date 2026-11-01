@@ -38,13 +38,16 @@
 // unless --blocker-states-json <path> — a JSON object keyed by blocker number
 // to the {state, stateReason|state_reason} the caller fetched over another
 // transport — supplies the state: open reads open, closed NOT_PLANNED/DUPLICATE
-// not-applicable, any other closed undetermined. The key is absent without the
-// flag, and the rest of the envelope is unchanged.
+// not-applicable, any other closed undetermined. A compare call that throws
+// leaves that blocker undetermined/probe-failed and prints one stderr line (the
+// cause — a wrong integration branch, a 403, a rate limit — is otherwise lost).
+// The key is absent without the flag, and the rest of the envelope is unchanged.
 // Exit 0 success; 1 any record fetch (or the native dependency GraphQL call)
 // failed — every failing record named, all-at-once — or, with --blocker-landing,
 // the blocker query failed as a whole (never a per-blocker undetermined); 2
 // malformed invocation (no numbers, non-positive, unresolvable owner/repo under
-// native mode or for --blocker-landing with a non-empty blocker set, a bad
+// native mode or for --blocker-landing with a non-empty blocker set, a
+// --blocker-landing blocker number that is no valid issue number, a bad
 // --records-json, --blocker-states-json without both --records-json and
 // --blocker-landing, or a bad/incomplete --blocker-states-json), or a --waves
 // dependency cycle among the requested records.
@@ -291,17 +294,25 @@ function blockerLandingFromRecordsJson(opts, union, deps) {
 }
 
 // #4553, gh path: -> { results } | { code }. An empty blocker set needs no
-// repo and no call. A non-empty one with no resolvable owner/repo is exit 2 —
-// checked here, before fetchBlockerLanding, so it can never surface as the
-// exit-1 query failure; a whole-query failure is exit 1 (never per-blocker
-// undetermined), its message collapsed to one stderr line.
+// repo and no call. A non-empty one with no resolvable owner/repo, or a blocker
+// number that is no valid issue number (a `Blocked by #0` body line — a fixed
+// input, so a retry could not help), is exit 2 — checked here, before
+// fetchBlockerLanding, so neither can surface as the exit-1 query failure; a
+// whole-query failure is exit 1 (never per-blocker undetermined), its message
+// collapsed to one stderr line. A compare call that threw does not fail the run
+// (that blocker reads undetermined), but each gets one stderr line.
 function blockerLandingFromGh(opts, union, repoSpec, deps) {
   if (union.length === 0) return { results: new Map() };
+  const invalid = union.filter((n) => !(Number.isSafeInteger(n) && n > 0));
+  if (invalid.length) {
+    deps.stderr(`preflight-records.js: --blocker-landing: not a valid issue number: ${invalid.map(String).join(', ')} — fix the record's Blocked by line\n`);
+    return { code: 2 };
+  }
   if (!repoSpec) {
     deps.stderr('preflight-records.js: could not resolve owner/repo for --blocker-landing — pass --repo owner/name\n');
     return { code: 2 };
   }
-  const { results, error } = fetchBlockerLanding({
+  const { results, error, probeErrors } = fetchBlockerLanding({
     blockers: union,
     owner: repoSpec.owner,
     repo: repoSpec.repo,
@@ -312,6 +323,9 @@ function blockerLandingFromGh(opts, union, repoSpec, deps) {
   if (error) {
     deps.stderr(`preflight-records.js: blocker landing query failed: ${oneLine(error)}\n`);
     return { code: 1 };
+  }
+  for (const { sha, message } of probeErrors || []) {
+    deps.stderr(`preflight-records.js: blocker landing compare failed for ${sha}: ${oneLine(message)}\n`);
   }
   return { results };
 }

@@ -56,6 +56,7 @@ function assertUnlandedCard(text) {
   assert.ok(lines.includes('git merge --ff-only origin/{integration-branch}'), 'escape 1: git merge --ff-only origin/{integration-branch} on its own line');
   assert.ok(lines.includes('git merge {commit}'), 'escape 1: git merge {commit} on its own line');
   assert.ok(lines.some((l) => l.startsWith('gh api -X DELETE')), 'escape 2: gh api -X DELETE on its own line');
+  assert.ok(lines.some((l) => l.startsWith('gh issue view {n} --json body') && l.includes('{blocker}') && l.endsWith('gh issue edit {n} --body-file -')), 'escape 2 (body-text): a one-line rewrite of the body without the Blocked by line');
   const cherry = lines.indexOf(CHERRY_COMMENT);
   assert.ok(cherry !== -1, 'escape 1 carries the cherry-pick-only comment line');
   const esc1 = lines.findIndex((l) => l.startsWith('# Escape 1'));
@@ -114,7 +115,8 @@ function assertStep3PassesBlockerLanding(text) {
   assert.match(step3, /--merge-gate --blocker-landing --integration-branch "\$INTEGRATION_BRANCH"/, 'step 3 call passes --blocker-landing');
   assert.match(step3, /blockerLanding/, 'step 3 names the blockerLanding key');
   assert.match(step3, /or the blocker-landing query failed/, 'step 3 exit 1 includes the blocker-landing query failure');
-  assert.match(step3, /never a second invocation \(the gh-absent `--blocker-states-json` re-run aside\)/, 'step 3 qualifies "never a second invocation" with the gh-absent re-run');
+  assert.match(step3, /never a second invocation \(the gh-absent `--blocker-states-json` re-run aside[;)]/, 'step 3 qualifies "never a second invocation" with the gh-absent re-run');
+  assert.match(step3, /on a resume whose step list has neither `build` nor `test`[^)]*leave `--blocker-landing` off/, 'step 3 drops --blocker-landing on a resume whose build already ran');
 }
 
 function assertGhAbsentOpenStop(text) {
@@ -155,6 +157,7 @@ test('AC5.2: the unlanded card carries blocker, commit, integration branch and b
   assertUnlandedCard(text);
   assert.throws(() => assertUnlandedCard(mutate(text, /^git merge \{commit\}$/m, 'git merge {commit} --no-ff')), { message: 'escape 1: git merge {commit} on its own line' });
   assert.throws(() => assertUnlandedCard(mutate(text, /^gh api -X DELETE/m, 'run gh api -X DELETE')), { message: 'escape 2: gh api -X DELETE on its own line' });
+  assert.throws(() => assertUnlandedCard(mutate(text, /^gh issue view \{n\} --json body.*$/m, 'gh issue edit {n}')), { message: 'escape 2 (body-text): a one-line rewrite of the body without the Blocked by line' });
   assert.throws(() => assertUnlandedCard(mutate(text, /origin\/\{integration-branch\}/g, 'the integration branch')), { message: 'card message names origin/{integration-branch}' });
   // Message-line deletions: the escape lines below still carry each token, so only a
   // message-scoped assertion can see these go missing.
@@ -244,7 +247,8 @@ test("multi-spec.md step 3's call passes --blocker-landing", () => {
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, '--merge-gate --blocker-landing --integration-branch', '--merge-gate --integration-branch')), { message: 'step 3 call passes --blocker-landing' });
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, ' with `blockerLanding` on each record', '')), { message: 'step 3 names the blockerLanding key' });
   assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, 'or the blocker-landing query failed', 'or something failed')), { message: 'step 3 exit 1 includes the blocker-landing query failure' });
-  assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, ' (the gh-absent `--blocker-states-json` re-run aside)', '')), { message: 'step 3 qualifies "never a second invocation" with the gh-absent re-run' });
+  assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, / \(the gh-absent `--blocker-states-json` re-run aside[^)]*\)/, '')), { message: 'step 3 qualifies "never a second invocation" with the gh-absent re-run' });
+  assert.throws(() => assertStep3PassesBlockerLanding(mutate(text, '; on a resume whose step list has neither `build` nor `test`, the build has run, so leave `--blocker-landing` off, as `validation.md`\'s 2.7b skips', '')), { message: 'step 3 drops --blocker-landing on a resume whose build already ran' });
 });
 
 test('AC6.1, AC7.1 (gh-absent): multispec-preflight-failure.md keeps the open stop under --records-json', () => {

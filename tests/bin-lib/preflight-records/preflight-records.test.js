@@ -982,6 +982,30 @@ test('AC9.1: --blocker-landing with no resolvable repo and an out-of-run blocker
   assert.deepEqual(calls.filter((a) => !isIssueView(a, 10)), []);
 });
 
+test('--blocker-landing: a Blocked by number that is no valid issue number exits 2 before any blocker call (a fixed input, so no retry would help)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 11)) return JSON.stringify(issue({ number: 11, title: 'Eleven', body: `Blocked by #0\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['11', '--blocker-landing'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /preflight-records\.js: --blocker-landing: not a valid issue number: 0/);
+  assert.deepEqual(calls.filter((a) => !isIssueView(a, 11)), [], 'no GraphQL, no compare call');
+});
+
+test('--blocker-landing: a compare call that throws leaves the blocker undetermined/probe-failed, exits 0, and prints one stderr line carrying the cause', () => {
+  const { runner } = landingFixture({ repository: { b5: closedBlocker('eee555') }, statuses: {} });
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['11'].blockerLanding,
+    [{ blocker: 5, verdict: 'undetermined', commit: 'eee555', via: 'probe-failed' }]);
+  const text = err.join('');
+  assert.match(text, /^preflight-records\.js: blocker landing compare failed for eee555: [^\n]*unexpected compare eee555[^\n]*\n$/, 'exactly one line, with the cause');
+});
+
 test('AC7.1: --blocker-landing under --records-json: every out-of-run blocker undetermined/records-json, one stderr line, no runner call, exit 0', () => {
   let calls = 0;
   const { deps, out, err } = cliDeps({

@@ -3,7 +3,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, undeterminedAll, classifyFromState, recoverNotFound, fetchBlockerLanding,
+  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding,
 } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
 
 const isGraphQL = (a) => a[0] === 'api' && a[1] === 'graphql';
@@ -137,6 +137,44 @@ test('compare-API error → undetermined probe-failed; ahead → unlanded; unkno
   assert.deepEqual(classifyBlocker(5, node(), new Map()), { blocker: 5, verdict: 'undetermined', commit: 'aaa111', via: 'probe-failed' });
 });
 
+test('a closing-PR read cut at first:10 never claims unlanded — undetermined references-truncated; a reachable candidate still lands it', () => {
+  const cut = (extra = {}) => ({
+    ...closed({ closer: { __typename: 'PullRequest', ...pr(90, 'aaa111') } }),
+    closedByPullRequestsReferences: { pageInfo: { hasNextPage: true }, nodes: [pr(90, 'aaa111')] },
+    ...extra,
+  });
+  let runner = fakeRunner({ repository: { b5: cut() }, statuses: { aaa111: 'diverged' } });
+  assert.deepEqual(fetchBlockerLanding({ ...base, blockers: [5], runner }).results.get(5),
+    { blocker: 5, verdict: 'undetermined', commit: 'aaa111', via: 'references-truncated' });
+  runner = fakeRunner({ repository: { b5: cut() }, statuses: { aaa111: 'behind' } });
+  assert.deepEqual(fetchBlockerLanding({ ...base, blockers: [5], runner }).results.get(5),
+    { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+  // The same diverged closer with no further page stays the incident's unlanded verdict.
+  runner = fakeRunner({
+    repository: { b5: cut({ closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [pr(90, 'aaa111')] } }) },
+    statuses: { aaa111: 'diverged' },
+  });
+  assert.deepEqual(fetchBlockerLanding({ ...base, blockers: [5], runner }).results.get(5),
+    { blocker: 5, verdict: 'unlanded', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('probing stops at a blocker\'s first reachable candidate; a thrown compare call is reported in probeErrors with its cause', () => {
+  const node = closed({ closer: { __typename: 'PullRequest', ...pr(90, 'aaa111') }, refs: [pr(93, 'ccc333', { base: 'dev' }), pr(94, 'ddd444', { base: 'dev' })] });
+  let runner = fakeRunner({ repository: { b5: node }, statuses: { aaa111: 'behind', ccc333: 'behind', ddd444: 'behind' } });
+  let out = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.equal(runner.compares().length, 1, 'the closer is reachable, so the two references are never probed');
+  assert.deepEqual(out.results.get(5), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+  assert.deepEqual(out.probeErrors, []);
+
+  runner = fakeRunner({ repository: { b5: node }, statuses: { aaa111: new Error('HTTP 404: Not Found'), ccc333: 'behind', ddd444: 'behind' } });
+  out = fetchBlockerLanding({ ...base, blockers: [5], runner });
+  assert.equal(runner.compares().length, 2, 'a failed closer probe does not stop the next candidate; the first reachable one does');
+  assert.deepEqual(out.results.get(5), { blocker: 5, verdict: 'landed', commit: 'ccc333', via: 'closing-pr-ref' });
+  assert.equal(out.probeErrors.length, 1);
+  assert.equal(out.probeErrors[0].sha, 'aaa111');
+  assert.match(out.probeErrors[0].message, /404/);
+});
+
 test('open blocker → open, no compare call', () => {
   const runner = fakeRunner({ repository: { b5: open() } });
   const { results } = fetchBlockerLanding({ ...base, blockers: [5], runner });
@@ -193,7 +231,14 @@ test('AC9.1: a NOT_FOUND on an unrequested alias path is a whole-query failure',
   assert.equal(results, null);
   assert.ok(error && error.length > 0);
   assert.equal(runner.compares().length, 0);
-  assert.equal(recoverNotFound({ stdout: JSON.stringify({ data: { repository: {} }, errors: [] }) }, [5]), null, 'empty errors is not a recovery');
+  // A thrown call whose stdout carries an empty errors array is not a NOT_FOUND recovery either.
+  const emptyErrors = fakeRunner({
+    graphql: notFoundThrow({ repository: { b5: closed({ closer: { __typename: 'PullRequest', ...pr(90, 'aaa111') } }) }, errors: [] }),
+    statuses: { aaa111: 'behind' },
+  });
+  const thrown = fetchBlockerLanding({ ...base, blockers: [5], runner: emptyErrors });
+  assert.equal(thrown.results, null, 'empty errors is not a recovery');
+  assert.equal(emptyErrors.compares().length, 0);
 });
 
 test('AC9.1: a null or absent b{n} alias that no NOT_FOUND error names is a whole-query failure, zero compare calls', () => {
@@ -359,7 +404,7 @@ test('buildBlockerLandingQuery: null for [] and non-array; one b{n} alias per bl
   assert.match(q, /^query\(\$owner:String!,\$repo:String!\)\{ repository\(owner:\$owner,name:\$repo\)\{/);
   for (const n of [5, 12]) {
     assert.ok(q.includes(
-      `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes{ number merged baseRefName mergeCommit{ oid } } } }`,
+      `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ pageInfo{ hasNextPage } nodes{ number merged baseRefName mergeCommit{ oid } } } }`,
     ), `alias b${n}`);
   }
   assert.equal(q.match(/\bb\d+: issue\(/g).length, 2);
