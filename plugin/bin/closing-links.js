@@ -61,6 +61,14 @@
 // sorted -- the numbers a caller names for a hand close) and omits closingSet.
 // The default base keeps the envelope above unchanged.
 //
+// In-process callers use the core, closingLinks(opts, overrides) -> { code,
+// envelope }: opts is { run, mode, settleMs?, closeWindowMs? } (already
+// validated; settleMs defaults to 15000, closeWindowMs to null), overrides the
+// same deps seam run() takes. envelope is the object the CLI prints (logFailed
+// included), non-null iff code is 0; exits 3, 4 and 5 return envelope: null with
+// their stderr line and SKIP append unchanged. The core prints nothing to
+// stdout; run(argv, deps) is a thin printer over it (parse, then one JSON line).
+//
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
 // 3 run dir missing or not anchored under the main checkout (a worktree-local
@@ -175,32 +183,30 @@ function uniqueSorted(numbers) {
   return [...new Set(numbers)].sort((a, b) => a - b);
 }
 
-function run(argv, overrides = {}) {
+// The core: already-validated opts -> { code, envelope }. Prints nothing to
+// stdout; stderr lines and decisions.md appends are its own. `envelope` is the
+// object the CLI prints, non-null iff code is 0.
+function closingLinks(opts, overrides = {}) {
   // Tests pass only the seams they fake; the rest stay real.
   const deps = { ...realDeps, ...overrides };
-  const usageError = (message) => { deps.stderr(`closing-links.js: ${message}\n${USAGE}`); return 2; };
-  const print = (body) => { deps.stdout(`${JSON.stringify(body)}\n`); return 0; };
-
-  // 1. Parse / validate. --help answers before any probe.
-  const o = parseArgs(argv);
-  if (o.error) return usageError(o.error);
-  if (o.help) { deps.stdout(USAGE); return 0; }
-  if (!o.run) return usageError('--run <run-dir> is required');
-  if (!o.mode) return usageError('--mode <pre-merge|post-merge> is required');
+  const o = {
+    run: opts.run, mode: opts.mode, settleMs: opts.settleMs ?? DEFAULT_SETTLE_MS, closeWindowMs: opts.closeWindowMs ?? null,
+  };
+  const ok = (envelope) => ({ code: 0, envelope });
 
   // 2. The run dir must be the main checkout's, never a worktree-local shadow.
   const target = resolveTarget({ runDir: o.run, cwd: deps.cwd(), mainRoot: deps.mainRoot });
   if (!target.ok) {
     if (target.reason === 'missing') deps.stderr(`closing-links.js: run dir does not exist: ${o.run}\n`);
     else deps.stderr(`closing-links.js: run dir is not anchored under the main checkout (a worktree-local shadow): ${o.run} — resolve $RUN_ROOT per _shared/pipeline-run-dir.md's Anchoring section and pass the main-checkout path\n`);
-    return 3;
+    return { code: 3, envelope: null };
   }
 
   // 3. The PR number and run id; a per-spec dir answers for its parent run.
   let resolved = { state: null, parentRunDir: null };
   try { resolved = deps.readRunState(o.run) || resolved; } catch { /* no readable run-state: no-pr */ }
   const n = resolved.state && resolved.state.pr && resolved.state.pr.number;
-  if (!Number.isInteger(n) || n <= 0) return print({ action: 'no-pr' });
+  if (!Number.isInteger(n) || n <= 0) return ok({ action: 'no-pr' });
   const runId = path.basename(resolved.parentRunDir || o.run);
 
   let logFailed = false;
@@ -229,13 +235,13 @@ function run(argv, overrides = {}) {
   const ghFailed = (message) => {
     deps.stderr(`closing-links.js: ${message}\n`);
     unchecked(`exit ${EXIT_GH_FAILURE} gh failure: ${message.split('\n')[0]}`);
-    return EXIT_GH_FAILURE;
+    return { code: EXIT_GH_FAILURE, envelope: null };
   };
 
   // 4. No gh: status as data, never a failure.
   if (!deps.ghAvailable()) {
     unchecked('gh-absent');
-    return print({ action: 'gh-absent', pr: n, ...(logFailed ? { logFailed: true } : {}) });
+    return ok({ action: 'gh-absent', pr: n, ...(logFailed ? { logFailed: true } : {}) });
   }
 
   const log = (text, reversibility, status = 'AUTO', step = 'Closing links') => {
@@ -254,7 +260,7 @@ function run(argv, overrides = {}) {
   // SKIP line tagged (degraded), Reversibility n/a. KEPT-PROMPT would claim a
   // user was asked inline, and STAGED needs a staged/ file; neither happened.
   const degraded = (condition, fallback) => log(`condition: ${condition} → fallback: ${fallback}`, 'n/a', 'SKIP', 'Closing links (degraded)');
-  const done = (envelope) => print({ ...envelope, ...(logFailed ? { logFailed: true } : {}) });
+  const done = (envelope) => ok({ ...envelope, ...(logFailed ? { logFailed: true } : {}) });
 
   // 5. Read the live PR. A body that is not a string, or links that are not an
   // array, is a read failure -- never an empty answer that licenses a write.
@@ -283,10 +289,10 @@ function run(argv, overrides = {}) {
 
   if (o.mode === 'pre-merge') {
     // 6a. No fixes span means no statement of what the run keeps open.
-    if (!span.found) return print({ action: 'no-fixes-span', pr: n });
+    if (!span.found) return ok({ action: 'no-fixes-span', pr: n });
     const unwanted = linked.filter((x) => !expected.includes(x));
     const base = { pr: n, expected, keepOpen, linked, unwanted };
-    if (unwanted.length === 0) return print({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
+    if (unwanted.length === 0) return ok({ action: 'clean', ...base, unlinked: [], stillLinked: [], neutralized: 0 });
 
     // 7a. Prove the PR is this run's before anything is written to it or any
     // outcome is logged (a no-write path still logs into this run) -- only the
@@ -297,7 +303,7 @@ function run(argv, overrides = {}) {
     if (found !== runId) {
       deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
       unchecked('exit 4 run marker mismatch');
-      return 4;
+      return { code: 4, envelope: null };
     }
     if (newBody !== pr.body) {
       try {
@@ -333,8 +339,8 @@ function run(argv, overrides = {}) {
   }
 
   // 6b. post-merge: nothing to reopen until the PR merged.
-  if (pr.state !== 'MERGED') return print({ action: 'not-merged', pr: n, state: pr.state });
-  if (!span.found) return print({ action: 'no-fixes-span', pr: n });
+  if (pr.state !== 'MERGED') return ok({ action: 'not-merged', pr: n, state: pr.state });
+  if (!span.found) return ok({ action: 'no-fixes-span', pr: n });
 
   // 7b. The squash message is the second closing channel. A failed read (or
   // an oid that is not a commit sha, never put into the API path) degrades to
@@ -504,6 +510,23 @@ function run(argv, overrides = {}) {
   });
 }
 
-module.exports = { run, parseArgs, EXIT_GH_FAILURE, ERR_TEXT_MAX };
+// The CLI: parse, then print the core's envelope as one JSON line.
+function run(argv, overrides = {}) {
+  const deps = { ...realDeps, ...overrides };
+  const usageError = (message) => { deps.stderr(`closing-links.js: ${message}\n${USAGE}`); return 2; };
+
+  // 1. Parse / validate. --help answers before any probe.
+  const o = parseArgs(argv);
+  if (o.error) return usageError(o.error);
+  if (o.help) { deps.stdout(USAGE); return 0; }
+  if (!o.run) return usageError('--run <run-dir> is required');
+  if (!o.mode) return usageError('--mode <pre-merge|post-merge> is required');
+
+  const { code, envelope } = closingLinks(o, overrides);
+  if (code === 0) deps.stdout(`${JSON.stringify(envelope)}\n`);
+  return code;
+}
+
+module.exports = { run, closingLinks, parseArgs, EXIT_GH_FAILURE, ERR_TEXT_MAX };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

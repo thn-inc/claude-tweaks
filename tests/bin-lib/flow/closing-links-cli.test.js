@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { run, parseArgs } = require('../../../plugin/bin/closing-links');
+const { run, parseArgs, closingLinks } = require('../../../plugin/bin/closing-links');
 
 const RUN_ID = '2026-10-25T000001-record-4199';
 const FOREIGN_RUN_ID = '2026-01-01T000000-record-9';
@@ -154,6 +154,55 @@ test('parseArgs: shapes and rejections', () => {
   // Object.hasOwn: an inherited key is not a flag.
   assert.ok(parseArgs(['constructor']).error);
   assert.ok(parseArgs(['--toString', 'x']).error);
+});
+
+test('AC1.1/AC1.2: closingLinks returns the post-merge envelope run() prints, and prints nothing itself', () => {
+  const setup = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prReads: [mergedView(body(), [2724, 3997])], issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] } });
+    return { runDir, h };
+  };
+  const a = setup();
+  assert.equal(run(['--run', a.runDir, ...POST], a.h.deps), 0);
+  const b = setup();
+  const r = closingLinks({ run: b.runDir, mode: 'post-merge' }, b.h.deps);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.envelope, a.h.json());
+  assert.equal(r.envelope.action, 'reopened');
+  assert.deepEqual(b.h.out, []);
+});
+
+test('AC1.1: closingLinks returns the pre-merge envelope run() prints', () => {
+  const setup = () => {
+    const { main, runDir } = fixture({ pr: { number: 7 } });
+    const h = makeDeps(main, { prReads: [preView(body(), [3997])] });
+    return { runDir, h };
+  };
+  const a = setup();
+  assert.equal(run(['--run', a.runDir, ...PRE], a.h.deps), 0);
+  const b = setup();
+  const r = closingLinks({ run: b.runDir, mode: 'pre-merge' }, b.h.deps);
+  assert.equal(r.code, 0);
+  assert.deepEqual(r.envelope, a.h.json());
+  assert.equal(r.envelope.action, 'clean');
+  assert.deepEqual(b.h.out, []);
+});
+
+test('AC1.1: closingLinks exit 5 returns no envelope and still logs its /wrap-up SKIP', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [new Error('network down')] });
+  assert.deepEqual(closingLinks({ run: runDir, mode: 'post-merge' }, h.deps), { code: 5, envelope: null });
+  assert.deepEqual(h.out, []);
+  assert.match(h.log(runDir), /SKIP .*Closing links \(post-merge\) \(degraded\)/);
+});
+
+test('AC1.1: closingLinks exit 3 (missing run dir) returns no envelope', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, { prReads: [mergedView(body(), [3997])] });
+  const missing = path.join(runDir, 'does-not-exist');
+  assert.deepEqual(closingLinks({ run: missing, mode: 'post-merge' }, h.deps), { code: 3, envelope: null });
+  assert.deepEqual(h.calls, []);
+  assert.deepEqual(h.out, []);
 });
 
 test('AC2.1 pre-merge unlinks a stale closing reference', () => {
