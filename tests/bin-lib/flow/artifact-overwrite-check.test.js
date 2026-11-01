@@ -1195,3 +1195,37 @@ test('attributeByWindow (Q10): a commit second equal to a later window start\'s 
   assert.deepStrictEqual([...attributeByWindow(windows, 6000)], [11]); // next second: unaffected
   assert.deepStrictEqual([...attributeByWindow(windows, 1000)], [10]); // earliest window's own start second: no Q10 rule
 });
+
+test('AC4.1 (disagreeing direction): a refs #11 trailer wins over spec 10\'s window, so deleting spec 10\'s line is an overwrite', () => {
+  // Both commits are authored in spec 10's window. If the trailer were unioned
+  // with the window (#11 ∪ #10) the modify would intersect the add's #10 — a
+  // false clean on a HARD-GATE.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Fix locator (refs #11)', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].commit, modifySha);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`traces to commit ${addSha}, attributed to #10 (by manifest window)`), reason);
+  assert.ok(reason.includes(`${modifySha}'s own #11 (by refs trailer)`), reason);
+});
+
+test('computeSpecWindows: windows are sorted by first transition, not by manifest order', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 11, status: 'complete', startedAt: T1 }, { id: 10, status: 'complete', startedAt: T0 }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [
+    { id: 10, start: Date.parse(T0), end: Date.parse(T1) },
+    { id: 11, start: Date.parse(T1), end: Infinity },
+  ]);
+});
+
+test('computeSpecWindows: an empty-string startedAt is absent data, so phases[].at gives the first transition', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: '', phases: [{ phase: 'build', status: 'running', at: T0 }] }] } };
+  let result;
+  assert.doesNotThrow(() => { result = computeSpecWindows(manifest); });
+  assert.deepStrictEqual(result, { windows: [{ id: 10, start: Date.parse(T0), end: Infinity }], off: null });
+});
