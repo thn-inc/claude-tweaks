@@ -280,6 +280,28 @@ its shape owes:
 Walk the procedure section by section, and name the shape each part takes, before you call the
 mirror pinned.
 
+**Driver-emitted line instance (#4812):** the code side can build a log line inline in a driver's
+branches, with no composer to call with the prose's placeholders. `plugin/bin/lib/flow/pr-early-open.js`
+writes four rebind lines (`rebound`/`rebind of` a reused/reopened PR) through one `log` closure, and
+`_shared/pr-early-run-lifecycle.md` states them as backticked `AUTO {time} — …`/`SKIP {time} — …`
+templates. Each side was pinned only against itself. `tests/bin-lib/flow/pr-early-open.test.js`'s
+"the four rebind log lines pr-early-open.js writes equal pr-early-run-lifecycle.md's templates" test
+runs the composer row's substitution in reverse:
+
+1. It drives every emitting branch through the injected harness, one scripted run per branch.
+2. It maps each run's concrete values back to placeholders (`#7` → `#{number}`, the run id →
+   `{run-id}`, `HTTP 422` → `{error}`). Pick fixture values that occur nowhere else in the line, or
+   the map rewrites text that is not a placeholder.
+3. It extracts the templates with one regex over the whitespace-collapsed doc, asserts their exact
+   count, and `deepEqual`s the two sorted lists, so a branch with no template and a template with
+   no branch both fail.
+4. Its go-red controls run through the same helper, each matched to its own message: a reworded
+   template, and a dropped one.
+
+The map also drops the `- ` bullet and `formatEntry`'s default `log-decision:` step, which the
+templates leave out. Keep it to placeholders plus such known differences, so a real drift is not
+normalized away.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.
