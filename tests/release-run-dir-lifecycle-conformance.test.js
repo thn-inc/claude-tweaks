@@ -517,17 +517,24 @@ test('AC3.1: autonomy-ceiling.md registers release/disposition.md as a consoleAu
   assertFactsAndGoRed(row, CEILING_FACTS, 'the consoleAutoResolve row must name release/disposition.md as a sanctioned caller');
 });
 
-// --- FAILED is hand-composed by five writers; the skill graph names what disposition.md reads (#3898 review) ---
+// --- FAILED is hand-composed by six writers; the skill graph names what disposition.md reads (#3898 review) ---
 const DECISION_LOG = path.join(ROOT, 'plugin', 'skills', '_shared', 'auto-decision-log.md');
 const FAILED_WRITER_FACTS = [
-  [/hand-composed by its five writers \(see the `STATUS` row below\)/, 'the schema intro counts five FAILED writers'],
-  [/hand-composed by `backlog\/refine-mode\.md`, `backlog\/refine-record\.md`, `apply-refine-labels\.js`, `release\/bookkeeping\.md` and `release\/disposition\.md` rather than/, 'the STATUS row names all five FAILED writers'],
-  [/Hand-composed by its five writers \(see the `STATUS` row above\)/, 'the FAILED outcome row counts five writers'],
+  [/hand-composed by its six writers \(see the `STATUS` row below\)/, 'the schema intro counts six FAILED writers'],
+  [/hand-composed by `backlog\/refine-mode\.md`, `backlog\/refine-record\.md`, `apply-refine-labels\.js`, `release\/bookkeeping\.md`, `release\/disposition\.md` and `stash-guard\.js` rather than/, 'the STATUS row names all six FAILED writers'],
+  [/Hand-composed by its six writers \(see the `STATUS` row above\)/, 'the FAILED outcome row counts six writers'],
 ];
 
-test('AC3.1: auto-decision-log.md names every FAILED writer, release/bookkeeping.md and release/disposition.md included (with go-red)', () => {
-  assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all five hand-composing FAILED writers');
-  assert.doesNotMatch(readText(DECISION_LOG), /its two writers/, 'no stale "two writers" count may remain');
+test('AC3.1: auto-decision-log.md names every FAILED writer, release/bookkeeping.md, release/disposition.md and stash-guard.js included (with go-red)', () => {
+  assertFactsAndGoRed(readText(DECISION_LOG), FAILED_WRITER_FACTS, 'auto-decision-log.md must name all six hand-composing FAILED writers');
+  for (const [stale, message] of [
+    [/its two writers/, 'no stale "two writers" count may remain'],
+    [/its five writers/, 'no stale "five writers" count may remain'],
+  ]) {
+    assert.doesNotMatch(readText(DECISION_LOG), stale, message);
+    // Go-red control: the same assertion over text that holds the phrase must throw.
+    assert.throws(() => assert.doesNotMatch(`${readText(DECISION_LOG)}\n${stale.source}`, stale, message), assert.AssertionError, `${message}: the control must go red`);
+  }
 });
 
 const GRAPH = path.join(ROOT, 'docs', 'skill-graph.md');
