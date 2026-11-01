@@ -26,6 +26,15 @@ Scope keywords: dispatch-resume, selectResumePr, worktree-dispatch-record
 - Never `git stash`. Worktree shell: one plain command per Bash call.
 - Scope and edit discipline: Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same.
 
+## Plan review amendments (these override any older wording below)
+
+1. **Live run means proven live.** Refusals from a provably live owner carry `liveRun: true`: `prior-run-live` from `live-owner`, and `boundRunConflict`'s final live-owner branch. `stuckRow`'s no-row rule is `live-claim`, `live-sibling`, `no-pr`, or `verdict.liveRun === true`. A `prior-run-live` from `unknown-owner`, and a `concurrent-resume` from an unknown, other-host or own-session owner, render a row with the verdict's line. Tests: `stuckRow` for each of those shapes, and `resumeEligibility` with `priorRunDir: 'live-owner'` versus `'unknown-owner'`.
+2. **A non-draft PR never takes `close`.** In `selectResumePr`, `foreign-pr`, `multi-record-pr` and `cross-repo-pr` on a PR with `isDraft !== true` take disposition `close-out`, with these lines. With a run marker in the body: `#{n}'s PR #{pr} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #{n}`. With no marker: `#{n}'s PR #{pr} is not a draft and carries no claude-tweaks-run marker, which close-out needs — review and merge it by hand`. Non-draft cross-repo: `#{n}'s open closing PR #{pr} ({url}) comes from a fork or another repository and is not a draft — review and merge it by hand`. Tests (Task 1): each of these with `isDraft: false`, asserting disposition `close-out`, the exact line, and that `refusalDetail`'s remedy does not match `/gh pr close|close PR/`.
+3. **The head counts for the sibling check.** `runVerdict` also treats `findSibling(pr.headRefName, ...)` as a live sibling, so a head with no record number is still seen. `runBound` does the same with the bound worktree's path relative to `.claude/worktrees`. Refused stdout adds `headRefName` when exactly one kept PR exists (`refusalDetail`), and `stuck-open-prs.js` runs `findSibling(verdict.headRefName, ...)` after the verdict: a hit renders no row. Tests: a Task 2 `findSibling` fake matching only the head `fix/thing` gives `live-sibling` in the verdict and `--bound-run`; a Task 3 CLI test with a `not-draft` verdict carrying that head and a matching sibling gives `rows: []`.
+4. **The row joins the record.** `stuck-open-prs.js` prints `{number, pr, remedy, title, createdAt, labels}`, copying the last three from the `--records` entry (`UNION_FIELDS` carries them), so Step 3's ranking and the `{createdAt, relative}` column work. Pin them in Task 3's one-row CLI test.
+5. **Tidy's matched Resume row runs the verdict too (Task 4).** Add to the new `issue-claims-backstops.md` section: when `stale-claim-pr.js` printed the dispatch-resume command as `resume`, run the same `dispatch-resume.js --issue {n}`. Exit 0 keeps it. Exit 3 replaces `{resume}` with `{disposition} — {remedy}`. Exit 2 or 4 keeps it and appends `open linked PR unknown (dispatch-resume exit {code})`. The row stays never staged, never released. Pin this in `assertDisposition` as `replaces \`{resume}\` with \`{disposition} — {remedy}\``.
+6. **`close-out #N` works with no claim held (Task 5).** In `plugin/skills/dispatch/close-out.md`'s `close-out #N[,#M,...]` table row, after the still-held-claim clause, add: `with no claim held (a stuck record's released claim), take the PR from \`bin/dispatch-resume.js --issue {N}\`: \`prNumber\` when eligible, else its single \`prNumbers\` entry, and report and stop when it names none`. Pin it in `tests/dispatch-resume-prose.test.js` as `with no claim held` with a go-red control. No test pins the existing `still-held claim` phrase: `grep -rln -F "still-held claim" tests plugin docs` lists only `close-out.md`.
+
 ## Verified command
 
 Run once against the live repo with the slug the CLI derives (`gh repo view` printed `thn-inc/claude-tweaks`), issue 3942, 2026-11-02: PR #4444 on `worktree-record-3942`, `state: OPEN`, `isCrossRepository: false`, `isDraft: true`, `closingIssuesReferences.totalCount: 1`, `hasNextPage: false`. Without `includeClosedPrs` the connection omits closed PRs: the same read with `includeClosedPrs:true` on #4849 lists closed #4904 and open #4905, so the code still filters on `state`. A shell string holding this query with `$owner` can trip the worktree guard from Bash; the code passes it through `execFileSync` argv, where no shell is involved.
@@ -460,6 +469,7 @@ Run `gh issue list --state open --label auto:build --json number,labels,state --
 ### Task 4: Tidy's stale-claim Release states the PR disposition
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/tidy/issue-claims-backstops.md`
@@ -533,6 +543,7 @@ git commit -m "State the open PR's disposition on tidy's stale-claim Release, re
 **Files:**
 - Modify: `plugin/skills/dispatch/resume.md`
 - Modify: `plugin/skills/dispatch/open-pr-exclusion-report.md`
+- Modify: `plugin/skills/dispatch/close-out.md`
 - Modify: `docs/journeys/resume-a-stalled-dispatched-build-4588.md`
 - Modify: `docs/skill-graph.md`
 - Modify: `docs/plugin-structure.md`
@@ -586,6 +597,6 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/dispatch/resume.md plugin/skills/dispatch/open-pr-exclusion-report.md docs/journeys/resume-a-stalled-dispatched-build-4588.md docs/skill-graph.md docs/plugin-structure.md tests/dispatch-resume-prose.test.js
+git add plugin/skills/dispatch/resume.md plugin/skills/dispatch/open-pr-exclusion-report.md plugin/skills/dispatch/close-out.md docs/journeys/resume-a-stalled-dispatched-build-4588.md docs/skill-graph.md docs/plugin-structure.md tests/dispatch-resume-prose.test.js
 git commit -m "State the closing-reference resume rule in the dispatch prose, refs #4849"
 ```
