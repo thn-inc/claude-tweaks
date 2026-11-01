@@ -83,22 +83,17 @@ function skipReason(verdict) {
 // result, or its thrown error, is replayed to every later parent (the gh identity is
 // the same for the whole run, so a failed probe is not retried per parent).
 function memoizeRead(read) {
-  let done = false;
-  let failed = false;
-  let value;
-  let error;
+  let outcome = null;
   return () => {
-    if (!done) {
+    if (outcome === null) {
       try {
-        value = read();
-      } catch (err) {
-        failed = true;
-        error = err;
+        outcome = { value: read() };
+      } catch (error) {
+        outcome = { error };
       }
-      done = true;
     }
-    if (failed) throw error;
-    return value;
+    if ('error' in outcome) throw outcome.error;
+    return outcome.value;
   };
 }
 
