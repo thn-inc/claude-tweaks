@@ -60,7 +60,8 @@
 
 const {
   CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, numberSet, resolveParent,
-  enumerateSubIssues, readParentLabels, readSubIssueFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence, readLogin,
+  enumerateSubIssues, readParentLabels, readSubIssueFacts,
+  gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence, readLogin,
 } = require('./parent-gate');
 const { repoSlug } = require('../repo-resolve');
 
