@@ -88,6 +88,12 @@ function failingStore(trap = () => true) {
   };
 }
 
+// A runner that delegates to the real one but answers `stash store` with success without
+// running git: the exit-0-writes-nothing shape, whatever the stack holds.
+function noopStore() {
+  return (args) => (args[2] === 'stash' && args[3] === 'store' ? '' : realGit(args));
+}
+
 // A runner that delegates to the real one, but on the second `stash list` (the pre-store
 // re-read) first stores `entry` itself -- a sibling guard restoring it in the race window.
 // Every `stash store` call it sees is pushed to `stores`.
@@ -263,9 +269,9 @@ test('a sha stored twice: a sibling restoring the older copy first leaves one al
   assert.deepEqual(stack(dir), [x, y, x]);
 });
 
-const NOTHING_WRITTEN = /same commit already at stash@\{0\} — git stash store wrote nothing/;
+const NOTHING_TO_RECOVER = /same commit still at stash@\{0\}; nothing to recover/;
 
-test('a store that writes nothing is reported as a failed restore, never as restored (probe A: older copy of the sha at stash@{0} dropped)', () => {
+test('AC1.1: stack [x, y, x] with stash@{2} dropped, then compare --restore: reported as a failed restore with no recover command (probe A)', () => {
   const dir = fixture();
   const { root, runDir } = withRunDir();
   const { x, y } = doubledStack(dir);
@@ -278,15 +284,21 @@ test('a store that writes nothing is reported as a failed restore, never as rest
   assert.deepEqual(r.json.restored, []);
   assert.deepEqual(r.json.alreadyPresent, []);
   assert.equal(r.json.restoreFailed.length, 1);
-  assert.equal(r.json.restoreFailed[0].sha, x.sha);
-  assert.match(r.json.restoreFailed[0].error, NOTHING_WRITTEN);
-  assert.equal(r.json.restoreFailed[0].command, storeCommand(x.subject, x.sha));
-  assert.match(r.err, new RegExp(`restore failed for ${x.sha}; recover with:`));
+  const failed = r.json.restoreFailed[0];
+  assert.equal(failed.sha, x.sha);
+  assert.equal(failed.subject, x.subject);
+  assert.equal(failed.error, 'same commit still at stash@{0}; nothing to recover');
+  assert.ok('command' in failed);
+  assert.equal(failed.command, null);
+  assert.equal(r.err, `stash-guard.js: restore failed for ${x.sha}: same commit still at stash@{0}; nothing to recover\n`);
+  assert.doesNotMatch(r.err, /recover with/);
   assert.deepEqual(stack(dir), [x, y]);
   const text = decisionsOf(runDir);
   assert.equal(r.json.logged, true);
   assert.doesNotMatch(text, /restored via git stash store/);
-  assert.match(text, /- FAILED \d{2}:\d{2}:\d{2} — Stash guard: implementer for task 2 removed stash entry [0-9a-f]{40} .*; restore failed: same commit already at stash@\{0\} — git stash store wrote nothing — recover with: git stash store -m /);
+  assert.doesNotMatch(text, /recover with/);
+  const failedLine = text.split('\n').find((l) => l.startsWith('- FAILED '));
+  assert.match(failedLine, /^- FAILED \d{2}:\d{2}:\d{2} — Stash guard: implementer for task 2 removed stash entry [0-9a-f]{40} On main: twice; restore failed: same commit still at stash@\{0\}; nothing to recover\. Reversibility: n\/a \(write did not land\)\.$/);
 });
 
 test('a store that writes nothing: probe B (two newer entries dropped) restores what it can and reports the rest as failed', () => {
@@ -303,9 +315,27 @@ test('a store that writes nothing: probe B (two newer entries dropped) restores 
   assert.deepEqual(r.json.alreadyPresent, []);
   assert.equal(r.json.restoreFailed.length, 1);
   assert.equal(r.json.restoreFailed[0].sha, x.sha);
-  assert.match(r.json.restoreFailed[0].error, NOTHING_WRITTEN);
+  assert.match(r.json.restoreFailed[0].error, NOTHING_TO_RECOVER);
+  assert.equal(r.json.restoreFailed[0].command, null);
+  assert.doesNotMatch(r.err, /recover with/);
   // Only the real write landed: y went on top of the surviving x.
   assert.deepEqual(stack(dir), [y, x]);
+});
+
+test('a store that exits 0 but leaves a different sha at stash@{0} keeps its recover command (sibling drop race)', () => {
+  const dir = fixture();
+  const older = stashPush(dir, 'older');
+  const newer = stashPush(dir, 'newer');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{1}');
+  assert.deepEqual(stack(dir), [newer]);
+  const r = compare(dir, baseline, ['--restore'], { git: noopStore() });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].sha, older.sha);
+  assert.equal(r.json.restoreFailed[0].error, 'git stash store exited 0 but the entry is not back on the stack');
+  assert.equal(r.json.restoreFailed[0].command, storeCommand(older.subject, older.sha));
+  assert.match(r.err, new RegExp(`restore failed for ${older.sha}; recover with:`));
 });
 
 test('AC3.2: without --restore the stack is left unchanged', () => {

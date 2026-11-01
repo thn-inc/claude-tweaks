@@ -15,15 +15,19 @@
 // compare prints one JSON line {removed, added}; --restore adds restored,
 // alreadyPresent (a removed sha the pre-store re-read found back on the stack, so it
 // is not stored twice) and restoreFailed [{sha, subject, error, command}] (each
-// command is also printed to stderr, paste-ready); --run adds logged, plus logError
+// command is also printed to stderr, paste-ready, except that command is null when there is
+// nothing to run -- see below); --run adds logged, plus logError
 // when the append was refused or threw. When nothing changed no append is attempted, so
 // logged and logError are omitted. An added entry is reported and left on the stack,
 // never popped. A sha can occur more than once on the stack: removed and added are
 // multiset differences, so dropping one copy of a doubled sha is detected, and every
 // removed copy gets its own restore outcome. `git stash store` of a sha already at
 // stash@{0} exits 0 and writes nothing, so every store is confirmed by re-reading the
-// stack; one that wrote nothing is a restoreFailed entry (error "same commit already at
-// stash@{0} — git stash store wrote nothing"), never counted or logged as restored.
+// stack; one that wrote nothing is a restoreFailed entry, never counted or logged as
+// restored. When the re-read shows that commit at stash@{0} the error is "same commit still
+// at stash@{0}; nothing to recover" and command is null (a recover command would be the
+// same no-op); when a different sha is on top, a sibling session raced, the error is "git
+// stash store exited 0 but the entry is not back on the stack" and command is kept.
 //
 // Position limit: a restored entry always lands at stash@{0} (`git stash store` pushes),
 // so only the relative order among the restored entries comes back; entries that
@@ -245,25 +249,35 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
       handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
       continue;
     }
-    const fail = (error) => {
-      const command = storeCommand(entry.subject, entry.sha);
+    // A null command means there is nothing to run: the entry's commit is still at stash@{0}.
+    const fail = (error, command) => {
       outcomes[i] = { failed: { sha: entry.sha, subject: entry.subject, error, command } };
-      deps.stderr(`${NAME}: restore failed for ${entry.sha}; recover with:\n${command}\n`);
+      deps.stderr(command === null
+        ? `${NAME}: restore failed for ${entry.sha}: ${error}\n`
+        : `${NAME}: restore failed for ${entry.sha}; recover with:\n${command}\n`);
     };
     try {
       deps.git(['-C', repo, 'stash', 'store', '-m', entry.subject, entry.sha]);
     } catch (e) {
-      fail(oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e)));
+      fail(oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e)), storeCommand(entry.subject, entry.sha));
       continue;
     }
     // `git stash store` of a sha already at stash@{0} exits 0 without writing an entry, so a
     // clean exit proves nothing: confirm the sha's count went up. A failed re-read cannot
-    // refute the exit code, so it counts as restored.
+    // refute the exit code, so it counts as restored. When the count did not go up and
+    // stash@{0} is the entry's own sha, the commit is already on top and there is nothing to
+    // recover; any other top (a sibling dropped a copy in between) keeps the recover command.
     let wrote = true;
+    let after = null;
     try {
-      wrote = (countBySha(readStack(deps.git, repo)).get(entry.sha) || 0) > (seen === null ? expected : seen);
+      after = readStack(deps.git, repo);
+      wrote = (countBySha(after).get(entry.sha) || 0) > (seen === null ? expected : seen);
     } catch { /* trust the exit code */ }
-    if (!wrote) { fail('same commit already at stash@{0} — git stash store wrote nothing'); continue; }
+    if (!wrote) {
+      if (after[0] && after[0].sha === entry.sha) fail('same commit still at stash@{0}; nothing to recover', null);
+      else fail('git stash store exited 0 but the entry is not back on the stack', storeCommand(entry.subject, entry.sha));
+      continue;
+    }
     outcomes[i] = { restored: true };
     handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
   }
@@ -285,9 +299,10 @@ function logItems(deps, o, body, groups) {
   if (present.length) items.push(auto(`${removedText(present)}; already back on the stack before restore, not stored again`, 'n/a (a detection, not a mutation)'));
   // formatEntry rejects FAILED, so these lines are composed by hand.
   for (const f of body.restoreFailed) {
+    const recover = f.command === null ? '' : ` — recover with: ${f.command}`;
     items.push({
       section: SECTION,
-      entry: `- FAILED ${hms(now)} — ${STEP}: ${name} removed stash entry ${f.sha} ${f.subject}; restore failed: ${f.error} — recover with: ${f.command}. Reversibility: n/a (write did not land).`,
+      entry: `- FAILED ${hms(now)} — ${STEP}: ${name} removed stash entry ${f.sha} ${f.subject}; restore failed: ${f.error}${recover}. Reversibility: n/a (write did not land).`,
     });
   }
   if (body.added.length) {
