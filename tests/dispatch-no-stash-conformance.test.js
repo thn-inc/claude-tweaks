@@ -342,6 +342,9 @@ const STASH_GUARD_FACTS = [
   outcomesFact('AC13.3 verdict stands', /verdict stands/),
   outcomesFact('AC13.4 at most one retry per review', /at most one retry per review/),
   outcomesFact('AC13.4 never a third', /never a third/),
+  // The handoff carry-over and hand-log apply to every dispatch, so they are pinned outside the reviewer branch.
+  outcomesFact('carry-over applies to every dispatch', /(^|\n\n)For every dispatch \(implementer, fix or reviewer\), every `restoreFailed` command/),
+  outcomesFact('the guard adds no new stop', /The guard adds no new stop/),
 ];
 
 // What the stanza must NOT restate (#4785): the reviewer-retry sequence, the dirty-tree note file and the
@@ -351,6 +354,7 @@ const NOT_IN_STANZA = [
   ['git status --porcelain', /git status --porcelain/],
   ['DONE_WITH_CONCERNS', /DONE_WITH_CONCERNS/],
   ['dirty-tree note file', /stash-guard-\{id\}-note\.txt/],
+  ['log-decision call', /log-decision\.js/],
   ['Stash guard (degraded)', /Stash guard \(degraded\)/],
 ];
 
@@ -449,7 +453,14 @@ test('AC2.1: the reviewer-retry steps live in the lazy-loaded sub-file, not the 
   // Go-red control: the moved text re-inlined into the stanza reports each restated item and nothing else.
   assert.deepStrictEqual(
     missingStashGuardFacts({ stanza: texts.stanza + STASH_GUARD_OUTCOMES, outcomes: texts.outcomes }),
-    NOT_IN_STANZA.map(([label]) => `restated in stanza: ${label}`),
+    [
+      'restated in stanza: verdict is void',
+      'restated in stanza: git status --porcelain',
+      'restated in stanza: DONE_WITH_CONCERNS',
+      'restated in stanza: dirty-tree note file',
+      'restated in stanza: log-decision call',
+      'restated in stanza: Stash guard (degraded)',
+    ],
   );
 });
 

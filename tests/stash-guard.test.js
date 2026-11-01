@@ -592,12 +592,14 @@ function documentedRestoreLineProblems(doc, emitted) {
   const list = /^[^(]*\(`\{who\}` is ([^)]*)\)/.exec(rest);
   if (!list) return [...problems, 'the documented {who} list was not found'];
   const forms = [...list[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
-  const formRe = (form) => new RegExp(`^${escapeRe(form).replace(/\\\{k\\\}/g, '2').replace(/\\\{role\\\}/g, '[a-z-]+')}$`);
-  for (const { who } of emitted) {
-    if (!forms.some((form) => formRe(form).test(who))) problems.push(`emitted {who} "${who}" is not in the documented {who} list`);
+  // {k} is 2 in every case; {role} is the label the case was dispatched with (none for the implementer case),
+  // so each documented form is compared as an exact string against the emitted who.
+  const expand = (form, role) => form.replace(/\{k\}/g, '2').replace(/\{role\}/g, role === undefined ? '{role}' : role);
+  for (const { who, role } of emitted) {
+    if (!forms.some((form) => expand(form, role) === who)) problems.push(`emitted {who} "${who}" is not in the documented {who} list`);
   }
   for (const form of forms) {
-    if (!emitted.some(({ who }) => formRe(form).test(who))) problems.push(`documented {who} form "${form}" is never emitted`);
+    if (!emitted.some(({ who, role }) => expand(form, role) === who)) problems.push(`documented {who} form "${form}" is never emitted`);
   }
   return problems;
 }
@@ -605,10 +607,10 @@ function documentedRestoreLineProblems(doc, emitted) {
 test('AC3.1: the restore line build/stash-guard.md documents is the line the CLI writes', () => {
   const doc = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'stash-guard.md'));
   const emitted = [];
-  for (const [args, who] of [
-    [['--label', 'fix-wave'], 'fix-wave dispatch'],
-    [['--task', '2', '--label', 'review'], 'review dispatch for task 2'],
-    [['--task', '2'], 'implementer for task 2'],
+  for (const [args, who, role] of [
+    [['--label', 'fix-wave'], 'fix-wave dispatch', 'fix-wave'],
+    [['--task', '2', '--label', 'review'], 'review dispatch for task 2', 'review'],
+    [['--task', '2'], 'implementer for task 2', undefined],
   ]) {
     const dir = fixture();
     const { root, runDir } = withRunDir();
@@ -618,7 +620,7 @@ test('AC3.1: the restore line build/stash-guard.md documents is the line the CLI
     const r = compare(dir, baseline, ['--restore', '--run', runDir, ...args], { mainRoot: root, cwd: () => root });
     assert.equal(r.code, 3, who);
     for (const line of decisionsOf(runDir).split('\n')) {
-      if (line.startsWith('- AUTO ')) emitted.push({ who, line: line.slice(2) });
+      if (line.startsWith('- AUTO ')) emitted.push({ who, role, line: line.slice(2) });
     }
   }
   assert.equal(emitted.length, 3);
