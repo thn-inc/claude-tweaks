@@ -340,8 +340,9 @@ stays best-effort and the claim read stays the authoritative hold check:
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
 - **6** (#4495) — the `claims-registry` branch was missing on origin and creating it was refused
-  (a permission error, a ruleset, `gh` absent — a network failure is exit 4 instead) (also under `--keep-going`): stdout carries `{branchMissing: {branch, reason}, released,
-  releaseFailed}`, stderr carries the remedy. Render:
+  — a permission error, a ruleset, `gh` absent; a network failure is exit 4 instead — also under
+  `--keep-going`: stdout carries `{branchMissing: {branch, reason}, released, releaseFailed}`,
+  stderr carries the remedy. Render:
 
   ```markdown
   ## Flow: Claims branch missing

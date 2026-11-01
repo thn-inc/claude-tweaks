@@ -7,7 +7,8 @@
 // invocation or missing dependency; 3 = contested, or in flight — a pr-opened
 // tombstone whose linked PR is still open, or a stale claim whose run marker
 // sits on an open same-repo PR (JSON on stdout — {contested:[...]} or
-// {inFlight:[{issue,link}]}); 4 = transient gh failure (a claims-registry bootstrap network failure or rate limit included); 5 = a claim write
+// {inFlight:[{issue,link}]}); 4 = transient gh failure (a claims-registry
+// bootstrap network failure or rate limit included); 5 = a claim write
 // reported success but the post-write read-back did not confirm it
 // ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
 // and creating it was refused ({branchMissing:{branch,reason}}, with or without

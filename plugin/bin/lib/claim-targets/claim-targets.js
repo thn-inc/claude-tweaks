@@ -52,7 +52,7 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 4 = transient gh failure (incl. a claims-registry bootstrap that hit a network failure or a rate limit)\n'
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
   + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
-  + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (permission, ruleset, gh absent) —\n'
+  + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (e.g. permission, ruleset, gh absent) —\n'
   + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
@@ -469,8 +469,8 @@ function run(argv, deps) {
   // contest. The branch is created at most once per run: a second sighting
   // after a bootstrap that reported success is transient (the remote has not
   // caught up yet), never a second bootstrap. A bootstrap that failed
-  // transiently (a transport failure or rate limit, nothing the remote
-  // decided) is remembered in `bootstrapTransientError`: a later target that
+  // transiently (a network failure or a rate limit — secondary, or primary
+  // reported as network-failure — a later run may succeed) is remembered in `bootstrapTransientError`: a later target that
   // finds the branch still missing reports that same name, not
   // `claims-branch-missing`. A refused bootstrap is run-level — every target
   // would hit it — so it exits 6 even under `--keep-going`, bypassing
@@ -496,6 +496,9 @@ function run(argv, deps) {
       bootstrapTransientError = b.failure === 'secondary-rate-limit'
         ? 'claims-branch-bootstrap-rate-limited'
         : 'claims-branch-bootstrap-network-failure';
+      // The envelope names the class; the underlying reason goes to stderr,
+      // once, on the attempt itself (later sightings reuse the remembered name).
+      deps.stderr(`claim-targets: ${CLAIMS_BRANCH} bootstrap failed transiently: ${oneLineReason(b.reason)} — re-run later\n`);
       return { code: stopOrSkip(issue, 'transient', 'transient', 4, { error: bootstrapTransientError }) };
     }
     if (!b.ok) {

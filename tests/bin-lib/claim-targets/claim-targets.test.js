@@ -2406,7 +2406,7 @@ test('(bm8) write site, second sighting after a bootstrap that reported success:
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
-test('AC4.1: (bm8b) write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
+test('(bm8b) AC4.1: write site, bootstrap POST hits a secondary rate limit: transient exit 4, never the exit-6 refusal', () => {
   const { ghApi, state } = makeBranchlessGhApi({
     postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
   });
@@ -2421,8 +2421,8 @@ test('AC4.1: (bm8b) write site, bootstrap POST hits a secondary rate limit: tran
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
-const { classifyGhApiError } = require('../../../plugin/bin/lib/issues/claim-store');
 const TRANSPORT_FAILURE = { stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT 140.82.112.6:443' };
+const TRANSIENT_PREFIX = 'claim-targets: claims-registry bootstrap failed transiently:';
 const POST_422_EXISTS = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
 
 test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status): exit 4 claims-branch-bootstrap-network-failure, never the exit-6 refusal', () => {
@@ -2435,6 +2435,10 @@ test('(bm10) AC2.1: bootstrap POST fails with a transport error (no HTTP status)
   assert.equal(code, 4, io.err.join(''));
   assert.equal(JSON.parse(io.out[0]).transient[0].error, 'claims-branch-bootstrap-network-failure');
   assert.ok(!io.err.join('').includes(REFUSAL_PREFIX), 'no exit-6 stderr line');
+  const stderr = io.err.join('');
+  assert.ok(stderr.startsWith(TRANSIENT_PREFIX), stderr);
+  assert.ok(stderr.includes('ETIMEDOUT'), stderr);
+  assert.equal(stderr.trimEnd().split('\n').length, 1, 'exactly one stderr line');
   assert.equal(state.refPosts, 1);
 });
 
@@ -2476,6 +2480,9 @@ test('(bm12) AC8.1: POST 422 + a permission-403 re-read: exit 6', () => {
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
   assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
   assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Reference already exists/);
 });
 
@@ -2483,7 +2490,7 @@ test('(bm13) AC11.1: POST 422 + a primary-rate-limit re-read: exit 4 claims-bran
   const e = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
   const { ghApi } = makeBranchlessGhApi({
     postResponse: POST_422_EXISTS,
-    branchesAfterPost: { stdout: null, ...classifyGhApiError(e), error: e.message },
+    branchesAfterPost: { stdout: null, ...claimStore.classifyGhApiError(e), error: e.message },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2524,6 +2531,9 @@ test('(bm15) AC12.1: bootstrap POST answers 409: exit 6', () => {
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
   assert.equal(code, 6, io.err.join(''));
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(REFUSAL_PREFIX), stderr);
+  assert.ok(stderr.endsWith(REFUSED_SUFFIX), stderr);
   assert.match(JSON.parse(io.out[0]).branchMissing.reason, /Git Repository is empty/);
 });
 
@@ -2540,6 +2550,25 @@ test('(bm16) AC10.1: two targets under --keep-going, first bootstrap fails with 
     { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-network-failure' },
   ]);
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
+  const stderr = io.err.join('');
+  assert.equal(stderr.split(TRANSIENT_PREFIX).length - 1, 1, 'the transient line is written once, not once per target');
+});
+
+test('(bm17) two targets under --keep-going, first bootstrap hits a secondary rate limit: both skipped as claims-branch-bootstrap-rate-limited', () => {
+  const { ghApi, state } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  assert.equal(code, 0, io.err.join(''));
+  assert.deepEqual(JSON.parse(io.out[0]).skipped, [
+    { issue: 720, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+    { issue: 721, reason: 'transient', error: 'claims-branch-bootstrap-rate-limited' },
+  ]);
+  assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
 test('(perm-read) a permission-403 claim read keeps its pre-split exit 4, now naming permission-denied', () => {
@@ -2547,6 +2576,21 @@ test('(perm-read) a permission-403 claim read keeps its pre-split exit 4, now na
     if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) {
       return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
     }
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 4, io.err.join(''));
+  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'permission-denied');
+});
+
+test('(perm-write) a permission-403 claim write keeps exit 4, naming permission-denied', () => {
+  const ghApi = (args) => {
+    if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) return readAbsent;
+    if (args[0] === '--method' && args[1] === 'PUT') return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
     throw new Error(`unexpected ghApi ${args.join(' ')}`);
   };
   const { gh } = makeGh({});

@@ -1112,6 +1112,16 @@ test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read 
   assert.deepEqual(w, { ok: false, failure: 'network-failure' });
 });
 
+test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read denied (403) → permission-denied, the lookup\'s own failure kind', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'permission-denied', status: 403 };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'permission-denied' });
+});
+
 test('writeClaimBlob: a rejected PUT whose re-read shows ANOTHER holder\'s blob never consults the branches endpoint', () => {
   const calls = [];
   const ghApi = (args) => {
@@ -1195,6 +1205,7 @@ test('ensureClaimsBranch: POST git/refs 422 from a ruleset while the branch is s
   assert.equal(r.ok, false);
   assert.match(r.reason, /Repository rule violations found/);
   assert.match(r.reason, /Cannot create ref/);
+  assert.doesNotMatch(r.reason, /branch re-read:/);
 });
 
 const POST_422 = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
@@ -1240,6 +1251,13 @@ test('ensureClaimsBranch: POST git/refs 422 + a gh-absent re-read is a refusal',
 
 test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 409 with failure null is a refusal, never a lost race', () => {
   const r = reread422({ stdout: null, failure: null, status: 409, error: 'HTTP 409: Conflict' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.match(r.reason, /Reference already exists/);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 422 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 422, error: 'HTTP 422: Unprocessable' });
   assert.equal(r.ok, false);
   assert.equal('transient' in r, false);
   assert.match(r.reason, /Reference already exists/);

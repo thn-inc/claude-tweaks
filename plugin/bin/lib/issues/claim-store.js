@@ -108,8 +108,9 @@ function ghErrorText(e) {
 
 // Pure: classify a caught execFileSync error into {failure, status} — split
 // out from defaultGhApi's catch block so the text-matching regexes below are
-// unit-testable without touching the real `gh` binary. `defaultGhApi` is the
-// only caller.
+// unit-testable without touching the real `gh` binary. Direct callers:
+// `defaultGhApi`, `release-claim/release.js`, `reconcile/preflight.js`,
+// `reconcile/pr-state.js`, `reconcile/release-merged.js`.
 //
 // `_shared/issue-claims.md`'s "The lock" step 1 documents a 404 as a normal
 // outcome ("file does not exist"), not an error — gh reports it as
@@ -187,7 +188,7 @@ function defaultGhApi(args) {
   }
 }
 
-// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'permission-denied'|'truncated' }
+// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'secondary-rate-limit'|'permission-denied'|'truncated' }
 // #3098: the Contents-API directory listing this used to make caps at 1000
 // entries (GitHub's own documented limit for that endpoint) — silently, with
 // no truncation signal at all. `claims-registry` long since passed that
@@ -525,9 +526,9 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // makes the PUT fail the same way. Only the branch lookup tells them
     // apart; an unanswerable one is transient, never a manufactured contest.
     if (!fresh.failure && fresh.absent) {
-      const exists = claimsBranchExists(deps.ghApi, repoSlug);
-      if (exists === false) return { ok: false, branchMissing: true, failure: null };
-      if (exists === null) return { ok: false, failure: 'network-failure' };
+      const lookup = readClaimsBranch(deps.ghApi, repoSlug);
+      if (lookup.exists === false) return { ok: false, branchMissing: true, failure: null };
+      if (lookup.exists === null) return { ok: false, failure: lookup.result.failure };
     }
     return { ok: false, conflict: true, failure: null };
   }
