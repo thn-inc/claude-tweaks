@@ -205,13 +205,14 @@ test('AC7.1, AC7.2: undetermined proceeds and writes one SKIP per blocker, shell
     () => assertUndeterminedSkip(mutate(text, /Text from git or a user paragraph/, 'logging paragraph')),
     { message: 'cites auto-decision-log.md\'s "Text from git or a user" paragraph' },
   );
-  // The citation moved out of the holder sentence into a sentence of its own: the
-  // section still carries it, so only the sentence-scoped pin can see the move.
-  const CITATION = ", written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph";
+  // The citation moved, lowercase text intact, out of the holder sentence into a
+  // sentence of its own: a whole-section pin still matches it, so only the
+  // sentence-scoped pin can see the move.
+  const CITATION = "written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph";
   const moved = mutate(text, /(`\{text-file\}` holds one line, [^\n]*?), written per `_shared\/auto-decision-log\.md`'s Text from git or a user paragraph([^\n]*?shell quoting\.)/,
-    (_, head, tail) => `${head}${tail} Written per \`_shared/auto-decision-log.md\`'s Text from git or a user paragraph.`);
-  assert.ok(outOfRunSection(moved).includes("Text from git or a user paragraph"), 'the moved copy still carries the citation');
-  assert.ok(!holderSentence(outOfRunSection(moved)).includes(CITATION.slice(2)), 'the moved copy holds the citation outside the holder sentence');
+    (_, head, tail) => `${head}${tail} It is ${CITATION}.`);
+  assert.ok(outOfRunSection(moved).includes(CITATION), 'the moved copy still carries the lowercase citation');
+  assert.ok(!holderSentence(outOfRunSection(moved)).includes(CITATION), 'the moved copy holds the citation outside the holder sentence');
   assert.throws(() => assertUndeterminedSkip(moved), { message: 'cites auto-decision-log.md\'s "Text from git or a user" paragraph' });
   assert.throws(
     () => assertUndeterminedSkip(mutate(text, /write the file, log it, then rewrite it for the next blocker/, 'one file per blocker')),

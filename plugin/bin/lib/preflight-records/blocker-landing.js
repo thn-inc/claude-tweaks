@@ -17,8 +17,8 @@
 //
 // A whole-query failure (a blocker that is not a positive safe integer, the
 // GraphQL call throwing, unparseable output, no data.repository, any
-// non-NOT_FOUND error, or a null/absent `b{n}` alias that no NOT_FOUND error
-// names) is never `undetermined`: fetchBlockerLanding returns
+// non-NOT_FOUND error, or a `b{n}` alias that is not a non-null, non-array
+// object and that no NOT_FOUND error names) is never `undetermined`: fetchBlockerLanding returns
 // `{results: null, error}` and the CLI stops the run — a malformed response
 // fails whole, as bin/lib/issues/native-dependencies.js's does (#723). The one
 // recovery is NOT_FOUND-only: `gh api graphql` exits 1 when any alias fails to
@@ -110,10 +110,13 @@ function compareArgs({ owner, repo, host, integrationBranch, sha }) {
   return args;
 }
 
-// blocker, its b{n} node (null/absent when unresolved), sha -> reachability
-// map -> one result. Rules apply in order.
+// A b{n} alias value that is an issue object: non-null, non-array.
+const isIssueNode = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
+// blocker, its b{n} node (anything else when a NOT_FOUND named it), sha ->
+// reachability map -> one result. Rules apply in order.
 function classifyBlocker(blocker, node, reach) {
-  if (!node) return result(blocker, 'undetermined', null, 'not-found');
+  if (!isIssueNode(node)) return result(blocker, 'undetermined', null, 'not-found');
   if (node.state === 'OPEN') return result(blocker, 'open', null, 'state');
   if (NOT_APPLICABLE_REASONS.has(node.stateReason)) return result(blocker, 'not-applicable', null, 'state-reason');
   const candidates = candidateCommits(node);
@@ -213,9 +216,9 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
   }
   const { repository } = parsed.data;
   // Every error left is a NOT_FOUND on a requested alias; only the aliases those
-  // errors name may be null or absent.
+  // errors name may be anything other than an issue object.
   const notFound = new Set((Array.isArray(parsed.errors) ? parsed.errors : []).map((e) => e.path[1]));
-  const missing = blockers.map((n) => `b${n}`).filter((a) => repository[a] == null && !notFound.has(a));
+  const missing = blockers.map((n) => `b${n}`).filter((a) => !isIssueNode(repository[a]) && !notFound.has(a));
   if (missing.length) {
     return { results: null, error: `GraphQL response has no node for ${missing.join(', ')} and no NOT_FOUND error naming it` };
   }
