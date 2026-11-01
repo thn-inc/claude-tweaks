@@ -75,7 +75,7 @@ const MERGE_MODE_FACTS = {
   'already-claim': /runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/,
   'already-marker': /a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/,
   'already-in-flight': /`in-flight` — another process holds the run's claim and is running them now: report `in-flight`, never `ran`/,
-  'already-json-line': /It prints one JSON line and exits 0 for every outcome, so route on the line, never the exit code/,
+  'already-json-line': /It exits 0 whenever it prints its one JSON line, whatever the outcome, so route on that line, never the exit code/,
   'already-clean-ran': /A clean `ran` entry — `closingLinks` `nothing-closed`, `closed`, `reopened`, `no-fixes-span`, `not-merged` or `no-pr`, no `step40Failed` and no `parentFailures` element — reports `ran`/,
   'already-in-flight-archived': /On an archived run \(the adopted path is under `archive\/`\) the holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again once the claim is past its 10-minute stale window \(`CLAIM_STALE_MS`\), in case that holder died/,
   'already-pending-close': /Merge mode skips the re-run half of that `pendingClose` action, because the re-run would print `already-done` here, so its `pendingClose` records go straight to the hand check: reopen one by hand if it closed/,
