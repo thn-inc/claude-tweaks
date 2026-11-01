@@ -169,7 +169,8 @@ function computeSpecWindows(manifest) {
       }
       phaseTimes.push(at);
     });
-    const first = startedAt !== null ? startedAt : (phaseTimes.length > 0 ? Math.min(...phaseTimes) : null);
+    const earliestPhase = phaseTimes.length > 0 ? Math.min(...phaseTimes) : null;
+    const first = startedAt ?? earliestPhase;
     const times = startedAt !== null ? [startedAt, ...phaseTimes] : phaseTimes;
     return { spec, first, times };
   });

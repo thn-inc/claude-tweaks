@@ -80,7 +80,11 @@ function manifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [1
   for (const [specId, status, phase, iso] of transitions) transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
   return { runDir, manifest: readManifest(runDir) };
 }
-const SEQUENTIAL = [[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', T1], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
+function checkStories(fx, manifest) {
+  return checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+}
+const SPEC_10_DONE = [[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z']];
+const SEQUENTIAL = [...SPEC_10_DONE, [11, 'running', 'build', T1], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
 // A parallel wave: both members move to running, then spec 10 keeps transitioning after spec 11 started.
 const INTERLEAVED = [[10, 'running', 'build', T0], [11, 'running', 'build', T1], [10, 'running', 'test', '2026-01-01T12:30:00.000Z'], [10, 'complete', 'wrap-up', '2026-01-01T13:00:00.000Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
 const STORY = 'stories/x-10.yaml';
@@ -972,7 +976,7 @@ test('AC1.1, AC1.2, AC1.3: untrailered self-edit inside spec 10\'s window is cle
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.deepStrictEqual(result, { clean: true, overwrites: [] });
 });
 
@@ -984,7 +988,7 @@ test('window attribution reads the author date, not the committer date', () => {
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z', '2026-01-01T12:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.deepStrictEqual(result, { clean: true, overwrites: [] });
 });
 
@@ -993,7 +997,7 @@ test('AC2.1, AC2.2: the modifying commit in spec 11\'s window is still one overw
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.strictEqual(result.overwrites.length, 1);
   assert.strictEqual(result.overwrites[0].path, STORY);
@@ -1024,7 +1028,7 @@ test('AC4.1: a refs #N trailer wins over a different spec\'s manifest window', (
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Fix locator (refs #10)', '2026-01-01T12:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
 });
 
@@ -1033,7 +1037,7 @@ test('AC5.1: an author date before every spec\'s first transition leaves that co
   write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T09:00:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T10:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.strictEqual(result.overwrites.length, 1);
   const { reason } = result.overwrites[0];
@@ -1046,8 +1050,8 @@ test('Q2/Q4: a manifest naming a failed spec keeps refs-only behavior for the AC
   const fx = repo();
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
-  const { manifest } = manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', T1], [11, 'failed', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const { manifest } = manifestRun([...SPEC_10_DONE, [11, 'running', 'build', T1], [11, 'failed', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec #11 is failed)'), result.overwrites[0].reason);
 });
@@ -1059,7 +1063,7 @@ test('Q6: an interleaved (parallel-wave) manifest keeps refs-only behavior for t
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
   const { manifest } = manifestRun(INTERLEAVED);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec transitions interleave'), result.overwrites[0].reason);
 });
@@ -1070,8 +1074,8 @@ test('Q10: a modifying commit authored in the same second as spec 11\'s first tr
   const fx = repo();
   write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T11:00:00Z');
   write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:00:00Z');
-  const { manifest } = manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', '2026-01-01T12:00:00.400Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const { manifest } = manifestRun([...SPEC_10_DONE, [11, 'running', 'build', '2026-01-01T12:00:00.400Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.strictEqual(result.overwrites.length, 1);
   const { reason } = result.overwrites[0];
@@ -1204,7 +1208,7 @@ test('AC4.1 (disagreeing direction): a refs #11 trailer wins over spec 10\'s win
   write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
   write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Fix locator (refs #11)', '2026-01-01T11:30:00Z');
   const { manifest } = manifestRun(SEQUENTIAL);
-  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  const result = checkStories(fx, manifest);
   assert.strictEqual(result.clean, false);
   assert.strictEqual(result.overwrites.length, 1);
   assert.strictEqual(result.overwrites[0].commit, modifySha);
