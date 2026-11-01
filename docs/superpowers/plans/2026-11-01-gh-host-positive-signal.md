@@ -12,10 +12,10 @@
 
 ## Global Constraints
 
-- With only `GH_ENTERPRISE_TOKEN` set and origin `https://git.corp.invalid/o/r.git`, `ghOptions` injects no `GH_HOST`.
-- A `hosts.yml` GHE host and a `*.ghe.com` origin still get `GH_HOST` injected.
-- `https://gitlab.com./o/r.git`, `git+ssh://alias/o/r` and `ssh+git://alias/o/r` inject no `GH_HOST`.
-- `npm test` passes.
+- AC1.1: With only `GH_ENTERPRISE_TOKEN` set and origin `https://git.corp.invalid/o/r.git`, `ghOptions` injects no `GH_HOST` — Task 1's forge-test URL loop.
+- AC2.1: A `hosts.yml` GHE host and a `*.ghe.com` origin still get `GH_HOST` injected — the existing AC1.1-seam and AC5.2 hosts.yml tests, unchanged, plus the normalization test.
+- AC3.1: `https://gitlab.com./o/r.git`, `git+ssh://alias/o/r` and `ssh+git://alias/o/r` inject no `GH_HOST` — Task 1's bypass-spellings test.
+- AC4.1: `npm test` passes — Common Step 5's verification run.
 - An injected `GH_HOST` value is the normalized host: lower-case, no trailing dot.
 
 ## Review Focus
@@ -57,7 +57,7 @@
   - `resolveGhHost`, `ghOptions` and `explicitRepoGhHost` keep their signatures.
   - `module.exports` is unchanged. `isSshRemote`, `NON_GITHUB_FORGES` and `isNonGithubForge` were never exported.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Write the failing tests (AC1.1, AC2.1, AC3.1)**
 
 Changes to existing tests in `tests/bin-lib/repo-resolve.test.js`:
 
@@ -102,7 +102,7 @@ Expected: FAIL. The token-alone assertions return an injected copy, not `o`. The
 - Delete `isSshRemote`, `NON_GITHUB_FORGES` and `isNonGithubForge`, with their comments.
 - Update the header comment (lines 3-7) so the known-host list reads `*.ghe.com or a gh hosts.yml key`. Add one sentence: an enterprise token alone admits nothing, because gh sends it to whatever `GH_HOST` names (#4854).
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [ ] **Step 4: Run tests to verify they pass (AC1.1, AC2.1, AC3.1; AC4.1's full `npm test` runs centrally at build Common Step 5)**
 
 Run: `node --test tests/bin-lib/repo-resolve.test.js tests/gh-host-seam-conformance.test.js`
 Expected: PASS, 0 failures.
