@@ -29,12 +29,15 @@ Scope keywords: findingKey, lineKeys, parseTiebreakLine, TIEBREAK_CONFIRMED_RE, 
 3. A re-staged space-path finding (#4583): STAGED, verdict, then STAGED again for `a dir/x.ts:3`. The second STAGED line stays open (Task 2).
 4. A contested pair whose Finding A sits at a space-holding path settles its `review-contested-*` file through its own console verdict, and a sibling space path's contested file stays keep-staged (Task 2).
 5. Verdicts at both `a dir/x.ts:3` and plain `dir/x.ts:3` (same lens): each STAGED line takes its own verdict (longest named candidate wins) (Task 2).
+6. A wrapped STAGED citation `[a dir/x.ts:3]` (and `(a dir/x.ts:3)`) settles on a verdict for `a dir/x.ts:3`, while `[b dir/x.ts:3]` stays keep-staged (Task 2).
+7. A re-staged contested partner at `c dir/y.ts:5` with its own earlier console verdict takes the pair's later verdict through inheritance. Its outdated console verdict is superseded, with no second item, just as the same case settles on a space-free path (Task 2).
 
 ---
 
 ### Task 1: Tiebreak evidence at a space-holding path
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/tiebreak.js` (`parseEvidence` ~96, `parseTiebreakReply` ~148, `resolveTiebreak` ~262)
@@ -104,11 +107,12 @@ Claude-Session: https://claude.ai/code/session_01X7gPF9KCviqiMJfu1bzMPu"
 **Interfaces:**
 - Consumes: Task 1's `resolveTiebreak` producing `drop`/`confirmed` for a space-holding path (through `tbVerdict`).
 - Produces, inside `resolve.js` only (no new exports):
-  - `parseTiebreakLine(line).key` is `` `${lens}|${path}:${line}` `` from the parsed groups.
+  - `parseTiebreakLine(line).key` is `` `${lens}|${path}:${line}` ``. `path` and `line` come from the parsed groups. `lens` is the parsed lens run through `findingKey`'s own class (`/^[A-Za-z0-9_-]+/` on the captured text), so a quoted lens such as `"3a b"` keys `3a`, as both sides do today (spec Plan Review Clarifications). The returned object's `lens` field stays the full captured text.
   - `TIEBREAK_CONFIRMED_RE`'s path group accepts spaces, anchored on the ` confirmed by tiebreak:{id}. Confirmed.` tail.
-  - `locationCandidates(line, match, lens) → string[]`: candidate keys for one `FINDING_LOC_RE` match, shortest first. `candidates[0]` is today's key. Each longer candidate starts right after a whitespace character to the left of the match. Scanning left stops at `"`, `—`, `:` or the line start.
+  - `locationCandidates(line, match, lens) → string[]`: candidate keys for one `FINDING_LOC_RE` match, shortest first. `candidates[0]` is today's key. In the spec's words, "each longer one extends left across a space (or any other character outside the `FINDING_PATH` class) to the start of the previous run. Extension stops at a `"`, an em dash `—`, or the line start." So a candidate may start right after any character outside the `FINDING_PATH` character class (`[A-Za-z0-9_./@+~%$-]`), and `[a dir/x.ts:3]` yields `a dir/x.ts`.
   - `lineKeys(line, known = new Set()) → string[]`: each location resolves to its longest candidate in `known`, else `candidates[0]`. The coincidence branch finds its second location with the same rule, after ` / `.
   - `tiebreakModel` builds `known` from `settledByKey`'s keys once its first pass ends. It passes `known` to every later `lineKeys` call and returns `keysOf: (line) => lineKeys(line, known)`. `coordinationItems` uses `model.keysOf` in place of its two bare `lineKeys(line)` calls.
+  - Partner inheritance (#4583, ~623-631): for each `contestedPositionKeys` bullet, resolve the bullet's shortest key to its longest candidate in `known` (the bullet line goes through `locationCandidates` like a STAGED line). Read `own = settledByKey.get(resolved)` and `stagedAt = latestStaged.get(resolved)`, and keep writing the inherited verdict at the bullet's shortest key (spec Plan Review Clarifications).
   - Consumer classification: every `lineKeys` caller (`naming`, `latestStaged`, `coordinationItems`' `settledAfter` and `contested` lookups) is pick-one per location. Every caller needs the resolved key; none needs the candidate list.
 
 - [ ] **Step 0: Real-input baseline (before any edit).** Write a scratch script outside the repo (the session scratchpad). It runs `findingItems({ runDir, deps })` from `plugin/bin/lib/console/resolve.js` over every directory holding a `decisions.md` under `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/` (recursively, including `archive/`), with `deps = { readFile: (p) => fs.readFileSync(p, 'utf8'), readdir: (p) => { try { return fs.readdirSync(p); } catch { return []; } } }`. It writes `{runDir: items.map(i => [i.id, i.section, i.resolution])}` as JSON to `before.json`. Record the run-dir count.
@@ -120,7 +124,8 @@ test('AC1.1 AC1.2: a dropped verdict for a dir/x.ts:3 settles that line only; b 
   const a = tbFinding({ lens: '3b', path: 'a dir/x.ts', line: 3 });
   const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
   const items = findings([tbStaged(a), tbStaged(b), tbVerdict(a, { verdict: 'refuted' }).entry].join('\n'));
-  assert.deepStrictEqual(items.map((i) => [i.id.includes('b dir/x.ts'), i.resolution]), [[true, 'keep-staged']]);
+  // A coordination id keeps only line.slice(2, 60), which cuts before `.ts`.
+  assert.deepStrictEqual(items.map((i) => [i.id.includes('finding b dir/x.'), i.resolution]), [[true, 'keep-staged']]);
 });
 test('AC2.1: a lone STAGED line at my dir/x.ts:3 is settled by its own dropped, digested, console and confirmed verdict (#4632)', () => {
   // dropped and digested and confirmed: no item left; console: exactly the tiebreak:{id} item.
@@ -143,15 +148,20 @@ test('AC6.1: a space-free verdict path keys byte-identically to the FINDING_PATH
       assert.strictEqual(parseTiebreakLine(entry).key, `3a|${m[1]}:${m[2]}`, `${path} ${verdict}`);
     }
   }
+  // Lens class: a quoted lens "3a b" keys `3a` on the verdict side, as findingKey does on the STAGED side.
+  const odd = tbFinding({ lens: '3a b', path: 'src/a.js', line: 7 });
+  const oddVerdict = tbVerdict(odd, { verdict: 'refuted' }).entry;
+  assert.strictEqual(parseTiebreakLine(oddVerdict).key, '3a|src/a.js:7');
+  assert.deepStrictEqual(findings([tbStaged(odd), oddVerdict].join('\n')), []);
 });
 ```
 
-Add one test per Review Focus line (1, 3, 4, 5), named `Review Focus N: … (#4632)`. Assert resolutions per item with `findings(...)`: a coincidence line at `a dir/x.ts:3 / a dir/x.ts:5` stays `keep-staged` when only the `:3` verdict exists, and settles once both exist. Import `FINDING_PATH` from `MOD` alongside the existing names. AC5.1 (every existing case passes unchanged) is covered by Step 4's full-file run, not a new test.
+Add one test per Review Focus line (1, 3, 4, 5, 6, 7), named `Review Focus N: … (#4632)`. Assert resolutions per item with `findings(...)`: a coincidence line at `a dir/x.ts:3 / a dir/x.ts:5` stays `keep-staged` when only the `:3` verdict exists, and settles once both exist. Import `FINDING_PATH` from `MOD` alongside the existing names. AC5.1 (every existing case passes unchanged) is covered by Step 4's full-file run, not a new test.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/console/resolve.test.js`
-Expected: FAIL after Step 1. AC1, AC2's dropped/confirmed/console cases, AC3, and Review Focus 1, 4 and 5 fail. AC4.1 and AC6.1 pass at base, since both pin unchanged behavior; record that they pass rather than claiming red.
+Expected: FAIL after Step 1. AC1, AC3 and Review Focus 1, 4, 5, 6 and 7 fail. AC2 passes here, because Task 1 already let a lone space path settle through today's truncated keys on both sides; its red proof is against `main` (Step 5b). AC4.1, AC5.1 and AC6.1 are regression pins (spec Plan Review Clarifications); record that they pass at base rather than claiming red.
 
 - [ ] **Step 3: Implement** the Interfaces above in `resolve.js`. Update the comment above `findingKey` (~740) and the two comments named in Files to describe the whole-path verdict key and the longest-named-candidate rule.
 
@@ -161,6 +171,8 @@ Run: `node --test tests/bin-lib/console/resolve.test.js tests/bin-lib/tiebreak.t
 Expected: PASS, every test (AC5.1).
 
 - [ ] **Step 5: Real-input comparison.** Re-run Step 0's script into `after.json` and diff it against `before.json`. Expected: identical for every run dir unless that run's `decisions.md` holds a space-holding finding path. Name every differing run dir and its changed items in the task report, or state "0 run dirs differ of {count}".
+
+- [ ] **Step 5b: Red proof against `main` (AC1, AC2, AC3).** In a scratch worktree (`git worktree add {scratch} $(git merge-base HEAD origin/main)`, never an in-place revert here), copy in this branch's `tests/bin-lib/console/resolve.test.js` and `tests/bin-lib/tiebreak.test.js`. Run `node --test` on both there and quote the failing test names: AC1.1, AC2.1, AC3.1 and Task 1's evidence test must each fail. Then remove the scratch worktree with `git worktree remove {scratch}`.
 
 - [ ] **Step 6: Commit**
 
