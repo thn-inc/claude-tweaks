@@ -1214,6 +1214,7 @@ const HOOKS_JS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.
 const LEFTOVER = `${ROOT}/2026-10-31T115900-record-4589`;
 const staleLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to run ${path.basename(dir)}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
 const concurrentLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${N} once that run ends`;
+const ownSessionLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)} owned by this same session — if another dispatch resume in this session is still running, stop it, then run /claude-tweaks:dispatch resume #${N}; if an earlier resume in this session crashed and left that run open, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
 
 test('--bound-run: a leftover run bound there whose owner is provably dead -> exit 3 stale-bound-run naming close-run on that dir', () => {
   for (const [label, state, alive] of [
@@ -1248,17 +1249,17 @@ test('--bound-run: a bound run whose owner is live, unknown or on another host i
   }
 });
 
-test('a bound run owned by this same session id is never proven dead: concurrent-resume with the live line, in both modes (#965)', () => {
+test('a bound run owned by this same session id is never proven dead: concurrent-resume with the own-session line naming close-run, in both modes (#965)', () => {
   // Its pid is gone and its block names this session: the prior-run ladder would read it as dead.
   const state = { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } };
   const bound = makeEnv({ alive: () => false });
   bound.cfg.runDirs = [{ dir: LEFTOVER, state }];
-  assert.deepStrictEqual(exec(bound, BOUND).json, { concurrent: true, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
+  assert.deepStrictEqual(exec(bound, BOUND).json, { concurrent: true, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
   const verdict = makeEnv({ alive: () => false });
   verdict.cfg.runDirs = [{ dir: LEFTOVER, state }];
   const r = exec(verdict);
   assert.equal(r.code, 3);
-  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
 });
 
 // ---- the same run-dir scan in verdict mode (Step 2, before Step 3 archives anything) ----
