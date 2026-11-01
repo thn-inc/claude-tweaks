@@ -30,6 +30,10 @@ Scope keywords: KNOWN_FLAGS, HELP_FLAGS, firstUnknownFlag, flag-strict
 
 **Retirement sweep:** Task 1 deletes `HELP_FLAGS`. `git grep -n HELP_FLAGS` at 9685e20af hits only `plugin/bin/hooks.js` (lines 160, 166, 172, 1930, 1941) and an archived run's `work/4773-spec.md`, which is history and stays. Task 3 rewrites the three comment mentions; Task 1 removes the constant and its one reader. No test pins the rewritten prose (checked: `git grep -F` over `tests/ plugin/ docs/ .claude/` for each rewritten phrase).
 
+Waived AC3.2: a fact about the base commit, not this change — the spec's own probe already showed `  reconcile: [` absent on origin/main at 79f3c3c84, and it is still absent at 9685e20af (`git grep -n -F -e "  reconcile: [" -- plugin/bin/hooks.js` exits 1).
+
+**Check B scope review (plan-audit at c26ae8f13, scope-creep policy `add-to-plan`):** `tests/hooks-resolve-console.test.js` is added to Task 1's Step 4 run list, since it spawns a `KNOWN_FLAGS` verb. The other hits need no change: `tests/hooks-dispatcher.test.js` is already in that run list. `docs/journeys/recover-from-a-mistyped-hooks-js-verb-4181.md` belongs to `/claude-tweaks:build` Common Step 6. The two `docs/superpowers/plans/2026-10-31-*.md` files are history. `plugin/skills/wrap-up/cleanup-procedures-execution.md:276` cites the `teardown-run` removal comment, which this plan leaves in place.
+
 **AC evidence:** AC 2 is verified by Task 2's audit. Its table goes in Task 2's report file and is quoted in PR #4822's body, so the evidence outlives the scratch run.
 
 ## Review Focus
@@ -63,7 +67,7 @@ Scope keywords: KNOWN_FLAGS, HELP_FLAGS, firstUnknownFlag, flag-strict
 - [ ] **Step 1: Write the failing tests** in `tests/hooks-js-flag-strict.test.js`, reusing `tests/archive-run-verb.test.js`'s `git`/`runHook`/`HOOK_SANDBOX` helper shape (`PIPELINE_RUN_DIR: ''` in env, never the runner's cwd):
   - `'#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else'`: `assert.deepStrictEqual(Object.keys(KNOWN_FLAGS).sort(), Object.keys(VERBS).sort())` (via `require('../plugin/bin/hooks.js')`). Also pin spec AC 3's line shape: `assert.ok(fs.readFileSync(HOOKS, 'utf8').includes('\n  reconcile: ['))`.
   - `'#4777: every VERBS verb refuses an undeclared flag with its usage line'`: for each verb, `runHook([verb, '--definitely-not-a-flag'])` in `HOOK_SANDBOX` → `code === 0` and `stdout === \`claude-tweaks: usage: ${USAGE[verb]}\n\``.
-  - `'#4777 AC1.1-AC1.3: reconcile --dryrun prints the reconcile usage line and runs no check'`: in a temp git repo seeded with a `clean`-status run dir under `.claude-tweaks/pipelines/` (the `runDirFixture('clean')` shape), for both `['reconcile', '--dryrun']` and `['reconcile', '--json', '--dryrun']`: stdout is exactly `claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n`, exit 0, the run dir still exists, nothing exists under `.claude-tweaks/pipelines/archive/`, `git rev-parse HEAD` is unchanged, and `.claude-tweaks/reconcile-cache.json` was not created.
+  - `'#4777 AC1.1 AC1.2: reconcile --dryrun prints the reconcile usage line and runs no check'`: in a temp git repo seeded with a `clean`-status run dir under `.claude-tweaks/pipelines/` (the `runDirFixture('clean')` shape), for both `['reconcile', '--dryrun']` and `['reconcile', '--json', '--dryrun']`: stdout is exactly `claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n`, exit 0, the run dir still exists, nothing exists under `.claude-tweaks/pipelines/archive/`, `git rev-parse HEAD` is unchanged, and `.claude-tweaks/reconcile-cache.json` was not created.
   - `'#4777: adopt-run-dir refuses an undeclared flag before adopting'`: both orders `['adopt-run-dir', '--run', runDir, '--worktree', wt, '--bogus']` and `['adopt-run-dir', '--bogus', '--run', runDir, '--worktree', wt]` (wt = a `git worktree add` of the fixture repo) → exact usage stdout, exit 0, and the worktree holds no `.claude-tweaks/pipelines/{runId}` copy.
   - `'#4777: sweep-shadow refuses an undeclared flag before sweeping'`: both orders, with a shadow file planted the way `tests/bin-lib/hooks/sweep-shadow.test.js` plants one (reuse its fixture shape) → exact usage stdout, exit 0, shadow file still present.
   - `'#4777: resolve-run-dir --create refuses an undeclared flag and mints nothing'`: both orders `['resolve-run-dir', '--spec-slug', 'x', '--create', '--bogus']` / `['resolve-run-dir', '--bogus', '--spec-slug', 'x', '--create']` in a fresh git repo → exact usage stdout, exit 0, `.claude-tweaks/pipelines` absent or empty.
@@ -79,7 +83,7 @@ Expected: FAIL — `KNOWN_FLAGS` is undefined (not exported), and `reconcile --d
 
 - [ ] **Step 4: Run tests to verify they pass, plus the suites that pin the guard**
 
-Run: `node --test tests/hooks-js-flag-strict.test.js tests/hooks-help-guard.test.js tests/hooks-dispatcher.test.js tests/archive-run-verb.test.js tests/hooks-adopt-run-dir.test.js tests/reconcile.test.js tests/bin-lib/hooks/reconcile-summary.test.js`
+Run: `node --test tests/hooks-js-flag-strict.test.js tests/hooks-help-guard.test.js tests/hooks-dispatcher.test.js tests/archive-run-verb.test.js tests/hooks-adopt-run-dir.test.js tests/hooks-resolve-console.test.js tests/reconcile.test.js tests/bin-lib/hooks/reconcile-summary.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 5: Prove discrimination.** Temporarily delete the `reconcile` line from `KNOWN_FLAGS`, re-run `node --test tests/hooks-js-flag-strict.test.js` and confirm the reconcile test and the registration test fail. Restore the line and confirm it passes. Report both outputs.
@@ -101,7 +105,7 @@ git commit -m "Make every hooks.js verb refuse an undeclared flag — KNOWN_FLAG
 
 - [ ] **Step 1: Write the check.** List every invocation of the ten newly strict verbs across `plugin/` and `tests/`. Use `git grep -n -E 'hooks\.js"? +(reconcile|reconcile-summary|reconcile-background|resolve-run-dir|sweep-shadow|adopt-run-dir|check-resume-freshness|check-staged-inventory|check-session-residue|check-sibling-sessions)\b' -- plugin/ tests/` for prose and shell forms. Add an array-form search for spawns: `git grep -n -E "'(reconcile|reconcile-summary|reconcile-background|resolve-run-dir|sweep-shadow|adopt-run-dir|check-[a-z-]+)'" -- plugin/bin tests/`.
 
-- [ ] **Step 2: Run it and expect undeclared flags to be absent**
+- [ ] **Step 2: Run the audit verification (AC2.1) and expect undeclared flags to be absent**
 
 Run: the two greps above, then for each hit compare its `--*` tokens against Task 1's `KNOWN_FLAGS` entry.
 Expected: every flag is declared. The controller's pre-audit at 9685e20af found only these flags in `plugin/`: `--checks`, `--dry-run`, `--json`, `--mcp-reachable`, `--spec-slug`, `--standalone`, `--mode`, `--create`, `--root-only`, `--archived`, `--run`, `--worktree`, `--record`. Background-spawn calls `reconcile-background` bare. Check C note: this step has no `Expected: FAIL`, because it is an audit, not a test.
