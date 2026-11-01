@@ -1369,3 +1369,24 @@ test('#3378: checkTaskMarkers ignores an unknown value inside a fenced code bloc
   const text = '### Task 1: A\n```\n**Role:** trivial\n```\n';
   assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
 });
+
+test('AC1.1 (#4640): checkTaskMarkers reports no finding for an annotated closed-set value', () => {
+  const text = '### Task 1: A\n**Role:** judgment (why)\n**Review risk:** high — why\n';
+  assert.deepStrictEqual(checkTaskMarkers(text), { ok: true, findings: [] });
+});
+
+test('AC4.1 (#4640): checkTaskMarkers flags only the unrecognized field, carrying the full raw value', () => {
+  const text = [
+    '### Task 1: A', '**Role:** judgment (why)', '**Review risk:** medium (reason)', '',
+    '### Task 2: B', '**Review risk:** high-ish', '',
+    '### Task 3: C', '**Review risk:**',
+  ].join('\n');
+  assert.deepStrictEqual(checkTaskMarkers(text), {
+    ok: false,
+    findings: [
+      { taskIndex: 1, title: 'A', field: 'Review risk', value: 'medium (reason)' },
+      { taskIndex: 2, title: 'B', field: 'Review risk', value: 'high-ish' },
+      { taskIndex: 3, title: 'C', field: 'Review risk', value: '' },
+    ],
+  });
+});
