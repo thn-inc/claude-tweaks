@@ -76,6 +76,7 @@ const TEMPLATE = extractTemplate(STEP14);
 function assertDefaultRender(render) {
   const lost = 'default render lost a real script line';
   const lines = render.split('\n');
+  const lostMsg = (what) => `${lost}: ${what}`;
   for (const needle of [
     'claude plugin marketplace add thn-inc/claude-tweaks-marketplace',
     'claude plugin marketplace update claude-tweaks-marketplace',
@@ -84,9 +85,9 @@ function assertDefaultRender(render) {
     '# (claude-tweaks #129:',
     '# (/stories, /visual-review,',
   ]) {
-    assert.ok(render.includes(needle), lost);
+    assert.ok(render.includes(needle), lostMsg(needle));
   }
-  assert.ok(lines.includes('PLUGIN_SPECS="claude-tweaks@claude-tweaks-marketplace superpowers@claude-plugins-official"'), lost);
+  assert.ok(lines.includes('PLUGIN_SPECS="claude-tweaks@claude-tweaks-marketplace superpowers@claude-plugins-official"'), lostMsg('PLUGIN_SPECS line'));
   assert.ok(!lines.some((l) => l.startsWith('# (authoring:')), 'default render still carries an authoring note');
   assert.ok(!lines.some((l) => l.startsWith('# a matching') || l.startsWith('# enabledPlugins lists them')), 'default render kept a wrapped authoring-note continuation');
 }
@@ -113,9 +114,14 @@ test('template extraction survives a CRLF checkout', () => {
 });
 
 test('Review Focus (render keeps real comments) go-red', () => {
-  const copy = TEMPLATE.replace('# (claude-tweaks #129:', '# (authoring: claude-tweaks #129:');
+  // The mutated note is one complete `# (authoring: …)` line, so it closes on its own line and
+  // swallows nothing after it: the only thing the render loses is the pinned needle.
+  const realLine = '# (claude-tweaks #129: a Routine ran a build predating a shipped fix for days, reporting the';
+  assert.ok(TEMPLATE.includes(realLine), 'the #129 comment line moved; update this control');
+  const copy = TEMPLATE.replace(realLine, '# (authoring: a Routine ran a build predating a shipped fix for days)');
   assert.notEqual(copy, TEMPLATE);
-  assert.throws(() => assertDefaultRender(renderTemplate(copy, { optedOut: false })), { message: /default render lost a real script line/ });
+  const exact = 'default render lost a real script line: # (claude-tweaks #129:';
+  assert.throws(() => assertDefaultRender(renderTemplate(copy, { optedOut: false })), (err) => err.message === exact);
 });
 
 test('AC2.1/AC2.2: opted-out render has no claude-tweaks-marketplace line', () => {

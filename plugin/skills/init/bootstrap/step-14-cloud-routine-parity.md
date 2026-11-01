@@ -27,7 +27,7 @@ That second half matters because the two are genuinely independent: a routine le
 
 When there are zero mirror candidates, this still renders (never silently auto-applied — matches Step 8's "always prompt before wiring a settings file" precedent), with Option 1's description reduced to the two hard deps only. On "Override specific items," follow up with the two candidates that are always-included stated plainly, then a `multiSelect: true` `AskUserQuestion` listing only the mirror candidates for the user to pick from. Under `declare-claude-tweaks: false`, every "claude-tweaks + superpowers" and "claude-tweaks and superpowers" phrase in the options above, and "the two hard deps" and "the two candidates that are always-included" in this paragraph, read as superpowers alone.
 
-**Apply.** On any outcome except "Skip entirely": merge the project's `.claude/settings.json` — preserve every existing key untouched (same non-destructive merge Step 8 uses for `~/.claude/settings.json`'s `statusLine` key), add `claude-tweaks@claude-tweaks-marketplace: true` and `superpowers@claude-plugins-official: true` under `enabledPlugins`, plus one `true` entry per selected mirror candidate. Under `declare-claude-tweaks: false`, add only `superpowers@claude-plugins-official: true` (plus the selected mirrors) and skip the `claude-tweaks-marketplace` entry below — never add or re-add either claude-tweaks entry. An entry the project already carries stays as it is, per the non-destructive merge; removing it is the maintainer's edit, not this step's. For `extraKnownMarketplaces`: always ensure a `claude-tweaks-marketplace` entry —
+**Apply.** On any outcome except "Skip entirely": merge the project's `.claude/settings.json` — preserve every existing key untouched (same non-destructive merge Step 8 uses for `~/.claude/settings.json`'s `statusLine` key), add `claude-tweaks@claude-tweaks-marketplace: true` and `superpowers@claude-plugins-official: true` under `enabledPlugins`, plus one `true` entry per selected mirror candidate. Under `declare-claude-tweaks: false`, add only `superpowers@claude-plugins-official: true` (plus the selected mirrors) and skip the `claude-tweaks-marketplace` entry below — never add or re-add either claude-tweaks entry. An entry the project already carries stays as it is, per the non-destructive merge; removing it is the maintainer's edit, not this step's. For `extraKnownMarketplaces`: always (unless opted out above) ensure a `claude-tweaks-marketplace` entry —
 
 ```json
 "claude-tweaks-marketplace": {
@@ -114,7 +114,8 @@ done
 # directory a session would actually load, compare it against the catalog, and repair drift.
 # Session-scoped destination, reimplemented inline rather than delegating to
 # bin/lib/session-tmp.js (_shared/session-tmp-root.md's mechanism) — this generated script's
-# whole job is bootstrapping claude-tweaks onto a sandbox that doesn't have it yet, so it can
+# whole job is bootstrapping the declared plugins (claude-tweaks among them unless
+# declare-claude-tweaks is false) onto a sandbox that doesn't have them yet, so it can
 # never assume ${CLAUDE_PLUGIN_ROOT} resolves to an installed payload at the point this line
 # runs. The collision this convention exists to prevent doesn't apply here either way: each
 # cloud sandbox this script provisions is its own isolated container with its own /tmp, so
