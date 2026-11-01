@@ -1384,6 +1384,166 @@ test('isFreshForgeDegradeMemo: fresh only for a finite past timestamp younger th
   for (const bad of [undefined, null, '1000', NaN, Infinity, {}]) assert.strictEqual(f(bad, 1000, 60000), false);
 });
 
+// --- #4830: opt-in run-scoped degrade memo in resolveRunPinnedIntegrationModel ---
+
+const MEMO_T = 1700000000000;
+const MEMO_TTL = 60000;
+const memoRunDir = () => fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-run-'));
+const memoState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+
+test('#4830 memo: a degrade stamps the memo; a second call inside the TTL spawns no gh and reports a memoized degrade', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const opts = (now) => ({ timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, opts(() => MEMO_T)), 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T);
+      assert.strictEqual(seen[0].reason, 'timeout');
+      assert.strictEqual(pre.resolveRunPinnedIntegrationModel(repo, run, opts(() => MEMO_T + 59999)), 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.deepStrictEqual(seen[1], { memoized: true, degradedAt: MEMO_T });
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: an expired memo re-probes and refreshes the stamp', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T + MEMO_TTL });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T + MEMO_TTL);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a future memo and a numeric-string memo both probe, then re-stamp', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const opts = { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T };
+      const futureRun = memoRunDir();
+      fs.writeFileSync(path.join(futureRun, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T + 1000 }));
+      pre.resolveRunPinnedIntegrationModel(repo, futureRun, opts);
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(futureRun).forgeDegradedAt, MEMO_T);
+      // A numeric string coerces under `-`, so only the isFinite clause rejects it.
+      const stringRun = memoRunDir();
+      fs.writeFileSync(path.join(stringRun, 'run-state.json'), JSON.stringify({ forgeDegradedAt: String(MEMO_T) }));
+      pre.resolveRunPinnedIntegrationModel(repo, stringRun, opts);
+      assert.strictEqual(gh.count(), 4);
+      assert.strictEqual(memoState(stringRun).forgeDegradedAt, MEMO_T);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a garbled run-state.json probes and does not throw', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), 'not json');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.strictEqual(memoState(run).forgeDegradedAt, MEMO_T);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a clean detection clears a stale memo', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T - MEMO_TTL }));
+  const gh = fakeGh({ first: 'fail' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(memoState(run).forgeDegradedAt, null);
+      assert.deepStrictEqual(seen, []);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: a run-config pin ignores a fresh memo', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  fs.writeFileSync(path.join(run, 'config.yml'), 'integration-model: pr-first\n');
+  fs.writeFileSync(path.join(run, 'run-state.json'), JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T, onDegrade: (d) => seen.push(d) });
+      assert.strictEqual(result, 'pr-first');
+      assert.strictEqual(gh.count(), 0);
+      assert.deepStrictEqual(seen, []);
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: without degradeMemoTtlMs (precondition.js call shape) a fresh memo is ignored and nothing is written', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const run = memoRunDir();
+  const stateFile = path.join(run, 'run-state.json');
+  fs.writeFileSync(stateFile, JSON.stringify({ forgeDegradedAt: MEMO_T }));
+  const before = fs.readFileSync(stateFile);
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, run, { timeoutMs: 1000, onDegrade: () => {}, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+      assert.ok(fs.readFileSync(stateFile).equals(before), 'run-state.json must be byte-identical');
+    });
+  } finally {
+    gh.restore();
+  }
+});
+
+test('#4830 memo: an empty runDir with the option set probes and writes nothing', { skip: STUB_SKIP }, () => {
+  const repo = unpinnedRepoWithOrigin();
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4830-cwd-'));
+  const gh = fakeGh({ first: 'hang' });
+  const cwd = process.cwd();
+  try {
+    process.chdir(scratch);
+    withoutGhTimeoutEnv(() => {
+      const result = pre.resolveRunPinnedIntegrationModel(repo, '', { timeoutMs: 1000, degradeMemoTtlMs: MEMO_TTL, now: () => MEMO_T });
+      assert.strictEqual(result, 'local-merge');
+      assert.strictEqual(gh.count(), 2);
+    });
+    assert.strictEqual(fs.existsSync(path.join(scratch, 'run-state.json')), false);
+  } finally {
+    process.chdir(cwd);
+    gh.restore();
+  }
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a

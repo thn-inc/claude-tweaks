@@ -1676,6 +1676,25 @@ function isFreshForgeDegradeMemo(at, now, ttlMs) {
 // gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision
 // Q2). `check-pr-bookkeeping.js` (via pr-bookkeeping/precondition.js) runs as a
 // CLI, not a hook, passes no `timeoutMs`, and so follows the ladder.
+//
+// `opts.degradeMemoTtlMs` (#4830) is an opt-in run-scoped degrade memo, and only
+// this gate opts in (precondition.js passes `{ onDegrade }` alone and gets
+// today's behavior, byte for byte). Without it, a hung `gh` costs the full ~15 s
+// forge probe on every hooked call. With a positive-integer TTL and a non-empty
+// `runDir`, a degraded detection stamps `forgeDegradedAt` into run-state.json and
+// a call inside the TTL returns 'local-merge' without spawning `gh` or `git`. A
+// memo hit is still reported through `onDegrade` — as `{ memoized: true,
+// degradedAt }`, deliberately with no `reason` key so nothing mistakes it for a
+// FORGE_DEGRADE_REASON code — so the gate's Q5 rule still withholds `prExempt`.
+// The memo expires after the TTL and is cleared by the next clean detection. It
+// is read only after the pin check, so an explicit pin always wins. `opts.now`
+// (default Date.now) is a test seam.
+//
+// Concurrency: no compare-and-set. A degraded detection that began before a
+// concurrent clean one still writes `forgeDegradedAt: now()` after its probe,
+// which can re-arm a just-cleared memo; a recovered forge then goes unnoticed
+// for at most one more TTL — accepted, inside "recovery is noticed within one
+// TTL".
 function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const git = () => mainRoot;
   const readFile = (p) => {
@@ -1690,7 +1709,26 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const detectOpts = {};
   if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
   if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
-  return detectIntegrationModel(root, detectOpts);
+  const ttl = opts.degradeMemoTtlMs;
+  if (!(Number.isInteger(ttl) && ttl > 0 && typeof runDir === 'string' && runDir !== '')) {
+    return detectIntegrationModel(root, detectOpts);
+  }
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const state = ctxLib.readRunState(runDir);
+  const memoAt = state && state.forgeDegradedAt;
+  if (isFreshForgeDegradeMemo(memoAt, now(), ttl)) {
+    if (opts.onDegrade !== undefined) opts.onDegrade({ memoized: true, degradedAt: memoAt });
+    return 'local-merge';
+  }
+  let degraded = false;
+  detectOpts.onDegrade = (d) => {
+    degraded = true;
+    if (opts.onDegrade !== undefined) opts.onDegrade(d);
+  };
+  const model = detectIntegrationModel(root, detectOpts);
+  if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  else ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  return model;
 }
 
 // True only on a PROVABLE ownership mismatch: this run's run-state.json was
