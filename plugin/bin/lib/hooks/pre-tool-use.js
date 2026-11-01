@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, keepLost,
   PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
@@ -945,6 +945,31 @@ function checkGitStashWarn(segments, warnings) {
       + '`git stash store -m "<subject>" <sha>` command it printed, is the intended recovery.',
     );
   }
+}
+
+// #4548: warn-only heads-up for a Bash command that kills processes by image or name
+// (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, a `pgrep`-fed `kill`, also
+// inside `sh -c`/`cmd /c`/`powershell -Command`). Unlike checkGitStashWarn's linked-worktree
+// condition, the hazard is machine-wide — every sibling session and worktree shares the
+// process table — so this is run- and location-independent: it needs no run state and no
+// repo. It is reachable only because GUARDED_PROGRAM_WORDS.processKill feeds the bash
+// prefilter, which matches those words case-insensitively (`TASKKILL`). The parser is
+// git-command.js's processKillByName; a PID-scoped kill is never reported. Fail-open: any
+// parser throw swallows to silence, never to a block.
+function checkProcessKillWarn(command, cwd, warnings) {
+  if (!command) return;
+  try {
+    if (processKillByName(command, cwd).length) {
+      warnings.push(
+        'claude-tweaks: killing a process by image or name (`taskkill /IM`, `pkill`, `killall`, '
+        + '`Stop-Process -Name`, a `pgrep`-fed `kill`, also inside `sh -c`/`cmd /c`/`powershell -Command`) '
+        + 'matches every process of that name on this machine — the process table is shared with every '
+        + 'sibling session and worktree, so it can take down their dev servers and tooling. Kill only a '
+        + 'PID you captured when you started the process, or the listener on a port you own '
+        + '(`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`, then `kill {pid}`; win32: `taskkill /PID {pid} /T /F`).',
+      );
+    }
+  } catch (_) { /* best-effort heads-up: a parser failure is silence, never a block */ }
 }
 
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
@@ -2283,6 +2308,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // three times per invocation (once per consumer) was pure repeated work.
   const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
+  checkProcessKillWarn(command, ctx.cwd, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
