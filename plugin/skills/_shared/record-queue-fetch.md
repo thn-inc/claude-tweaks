@@ -142,8 +142,9 @@ node -e "
 Note that `{tmp-records-file}` now holds the **unfiltered** `--state all` snapshot content (open
 and closed together) — the `.filter((i) => i.state === 'OPEN')` above is what narrows it down to
 this section's open-only contract on the way to `{tmp-faceted-file}`. A consumer that reads
-`{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` (none do today) would
-need to apply the same filter itself.
+`{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` (only
+`tidy/step-1-records.md`'s Shape 1 digest-rollover pair listing does today, and it filters
+`state === 'OPEN'` itself) would need to apply the same filter itself.
 
 `backlog-fetch-limit` replaces the previous hardcoded 200/500 per-consumer limits — `gh issue list --limit N` auto-paginates internally regardless of how large `N` is, so raising the default doesn't change the fetch mechanism, only how much it's willing to pull before stopping. A consumer whose own population is naturally small (e.g. a `--label ready` filtered fetch) still uses this same limit and the same truncation check — the limit bounds "how many rows before we assume there might be more," not a per-consumer tuning knob.
 

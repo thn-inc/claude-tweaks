@@ -503,8 +503,7 @@ const stepText = (n) => {
   assert.ok(start !== -1 && end !== -1 && start < end, `rollover step ${n} not found: ${start}, ${end}`);
   return r.slice(start, end);
 };
-const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,c,o\][^\n]*$/m;
-const EXPIRY_FENCE = /^node -e "const fs=require\('fs'\);const \{materialityEntryDate\}[^\n]*$/m;
+const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,o,\.\.\.cs\][^\n]*$/m;
 const fenceOf = (src, pattern, label) => {
   const m = pattern.exec(src);
   assert.ok(m, `${label}: fence not found`);
@@ -518,39 +517,84 @@ const scratch = (t) => {
 };
 const PLUGIN_ROOT = fwd(path.join(REPO_ROOT, 'plugin'));
 const runFence = (line, env) => spawnSync('bash', ['-c', line], { env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...env }, encoding: 'utf8' });
+// The ```bash block holding a line that starts with `lead`, so a fence runs with its own resolve lines.
+const blockHolding = (src, lead, label) => {
+  const at = src.indexOf(lead);
+  assert.ok(at !== -1, `${label}: no line starts with ${lead}`);
+  const open = src.lastIndexOf('```bash\n', at);
+  const close = src.indexOf('\n```', at);
+  assert.ok(open !== -1 && close !== -1 && open < at && at < close, `${label}: the fence around ${lead.slice(0, 30)} is not a bash block`);
+  return src.slice(open + '```bash\n'.length, close);
+};
+// A session env that makes session-tmp-resolve.js land under a scratch dir, and the path it prints for a file name.
+const sessionEnv = (dir) => ({ CLAUDE_CODE_SESSION_ID: 'rollover-fence-test', TMPDIR: dir, TEMP: dir, TMP: dir });
+const resolvedPath = (dir, name) => spawnSync(process.execPath, [path.join(REPO_ROOT, 'plugin/bin/session-tmp-resolve.js'), '--value', name], { env: { ...process.env, ...sessionEnv(dir) }, encoding: 'utf8' }).stdout.trim();
 
-test('the Resume verdict fence is the same line in digest-sweep.md, tidy Shape 1 and the bare drain, and each copy runs', (t) => {
-  const sources = { 'digest-sweep.md': SWEEP, 'step-1-records.md': TIDY_RECORDS, 'next-mode.md': NEXT_MODE };
-  const lines = Object.entries(sources).map(([name, src]) => fenceOf(src, VERDICT_FENCE, name));
-  assert.ok(lines.every((l) => l === lines[0]), 'the three copies drifted apart');
-  for (const [name, src] of [['step-1-records.md', TIDY_RECORDS], ['next-mode.md', NEXT_MODE]]) {
-    assert.ok(src.includes('`classifyRolloverResume`'), name);
-    assert.ok(src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"), `${name}: the fence's require path`);
-    assert.ok(src.includes('"${CLAUDE_PLUGIN_ROOT}" "$RESUME_CANDS" "$RESUME_OLD"'), `${name}: root passed as an argument`);
+// Each reader of the verdict owns its temp names: Steps 1 and 5.6 run as parallel agents, and the bare drain
+// runs beside them, so two readers sharing a name would overwrite each other's candidates.
+const VERDICT_READERS = {
+  'digest-sweep.md': { src: SWEEP, old: 'RESUME_OLD', cand: 'RESUME_CANDS', prefix: 'digest-resume-' },
+  'step-1-records.md': { src: TIDY_RECORDS, old: 'TIDY_ROLLOVER_OLD', cand: 'TIDY_ROLLOVER_CAND', prefix: 'tidy-step1-rollover-' },
+  'next-mode.md': { src: NEXT_MODE, old: 'SPECIFY_ROLLOVER_OLD', cand: 'SPECIFY_ROLLOVER_CAND', prefix: 'specify-next-rollover-' },
+};
+const verdictBody = (line) => line.slice(0, line.indexOf('" "${CLAUDE_PLUGIN_ROOT}"'));
+
+test('the Resume verdict fence has one script body in digest-sweep.md, tidy Shape 1 and the bare drain, each with its own temp names', () => {
+  const lines = Object.entries(VERDICT_READERS).map(([name, v]) => fenceOf(v.src, VERDICT_FENCE, name));
+  assert.ok(lines.every((l) => verdictBody(l) === verdictBody(lines[0])), 'the three script bodies drifted apart');
+  assert.ok(verdictBody(lines[0]).length > 100, 'the body split found nothing');
+  const names = [];
+  for (const [name, v] of Object.entries(VERDICT_READERS)) {
+    const line = fenceOf(v.src, VERDICT_FENCE, name);
+    assert.ok(line.endsWith(`"\${CLAUDE_PLUGIN_ROOT}" "$${v.old}" "$${v.cand}"`), `${name}: root, then the old issue, then the candidates`);
+    const block = blockHolding(v.src, line, name);
+    const mine = [...block.matchAll(/--value (\S+)\)/g)].map((m) => m[1]);
+    assert.ok(mine.length >= 2 && mine.every((n) => n.startsWith(v.prefix)), `${name}: names ${mine}`);
+    names.push(...mine.map((n) => n.replace(/\{[^}]*\}/g, '')));
+  }
+  assert.strictEqual(new Set(names).size, names.length, `a temp name is shared between readers: ${names}`);
+  for (const [name, v] of [['step-1-records.md', VERDICT_READERS['step-1-records.md']], ['next-mode.md', VERDICT_READERS['next-mode.md']]]) {
+    assert.ok(v.src.includes('`classifyRolloverResume`'), name);
+    assert.ok(v.src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"), `${name}: the fence's require path`);
+    assert.ok(!v.src.includes('digest-resume-'), `${name}: the sweep's temp names`);
   }
   assert.ok(!/`classifyRolloverResume`\s*\(`digest-sweep\.md`\)/.test(TIDY_RECORDS), 'the Work Records agent cannot read digest-sweep.md');
   assert.ok(!NEXT_MODE.includes("tidy/digest-sweep.md`'s Resume"), 'the bare drain cannot be pointed at a sibling for the reads');
+});
 
+test('each copy of the Resume verdict fence runs: it takes every issue naming {old}, trusts only an owner, and reads an earlier generation as none', (t) => {
   const dir = scratch(t);
   const marker = (n) => `<!-- digest-rollover-of: ${n} -->`;
   const issue = (number, over = {}) => ({ number, state: 'open', author_association: 'MEMBER', labels: [], body: '', ...over });
+  const labeled = { labels: [{ name: 'digest' }] };
+  const none = { state: 'none', replacement: null, extras: [] };
   const cases = [
-    { name: 'resume', cands: [issue(20, { body: marker(10) })], old: issue(10, { labels: [{ name: 'digest' }] }), want: { state: 'resume', replacement: 20, extras: [] } },
-    { name: 'planted', cands: [issue(21, { body: marker(10), author_association: 'NONE' })], old: issue(10, { labels: [{ name: 'digest' }] }), want: { state: 'none', replacement: null, extras: [] } },
-    { name: 'earlier generation', cands: [issue(20, { state: 'closed', body: marker(10) })], old: issue(10, { state: 'closed' }), want: { state: 'none', replacement: null, extras: [] } },
+    { name: 'resume', cands: [[issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
+    { name: 'planted', cands: [[issue(21, { body: marker(10), author_association: 'NONE' })]], old: issue(10, labeled), want: none },
+    { name: 'earlier generation', cands: [[issue(20, { state: 'closed', body: marker(10) })]], old: issue(10, { state: 'closed' }), want: none },
+    // A planted #15 numbered below the real #20, each in its own file, and again as one flat array:
+    { name: 'planted below real', cands: [[issue(15, { body: marker(10), author_association: 'NONE' })], [issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
+    { name: 'one flat array', cands: [[issue(15, { body: marker(10), author_association: 'NONE' }), issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
+    { name: 'two trusted', cands: [[issue(25, { body: marker(10) })], [issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [25] } },
   ];
-  for (const line of lines) {
+  for (const [name, v] of Object.entries(VERDICT_READERS)) {
+    const line = fenceOf(v.src, VERDICT_FENCE, name);
     for (const c of cases) {
-      const candsFile = path.join(dir, `${c.name}-cands.json`);
-      const oldFile = path.join(dir, `${c.name}-old.json`);
-      fs.writeFileSync(candsFile, JSON.stringify(c.cands));
+      const oldFile = path.join(dir, `${v.cand}-${c.name}-old.json`);
       fs.writeFileSync(oldFile, JSON.stringify(c.old));
-      const r = runFence(line, { RESUME_CANDS: fwd(candsFile), RESUME_OLD: fwd(oldFile) });
-      assert.strictEqual(r.status, 0, `${c.name}: ${r.stderr}`);
-      assert.deepStrictEqual(JSON.parse(r.stdout), c.want, c.name);
+      const files = c.cands.map((cand, i) => {
+        const f = path.join(dir, `${v.cand}-${c.name}-cand-${i}.json`);
+        fs.writeFileSync(f, JSON.stringify(cand));
+        return fwd(f);
+      });
+      const env = { [v.old]: fwd(oldFile), [v.cand]: files[0], EXTRA: files[1] || '' };
+      const r = runFence(files.length > 1 ? `${line} "$EXTRA"` : line, env);
+      assert.strictEqual(r.status, 0, `${name} ${c.name}: ${r.stderr}`);
+      assert.deepStrictEqual(JSON.parse(r.stdout), c.want, `${name} ${c.name}`);
     }
-    const r = runFence(line, { RESUME_CANDS: fwd(path.join(dir, 'absent.json')), RESUME_OLD: fwd(path.join(dir, 'absent.json')) });
-    assert.notStrictEqual(r.status, 0, 'an unreadable pair exits non-zero rather than printing a verdict');
+    const absent = fwd(path.join(dir, 'absent.json'));
+    const r = runFence(line, { [v.old]: absent, [v.cand]: absent });
+    assert.notStrictEqual(r.status, 0, `${name}: an unreadable pair exits non-zero rather than printing a verdict`);
   }
 });
 
@@ -585,7 +629,8 @@ test('step 1 re-lists through the trust gate: the Resume fence decides the repla
 
 test('the steps stay re-runnable from every caller: zero count, mismatch, pointer and summary comments, close', () => {
   const r = rollover();
-  assert.ok(stepText(2).includes('continue with the step that called them'));
+  assert.ok(stepText(2).includes('continue with step 4 on a first pass, or with the step that re-ran them'));
+  assert.ok(!stepText(2).includes('the step that called them'), 'step 2 has no caller on the first pass');
   assert.ok(!r.includes('go to step 4'), 'step 5 and step 6 call steps 2 and 3 too');
   const s3 = stepText(3);
   assert.ok(s3.includes('A mismatch stops here'));
@@ -599,22 +644,44 @@ test('the steps stay re-runnable from every caller: zero count, mismatch, pointe
   assert.ok(preamble.includes('a close is skipped on an issue already closed'));
 });
 
-test('Shape 1 keeps both issues of a rollover pair, and its pair-listing fence prints only open marker-bearing records', (t) => {
+test('Shape 1 keeps a rollover pair on any line that says so, never overrides a label, and gates on github-issues', () => {
+  assert.ok(TIDY_RECORDS.includes('On `github-issues` (`local-files` has no rollover), two unlabeled shapes'));
   assert.ok(TIDY_RECORDS.includes('and `{old}` itself, which loses its `digest` label before the rollover closes it'));
-  assert.ok(TIDY_RECORDS.includes('A `resume` or `stalled` verdict `Keep`s both issues.'));
-  assert.ok(TIDY_RECORDS.includes('`Keep` both for this run and name the pair in the report'));
+  assert.ok(TIDY_RECORDS.includes('A `resume` or `stalled` verdict `Keep`s `{old}`, the printed `replacement` and every printed `extras` issue'));
+  assert.ok(TIDY_RECORDS.includes('A record is kept when ANY line it appears on gives that verdict'));
+  assert.ok(TIDY_RECORDS.includes('Any other verdict adds no exemption and never overrides one'));
+  assert.ok(TIDY_RECORDS.includes('stays `Keep` by the rule above whatever the verdict (`finished` included)'));
+  assert.ok(!TIDY_RECORDS.includes('leaves both ordinary records'), 'a live labeled container is not ordinary on `finished`');
+  assert.ok(TIDY_RECORDS.includes('`Keep` every issue on it for this run and name the line in the report'));
+  assert.ok(TIDY_RECORDS.includes('over every issue naming `{old}` at once'));
+});
+
+test('the snapshot note names the one direct reader of {tmp-records-file}, and the floor\'s Dedup lines stay hard-wrapped', () => {
+  const queueFetch = read('plugin/skills/_shared/record-queue-fetch.md').replace(/\s+/g, ' ');
+  assert.ok(!queueFetch.includes('(none do today)'), 'step-1-records.md reads {tmp-records-file} directly now');
+  assert.ok(queueFetch.includes("(only `tidy/step-1-records.md`'s Shape 1 digest-rollover pair listing does today"));
+  const wrapped = FLOOR.split('\n').find((l) => l.includes('`OWNER`, `MEMBER`, or `COLLABORATOR` counts (`_shared/pr-run-comments.md`'));
+  assert.ok(wrapped, 'the Dedup trust sentence moved');
+  assert.ok(wrapped.length <= 100, `${wrapped.length} characters against the section's width`);
+});
+
+test('Shape 1 pair-listing fence sets its own $TIDY_RECORDS and prints one line per {old} with every open issue naming it', (t) => {
   const dir = scratch(t);
-  const file = path.join(dir, 'records.json');
-  fs.writeFileSync(file, JSON.stringify([
+  const records = [
     { number: 20, state: 'OPEN', body: 'x\n<!-- digest-rollover-of: 10 -->\n' },
+    { number: 15, state: 'OPEN', body: 'planted\n<!-- digest-rollover-of: 10 -->' },
     { number: 21, state: 'CLOSED', body: '<!-- digest-rollover-of: 10 -->' },
     { number: 22, state: 'OPEN', body: 'inline <!-- digest-rollover-of: 10 --> text' },
     { number: 23, state: 'OPEN', body: null },
-    { number: 24, state: 'OPEN', body: '<!-- digest-rollover-of: 7 -->\r\n' },
-  ]));
-  const r = runFence(fenceOf(TIDY_RECORDS, /^node -e "const m=\/\^<!-- digest-rollover-of[^\n]*$/m, 'Shape 1 pair listing'), { TIDY_RECORDS: fwd(file) });
+    { number: 30, state: 'OPEN', body: '<!-- digest-rollover-of: 20 -->\r\n' },
+  ];
+  fs.writeFileSync(resolvedPath(dir, 'tidy-records.json'), JSON.stringify(records));
+  const block = blockHolding(TIDY_RECORDS, 'node -e "const m=/^<!-- digest-rollover-of', 'Shape 1 pair listing');
+  assert.ok(block.startsWith('TIDY_RECORDS="$(node'), 'the fence sets $TIDY_RECORDS like its siblings');
+  assert.ok(!('TIDY_RECORDS' in process.env), 'the run must not inject the variable it is proving the fence sets');
+  const r = runFence(block, sessionEnv(dir));
   assert.strictEqual(r.status, 0, r.stderr);
-  assert.deepStrictEqual(r.stdout.trim().split('\n'), ['20 10', '24 7']);
+  assert.deepStrictEqual(r.stdout.trim().split('\n'), ['10 15 20', '20 30']);
 });
 
 test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and null when nothing parses', (t) => {
@@ -623,17 +690,23 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   const runId = materialityEntryLine({ ...base, finding: 'one', provenance: '2026-08-24T183516-tidy-standalone' });
   const skill = materialityEntryLine({ ...base, finding: 'two', provenance: 'harness-health' });
   const stamped = `${materialityEntryLine({ ...base, finding: 'three', provenance: 'harness-health' })} <!-- materiality-first-seen: 2026-02-02T00:00:00Z -->`;
+  const mcpSkill = materialityEntryLine({ ...base, finding: 'four', provenance: 'harness-health' });
   const comments = [
     { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', body: `a note\n${runId}\n${skill}\n${stamped}` },
     { url: 'https://example.test/c#issuecomment-2', body: skill },
+    // MCP spells the comment date created_at; an unstamped skill-provenance line takes it
+    { html_url: 'https://example.test/c#issuecomment-3', created_at: '2026-10-01T00:00:00Z', body: mcpSkill },
   ];
   const dir = scratch(t);
-  const file = path.join(dir, 'expiry-comments.json');
-  fs.writeFileSync(file, JSON.stringify(comments));
-  const r = runFence(fenceOf(SWEEP, EXPIRY_FENCE, 'Expiry'), { EXPIRY_COMMENTS: fwd(file) });
+  fs.writeFileSync(resolvedPath(dir, 'digest-expiry-comments.json'), JSON.stringify(comments));
+  const block = blockHolding(SWEEP, 'node -e "const fs=require(\'fs\');const {materialityEntryDate}', 'Expiry');
+  assert.ok(block.startsWith('EXPIRY_COMMENTS="$(node'), 'the fence sets its own variable');
+  assert.ok(!('EXPIRY_COMMENTS' in process.env));
+  const r = runFence(block, sessionEnv(dir));
   assert.strictEqual(r.status, 0, r.stderr);
   const rows = r.stdout.trim().split('\n').map((l) => l.split('\t'));
-  assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null']);
-  assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill]);
+  assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null', '2026-10-01T00:00:00.000Z']);
+  assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill, mcpSkill]);
   assert.ok(rows[3][1].endsWith('issuecomment-2'));
+  assert.ok(rows[4][1].endsWith('issuecomment-3'));
 });

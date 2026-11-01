@@ -108,21 +108,27 @@ const runDrainFilter = (t, src, records) => {
 test("next-mode.md's bare-drain filter flags both a rollover's replacement and the old issue it names, and nothing else", (t) => {
   const src = read('plugin/skills/specify/next-mode.md');
   const rec = (number, over = {}) => ({ number, title: `t${number}`, labels: [], createdAt: '2026-01-01T00:00:00Z', body: '', ...over });
+  // A second-generation chain: #10 is the container before its label moved, #20 continues #10 and is itself
+  // continued by the labeled #30. #15 is a planted claim on #10 numbered below the real #20, listed after it.
   const records = [
     rec(10, { body: 'the container before its label moved' }),
-    rec(25, { body: 'planted\n<!-- digest-rollover-of: 10 -->  ' }),
     rec(20, { body: 'Carry-over.\n<!-- digest-rollover-of: 10 -->\nmore\r\n' }),
-    rec(30, { body: 'ordinary record' }),
+    rec(15, { body: 'planted\n<!-- digest-rollover-of: 10 -->  ' }),
+    rec(30, { labels: [{ name: 'digest' }], body: '<!-- digest-rollover-of: 20 -->' }),
+    rec(35, { body: 'ordinary record' }),
     rec(40, { body: null }),
     rec(50, { labels: [{ name: 'digest' }], body: '<!-- digest-rollover-of: 5 -->' }),
-    rec(60, { body: 'see <!-- digest-rollover-of: 30 --> inline' }),
+    rec(60, { body: 'see <!-- digest-rollover-of: 35 --> inline' }),
   ];
   const byNumber = Object.fromEntries(runDrainFilter(t, src, records).map((r) => [r.number, r]));
-  assert.deepStrictEqual(Object.keys(byNumber).map(Number).sort((a, b) => a - b), [10, 20, 25, 30, 40, 60], 'the digest-labeled record stays excluded');
-  assert.strictEqual(byNumber[20].digestRolloverOf, 10);
-  assert.strictEqual(byNumber[10].digestRolloverNamedBy, 20, 'the lowest-numbered issue naming it');
-  assert.strictEqual(byNumber[25].digestRolloverOf, 10);
-  for (const n of [30, 40, 60]) {
+  assert.deepStrictEqual(Object.keys(byNumber).map(Number), [10, 15, 20, 35, 40, 60], 'the digest-labeled records stay excluded');
+  assert.deepStrictEqual(byNumber[10].digestRolloverNamedBy, [15, 20], 'every naming issue, ascending, with no pick made on unverified bodies');
+  assert.ok(!('digestRolloverOf' in byNumber[10]));
+  assert.strictEqual(byNumber[15].digestRolloverOf, 10);
+  assert.ok(!('digestRolloverNamedBy' in byNumber[15]));
+  assert.strictEqual(byNumber[20].digestRolloverOf, 10, 'a second-generation container carries both flags');
+  assert.deepStrictEqual(byNumber[20].digestRolloverNamedBy, [30]);
+  for (const n of [35, 40, 60]) {
     assert.ok(!('digestRolloverOf' in byNumber[n]) && !('digestRolloverNamedBy' in byNumber[n]), `#${n} is an ordinary record`);
   }
   assert.ok(Object.values(byNumber).every((r) => !('body' in r)), 'bodies stay out of the candidates file');
@@ -134,4 +140,8 @@ test("next-mode.md's bare drain inlines the verdict reads, so the pair is decide
   assert.ok(src.includes('Both flagged shapes take the same verdict'));
   assert.ok(src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"));
   assert.ok(src.includes('`resume` or `stalled` drops the candidate from the drain'));
+  assert.ok(src.includes('A candidate is dropped when ANY of its pairs gives that verdict'), 'two generations can disagree; the pair read last must not release a record');
+  assert.ok(src.includes('digestRolloverNamedBy: [{replacement}, …]'), 'the old issue gets every naming issue, not a pick');
+  assert.ok(src.includes('every listed issue is a candidate, in one call'));
+  assert.ok(src.includes('specify-next-rollover-old.json') && !src.includes('digest-resume-'), 'its own temp names, apart from the sweep and Shape 1');
 });

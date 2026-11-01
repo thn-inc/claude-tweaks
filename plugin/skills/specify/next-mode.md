@@ -196,7 +196,7 @@ node -e "
   const namedBy = new Map();
   for (const r of records) {
     const hit = MARKER.exec(r.body || '');
-    if (hit && (!namedBy.has(Number(hit[1])) || r.number < namedBy.get(Number(hit[1])))) namedBy.set(Number(hit[1]), r.number);
+    if (hit) namedBy.set(Number(hit[1]), [...(namedBy.get(Number(hit[1])) || []), r.number]);
   }
   const eligible = records.filter((r) =>
     !r.labels.some((l) => EXCLUDE.has(l.name) || l.name.startsWith('needs:'))
@@ -205,24 +205,24 @@ node -e "
     return {
       ...r,
       ...(hit && { digestRolloverOf: Number(hit[1]) }),
-      ...(namedBy.has(r.number) && { digestRolloverNamedBy: namedBy.get(r.number) }),
+      ...(namedBy.has(r.number) && { digestRolloverNamedBy: namedBy.get(r.number).sort((a, b) => a - b) }),
     };
   });
   console.log(JSON.stringify(eligible));
 " > "$CANDIDATES"
 ```
 
-A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled. One carrying `digestRolloverNamedBy: {replacement}` may be the old issue itself, which loses its `digest` label before the rollover closes it. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate read both issues of the pair through REST (only that read carries the author association: `gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the two paths with the Write tool) and run `classifyRolloverResume`:
+A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled. One carrying `digestRolloverNamedBy: [{replacement}, …]` may be the old issue itself, which loses its `digest` label before the rollover closes it; the array holds every issue whose body names it, so the trust check can pick among them and no unverified body picks first. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate read the issues of each pair through REST (only that read carries the author association: `gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the paths with the Write tool) and run `classifyRolloverResume`. For `digestRolloverOf`, `{old}` is the flag's value and the candidate is the one candidate. For `digestRolloverNamedBy`, `{old}` is the candidate and every listed issue is a candidate, in one call. Repeat the `SPECIFY_ROLLOVER_CAND` and `gh api` lines under each further issue's own number and add its path as another argument:
 
 ```bash
-RESUME_CANDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value digest-resume-candidates.json)"
-RESUME_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value digest-resume-old.json)"
-gh api repos/{owner}/{repo}/issues/{replacement} --jq '[.]' > "$RESUME_CANDS"
-gh api repos/{owner}/{repo}/issues/{old} > "$RESUME_OLD"
-node -e "const fs=require('fs');const [root,c,o]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>JSON.parse(fs.readFileSync(f,'utf8'));console.log(JSON.stringify(classifyRolloverResume(read(c),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$RESUME_CANDS" "$RESUME_OLD"
+SPECIFY_ROLLOVER_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json)"
+SPECIFY_ROLLOVER_CAND="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand-{replacement}.json)"
+gh api repos/{owner}/{repo}/issues/{old} > "$SPECIFY_ROLLOVER_OLD"
+gh api repos/{owner}/{repo}/issues/{replacement} > "$SPECIFY_ROLLOVER_CAND"
+node -e "const fs=require('fs');const [root,o,...cs]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>JSON.parse(fs.readFileSync(f,'utf8'));console.log(JSON.stringify(classifyRolloverResume([].concat(...cs.map(read)),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$SPECIFY_ROLLOVER_OLD" "$SPECIFY_ROLLOVER_CAND"
 ```
 
-Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain. Any other verdict makes it an ordinary record. A non-zero exit is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
+Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain. A candidate is dropped when ANY of its pairs gives that verdict: a second-generation container carries both flags, its two pairs can disagree, and the pair read last never releases it. When none does, it is an ordinary record. A non-zero exit is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
 
 No further claim-state filtering runs here — the `bot:in-progress`
 exclusion above is a cheap label pre-filter only, same posture as
