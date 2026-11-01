@@ -11,14 +11,14 @@ const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../../../
 
 // The eight gh call shapes (Global Constraints), owner/repo o/r.
 const SHAPE = {
-  body: (n) => ['issue', 'view', String(n), '--json', 'body', '-q', '.body'],
+  body: (n) => ['issue', 'view', String(n), '--repo', 'o/r', '--json', 'body', '-q', '.body'],
   parent: (n) => ['api', 'graphql', '-f', `query=${buildNativeParentQuery([n])}`, '-f', 'owner=o', '-f', 'repo=r'],
   probe: () => ['api', 'graphql', '-f', 'query={ __type(name: "Issue") { fields { name } } }'],
   page: (p) => ['api', 'graphql', '-f', `query=${buildNativeSubIssuesQuery([p])}`, '-f', 'owner=o', '-f', 'repo=r'],
   rest: (p) => ['api', '--paginate', `repos/o/r/issues/${p}/sub_issues`, '--jq', '.[].number'],
   sub: (n) => ['issue', 'view', String(n), '--repo', 'o/r', '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'],
-  labels: (p) => ['issue', 'view', String(p), '--json', 'labels', '-q', '[.labels[].name]'],
-  live: (p) => ['issue', 'view', String(p), '--json', 'state,stateReason,comments'],
+  labels: (p) => ['issue', 'view', String(p), '--repo', 'o/r', '--json', 'labels', '-q', '[.labels[].name]'],
+  live: (p) => ['issue', 'view', String(p), '--repo', 'o/r', '--json', 'state,stateReason,comments'],
   login: () => ['api', 'user', '--jq', '.login'],
 };
 
@@ -26,7 +26,7 @@ const SHAPE = {
 //   parentOf {sub: parent}, parentNoRepo, bodies {n: text}, probeFields [names],
 //   subs {parent: [n]}, hasNextPage {parent: bool}, rest {parent: [n]},
 //   issues {n: {state, stateReason, labels, title, refs}}, garbled {n: text},
-//   parentLabels {parent: [names]}, parentLive {parent: {...}}, liveRaw {parent: text},
+//   parentLabels {parent: [names]}, labelsRaw {parent: text}, parentLive {parent: {...}}, liveRaw {parent: text},
 //   login, throwWhen(key).
 function makeGh(world) {
   const calls = [];
@@ -55,7 +55,7 @@ function makeGh(world) {
     }
     let m = /^api --paginate repos\/o\/r\/issues\/(\d+)\/sub_issues --jq \.\[\]\.number$/.exec(key);
     if (m) return `${((world.rest || world.subs || {})[m[1]] || []).join('\n')}\n`;
-    m = /^issue view (\d+) --json body -q \.body$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json body -q \.body$/.exec(key);
     if (m) return (world.bodies || {})[m[1]] || '';
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) {
@@ -67,9 +67,10 @@ function makeGh(world) {
         closedByPullRequestsReferences: (i.refs || []).map((number) => ({ number })),
       });
     }
-    m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
+    if (m && world.labelsRaw && m[1] in world.labelsRaw) return world.labelsRaw[m[1]];
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
-    m = /^issue view (\d+) --json state,stateReason,comments$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m && world.liveRaw && m[1] in world.liveRaw) return world.liveRaw[m[1]];
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
     if (key === 'api user --jq .login') return `${world.login || 'bot'}\n`;
@@ -87,7 +88,8 @@ const facts = (over = {}) => ({
   parent: 10, parentLabels: ['parent-issue'], subIssues: [sub(11), sub(12)], riskFloor: 'high', ...over,
 });
 
-const NATIVE = { owner: 'o', repo: 'r', workLinks: 'native' };
+const OR = { owner: 'o', repo: 'r' };
+const NATIVE = { ...OR, workLinks: 'native' };
 const argvOf = (calls) => calls.map((c) => c.args);
 const ghFailure = (pattern) => (err) => {
   assert.ok(err instanceof GhFailure, `GhFailure expected, got ${err && err.constructor && err.constructor.name}: ${err && err.message}`);
@@ -444,12 +446,25 @@ test('gatherGateFacts takes exactly one of subIssue and parent', () => {
   }
 });
 
-test('a JSON answer that is not an object is a GhFailure (shapes 5 and 7)', () => {
-  for (const text of ['null', '42', '"text"']) {
-    let { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
-    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(not a JSON object/), `shape 5: ${text}`);
-    ({ caller } = makeGh({ liveRaw: { 10: text } }));
-    assert.throws(() => gatherIdempotenceFacts({ parent: 10, caller }), ghFailure(/^gh issue view 10: unexpected output \(not a JSON object/), `shape 7: ${text}`);
+// Each callJson read names the JSON container it expects; any other answer is a GhFailure, never a TypeError.
+test('shape 5: a sub-issue read that is not a JSON object is a GhFailure', () => {
+  for (const text of ['null', '42', '"text"', '[]', '[{"state":"CLOSED"}]']) {
+    const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });
+    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(not a JSON object/), text);
+  }
+});
+
+test('shape 6: a parent-labels read that is not a JSON array is a GhFailure', () => {
+  for (const text of ['null', '42', '"parent-issue"', '{}', '{"labels":[]}']) {
+    const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, labelsRaw: { 10: text } });
+    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 10: unexpected output \(not a JSON array/), text);
+  }
+});
+
+test('shape 7: a parent live read that is not a JSON object is a GhFailure', () => {
+  for (const text of ['null', '42', '"text"', '[]']) {
+    const { caller } = makeGh({ liveRaw: { 10: text } });
+    assert.throws(() => gatherIdempotenceFacts({ parent: 10, ...OR, caller }), ghFailure(/^gh issue view 10: unexpected output \(not a JSON object/), text);
   }
 });
 
@@ -466,15 +481,15 @@ test('a failing or unparseable read throws GhFailure', () => {
 test('gatherIdempotenceFacts reads the login only for an open, non-reopened parent', () => {
   const comments = [headingComment()];
   let gh = makeGh({ parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } });
-  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments, login: 'bot' });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments, login: 'bot' });
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10), SHAPE.login()]);
 
   gh = makeGh({ parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } });
-  assert.equal(gatherIdempotenceFacts({ parent: 10, caller: gh.caller }).login, null);
+  assert.equal(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }).login, null);
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
 
   gh = makeGh({ parentLive: { 10: { state: 'OPEN', stateReason: 'REOPENED', comments: 'not-an-array' } } });
-  const reopened = gatherIdempotenceFacts({ parent: 10, caller: gh.caller });
+  const reopened = gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller });
   assert.equal(reopened.login, null);
   assert.deepEqual(reopened.comments, []);
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);

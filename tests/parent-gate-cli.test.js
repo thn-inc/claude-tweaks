@@ -48,7 +48,7 @@ function makeGh(world) {
     }
     let m = /^api --paginate repos\/o\/r\/issues\/(\d+)\/sub_issues --jq \.\[\]\.number$/.exec(key);
     if (m) return `${((world.rest || world.subs || {})[m[1]] || []).join('\n')}\n`;
-    m = /^issue view (\d+) --json body -q \.body$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json body -q \.body$/.exec(key);
     if (m) return (world.bodies || {})[m[1]] || '';
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) {
@@ -59,9 +59,9 @@ function makeGh(world) {
         closedByPullRequestsReferences: (i.closedBy || []).map((number) => ({ number })),
       });
     }
-    m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
-    m = /^issue view (\d+) --json state,stateReason,comments$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
     if (key === 'api user --jq .login') return `${world.login || 'bot'}\n`;
     throw new Error(`unexpected gh call: ${key}`);
@@ -85,6 +85,7 @@ function go(argv, world = {}, over = {}) {
     readPolicyRaw: () => 'work-links: native\nrisk-floor: high\n',
     readWorkBackend: () => 'github-issues',
     readFile: (file) => fs.readFileSync(file, 'utf8'),
+    probeRecordsDir: (dir) => { fs.readdirSync(dir); },
     queryRecords,
     stdout: (s) => out.push(s),
     stderr: (s) => err.push(s),
@@ -97,9 +98,9 @@ function go(argv, world = {}, over = {}) {
   };
 }
 
-const subViews = (calls) => calls.filter((a) => a[0] === 'issue' && a[1] === 'view' && a.includes('--repo'));
+const subViews = (calls) => calls.filter((a) => a[0] === 'issue' && a[1] === 'view' && a.includes('state,stateReason,labels,title,closedByPullRequestsReferences'));
 const seen = (calls, want) => calls.filter((a) => a.length === want.length && a.every((x, i) => x === want[i])).length;
-const isShape7 = (a) => a[0] === 'issue' && a[3] === '--json' && a[4] === 'state,stateReason,comments';
+const isShape7 = (a) => a[0] === 'issue' && a[5] === '--json' && a[6] === 'state,stateReason,comments';
 const isShape8 = (a) => a[0] === 'api' && a[1] === 'user';
 
 // --- acceptance cases ---
@@ -209,6 +210,18 @@ test("body-text resolves Parent: #N and the parent's task list", () => {
   assert.equal(r.calls.filter((a) => a[0] === 'api' && a[1] === 'graphql').length, 0);
 });
 
+test('every gh issue view read names the origin owner/repo, so one gate never splits its reads across remotes', () => {
+  const bodies = { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [x] #12\n' };
+  const runs = [go(['--sub-issue', '11', '--idempotence']), go(['--sub-issue', '11', '--work-links', 'body-text', '--idempotence'], { bodies })];
+  for (const r of runs) {
+    assert.equal(r.code, 0, r.stderr);
+    const views = r.calls.filter((a) => a[0] === 'issue' && a[1] === 'view');
+    for (const a of views) assert.deepEqual(a.slice(3, 5), ['--repo', 'o/r'], a.join(' '));
+  }
+  // Shapes 5, 6 and 7 natively; 1, 3, 5, 5, 6 and 7 under body-text.
+  assert.deepEqual(runs.map((r) => r.calls.filter((a) => a[0] === 'issue' && a[1] === 'view').length), [4, 6]);
+});
+
 test('no resolvable parent prints no-parent', () => {
   const r = go(['--sub-issue', '11'], { parentOf: {} });
   assert.equal(r.code, 0);
@@ -222,6 +235,22 @@ test('--sub-issue without --closing counts itself closed', () => {
   assert.equal(r.verdict.state, 'due');
   const unrelated = go(['--parent', '10'], { issues: { 11: OPEN } });
   assert.equal(unrelated.verdict.state, 'incomplete');
+});
+
+test('--closing and --held tokens are trimmed, so a space after a comma is not a malformed call', () => {
+  const world = { issues: { 11: OPEN } };
+  const spaced = go(['--sub-issue', '12', '--closing', '11, 12', '--held', '11, 12'], world);
+  assert.equal(spaced.code, 0, spaced.stderr);
+  const tight = go(['--sub-issue', '12', '--closing', '11,12', '--held', '11,12'], world);
+  assert.deepEqual(spaced.verdict, tight.verdict);
+  assert.equal(spaced.verdict.state, 'due');
+  assert.deepEqual(spaced.verdict.held, [11, 12]);
+  assert.equal(go(['--sub-issue', '12', '--closing', ' o/r#11 , 12'], world).verdict.state, 'due');
+  for (const argv of [['--closing', '11, '], ['--closing', '11,,12'], ['--held', '11, ']]) {
+    const r = go(['--sub-issue', '12', ...argv], world);
+    assert.equal(r.code, 1, JSON.stringify(argv));
+    assert.equal(r.stdout, '', JSON.stringify(argv));
+  }
 });
 
 test('--held and --merging-pr reach the verdict', () => {
@@ -776,6 +805,8 @@ test('local-files: the acceptance facet gates', (t) => {
   assert.equal(gated.verdict.state, 'gated');
   const approved = family(t, { parent: { facets: { acceptance: 'approved' } } });
   assert.equal(goLocal(['--parent', String(approved.parent.id)], approved.dir).verdict.state, 'resolved');
+  const changes = family(t, { parent: { facets: { acceptance: 'changes-requested' } } });
+  assert.equal(goLocal(['--parent', String(changes.parent.id)], changes.dir).verdict.state, 'resolved');
 });
 
 test('local-files: a sub-issue with no parent facet is no-parent', (t) => {
@@ -827,6 +858,33 @@ test('local-files: a failing store read is exit 3 with nothing on stdout', (t) =
   assert.equal(r.code, 3);
   assert.equal(r.stdout, '');
   assert.match(r.stderr, /^parent-gate\.js: could not read the records in .*EACCES/);
+});
+
+test('local-files: an unreadable records dir is exit 3, not an empty store', (t) => {
+  const { dir, parent } = family(t);
+  const denied = goLocal(['--parent', String(parent.id)], dir, {
+    probeRecordsDir: () => { throw Object.assign(new Error('EACCES: permission denied, scandir'), { code: 'EACCES' }); },
+  });
+  assert.equal(denied.code, 3);
+  assert.equal(denied.stdout, '');
+  assert.match(denied.stderr, /^parent-gate\.js: could not read the records in .*EACCES/);
+  // A records dir that is a file is unreadable too (ENOTDIR through the real probe).
+  const notDir = goLocal(['--parent', String(parent.id)], parent.path);
+  assert.equal(notDir.code, 3);
+  assert.match(notDir.stderr, /^parent-gate\.js: could not read the records in .*ENOTDIR/);
+});
+
+test('local-files: a record both scans return is one sub-issue, in its closed state', (t) => {
+  const { dir, parent, subs } = family(t);
+  // A sibling closed between the open scan and the closed scan: the open scan still saw it open.
+  const racing = (d, filter) => {
+    const found = queryRecords(d, filter);
+    return filter.closed ? found : [...found, { ...subs[0], facets: { ...subs[0].facets, closed: false } }];
+  };
+  const r = goLocal(['--parent', String(parent.id), '--closing', String(subs[0].id)], dir, { queryRecords: racing });
+  assert.equal(r.code, 0, r.stderr);
+  assert.deepEqual(r.verdict.subIssues.map((s) => [s.number, s.state]), [[subs[0].id, 'CLOSED'], [subs[1].id, 'CLOSED']]);
+  assert.equal(r.verdict.state, 'due');
 });
 
 test('local-files: the records dir defaults to specs under the repo root; --records-dir resolves against it', (t) => {

@@ -895,8 +895,8 @@ function e2eWorld(live, { base = 'main', fixes = [101], closeErrors = [] } = {})
     if (key === 'api --paginate repos/acme/w/issues/100/sub_issues --jq .[].number') return '101\n102\n';
     m = /^issue view (10[12]) --repo acme\/w --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) return JSON.stringify({ ...liveOf(Number(m[1])), title: `T${m[1]}`, labels: [{ name: 'risk:low' }], closedByPullRequestsReferences: [] });
-    if (key === 'issue view 100 --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
-    if (key === 'issue view 100 --json state,stateReason,comments') {
+    if (key === 'issue view 100 --repo acme/w --json labels -q [.labels[].name]') return JSON.stringify(['parent-issue']);
+    if (key === 'issue view 100 --repo acme/w --json state,stateReason,comments') {
       const closedYet = calls.some((c) => c.key.startsWith('issue close 100'));
       return JSON.stringify({ state: closedYet ? 'CLOSED' : 'OPEN', stateReason: closedYet ? 'COMPLETED' : '', comments: [] });
     }

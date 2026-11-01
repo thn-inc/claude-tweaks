@@ -1043,6 +1043,11 @@ const INVOCATION_FACTS = [
     'cli',
     '**Under `work-backend: local-files`, any non-zero exit** — report the failure and stop that entry; never fail open.',
   ],
+  [
+    'a fail-open exit names the stderr line',
+    'cli',
+    "Whenever an exit fails open, quote the CLI's stderr line in the entry's output: exit 1 is a malformed invocation, a bug in the calling skill, and only that line tells it apart from a `gh` outage.",
+  ],
   ['Step 4.0b line', 'pm', 'bin/parent-gate.js" --sub-issue {n}'],
   ['Step 4.0b idempotence', 'pm', '--idempotence'],
   ['Step 4.0b held', 'pm', '--held'],
@@ -1157,6 +1162,21 @@ const HELD_SKIP =
   'A non-empty `held` skips the parent, named in the closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a `failed[]`, `pendingClose[]` or `closeFailed[]` one waits on the hand reopen or close the inputs paragraph above names.';
 const PRE_FIX_HELD_SKIP = 'A non-empty `held` is the skip the inputs paragraph above names: name the parent in the closing summary.';
 const assertHeldSkip = (text) => assert.ok(collapse(text).includes(HELD_SKIP), 'the held skip names every held list accurately');
+
+// Step 4.0b routes a no-parent verdict before the reconciler's order (whose first check, parentIssue,
+// would read a no-parent verdict's null as "labels lack parent-issue"), and ties that no-op to its field.
+const STEP_40B_ROUTING =
+  "Route a `no-parent` verdict first: a record with no resolvable parent follows **Resolve the parent**'s no-parent branch. Route every other verdict in the reconciler's order. A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary. The verdict reports it as `parentIssue: false`.";
+const PRE_FIX_STEP_40B_ROUTING =
+  "Route the verdict in the reconciler's order. A parent whose labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in the closing summary. The verdict reports it as `parentIssue: false`.";
+const assertStep40bRouting = (text) => assert.ok(collapse(text).includes(STEP_40B_ROUTING), 'Step 4.0b routes no-parent first and names parentIssue: false');
+
+test('#4603: Step 4.0b routes no-parent first, then the reconciler\'s order, naming parentIssue: false', () => {
+  assertStep40bRouting(step40bOf());
+  assert.throws(() => assertStep40bRouting(PRE_FIX_STEP_40B_ROUTING), /routes no-parent first/, 'go-red: the pre-fix routing fails');
+  const withoutField = STEP_40B_ROUTING.replace(' The verdict reports it as `parentIssue: false`.', '');
+  assert.throws(() => assertStep40bRouting(withoutField), /names parentIssue: false/, 'go-red: dropping the field sentence fails');
+});
 
 test('#4603: Step 4.0b keeps the gh-absent retry and states the held skip accurately', () => {
   const step40b = step40bOf();

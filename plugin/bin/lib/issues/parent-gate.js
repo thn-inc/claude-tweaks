@@ -5,8 +5,10 @@
 // close's idempotence check (#4603). The gathers keep #4599's gh call shapes,
 // except that native enumeration runs through bin/fetch-sub-issues.js's `run`,
 // called in-process, so its probe, page and retry ladder are reused, not
-// re-derived. bin/parent-gate.js and below-floor-parent-close.js both compose
-// it. It replaces the prose snippets that #4466's review found eight defects in.
+// re-derived, and that every `gh issue view` read carries `--repo owner/repo`,
+// so one gate never splits its reads between gh's base repo and the caller's.
+// bin/parent-gate.js and below-floor-parent-close.js both compose it. It
+// replaces the prose snippets that #4466's review found eight defects in.
 //
 // Four parts: two gh gathers (gatherGateFacts, gatherIdempotenceFacts) that
 // take a `caller` from ghCaller(gh) and throw GhFailure on a failing or
@@ -55,8 +57,9 @@ class GhFailure extends Error {}
 
 // gh(args, input?) -> stdout, throwing on failure  ->  { call, callJson }, each
 // turning a failure into a GhFailure that names the call's first three args.
-// callJson also rejects JSON that is not an object or array (`null`, a number, a
-// string), which every reader here would otherwise dereference into a TypeError.
+// callJson(args, expect) also rejects JSON that is not the container its reader
+// expects (`'object'`, not an array or `null`; or `'array'`), which that reader
+// would otherwise dereference into a TypeError.
 function ghCaller(gh) {
   const call = (args, input) => {
     try {
@@ -65,7 +68,7 @@ function ghCaller(gh) {
       throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: ${err && err.message}`);
     }
   };
-  const callJson = (args) => {
+  const callJson = (args, expect) => {
     const out = call(args);
     let parsed;
     try {
@@ -73,8 +76,9 @@ function ghCaller(gh) {
     } catch (err) {
       throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: unparseable output (${err.message})`);
     }
-    if (parsed === null || typeof parsed !== 'object') {
-      throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: unexpected output (not a JSON object: ${JSON.stringify(parsed)})`);
+    const fits = expect === 'array' ? Array.isArray(parsed) : parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
+    if (!fits) {
+      throw new GhFailure(`gh ${args.slice(0, 3).join(' ')}: unexpected output (not a JSON ${expect}: ${JSON.stringify(parsed)})`);
     }
     return parsed;
   };
@@ -89,7 +93,7 @@ function distinctAscending(values) {
 // Shape 1 (body-text) or 2 (native): the sub-issue's parent number, or null.
 function resolveParent({ subIssue, owner, repo, workLinks, caller }) {
   if (workLinks === 'body-text') {
-    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--json', 'body', '-q', '.body'])));
+    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--repo', `${owner}/${repo}`, '--json', 'body', '-q', '.body'])));
     return match ? Number(match[1]) : null;
   }
   // fetchNativeParent throws only for a failed or malformed GraphQL read.
@@ -108,7 +112,7 @@ function enumerateSubIssues({
   parent, owner, repo, workLinks, caller, fetcher = runFetchSubIssues,
 }) {
   if (workLinks === 'body-text') {
-    return distinctAscending(parseSubIssues(String(caller.call(['issue', 'view', String(parent), '--json', 'body', '-q', '.body']))));
+    return distinctAscending(parseSubIssues(String(caller.call(['issue', 'view', String(parent), '--repo', `${owner}/${repo}`, '--json', 'body', '-q', '.body']))));
   }
   const restArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parent}/sub_issues`, '--jq', '.[].number'];
   let out = '';
@@ -149,7 +153,7 @@ function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
   }
   const slug = `${owner}/${repo}`;
   const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, workLinks, caller }).map((num) => {
-    const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences']);
+    const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     const refs = Array.isArray(live.closedByPullRequestsReferences) ? live.closedByPullRequestsReferences : [];
     return {
       number: num,
@@ -160,14 +164,14 @@ function gatherGateFacts({ subIssue, parent, owner, repo, workLinks, caller }) {
       closedBy: refs.map((ref) => ref && ref.number).filter(Number.isInteger),
     };
   });
-  const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--json', 'labels', '-q', '[.labels[].name]']));
+  const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
   return { parent: resolved, parentLabels, subIssues };
 }
 
 // Shapes 7 and 8: the parent's live state and comments, and the current gh login,
 // read only when the parent is neither CLOSED nor REOPENED.
-function gatherIdempotenceFacts({ parent, caller }) {
-  const live = caller.callJson(['issue', 'view', String(parent), '--json', 'state,stateReason,comments']);
+function gatherIdempotenceFacts({ parent, owner, repo, caller }) {
+  const live = caller.callJson(['issue', 'view', String(parent), '--repo', `${owner}/${repo}`, '--json', 'state,stateReason,comments'], 'object');
   const state = String(live.state || '').toUpperCase();
   const stateReason = String(live.stateReason || '').toUpperCase();
   const comments = Array.isArray(live.comments) ? live.comments : [];

@@ -135,12 +135,9 @@ summarizing it.
 **Sub-issue-side entries only** — see "Two entry shapes" above. The parent-side entry already
 holds `$PARENT_NUM` and skips straight to "Enumerate the parent's sub-issues" below.
 
-Resolve the sub-issue's parent the same way `/claude-tweaks:review` Step 1.6 does
-(`skills/review/SKILL.md:147-154`): `work-backend: local-files` — `facets.parent`;
-`work-backend: github-issues` + `work-links: native` — the sub-issue relationship queried
-from this sub-issue's own side; `work-backend: github-issues` + `work-links: body-text` — the
-`Parent: #N` line in this sub-issue's own body. The CLI resolves it (`--sub-issue`) and reports
-`state: 'no-parent'` when it finds none.
+The CLI (`--sub-issue`) resolves the parent as `/claude-tweaks:review` Step 1.6 does — by
+`facets.parent` under `work-backend: local-files`, else per `work-links` — and reports
+`state: 'no-parent'` when there is none.
 
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —
@@ -151,39 +148,15 @@ resolvable parent is a no-op: no labeling, no Try it.
 
 ## Enumerate the parent's sub-issues
 
-With a parent resolved (`$PARENT_NUM`), enumerate the parent's sub-issues from the **parent**
-side, never from a sub-issue-side scan — a sub-issue-side lookup works under one `work-links`
-mode and silently returns nothing under the other.
+With a parent resolved (`$PARENT_NUM`), the CLI enumerates its sub-issues from the **parent**
+side, never from a sub-issue-side scan, which works under one `work-links` mode and silently
+returns nothing under the other. `work-links` (`_shared/work-record-config.md`) comes from
+`.claude-tweaks/policy.yml`, overridable with `--work-links`. Every call re-reads the sub-issues
+and the parent's labels, so the parent-side entry never reuses its scan's stale snapshot.
 
-Resolve `work-links` before picking a branch below (`native` or `body-text` —
-`_shared/work-record-config.md`; the resolver applies that table's default when the key is
-unset), the same read `wrap-up/unblocked-records.md` already performs. The CLI reads it from
-`.claude-tweaks/policy.yml`, overridable with `--work-links`.
-
-`work-links: native` — the parent's native sub-issue list, every page. The CLI reads it through
-`bin/fetch-sub-issues.js`. `work-links: body-text` — the parent's own task list, parsed with
-`parseSubIssues` (`bin/lib/issues/record.js`). The CLI reads the parent's body and parses it.
-
-`work-backend: local-files` — the parent body carries no task list (`specify/record-creation-linking.md`'s
-local-files branch — #1346's split of `record-creation.md` — writes only `facets.parent` on each sub-issue, never a checklist on the parent), so
-query the reverse relationship instead — every record whose own `facets.parent` matches, open and
-closed alike (the same two-call merge `specify/record-creation.md:44` already uses). The CLI runs
-that query over the record store (`bin/lib/issues/local-store.js`'s `queryRecords`).
-
-For each sub-issue number resolved above (`work-backend: github-issues`), read its current state
-**and labels** once, in one call — its `state`, `stateReason`, labels, `title` and
-`closedByPullRequestsReferences` — and reuse that read for the gate state, the Oversight-floor
-check, and **Close the parent below the floor**'s listing lines and close reason. The CLI makes
-that one read per sub-issue.
-
-Then fetch the **parent's** own current labels — the other argument that predicate takes, and
-the one nothing above has produced yet. Both entry shapes need this: the parent-side entry
-re-fetches them because its scan's snapshot is stale by approval time, and a sub-issue-side entry
-has never read them at all (**Resolve the parent** yields only a number). The CLI reads them
-fresh on every call.
-
-`work-backend: local-files` — read the parent record instead and translate its
-`facets.acceptance`, per **Evaluate the gate** below.
+`work-backend: local-files` — the parent carries no task list
+(`specify/record-creation-linking.md`), so its sub-issues are the records whose `facets.parent`
+names it, and its `facets.acceptance` stands in for its labels, per **Evaluate the gate** below.
 
 ## Self-inclusion rule
 
@@ -341,6 +314,10 @@ Route on its exit code:
   again, so the two paths cannot loop.
 - **Any other non-zero exit on the `gh` or `--facts-json` path** — a failing `gh` call under
   **Fail open on every `gh` call**.
+
+Whenever an exit fails open, quote the CLI's stderr line in the entry's output: exit 1 is a
+malformed invocation, a bug in the calling skill, and only that line tells it apart from a `gh`
+outage.
 
 ## Evaluate the gate
 
@@ -633,9 +610,8 @@ performs for a non-decomposed record, applied to the parent's file instead of th
 `parentBriefTemplate` below is the same rendered template from **Compose the parent brief**,
 above — no separate write to a temp file is needed for this backend, since the write below embeds
 it directly. `parentPath` is the `.path` field of the parent's own record — a combined open+closed
-`queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing (the parent
-itself carries no `facets.parent`, so this is a fresh query, not the sub-issue listing above),
-filtered to the entry whose `.id === PARENT_ID`:
+`queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing, filtered to the
+entry whose `.id` is the verdict's `parent` (`$PARENT_NUM`):
 
 ```js
 const { readRecord, writeRecord } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');

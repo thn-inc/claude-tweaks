@@ -106,7 +106,7 @@ function makeGh(world) {
     }
     let m = /^api --paginate repos\/o\/r\/issues\/(\d+)\/sub_issues --jq \.\[\]\.number$/.exec(key);
     if (m) return (world.subs[m[1]] || []).join('\n') + '\n';
-    m = /^issue view (\d+) --json body -q \.body$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json body -q \.body$/.exec(key);
     if (m) return (world.bodies || {})[m[1]] || '';
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) {
@@ -117,9 +117,9 @@ function makeGh(world) {
         closedByPullRequestsReferences: (i.refs || []).map((number) => ({ number })),
       });
     }
-    m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
-    m = /^issue view (\d+) --json state,stateReason,comments$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
     if (key === 'api user --jq .login') return `${world.login || 'plugin-bot'}\n`;
     if (/^issue comment \d+ --body-file -$/.test(key)) return '';
@@ -184,7 +184,7 @@ test('body-text: the parent comes from the sub-issue body, the sub-issues from t
   const out = closeBelowFloorParents(base({ workLinks: 'body-text', gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
   assert.ok(calls.every((c) => !(c.args[0] === 'api' && c.args[1] === 'graphql')));
-  assert.ok(calls.some((c) => c.args.join(' ') === 'issue view 11 --json body -q .body'));
+  assert.ok(calls.some((c) => c.args.join(' ') === 'issue view 11 --repo o/r --json body -q .body'));
 });
 
 test('body-text: a sub-issue body with no Parent line has no resolvable parent (silent no-op)', () => {

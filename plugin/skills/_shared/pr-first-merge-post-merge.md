@@ -110,9 +110,10 @@ and `pendingClose[]` and each `failed[]` and `closeFailed[]` entry's `issue`, co
 node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --sub-issue {n} --closing {closing-sub-issues} --idempotence --merging-pr {pr-number} --held {held}
 ```
 
-Route the verdict in the reconciler's order. A parent whose labels lack
-`parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op too, named in
-the closing summary. The verdict reports it as `parentIssue: false`. Skip a parent whose verdict
+Route a `no-parent` verdict first: a record with no resolvable parent follows **Resolve the
+parent**'s no-parent branch. Route every other verdict in the reconciler's order. A parent whose
+labels lack `parent-issue` — the label tidy's `parent-gate` backstop selects on — is a no-op
+too, named in the closing summary. The verdict reports it as `parentIssue: false`. Skip a parent whose verdict
 lists `needs` (its `needs:*` labels) and name it in the closing summary, per
 `_shared/work-record.md`'s Worklist rule. A non-empty `held` skips the parent, named in the
 closing summary: a `reopened[]` sub-issue is open again, so the parent is not due, and a
@@ -122,9 +123,9 @@ paragraph above names. On `due` with `exceeds: false`, run
 through `_shared/github-write-transport.md`'s MCP rows (the procedure's **Transport (#4602).**
 paragraph), so a gh-absent run with the GitHub MCP server closes the parent the same way after a
 no-PR local merge; after a PR merge, Step 4.0's `gh-absent` result skips this step, as above.
-Every other outcome is a no-op; a record with no resolvable parent follows **Resolve the
-parent**'s no-parent branch. Evaluate each parent once: skip a record whose parent this step
-already handled, so a parent with several sub-issues in the set is closed once. The verdict's
+Every other outcome is a no-op; this step writes nothing for it. Evaluate each parent once:
+skip a record whose parent this step already handled, so a parent with several sub-issues in the
+set is closed once. The verdict's
 `parent` names it. The procedure's **Return to the Try it post** and **Fail open on every `gh`
 call** paragraphs state what this entry does not do (no Try it block, no fallback to the no-parent
 path) and how it skips on a failing `gh` call — never a stop, and never a reason to report

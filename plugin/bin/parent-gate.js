@@ -32,10 +32,9 @@
 //                the gh path runs. This path makes zero gh calls and never probes for gh.
 //                `parentComments` and `me` are required and guarded only under --idempotence,
 //                and only for an open, non-reopened parent that is due below the floor (where
-//                the gh path makes its two reads); any other verdict never looks at them.
-//                owner/repo are read from the origin remote (a git read) only when a
-//                --closing token is qualified; otherwise no remote is read. Refused with
-//                --backend local-files.
+//                the gh path makes its two reads); any other verdict never looks at them. The
+//                origin remote (a git read) supplies owner/repo only when a --closing token is
+//                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
 // Output: one JSON line on stdout, the verdict in the order of VERDICT_FIELDS
 // (bin/lib/issues/parent-gate.js): {parent, state, exceeds, closeReason, idempotence,
@@ -48,7 +47,8 @@
 // read (the message goes to stderr). On every non-zero exit nothing goes to stdout. Only a
 // GhFailure or a FactsError maps to an exit code, and a thrown store read under local-files:
 // any other throw is a bug and propagates. Under --backend local-files a sub-issue or parent
-// id the store does not hold, or a closing token that names a repository, is exit 1.
+// id the store does not hold, or a closing token that names a repository, is exit 1; an absent
+// records dir is an empty store, and a records dir that will not read for any other reason is 3.
 //
 // --facts-json uses the same vocabulary, and splits the file's problems by what they mean:
 // 1 a facts file that will not read, parse or hold a JSON object, a required key that is
@@ -62,9 +62,9 @@
 // mcp-agent-fetch-node-compute rule 3 maps a guard failure to a failed read, never to content,
 // which is this CLI's 3.
 //
-// There is no `--repo` flag. Owner/repo come from the origin remote, because shapes 1, 3,
-// 6 and 7 of the gate's gh calls carry no `--repo` and read the repo of gh's own cwd; an
-// override would split one gate's reads across two repositories.
+// There is no `--repo` flag. Owner/repo come from the origin remote, and every gh read of
+// the gate names them (`--repo` on each `gh issue view`, the GraphQL variables, the REST
+// path), so one gate reads one repository however many remotes the checkout has.
 'use strict';
 
 const fs = require('fs');
@@ -111,12 +111,12 @@ function flagValue(flag, text) {
       return n === null ? { error: `${flag} must be a positive integer: ${text}` } : { value: n };
     }
     case '--held': {
-      const numbers = text.split(',').map(positive);
+      const numbers = text.split(',').map((token) => positive(token.trim()));
       return numbers.includes(null) ? { error: `--held must be positive integers separated by commas: ${text}` } : { value: numbers };
     }
     case '--closing': {
       // Syntax only: dropping a foreign-repo token needs the resolved owner/repo, so run() filters.
-      const tokens = text.split(',');
+      const tokens = text.split(',').map((token) => token.trim());
       const checked = parseClosingTokens(tokens, { owner: 'o', repo: 'r' });
       return checked.error ? { error: checked.error } : { value: tokens };
     }
@@ -192,6 +192,8 @@ const realDeps = {
   },
   readWorkBackend,
   readFile: (file) => fs.readFileSync(file, 'utf8'),
+  // Throws when the records dir will not read; queryRecords reads any such dir as empty.
+  probeRecordsDir: (dir) => { fs.readdirSync(dir); },
   queryRecords,
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -204,7 +206,8 @@ function printVerdict(deps, verdict) {
 // --backend local-files: the same gate over the record store -> exit code. A record's `parent`
 // facet is its parent, `closed`/`not-planned` give a sub-issue's state, and the `risk`,
 // `is-parent-issue` and `acceptance` facets stand in for the labels the gh path reads. The
-// store is read once, open then closed, so the sub-issues and the parent are one snapshot.
+// store is read in two scans, open then closed; a record both return (closed between them)
+// is kept once, as the later closed scan read it.
 function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
   const closing = parseClosingTokens(tokens, { owner: null, repo: null });
   if (closing.error) {
@@ -214,6 +217,8 @@ function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
   const dir = path.resolve(root, opts.recordsDir !== null ? opts.recordsDir : DEFAULT_DIR);
   let records;
   try {
+    // An absent dir is an empty store; any other readdir error would otherwise read as one too.
+    try { deps.probeRecordsDir(dir); } catch (err) { if (!err || err.code !== 'ENOENT') throw err; }
     records = [...deps.queryRecords(dir, {}), ...deps.queryRecords(dir, { closed: true })];
   } catch (err) {
     deps.stderr(`parent-gate.js: could not read the records in ${dir}: ${err && err.message}\n`);
@@ -239,7 +244,7 @@ function runLocalFiles(opts, deps, { root, tokens, riskFloor }) {
     facts = {
       parent: parentId,
       parentLabels,
-      subIssues: records.filter((r) => r.facets.parent === parentId).map((r) => ({
+      subIssues: [...byId.values()].filter((r) => r.facets.parent === parentId).map((r) => ({
         number: r.id,
         title: r.title,
         state: r.facets.closed ? 'CLOSED' : 'OPEN',
@@ -373,7 +378,7 @@ function run(argv, deps = realDeps) {
     if (opts.idempotence && verdict.state === 'due' && verdict.exceeds === false) {
       // The facts file's two idempotence reads are guarded here and nowhere earlier: a verdict that
       // never reads them (the gh path makes no such call) must not depend on them.
-      const idempotenceFacts = mcp ? withIdempotenceReads(mcp.raw, mcp.idempotence) : gatherIdempotenceFacts({ parent: verdict.parent, caller });
+      const idempotenceFacts = mcp ? withIdempotenceReads(mcp.raw, mcp.idempotence) : gatherIdempotenceFacts({ parent: verdict.parent, owner, repo, caller });
       const { idempotence, skipped } = evaluateIdempotence(idempotenceFacts);
       verdict = { ...verdict, idempotence, skipped };
     }

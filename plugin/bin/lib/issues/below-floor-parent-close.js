@@ -107,7 +107,7 @@ function closeBelowFloorParents({
         }
 
         // Idempotence: read before writing anything.
-        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, caller }));
+        const { idempotence, skipped: notes } = evaluateIdempotence(gatherIdempotenceFacts({ parent, owner, repo, caller }));
         if (idempotence === 'already-closed') {
           skipped.push({ parent, reason: 'already-closed' });
           continue;
