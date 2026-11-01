@@ -13,6 +13,7 @@ const {
   digestReplacementMarker,
   selectCarryOverEntries,
   materialityEntryDate,
+  isLiveEntryLine,
   planCarryOver,
   classifyRolloverResume,
 } = require('../../../plugin/bin/lib/health-core/materiality-digest');
@@ -287,6 +288,33 @@ test('materialityEntryDate falls back to the comment date, and returns null with
   assert.strictEqual(materialityEntryDate(stamped(skillLine, '2026-02-02T00:00:00Z')).toISOString(), '2026-02-02T00:00:00.000Z');
 });
 
+test('materialityEntryDate ignores a run-id with an impossible date instead of rolling it into the next month', () => {
+  const impossible = findingLine(1, { provenance: '2026-02-30T000000-spec-1' });
+  const commentDate = '2026-11-01T00:00:00Z';
+  // The same fall-through a non-run-id provenance takes: first-seen marker, else the comment date.
+  assert.strictEqual(materialityEntryDate(stamped(impossible, '2026-02-02T00:00:00Z'), commentDate).toISOString(), '2026-02-02T00:00:00.000Z');
+  assert.strictEqual(materialityEntryDate(impossible, commentDate).toISOString(), '2026-11-01T00:00:00.000Z');
+  assert.strictEqual(materialityEntryDate(impossible), null);
+  const badHour = findingLine(1, { provenance: '2026-02-03T250000-spec-1' });
+  assert.strictEqual(materialityEntryDate(badHour, commentDate).toISOString(), '2026-11-01T00:00:00.000Z');
+  // Control: a valid run id still dates from the run id, ahead of the marker and the comment date.
+  const valid = findingLine(1, { provenance: '2026-02-28T120000-spec-1' });
+  assert.strictEqual(materialityEntryDate(stamped(valid, '2026-02-02T00:00:00Z'), commentDate).toISOString(), '2026-02-28T12:00:00.000Z');
+});
+
+test('isLiveEntryLine is true only for an Entry-format line with no trailing mark', () => {
+  const live = findingLine(1);
+  assert.strictEqual(isLiveEntryLine(live), true);
+  assert.strictEqual(isLiveEntryLine(stamped(live)), true, 'a trailing first-seen comment keeps it live');
+  assert.strictEqual(isLiveEntryLine('- [tests] a → b — f.js — Defer-reason: x — run'), true, 'a mid-finding arrow is not a mark');
+  assert.strictEqual(isLiveEntryLine(`${live} → expired`), false);
+  assert.strictEqual(isLiveEntryLine(`${live} → #123`), false);
+  assert.strictEqual(isLiveEntryLine(live.replace(' <!--', ' → #123 <!--')), false, 'a mark before the trailing comment');
+  assert.strictEqual(isLiveEntryLine('- [text](https://example.test/x) a link bullet'), false);
+  assert.strictEqual(isLiveEntryLine('Note: a remark about the digest'), false);
+  assert.strictEqual(isLiveEntryLine(''), false);
+});
+
 test('AC5.1: a promoted and an expired finding are still duplicates against the new container, and neither is in the active set', () => {
   const PROMOTED = { ...ENTRY, finding: 'promoted finding' };
   const EXPIRED = { ...ENTRY, finding: 'expired finding' };
@@ -491,6 +519,91 @@ test('a marker edit on a CRLF comment puts the mark before the carriage return, 
   assert.strictEqual(done.verified, true);
 });
 
+test('a marker edit finds its comment id from html_url, a numeric id or a numeric string id, and refuses a comment with none', () => {
+  const old = [posted(findingLine(1))];
+  const carriedBody = planOf(old).bodies[0];
+  const marked = [{ ...old[0], body: `${findingLine(1)} → #99` }];
+  const newSide = (identity) => [{ body: carriedBody, authorAssociation: 'MEMBER', createdAt: C_DATE, ...identity }];
+  const editIdFor = (identity) => planOf(marked, newSide(identity)).markerEdits.map((e) => e.commentId);
+  assert.deepStrictEqual(editIdFor({ html_url: 'https://github.com/o/r/issues/1#issuecomment-4242' }), ['4242']);
+  assert.deepStrictEqual(editIdFor({ id: 777 }), ['777']);
+  assert.deepStrictEqual(editIdFor({ id: '888' }), ['888']);
+  assert.throws(() => planOf(marked, newSide({})), { name: 'CarryOverInputError' });
+  assert.throws(() => planOf(marked, newSide({ id: 'abc', url: 'https://example.test/issues/1' })), { name: 'CarryOverInputError' });
+});
+
+test('a trusted old-side bullet that fails the Entry format is counted in unparsedEntryLines, never changing verified', () => {
+  const noArea = '- [] no area — f.js — Defer-reason: x — run';
+  const bracketed = '- [a]b] finding — f.js — Defer-reason: x — run';
+  const p = planOf([posted(`${noArea}\n${findingLine(1)}`)]);
+  assert.strictEqual(p.unparsedEntryLines, 1);
+  assert.strictEqual(p.live, 1);
+  assert.strictEqual(planOf([posted(`${bracketed}\n${noArea}`)]).unparsedEntryLines, 2);
+  const old = [posted(`${noArea}\n${findingLine(1)}`)];
+  const again = planOf(old, postBodies(p));
+  assert.strictEqual(again.verified, true, 'verified is not changed by an unparsed line');
+  assert.strictEqual(again.unparsedEntryLines, 1);
+  const quiet = planOf([posted([
+    findingLine(1),
+    `${findingLine(2)} → expired`,
+    '- [tidy] old work — src/a.js — Defer-reason: x — run → #3900',
+    'Note: a remark about the digest',
+    '---',
+  ].join('\n'))]);
+  assert.strictEqual(quiet.unparsedEntryLines, 0);
+});
+
+test('an unparsed bullet carrying a fingerprint marker is tombstoned, not counted', () => {
+  const marked = '- [] gone <!-- materiality-fingerprint: fpunparsed -->';
+  const p = planOf([posted(`${marked}\n${findingLine(1)}`)]);
+  assert.strictEqual(p.unparsedEntryLines, 0);
+  assert.strictEqual(p.tombstones, 1);
+  assert.deepStrictEqual(tombstoneLines(p.bodies), ['<!-- materiality-fingerprint: fpunparsed -->']);
+});
+
+test('planCarryOver checks newCommentCount against the new comments read when given, and ignores it when omitted', () => {
+  const old = [posted(findingLine(1))];
+  const fresh = postBodies(planOf(old));
+  const refused = { name: 'CarryOverInputError' };
+  const withCount = (side, newCommentCount) => planCarryOver(old, side, { oldCommentCount: old.length, newCommentCount });
+  assert.strictEqual(withCount(fresh, fresh.length).verified, true, 'a matching count plans');
+  assert.strictEqual(withCount([], 0).pending.length, 1, 'a matching zero plans');
+  assert.throws(() => withCount([], 1), refused, 'a short read of a one-comment side');
+  assert.throws(() => withCount(fresh, fresh.length + 1), refused);
+  assert.throws(() => withCount(fresh, 0), refused);
+  assert.throws(() => withCount(fresh, NaN), refused);
+  assert.throws(() => withCount(fresh, String(fresh.length)), refused, 'a string count is not an integer');
+  assert.throws(() => withCount(fresh, null), refused);
+  assert.throws(() => withCount(fresh, -1), refused);
+  assert.throws(() => withCount([], 2), /newCommentCount 2 does not equal the 0 new comments read/);
+  assert.deepStrictEqual(planCarryOver(old, fresh, { oldCommentCount: old.length }), planCarryOver(old, fresh, { oldCommentCount: old.length, newCommentCount: undefined }), 'omitted is unchanged');
+  assert.strictEqual(planCarryOver(old, [], { oldCommentCount: old.length }).pending.length, 1);
+});
+
+test('AC7.1 (non-body posts): a re-run after the label move or the close posts nothing, though the old side now holds the rollover\'s own comments', () => {
+  const entries = [1, 2].map((n) => findingLine(n));
+  const expired = `${findingLine(3)} → expired`;
+  const priorTombstone = `${TOMBSTONE_HEADER} promoted or expired findings kept for dedup\n<!-- materiality-fingerprint: priorfp -->`;
+  const base = [posted([...entries, expired].join('\n')), posted(priorTombstone)];
+  const first = planOf(base);
+  assert.strictEqual(first.pending.length, 2);
+  assert.ok(first.bodies.length > 0);
+  const fresh = postBodies(first);
+  const pointer = posted('<!-- digest-rollover-to: 456 -->\nThis digest rolled over to #456; the carried entries live there.');
+  const summary = posted('<!-- digest-rollover-to: 456 -->\nRolled over to #456: carried 2 entries and 2 tombstones.');
+  for (const old of [[...base, pointer], [...base, pointer, summary]]) {
+    const again = planOf(old, fresh);
+    assert.deepStrictEqual(again.pending, []);
+    assert.deepStrictEqual(again.tombstonesPending, []);
+    assert.deepStrictEqual(again.bodies, []);
+    assert.deepStrictEqual(again.markerEdits, []);
+    assert.strictEqual(again.verified, true);
+    assert.strictEqual(again.live, first.live);
+    assert.strictEqual(again.tombstones, first.tombstones);
+    assert.strictEqual(again.unparsedEntryLines, 0);
+  }
+});
+
 test('AC10.1: a re-plan after posting returns no marker edit for a key that is still live on the old issue', () => {
   const old = [posted(`${findingLine(1)}\n${findingLine(1)} → #12`)];
   const fresh = postBodies(planOf(old));
@@ -577,7 +690,7 @@ test('two live lines sharing a fingerprint: the dropped line\'s consolebackfill-
   assert.strictEqual(planOf(old, postBodies(p)).verified, true);
 });
 
-test('a mark followed by prose between later comments is not trailing, and a long run of comments stays linear', () => {
+test('a mark followed by prose between later comments is not trailing', () => {
   const misread = `${findingLine(1)} → #12 <!-- a --> text <!-- b -->`;
   assert.deepStrictEqual(selectCarryOverEntries([posted(misread)]).entries.map((e) => e.line), [stamped(misread)]);
   const prose = `${findingLine(2)} → #12 ${'<!-- a --> x '.repeat(40)}`;

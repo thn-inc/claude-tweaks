@@ -202,6 +202,13 @@ function describeLine(text) {
   };
 }
 
+// True exactly when the line is an Entry-format line that is still live: it does not end in a
+// `→ expired` / `→ #N` mark. tidy/digest-sweep.md's Expiry step reads entries through this.
+function isLiveEntryLine(text) {
+  const d = describeLine(String(text));
+  return d.entry && !d.marked;
+}
+
 function firstSeenDate(text) {
   for (const found of String(text).matchAll(FIRST_SEEN_MARKER)) {
     const date = parseIso(found[1]);
@@ -295,16 +302,23 @@ function packBodies(lines, maxChars, header, reserve = 0) {
 //   oldComments / newComments: flat comment-object arrays (see readTrustedLines); the new side
 //     may be empty. oldCommentCount: the old issue's true comment count (REST `.comments`), which
 //     must equal oldComments.length so a truncated read is refused, not planned as complete.
+//     newCommentCount: optional, the new issue's true comment count; when given it must equal
+//     newComments.length, so a short read of the new side is refused rather than planned as
+//     "nothing carried yet" (which would re-post). Omitted, the new side is trusted as read.
 //   live: distinct trusted live entries on the old side. carried: those present on a trusted
 //     entry line of the new side (live or marked). pending: the lines still to post.
 //   tombstones: marker-only lines for promoted/expired entries, each holding every dedup marker
 //     its source line carried that no live line or earlier tombstone holds. tombstonesCarried /
 //     tombstonesPending: how many are on the new side, and the missing-marker lines still to post.
+//   unfingerprintedMarked: trusted old-side lines already marked `→ …` that carry no fingerprint.
+//   unparsedEntryLines: trusted old-side lines that start with `- [`, fail the Entry format and
+//     carry no dedup marker. Such a line is neither carried nor tombstoned, so a nonzero count
+//     means `verified` does not vouch for it; the caller surfaces it (it never changes verified).
 //   markerEdits: bodies for new-side comments whose carried copy lacks the `→` mark its old line
 //     gained, for a key with no live line left on the old side.
 //   bodies: what to post now, pending entries then tombstones, each under maxChars.
 //   verified: nothing pending, no marker edit, both counts match.
-function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = DEFAULT_MAX_CHARS } = {}) {
+function planCarryOver(oldComments, newComments, { oldCommentCount, newCommentCount, maxChars = DEFAULT_MAX_CHARS } = {}) {
   const oldSide = readTrustedLines(oldComments, 'old comments');
   if (oldComments.length === 0) throw new CarryOverInputError('old comments: empty — nothing to plan from');
   if (!Number.isInteger(oldCommentCount) || oldCommentCount !== oldComments.length) {
@@ -312,6 +326,9 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   }
   if (!Number.isInteger(maxChars) || maxChars <= 0) throw new CarryOverInputError(`maxChars ${String(maxChars)} is not a positive integer`);
   const newSide = readTrustedLines(newComments, 'new comments');
+  if (newCommentCount !== undefined && (!Number.isInteger(newCommentCount) || newCommentCount !== newComments.length)) {
+    throw new CarryOverInputError(`newCommentCount ${String(newCommentCount)} does not equal the ${newComments.length} new comments read — a truncated or partial read`);
+  }
 
   const live = liveEntriesOf(oldSide.lines);
   const liveKeys = new Set(live.map((e) => e.key));
@@ -330,12 +347,19 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   const marks = new Map();
   const carriedKeys = new Set();
   let unfingerprintedMarked = 0;
+  let unparsedEntryLines = 0;
+  // Decides which old line is the carried copy of each key: the first unmarked line per key (the
+  // same first-unmarked-wins rule liveEntriesOf uses, so keep the two in step). It also records the
+  // first `→` mark per key, and routes the dedup markers of every other line into tombstones: a
+  // rollover must preserve every signal a dedup or sweep reads, so what is suppressed before a
+  // rollover stays suppressed after it (the spec's Reading B decision on #4848).
   for (const { text } of oldSide.lines) {
     const d = describeLine(text);
     if (d.entry && !d.marked && !carriedKeys.has(d.key)) {
       carriedKeys.add(d.key);
       continue;
     }
+    if (!d.entry && text.startsWith('- [') && d.markers.length === 0) unparsedEntryLines += 1;
     if (d.marked && d.fingerprint === null) unfingerprintedMarked += 1;
     if (d.marked && !liveKeys.has(d.key) && !marks.has(d.key)) marks.set(d.key, d.mark);
     addTombstone(d.markers.filter((m) => !liveMarkers.has(m)));
@@ -372,6 +396,8 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   const markerEdits = [];
   for (const comment of new Set(newLines.map((l) => l.comment))) {
     let changed = false;
+    // Splits on '\n', not CRLF, and re-attaches each line's own trailing CR, so a PATCH of the whole
+    // body does not rewrite a CRLF comment's line endings.
     const body = comment.body.split('\n').map((raw) => {
       const cr = raw.endsWith('\r') ? '\r' : '';
       const text = cr ? raw.slice(0, -1) : raw;
@@ -396,6 +422,7 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
     tombstonesCarried,
     tombstonesPending,
     unfingerprintedMarked,
+    unparsedEntryLines,
     markerEdits,
     bodies,
     verified: pending.length === 0 && tombstonesPending.length === 0 && markerEdits.length === 0
@@ -474,6 +501,7 @@ module.exports = {
   isMaterialityDuplicate,
   selectCarryOverEntries,
   materialityEntryDate,
+  isLiveEntryLine,
   planCarryOver,
   digestReplacementMarker,
   classifyRolloverResume,

@@ -96,6 +96,11 @@ test('every malformed invocation exits 1 with usage, before any probe or read', 
     ['carry', '--old', '10', '--new', '20', '--count', '3'],
     ['carry', '--old', '10', '--new', '20', '--old-json', 'a', '--new-json', 'b'],
     ['carry', '--old', '10', '--new', '20', '--count', '-1', '--old-json', 'a', '--new-json', 'b'],
+    ['carry', '--old', '10', '--new', '20', '--new-count', '1'],
+    ['carry', '--old', '10', '--new', '20', '--count', '1', '--old-json', 'a', '--new-json', 'b', '--new-count', 'x'],
+    ['carry', '--old', '10', '--new', '20', '--count', '1', '--old-json', 'a', '--new-json', 'b', '--new-count', '-1'],
+    ['carry', '--old', '10', '--new', '20', '--count', '1', '--old-json', 'a', '--new-json', 'b', '--new-count'],
+    ['verdict', '--old-json', 'a', '--candidates-json', 'b', '--new-count', '1'],
   ];
   for (const argv of cases) {
     const deps = fakeDeps();
@@ -187,6 +192,9 @@ test('an unreadable or wrong-shaped read of a pair exits 3 with nothing printed,
   refused('an absent candidates file', withFiles(O, undefined), FILES);
   refused('an unparseable file', withFiles(O, '{not json'), FILES);
   refused('candidates not an array', withFiles(O, JSON.stringify(issue(20))), FILES);
+  const emptyList = withFiles(O, '[]');
+  refused('an empty candidates array, which must not read as a clean none', emptyList, FILES);
+  assert.match(emptyList.calls.stderr.join(''), /empty — name at least one candidate/);
   refused('an MCP error recorded as a candidate', withFiles(O, JSON.stringify([issue(20), { message: 'Not Found' }])), FILES);
   refused('a candidate with no number, which must not read as a clean none', withFiles(O, JSON.stringify([{ author_association: 'MEMBER', body: marker(10) }])), FILES);
   refused('an MCP error recorded as the old issue', withFiles(JSON.stringify({ message: 'Not Found' }), C), FILES);
@@ -211,7 +219,7 @@ test('carry reads the true count, then both issues\' paginated comments, and wri
   assert.deepStrictEqual(
     { ...out, paths: undefined },
     {
-      old: 10, replacement: 20, count: 1, live: 1, carried: 0, pending: 1, tombstones: 0, tombstonesCarried: 0, tombstonesPending: 0, unfingerprintedMarked: 0, verified: false, skipped: [], paths: undefined, edits: [],
+      old: 10, replacement: 20, count: 1, live: 1, carried: 0, pending: 1, tombstones: 0, tombstonesCarried: 0, tombstonesPending: 0, unfingerprintedMarked: 0, unparsedEntryLines: 0, verified: false, skipped: [], paths: undefined, edits: [],
     },
   );
   assert.deepStrictEqual(out.paths, ['/tmp/digest-carry-10/carry-0.md']);
@@ -242,6 +250,7 @@ test('a true count of 0 with an empty read prints empty and verified, and never 
   assert.strictEqual(run(carryArgs, deps), 0);
   const out = printed(deps);
   assert.strictEqual(out.empty, true);
+  assert.strictEqual(out.unparsedEntryLines, 0);
   assert.strictEqual(out.verified, true);
   assert.deepStrictEqual(out.paths, []);
   assert.strictEqual(calls.length, 2);
@@ -300,6 +309,31 @@ test('carry file form takes the count from the flag and makes no gh call and no 
   const zero = fakeDeps({ readFile: reading('[]', undefined) });
   assert.strictEqual(run(['carry', '--old', '10', '--new', '20', '--count', '0', '--old-json', '/o', '--new-json', '/n'], zero), 0);
   assert.strictEqual(printed(zero).empty, true);
+});
+
+test('carry file form: --new-count is optional, a matching count plans, a mismatch exits 3 with nothing printed', () => {
+  const live = comment(entry('one'));
+  const reading = (n) => (p) => { const v = { '/o': JSON.stringify([live]), '/n': n }[p]; if (v === undefined) throw new Error('ENOENT'); return v; };
+  const base = ['carry', '--old', '10', '--new', '20', '--count', '1', '--old-json', '/o', '--new-json', '/n'];
+  const none = fakeDeps({ readFile: reading('[]') });
+  assert.strictEqual(run(base, none), 0, 'omitted: unchanged');
+  assert.strictEqual(printed(none).pending, 1);
+  const matching = fakeDeps({ readFile: reading('[]') });
+  assert.strictEqual(run([...base, '--new-count', '0'], matching), 0);
+  assert.strictEqual(printed(matching).pending, 1);
+  const short = fakeDeps({ readFile: reading('[]') });
+  assert.strictEqual(run([...base, '--new-count', '1'], short), 3, 'a new side read short of its true count');
+  silent(short);
+  assert.match(short.calls.stderr.join(''), /newCommentCount 1 does not equal the 0 new comments/);
+  assert.deepStrictEqual(short.calls.written, {});
+});
+
+test('carry prints unparsedEntryLines for an old-side bullet that fails the Entry format', () => {
+  const FILES = ['carry', '--old', '10', '--new', '20', '--count', '1', '--old-json', '/o', '--new-json', '/n'];
+  const old = JSON.stringify([comment(`- [] no area\n${entry('one')}`)]);
+  const deps = fakeDeps({ readFile: (p) => ({ '/o': old, '/n': '[]' })[p] });
+  assert.strictEqual(run(FILES, deps), 0);
+  assert.strictEqual(printed(deps).unparsedEntryLines, 1);
 });
 
 test('each old issue carries into its own temp dir, since step 4 runs carry once per stranded issue', () => {
@@ -488,10 +522,14 @@ test('step 2\'s documented file-form carry runs as written with gh absent', NOT_
   assert.ok(oldName.startsWith('digest-carry-') && newName.startsWith('digest-carry-'), line);
   fs.writeFileSync(resolved(dir, oldName), JSON.stringify([comment(entry('one'))]));
   fs.writeFileSync(resolved(dir, newName), '[]');
-  const r = runLine(line.replace('{count}', '1'), noGh(dir));
+  assert.ok(line.includes('--new-count {newCount}'), line);
+  const r = runLine(line.replace('{count}', '1').replace('{newCount}', '0'), noGh(dir));
   assert.strictEqual(r.status, 0, r.stderr);
   assert.strictEqual(JSON.parse(r.stdout).live, 1);
-  const short = runLine(line.replace('{count}', '2'), noGh(dir));
+  const short = runLine(line.replace('{count}', '2').replace('{newCount}', '0'), noGh(dir));
   assert.strictEqual(short.status, 3, short.stderr);
   assert.strictEqual(short.stdout, '');
+  const shortNew = runLine(line.replace('{count}', '1').replace('{newCount}', '3'), noGh(dir));
+  assert.strictEqual(shortNew.status, 3, shortNew.stderr);
+  assert.strictEqual(shortNew.stdout, '');
 });

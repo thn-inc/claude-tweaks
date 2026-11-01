@@ -462,6 +462,8 @@ test('digest-sweep.md Expiry dates a github-issues line through materialityEntry
   assert.ok(expiry.includes('materiality-first-seen'));
   assert.ok(expiry.includes('On `local-files`, the age comes from'));
   assert.ok(expiry.includes('materialityEntryDate(line, comment.createdAt || comment.created_at)'), 'both comment-date spellings, as the fence reads them');
+  assert.ok(expiry.includes('per live entry line (`isLiveEntryLine`: an entry-format line with no trailing `→` mark)'), 'the fence prints live entry lines only');
+  assert.ok(expiry.includes('if(isLiveEntryLine(l)){') && !expiry.includes("l.startsWith('- [')"), 'the fence selects by the module\'s entry definition');
 });
 
 test('a re-run reaches a mark made on the old issue, and a later approval marks the carried copy', () => {
@@ -501,7 +503,7 @@ test('an orphaned replacement is named for a human only when no open digest issu
   const at = resume.indexOf('A `none` printing `orphan: {n}`');
   assert.ok(at !== -1, 'the orphan branch is missing');
   const branch = resume.slice(at);
-  assert.ok(branch.includes('Skip an orphan that another pair reports as `stalled` or `resume`'), 'a second-generation stall is not also hand-orphaned');
+  assert.ok(branch.includes('Skip an orphan that another pair reports as `stalled` or `resume`, as its `{old}` or its `replacement`'),'a second-generation stall is not also hand-orphaned');
   assert.ok(branch.includes('when none exists name `{n}` and `{old}` in the sweep report for a human'));
   assert.ok(branch.includes('Never re-label it here, since a later generation looks the same otherwise'));
   assert.ok(!branch.includes('--add-label'), 'no labeling command belongs to this branch');
@@ -527,6 +529,27 @@ test('step 4 handles known extras before the label comes off, and only a newly a
   assert.ok(order.every((i) => i !== -1), `step 4 lost a marker: ${order}`);
   assert.deepEqual([...order].sort((a, b) => a - b), order, `step 4 out of order: ${order}`);
   assert.ok(s.indexOf('add it to the replacement') > order[1], 'the add follows the removal');
+});
+
+test('step 4 gives the digest label only to the replacement step 1 identified, never to an issue found by title', () => {
+  const s = stepText(4);
+  assert.ok(s.includes('A title alone never gives an issue the label: only the replacement step 1 identified, the verdict\'s printed `replacement` or the issue it just created, gets it.'));
+  assert.ok(s.includes('add it to the replacement, if it lacks it'), 'the add targets the replacement');
+  assert.ok(!s.includes('--search') && !/in:title/.test(s), 'step 4 never selects an issue by title');
+});
+
+test('the MCP carry form passes --new-count with the replacement\'s paged count, and a refusal means re-page', () => {
+  const s = stepText(2);
+  assert.ok(s.includes('take the number of comments in the replacement\'s joined array as `{newCount}`'));
+  assert.ok(s.includes('--count {count} --new-count {newCount} --old-json'), 'the file-form fence passes the flag');
+  assert.ok(s.includes('A refusal naming `--new-count` means the replacement\'s comments were paged short: re-page them.'));
+});
+
+test('the carry report names a non-zero unparsedEntryLines with its count, as not carried and not part of verified', () => {
+  const s = stepText(2);
+  assert.ok(s.includes('Name a non-zero `unparsedEntryLines` with its count too'));
+  assert.ok(s.includes('so they are not carried and do not affect `verified`'));
+  assert.ok(s.includes('before the old issue is closed'));
 });
 
 test('step 6 takes the count before the summary comment and allows for it', () => {
@@ -558,10 +581,10 @@ const scratch = (t) => {
 };
 const PLUGIN_ROOT = fwd(path.join(REPO_ROOT, 'plugin'));
 const runFence = (line, env) => spawnSync('bash', ['-c', line], { env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...env }, encoding: 'utf8' });
-// The ```bash block holding a line that starts with `lead`, so a fence runs with its own resolve lines.
+// The ```bash block holding `lead` (anywhere in a line, not only at its start), so a fence runs with its own resolve lines.
 const blockHolding = (src, lead, label) => {
   const at = src.indexOf(lead);
-  assert.ok(at !== -1, `${label}: no line starts with ${lead}`);
+  assert.ok(at !== -1, `${label}: no block holds ${lead}`);
   const open = src.lastIndexOf('```bash\n', at);
   const close = src.indexOf('\n```', at);
   assert.ok(open !== -1 && close !== -1 && open < at && at < close, `${label}: the fence around ${lead.slice(0, 30)} is not a bash block`);
@@ -603,7 +626,13 @@ test('step 1 stops when the running identity is untrusted, before a second repla
   const create = s.indexOf('Its body\'s first line is exactly');
   const check = s.indexOf('`gh api repos/{owner}/{repo}/issues/{replacement} --jq .author_association`');
   assert.ok(create !== -1 && check !== -1 && create < check, `the check follows the create: ${create}, ${check}`);
-  assert.ok(s.includes('On anything but `OWNER`, `MEMBER` or `COLLABORATOR`, stop here and say so in the report'));
+  assert.ok(s.includes('On anything but `OWNER`, `MEMBER` or `COLLABORATOR`, close that issue so a re-approved rollover does not leave another stray'));
+  assert.ok(s.includes('This issue was created by an identity whose marker the sweep does not trust, so the rollover did not proceed.'), 'the stray carries a one-line comment saying why');
+  assert.ok(s.includes('`gh issue close {replacement} --reason "not planned"`'), 'the stray is closed');
+  assert.ok(s.includes('`add_issue_comment`, then `issue_write` with `state: closed`'), 'the MCP form of the close');
+  const comment = s.indexOf('gh issue comment {replacement} --body');
+  assert.ok(comment !== -1 && comment < s.indexOf('then stop here and say so in the report'), 'comment and close come before the stop');
+  assert.ok(s.includes('then stop here and say so in the report'));
 });
 
 test('the steps stay re-runnable from every caller: zero count, mismatch, pointer and summary comments, close', () => {
@@ -676,16 +705,21 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   const skill = materialityEntryLine({ ...base, finding: 'two', provenance: 'harness-health' });
   const stamped = `${materialityEntryLine({ ...base, finding: 'three', provenance: 'harness-health' })} <!-- materiality-first-seen: 2026-02-02T00:00:00Z -->`;
   const mcpSkill = materialityEntryLine({ ...base, finding: 'four', provenance: 'harness-health' });
+  // already marked (`→ expired`), a plain bullet, and a CRLF comment body: only live entry lines print
+  const marked = `${materialityEntryLine({ ...base, finding: 'six', provenance: 'harness-health' })} → expired`;
+  const bullet = '- [a link](https://example.test/x)';
+  const crlfLine = materialityEntryLine({ ...base, finding: 'five', provenance: 'harness-health' });
   const comments = [
-    { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', authorAssociation: 'MEMBER', body: `a note\n${runId}\n${skill}\n${stamped}` },
+    { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', authorAssociation: 'MEMBER', body: `a note\n${runId}\n${skill}\n${stamped}\n${marked}\n${bullet}` },
     { url: 'https://example.test/c#issuecomment-2', authorAssociation: 'OWNER', body: skill },
     // MCP spells the comment date created_at; an unstamped skill-provenance line takes it
     { html_url: 'https://example.test/c#issuecomment-3', created_at: '2026-10-01T00:00:00Z', author_association: 'COLLABORATOR', body: mcpSkill },
     // a planted line in an untrusted comment is never dated
     { url: 'https://example.test/c#issuecomment-4', createdAt: '2026-11-01T00:00:00Z', authorAssociation: 'NONE', body: runId },
+    { url: 'https://example.test/c#issuecomment-5', createdAt: '2026-09-01T00:00:00Z', authorAssociation: 'OWNER', body: `a note\r\n${crlfLine}\r\n${bullet}\r\n` },
   ];
   const dir = scratch(t);
-  const documented = blockHolding(SWEEP, 'node -e "const fs=require(\'fs\');const {materialityEntryDate}', 'Expiry');
+  const documented = blockHolding(SWEEP, 'node -e "const fs=require(\'fs\');const {materialityEntryDate,isLiveEntryLine}', 'Expiry');
   assert.ok(documented.startsWith('EXPIRY_COMMENTS="$(node'), 'the fence sets its own variable');
   assert.ok(documented.includes('gh issue view {n} --json comments --jq .comments > "$EXPIRY_COMMENTS" && node -e'), 'the fence saves its own read');
   const block = documented.replace('{n}', '10');
@@ -693,11 +727,15 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   const r = runFence(block, { ...sessionEnv(dir), ...ghExpiryStub(dir, comments) });
   assert.strictEqual(r.status, 0, r.stderr);
   const rows = r.stdout.trim().split('\n').map((l) => l.split('\t'));
-  assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null', '2026-10-01T00:00:00.000Z']);
-  assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill, mcpSkill]);
+  assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null', '2026-10-01T00:00:00.000Z', '2026-09-01T00:00:00.000Z']);
+  assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill, mcpSkill, crlfLine]);
   assert.ok(rows[3][1].endsWith('issuecomment-2'));
   assert.ok(rows[4][1].endsWith('issuecomment-3'));
-  assert.strictEqual(rows.length, 5, 'the untrusted comment\'s line is not dated');
+  assert.ok(rows[5][1].endsWith('issuecomment-5'), 'a CRLF comment\'s live line prints');
+  assert.ok(!r.stdout.includes('\r'), 'no printed column keeps a carriage return');
+  assert.ok(!r.stdout.includes(marked) && !r.stdout.includes('→ expired'), 'a line already marked is not printed');
+  assert.ok(!r.stdout.includes(bullet), 'a plain bullet is not an entry line');
+  assert.strictEqual(rows.length, 6, 'the untrusted comment\'s line is not dated');
   // a failed read stops the fence before the dating runs, never an empty set
   const failed = runFence(documented.replace('{n}', '11'), { ...sessionEnv(dir), ...ghExpiryStub(dir, comments) });
   assert.notStrictEqual(failed.status, 0, 'a failed gh read must fail the fence');

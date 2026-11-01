@@ -10,6 +10,7 @@
 //   digest-rollover.js verdict --old-json <path> --candidates-json <path>
 //   digest-rollover.js carry --old <n> --new <n>
 //   digest-rollover.js carry --old <n> --new <n> --count <n> --old-json <path> --new-json <path>
+//   digest-rollover.js carry --old <n> --new <n> --count <n> --new-count <n> --old-json <path> --new-json <path>
 //   digest-rollover.js --help
 // The first form of each verb reads through `gh` from the cwd's repo: the verdict through REST
 // (`gh api repos/{owner}/{repo}/issues/{n}`, the read carrying the author association), the carry
@@ -20,13 +21,16 @@
 //   --candidates-json  every issue naming the old one, one flat array of issue objects.
 //   --new-json         the replacement's comments, one flat array.
 //   --count            the old issue's true comment count.
+//   --new-count        optional, with the file form: the replacement's true comment count. When given,
+//                      a --new-json read of any other length is refused, so a short read of the new
+//                      side cannot make the planner re-post what is already carried.
 // Each entry is shape-checked by the planner, so an MCP error written as data is a refused read.
 //
 // Output: one JSON line at exit 0.
 //   verdict: { state, replacement, extras } and, on `none` only, `orphan` when a trusted open
 //     replacement of a closed old issue is there (classifyRolloverResume).
 //   carry: { old, replacement, count, live, carried, pending, tombstones, tombstonesCarried,
-//     tombstonesPending, unfingerprintedMarked, verified, skipped, paths, edits }. paths are the
+//     tombstonesPending, unfingerprintedMarked, unparsedEntryLines, verified, skipped, paths, edits }. paths are the
 //     comment bodies to post, edits the { commentId, path } marker edits to apply. A true count of
 //     0 with an empty read prints `empty: true`, `verified: true` and nothing to post: the planner
 //     refuses an empty read, so a truncated read can never pass as an empty issue.
@@ -56,12 +60,13 @@ const USAGE = `usage: digest-rollover.js verdict --old <n> --candidates <n>[,<n>
        digest-rollover.js verdict --old-json <path> --candidates-json <path>
        digest-rollover.js carry --old <n> --new <n>
        digest-rollover.js carry --old <n> --new <n> --count <n> --old-json <path> --new-json <path>
+       digest-rollover.js carry --old <n> --new <n> --count <n> --new-count <n> --old-json <path> --new-json <path>
 exit: 0 printed, 1 malformed invocation, 2 gh absent (use the file form), 3 a read refused or failed
 `;
 
 const VERB_FLAGS = {
   verdict: ['--old', '--candidates', '--old-json', '--candidates-json'],
-  carry: ['--old', '--new', '--count', '--old-json', '--new-json'],
+  carry: ['--old', '--new', '--count', '--new-count', '--old-json', '--new-json'],
 };
 const POSITIVE = /^[1-9]\d*$/;
 const NUMBER_FLAGS = new Set(['--old', '--new']);
@@ -80,6 +85,7 @@ function parseArgs(argv) {
     if (typeof value !== 'string' || !value.trim() || value.startsWith('--')) return { error: `${flag} requires a value` };
     if (NUMBER_FLAGS.has(flag) && !POSITIVE.test(value)) return { error: `${flag} requires a positive integer` };
     if (flag === '--count' && !/^\d+$/.test(value)) return { error: '--count requires a non-negative integer' };
+    if (flag === '--new-count' && !/^\d+$/.test(value)) return { error: '--new-count requires a non-negative integer' };
     if (flag === '--candidates' && !value.split(',').every((n) => POSITIVE.test(n))) return { error: '--candidates requires positive integers, comma-separated' };
     o[flag.slice(2)] = value;
   }
@@ -101,6 +107,7 @@ function parseArgs(argv) {
     const fileForm = has('count', 'old-json', 'new-json');
     if (any(fileForm) && !all(fileForm)) return { error: '--count, --old-json and --new-json go together' };
     o.fileForm = all(fileForm);
+    if (o['new-count'] !== undefined && !o.fileForm) return { error: '--new-count goes with the file form (--count, --old-json and --new-json)' };
   }
   return o;
 }
@@ -162,6 +169,11 @@ function runVerdict(opts, deps) {
   if (opts.fileForm) {
     old = readJsonFile(deps, opts['old-json']);
     candidates = readJsonFile(deps, opts['candidates-json']);
+    // The gh form always names at least one candidate; an empty file would print `none`, which the
+    // sweep reads as "create a replacement", so a truncated or failed fetch is refused instead.
+    if (Array.isArray(candidates) && candidates.length === 0) {
+      throw new ReadRefused(`${opts['candidates-json']}: empty — name at least one candidate; an empty list would read as no replacement`);
+    }
   } else {
     old = readIssue(deps, opts.old);
     candidates = [...new Set(opts.candidates.split(','))].map((n) => readIssue(deps, n));
@@ -178,6 +190,7 @@ const EMPTY_PLAN = {
   tombstonesCarried: 0,
   tombstonesPending: 0,
   unfingerprintedMarked: 0,
+  unparsedEntryLines: 0,
   verified: true,
   skipped: [],
   paths: [],
@@ -196,7 +209,8 @@ function runCarry(opts, deps) {
     return 0;
   }
   const newComments = opts.fileForm ? readJsonFile(deps, opts['new-json']) : readComments(deps, opts.new);
-  const plan = planCarryOver(oldComments, newComments, { oldCommentCount: count });
+  const newCommentCount = opts['new-count'] === undefined ? undefined : Number(opts['new-count']);
+  const plan = planCarryOver(oldComments, newComments, { oldCommentCount: count, newCommentCount });
   const dir = attempt('carry directory', () => deps.carryDir(old));
   const write = (name, body) => {
     const file = `${dir}/${name}`;
@@ -216,6 +230,7 @@ function runCarry(opts, deps) {
     tombstonesCarried: plan.tombstonesCarried,
     tombstonesPending: plan.tombstonesPending.length,
     unfingerprintedMarked: plan.unfingerprintedMarked,
+    unparsedEntryLines: plan.unparsedEntryLines,
     verified: plan.verified,
     skipped: plan.skipped,
     paths,
