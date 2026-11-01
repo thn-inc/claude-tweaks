@@ -4,9 +4,9 @@
 // merged AFTER its session ended — an armed auto-merge, a merge-queue merge —
 // so no session ever ran the steps (#4599). Step 4.0b runs
 // lib/issues/below-floor-parent-close.js over lib/issues/parent-gate.js, the
-// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 stays a
-// bin/closing-links.js run. This file only decides WHEN they run and records
-// that they did.
+// gate code the prose's bin/parent-gate.js CLI runs. Step 4.0 runs through
+// bin/closing-links.js's closingLinks() core, in-process. This file only decides
+// WHEN they run and records that they did.
 //
 // Exactly once per run: a `decisions.md` entry (the marker) is the done-signal,
 // whether the merging session's own Step 4.0b wrote it or this check did. Two
@@ -29,8 +29,8 @@
 // location the marker rule never matches — and defer the run as
 // `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
 // failure writes the marker as any other failure does. Every other exit is
-// deterministic (2 malformed invocation, 3 run dir not anchored, 4 pre-merge
-// only), as is an unreadable exit-0 envelope: those write the marker at once.
+// deterministic (3 run dir not anchored, 4 pre-merge only): those write the
+// marker at once.
 //
 // Step 4.0b's after-a-PR-merge rules, from Step 4.0's envelope (#4549): there is
 // no default-branch check (on a non-default base Step 4.0 closes the `Fixes`
@@ -70,7 +70,7 @@ const { appendEntries, formatEntry, parseEntry } = require('../log-decision/appe
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
 const { ghOptions } = require('../repo-resolve');
 const { closeBelowFloorParents } = require('../issues/below-floor-parent-close');
-const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
+const { closingLinks, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
 
 const MARKER_STEP = 'reconcile post-merge';
 const PARENT_STEP = 'reconcile post-merge parent-close';
@@ -232,16 +232,6 @@ function releaseClaim(runDir) {
   try { fs.unlinkSync(path.join(runDir, CLAIM_FILENAME)); } catch { /* already gone */ }
 }
 
-// Pure: Step 4.0's JSON envelope from the CLI's captured stdout, or null.
-function parseEnvelope(stdoutText) {
-  const lines = String(stdoutText).split('\n').map((l) => l.trim()).filter(Boolean);
-  if (!lines.length) return null;
-  try {
-    const parsed = JSON.parse(lines[lines.length - 1]);
-    return parsed && typeof parsed === 'object' ? parsed : null;
-  } catch { return null; }
-}
-
 const numbers = (values) => (Array.isArray(values) ? values : []).map(Number).filter(Number.isInteger);
 
 function candidateRuns(root) {
@@ -296,7 +286,7 @@ async function postMerge({
   const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   })));
-  const runClosingLinks = deps.closingLinksRun || closingLinksRun;
+  const runClosingLinks = deps.closingLinksRun || closingLinks;
   const closeParents = deps.closeParents || closeBelowFloorParents;
   const writeEntries = deps.appendEntries || appendEntries;
 
@@ -362,14 +352,12 @@ async function postMerge({
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
 }) {
-  let out = '';
-  const code = runClosingLinks(
-    ['--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS)],
+  const { code, envelope } = runClosingLinks(
+    { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS },
     {
-      cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stdout: (s) => { out += s; }, stderr: () => {},
+      cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stderr: () => {},
     },
   );
-  const envelope = code === 0 ? parseEnvelope(out) : null;
   const stamp = now();
   // A failed write still reports the parents Step 4.0b closed: they are closed on GitHub either way.
   const write = (items, ran, parentsClosed = 0) => {
@@ -393,13 +381,9 @@ function processRun({
   };
 
   if (!envelope || !Array.isArray(envelope.closingSet)) {
-    const unreadable = code === 0 && !(envelope && envelope.action);
-    let returned;
-    if (code !== 0) returned = `exit ${code}`;
-    else if (unreadable) returned = 'an unreadable envelope';
-    else returned = envelope.action;
+    const returned = code !== 0 ? `exit ${code}` : envelope.action;
     // An unread base or default branch: Step 4.0 closed nothing and carries no closing set (#4549).
-    const baseUnchecked = code === 0 && Boolean(envelope && envelope.baseUnchecked === true);
+    const baseUnchecked = code === 0 && envelope.baseUnchecked === true;
     if (code === TRANSIENT_CLOSING_LINKS_EXIT) {
       const retried = retry(`Step 4.0 returned exit ${code} (a gh failure)`);
       if (retried) return retried;
@@ -409,10 +393,10 @@ function processRun({
       if (retried) return retried;
     }
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: MARKER_STEP, text: composeSkipText(returned), reversibility: 'n/a' }) };
-    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit, an unreadable
-    // envelope, or an unread base), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
+    // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit or an unread base),
+    // as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
     return write([item], {
-      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable || baseUnchecked ? { step40Failed: true } : {}),
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || baseUnchecked ? { step40Failed: true } : {}),
     });
   }
 

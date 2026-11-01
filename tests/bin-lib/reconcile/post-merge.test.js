@@ -54,13 +54,13 @@ function fakePrStates(table) {
   return { byNumberAsync: async (n) => table[n] };
 }
 
-// A closing-links fake that prints `envelope` and exits `code`.
+// A closing-links fake standing in for the exported core: it returns `{ code, envelope }`, the envelope
+// object only on exit 0 (the real core's contract).
 function fakeClosingLinks(envelope, code = 0) {
   const calls = [];
-  const fn = (argv, d) => {
-    calls.push({ argv, deps: d });
-    if (envelope) d.stdout(`${JSON.stringify(envelope)}\n`);
-    return code;
+  const fn = (opts, d) => {
+    calls.push({ opts, deps: d });
+    return { code, envelope: code === 0 ? envelope : null };
   };
   fn.calls = calls;
   return fn;
@@ -88,7 +88,7 @@ function run(root, { prs, links, close, dryRun = false, extra = {} } = {}) {
   });
 }
 
-test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus summary marker, entry ran', async () => {
+test('merged unmarked run: Step 4.0 options, Step 4.0b arguments, parent line plus summary marker, entry ran', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks({ ...ENVELOPE, action: 'reopened', reopened: [103], pendingClose: [104], failed: [{ issue: 105 }] });
@@ -103,10 +103,9 @@ test('merged unmarked run: Step 4.0 argv, Step 4.0b arguments, parent line plus 
     deferred: [],
   });
   assert.equal(links.calls.length, 1);
-  assert.deepEqual(links.calls[0].argv, [
-    '--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS),
-  ]);
+  assert.deepEqual(links.calls[0].opts, { run: dir, mode: 'post-merge', settleMs: 0, closeWindowMs: CLOSE_WINDOW_MS });
   const d = links.calls[0].deps;
+  assert.ok(!('stdout' in d), 'the core prints nothing, so post-merge passes no stdout');
   assert.equal(d.cwd(), root);
   assert.equal(d.mainRoot, root);
   assert.equal(d.ghAvailable(), true);
@@ -286,7 +285,7 @@ test('merge grace: a merge 2 minutes old, or with no mergedAt, is skipped, untou
   for (const pr of [11, 12, 13]) assert.deepEqual([byPr[pr].action, byPr[pr].reason], ['skipped', 'merge-grace']);
   assert.equal(byPr[14].action, 'ran');
   assert.equal(links.calls.length, 1);
-  assert.equal(links.calls[0].argv[1], old);
+  assert.equal(links.calls[0].opts.run, old);
   for (const dir of [fresh, noStamp, garbled]) assert.equal(decisionsOf(dir), '');
   assert.deepEqual(new Set(r.deferred), new Set([fresh, noStamp, garbled]));
   assert.equal(MERGE_GRACE_MS, 10 * 60 * 1000);
@@ -309,7 +308,7 @@ test('merge grace boundary: a merge exactly MERGE_GRACE_MS old is still in grace
   assert.deepEqual([byPr[11].action, byPr[11].reason], ['skipped', 'merge-grace']);
   assert.deepEqual(r.deferred, [edge]);
   assert.equal(byPr[12].action, 'ran');
-  assert.deepEqual(links.calls.map((c) => c.argv[1]), [past]);
+  assert.deepEqual(links.calls.map((c) => c.opts.run), [past]);
   // closing-links settles a still-open record only once now > mergedAt + window, so the window must
   // never outlast the grace: every run that gets here is strictly past it.
   assert.ok(CLOSE_WINDOW_MS <= MERGE_GRACE_MS);
@@ -387,11 +386,10 @@ test('claim: a closing-links runner that throws leaves no lock, no marker, and l
   const bad = addRun(root, '2026-10-30T090000-spec-1', { pr: 11 });
   const good = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
   let n = 0;
-  const links = (argv, d) => {
+  const links = (opts) => {
     n += 1;
-    if (argv[1] === bad) throw new Error('kaboom');
-    d.stdout(`${JSON.stringify(ENVELOPE)}\n`);
-    return 0;
+    if (opts.run === bad) throw new Error('kaboom');
+    return { code: 0, envelope: ENVELOPE };
   };
   const r = await run(root, { prs: { 11: merged(), 12: merged() }, links, close: fakeCloseParents() });
   const byPr = Object.fromEntries(r.entries.map((e) => [e.pr, e]));
@@ -516,16 +514,6 @@ test('M7: hasPostMergeMarker never reads an attempt line as a marker', () => {
   assert.equal(hasPostMergeMarker(`${attempt}\n${attempt}\n${attempt}\n`), false);
 });
 
-test('K4: an exit-0 envelope with neither closingSet nor action is labelled unreadable and flagged step40Failed', async () => {
-  const root = mainCheckout();
-  const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks({ pr: 11, unexpected: true }), close: fakeCloseParents() });
-  assert.deepEqual(r.entries, [{
-    runDir: dir, pr: 11, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true,
-  }]);
-  assert.match(decisionsOf(dir), /Step 4\.0 returned an unreadable envelope, no closingSet/);
-});
-
 test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions.md is done: no lookup, no call, not prefetched', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
@@ -592,7 +580,7 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   // The walk order is the run listing's, so which merged run goes first is not pinned: exactly one runs.
   const ran = r.entries.filter((e) => e.action === 'ran').map((e) => e.runDir);
   assert.equal(ran.length, 1);
-  assert.equal(links.calls[0].argv[1], ran[0]);
+  assert.equal(links.calls[0].opts.run, ran[0]);
   const exhausted = r.entries.filter((e) => e.reason === 'budget-exhausted').map((e) => e.runDir);
   assert.deepEqual(new Set([...ran, ...exhausted]), new Set([first, second, third]));
   assert.equal(r.entries.length, 3, 'an OPEN PR is not a run that would have run: no entry');
@@ -610,12 +598,12 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   assert.deepEqual(r2.entries.map((e) => e.action), ['ran', 'ran']);
 });
 
-test('step40Failed marks a non-zero exit and an unreadable exit-0 envelope, never a readable envelope without a closing set', async () => {
+test('step40Failed marks a non-zero exit, never a readable envelope without a closing set', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
-  const unreadable = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 0), close: fakeCloseParents() });
-  assert.deepEqual(unreadable.entries, [{
-    runDir: dir, pr: 11, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true,
+  const failed = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, 3), close: fakeCloseParents() });
+  assert.deepEqual(failed.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'exit 3', parentsClosed: 0, step40Failed: true,
   }]);
   const root2 = mainCheckout();
   const dir2 = addRun(root2, '2026-10-30T090000-spec-1');
@@ -626,6 +614,21 @@ test('step40Failed marks a non-zero exit and an unreadable exit-0 envelope, neve
   addRun(root3, '2026-10-30T090000-spec-1');
   const ok = await run(root3, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
   assert.ok(!('step40Failed' in ok.entries[0]));
+});
+
+test('postMerge without deps.closingLinksRun falls back to the exported closingLinks core', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // Production calls postMerge with no deps, so it reaches the default binding the injected fakes above
+  // never do. The real core, with a gh that answers '', cannot parse `gh pr view` and returns exit 5; a
+  // default naming an unbound identifier would instead throw a ReferenceError, surfacing as reason 'error'.
+  const r = await postMerge({
+    cwd: root, now, prStates: fakePrStates({ 11: merged() }),
+    deps: { gh: fakeGh, closeParents: fakeCloseParents() },
+  });
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'transient-failure', detail: 'Step 4.0 returned exit 5 (a gh failure)', attempt: 1,
+  }]);
 });
 
 test('an exit-0 envelope with no closingSet (not-merged) is a SKIP marker naming its action', async () => {
