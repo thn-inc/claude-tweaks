@@ -53,7 +53,14 @@ files:
 - **Should understand:** Exit `1`, and stdout's `overwrites[]` array carries one entry per offending path/commit: `{path, commit, reason}`, where `reason` names the deleted line number and the commit whose `refs` trailer it traces back to. This is the HARD-GATE case — `flow/multispec-artifact-namespacing.md` says stop before rendering the console and report this array.
 - **Red flags:** An overwrite silently merged into "clean" because only the exit code was checked and `1` was treated as "harmless — probably just a lint warning"; a console that renders anyway.
 
-### 6. Understand the five safety tests without reading the algorithm
+### 6. Read a spec's own untrailered review fix — the #4593 case
+- **URL:** a synthetic fixture, same shape as `tests/bin-lib/flow/artifact-overwrite-check.test.js`'s "AC1.1" case: spec #10's stories commit adds `stories/x-10.yaml`, and spec #10's own review fix changes one of its lines; neither commit carries a `refs` trailer. Run step 1's command with `--run` pointing at the run dir whose `manifest.yml` puts both commits' author dates inside spec #10's window.
+- **Action:** Run it with `--run`, then once more without it.
+- **Should feel:** Like the gate understood whose edit it was — a spec correcting its own artifact during review no longer stops the run for a manual ruling.
+- **Should understand:** With `--run`, exit `0` and `{"clean":true,"overwrites":[]}`: the manifest window attributes both commits to spec #10. Without `--run`, exit `1`, and the entry's `reason` says `unattributable — no refs trailer and no manifest window`, never `refs trailer does not match`, so a missing attribution reads differently from a confirmed cross-spec deletion. A manifest that `--run` cannot read or that is unusable (no specs, a present-but-invalid timestamp) exits `3` and names the file or field.
+- **Red flags:** A clean verdict from a manifest whose specs' transitions interleave, or that names a `failed`/`not-run` spec — the tool turns windows off for those and must stay refs-only.
+
+### 7. Understand the five safety tests without reading the algorithm
 - **URL:** `plugin/skills/flow/multispec-artifact-namespacing.md`'s "Append vs. overwrite (#2014)" section
 - **Action:** Read it instead of `plugin/bin/lib/flow/artifact-overwrite-check.js` directly.
 - **Should feel:** The prose and the code agree — reading either one gives the same mental model.
@@ -64,4 +71,5 @@ files:
 - Created during build of #2014 (mechanize the artifact-overwrite completion check's append-vs-overwrite judgment).
 - Step 3 added, and step 5 widened to three tests, during build of #3341 (pass a content-preserving step-markup reformat).
 - Step 4 added, and step 6 widened to five tests, during build of #4590 (step renumber and reference-preserving `Origin:` line).
+- Step 6 added, step 1 given `--run`, and the self-edit test's attribution widened to manifest windows, during build of #4593 (attribute untrailered commits by manifest window).
 - Related specs: #786 (the original completion check this extends).
