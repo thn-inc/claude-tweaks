@@ -495,10 +495,11 @@ function recognizeMarkerValue(raw, closedSet) {
 // tasks by this identity, not by position in the file) as a Number.
 // `role`/`risk` are the recognized value or null (an absent line, or a
 // present line whose leading whitespace-delimited token isn't in the closed
-// set above — a trailing annotation after a recognized token is ignored); `roleRaw`/
-// `riskRaw` carry the line's raw trimmed value (or null when the line is
-// absent at all) so a caller validating against the closed set (checks.js's
-// `checkTaskMarkers`) can still name the actual offending value. `markers`
+// set above — a trailing annotation after a recognized token is ignored);
+// `roleRaw`/`riskRaw` carry the line's raw trimmed value (or null when the
+// line is absent at all) so a caller validating against the closed set
+// (checks.js's `checkTaskMarkers`) can still name the actual offending
+// value. `markers`
 // is true iff ANY task carries a recognized marker KEY at all — a key
 // present with an unrecognized value still counts (the task is marked, just
 // invalidly), so `markers: false` means "no `**Role:**`/`**Review risk:**`

@@ -90,20 +90,26 @@ test('#3378: dispatch.md names no hardcoded model name in its per-task tier-forw
 
 test('AC6.1 AC6.2 (#4640): dispatch.md\'s tier forwarding names `findings` and its one SKIP decision-log line, and continues unmarked', () => {
   const text = read('plugin', 'skills', 'build', 'dispatch.md');
-  const section = text.slice(text.indexOf('**Per-task role/review-risk tier forwarding (#3378).**'));
+  const from = text.slice(text.indexOf('**Per-task role/review-risk tier forwarding (#3378).**'));
+  const end = from.indexOf('\n\n');
+  const section = end === -1 ? from : from.slice(0, end);
   assert.match(section, /When that output carries `findings`/);
   assert.match(section, /--status SKIP --section "\/build" --step "Per-task tier forwarding \(degraded\)" --text-file "\{path\}"/);
-  assert.match(section, /whichever exclusion below fires/);
+  assert.match(section, /whether or not an exclusion below fires/);
   assert.match(section, /treated as unmarked for that field, never a stop/);
 });
 
 test('AC7.1 (#4640): plan-authoring-checks.md and plan-audit.md each state that a trailing annotation after the marker value is ignored', () => {
   const authoring = read('plugin', 'skills', 'build', 'plan-authoring-checks.md');
-  const markers = authoring.slice(authoring.indexOf('**Per-task role/review-risk markers (#3378).**'));
-  assert.match(markers, /A trailing annotation after the value and a space is ignored\./);
+  const markersFrom = authoring.slice(authoring.indexOf('**Per-task role/review-risk markers (#3378).**'));
+  const markersEnd = markersFrom.indexOf('\n\n');
+  const markers = markersEnd === -1 ? markersFrom : markersFrom.slice(0, markersEnd);
+  assert.match(markers, /A trailing annotation after the value and whitespace is ignored\./);
   assert.match(markers, /a stderr warning/);
   const audit = read('plugin', 'skills', 'build', 'plan-audit.md');
-  const para = audit.slice(audit.indexOf('`--task-markers {plan-file}` (#3378)'));
-  assert.match(para, /a trailing annotation after the value and a space is ignored/);
+  const paraFrom = audit.slice(audit.indexOf('`--task-markers {plan-file}` (#3378)'));
+  const paraEnd = paraFrom.indexOf('\n\n');
+  const para = paraEnd === -1 ? paraFrom : paraFrom.slice(0, paraEnd);
+  assert.match(para, /a trailing annotation after the value and whitespace is ignored/);
   assert.match(para, /each entry is also written to stderr as one warning line/);
 });

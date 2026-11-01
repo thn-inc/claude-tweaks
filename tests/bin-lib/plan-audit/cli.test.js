@@ -482,12 +482,7 @@ test('--count-tasks never runs Checks A/B/C — a plan naming a missing path sti
 // ── #3378 — --task-markers ───────────────────────────────────────────────────
 
 function runTaskMarkers(planFile) {
-  try {
-    const stdout = execFileSync('node', [CLI, planFile, '--task-markers'], { encoding: 'utf8' });
-    return { exitCode: 0, stdout, stderr: '' };
-  } catch (err) {
-    return { exitCode: err.status, stdout: err.stdout || '', stderr: err.stderr || '' };
-  }
+  return runTaskMarkersCapture(planFile);
 }
 
 test('--task-markers prints markers:false and every role/risk null for an unmarked plan (#3378 AC1)', () => {
