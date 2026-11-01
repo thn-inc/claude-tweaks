@@ -665,8 +665,8 @@ const key = process.argv.slice(2).join(' ');
 if (key !== 'issue view 10 --json comments --jq .comments') { process.stderr.write('unexpected gh ' + key + '\\n'); process.exit(1); }
 process.stdout.write(require('fs').readFileSync(${JSON.stringify(path.join(dir, 'fixture.json'))}, 'utf8'));
 `);
-  fs.chmodSync(stub, 0o755);
-  return { PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+  fs.chmodSync(stub, 0o755); // root-safe: makes the stub runnable, simulates no denial
+  return { PATH:`${bin}${path.delimiter}${process.env.PATH}` };
 };
 
 test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and null when nothing parses', { skip: process.platform === 'win32' ? 'a bare executable stub is not a launchable gh on win32' : false }, (t) => {

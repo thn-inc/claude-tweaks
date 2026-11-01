@@ -366,7 +366,7 @@ if (key === '--version') { console.log('gh version 2.0.0'); process.exit(0); }
 if (!(key in table) || table[key] === null) { process.stderr.write('HTTP 404: Not Found (' + key + ')\\n'); process.exit(1); }
 process.stdout.write(typeof table[key] === 'string' ? table[key] : JSON.stringify(table[key]));
 `);
-  fs.chmodSync(stub, 0o755);
+  fs.chmodSync(stub, 0o755); // root-safe: makes the stub runnable, simulates no denial
   return bin;
 }
 const sessionEnv = (dir) => ({ CLAUDE_CODE_SESSION_ID: 'digest-rollover-test', TMPDIR: dir, TEMP: dir, TMP: dir });
