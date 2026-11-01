@@ -13,7 +13,7 @@ const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // several: the count and every word the phrase spans must not be one (`Lens 3c: agents returned no findings`).
 const NOT_ZERO = String.raw`(?!(?:no|zero|0)\s)`;
 const WORD = String.raw`${NOT_ZERO}[\w/()-]+\s+`;
-const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`);
+const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`, 'i');
 const PATH_RE = new RegExp(String.raw`${FINDING_PATH}(?::\d+)?`, 'g');
 const PLURAL_SUBJECT_RES = [
   new RegExp(String.raw`\b${NOT_ZERO}\d+\s+(?:${WORD}){0,3}findings\b`, 'i'),
