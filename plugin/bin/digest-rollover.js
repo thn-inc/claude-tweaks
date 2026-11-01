@@ -89,10 +89,12 @@ function parseArgs(argv) {
   if (verb === 'verdict') {
     const ghForm = has('old', 'candidates');
     const fileForm = has('old-json', 'candidates-json');
-    if (all(ghForm) === all(fileForm) || (all(ghForm) && any(fileForm)) || (all(fileForm) && any(ghForm))) {
+    const ghOnly = all(ghForm) && !any(fileForm);
+    const fileOnly = all(fileForm) && !any(ghForm);
+    if (!ghOnly && !fileOnly) {
       return { error: 'verdict takes either --old with --candidates, or --old-json with --candidates-json' };
     }
-    o.fileForm = all(fileForm);
+    o.fileForm = fileOnly;
   } else {
     if (!all(has('old', 'new'))) return { error: 'carry requires --old and --new' };
     if (o.old === o.new) return { error: '--old and --new name the same issue' };
@@ -228,7 +230,7 @@ function run(argv, deps) {
   if (opts.error) { deps.stderr(`digest-rollover.js: ${opts.error}\n${USAGE}`); return 1; }
   if (!opts.fileForm) {
     let available = false;
-    try { available = deps.ghAvailable(); } catch { available = false; }
+    try { available = deps.ghAvailable(); } catch { /* a probe that throws reads as absent */ }
     if (!available) {
       deps.stderr('digest-rollover.js: gh CLI not found on PATH — fetch through MCP and use the file form\n');
       return 2;

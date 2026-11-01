@@ -313,7 +313,6 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   if (!Number.isInteger(maxChars) || maxChars <= 0) throw new CarryOverInputError(`maxChars ${String(maxChars)} is not a positive integer`);
   const newSide = readTrustedLines(newComments, 'new comments');
 
-  const oldLines = oldSide.lines.map((l) => ({ ...l, d: describeLine(l.text) }));
   const live = liveEntriesOf(oldSide.lines);
   const liveKeys = new Set(live.map((e) => e.key));
   // Markers on the lines that get carried live. A later live line sharing a key is not carried, so
@@ -322,29 +321,33 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
 
   const tombstones = [];
   const taken = new Set();
+  // Adds one tombstone holding the markers not already tombstoned.
+  const addTombstone = (markers) => {
+    const rest = markers.filter((m) => !taken.has(m));
+    for (const m of rest) taken.add(m);
+    if (rest.length > 0) tombstones.push(rest);
+  };
   const marks = new Map();
   const carriedKeys = new Set();
   let unfingerprintedMarked = 0;
-  for (const { d } of oldLines) {
+  for (const { text } of oldSide.lines) {
+    const d = describeLine(text);
     if (d.entry && !d.marked && !carriedKeys.has(d.key)) {
       carriedKeys.add(d.key);
       continue;
     }
     if (d.marked && d.fingerprint === null) unfingerprintedMarked += 1;
     if (d.marked && !liveKeys.has(d.key) && !marks.has(d.key)) marks.set(d.key, d.mark);
-    const rest = d.markers.filter((m) => !liveMarkers.has(m) && !taken.has(m));
-    for (const m of rest) taken.add(m);
-    if (rest.length > 0) tombstones.push(rest);
+    addTombstone(d.markers.filter((m) => !liveMarkers.has(m)));
   }
 
   const newLines = newSide.lines.map((l) => ({ ...l, d: describeLine(l.text) }));
-  const newEntryKeys = new Set(newLines.filter(({ d }) => d.entry).map(({ d }) => d.key));
   const newMarkers = new Set(newLines.flatMap(({ d }) => d.markers));
 
   // A selected live entry whose key the new side already holds, but on a line missing some of its
   // markers: the selection moved after the copy was posted (the first live line was promoted, so a
   // later duplicate with an extra marker is now the one carried). Those markers are tombstoned
-  // rather than assumed to be on the new side.
+  // rather than assumed to be on the new side. The map's keys are the entry keys the new side holds.
   const newEntryMarkers = new Map();
   for (const { d } of newLines) {
     if (!d.entry) continue;
@@ -353,12 +356,10 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   }
   for (const e of live) {
     if (!newEntryMarkers.has(e.key)) continue;
-    const rest = (e.line.match(DEDUP_MARKER) || []).filter((m) => !newEntryMarkers.get(e.key).has(m) && !taken.has(m));
-    for (const m of rest) taken.add(m);
-    if (rest.length > 0) tombstones.push(rest);
+    addTombstone((e.line.match(DEDUP_MARKER) || []).filter((m) => !newEntryMarkers.get(e.key).has(m)));
   }
 
-  const pendingEntries = live.filter((e) => !newEntryKeys.has(e.key));
+  const pendingEntries = live.filter((e) => !newEntryMarkers.has(e.key));
   const pending = pendingEntries.map((e) => e.line);
   const tombstonesPending = [];
   let tombstonesCarried = 0;
@@ -369,10 +370,7 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   }
 
   const markerEdits = [];
-  const edited = new Set();
-  for (const { comment } of newLines) {
-    if (edited.has(comment)) continue;
-    edited.add(comment);
+  for (const comment of new Set(newLines.map((l) => l.comment))) {
     let changed = false;
     const body = comment.body.split('\n').map((raw) => {
       const cr = raw.endsWith('\r') ? '\r' : '';

@@ -435,7 +435,7 @@ test('each reader\'s documented gh verdict runs as written, and a refused read p
 });
 
 test('each reader\'s documented file-form verdict runs as written with gh absent', NOT_ON_WIN32, (t) => {
-  for (const [rel] of Object.entries(READERS)) {
+  for (const rel of Object.keys(READERS)) {
     const src = skillText(rel);
     const line = documented(src, FILE_LINE, rel);
     const [oldName, candName] = [...line.matchAll(/--value (\S+?)\)/g)].map((m) => m[1]);
