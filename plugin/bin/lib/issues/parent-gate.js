@@ -30,7 +30,7 @@
 //   5   each sub-issue, ascending: issue view {n} --repo {slug} --json state,stateReason,labels,title,closedByPullRequestsReferences.
 //   6   the parent's labels: issue view {parent} --repo {slug} --json labels -q [.labels[].name].
 //   7   idempotence: issue view {parent} --repo {slug} --json state,stateReason,comments.
-//   8   the login: api user --jq .login, only when needsIdempotenceReads(7's state, stateReason).
+//   8   the login: api user --jq .login, only when needsIdempotenceReads(7's state, stateReason); a failed or blank read is login '' (trusted authors only, evaluateIdempotence notes it).
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
@@ -59,6 +59,10 @@ const VERDICT_FIELDS = [
 ];
 // The idempotence values, in the order they are checked.
 const IDEMPOTENCE_VALUES = ['already-closed', 'reopened', 'close-only', 'comment-and-close'];
+
+// The note evaluateIdempotence appends when the login read failed or came back blank and no
+// close marker counted: the dedupe then matched trusted authors only.
+const IDENTITY_PROBE_FAILED_NOTE = 'identity probe failed — close marker matched against trusted authors only';
 
 const QUALIFIED_TOKEN_RE = /^([^/\s#]+)\/([^/\s#]+)#(\d+)$/;
 
@@ -121,6 +125,12 @@ function onHost(args, host) {
 // only for a parent neither CLOSED nor REOPENED. Takes the uppercased state and stateReason.
 function needsIdempotenceReads(state, stateReason) {
   return state !== 'CLOSED' && stateReason !== 'REOPENED';
+}
+
+// Shape 8: the current gh login, trimmed. Throws whatever caller.call throws (a GhFailure);
+// gatherIdempotenceFacts reads that as no identity. The one place the --hostname rule applies to it.
+function readLogin({ caller, host }) {
+  return String(caller.call(onHost(['api', 'user', '--jq', '.login'], host))).trim();
 }
 
 // Shape 1 (body-text) or 2 (native): the sub-issue's parent number, or null.
@@ -216,12 +226,14 @@ function gatherGateFacts({
 }
 
 // Shapes 7 and 8: the parent's live state and comments, and the current gh login,
-// read only when the parent is neither CLOSED nor REOPENED. A state that is not a
+// read only when the parent is neither CLOSED nor REOPENED. A failed login read
+// (a GhFailure, from the default read or an injected `readLogin`) or a blank one is
+// login '' (no identity: the dedupe matches trusted authors only). A state that is not a
 // string, a present stateReason that is not one, or (when the comments are read) a
 // comments value that is not an array is a GhFailure: read as '' or [], it would
 // post a duplicate close comment.
 function gatherIdempotenceFacts({
-  parent, owner, repo, host, caller,
+  parent, owner, repo, host, caller, readLogin: readLoginFn = () => readLogin({ caller, host }),
 }) {
   const live = caller.callJson(['issue', 'view', String(parent), '--repo', repoSlug({ host, owner, repo }), '--json', 'state,stateReason,comments'], 'object');
   const malformed = (what, value) => new GhFailure(`gh issue view ${parent}: unexpected output (${what}: ${JSON.stringify(value)})`);
@@ -234,7 +246,15 @@ function gatherIdempotenceFacts({
   const reads = needsIdempotenceReads(state, stateReason);
   if (reads && !Array.isArray(live.comments)) throw malformed('comments is not an array', live.comments);
   const comments = Array.isArray(live.comments) ? live.comments : [];
-  const login = reads ? String(caller.call(onHost(['api', 'user', '--jq', '.login'], host))).trim() : null;
+  let login = null;
+  if (reads) {
+    try {
+      login = String(readLoginFn()).trim();
+    } catch (err) {
+      if (!(err instanceof GhFailure)) throw err;
+      login = '';
+    }
+  }
   return { state, stateReason, comments, login };
 }
 
@@ -335,6 +355,7 @@ function evaluateIdempotence(facts, { source = 'comments' } = {}) {
     if (isCloseMarkerComment(comment, f.login)) counted = true;
     else skipped.push(untrustedSkipNote(comment));
   }
+  if (!counted && f.login === '') skipped.push(IDENTITY_PROBE_FAILED_NOTE);
   return { idempotence: counted ? 'close-only' : 'comment-and-close', skipped };
 }
 
@@ -394,7 +415,9 @@ module.exports = {
   IDEMPOTENCE_VALUES,
   IDEMPOTENCE_SOURCES,
   isCloseMarkerComment,
+  IDENTITY_PROBE_FAILED_NOTE,
   needsIdempotenceReads,
+  readLogin,
   positive,
   distinctAscending,
   numberSet,
