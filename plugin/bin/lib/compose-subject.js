@@ -65,7 +65,7 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions,
 } = require('./repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
@@ -255,7 +255,7 @@ const realDeps = {
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })),
   fetchIssueType: fetchIssueTypeGraphQL,
   readCommitScope: () => readCommitScope(process.cwd()),
   readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),

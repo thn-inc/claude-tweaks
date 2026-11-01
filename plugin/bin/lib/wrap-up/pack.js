@@ -17,7 +17,7 @@ const { resolvePolicyConfig } = require('../policy-schema');
 const { parseManifestYaml } = require('../flow/manifest');
 const { parseDependencies, DEFER_REASONS } = require('../issues/record');
 const { runWithConcurrency } = require('../reconcile/gh-pool');
-const { parseRepo, repoSlug } = require('../repo-resolve');
+const { parseRepo, repoSlug, ghOptions } = require('../repo-resolve');
 const { readRunStateWithParent } = require('../hooks/context');
 const { ownedPlansFiles } = require('./ledger-ownership');
 const { ledgerRowCells } = require('./ledger-cells');
@@ -38,10 +38,11 @@ const EXEC_OPTS = { maxBuffer: 32 * 1024 * 1024, timeout: 30000 };
 // as a crash and hid #3479's 0.5 s of headroom — so a timeout kill (the
 // shared isTimeoutError check) is rethrown naming the timeout. Every other
 // rejection (ENOENT for gh-absent, a maxBuffer overflow) passes through
-// unchanged.
-async function execBounded(deps, cmd, args, cwd) {
+// unchanged. `wrap` transforms the options per call: identity by default,
+// ghOptions (#4505's GH_HOST seam) for a gh spawn.
+async function execBounded(deps, cmd, args, cwd, wrap = (_a, o) => o) {
   try {
-    return await deps.execFile(cmd, args, { cwd, ...EXEC_OPTS });
+    return await deps.execFile(cmd, args, wrap(args, { cwd, ...EXEC_OPTS }));
   } catch (err) {
     if (isTimeoutError(err)) {
       const target = cmd === 'node' ? path.basename(args[0]) : args[0];
@@ -76,8 +77,8 @@ function defaultGit(args, opts) {
 
 // Synchronous sibling of defaultGit, for the one ladder rank (#2385) that
 // needs `gh` before resolveInputs has anything async to await.
-function defaultGhSync(args, opts) {
-  return execSync('gh', args, opts);
+function defaultGhSync(args, { cwd } = {}) {
+  return execFileSync('gh', args, ghOptions(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }));
 }
 
 // In-process replacement for `node resolve-policy.js --values <key>` (#1930
@@ -607,7 +608,7 @@ function buildProbes(inputs, deps) {
     if (inputs.records.length === 0) throw new Error('records unresolved — no materialized header or manifest found');
   };
   const gh = async (args) => {
-    try { return await execBounded(deps, 'gh', args, inputs.worktree); } catch (err) {
+    try { return await execBounded(deps, 'gh', args, inputs.worktree, ghOptions); } catch (err) {
       if (err && err.code === 'ENOENT') throw new Error('gh-absent');
       throw err;
     }
