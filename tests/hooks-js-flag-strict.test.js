@@ -116,6 +116,11 @@ function linkedWorktree(root) {
   return fs.realpathSync(wt);
 }
 
+function assertNoRunDirMinted(root) {
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  assert.ok(!fs.existsSync(pipelines) || fs.readdirSync(pipelines).length === 0, 'no run dir was minted');
+}
+
 test('#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else', () => {
   assert.deepStrictEqual(Object.keys(KNOWN_FLAGS).sort(), Object.keys(VERBS).sort());
   assert.ok(fs.readFileSync(HOOKS, 'utf8').includes('\n  reconcile: ['));
@@ -252,7 +257,6 @@ test('#4777: sweep-shadow with no typo sweeps the shadow file (positive control)
 
 test('#4777: resolve-run-dir --create refuses an undeclared flag and mints nothing', () => {
   const root = freshRepo();
-  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   for (const args of [
     ['resolve-run-dir', '--spec-slug', 'x', '--create', '--bogus'],
     ['resolve-run-dir', '--bogus', '--spec-slug', 'x', '--create'],
@@ -260,7 +264,7 @@ test('#4777: resolve-run-dir --create refuses an undeclared flag and mints nothi
     const result = runHook(args, { cwd: root });
     assert.equal(result.code, 0, args.join(' '));
     assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, args.join(' '));
-    assert.ok(!fs.existsSync(pipelines) || fs.readdirSync(pipelines).length === 0, 'no run dir was minted');
+    assertNoRunDirMinted(root);
   }
 });
 
@@ -275,11 +279,10 @@ test('#4777: resolve-run-dir --create with no typo mints a run dir (positive con
 
 test('#4777: --help in a value position still prints usage and runs nothing', () => {
   const root = freshRepo();
-  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
   const mint = runHook(['resolve-run-dir', '--spec-slug', '--help', '--create'], { cwd: root });
   assert.equal(mint.code, 0);
   assert.equal(mint.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`);
-  assert.ok(!fs.existsSync(pipelines) || fs.readdirSync(pipelines).length === 0, 'no run dir was minted');
+  assertNoRunDirMinted(root);
   const sibling = runHook(['check-sibling-sessions', '--record', '--help'], { cwd: root });
   assert.equal(sibling.code, 0);
   assert.equal(sibling.stdout, `claude-tweaks: usage: ${USAGE['check-sibling-sessions']}\n`);

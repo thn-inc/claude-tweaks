@@ -165,8 +165,8 @@ function usageText() {
 // positions included) before the undeclared-flag scan.
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
-// unambiguousOnly is chosen per call site (resolveOpts), not by this table,
-// for every resolveRunArg caller.
+// unambiguousOnly is chosen per call site (resolveOpts), not by this table —
+// the same holds for every resolveRunArg caller.
 const KNOWN_FLAGS = {
   'archive-run': ['--run'],
   'close-run': ['--run'],
@@ -1942,7 +1942,8 @@ async function main(argv) {
     // skips the token after a VALUE_FLAGS member, so a --help sitting in a
     // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
-    if (argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help') || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
+    const hasHelpFlag = argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help');
+    if (hasHelpFlag || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
