@@ -71,6 +71,21 @@ const HOOKS_JS = path.join(BIN, 'hooks.js');
 // module is now its only home; git-discipline.md's Phase exit section names the SKIP only).
 const SKIP_TEXT = 'condition: integration-model=local-merge or current-branch mode → fallback: no phase-exit push, one push at finish';
 
+// The kill timeout for realDeps.resolvePolicy's resolve-policy.js child. Only `integration-model` can
+// reach the forge ladder; it is sized from the same root the child resolves from (`git rev-parse
+// --show-toplevel` of cwd -- a --worktree naming a subdirectory must not size from the default
+// 5000 ms and kill the child mid-ladder), falling back to cwd when that git call fails.
+function policyReadTimeoutMs(key, cwd) {
+  if (key !== 'integration-model') return GIT_TIMEOUT_MS;
+  let root = cwd;
+  try {
+    root = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
+    }).trim() || cwd;
+  } catch { /* not a checkout, or git unavailable: the child's own root is unknown, size from cwd */ }
+  return GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(root) + GIT_TIMEOUT_MS;
+}
+
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
@@ -89,11 +104,8 @@ const realDeps = {
   // throws, which runPhaseExit's unresolved branch logs (record #4578 plan review). The return is
   // what --values printed: the entry's value, '' for a null/error entry.
   resolvePolicy: (runDir, key, cwd) => {
-    const timeout = key === 'integration-model'
-      ? GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(cwd) + GIT_TIMEOUT_MS
-      : GIT_TIMEOUT_MS;
     const out = execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, key], {
-      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, windowsHide: true,
+      cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: policyReadTimeoutMs(key, cwd), windowsHide: true,
     });
     const entry = JSON.parse(out)[key];
     if (!entry) throw new Error(`resolve-policy.js printed no entry for ${key}`);
@@ -450,4 +462,4 @@ function backfillPr({ deps, runDir, wt, branch, step, log, result, details }) {
   }
 }
 
-module.exports = { runPhaseExit, realDeps, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
+module.exports = { runPhaseExit, realDeps, policyReadTimeoutMs, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };

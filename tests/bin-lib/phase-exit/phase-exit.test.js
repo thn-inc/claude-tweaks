@@ -5,7 +5,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runPhaseExit, realDeps } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runPhaseExit, realDeps, policyReadTimeoutMs } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../../../plugin/bin/lib/policy-schema');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
+const { readText } = require('../../helpers/read-skill');
 const { run } = require('../../../plugin/bin/phase-exit');
 const { closeRunState } = require('../../../plugin/bin/lib/hooks/close-run-state');
 const { GIT_PUSH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('../../../plugin/bin/lib/shared-primitives');
@@ -797,9 +800,83 @@ test('runPhaseExit: a degraded resolve logs the unresolved SKIP naming the degra
   assert.equal(pushCalls(h.calls).length, 0);
 });
 
-test('phase-exit.js sizes the integration-model resolve timeout from the forge ladder (#4578 plan review)', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'phase-exit', 'phase-exit.js'), 'utf8');
-  assert.match(src, /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbeTimeoutMs\(/);
+test('policyReadTimeoutMs: only integration-model gets the ladder-sized timeout; every other key keeps GIT_TIMEOUT_MS (#4578 plan review)', () => {
+  const { repo } = forgeFixture();
+  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  try {
+    assert.equal(policyReadTimeoutMs('integration-model', repo), GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 5000 + GIT_TIMEOUT_MS);
+    assert.equal(policyReadTimeoutMs('integration-branch', repo), GIT_TIMEOUT_MS);
+    assert.equal(policyReadTimeoutMs('merge-verification', repo), GIT_TIMEOUT_MS);
+  } finally {
+    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
+  }
+});
+
+test('policyReadTimeoutMs: a subdirectory cwd is sized from the checkout toplevel the child resolves from, not from the subdirectory (#4578 fix round 1)', () => {
+  const { repo } = forgeFixture();
+  fs.mkdirSync(path.join(repo, '.claude-tweaks'));
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 20000\n');
+  const sub = path.join(repo, 'packages', 'app');
+  fs.mkdirSync(sub, { recursive: true });
+  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  try {
+    const want = GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 20000 + GIT_TIMEOUT_MS;
+    assert.equal(policyReadTimeoutMs('integration-model', repo), want);
+    assert.equal(policyReadTimeoutMs('integration-model', sub), want);
+  } finally {
+    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
+  }
+});
+
+test('policyReadTimeoutMs: a cwd that is not a git checkout falls back to sizing from cwd itself', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-pe-nogit-')));
+  created.push(dir);
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), 'gh-timeout-ms: 20000\n');
+  const saved = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  try {
+    assert.equal(policyReadTimeoutMs('integration-model', dir), GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * 20000 + GIT_TIMEOUT_MS);
+  } finally {
+    if (saved !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = saved;
+  }
+});
+
+// The wiring scan: reads the module as text, comments stripped (a mention in a comment must not
+// satisfy it), the stripper verdict reported rather than trusted.
+const PHASE_EXIT_SRC = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'phase-exit', 'phase-exit.js');
+const LADDER_RE = /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbeTimeoutMs\(/;
+const GUARD_RE = /if\s*\(\s*key\s*!==\s*'integration-model'\s*\)\s*return\s+GIT_TIMEOUT_MS\s*;/;
+const WIRING_RE = /timeout:\s*policyReadTimeoutMs\(\s*key\s*,\s*cwd\s*\)/;
+
+function wiringFindings(raw) {
+  const stripped = stripComments(raw);
+  const verdict = stripperVerdict(raw, stripped);
+  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  const findings = [];
+  const ladder = stripped.search(LADDER_RE);
+  const guard = stripped.search(GUARD_RE);
+  if (ladder < 0) findings.push('no ladder-sized timeout (GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(...))');
+  if (guard < 0) findings.push("the ladder timeout is not guarded to the integration-model key (if (key !== 'integration-model') return GIT_TIMEOUT_MS;)");
+  if (ladder >= 0 && guard >= 0 && guard > ladder) findings.push('the integration-model guard must precede the ladder expression');
+  if (!WIRING_RE.test(stripped)) findings.push('realDeps.resolvePolicy does not pass timeout: policyReadTimeoutMs(key, cwd)');
+  return findings;
+}
+
+test('phase-exit.js sizes the integration-model resolve timeout from the forge ladder, for that key only (#4578 plan review)', () => {
+  assert.deepEqual(wiringFindings(readText(PHASE_EXIT_SRC)), []);
+});
+
+test('go-red: the wiring scan flags the ladder applied to every key, a comment-only guard, and an unparseable file', () => {
+  const good = readText(PHASE_EXIT_SRC);
+  const unguarded = good.replace(GUARD_RE.exec(good)[0], '');
+  assert.notEqual(unguarded, good, 'the control must actually remove the guard');
+  assert.match(wiringFindings(unguarded).join('\n'), /not guarded to the integration-model key/);
+  const hiddenInComment = `${unguarded}\n// if (key !== 'integration-model') return GIT_TIMEOUT_MS;\n`;
+  assert.match(wiringFindings(hiddenInComment).join('\n'), /not guarded to the integration-model key/);
+  assert.match(wiringFindings('const a = (;').join('\n'), /does not compile/);
 });
 
 // ---- checklist ----
