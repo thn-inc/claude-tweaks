@@ -138,7 +138,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -168,7 +168,7 @@ Because design mode has no spec with structured acceptance criteria, extract tes
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`. Same plan-header artifact rule and plan-authoring check as Spec Step 3 apply (ignore the "For agentic workers" boilerplate).
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -183,6 +183,8 @@ For the full procedure (pre-flight branch-divergence check with auto-mode behavi
 If the user did not specify `worktree`, skip this step.
 
 ### Common Step 1.5: Plan Audit
+
+**Dispatch-capability preflight (#4555), first, whatever this step's skip gate decides:** under `subagent`, probe for an `Agent`/`Task` tool with `_shared/subagent-dispatch-core.md`'s no-`Agent` probe, before Common Step 1.6's plan reviewer and Common Step 2's `subagent` execution. None found → stop BLOCKED per `execution-mode-policy.md`'s No-dispatch host section — never implement the plan's tasks inline, and never switch to `batched` on the run's behalf.
 
 Audit the plan against the actual repo before dispatching execution, via `node "${CLAUDE_PLUGIN_ROOT}/bin/plan-audit.js" {plan-file} [--repo-root {dir}] [--spec {spec-file}] [--count-tasks] [--bytes] [--task-markers]` — a mechanized CLI (#903), not hand-run greps. When a materialized spec exists (record mode), pass it as `--spec {spec-file}` — in worktree mode the worktree's copy of `work/{n}-spec.md`, since `$PIPELINE_RUN_DIR` holds no `work/` — to add the warn-only Check E (AC-clause coverage) and Check F (spec-named path coverage) (`plan-audit.md`). Five checks:
 - **Check A (always):** verify every path in the plan's Files: sections exists (or its parent directory exists for Create/Test, or is created by another Create/Test entry in the same plan).
