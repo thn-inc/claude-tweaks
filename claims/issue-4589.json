@@ -1,7 +1,6 @@
 {
+  "released": true,
   "runId": "2026-11-01T073216-record-4589",
-  "sessionId": "a62093a7-5132-4d28-adf7-1c8f582d8297",
-  "claimedAt": "2026-11-01T07:34:04.220Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "failed: plan-review-needs-human",
+  "releasedAt": "2026-11-01T07:47:13.548Z"
 }
