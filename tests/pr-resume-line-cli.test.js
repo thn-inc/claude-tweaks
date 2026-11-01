@@ -95,6 +95,26 @@ test('malformed invocations exit 1 with usage on stderr and nothing on stdout', 
   }
 });
 
+test('a --run-id that fails RUN_ID_SHAPE is rejected before the body is read', () => {
+  const bad = [
+    'not-a-run-id',
+    '2026-10-31T005940-Record-4659',
+    '2026-10-31-record-4659',
+    '../2026-10-31T005940-record-4659',
+    `${RUN}\n`,
+    `${RUN} `,
+  ];
+  for (const runId of bad) {
+    const deps = fakeDeps({ [BODY]: composed() });
+    assert.equal(run(['--body-file', BODY, '--run-id', runId], deps), 1, JSON.stringify(runId));
+    const err = deps.calls.stderr.join('');
+    assert.ok(err.startsWith(`pr-resume-line.js: --run-id is not a valid run id: ${JSON.stringify(runId)}\n`), JSON.stringify(runId));
+    assert.match(err, /usage: pr-resume-line\.js/, JSON.stringify(runId));
+    assert.equal(out(deps), '', JSON.stringify(runId));
+    assert.equal(deps.calls.readFile.length, 0, JSON.stringify(runId));
+  }
+});
+
 test('the real process reads a real body file, and a missing one is a failure verdict', () => {
   const cli = path.join(__dirname, '..', 'plugin', 'bin', 'pr-resume-line.js');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-resume-line-'));

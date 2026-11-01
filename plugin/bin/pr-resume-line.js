@@ -20,11 +20,13 @@
 // composeResumeLine emits for this run.
 // Exit codes (a CLI-specific vocabulary — verdicts are data on stdout):
 //   1  malformed invocation (unknown flag, a flag missing its value, no
-//      --body-file, no --run-id); usage on stderr, no stdout.
+//      --body-file, no --run-id, a --run-id that does not match RUN_ID_SHAPE);
+//      usage on stderr, no stdout.
 'use strict';
 
 const fs = require('fs');
 const { resumeVerdict } = require('./lib/flow/pr-body');
+const { RUN_ID_SHAPE } = require('./lib/issues/claim-store');
 
 const USAGE = 'usage: pr-resume-line.js --body-file <path> --run-id <id> [--help]\n';
 
@@ -60,6 +62,10 @@ function run(argv, deps) {
   if (opts.error) { deps.stderr(`pr-resume-line.js: ${opts.error}\n${USAGE}`); return 1; }
   if (!opts.bodyFile) { deps.stderr(`pr-resume-line.js: --body-file is required\n${USAGE}`); return 1; }
   if (!opts.runId) { deps.stderr(`pr-resume-line.js: --run-id is required\n${USAGE}`); return 1; }
+  if (!RUN_ID_SHAPE.test(opts.runId)) {
+    deps.stderr(`pr-resume-line.js: --run-id is not a valid run id: ${JSON.stringify(opts.runId)}\n${USAGE}`);
+    return 1;
+  }
 
   let body;
   try {
