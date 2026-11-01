@@ -213,7 +213,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   [--spec <n>] [--lever "<key>=<value> (<source>)"]
 ```
 
-A text (`--text`, `--text-file`, or an `--entries` element) that begins with its own `--step` plus `:` exits `2` — the step prefix is written for you, so pass the text without it.
+A text (`--text`, `--text-file`, or an `--entries` element) that begins with its own `--step` plus `:` exits `2` — the step prefix is written for you, so pass the text without it; so does a STAGED reproduction entry naming several findings (see the `--text-file` paragraph above).
 
 Prefer it over composing the line by hand or via a scratch `node -e` at every AUTO/STAGED site.
 

@@ -10,8 +10,9 @@ const { FINDING_PATH } = require('../console/finding-path');
 
 const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // A plural phrase with a zero quantifier (`no`, `zero`, `0`) anywhere before `findings` names no findings, not
-// several: the count and every word the phrase spans must not be one (`Lens 3c: agents returned no findings`).
-const NOT_ZERO = String.raw`(?!(?:no|zero|0)\s)`;
+// several: the count and every word the phrase spans must not be one (`Lens 3c: agents returned no findings`),
+// including one written after `(`, which WORD admits (`Lens 3c (no findings)`).
+const NOT_ZERO = String.raw`(?!\(?(?:no|zero|0)\s)`;
 const WORD = String.raw`${NOT_ZERO}[\w/()-]+\s+`;
 const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`, 'i');
 const PATH_RE = new RegExp(String.raw`${FINDING_PATH}(?::\d+)?`, 'g');
@@ -27,7 +28,8 @@ const LENS_FINDING_RE = new RegExp(String.raw`\b${LENS}\s+(?:[\w-]+\s+)?finding\
 function aggregateReproductionProblem({ status, step, text }) {
   if (status !== 'STAGED') return null;
   const entry = step ? `${step}: ${String(text).trim()}` : String(text).trim();
-  const at = entry.search(/\breproduction:\s/i);
+  // A quoted marker (`see "Reproduction: 3 findings" above`) is another line citing one, not a marker.
+  const at = entry.search(/(?<!["'`])\breproduction:\s/i);
   if (at < 0) return null;
   // The coincidence clause is exempt, not the whole line: drop it and judge whatever else the line says.
   const marked = entry.slice(at);
