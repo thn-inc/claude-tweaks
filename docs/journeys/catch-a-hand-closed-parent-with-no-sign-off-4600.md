@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/issues/acceptance.js
   - plugin/bin/lib/issues/below-floor-parent-close.js
+  - plugin/bin/lib/issues/parent-gate.js
   - plugin/skills/_shared/github-pr-scan-acceptance.md
   - plugin/skills/tidy/step-1-records.md
   - tests/closed-parent-acceptance-backstop.test.js
@@ -32,11 +33,11 @@ files:
 - **Should understand:**
   - The marker, not today's floor, is what proves #4466 closed a parent.
   - A marker comment from anyone else counts as no marker, so a forged comment can never hide a gap.
-  - On GitHub, if `gh api user` returns no login, the fetch block throws and the whole scope stops. It reports no rows and quotes the error, rather than reading a marker the current `gh` identity posted as missing.
+  - On GitHub, a failed or empty `gh api user` login no longer stops the scope. Close markers are matched against trusted authors only, so a marker the current `gh` identity posted under an untrusted association reads as absent. The open-parent rows are kept, and one `WARNING` line carrying the identity-probe-failed note (`parent-gate.js`'s `IDENTITY_PROBE_FAILED_NOTE`) is reported beside them.
 - **Red flags:**
   - A parent closed more than 30 days ago that reappears.
   - A parent listed twice because it carries both labels.
-  - `[parent-gate]` or `[acceptance-gap]` rows reported after the empty-login guard threw.
+  - The scope going empty, or the identity-probe-failed `WARNING` missing from beside its rows, when the `gh api user` login read fails.
 
 ### 2. Each closed parent gets one verdict
 - **URL:** `plugin/bin/lib/issues/acceptance.js`, `closedParentGap`
@@ -69,3 +70,5 @@ files:
 ## Origin
 
 Built by `/claude-tweaks:flow` record #4600 (run `2026-10-31T190944-record-4600`), resuming the plan-review stop of run `2026-10-31T074012-record-4600`.
+
+Updated by `/claude-tweaks:flow` record #4801 (run `2026-11-01T212615-spec-4801`): a failed or empty `gh api user` login degrades close-marker matching to trusted authors with a `WARNING`, instead of stopping the scope.
