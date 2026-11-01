@@ -773,13 +773,14 @@ function enumerateBodyTextSubIssues(parent, deps, cwd) {
   for (const s of numbers) {
     try {
       const data = JSON.parse(deps.gh(['issue', 'view', String(s), '--json', 'state,labels'], cwd));
-      if (typeof data.state !== 'string') {
+      const rawLabels = Array.isArray(data.labels) ? data.labels : [];
+      if (typeof data.state !== 'string' || !rawLabels.every((l) => l && typeof l === 'object' && typeof l.name === 'string')) {
         return { ok: false, error: `could not parse state/labels for sub-issue #${s} of parent #${parent}` };
       }
       subIssues.push({
         number: s,
         state: data.state.toUpperCase(),
-        labels: (Array.isArray(data.labels) ? data.labels : []).map((l) => l.name),
+        labels: rawLabels.map((l) => l.name),
       });
     } catch (err) {
       return { ok: false, error: `gh issue view (state,labels) failed for sub-issue #${s} of parent #${parent} (${err.message})` };

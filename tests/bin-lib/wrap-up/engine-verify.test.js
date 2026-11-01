@@ -2036,7 +2036,8 @@ function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentCo
       }
       if (args[4] === 'state,labels') {
         if (!states[n]) throw new Error(`gh: no state for #${n}`);
-        return JSON.stringify({ labels: states[n].labels.map((name) => ({ name })), state: states[n].state });
+        const s = states[n];
+        return JSON.stringify({ labels: s.rawLabels !== undefined ? s.rawLabels : s.labels.map((name) => ({ name })), state: s.state });
       }
       if (args[4] === 'labels,comments') {
         const t = targetLabels[n];
@@ -2137,6 +2138,30 @@ test('body-text sub-issue with a non-string state is a gather failure', () => {
   const result = enumerateSubIssues(12, deps, process.cwd(), 'body-text');
   assert.strictEqual(result.ok, false);
   assert.match(result.error, /#21/);
+});
+
+test('body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure', () => {
+  for (const rawLabels of [[null], ['risk:high'], [{ name: 7 }], [{}]]) {
+    const { row } = bodyTextRow({
+      records: [20],
+      bodies: { 20: 'Parent: #12\n', 12: '- [x] #20\n- [ ] #21\n' },
+      states: { 20: { state: 'OPEN', labels: [] }, 21: { state: 'OPEN', labels: [], rawLabels } },
+    });
+    assert.strictEqual(row.result, 'unknown', row.detail);
+    assert.match(row.detail, /#20: could not parse state\/labels for sub-issue #21 of parent #12/, JSON.stringify(rawLabels));
+    assert.doesNotMatch(row.detail, /gh issue view \(state,labels\) failed/, JSON.stringify(rawLabels));
+  }
+});
+
+test('body-text sub-issue with a missing or empty labels key still enumerates with labels []', () => {
+  const body = JSON.stringify({ body: '- [ ] #21\n' });
+  for (const reply of [{ state: 'open' }, { state: 'open', labels: [] }]) {
+    const deps = { git: () => '', gh: (args) => (args[4] === 'body' ? body : JSON.stringify(reply)) };
+    assert.deepStrictEqual(enumerateSubIssues(12, deps, process.cwd(), 'body-text'), {
+      ok: true,
+      subIssues: [{ number: 21, state: 'OPEN', labels: [] }],
+    });
+  }
 });
 
 test('body-text parent shared by two run records is enumerated once', () => {
