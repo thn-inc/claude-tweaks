@@ -138,7 +138,7 @@ The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`.
 
 **Size-headroom check:** when a plan task appends to a `plugin/skills/**/*.md` file already within ~10% of `RAIL_BYTES` (the Read-limit rail, `plugin/bin/lib/skill-audit/budgets.js`), measure `wc -c` on the merge base and name the remedy up front in the plan — cut bytes, or move a genuinely lazy section (one some runs never read) into its own cited file; `when:` fencing is the remedy only for a composed bundle near the rail, and does not help a raw file, since the rail measures it with only the marker lines stripped. Never a "read X now" split every run follows; the `rail:` tests fail CI for a file or composed bundle over the rail. (Same check applies in Design Step 3 below.)
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 
@@ -168,7 +168,7 @@ Because design mode has no spec with structured acceptance criteria, extract tes
 
 The plan will be written to `docs/superpowers/plans/YYYY-MM-DD-{feature}.md`. Same plan-header artifact rule and plan-authoring check as Spec Step 3 apply (ignore the "For agentic workers" boilerplate).
 
-Proceed to **Common Step 2**.
+Proceed to **Common Step 1.5**.
 
 ---
 

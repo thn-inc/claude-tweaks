@@ -164,7 +164,9 @@ test('AC1.2: flow 2.4 precedes 2.8 (claim)', () => {
   const b = lines.findIndex((l) => l.startsWith(claim));
   assert.ok(a >= 0 && b >= 0, 'both lines must exist for the swap control');
   [lines[a], lines[b]] = [lines[b], lines[a]];
-  assert.ok(!precedes(lines.join('\n')), 'the swapped copy must fail the ordering check');
+  const swapped = lines.join('\n');
+  assert.notEqual(swapped, text, 'the swap control must change the text');
+  assert.ok(!precedes(swapped), 'the swapped copy must fail the ordering check');
 });
 
 test('AC1.3: build preflight sits in Common Step 1.5, before Common Step 1.6', () => {
@@ -187,8 +189,8 @@ test('AC1.3: build preflight sits in Common Step 1.5, before Common Step 1.6', (
 });
 
 test('AC2.2: neither SKILL.md tells the agent to implement plan tasks inline', () => {
-  const INLINE = /implement(?:s|ing)? (?:the plan(?:'s tasks)?|plan tasks) inline/i;
-  const offenders = (text) => text.split('\n').filter((line) => INLINE.test(line) && !/never implement/i.test(line));
+  const INLINE = /(?:implement|execute|run)(?:s|ing)? (?:the plan(?:'s tasks)?|plan tasks|the tasks) inline/i;
+  const offenders = (text) => text.split('\n').filter((line) => INLINE.test(line) && !/never (?:implement|execute|run)/i.test(line));
   for (const file of [FLOW_SKILL, BUILD_SKILL]) {
     assert.deepEqual(offenders(readText(file)), [], `${path.basename(path.dirname(file))}/SKILL.md must not instruct inline implementation of plan tasks`);
   }
@@ -196,4 +198,17 @@ test('AC2.2: neither SKILL.md tells the agent to implement plan tasks inline', (
   // Control: an affirmative instruction appended to a copy must be reported.
   const doctored = `${readText(FLOW_SKILL)}\nImplement plan tasks inline.`;
   assert.deepEqual(offenders(doctored), ['Implement plan tasks inline.'], 'the sweep must report an affirmative inline instruction');
+  assert.deepEqual(offenders('Execute the tasks inline.'), ['Execute the tasks inline.'], 'the sweep must catch the execute/run synonyms');
+});
+
+test('AC1.3: no build hand-off line skips Common Step 1.5 by proceeding straight to Common Step 2', () => {
+  const SKIPS = /Proceed to \*\*Common Step 2\*\*/;
+  const offenders = (text) => text.split('\n').filter((line) => SKIPS.test(line));
+  for (const file of [BUILD_SKILL, path.join(SKILLS, 'build', 'micro-plan.md')]) {
+    assert.deepEqual(offenders(readText(file)), [], `${path.basename(file)} must proceed to Common Step 1.5, whose preflight runs before Common Step 2`);
+  }
+
+  // Control: appending the skipping line to a copy must be reported.
+  const doctored = `${readText(BUILD_SKILL)}\nProceed to **Common Step 2**.`;
+  assert.deepEqual(offenders(doctored), ['Proceed to **Common Step 2**.'], 'the check must report a line that skips Common Step 1.5');
 });
