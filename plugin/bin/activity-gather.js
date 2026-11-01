@@ -26,7 +26,9 @@
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { gather, PeriodError, ACTIVITY_GH_TIMEOUT_MS, resolvePeriod, QUERY_KEYS } = require('./lib/activity/gather');
-const { parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: activity-gather.js --period <1d|7d|14d|month|quarter|<from>..<to>> [--repo <owner/name>[,<owner/name>...]] [--actor <login>] --out <facts.json path> [--help]\n';
 
@@ -72,6 +74,8 @@ const realDeps = {
     return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: ACTIVITY_GH_TIMEOUT_MS, windowsHide: true }));
   },
   remoteUrl: () => remoteUrl(),
+  // #4505: --repo entries live on github.com, whatever host origin is on.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   writeFile: (p, text) => fs.writeFileSync(p, text),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
@@ -101,6 +105,8 @@ function run(argv, deps = realDeps) {
       const name = r.slice(r.indexOf('/') + 1);
       if (name === '.' || name === '..') return usageError(`--repo entry "${r}" is not a repository name; expected owner/name`);
     }
+    // Every --repo entry is on github.com, so `gh auth status` and `gh api user` must be too.
+    if (deps.pinGhHost) deps.pinGhHost({ host: 'github.com' });
   }
 
   if (!deps.ghAvailable()) { deps.stderr('activity-gather.js: gh is not installed or not on PATH — install GitHub CLI (https://cli.github.com) and run `gh auth login`\n'); return 2; }

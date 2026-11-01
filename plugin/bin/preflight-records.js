@@ -40,7 +40,7 @@ const preflight = require('./lib/preflight-records/preflight-records');
 const { planMergeGateSplit } = require('./lib/preflight-records/merge-gate');
 const { planParallelWaves } = require('./lib/preflight-records/waves');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
-const { parseRepo, repoResolutionNote } = require('./lib/repo-resolve');
+const { parseRepo, repoResolutionNote, pinExplicitRepoHost } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: preflight-records.js <n> [<n> ...] [--work-links native|body-text] [--repo owner/name] [--merge-gate] [--waves] [--integration-branch <name>] [--records-json <path>] [--help]\n';
 
@@ -100,6 +100,9 @@ function readFileSafe(filePath) {
 
 const realDeps = {
   runner: preflight.defaultRunner,
+  // #4505: an explicit --repo's host reaches the native-dependency GraphQL
+  // queries, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   // The deps-resolved work-links policy value (--work-links overrides this).
@@ -137,6 +140,7 @@ function loadFromGh(opts, numbers, deps) {
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
+  if (opts.repo && repoSpec && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const repoNote = repoResolutionNote(repoSpec);
   if (repoNote) deps.stderr(`preflight-records.js: ${repoNote}\n`);
 

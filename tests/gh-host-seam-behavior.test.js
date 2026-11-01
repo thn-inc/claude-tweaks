@@ -58,10 +58,11 @@ function makeRepo(t, origin) {
 }
 
 // Installs the fake gh; returns the log reader. The stub logs one line per
-// spawn, then prints the canned answer for its first two args.
-function installFakeGh(t) {
+// spawn, then prints the canned answer for its first two args (`canned`
+// replaces CANNED entries by key for one case).
+function installFakeGh(t, canned = {}) {
   const dir = tmp(t, 'ct-gh-seam-fake-');
-  for (const [key, text] of Object.entries(CANNED)) fs.writeFileSync(path.join(dir, `${key}.json`), text);
+  for (const [key, text] of Object.entries({ ...CANNED, ...canned })) fs.writeFileSync(path.join(dir, `${key}.json`), text);
   const log = path.join(dir, 'gh.log');
   const restore = installStub('gh', [
     '#!/bin/sh',
@@ -173,4 +174,51 @@ test('AC2.1: on a github.com origin the fake gh sees GH_HOST unset', { skip: STU
   const lines = networkLines(readLog());
   assert.ok(lines.some((l) => / ARGS=pr view 7 /.test(l)), `no gh pr view call, log:\n${lines.join('\n')}`);
   for (const line of lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST injected on github.com: ${line}`);
+});
+
+// Fix round 1: a bare `--repo owner/name` means github.com (Decision Q2). The
+// author-association lookup threads no --hostname for github.com, so on a GHE
+// origin the seam used to send it to the origin host while `issue view --repo`
+// reached github.com: one record read from two hosts.
+const MATERIALIZE_RECORD = JSON.stringify({
+  number: 7,
+  title: 'Fix the widget',
+  body: [
+    'Surface: backend',
+    'Premise-check: true',
+    '',
+    '## Current State',
+    'The widget is broken.',
+    '',
+    '## Deliverables',
+    '- [ ] fix the widget',
+    '',
+    '## Acceptance Criteria',
+    '1. The widget works',
+    '',
+    '## Release Note',
+    'The widget works.',
+  ].join('\n'),
+  labels: [{ name: 'ceremony:standard' }],
+  url: 'https://github.com/acme/widgets/issues/7',
+});
+
+function materializeLines(t, origin) {
+  const readLog = installFakeGh(t, { 'issue-view': MATERIALIZE_RECORD });
+  const { repo, runDir } = makeRepo(t, origin);
+  node(repo, [path.join(BIN, 'materialize.js'), '7', '--run-dir', runDir, '--repo', 'acme/widgets']);
+  const lines = networkLines(readLog());
+  assert.ok(lines.some((l) => / ARGS=issue view 7 --repo acme\/widgets /.test(l)), `no gh issue view call, log:\n${lines.join('\n')}`);
+  assert.ok(lines.some((l) => / ARGS=api repos\/acme\/widgets\/issues\/7 --jq \.author_association$/.test(l)), `no author-association call, log:\n${lines.join('\n')}`);
+  return lines;
+}
+
+test('fix round 1: materialize.js --repo owner/name on a *.ghe.com origin sends every gh call to github.com', { skip: STUB_SKIP }, (t) => {
+  const lines = materializeLines(t, GHE_ORIGIN);
+  for (const line of lines) assert.ok(line.startsWith('GH_HOST=github.com '), `gh call did not reach github.com: ${line}`);
+});
+
+test('fix round 1: materialize.js --repo owner/name on a github.com origin leaves GH_HOST unset', { skip: STUB_SKIP }, (t) => {
+  const lines = materializeLines(t, DOTCOM_ORIGIN);
+  for (const line of lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST set on github.com: ${line}`);
 });

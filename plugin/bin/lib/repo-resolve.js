@@ -184,6 +184,30 @@ function ghOptions(args, opts, deps = {}) {
   return { ...o, env: { ...base, GH_HOST: spec.host } };
 }
 
+// A CLI's explicit --repo names its own host, and a bare `owner/name` means
+// github.com (Decision Q2). Its calls that carry no host flag (a github.com
+// spec threads no --hostname; a GraphQL owner/repo pair; `gh api user`) would
+// otherwise get ghOptions's origin host. -> the host those calls must reach,
+// or null when ghOptions already reaches it from `cwd` (github.com when it
+// injects nothing) or GH_HOST is exported (AC4: the user's value wins).
+function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
+  const env = deps.env || process.env;
+  if (!repoSpec || 'GH_HOST' in env) return null;
+  const host = String(repoSpec.host || 'github.com').toLowerCase();
+  return host === (resolveGhHost(cwd || process.cwd(), deps) || 'github.com') ? null : host;
+}
+
+// For a single-invocation CLI whose every gh call targets its explicit --repo:
+// exports explicitRepoGhHost's answer as GH_HOST on `deps.env` (process.env),
+// so every later gh spawn, ghOptions-wrapped or a library default, reaches
+// that host. -> the host pinned, or null. Called from a CLI's realDeps only.
+function pinExplicitRepoHost(repoSpec, deps = {}) {
+  const env = deps.env || process.env;
+  const host = explicitRepoGhHost(repoSpec, deps.cwd, { ...deps, env });
+  if (host) env.GH_HOST = host;
+  return host;
+}
+
 // The seam's bounded, windowsHide'd gh spawn. ghOptions alone adds neither, so a
 // wrapped site keeps its own timeout; this helper is for sites that want GH_TIMEOUT_MS.
 function ghExecFileSync(args, opts = {}) {
@@ -192,5 +216,5 @@ function ghExecFileSync(args, opts = {}) {
 
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
-  ghOptions, ghExecFileSync, resolveGhHost, _resetGhHostCache,
+  ghOptions, ghExecFileSync, resolveGhHost, explicitRepoGhHost, pinExplicitRepoHost, _resetGhHostCache,
 };

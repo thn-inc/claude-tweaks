@@ -236,3 +236,39 @@ test('resolveGhHost: a user-less scp-style remote is SSH, so the token clause sk
   _resetGhHostCache();
   assert.equal(resolveGhHost('/n', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git' }), null);
 });
+
+// Fix round 1: an explicit --repo's host against the host ghOptions would reach from cwd.
+const { explicitRepoGhHost, pinExplicitRepoHost } = require('../../plugin/bin/lib/repo-resolve');
+const dotcom = { ...ghe, remoteUrl: () => 'https://github.com/acme/widgets.git' };
+test('explicitRepoGhHost: a bare github.com --repo on a GHE origin pins github.com; one agreeing with the seam pins nothing', () => {
+  _resetGhHostCache();
+  assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com');
+  assert.equal(explicitRepoGhHost({ owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com'); // a missing host reads as github.com
+  assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), null);
+  assert.equal(explicitRepoGhHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'other.ghe.com');
+  _resetGhHostCache();
+  assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // AC2: github.com origin
+  assert.equal(explicitRepoGhHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), 'acme.ghe.com');
+  assert.equal(explicitRepoGhHost(null, '/d', dotcom), null);
+});
+test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always wins', () => {
+  _resetGhHostCache();
+  for (const env of [{ GH_HOST: 'mine.example' }, { GH_HOST: '' }]) {
+    assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/r', { ...ghe, env }), null, JSON.stringify(env));
+  }
+});
+test('pinExplicitRepoHost: exports the pinned host on deps.env, leaves it alone otherwise, and then ghOptions steps back', () => {
+  _resetGhHostCache();
+  const env = { PATH: '/p' };
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env }), 'github.com');
+  assert.deepEqual(env, { PATH: '/p', GH_HOST: 'github.com' });
+  const opts = { cwd: '/r', env };
+  assert.strictEqual(ghOptions(['api', 'repos/acme/widgets/issues/7'], opts, ghe), opts);
+  const mine = { GH_HOST: 'mine.example' };
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
+  assert.deepEqual(mine, { GH_HOST: 'mine.example' });
+  _resetGhHostCache();
+  const untouched = {};
+  assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: untouched }), null);
+  assert.deepEqual(untouched, {});
+});
