@@ -21,7 +21,9 @@
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 the path:line token may sit in
 //       one backtick pair (`{path}`:{line} or `{path}:{line}`), which is
-//       stripped. quote = everything after the
+//       stripped. With a findingPath option (resolveTiebreak passes the finding's
+//       path), that exact path, even one holding whitespace, is also read as the
+//       literal prefix of the same three spellings. quote = everything after the
 //       first whitespace following path:line; one wrapping pair of double
 //       quotes, or a Markdown code span (any equal backtick run, padding
 //       spaces dropped), is stripped. An empty or whitespace-only quote, a line
@@ -130,7 +132,8 @@ function parseRecommendation(value) {
   return { recommendation: m[1].toLowerCase(), recommendationReason: sep[1].trim() || null };
 }
 
-function parseTiebreakReply(text, { findingPath } = {}) {
+function parseTiebreakReply(text, options) {
+  const { findingPath } = options || {};
   if (typeof text !== 'string') return unparsed();
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
   if (lines.length === 0) return unparsed();
@@ -276,8 +279,8 @@ function neutralize(text) {
 }
 
 function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
-  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
   const id = findingId(finding);
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
   const t = stamp(now);
   const line = firstLine(finding.line);
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');

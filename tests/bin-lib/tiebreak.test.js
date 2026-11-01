@@ -819,6 +819,18 @@ test('AC2.1: evidence at a space-holding finding path resolves drop and confirme
     }
   }
 });
+test('parseTiebreakReply with findingPath returns the finding path as the evidence path (#4632)', () => {
+  for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+    assert.deepEqual(parseTiebreakReply(`Verdict: confirmed\nEvidence: ${ev}\nSTATUS: DONE`, { findingPath: 'a dir/x.ts' }).evidence, { path: 'a dir/x.ts', line: 3, quote: 'quote text here' }, ev);
+  }
+});
+test('parseTiebreakReply treats null options like no options (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE', null).evidence, null);
+  assert.deepEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:3 x\nSTATUS: DONE', null).evidence, { path: 'a.js', line: 3, quote: 'x' });
+});
+test('resolveTiebreak of a non-object finding still throws the findingId error (#4632)', () => {
+  assert.throws(() => resolveTiebreak(null, 'Verdict: confirmed\nSTATUS: DONE', { now: NOW }), /findingId: finding must be an object/);
+});
 test('a space-holding evidence path for a different finding path still fails (#4632)', () => {
   const f = { ...RAW[0], path: 'b dir/x.ts', line: 3 };
   const r = resolveTiebreak(f, 'Verdict: refuted\nEvidence: a dir/x.ts:3 `quote text here`\nSeverity: medium\nSTATUS: DONE', { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
