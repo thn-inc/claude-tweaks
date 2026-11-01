@@ -758,11 +758,12 @@ test('classifyRolloverResume refuses a non-array candidate list and a non-object
   for (const bad of [null, 'x', [], undefined, {}]) assert.throws(() => classifyRolloverResume([candidate(10)], bad), refused, JSON.stringify(bad));
 });
 
-test('classifyRolloverResume ignores a candidate without an integer number and the old issue itself', () => {
+test('classifyRolloverResume refuses a candidate without an integer number and ignores the old issue itself', () => {
   const none = { state: 'none', replacement: null, extras: [] };
-  assert.deepStrictEqual(classifyRolloverResume([candidate(undefined)], OLD_ISSUE), none);
-  assert.deepStrictEqual(classifyRolloverResume([candidate('10')], OLD_ISSUE), none);
-  assert.deepStrictEqual(classifyRolloverResume([candidate('11'), candidate(12)], OLD_ISSUE), { state: 'resume', replacement: 12, extras: [] });
+  const refused = { name: 'CarryOverInputError' };
+  assert.throws(() => classifyRolloverResume([candidate(undefined)], OLD_ISSUE), refused);
+  assert.throws(() => classifyRolloverResume([candidate('10')], OLD_ISSUE), refused);
+  assert.throws(() => classifyRolloverResume([candidate('11'), candidate(12)], OLD_ISSUE), refused);
   assert.deepStrictEqual(classifyRolloverResume([candidate(123)], OLD_ISSUE), none, 'the old issue is never its own replacement');
   assert.deepStrictEqual(classifyRolloverResume([candidate(123), candidate(10)], OLD_ISSUE), { state: 'resume', replacement: 10, extras: [] });
 });

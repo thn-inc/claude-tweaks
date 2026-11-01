@@ -423,7 +423,8 @@ function hasDigestLabel(issue) {
 // (carry on), stalled (the old issue is open and the digest label sits on neither issue — a human
 // finishes the move), finished (old closed, replacement labeled). replacement is the
 // lowest-numbered match; extras are the others, ascending. A none over a closed old issue adds
-// orphan: the lowest-numbered open match, when there is one.
+// orphan: the lowest-numbered open match, when there is one. A candidate with no author association
+// or no integer number is a refused read (CarryOverInputError), never a silent none.
 function classifyRolloverResume(candidates, oldIssue) {
   if (!Array.isArray(candidates)) throw new CarryOverInputError('candidates: expected an array of issue objects');
   if (!oldIssue || typeof oldIssue !== 'object' || Array.isArray(oldIssue) || !Number.isInteger(oldIssue.number)) {
@@ -434,10 +435,11 @@ function classifyRolloverResume(candidates, oldIssue) {
   }
   candidates.forEach((c, index) => {
     if (commentAssociation(c) === null) throw new CarryOverInputError(`candidates[${index}]: no author association`);
+    if (!Number.isInteger(c.number)) throw new CarryOverInputError(`candidates[${index}]: no integer number`);
   });
   const marker = digestReplacementMarker(oldIssue.number);
   const matches = candidates
-    .filter((c) => Number.isInteger(c.number) && c.number !== oldIssue.number
+    .filter((c) => c.number !== oldIssue.number
       && isTrustedComment(c) && typeof c.body === 'string'
       && c.body.split(/\r?\n/).some((l) => l.trim() === marker))
     .sort((a, b) => a.number - b.number);

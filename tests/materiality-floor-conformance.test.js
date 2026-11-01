@@ -501,6 +501,7 @@ test('an orphaned replacement is named for a human only when no open digest issu
   const at = resume.indexOf('A `none` printing `orphan: {n}`');
   assert.ok(at !== -1, 'the orphan branch is missing');
   const branch = resume.slice(at);
+  assert.ok(branch.includes('Skip an orphan that another pair reports as `stalled` or `resume`'), 'a second-generation stall is not also hand-orphaned');
   assert.ok(branch.includes('when none exists name `{n}` and `{old}` in the sweep report for a human'));
   assert.ok(branch.includes('Never re-label it here, since a later generation looks the same otherwise'));
   assert.ok(!branch.includes('--add-label'), 'no labeling command belongs to this branch');
@@ -549,7 +550,7 @@ const stepText = (n) => {
   assert.ok(start !== -1 && end !== -1 && start < end, `rollover step ${n} not found: ${start}, ${end}`);
   return r.slice(start, end);
 };
-const fwd =(p) => p.split(path.sep).join('/');
+const fwd = (p) => p.split(path.sep).join('/');
 const scratch = (t) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'rollover-fence-'));
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
@@ -627,7 +628,7 @@ test('Shape 1 keeps a rollover pair on any line that says so, never overrides a 
   assert.ok(TIDY_RECORDS.includes('A `resume` or `stalled` verdict `Keep`s `{old}`, the printed `replacement` and every printed `extras` issue'));
   assert.ok(TIDY_RECORDS.includes('A printed `extras` issue is `Keep` whatever the verdict, `finished` included'));
   assert.ok(TIDY_RECORDS.includes('A record is kept when ANY line it appears on gives that verdict'));
-  assert.ok(TIDY_RECORDS.includes('Any other verdict adds no exemption and never overrides one'));
+  assert.ok(TIDY_RECORDS.includes('Beyond the `extras` rule, any other verdict adds no exemption and never overrides one'));
   assert.ok(TIDY_RECORDS.includes('stays `Keep` by the rule above whatever the verdict (`finished` included)'));
   assert.ok(!TIDY_RECORDS.includes('leaves both ordinary records'), 'a live labeled container is not ordinary on `finished`');
   assert.ok(TIDY_RECORDS.includes('`Keep` every issue on it for this run and name the line in the report'));
@@ -653,7 +654,22 @@ test('Shape 1 pair-listing fence sets its own $TIDY_RECORDS and prints one line 
   assert.deepStrictEqual(r.stdout.trim().split('\n'), ['10 15 20', '20 30']);
 });
 
-test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and null when nothing parses', (t) => {
+// A stub `gh` that prints a fixture for the one argv the Expiry fence documents, and fails like gh for any other.
+const ghExpiryStub = (dir, fixture) => {
+  const bin = path.join(dir, 'ghbin');
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(dir, 'fixture.json'), JSON.stringify(fixture));
+  const stub = path.join(bin, 'gh');
+  fs.writeFileSync(stub, `#!${process.execPath}
+const key = process.argv.slice(2).join(' ');
+if (key !== 'issue view 10 --json comments --jq .comments') { process.stderr.write('unexpected gh ' + key + '\\n'); process.exit(1); }
+process.stdout.write(require('fs').readFileSync(${JSON.stringify(path.join(dir, 'fixture.json'))}, 'utf8'));
+`);
+  fs.chmodSync(stub, 0o755);
+  return { PATH: `${bin}${path.delimiter}${process.env.PATH}` };
+};
+
+test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and null when nothing parses', { skip: process.platform === 'win32' ? 'a bare executable stub is not a launchable gh on win32' : false }, (t) => {
   const { materialityEntryLine } = require('../plugin/bin/lib/health-core/materiality-digest');
   const base = { area: 'tidy', fileRefs: 'a.js', deferReason: 'direct-filing-sweep' };
   const runId = materialityEntryLine({ ...base, finding: 'one', provenance: '2026-08-24T183516-tidy-standalone' });
@@ -661,21 +677,29 @@ test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and
   const stamped = `${materialityEntryLine({ ...base, finding: 'three', provenance: 'harness-health' })} <!-- materiality-first-seen: 2026-02-02T00:00:00Z -->`;
   const mcpSkill = materialityEntryLine({ ...base, finding: 'four', provenance: 'harness-health' });
   const comments = [
-    { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', body: `a note\n${runId}\n${skill}\n${stamped}` },
-    { url: 'https://example.test/c#issuecomment-2', body: skill },
+    { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', authorAssociation: 'MEMBER', body: `a note\n${runId}\n${skill}\n${stamped}` },
+    { url: 'https://example.test/c#issuecomment-2', authorAssociation: 'OWNER', body: skill },
     // MCP spells the comment date created_at; an unstamped skill-provenance line takes it
-    { html_url: 'https://example.test/c#issuecomment-3', created_at: '2026-10-01T00:00:00Z', body: mcpSkill },
+    { html_url: 'https://example.test/c#issuecomment-3', created_at: '2026-10-01T00:00:00Z', author_association: 'COLLABORATOR', body: mcpSkill },
+    // a planted line in an untrusted comment is never dated
+    { url: 'https://example.test/c#issuecomment-4', createdAt: '2026-11-01T00:00:00Z', authorAssociation: 'NONE', body: runId },
   ];
   const dir = scratch(t);
-  fs.writeFileSync(resolvedPath(dir, 'digest-expiry-comments.json'), JSON.stringify(comments));
-  const block = blockHolding(SWEEP, 'node -e "const fs=require(\'fs\');const {materialityEntryDate}', 'Expiry');
-  assert.ok(block.startsWith('EXPIRY_COMMENTS="$(node'), 'the fence sets its own variable');
+  const documented = blockHolding(SWEEP, 'node -e "const fs=require(\'fs\');const {materialityEntryDate}', 'Expiry');
+  assert.ok(documented.startsWith('EXPIRY_COMMENTS="$(node'), 'the fence sets its own variable');
+  assert.ok(documented.includes('gh issue view {n} --json comments --jq .comments > "$EXPIRY_COMMENTS" && node -e'), 'the fence saves its own read');
+  const block = documented.replace('{n}', '10');
   assert.ok(!('EXPIRY_COMMENTS' in process.env));
-  const r = runFence(block, sessionEnv(dir));
+  const r = runFence(block, { ...sessionEnv(dir), ...ghExpiryStub(dir, comments) });
   assert.strictEqual(r.status, 0, r.stderr);
   const rows = r.stdout.trim().split('\n').map((l) => l.split('\t'));
   assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null', '2026-10-01T00:00:00.000Z']);
   assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill, mcpSkill]);
   assert.ok(rows[3][1].endsWith('issuecomment-2'));
   assert.ok(rows[4][1].endsWith('issuecomment-3'));
+  assert.strictEqual(rows.length, 5, 'the untrusted comment\'s line is not dated');
+  // a failed read stops the fence before the dating runs, never an empty set
+  const failed = runFence(documented.replace('{n}', '11'), { ...sessionEnv(dir), ...ghExpiryStub(dir, comments) });
+  assert.notStrictEqual(failed.status, 0, 'a failed gh read must fail the fence');
+  assert.strictEqual(failed.stdout, '');
 });

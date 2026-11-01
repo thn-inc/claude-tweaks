@@ -188,6 +188,7 @@ test('an unreadable or wrong-shaped read of a pair exits 3 with nothing printed,
   refused('an unparseable file', withFiles(O, '{not json'), FILES);
   refused('candidates not an array', withFiles(O, JSON.stringify(issue(20))), FILES);
   refused('an MCP error recorded as a candidate', withFiles(O, JSON.stringify([issue(20), { message: 'Not Found' }])), FILES);
+  refused('a candidate with no number, which must not read as a clean none', withFiles(O, JSON.stringify([{ author_association: 'MEMBER', body: marker(10) }])), FILES);
   refused('an MCP error recorded as the old issue', withFiles(JSON.stringify({ message: 'Not Found' }), C), FILES);
   refused('an old issue with no state', withFiles(JSON.stringify({ number: 10 }), C), FILES);
 });
