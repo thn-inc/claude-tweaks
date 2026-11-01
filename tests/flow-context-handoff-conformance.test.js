@@ -134,7 +134,10 @@ const HANDOFF_PROGRESS = [
   [/ceiling of 3 windows \(60 minutes\) per wave/, 'the template states the 3-window ceiling'],
   [/Children sharing a worktree progress together/, 'the template states the shared-worktree rule'],
 ];
-const handoffProgressMissing = (tpl) => HANDOFF_PROGRESS.filter(([re]) => !re.test(squash(tpl))).map(([, f]) => f);
+const handoffProgressMissing = (tpl) => {
+  const squashed = squash(tpl);
+  return HANDOFF_PROGRESS.filter(([re]) => !re.test(squashed)).map(([, f]) => f);
+};
 
 test('AC4.1: the handoff template carries the progress-check extension, with a child-worktree placeholder the handoff never substitutes (#4557)', () => {
   const [tpl] = fencedBlocks(read(HANDOFF));
@@ -144,12 +147,13 @@ test('AC4.1: the handoff template carries the progress-check extension, with a c
 
 test('AC5.1: each handoff progress-check assertion can go red (discrimination proof)', () => {
   const [tpl] = fencedBlocks(read(HANDOFF));
+  const squashed = squash(tpl);
   for (const [re, fact] of HANDOFF_PROGRESS) {
-    const doctored = squash(tpl).replace(re, '');
-    assert.notEqual(doctored, squash(tpl), `anchor text for "${fact}" not found — proof cannot discriminate`);
+    const doctored = squashed.replace(re, '');
+    assert.notEqual(doctored, squashed, `anchor text for "${fact}" not found — proof cannot discriminate`);
     assert.deepEqual(handoffProgressMissing(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
-  const swapped = squash(tpl).replace('git -C {child-worktree} rev-parse HEAD', 'git -C {worktree} rev-parse HEAD');
+  const swapped = squashed.replace('git -C {child-worktree} rev-parse HEAD', 'git -C {worktree} rev-parse HEAD');
   assert.match(swapped, /git -C \{worktree\}/, 'the placeholder control must match the wrong placeholder');
 });
 

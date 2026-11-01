@@ -561,7 +561,7 @@ test('AC1.1 AC1.2 AC1.3 AC2.1 AC4.1 AC7.1 AC7.2 AC7.3 AC7.4 AC8.1 AC8.2 AC9.1: e
 });
 
 test('AC5.1: each progress-check assertion goes red when removed from any single copy (discrimination proof)', () => {
-  for (const [, text] of Object.entries(primitiveCopies())) {
+  for (const text of Object.values(primitiveCopies())) {
     assertEachPatternGoesRed(text, PROGRESS_CHECK, missingProgress);
   }
 });
@@ -573,7 +573,7 @@ test('AC3.1: the never-redone and never-read-output_file rules stand in every co
 });
 
 test('AC3.1: each standing-rule assertion goes red when removed from any single copy (discrimination proof)', () => {
-  for (const [, text] of Object.entries(primitiveCopies())) {
+  for (const text of Object.values(primitiveCopies())) {
     assertEachPatternGoesRed(text, STANDING_RULES, missingStanding);
   }
 });
@@ -597,8 +597,7 @@ test('AC1.3: the progress check follows the write-capable stop sentence in every
 
 test('AC1.3: a copy with the passage moved before the stop sentence goes red (discrimination proof)', () => {
   const copies = primitiveCopies();
-  for (const name of Object.keys(copies)) {
-    const text = copies[name];
+  for (const [name, text] of Object.entries(copies)) {
     const stopAt = text.indexOf(STOP_SENTENCE);
     const passageAt = text.search(PROGRESS_CHECK[0][0]);
     assert.ok(stopAt !== -1 && passageAt !== -1, `anchor text for the stop sentence or the passage not found in ${name}`);
@@ -611,8 +610,7 @@ test('AC1.3: a copy with the passage moved before the stop sentence goes red (di
 
 test('AC1.3: a copy with an unrelated sentence between the stop sentence and the passage goes red (discrimination proof)', () => {
   const copies = primitiveCopies();
-  for (const name of Object.keys(copies)) {
-    const text = copies[name];
+  for (const [name, text] of Object.entries(copies)) {
     const stopEnd = text.indexOf(STOP_SENTENCE) + STOP_SENTENCE.length;
     assert.ok(stopEnd >= STOP_SENTENCE.length, 'anchor text for the stop sentence not found in ' + name);
     const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
