@@ -1966,6 +1966,11 @@ async function main(argv) {
       const reason = unknown.valueFlag
         ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
         : `unknown flag '${unknown.token}'`;
+      // fs.writeSync in a try/catch, not process.stderr.write: a closed (EBADF)
+      // or broken (EPIPE) stderr would otherwise throw into the entry's
+      // `.catch(() => process.exit(0))` and turn this refusal back into the
+      // silent exit 0 that #4834 removed. Pinned by tests/hooks-js-flag-strict
+      // .test.js's "#4834: an unusable stderr still refuses with exit 1".
       try {
         fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
         fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
