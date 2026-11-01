@@ -404,7 +404,7 @@ function assertDocVocabulary(docText, vocab) {
   const row = docText.match(/^\| Reversibility \| yes \| (.+?) — /m);
   assert.ok(row, 'auto-decision-log.md has a Reversibility table row');
   const rowTokens = [...row[1].matchAll(/`([^`]+)`/g)].map((t) => t[1]);
-  assert.deepStrictEqual([...rowTokens].sort(), [...vocab].sort(), 'Reversibility table row lists the vocabulary');
+  assert.deepStrictEqual(rowTokens.sort(), [...vocab].sort(), 'Reversibility table row lists the vocabulary');
   const templates = docText.split('\n').filter((l) => l.startsWith('- {STATUS} {HH:MM:SS}'));
   assert.ok(templates.length >= 2, `at least 2 entry templates start "- {STATUS} {HH:MM:SS}", found ${templates.length}`);
   for (const line of templates) {

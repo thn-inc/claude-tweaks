@@ -1655,14 +1655,18 @@ test('multi-agent: the paragraph search still finds its break under CRLF line en
 // Mode 2 Auto-resolution agrees with the Comparison rule table (#4810)
 // ============================================================
 
+function mode2Section(text) {
+  return text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+}
+
 function mode2AutoResolutionParagraph(text) {
-  const mode2 = text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+  const mode2 = mode2Section(text);
   const at = mode2.indexOf('### Auto-resolution');
   return mode2.slice(at + '### Auto-resolution'.length, mode2.indexOf('\n###', at + 1)).trim();
 }
 
 function assertMode2AutoResolutionMatchesTable(text) {
-  const mode2 = text.slice(text.indexOf('## Mode 2 — Debate'), text.indexOf('## Mode 3'));
+  const mode2 = mode2Section(text);
   const comparison = mode2.slice(mode2.indexOf('### Comparison rule'), mode2.indexOf('### Auto-resolution'));
   const pairs = [...comparison.matchAll(/^\| .+ \| .+ \| `(\w+)` \| (AUTO|STAGED) \|$/gm)].map((m) => [m[1], m[2]]);
   assert.strictEqual(pairs.length, 3, `expected 3 Mode 2 outcome rows, found ${pairs.length}`);
