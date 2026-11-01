@@ -1,17 +1,17 @@
-// plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the
-// single-invocation gh-api CLI wrappers under bin/, factored out of
-// apply-refine-labels.js, fetch-sub-issues.js, and resolve-blockers.js,
-// which each hand-rolled an identical parseRepo/ghAvailable/remoteUrl trio
-// (review finding: these three newest CLIs brought the total to 9
-// independent copies of the same owner/repo regex across the codebase). The
-// six pre-existing copies (link-records.js, release-claim.js,
-// preflight-records.js, file-feedback.js, materialize.js, claims.js) have
-// since migrated to this module too (#1177) — this is now the one parseRepo
-// definition in the codebase. ghAvailable is the injectable, canonical
-// `gh --version` probe (the six-call-site consolidation).
+// plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the bin/
+// gh CLIs: the one parseRepo definition (nine hand-rolled copies migrated here,
+// #1177), the injectable `gh --version` probe, and the gh host seam (#4505).
+// ghOptions(args, opts) returns opts itself when GH_HOST is already set, args
+// name -R/--repo/--hostname, or origin's host is github.com or not a known GHE
+// host; a known one (*.ghe.com, a gh hosts.yml key, or an enterprise token on a
+// non-SSH remote) gets a copy whose env adds GH_HOST, memoized per cwd.
 'use strict';
 const { execFileSync } = require('child_process');
-const { GH_TIMEOUT_MS, isTimeoutError } = require('./shared-primitives');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const sharedPrimitives = require('./shared-primitives');
+const { GH_TIMEOUT_MS, isTimeoutError } = sharedPrimitives;
 
 // A git remote URL (SSH or HTTPS, with or without .git, on github.com or an
 // arbitrary GitHub Enterprise Server host, or an `owner/name` string wrapped
@@ -70,6 +70,127 @@ function repoResolutionNote(repoSpec) {
   return `resolved repo ${repoSlug(repoSpec)} (host: ${repoSpec.host})`;
 }
 
+// #4505: the gh host seam. A gh call that infers its repo from the cwd reaches
+// github.com unless GH_HOST says otherwise, so on a GitHub Enterprise origin
+// every such call went to the wrong host. ghOptions wraps a gh spawn's options
+// object; every key of `deps` is optional and defaults to the real thing.
+const ghHostSpecs = new Map(); // path.resolve(cwd) -> { host, owner, repo } | null
+const notedGhHosts = new Set(); // hosts whose repoResolutionNote this process printed
+
+function _resetGhHostCache() {
+  ghHostSpecs.clear();
+  notedGhHosts.clear();
+}
+
+function originUrl(cwd) {
+  return execFileSync('git', ['remote', 'get-url', 'origin'], {
+    cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GIT_TIMEOUT_MS, windowsHide: true,
+  });
+}
+
+// scp-style `[user@]host:path` (a colon before any slash, no `://`) or an
+// `ssh://` URL. An SSH remote's host may be a ~/.ssh/config alias, which gh
+// cannot reach, so the enterprise-token clause never admits one (Decision Q1).
+function isSshRemote(url) {
+  const u = String(url || '').trim();
+  if (/^ssh:\/\//i.test(u)) return true;
+  if (u.includes('://')) return false;
+  const colon = u.indexOf(':');
+  const slash = u.indexOf('/');
+  return colon > 0 && (slash === -1 || colon < slash);
+}
+
+// gh's own config-dir order: GH_CONFIG_DIR, $XDG_CONFIG_HOME/gh, %AppData%/GitHub CLI
+// (Windows only), then ~/.config/gh.
+function ghConfigDir(deps) {
+  const env = deps.env || process.env;
+  if (env.GH_CONFIG_DIR) return env.GH_CONFIG_DIR;
+  if (env.XDG_CONFIG_HOME) return path.join(env.XDG_CONFIG_HOME, 'gh');
+  if ((deps.platform || process.platform) === 'win32' && env.AppData) return path.join(env.AppData, 'GitHub CLI');
+  return path.join(deps.homedir || os.homedir(), '.config', 'gh');
+}
+
+// Lower-cased top-level keys of gh's hosts.yml; an unreadable file has none.
+function ghConfigHosts(deps) {
+  const readFile = deps.readFile || ((p) => fs.readFileSync(p, 'utf8'));
+  let text;
+  try {
+    text = readFile(path.join(ghConfigDir(deps), 'hosts.yml'));
+  } catch {
+    return new Set();
+  }
+  return new Set([...String(text).matchAll(/^([^\s#:][^:\s]*):\s*$/gm)].map((m) => m[1].toLowerCase()));
+}
+
+function resolveGhSpec(cwd, deps = {}) {
+  const key = path.resolve(cwd);
+  if (ghHostSpecs.has(key)) return ghHostSpecs.get(key);
+  let spec = null;
+  try {
+    const url = (deps.remoteUrl || originUrl)(key);
+    const parsed = parseRepo(url);
+    const host = parsed && parsed.host.toLowerCase();
+    if (host && host !== 'github.com') {
+      const env = deps.env || process.env;
+      const known = host.endsWith('.ghe.com')
+        || ghConfigHosts(deps).has(host)
+        || (Boolean(env.GH_ENTERPRISE_TOKEN || env.GITHUB_ENTERPRISE_TOKEN) && !isSshRemote(url));
+      if (known) spec = { ...parsed, host };
+    }
+  } catch {
+    spec = null; // no origin, no git, or a probe timeout: no host
+  }
+  ghHostSpecs.set(key, spec);
+  return spec;
+}
+
+// The GitHub host gh calls from `cwd` should get as GH_HOST, or null (github.com,
+// an unknown host, or no resolvable origin). Memoized per path.resolve(cwd).
+function resolveGhHost(cwd, deps = {}) {
+  const spec = resolveGhSpec(cwd, deps);
+  return spec ? spec.host : null;
+}
+
+// Decision Q2: any -R/--repo/--hostname (also `--repo=x`, `--hostname=x` and
+// pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
+// A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag.
+function hasExplicitHostArg(args) {
+  for (const a of args || []) {
+    if (a === '--') return false;
+    if (typeof a !== 'string') continue;
+    if (a === '-R' || a === '--repo' || a === '--hostname') return true;
+    if (a.startsWith('--repo=') || a.startsWith('--hostname=') || (a.startsWith('-R') && a.length > 2)) return true;
+  }
+  return false;
+}
+
+// -> `opts` itself when nothing is injected (an effective env that already has
+// GH_HOST, even empty; an explicit host arg; no known GHE host for opts.cwd), else
+// a copy whose env is opts.env (or process env) plus GH_HOST. The first injection
+// per host prints repoResolutionNote, since GH_HOST also picks gh's auth host.
+// The arg scan runs before the host probe, so an explicit-host call spawns no git.
+function ghOptions(args, opts, deps = {}) {
+  const o = opts || {};
+  const base = o.env || deps.env || process.env;
+  if ('GH_HOST' in base) return opts;
+  if (hasExplicitHostArg(args)) return opts;
+  const spec = resolveGhSpec(o.cwd || process.cwd(), deps);
+  if (!spec) return opts;
+  if (!notedGhHosts.has(spec.host)) {
+    notedGhHosts.add(spec.host);
+    const write = deps.stderr || ((s) => process.stderr.write(s));
+    write(`claude-tweaks: ${repoResolutionNote(spec)} — gh calls get GH_HOST=${spec.host}\n`);
+  }
+  return { ...o, env: { ...base, GH_HOST: spec.host } };
+}
+
+// The seam's bounded, windowsHide'd gh spawn. ghOptions alone adds neither, so a
+// wrapped site keeps its own timeout; this helper is for sites that want GH_TIMEOUT_MS.
+function ghExecFileSync(args, opts = {}) {
+  return execFileSync('gh', args, ghOptions(args, { timeout: sharedPrimitives.GH_TIMEOUT_MS, ...opts, windowsHide: true }));
+}
+
 module.exports = {
   parseRepo, ghAvailable, remoteUrl, repoSlug, repoResolutionNote,
+  ghOptions, ghExecFileSync, resolveGhHost, _resetGhHostCache,
 };

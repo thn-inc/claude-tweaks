@@ -134,3 +134,105 @@ test("'--version' appears in plugin/bin only inside repo-resolve.js's ghAvailabl
   // 2 more (the timed-out-probe note in ghAvailable's comment).
   assert.deepEqual(hits, [`lib${pathModule.sep}repo-resolve.js:40`]);
 });
+
+// #4505: the gh host seam. Every test resets the per-process memo first and
+// passes fake deps, so no real `git` probe or hosts.yml read happens.
+const path = require('path');
+const { ghOptions, resolveGhHost, _resetGhHostCache } = require('../../plugin/bin/lib/repo-resolve');
+
+const ghe = { remoteUrl: () => 'https://acme.ghe.com/acme/widgets.git', readFile: () => { throw new Error('ENOENT'); }, env: {}, platform: 'linux', homedir: '/h', stderr: () => {} };
+test('AC1.1 seam: a *.ghe.com origin injects GH_HOST into a copy of opts', () => {
+  _resetGhHostCache();
+  const opts = { cwd: '/r', encoding: 'utf8', windowsHide: true };
+  const out = ghOptions(['pr', 'view', '7', '--json', 'body'], opts, ghe);
+  assert.notStrictEqual(out, opts);
+  assert.equal(out.env.GH_HOST, 'acme.ghe.com');
+  assert.equal(out.encoding, 'utf8');
+  assert.equal(opts.env, undefined); // caller's object untouched
+});
+test('AC2.1: a github.com origin returns the same opts object', () => {
+  _resetGhHostCache();
+  const opts = { cwd: '/r' };
+  assert.strictEqual(ghOptions(['pr', 'view'], opts, { ...ghe, remoteUrl: () => 'git@github.com:acme/widgets.git' }), opts);
+});
+test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opts.env, empty string included)', () => {
+  _resetGhHostCache();
+  const o1 = { cwd: '/r' };
+  assert.strictEqual(ghOptions(['api', 'graphql'], o1, { ...ghe, env: { GH_HOST: 'other.example' } }), o1);
+  const o2 = { cwd: '/r', env: { GH_HOST: '' } };
+  assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
+});
+test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token admits an HTTPS host', () => {
+  _resetGhHostCache();
+  const alias = { ...ghe, remoteUrl: () => 'git@github.com-work:acme/widgets.git' };
+  const o = { cwd: '/a' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o, alias), o);
+  _resetGhHostCache();
+  const o2 = { cwd: '/t' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o2, { ...alias, env: { GH_ENTERPRISE_TOKEN: 't' } }), o2);
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/u' }, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }).env.GH_HOST, 'git.corp.example');
+  _resetGhHostCache();
+  const o3 = { cwd: '/m' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o3, { ...ghe, remoteUrl: () => 'https://GitHub.com/acme/widgets.git' }), o3); // mixed-case github.com is github.com
+  _resetGhHostCache();
+  const ghes = { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' },
+    readFile: (p) => { assert.equal(p, path.join('/cfg', 'hosts.yml')); return 'git.corp.example:\n    user: me\n'; } };
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/b' }, ghes).env.GH_HOST, 'git.corp.example');
+});
+test('AC6.1, AC6.2 (Decision Q2): any explicit -R/--repo/--hostname suppresses injection, agreeing with origin or not', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['issue', 'view', '1', '--repo', 'thn-inc/claude-tweaks'], ['api', 'graphql', '--hostname', 'github.com'],
+    ['pr', 'list', '-R', 'other.example/acme/widgets'], ['issue', 'list', '--repo=thn-inc/claude-tweaks'],
+    ['issue', 'view', '1', '--repo', 'acme.ghe.com/acme/widgets'], ['issue', 'view', '1', '-R', 'ACME/Widgets'],
+    ['api', 'graphql', '--hostname', 'acme.ghe.com'], ['api', 'graphql', '--hostname=acme.ghe.com'], ['pr', 'list', '-Racme/widgets']]) {
+    assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
+  }
+});
+test('review focus: GraphQL -f owner=/repo= variables are not an explicit repo; args after -- are not scanned', () => {
+  _resetGhHostCache();
+  const o = { cwd: '/r' };
+  for (const args of [['api', 'graphql', '-f', 'query=q', '-f', 'owner=acme', '-f', 'repo=widgets'],
+    ['issue', 'comment', '1', '--body', 'x', '--', '--repo']]) {
+    assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
+  }
+});
+test('review focus: caller opts.env is the merge base', () => {
+  _resetGhHostCache();
+  const out = ghOptions(['pr', 'view'], { cwd: '/r', env: { PATH: '/p', X: '1' } }, ghe);
+  assert.deepEqual(out.env, { PATH: '/p', X: '1', GH_HOST: 'acme.ghe.com' });
+});
+test('review focus: memoized per cwd, probe failure is "no host", note logged once per host', () => {
+  _resetGhHostCache();
+  let probes = 0; const notes = [];
+  const d = { ...ghe, remoteUrl: (cwd) => { probes++; if (cwd === path.resolve('/none')) throw new Error('no origin'); return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  ghOptions(['a'], { cwd: '/r' }, d); ghOptions(['b'], { cwd: '/r' }, d);
+  const none = { cwd: '/none' };
+  assert.strictEqual(ghOptions(['c'], none, d), none);
+  assert.equal(probes, 2);
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\) — gh calls get GH_HOST=acme\.ghe\.com/);
+});
+test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matched case-insensitively", () => {
+  const corp = { ...ghe, remoteUrl: () => 'git@Git.Corp.Example:acme/widgets.git' };
+  const cases = [
+    [{ GH_CONFIG_DIR: '/cfg', XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', path.join('/cfg', 'hosts.yml')],
+    [{ XDG_CONFIG_HOME: '/x', AppData: '/ad' }, 'win32', path.join('/x', 'gh', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'win32', path.join('/ad', 'GitHub CLI', 'hosts.yml')],
+    [{ AppData: '/ad' }, 'linux', path.join('/h', '.config', 'gh', 'hosts.yml')],
+  ];
+  for (const [env, platform, want] of cases) {
+    _resetGhHostCache();
+    const read = [];
+    const host = resolveGhHost('/r', { ...corp, env, platform, readFile: (p) => { read.push(p); return '# comment:\nGIT.CORP.EXAMPLE:\n    user: me\ngithub.com:\n'; } });
+    assert.deepEqual(read, [want]);
+    assert.equal(host, 'git.corp.example');
+  }
+});
+test('resolveGhHost: a user-less scp-style remote is SSH, so the token clause skips it; an unknown HTTPS host without a token is null', () => {
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'git.corp.example:acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/n', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git' }), null);
+});
