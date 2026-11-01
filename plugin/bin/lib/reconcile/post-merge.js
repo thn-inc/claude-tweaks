@@ -337,7 +337,9 @@ async function processCandidate({
     return { entry: single ? { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr' } : null, defer: false };
   }
   const skipped = (reason, extra = {}) => ({ runDir: dir, pr, action: 'skipped', reason, ...extra });
-  if (runHasMarker(dir)) return { entry: single ? skipped('already-done') : null, defer: false };
+  // The reconcile loop drops these outcomes; the single-run path reports them.
+  const silentSkip = (reason, extra) => (single ? skipped(reason, extra) : null);
+  if (runHasMarker(dir)) return { entry: silentSkip('already-done'), defer: false };
 
   let prState;
   try { prState = await prStates.byNumberAsync(pr); } catch { prState = TRANSIENT_PR_FAILURE; } // a real throw from the lookup is a transport failure
@@ -345,7 +347,7 @@ async function processCandidate({
     const reason = typeof prState === 'string' ? prState : 'no-pr-state';
     return { entry: skipped(reason), defer: reason === TRANSIENT_PR_FAILURE };
   }
-  if (prState.state !== 'MERGED') return { entry: single ? skipped('not-merged', { detail: String(prState.state) }) : null, defer: false };
+  if (prState.state !== 'MERGED') return { entry: silentSkip('not-merged', { detail: String(prState.state) }), defer: false };
 
   const mergedAt = Date.parse(prState.mergedAt);
   // `<=`: a run is processed only strictly past the grace, so strictly past CLOSE_WINDOW_MS too
@@ -361,7 +363,7 @@ async function processCandidate({
   if (!claim.ok) return { entry: skipped(claim.reason), defer: true };
   try {
     // A pass that finished between the first read and the claim wrote its marker already.
-    if (runHasMarker(dir)) return { entry: single ? skipped('already-done') : null, defer: false };
+    if (runHasMarker(dir)) return { entry: silentSkip('already-done'), defer: false };
     const entry = processRun({
       dir, pr, ...ctx, now, params: inGrace ? IN_SESSION_PARAMS : LATE_MERGE_PARAMS, retryHint, includeRecords,
     });
