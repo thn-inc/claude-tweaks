@@ -12,6 +12,8 @@
 //   - record-payload.js     — recordPayload/specShapedBody composition
 //   - record-fingerprint.js — fingerprint handling
 //   - record-dependencies.js — dependency/blocker/sub-issue query building
+// It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
+// primitives that live in ../markdown-blocks.js.
 // New code that only needs one boundary's exports may require that
 // sub-module directly instead of this aggregator; both are equally valid.
 'use strict';
@@ -24,8 +26,9 @@ const {
 const {
   DEFER_REASONS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp,
-  fenceFor, fencedBlock, extractSection,
 } = require('./record-payload');
+
+const { fenceFor, fencedBlock, extractSection } = require('../markdown-blocks');
 
 const {
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint,

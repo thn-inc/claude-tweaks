@@ -642,8 +642,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /blockedBy\(first:25\)/);
-  assert.match(q, /state/);
+  assert.match(q, /i39: issue\(number:39\)\{ number blockedBy\(first:25\)\{ nodes\{ number state \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
@@ -1444,7 +1443,7 @@ test('extractSection: a fence is closed only by its own character, at least as l
 });
 
 test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines included (#4369)', () => {
-  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   const lines = ['a', '```md', '## in', '```', 'b', '~~~', 'open-ended', 'c'];
   assert.deepStrictEqual(fencedLineMask(lines), [false, true, true, true, false, true, true, true]);
   assert.deepStrictEqual(fencedLineRanges(lines), [[1, 3], [5, 7]]);
@@ -1453,14 +1452,14 @@ test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines i
 });
 
 test('fencedLineRanges: a backtick line whose info string holds a backtick is an inline span, not a fence (#4369)', () => {
-  const { fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   assert.deepStrictEqual(fencedLineRanges(['```a``` inline span', '## Current State']), []);
   assert.deepStrictEqual(fencedLineRanges(['```js', 'x', '```']), [[0, 2]]);
   assert.deepStrictEqual(fencedLineRanges(['~~~a`b', 'x', '~~~']), [[0, 2]]);
 });
 
 test('fencedLineMask unclosedAsText leaves only a trailing unclosed fence out of the mask (#4369)', () => {
-  const { fencedLineMask } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask } = require('../../../plugin/bin/lib/markdown-blocks');
   const unclosed = ['a', '```', '## h', 'b'];
   assert.deepStrictEqual(fencedLineMask(unclosed), [false, true, true, true]);
   assert.deepStrictEqual(fencedLineMask(unclosed, { unclosedAsText: true }), [false, false, false, false]);
