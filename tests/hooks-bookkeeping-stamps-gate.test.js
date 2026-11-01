@@ -1768,6 +1768,48 @@ test('bookkeeping-stamps gate (#1258): a caught model-resolution exception never
   );
 });
 
+test('bookkeeping-stamps gate (#4578 Q5): a degraded detection never persists prExempt — the next call detects again (AC15.2)', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  const out = pre.run(
+    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    {
+      // Guarded so a one-argument call cannot throw into the catch branch and pass for the wrong reason.
+      resolveIntegrationModel: (root, o) => {
+        if (o && typeof o.onDegrade === 'function') o.onDegrade({ reason: 'timeout', timeoutMs: 5000, attempts: 2 });
+        return 'local-merge';
+      },
+    },
+  );
+  // Fail-open: a degraded detection is not provably pr-first, so this call allows.
+  assert.deepStrictEqual(out, {});
+  const persisted = JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+  assert.strictEqual(
+    persisted.prExempt, undefined,
+    'a degraded detection must never persist prExempt — a later call might detect pr-first and need to enforce',
+  );
+});
+
+test('bookkeeping-stamps gate (#4578 Q5): the override receives an onDegrade callback; a clean local-merge still persists prExempt', () => {
+  const main = gitRepo();
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  const { run } = mkRunDir(project, wt, undefined);
+  let got;
+  const out = pre.run(
+    { input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt },
+    { resolveIntegrationModel: (root, o) => { got = o; return 'local-merge'; } },
+  );
+  assert.deepStrictEqual(out, {});
+  assert.strictEqual(typeof (got && got.onDegrade), 'function', 'the override must receive { onDegrade } as its second argument');
+  const persisted = JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+  assert.strictEqual(persisted.prExempt, true, 'a clean local-merge resolution still persists prExempt');
+});
+
 // --- #1460: an unrelated dangling run must not deny a fresh scratch worktree ---
 //
 // _shared/scratch-worktree.md's throwaway checkouts (used by /tidy, /wrap-up's

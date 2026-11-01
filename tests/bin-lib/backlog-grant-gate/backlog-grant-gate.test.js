@@ -138,6 +138,32 @@ test('#2240: resolveSubIssueNumbers (native) omits --hostname for github.com or 
   });
 });
 
+// #4505 fix round 1: the parent-issue list reads cwd's own repo (`runner`); the
+// owner/repo-addressed probe, batch and REST retry go through `nativeRunner`,
+// where the CLI pins an explicit --repo's host.
+test('#4505: resolveSubIssueNumbers (native) sends only the owner/repo calls through nativeRunner', () => {
+  const plain = [];
+  const native = [];
+  const answer = (args) => {
+    if (args[0] === 'issue') return JSON.stringify([{ number: 20 }]);
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      const q = args.find((a) => a.startsWith('query='));
+      if (q.includes('__type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      return JSON.stringify({ data: { repository: { i20: { number: 20, subIssues: { nodes: [], pageInfo: { hasNextPage: true } } } } } });
+    }
+    if (args[0] === 'api' && args[1] === '--paginate') return '21\n';
+    throw new Error(`unexpected call: ${JSON.stringify(args)}`);
+  };
+  const nums = resolveSubIssueNumbers({
+    workLinks: 'native', limit: 100, owner: 'o', repo: 'r',
+    runner: (args) => { plain.push(args.slice(0, 2).join(' ')); return answer(args); },
+    nativeRunner: (args) => { native.push(args.slice(0, 2).join(' ')); return answer(args); },
+  });
+  assert.deepStrictEqual(Array.from(nums), [21]);
+  assert.deepStrictEqual(plain, ['issue list']);
+  assert.deepStrictEqual(native, ['api graphql', 'api graphql', 'api --paginate']);
+});
+
 // --- computeOutlook: the full Step 0 -> Step 2 Phase A pipeline ---
 
 // computeOutlook's three gh fetches, keyed by args[3]. There is deliberately

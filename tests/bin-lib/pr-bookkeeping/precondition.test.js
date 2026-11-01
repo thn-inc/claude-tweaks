@@ -6,6 +6,10 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { checkPrBookkeepingPrecondition } = require('../../../plugin/bin/lib/pr-bookkeeping/precondition');
+const { STUB_SKIP } = require('../../helpers/path-stub');
+const { fakeGh } = require('../../helpers/fake-gh');
+const { readText } = require('../../helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 
 function gitRepoWithCommit() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-prbk-'));
@@ -328,4 +332,115 @@ test('checkPrBookkeepingPrecondition (#2858): a hand-corrupted parent stamp stil
   const unresolvable = checkPrBookkeepingPrecondition({ runDir, cwd: wt });
   assert.strictEqual(unresolvable.ok, true);
   assert.strictEqual(unresolvable.reason, 'unreadable-run-state');
+});
+
+// #4578 Q11: a forge detection that timed out twice cannot prove the run is
+// pr-first or not -- it reports degraded-detection (ok, fail-open), never the
+// not-pr-first a clean local-merge detection reports.
+function degradedFixture(runId) {
+  const main = gitRepoWithCommit();
+  execFileSync('git', ['-C', main, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
+  const wt = linkedWorktreeOf(main);
+  commitMaterializeFile(wt, runId);
+  const runDir = makeRunDir(runId);
+  writeRunState(runDir, { status: 'active', worktree: wt });
+  return { runDir, wt };
+}
+
+function withGhTimeoutEnv(ms, fn) {
+  const KEY = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const saved = process.env[KEY];
+  process.env[KEY] = ms;
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env[KEY];
+    else process.env[KEY] = saved;
+  }
+}
+
+test('checkPrBookkeepingPrecondition (#4578 Q11): a degraded forge detection reports degraded-detection, never not-pr-first (AC21.1)', { skip: STUB_SKIP }, () => {
+  const { runDir, wt } = degradedFixture('2026-10-31T000001-spec-4578');
+  // precondition.js passes no timeoutMs, so the ladder's env rung bounds the probe.
+  const gh = fakeGh({ first: 'hang' });
+  let r;
+  let calls;
+  try {
+    r = withGhTimeoutEnv('1000', () => checkPrBookkeepingPrecondition({ runDir, cwd: wt }));
+    calls = gh.count();
+  } finally {
+    gh.restore();
+  }
+  assert.deepStrictEqual(r, { ok: true, reason: 'degraded-detection' });
+  assert.strictEqual(calls, 2);
+});
+
+test('checkPrBookkeepingPrecondition (#4578 Q11): a clean local-merge detection (gh exits non-zero at once) still reports not-pr-first', { skip: STUB_SKIP }, () => {
+  const { runDir, wt } = degradedFixture('2026-10-31T000002-spec-4578');
+  const gh = fakeGh({ first: 'fail' });
+  let r;
+  let calls;
+  try {
+    r = withGhTimeoutEnv('1000', () => checkPrBookkeepingPrecondition({ runDir, cwd: wt }));
+    calls = gh.count();
+  } finally {
+    gh.restore();
+  }
+  assert.strictEqual(r.ok, true);
+  assert.strictEqual(r.reason, 'not-pr-first');
+  assert.strictEqual(calls, 1);
+});
+
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+const PRECONDITION_RAW = readText(path.join(REPO_ROOT, 'plugin', 'bin', 'lib', 'pr-bookkeeping', 'precondition.js'));
+const PRECONDITION_CODE = stripComments(PRECONDITION_RAW);
+const FORWARD_RE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*runDir,\s*\{\s*onDegrade\s*\}\)/;
+const CALL_SITE_RE = /resolveRunPinnedIntegrationModel\(/g;
+const callSiteCount = (code) => (code.match(CALL_SITE_RE) || []).length;
+
+// FORWARD_RE pins the call's argument text to exactly `{ onDegrade }`, so a
+// timeoutMs in the call fails the match -- that is the Q3 property. No
+// whole-file timeoutMs ban: an unrelated timeoutMs elsewhere in the file (a git
+// spawn bound) would not break it. The single-call-site count closes the other
+// gap: a second call that carries timeoutMs would not disturb FORWARD_RE's match
+// on the first.
+test('precondition.js forwards exactly { onDegrade } to resolveRunPinnedIntegrationModel -- it follows the gh-timeout-ms ladder (#4578 AC13.2, AC13.3, AC21.1)', () => {
+  assert.strictEqual(stripperVerdict(PRECONDITION_RAW, PRECONDITION_CODE), 'ok', STRIPPER_VERDICT_MESSAGES.misparsed);
+  assert.match(PRECONDITION_CODE, FORWARD_RE);
+  assert.strictEqual(callSiteCount(PRECONDITION_CODE), 1,
+    'resolveRunPinnedIntegrationModel( must be called exactly once, so no second call can carry timeoutMs');
+});
+
+test('go-red: the forwarding scan rejects a two-argument call, a timeoutMs call, and a call that exists only in a comment', () => {
+  const live = 'model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { onDegrade });';
+  assert.match(stripComments(live), FORWARD_RE);
+  const twoArg = 'model = resolveRunPinnedIntegrationModel(mainRoot, runDir);';
+  assert.doesNotMatch(stripComments(twoArg), FORWARD_RE);
+  const withTimeout = 'model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { onDegrade, timeoutMs: 5000 });';
+  assert.doesNotMatch(stripComments(withTimeout), FORWARD_RE);
+  const commented = `// ${live}\nmodel = resolveRunPinnedIntegrationModel(mainRoot, runDir);`;
+  assert.doesNotMatch(stripComments(commented), FORWARD_RE);
+  // a timeoutMs mention in a trailing comment does not disturb a compliant call
+  assert.match(stripComments(`${live} // timeoutMs`), FORWARD_RE);
+  // timeoutMs listed before onDegrade is also rejected
+  assert.doesNotMatch(stripComments('model = resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 5000, onDegrade });'), FORWARD_RE);
+  // a second call carrying timeoutMs leaves FORWARD_RE matching the first, but the call-site count catches it
+  const twoCalls = `${live}\nother = resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 5000, onDegrade });`;
+  assert.match(stripComments(twoCalls), FORWARD_RE);
+  assert.strictEqual(callSiteCount(stripComments(live)), 1);
+  assert.strictEqual(callSiteCount(stripComments(twoCalls)), 2);
+  // a call mentioned only in a comment is not a call site
+  assert.strictEqual(callSiteCount(stripComments(`${live}\n// resolveRunPinnedIntegrationModel(mainRoot, runDir, { timeoutMs: 1 });`)), 1);
+});
+
+test('/test Step 0 names the degraded-detection reason the precondition returns (#4578 Q11 prose twin)', () => {
+  const skill = readText(path.join(REPO_ROOT, 'plugin', 'skills', 'test', 'SKILL.md'));
+  const start = skill.indexOf('## Step 0: PR-Bookkeeping Precondition Check');
+  const end = skill.indexOf('## Step 1:', start);
+  assert.ok(start >= 0 && end > start, 'Step 0 section not found');
+  const slice = skill.slice(start, end);
+  assert.match(slice, /ok \(degraded-detection\)/);
+  assert.match(slice, /--status SKIP|`SKIP`/);
+  // the producer still carries the literal the prose names
+  assert.match(PRECONDITION_CODE, /'degraded-detection'/);
 });

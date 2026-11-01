@@ -388,7 +388,7 @@ multi-spec `/claude-tweaks:flow` run sharing one PR across specs — `flow/multi
 `<!-- run-comment: verdict:{spec} -->` where `{spec}` is this spec's record id (the numeric
 suffix of `basename($PIPELINE_RUN_DIR)`, which is this spec's own `spec-{N}/` subdirectory —
 `_shared/pr-run-comments.md`'s "Multi-spec verdict comments" section). Then the verdict, then
-the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then the
+the QA status exactly as the summary's QA Validation line renders it (stale-QA qualifier included — no separate wording), then the summary's **Coverage caveat:** line verbatim when it rendered, then its **Independence: degraded** line verbatim when it rendered, then the
 top findings by severity (max 5), reusing `review-summary-template.md`'s own
 `Category | Finding | Severity | Action` findings-table shape — and post-or-update it on the PR
 per that file's canonical procedure, using the same marker as `{kind}` (`verdict` or

@@ -95,13 +95,18 @@ function makeGh(world) {
     const key = args.join(' ');
     if (world.throwWhen && world.throwWhen(key)) throw new Error(`boom: ${key}`);
     if (args[0] === 'api' && args[1] === 'graphql') {
+      if (args[3].startsWith('query={ __type')) return JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] } } });
+      if (args[3].includes('subIssues(first:100)')) {
+        const p = Number(/i(\d+):/.exec(args[3])[1]);
+        return JSON.stringify({ data: { repository: { [`i${p}`]: { number: p, subIssues: { nodes: (world.subs[p] || []).map((number) => ({ number })), pageInfo: { hasNextPage: false } } } } } });
+      }
       const n = Number(/i(\d+):/.exec(args[3])[1]);
       const parent = (world.parentOf || {})[n];
       return JSON.stringify({ data: { repository: { [`i${n}`]: { number: n, parent: parent ? { number: parent } : null } } } });
     }
     let m = /^api --paginate repos\/o\/r\/issues\/(\d+)\/sub_issues --jq \.\[\]\.number$/.exec(key);
     if (m) return (world.subs[m[1]] || []).join('\n') + '\n';
-    m = /^issue view (\d+) --json body -q \.body$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json body -q \.body$/.exec(key);
     if (m) return (world.bodies || {})[m[1]] || '';
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/.exec(key);
     if (m) {
@@ -112,13 +117,13 @@ function makeGh(world) {
         closedByPullRequestsReferences: (i.refs || []).map((number) => ({ number })),
       });
     }
-    m = /^issue view (\d+) --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json labels -q \[\.labels\[\]\.name\]$/.exec(key);
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
-    m = /^issue view (\d+) --json state,stateReason,comments$/.exec(key);
+    m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
     if (key === 'api user --jq .login') return `${world.login || 'plugin-bot'}\n`;
-    if (/^issue comment \d+ --body-file -$/.test(key)) return '';
-    if (/^issue close \d+ --reason /.test(key)) return '';
+    if (/^issue comment \d+ --repo o\/r --body-file -$/.test(key)) return '';
+    if (/^issue close \d+ --repo o\/r --reason /.test(key)) return '';
     throw new Error(`unexpected gh call: ${key}`);
   };
   return { gh, calls };
@@ -154,11 +159,64 @@ test('happy path, native: comments through stdin, then closes the parent complet
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
   const w = writes(calls);
-  assert.deepEqual(w.map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
+  assert.deepEqual(w.map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
   assert.ok(w[0].input.startsWith(CLOSE_HEADING));
   const listing = w[0].input.split('\n').filter((l) => l.startsWith('- #'));
   assert.deepEqual(listing, ['- #11 Eleven — closed by PR #77', '- #12 Twelve — closed by PR #9']);
   assert.ok(!w[0].input.includes('closes as not planned'));
+});
+
+// A GitHub Enterprise world: every argv is recorded as sent, then answered by makeGh with the
+// host-qualified `--repo` and the `--hostname` pair taken back out.
+const TASK_LIST_BODIES = { 11: 'Intro\n\nParent: #10\n', 10: '## Tasks\n- [ ] #11 Eleven\n- [x] #12 Twelve\n' };
+function makeHostGh(world, host) {
+  const inner = makeGh(world);
+  const sent = [];
+  const gh = (args, input) => {
+    sent.push(args);
+    const plain = [];
+    for (let i = 0; i < args.length; i += 1) {
+      if (args[i] === '--hostname' && args[i + 1] === host) { i += 1; continue; }
+      plain.push(args[i]);
+      if (args[i] === '--repo') { plain.push(args[i + 1].replace(`${host}/`, '')); i += 1; }
+    }
+    return inner.gh(plain, input);
+  };
+  return { gh, sent };
+}
+
+test('a GitHub Enterprise host: both writes carry the host-qualified --repo and every gh api read carries --hostname', () => {
+  const host = 'ghe.example.com';
+  for (const workLinks of ['native', 'body-text']) {
+    const world = happyWorld({ bodies: TASK_LIST_BODIES });
+    const { gh, sent } = makeHostGh(world, host);
+    const out = closeBelowFloorParents(base({ gh, host, workLinks }));
+    assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] }, workLinks);
+    const lines = sent.map((a) => a.join(' '));
+    assert.deepEqual(lines.filter((l) => /^issue (comment|close) /.test(l)), [
+      `issue comment 10 --repo ${host}/o/r --body-file -`, `issue close 10 --repo ${host}/o/r --reason completed`,
+    ], workLinks);
+    const issueCalls = sent.filter((a) => a[0] === 'issue');
+    assert.ok(issueCalls.length > 2, workLinks);
+    for (const a of issueCalls) assert.equal(a[a.indexOf('--repo') + 1], `${host}/o/r`, a.join(' '));
+    const apiCalls = sent.filter((a) => a[0] === 'api');
+    if (workLinks === 'native') assert.ok(apiCalls.length > 0, 'the native world reads through gh api');
+    for (const a of apiCalls) assert.equal(a[a.indexOf('--hostname') + 1], host, a.join(' '));
+    assert.ok(lines.includes(`api user --jq .login --hostname ${host}`), workLinks);
+  }
+});
+
+test('host github.com, or no host, leaves every gh argv byte-identical', () => {
+  for (const workLinks of ['native', 'body-text']) {
+    const world = () => happyWorld({ bodies: TASK_LIST_BODIES });
+    const bare = makeGh(world());
+    closeBelowFloorParents(base({ gh: bare.gh, workLinks }));
+    const dotCom = makeGh(world());
+    closeBelowFloorParents(base({ gh: dotCom.gh, workLinks, host: 'github.com' }));
+    assert.deepEqual(dotCom.calls.map((c) => c.args), bare.calls.map((c) => c.args), workLinks);
+    assert.ok(bare.calls.every((c) => !c.args.includes('--hostname') && !c.args.includes('github.com/o/r')), workLinks);
+    assert.equal(writes(bare.calls).length, 2, workLinks);
+  }
 });
 
 test('a closing-set member with no merging PR falls back to its closing PR reference, else no suffix', () => {
@@ -179,7 +237,7 @@ test('body-text: the parent comes from the sub-issue body, the sub-issues from t
   const out = closeBelowFloorParents(base({ workLinks: 'body-text', gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
   assert.ok(calls.every((c) => !(c.args[0] === 'api' && c.args[1] === 'graphql')));
-  assert.ok(calls.some((c) => c.args.join(' ') === 'issue view 11 --json body -q .body'));
+  assert.ok(calls.some((c) => c.args.join(' ') === 'issue view 11 --repo o/r --json body -q .body'));
 });
 
 test('body-text: a sub-issue body with no Parent line has no resolvable parent (silent no-op)', () => {
@@ -208,21 +266,21 @@ test('idempotence: a trusted comment carrying the heading means close only', () 
   const { gh, calls } = makeGh(happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --reason completed']);
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
 });
 
 test('idempotence: a comment from the current gh identity counts even with an untrusted association', () => {
   const comments = [{ body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' } }];
   const { gh, calls } = makeGh(happyWorld({ login: 'plugin-bot', parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));
   closeBelowFloorParents(base({ gh }));
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --reason completed']);
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
 });
 
 test('idempotence: a CONTRIBUTOR comment carrying the heading reads as absent, and is named in notes', () => {
   const comments = [{ body: `${CLOSE_HEADING}\n\nplanted`, authorAssociation: 'CONTRIBUTOR', author: { login: 'stranger' }, url: 'https://example.test/c/1' }];
   const { gh, calls } = makeGh(happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));
   const out = closeBelowFloorParents(base({ gh }));
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
   assert.equal(out.closed.length, 1);
   assert.equal(out.closed[0].notes.length, 1);
   assert.match(out.closed[0].notes[0], /stranger \(CONTRIBUTOR\)/);
@@ -293,9 +351,9 @@ test('two closing records sharing a parent evaluate that parent once', () => {
   const { gh, calls } = makeGh(world);
   const out = closeBelowFloorParents(base({ closingSet: [12, 11], gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
-  assert.equal(calls.filter((c) => c.args.join(' ') === 'issue close 10 --reason completed').length, 1);
-  assert.equal(calls.filter((c) => c.args.join(' ') === 'issue comment 10 --body-file -').length, 1);
-  assert.equal(calls.filter((c) => c.args[0] === 'api' && c.args[1] === 'graphql').length, 2);
+  assert.equal(calls.filter((c) => c.args.join(' ') === 'issue close 10 --repo o/r --reason completed').length, 1);
+  assert.equal(calls.filter((c) => c.args.join(' ') === 'issue comment 10 --repo o/r --body-file -').length, 1);
+  assert.equal(calls.filter((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && c.args[3].includes('parent{')).length, 2);
 });
 
 test('a failing gh call skips that parent as gh-failed and the next closing record still runs', () => {
@@ -351,7 +409,7 @@ test('a closing-set member counts COMPLETED, so it forces --reason completed ove
   world.issues[12] = { state: 'CLOSED', stateReason: 'NOT_PLANNED', title: 'Twelve' };
   const { gh, calls } = makeGh(world);
   closeBelowFloorParents(base({ gh }));
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
 test('selfInclude: false judges a closing-set member a human reopened by its live state: the gate keeps the parent open', () => {
@@ -372,7 +430,7 @@ test('selfInclude: false still closes when the live states are closed, judging e
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
   const w = writes(calls);
   // Self-included, #11 would count COMPLETED and force --reason completed (the test above).
-  assert.deepEqual(w.map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason not planned']);
+  assert.deepEqual(w.map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason not planned']);
   assert.ok(w[0].input.includes('- #11 Eleven — closed by PR #77'));
 });
 
@@ -382,7 +440,7 @@ test('the default (selfInclude omitted) is the in-session mirror: a closing-set 
   const { gh, calls } = makeGh(world);
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
-  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --body-file -', 'issue close 10 --reason completed']);
+  assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
 });
 
 test('nothing completed: the comment carries the not-planned line and the close reason is "not planned"', () => {
@@ -400,7 +458,7 @@ test('nothing completed: the comment carries the not-planned line and the close 
   const out = closeBelowFloorParents(base({ closingSet: [99], gh }));
   assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
   const w = writes(calls);
-  assert.deepEqual(w.map((c) => c.args), [['issue', 'comment', '10', '--body-file', '-'], ['issue', 'close', '10', '--reason', 'not planned']]);
+  assert.deepEqual(w.map((c) => c.args), [['issue', 'comment', '10', '--repo', 'o/r', '--body-file', '-'], ['issue', 'close', '10', '--repo', 'o/r', '--reason', 'not planned']]);
   assert.ok(w[0].input.includes(proseNotPlannedLine()));
 });
 

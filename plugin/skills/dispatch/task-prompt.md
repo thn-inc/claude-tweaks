@@ -215,10 +215,11 @@ If your first commit is denied by the working-directory hook even though `pwd` a
 assignment once with `node "{plugin-root}/bin/hooks.js" record-worktree --run "<RUN_DIR>" "<WORKTREE>"`
 and retry the commit. If it is denied a second time, STOP and report BLOCKED.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
 CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim against the artifact
 you just produced -- this call is the producer, not a second call distrusting someone else's
@@ -408,10 +409,11 @@ If your first commit is denied by the working-directory hook even though `pwd` a
 assignment once with `node "{plugin-root}/bin/hooks.js" record-worktree --run "<RUN_DIR>" "<WORKTREE>"`
 and retry the commit. If it is denied a second time, STOP and report BLOCKED.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
 Status line (required): the last non-empty line of your reply, after the OUTPUT FORMAT block
 below, must read exactly `STATUS: {WORD}`, where {WORD} is one of: DONE / DONE_WITH_CONCERNS /

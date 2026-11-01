@@ -12,6 +12,7 @@ const { runClassified, runClassifiedAsync } = require('../shared-primitives');
 // binding — so a test's `t.mock.method(cp, 'execFileSync', ...)` or
 // `cp.execFile = stub` still reaches them (#381, #872 follow-up); see timing.js.
 const { execFileSyncTimed, execFileAsyncTimed } = require('../reconcile/timing');
+const { parseRepo } = require('../repo-resolve');
 
 // Budget for one git query, sized from measurement rather than intuition (#134).
 //
@@ -211,4 +212,19 @@ function repoSlugOf(repoRoot) {
   return m ? m[1] : null;
 }
 
-module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoPinnedEnv };
+// origin remote URL -> { host, owner, repo } (repo-resolve.js's parseRepo), or null when
+// unparseable/absent. repoSlugOf's twin for a caller that must keep the host: its bare
+// `owner/repo` sends a GitHub Enterprise origin's gh calls to gh's default host.
+function repoSpecOf(repoRoot) {
+  const remote = runGit(['remote', 'get-url', 'origin'], repoRoot);
+  if (remote.failure || !remote.stdout) return null;
+  const parsed = parseRepo(remote.stdout);
+  if (parsed) return parsed;
+  // A remote parseRepo does not read (an `ssh://` URL, say) still resolved through repoSlugOf's
+  // looser parse before the host was kept; fall back to it, host unknown, so the caller does not
+  // regress to `no-remote` for a remote it used to work with.
+  const m = /[:/]([^/]+)\/([^/]+?)(\.git)?$/.exec(remote.stdout);
+  return m ? { host: null, owner: m[1], repo: m[2] } : null;
+}
+
+module.exports = { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoSlugOf, repoSpecOf, repoPinnedEnv };
