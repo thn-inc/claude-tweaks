@@ -154,7 +154,7 @@ test('AC5.1: each handoff progress-check assertion can go red (discrimination pr
     assert.deepEqual(handoffProgressMissing(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
   }
   const swapped = squashed.replace('git -C "{child-worktree}" rev-parse HEAD', 'git -C "{worktree}" rev-parse HEAD');
-  assert.match(swapped, /git -C "?\{worktree\}/,'the placeholder control must match the wrong placeholder');
+  assert.match(swapped, /git -C "?\{worktree\}/, 'the placeholder control must match the wrong placeholder');
 });
 
 // #4728: the continuation child inherits the worktree, so the harness's Bash-shape

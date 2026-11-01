@@ -582,10 +582,10 @@ test('AC3.1: each standing-rule assertion goes red when removed from any single 
 // copy, directly: only the lead-in `Before that stop` (core adds `(#4557)`) may sit between them.
 const STOP_SENTENCE = 'naming that child and its unit.';
 const LEAD_IN = /^\s*Before that stop( \(#4557\))?,\s*$/;
+const anchorsOf = (text) => ({ stopAt: text.indexOf(STOP_SENTENCE), passageAt: text.search(PROGRESS_CHECK[0][0]) });
 const misorderedCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => {
-    const stopAt = text.indexOf(STOP_SENTENCE);
-    const passageAt = text.search(PROGRESS_CHECK[0][0]);
+    const { stopAt, passageAt } = anchorsOf(text);
     return stopAt === -1 || passageAt === -1 || stopAt > passageAt
       || !LEAD_IN.test(text.slice(stopAt + STOP_SENTENCE.length, passageAt));
   })
@@ -598,8 +598,7 @@ test('AC1.3: the progress check follows the write-capable stop sentence in every
 test('AC1.3: a copy with the passage moved before the stop sentence goes red (discrimination proof)', () => {
   const copies = primitiveCopies();
   for (const [name, text] of Object.entries(copies)) {
-    const stopAt = text.indexOf(STOP_SENTENCE);
-    const passageAt = text.search(PROGRESS_CHECK[0][0]);
+    const { stopAt, passageAt } = anchorsOf(text);
     assert.ok(stopAt !== -1 && passageAt !== -1, `anchor text for the stop sentence or the passage not found in ${name}`);
     const first = text.slice(passageAt).match(/^[^.]*\./)[0];
     const doctored = text.slice(0, stopAt) + first + ' ' + text.slice(stopAt, passageAt) + text.slice(passageAt + first.length);
@@ -611,9 +610,10 @@ test('AC1.3: a copy with the passage moved before the stop sentence goes red (di
 test('AC1.3: a copy with an unrelated sentence between the stop sentence and the passage goes red (discrimination proof)', () => {
   const copies = primitiveCopies();
   for (const [name, text] of Object.entries(copies)) {
-    const stopEnd = text.indexOf(STOP_SENTENCE) + STOP_SENTENCE.length;
-    assert.ok(stopEnd >= STOP_SENTENCE.length, 'anchor text for the stop sentence not found in ' + name);
+    const { stopAt } = anchorsOf(text);
+    assert.notEqual(stopAt, -1, `anchor text for the stop sentence not found in ${name}`);
+    const stopEnd = stopAt + STOP_SENTENCE.length;
     const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
-    assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], 'an unrelated sentence before the passage in only ' + name + ' must turn exactly that copy red');
+    assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `an unrelated sentence before the passage in only ${name} must turn exactly that copy red`);
   }
 });
