@@ -100,7 +100,7 @@ function expandChecks(checks) {
   return out;
 }
 
-// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number }
+// opts: { dryRun?: boolean, checks?: string[], cwd?: string, sessionId?: string, budgetMs?: number, forgeProbeTimeoutMs?: number }
 // -> { mirror, redTip, worktrees, claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, residuePlan, residueErrors, skipped, timings }
 // A dry run writes neither the cache nor GitHub (#4180): `residuePlan` lists what the residue
 // tracking would have done (an array on a dry run when archive ran, null otherwise), and
@@ -253,8 +253,17 @@ async function reconcileInner(opts, state) {
   // no agent turn to probe from and is unaffected, matching the same
   // permanent, structural gap pre-tool-use.js's own PR-stamp branch already
   // documents (IL-63) rather than working around it there.
+  // #4578: a hook-context caller (session-start.js) passes `forgeProbeTimeoutMs`
+  // so a hung `gh` cannot stall the hook past its budget; it is forwarded as
+  // `timeoutMs` only when set. The `reconcile` CLI verb and the detached
+  // background pass pass none and follow detectIntegrationModel's own ladder,
+  // so their forwarded shape stays exactly `{ mcpReachable }`.
   const resolveModel = opts.resolveIntegrationModel || resolveIntegrationModel;
-  const model = resolveModel(root, { mcpReachable: opts.mcpReachable === true });
+  const modelOpts = { mcpReachable: opts.mcpReachable === true };
+  if (opts.forgeProbeTimeoutMs !== undefined && opts.forgeProbeTimeoutMs !== null) {
+    modelOpts.timeoutMs = opts.forgeProbeTimeoutMs;
+  }
+  const model = resolveModel(root, modelOpts);
   if (model !== 'pr-first') {
     // local-merge / no-forge: only `reap` has a defined fallback here — the
     // long-standing content-identical ancestry check worktree-reap.js has
