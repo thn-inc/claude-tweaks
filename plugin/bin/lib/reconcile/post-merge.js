@@ -95,6 +95,11 @@ const CLAIM_STALE_MS = 10 * 60 * 1000;
 const CLAIM_FILENAME = '.post-merge.lock';
 // The one prStates failure string worth retrying; every other string is final (see the header).
 const TRANSIENT_PR_FAILURE = 'network-failure';
+// Step 4.0b skips that are failures, not deliberate gate outcomes: closeBelowFloorParents' `gh-failed` and
+// `internal-error`, and the step-wide `unreadable-policy` / `invalid-risk-floor` (policySkipOf, or
+// closeBelowFloorParents' own). Every other skip reason (`above-floor`, `sibling-unsettled`, `needs-label`,
+// `already-closed`, …) is the gate deciding not to close.
+const PARENT_FAILURE_REASONS = new Set(['gh-failed', 'internal-error', 'unreadable-policy', 'invalid-risk-floor']);
 
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
@@ -388,12 +393,14 @@ function isArchivedRunDir(runDir, root) {
   return resolveWithin(runDir, path.join(root, '.claude-tweaks', 'pipelines', 'archive')) !== null;
 }
 
-// The run's config.yml `spec:` value, or null when the file or the line is unreadable.
+// The run's config.yml `spec:` value when it is one record number, else null: an unreadable file or line,
+// or a multi-spec value (`1068,1103`, `[1486, 1501]`) that would garble the `#{n}` retry hint.
 function readSpecNumber(runDir) {
   let text;
   try { text = fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'); } catch { return null; }
   const m = /^spec:\s*(\S+)/m.exec(text);
-  return m ? m[1].replace(/^#/, '') : null;
+  const value = m ? m[1].replace(/^#/, '') : null;
+  return value && /^\d+$/.test(value) ? value : null;
 }
 
 // The ATTEMPT_STEP line's retry clause. An archived run is never walked by the reconcile pass, so its retry
@@ -405,7 +412,8 @@ function archivedRetryHint(runDir) {
 }
 
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
-// { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records? }.
+// { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records?,
+//   logFailed?, parentFailures? }.
 async function postMergeOne({
   runDir: givenRunDir, cwd, prStates, now = Date.now, deps = {},
 } = {}) {
@@ -423,7 +431,8 @@ async function postMergeOne({
 
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
-// of an attempt line; `includeRecords` adds Step 4.0's record lists to a `ran` entry (postMergeOne only).
+// of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed`, and Step 4.0b's
+// `parentFailures`, to a `ran` entry (postMergeOne only).
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
@@ -440,7 +449,8 @@ function processRun({
     },
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
-  // Step 4.0's record lists (issue numbers), for a caller that surfaces them; omitted with no envelope.
+  // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
+  // append), for a caller that surfaces them; omitted with no envelope.
   const recordsOf = (env) => (includeRecords && env ? {
     records: {
       failed: issuesOf(env.failed),
@@ -448,6 +458,7 @@ function processRun({
       pendingClose: numbers(env.pendingClose),
       unchecked: numbers(env.unchecked),
     },
+    ...(env.logFailed === true ? { logFailed: true } : {}),
   } : {});
   const stamp = now();
   // A failed write still reports the parents Step 4.0b closed: they are closed on GitHub either way.
@@ -530,8 +541,17 @@ function processRun({
       reversibility: 'n/a',
     }),
   });
+  // Step 4.0b's failed closes, for a caller that must not report them as a clean run (postMergeOne only).
+  const parentFailures = includeRecords ? {
+    parentFailures: skipped.filter((s) => PARENT_FAILURE_REASONS.has(s.reason)).map((s) => ({
+      ...(s.parent !== undefined && s.parent !== null ? { parent: s.parent } : {}),
+      ...(s.issue !== undefined && s.issue !== null ? { issue: s.issue } : {}),
+      reason: s.reason,
+      ...(s.detail ? { detail: boundDetail(oneLine(s.detail)) } : {}),
+    })),
+  } : {};
   return write(items, {
-    runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope),
+    runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope), ...parentFailures,
   }, closed.length);
 }
 

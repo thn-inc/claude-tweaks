@@ -1209,3 +1209,81 @@ test('postMergeOne reports setup failures with pr null', async () => {
   const ok = mainCheckout();
   assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr-states' });
 });
+
+test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate policy skip is not one; postMerge entries carry none', async () => {
+  const skipped = [
+    { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
+    { issue: 103, reason: 'internal-error', detail: 'boom' },
+    { reason: 'invalid-risk-floor' },
+    { parent: 88, reason: 'above-floor' },
+    { parent: 89, reason: 'sibling-unsettled' },
+  ];
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }),
+  }));
+  assert.equal(entry.action, 'ran');
+  assert.deepEqual(entry.parentFailures, [
+    { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
+    { issue: 103, reason: 'internal-error', detail: 'boom' },
+    { reason: 'invalid-risk-floor' },
+  ]);
+
+  // Only policy skips: an empty list, a clean `ran`.
+  const quiet = addRun(root, '2026-10-30T090001-spec-2');
+  const clean = await postMergeOne(oneArgs(root, quiet, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 88, reason: 'above-floor' }] }),
+  }));
+  assert.deepEqual(clean.parentFailures, []);
+
+  // The step-wide unreadable-policy skip is a failure too.
+  const { root: badPolicy, dir: badDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(badPolicy, '.claude-tweaks', 'policy.yml'));
+  const unreadable = await postMergeOne(oneArgs(badPolicy, badDir, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() }));
+  assert.deepEqual(unreadable.parentFailures, [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }]);
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }) });
+  assert.equal(loop.entries.length, 1);
+  assert.ok(!('parentFailures' in loop.entries[0]));
+});
+
+test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, never a garbled #{n}', async () => {
+  const root = mainCheckout();
+  for (const [i, config] of [
+    'mode: auto\nspec: 1068,1103\n',
+    'mode: auto\nspec: [1486, 1501]\n',
+    'mode: auto\nspec: record-3672\n',
+  ].entries()) {
+    const archived = addArchivedRun(root, `2026-01-0${i + 1}T000000-spec-multi`, { config });
+    await postMergeOne(oneArgs(root, archived, { prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents() }));
+    const line = entriesOf(archived).find((e) => e.location === ATTEMPT_STEP).action;
+    assert.match(line, /the next \/claude-tweaks:wrap-up merge retries Steps 4\.0 and 4\.0b/, config);
+  }
+});
+
+test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; postMerge entries never do', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents(),
+  }));
+  assert.equal(entry.action, 'ran');
+  assert.equal(entry.logFailed, true);
+  // The no-closing-set path carries it too.
+  const notMerged = addRun(root, '2026-10-30T090001-spec-2');
+  const bare = await postMergeOne(oneArgs(root, notMerged, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ action: 'not-merged', pr: 11, state: 'OPEN', logFailed: true }), close: fakeCloseParents(),
+  }));
+  assert.equal(bare.logFailed, true);
+  const quiet = addRun(root, '2026-10-30T090002-spec-3');
+  const clean = await postMergeOne(oneArgs(root, quiet, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() }));
+  assert.ok(!('logFailed' in clean));
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents() });
+  assert.ok(!('logFailed' in loop.entries[0]));
+});
