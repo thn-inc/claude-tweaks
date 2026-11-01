@@ -51,7 +51,7 @@ const {
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -203,27 +203,30 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8', windowsHide: true }),
+  ghView: (owner, repo, n, host) => {
+    const args = ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }));
+  },
   // #2590: closed PRs referencing this issue, searched by body text — used
   // to detect a sibling attempt that already reached this record's own
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }),
+  ghSearchClosedPRs: (owner, repo, n, host) => {
+    const args = ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }));
+  },
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
   // issue. `gh issue view --json` has no such field to request; the REST
   // endpoint does. Only called when a Premise-check: line is actually
   // present (the uncommon case) — every other record pays no extra call.
-  ghAuthorAssociation: (owner, repo, n, host) => String(
-    execFileSync(
-      'gh',
-      ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
-        .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
-      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true },
-    ),
-  ).trim(),
+  ghAuthorAssociation: (owner, repo, n, host) => {
+    const args = ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
+      .concat(host && host !== 'github.com' ? ['--hostname', host] : []);
+    return String(execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true }))).trim();
+  },
   ghAvailable,
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // #117: commit distance from a record's Verified-as-of: stamp to current

@@ -37,7 +37,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
@@ -98,7 +98,7 @@ const realDeps = {
   // `unattended` ceiling this runs with no human to retry, so a spurious
   // timeout-kill is worse than the slow-but-eventually-successful unbounded
   // call it would replace.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })),
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
   gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
