@@ -4,7 +4,7 @@
 //   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
-// prints {record, check: "passed", title, ceremony, surface}; its exit codes
+// prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
 // are the same 0 / 1 (gate failed) / 2 (unresolved, gh absent, malformed —
 // including --check beside --run-dir, --ceremony or --multi-record-slug).
 // Implements skills/flow/materialize.md's Resolution + Materialization hard
@@ -62,7 +62,7 @@ const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = requ
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
   + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
-  + '           prints {record, check: "passed", title, ceremony, surface}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
+  + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -420,6 +420,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
+      bodyBlockedBy: parseDependencies(record.body),
     }) + '\n');
     return 0;
   }
