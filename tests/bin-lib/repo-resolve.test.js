@@ -219,8 +219,9 @@ test('#4854: an enterprise token alone admits no host, forge or not, so the toke
     'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git', 'https://git.corp.invalid/o/r.git']) {
     for (const env of [{ GH_ENTERPRISE_TOKEN: 't' }, { GITHUB_ENTERPRISE_TOKEN: 't' }]) {
       _resetGhHostCache();
-      const o = { cwd: '/f' };
-      assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env }), o, url);
+      const o = { cwd: '/f' }; const notes = [];
+      assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env, stderr: (s) => notes.push(s) }), o, url);
+      assert.deepEqual(notes, [], url); // the silent seam: a token with an unknown origin host prints no note
     }
   }
   _resetGhHostCache();
@@ -267,8 +268,9 @@ test('resolveGhHost: a user-less scp-style remote with a token is not admitted; 
 test('#4854: bypass spellings of the old guards inject nothing with a token set', () => {
   for (const url of ['https://gitlab.com./o/r.git', 'https://GITLAB.COM./o/r.git', 'git+ssh://alias/o/r', 'ssh+git://alias/o/r', 'git+ssh://git@alias/o/r.git']) {
     _resetGhHostCache();
-    const o = { cwd: '/b' };
-    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: { GH_ENTERPRISE_TOKEN: 't' } }), o, url);
+    const o = { cwd: '/b' }; const notes = [];
+    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: { GH_ENTERPRISE_TOKEN: 't' }, stderr: (s) => notes.push(s) }), o, url);
+    assert.deepEqual(notes, [], url); // the silent seam: an unknown host prints no note
   }
 });
 test('#4854: the origin host is normalized (case, trailing dots) before the .ghe.com and hosts.yml checks, and GH_HOST carries the normalized host', () => {
@@ -282,6 +284,10 @@ test('#4854: the origin host is normalized (case, trailing dots) before the .ghe
   assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', readFile: () => 'Git.Corp.Example.:\n' }), 'git.corp.example');
   _resetGhHostCache();
   assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, { ...ghe, remoteUrl: () => 'https://gitlab.com./acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' }, readFile: () => 'gitlab.com:\n' }).env.GH_HOST, 'gitlab.com');
+  _resetGhHostCache();
+  const dot = { cwd: '/d' }; const notes = [];
+  assert.strictEqual(ghOptions(['pr', 'list'], dot, { ...ghe, remoteUrl: () => 'https://github.com./o/r.git', readFile: () => 'github.com:\n', stderr: (s) => notes.push(s) }), dot); // github.com. is github.com
+  assert.deepEqual(notes, []);
 });
 
 // Fix round 1: an explicit --repo's host against the host ghOptions would reach from cwd.
@@ -293,9 +299,11 @@ test('explicitRepoGhHost: a bare github.com --repo on a GHE origin pins github.c
   assert.equal(explicitRepoGhHost({ owner: 'acme', repo: 'widgets' }, '/r', ghe), 'github.com'); // a missing host reads as github.com
   assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), null);
   assert.equal(explicitRepoGhHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, '/r', ghe), 'other.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'ACME.ghe.com.', owner: 'acme', repo: 'widgets' }, '/r', ghe), null); // trailing dot: same host, not a new pin
   _resetGhHostCache();
   assert.equal(explicitRepoGhHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // AC2: github.com origin
   assert.equal(explicitRepoGhHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, '/d', dotcom), 'acme.ghe.com');
+  assert.equal(explicitRepoGhHost({ host: 'github.com.', owner: 'acme', repo: 'widgets' }, '/d', dotcom), null); // trailing dot: still github.com, nothing pinned
   assert.equal(explicitRepoGhHost(null, '/d', dotcom), null);
 });
 test('explicitRepoGhHost AC4: an exported GH_HOST (empty string included) always wins', () => {

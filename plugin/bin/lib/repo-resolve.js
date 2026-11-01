@@ -217,7 +217,7 @@ function ghOptions(args, opts, deps = {}) {
 function explicitRepoGhHost(repoSpec, cwd, deps = {}) {
   const env = deps.env || process.env;
   if (!repoSpec || 'GH_HOST' in env) return null;
-  const host = String(repoSpec.host || 'github.com').toLowerCase();
+  const host = normalizeHost(repoSpec.host || 'github.com');
   return host === (resolveGhHost(cwd || process.cwd(), deps) || 'github.com') ? null : host;
 }
 
