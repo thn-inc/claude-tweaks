@@ -1,6 +1,8 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
+const fs = require('fs');
+const os = require('os');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
@@ -101,12 +103,20 @@ function between(text, file, startMarker, endMarker) {
 
 const NAME_KILL_LITERALS = ['`taskkill /IM`', '`pkill`', '`killall`', '`Stop-Process -Name`', '`pgrep`'];
 
+// One entry per assertion: the live check and the frozen control both iterate this list, so the control
+// proves each pattern individually rejects the pre-change text (assertNameKillRule alone throws at the
+// first failing pattern and would leave the rest unproven).
+const NAME_KILL_PATTERNS = [
+  [/Never kill a process by image or name/, 'the region must forbid killing a process by image or name'],
+  ...NAME_KILL_LITERALS.map((literal) => [
+    new RegExp(literal.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+    `the region must name ${literal} as a forbidden form`,
+  ]),
+  [/-sTCP:LISTEN/, 'the region must give the own-port-listener alternative (lsof … -sTCP:LISTEN)'],
+];
+
 function assertNameKillRule(region) {
-  assert.match(region, /Never kill a process by image or name/, 'the region must forbid killing a process by image or name');
-  for (const literal of NAME_KILL_LITERALS) {
-    assert.ok(region.includes(literal), `the region must name ${literal} as a forbidden form`);
-  }
-  assert.match(region, /-sTCP:LISTEN/, "the region must give the own-port-listener alternative (lsof … -sTCP:LISTEN)");
+  for (const [pattern, message] of NAME_KILL_PATTERNS) assert.match(region, pattern, message);
 }
 
 const NAME_KILL_REGIONS = [
@@ -122,8 +132,8 @@ for (const [name, region] of NAME_KILL_REGIONS) {
   });
 }
 
-// express-prompt.md's no-stash paragraph (lines 85-89) before #4548, verbatim: the template as it stood,
-// with no name-kill rule anywhere in it.
+// express-prompt.md's no-stash paragraph before #4548, verbatim: the template as it stood, with no
+// name-kill rule anywhere in it.
 const PRE_CHANGE_EXPRESS =
   'Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or\n' +
   '`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is\n' +
@@ -133,6 +143,59 @@ const PRE_CHANGE_EXPRESS =
 
 test('#4548: the pre-change express template (no-stash paragraph alone) fails the same helper', () => {
   assert.throws(() => assertNameKillRule(flat(PRE_CHANGE_EXPRESS)), (err) => /by image or name/.test(err.message), 'the helper must go red on the missing rule, not on something else');
+  // The throw above stops at the first failing pattern, so prove every pattern rejects the frozen text on its own.
+  const frozen = flat(PRE_CHANGE_EXPRESS);
+  for (const [pattern, message] of NAME_KILL_PATTERNS) {
+    assert.throws(() => assert.match(frozen, pattern, message), (err) => err.message.includes(message), `the frozen express template must fail: ${message}`);
+  }
   // The frozen control must itself be the real no-stash paragraph, or the throw above proves nothing.
   assert.ok(flat(EXPRESS_PROMPT).includes(flat(PRE_CHANGE_EXPRESS).trim()), 'PRE_CHANGE_EXPRESS has drifted from the live no-stash paragraph');
+});
+
+// ---- Dev-server teardowns kill the listener, never every connection to the port ----
+//
+// `lsof -ti tcp:{port}` lists every process with a socket on the port, clients included — the browser a
+// check is driving among them — so `| xargs kill` took the client down with the server.
+const SKILLS_ROOT = path.join(ROOT, 'plugin', 'skills');
+
+function filesContaining(root, literal) {
+  const hits = [];
+  const walk = (dir) => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && entry.name.endsWith('.md') && readText(full).includes(literal)) {
+        hits.push(path.relative(root, full).split(path.sep).join('/'));
+      }
+    }
+  };
+  walk(root);
+  return hits.sort();
+}
+
+test('#4548: no skill file uses the client-matching lsof -ti tcp: kill', () => {
+  assert.deepStrictEqual(filesContaining(SKILLS_ROOT, 'lsof -ti tcp:'), []);
+});
+
+test('#4548: the lsof -ti tcp: corpus walk finds a planted offender', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4548-'));
+  try {
+    fs.mkdirSync(path.join(dir, 'nested'));
+    fs.writeFileSync(path.join(dir, 'nested', 'offender.md'), 'Stop it with `lsof -ti tcp:3000 | xargs kill`.\n');
+    fs.writeFileSync(path.join(dir, 'clean.md'), 'Nothing to see here.\n');
+    assert.deepStrictEqual(filesContaining(dir, 'lsof -ti tcp:'), ['nested/offender.md']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('#4548: the three teardown sites use the listener-scoped form', () => {
+  const form = '`lsof -nP -iTCP:{port} -sTCP:LISTEN -t | xargs kill`';
+  for (const rel of [
+    ['plugin', 'skills', '_shared', 'dev-url-detection.md'],
+    ['plugin', 'skills', 'journey-health', 'deep-tier.md'],
+    ['plugin', 'skills', 'wrap-up', 'cleanup-procedures-execution.md'],
+  ]) {
+    assert.ok(flat(read(...rel)).includes(form), `${rel.slice(2).join('/')} must carry ${form}`);
+  }
 });
