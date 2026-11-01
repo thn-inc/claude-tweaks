@@ -19,8 +19,10 @@
 //   cleanly. already-done: a marker is already in the run's decisions.md.
 //   in-flight: another process holds the run's claim. Any other reason (no-pr,
 //   not-merged, claim-failed, transient-failure, network-failure,
-//   marker-write-failed, error, not-github-issues, no-remote, no-pr-states, and
-//   this CLI's own gh-absent -- `pr: null`, no lookup made) is a failure to report.
+//   marker-write-failed, error, not-github-issues, no-remote, no-pr-states,
+//   no-pr-state, pr-not-found, invalid-arguments -- the last three are the PR-state
+//   resolver's own answer passed through -- and this CLI's own gh-absent -- `pr: null`,
+//   no lookup made) is a failure to report.
 //
 // Status is data: exit 0 whenever an entry was printed, whatever its action or reason.
 // 2 malformed invocation (unknown flag, missing --run, --run without a value).
