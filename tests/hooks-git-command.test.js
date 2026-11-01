@@ -713,23 +713,14 @@ test('#4548: processKillByName caps wrapper recursion without throwing', () => {
   assert.deepStrictEqual(processKillByName(`bash -c "sh -c 'pkill node'"`, '/repo'), ['pkill']);
 });
 
-test('#4548: processKillByName stays linear on a long run of substitution openers inside one word', () => {
-  // The pgrep/ps substitution matchers must not re-scan the rest of the word from every opener.
-  // The quadratic form took 2-3 s on the first two shapes; the bound is the fastest of three runs,
-  // so a loaded machine's one slow run does not fail it.
+test('#4548: processKillByName returns an array on a long run of substitution openers inside one word', () => {
+  // The linearity budget for these shapes lives in perf/process-kill-linearity.test.js
+  // (a wall-clock assertion flakes under load); this pins only that the scan completes.
   for (const command of [
     'kill ' + '`'.repeat(32000), "kill '" + '$('.repeat(32000), 'kill ' + '$(ps '.repeat(8000),
     'kill $(ps ' + '|'.repeat(32000), 'kill $(ps aux ' + '|/'.repeat(16000),
     'kill ' + '$($'.repeat(10000), 'kill $(' + '$/'.repeat(16000), 'kill ' + '`$/'.repeat(10000),
-  ]) {
-    let best = Infinity;
-    for (let run = 0; run < 3; run += 1) {
-      const start = process.hrtime.bigint();
-      assert.ok(Array.isArray(processKillByName(command, '/repo')));
-      best = Math.min(best, Number(process.hrtime.bigint() - start) / 1e6);
-    }
-    assert.ok(best < 400, `${command.slice(0, 10)}… took ${best.toFixed(0)} ms at best`);
-  }
+  ]) assert.ok(Array.isArray(processKillByName(command, '/repo')), command.slice(0, 10));
 });
 
 test('#4548: processKillByName never throws on a non-string', () => {
