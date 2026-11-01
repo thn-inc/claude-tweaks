@@ -5,7 +5,7 @@ const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
   enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
   evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
-  IDENTITY_PROBE_FAILED_NOTE, readLogin,
+  IDENTITY_PROBE_FAILED_NOTE, readLogin, listOmitsSubIssue,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
 const { untrustedSkipNote } = require('../../../plugin/bin/lib/issues/comment-trust');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../../plugin/bin/fetch-sub-issues');
@@ -558,6 +558,33 @@ test('gatherGateFacts with no resolvable parent stops after resolution', () => {
   assert.equal(bodyText.calls.length, 1);
 });
 
+test("gatherGateFacts body-text: a Parent line the parent's task list omits resolves no parent (Reading B)", () => {
+  const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: '- [ ] #12\n' } });
+  const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+  assert.deepEqual(got, { parent: null, parentLabels: [], subIssues: [] });
+  assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10)], 'no shape 5 or 6 read');
+  // Only the sub-issue side: the same unlisted record, named as the parent's own `parent`, is gathered as before.
+  const fromParent = gatherGateFacts({ parent: 10, owner: 'o', repo: 'r', workLinks: 'body-text', caller: makeGh({ bodies: { 10: '- [ ] #12\n' } }).caller });
+  assert.equal(fromParent.parent, 10);
+  assert.deepEqual(fromParent.subIssues.map((s) => s.number), [12]);
+});
+
+test("gatherGateFacts body-text: a parent with no task list keeps the parent (an empty list is not an omission)", () => {
+  for (const parentBody of ['', 'Just prose, no task list.\n']) {
+    const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: parentBody } });
+    const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+    assert.deepEqual(got, { parent: 10, parentLabels: ['parent-issue'], subIssues: [] }, JSON.stringify(parentBody));
+    assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10), SHAPE.labels(10)], JSON.stringify(parentBody));
+  }
+});
+
+test("gatherGateFacts native: a sub-issue list omitting the sub-issue keeps the parent (Reading B is body-text only)", () => {
+  const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [12] } });
+  const got = gatherGateFacts({ subIssue: 11, ...NATIVE, caller });
+  assert.equal(got.parent, 10);
+  assert.deepEqual(got.subIssues.map((s) => s.number), [12]);
+});
+
 test('gatherGateFacts from a parent skips resolution', () => {
   const { calls, caller } = makeGh({ subs: { 10: [11, 12] } });
   const got = gatherGateFacts({ parent: 10, ...NATIVE, caller });
@@ -787,4 +814,10 @@ test('closeBelowFloorParents composes the shared core (one implementation)', () 
   for (const gone of ["require('./acceptance')", "require('./oversight-floor')", "require('./native-dependencies')", "require('./comment-trust')", 'sub_issues']) {
     assert.ok(!source.includes(gone), `no longer carries ${gone}`);
   }
+});
+
+test("listOmitsSubIssue: only a non-empty list that lacks the sub-issue is an omission", () => {
+  assert.equal(listOmitsSubIssue([12, 30], 20), true);
+  assert.equal(listOmitsSubIssue([12, 20], 20), false);
+  assert.equal(listOmitsSubIssue([], 20), false, "an empty list keeps the parent");
 });

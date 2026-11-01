@@ -27,7 +27,8 @@
 //      `parentLink` present (1) then guarded (3), or, under body-text, `subIssueGet`;
 //   3. `parentGet` present (1) then guarded (3);
 //   4. the enumeration source: `subIssueList` present (1), then guarded (3), or, under
-//      body-text, `parentGet`'s body;
+//      body-text, `parentGet`'s body; a sub-issue in hand that body-text's non-empty list
+//      omits has no parent (Reading B), so the result is the no-parent shape and 5 never runs;
 //   5. `subIssueGets` present (1), an object (3), its key set equal to the enumerated
 //      numbers (1), then each entry guarded in ascending order (3).
 // normalizeMcpFacts stops there. `parentComments` and `me` are read by
@@ -38,9 +39,9 @@
 // them must not depend on them.
 'use strict';
 
-const { parseSubIssues } = require('./record');
+const { parseSubIssues, parseParent } = require('./record');
 const { normalizeLabelNames } = require('./record-vocabulary');
-const { PARENT_LINE_RE, distinctAscending, needsIdempotenceReads } = require('./parent-gate');
+const { distinctAscending, needsIdempotenceReads, listOmitsSubIssue } = require('./parent-gate');
 
 // The agent's seven fact keys, each one MCP result written unreshaped:
 //   parentLink    `get_parent` of the sub-issue in hand, or null when it has none (native).
@@ -127,8 +128,7 @@ function resolveParent(raw, subIssue, workLinks) {
   if (workLinks === 'body-text') {
     const entry = need(raw, 'subIssueGet');
     guardIssue(entry, 'subIssueGet', subIssue);
-    const match = PARENT_LINE_RE.exec(entry.body ?? '');
-    return match ? Number(match[1]) : null;
+    return parseParent(entry.body);
   }
   const link = need(raw, 'parentLink');
   if (link === null) return null;
@@ -157,6 +157,11 @@ function normalizeComment(c) {
   };
 }
 
+// A fresh no-parent result per call, so no caller can mutate a shared one.
+function noParent() {
+  return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
+}
+
 // raw facts + { subIssue | parent, workLinks } -> { gate, idempotence }.
 //   gate         { parent, parentLabels, subIssues: [{ number, title, state, stateReason, labels, closedBy }] }
 //                (the facts shape gatherGateFacts returns; with no parent, { parent: null, parentLabels: [], subIssues: [] }).
@@ -167,13 +172,15 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   if (!isPlainObject(raw)) throw absent('(top level)', 'must be a JSON object');
   const given = parent !== null && parent !== undefined;
   const resolved = given ? parent : resolveParent(raw, subIssue, workLinks);
-  if (resolved === null || resolved === undefined) {
-    return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
-  }
+  if (resolved === null || resolved === undefined) return noParent();
 
   const parentEntry = need(raw, 'parentGet');
   guardIssue(parentEntry, 'parentGet', resolved);
   const numbers = enumerate(raw, parentEntry, workLinks);
+  // Reading B, as parent-gate.js's gatherGateFacts: under body-text a `Parent: #N` whose non-empty
+  // task list does not list the sub-issue in hand resolves no parent. An empty or missing list is
+  // not an omission: it keeps the parent.
+  if (!given && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent();
 
   const gets = need(raw, 'subIssueGets');
   if (!isPlainObject(gets)) throw invalid('subIssueGets', 'is not an object keyed by sub-issue number');

@@ -137,7 +137,10 @@ holds `$PARENT_NUM` and skips straight to "Enumerate the parent's sub-issues" be
 
 The CLI (`--sub-issue`) resolves the parent as `/claude-tweaks:review` Step 1.6 does — by
 `facets.parent` under `work-backend: local-files`, else per `work-links` — and reports
-`state: 'no-parent'` when there is none.
+`state: 'no-parent'` when there is none. Under `work-links: body-text`, a `Parent: #N` line whose
+parent's task list lists other records but not this one resolves no parent either
+(`state: 'no-parent'`) — the parent's task list wins, so the record takes the standalone path
+below. An empty or missing task list is not that case: the parent still resolves.
 
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —

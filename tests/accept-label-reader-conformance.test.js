@@ -177,6 +177,11 @@ function acceptanceLabelingResult(labels) {
   try {
     fs.mkdirSync(path.join(runDir, 'work'), { recursive: true });
     fs.writeFileSync(path.join(runDir, 'work', '900-spec.md'), '---\nrecord: 900\n---\n# 900: title\n');
+    // #4551: this fake gh answers the native GraphQL parent call; the work-links
+    // schema default is body-text, so the fixture says native explicitly (this
+    // test pins the label reader, not the link model).
+    fs.mkdirSync(path.join(runDir, '.claude-tweaks'), { recursive: true });
+    fs.writeFileSync(path.join(runDir, '.claude-tweaks', 'policy.yml'), 'work-links: native\n');
     const gh = (args) => {
       if (args[0] === '--version') return 'gh version 2.0.0';
       if (args[0] === 'api' && args[1] === 'graphql') {
