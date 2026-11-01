@@ -763,6 +763,9 @@ function riskAllowedSlugs(policyRaw) {
 // resolveRunPinnedIntegrationModel's own comment).
 function detectIntegrationModel(repoRoot, opts = {}) {
   const { mcpReachable } = opts;
+  // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
+  // policy-schema and policy back, so a load-time edge from this file would close a cycle.
+  const { ghOptions } = require('./repo-resolve');
   const execOpts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
   try {
     execFileSync('git', ['remote', 'get-url', 'origin'], execOpts);
@@ -771,7 +774,10 @@ function detectIntegrationModel(repoRoot, opts = {}) {
   }
   if (mcpReachable === true) return 'pr-first';
   try {
-    execFileSync('gh', ['repo', 'view', '--json', 'owner,name'], execOpts);
+    // windowsHide restated in the call: the windows-hide scan reads a bare
+    // execOpts, never one wrapped in ghOptions (#4505's GH_HOST seam).
+    const args = ['repo', 'view', '--json', 'owner,name'];
+    execFileSync('gh', args, ghOptions(args, { ...execOpts, windowsHide: true }));
   } catch {
     return 'local-merge';
   }

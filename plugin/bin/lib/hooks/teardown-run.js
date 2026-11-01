@@ -19,6 +19,7 @@ const { runGit, repoSpecOf } = require('./git-exec');
 const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
+const { ghOptions } = require('../repo-resolve');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -33,11 +34,12 @@ const GH_TIMEOUT_MS = 15000;
 function defaultGhApiDelete(args, host) {
   const cp = require('child_process');
   const hostArgs = host && host !== 'github.com' ? ['--hostname', host] : [];
+  const ghArgs = ['api', '--method', 'DELETE', ...args, ...hostArgs];
   try {
-    cp.execFileSync('gh', ['api', '--method', 'DELETE', ...args, ...hostArgs], {
+    cp.execFileSync('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
-    });
+    }));
     return { ok: true };
   } catch (e) {
     const stderr = String((e && e.stderr) || (e && e.message) || '');
