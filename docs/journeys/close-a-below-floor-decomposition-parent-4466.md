@@ -79,6 +79,7 @@ files:
   - It applies the same rules as an in-session Step 4.0b after a PR merge. There is no default-branch check: on a non-default base the late Step 4.0 closes the PR's still-open `Fixes` records itself, and the parent closes over the ones it confirmed closed. A `Fixes` record it could not close (`closeFailed[]`) keeps its parent open. A `base-unchecked` result carries no closing set, so nothing closes and the next pass retries it, up to three attempts.
   - The first pass after this ships also catches up older merged runs once. Step 4.0's 10-minute reopen window and Step 4.0b's idempotence keep that harmless: no reopen of a record a human closed later, and no second comment.
   - The late pass applies the same policy rule to the whole pass: an unreadable `.claude-tweaks/policy.yml` or a rejected `risk-floor` skips every Step 4.0b close (`unreadable-policy`, `invalid-risk-floor`). Step 4.0 still runs and the marker is still written, so the run is not retried and tidy's backstop recovers the parent.
+  - The pass walks only the live run dirs, so it never reaches a run `/claude-tweaks:wrap-up` already archived. For that run, `/claude-tweaks:wrap-up #{n} merge` on the merged PR runs Steps 4.0 and 4.0b once through `bin/post-merge-run.js`, under the same marker and claim as the pass, so whichever starts second reports `already done` or `in-flight` (`merge-a-parked-unattended-pr-3784.md`, step 3).
 - **Red flags:**
   - A second `## Closed below the oversight floor` comment on a parent a session already closed.
   - A parent closed below the floor while `.claude-tweaks/policy.yml` could not be read, or held a `risk-floor` value the schema rejects.
@@ -115,3 +116,5 @@ Updated by record #4599 (run `2026-10-31T135734-record-4599`): step 3 added. A m
 Updated by record #4600 (run `2026-10-31T190944-record-4600`): step 5's `needsBackstop` line. The parent-gate sweep reports a hand-closed parent above the floor itself, and this journey's #4466 close marker keeps the parent it closed out of that row (`catch-a-hand-closed-parent-with-no-sign-off-4600.md`).
 
 Updated by record #4603 (run `2026-10-31T211744-record-4603`): the gate's gather and evaluate moved from prose snippets into `bin/parent-gate.js`, which the reconciler's `below-floor-parent-close.js` shares through `bin/lib/issues/parent-gate.js`. Steps 1 and 2 name the CLI call. The review's fix wave added the local-files call (`--backend local-files`, `local-parent-gate-shape.js`) and the fail-closed policy read, which steps 1-3 now note.
+
+Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.
