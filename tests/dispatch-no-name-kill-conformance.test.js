@@ -68,10 +68,12 @@ test('#4548: build/dispatch.md forwards the no-name-kill rule to every dispatch 
   assert.notStrictEqual(label, -1, 'build/dispatch.md must carry the "Forbid name-based process kills in every dispatch that can run commands" label');
   const cite = text.search(/_shared\/subagent-dispatch-core\.md`'s no-name-kill rule/);
   assert.notStrictEqual(cite, -1, "build/dispatch.md must cite _shared/subagent-dispatch-core.md's no-name-kill rule rather than restate it");
-  const stash = text.indexOf('**Forbid `git stash`');
+  // The forward sits after the whole stash-guard paragraph, not between it and the no-stash forbid
+  // sentence: tests/dispatch-no-stash-conformance.test.js requires those two to be adjacent.
   const guard = text.indexOf('**Stash guard around every dispatch');
-  assert.notStrictEqual(stash, -1, 'the "Forbid `git stash`" label is gone');
+  const cherryPick = text.indexOf('**Cherry-pick source-branch PR check');
   assert.notStrictEqual(guard, -1, 'the "Stash guard around every dispatch" label is gone');
-  assert.ok(label > stash && label < guard, 'the no-name-kill forward must sit between the no-stash forbid sentence and the stash-guard paragraph');
-  assert.ok(cite > label && cite < guard, "the no-name-kill citation must sit inside the forwarded sentence");
+  assert.notStrictEqual(cherryPick, -1, 'the "Cherry-pick source-branch PR check" label is gone');
+  assert.ok(label > guard && label < cherryPick, 'the no-name-kill forward must sit after the stash-guard paragraph and before the cherry-pick check');
+  assert.ok(cite > label && cite < cherryPick, 'the no-name-kill citation must sit inside the forwarded sentence');
 });
