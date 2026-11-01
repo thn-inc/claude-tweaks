@@ -3,6 +3,7 @@ files:
   - plugin/bin/stash-guard.js
   - plugin/bin/lib/hooks/pre-tool-use.js
   - plugin/skills/build/dispatch.md
+  - plugin/skills/build/stash-guard.md
   - plugin/skills/build/handoff-template.md
   - plugin/skills/dispatch/task-prompt.md
   - plugin/skills/dispatch/express-prompt.md
@@ -38,7 +39,7 @@ files:
 - **Should understand:** An entry an agent *added* is logged and left on the stack, never popped. An implementer result of `DONE` becomes `DONE_WITH_CONCERNS`, and the stash change is named to that task's reviewer. A `NEEDS_CONTEXT` or `BLOCKED` result keeps its status. A restored entry lands at `stash@{0}`, so positions shift, but nothing is lost. A sibling session's own legitimate drop during the window is also restored: an accepted false positive, undone by the sha the AUTO line names.
 - **Red flags:** An entry restored with a different subject; an index-keyed restore; a no-op `git stash store` reported as `restored`; a new mid-flow stop.
 
-### 4. A reviewer that touched the stash is reviewed again — `build/dispatch.md`
+### 4. A reviewer that touched the stash is reviewed again — `build/stash-guard.md`
 - **URL:** —
 - **Action:** When the compare after a reviewer dispatch reports a change, the controller voids that verdict. The CLI has already restored the stash. The controller runs `git status --porcelain` and dispatches the same review again under a fresh snapshot/compare pair. If the tree is dirty, the retry names the dirty paths. If the retry changes the stash again, it is restored and logged, and the retry's verdict stands.
 - **Should feel:** Trustworthy: a verdict reached while the stash was disturbed is never acted on.

@@ -10,6 +10,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { gitRepo } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 const { run, parseArgs, readStack, storeCommand, USAGE } = require('../plugin/bin/stash-guard');
 
 // Pin identity and config for this test process: the fixture helpers, the CLI's
@@ -565,6 +566,71 @@ test('AC11.2: --label alone and --task with --label name the dispatch in the dec
     assert.deepEqual(stack(dir), [entry], who);
     assert.ok(decisionsOf(runDir).includes(`— Stash guard: ${who} removed stash entry ${entry.sha} ${entry.subject}; restored via git stash store. Reversibility: high.`), `${who}: ${decisionsOf(runDir)}`);
   }
+});
+
+// #4785: build/stash-guard.md documents the restore line this CLI writes (the template and its {who} forms).
+// A prose-to-CLI twin pin: the doc's template must match every line the CLI emits for the three dispatch-id shapes.
+const escapeRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function documentedRestoreLineProblems(doc, emitted) {
+  const found = /logged `(AUTO \{time\} — Stash guard: \{who\} removed stash entr[^`]*)`([^]*)/.exec(doc);
+  if (!found) return ['the documented restore-line template was not found'];
+  const [, template, rest] = found;
+  const problems = [];
+  const parts = template.split(/(\{time\}|\{who\}|entr\{y,ies\}|\{sha subject …\})/);
+  for (const { who, line } of emitted) {
+    const source = parts.map((part) => {
+      if (part === '{time}') return '\\d{2}:\\d{2}:\\d{2}';
+      if (part === '{who}') return escapeRe(who);
+      if (part === 'entr{y,ies}') return 'entr(?:y|ies)';
+      if (part === '{sha subject …}') return '.+';
+      return escapeRe(part);
+    }).join('');
+    if (!new RegExp(`^${source}$`).test(line)) problems.push(`restore line does not match the documented template: ${line}`);
+  }
+  // The `{who}` list right after the template: every documented form must be emitted, every emitted form documented.
+  const list = /^[^(]*\(`\{who\}` is ([^)]*)\)/.exec(rest);
+  if (!list) return [...problems, 'the documented {who} list was not found'];
+  const forms = [...list[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]);
+  const formRe = (form) => new RegExp(`^${escapeRe(form).replace(/\\\{k\\\}/g, '2').replace(/\\\{role\\\}/g, '[a-z-]+')}$`);
+  for (const { who } of emitted) {
+    if (!forms.some((form) => formRe(form).test(who))) problems.push(`emitted {who} "${who}" is not in the documented {who} list`);
+  }
+  for (const form of forms) {
+    if (!emitted.some(({ who }) => formRe(form).test(who))) problems.push(`documented {who} form "${form}" is never emitted`);
+  }
+  return problems;
+}
+
+test('AC3.1: the restore line build/stash-guard.md documents is the line the CLI writes', () => {
+  const doc = readText(path.join(__dirname, '..', 'plugin', 'skills', 'build', 'stash-guard.md'));
+  const emitted = [];
+  for (const [args, who] of [
+    [['--label', 'fix-wave'], 'fix-wave dispatch'],
+    [['--task', '2', '--label', 'review'], 'review dispatch for task 2'],
+    [['--task', '2'], 'implementer for task 2'],
+  ]) {
+    const dir = fixture();
+    const { root, runDir } = withRunDir();
+    stashPush(dir, 'twin');
+    const baseline = snapshot(dir);
+    git(dir, 'stash', 'drop', 'stash@{0}');
+    const r = compare(dir, baseline, ['--restore', '--run', runDir, ...args], { mainRoot: root, cwd: () => root });
+    assert.equal(r.code, 3, who);
+    for (const line of decisionsOf(runDir).split('\n')) {
+      if (line.startsWith('- AUTO ')) emitted.push({ who, line: line.slice(2) });
+    }
+  }
+  assert.equal(emitted.length, 3);
+  assert.deepEqual(documentedRestoreLineProblems(doc, emitted), []);
+  // Go-red controls, through the same helper.
+  const drifted = doc.split('restored via git stash store').join('restored');
+  assert.notEqual(drifted, doc, 'the template drift matched nothing');
+  assert.equal(documentedRestoreLineProblems(drifted, emitted).filter((p) => p.startsWith('restore line does not match the documented template: ')).length, 3);
+  assert.equal(documentedRestoreLineProblems(drifted, emitted).length, 3);
+  const shortList = doc.replace('`{role} dispatch`', '');
+  assert.notEqual(shortList, doc, 'the who-list drift matched nothing');
+  assert.equal(documentedRestoreLineProblems(shortList, emitted).length, 1);
 });
 
 test('with --run, the AUTO and FAILED lines land in decisions.md under /build', () => {
