@@ -9,14 +9,14 @@ files:
 
 **Persona:** A claude-tweaks agent running `/claude-tweaks:flow`'s multi-spec Consolidated Review Console, whose shared worktree has a `docs/journeys/` file that more than one spec touched — the exact shape #786's completion check exists to police.
 **Goal:** Confirm, before the console renders, that a later spec's commit on a shared journey/story path only ever *extended* an earlier spec's content (its own step, a shared bookkeeping list) rather than silently deleting it — without falling back to a manual `git log --numstat` ruling every time the raw walk sees an `A`-then-`M` path.
-**Entry point:** A terminal at this repo's checkout root (or another project's resolved plugin root), inside the multi-spec run's shared worktree, with `$EXPECTED_BASE` known (the commit before spec 1's materialize commit).
+**Entry point:** A terminal at this repo's checkout root (or another project's resolved plugin root), inside the multi-spec run's shared worktree, with `$EXPECTED_BASE` known (the commit before spec 1's materialize commit) and `$MULTISPEC_PARENT_DIR` known (the multi-spec parent run dir holding `manifest.yml`).
 **Success state:** One command answers "clean" or "overwrite" for the whole run's commit range, naming the offending path/commit/reason on an overwrite — the same verdict `flow/multispec-artifact-namespacing.md`'s HARD-GATE reads, reached without a human (or an agent) staring at `git blame` output.
 
 ## Steps
 
 ### 1. Run the mechanized check over the run's commit range — terminal
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/check-artifact-overwrite.js" --base "$EXPECTED_BASE" --run "$MULTISPEC_PARENT_DIR" --path docs/journeys/ --path stories/`
-- **Action:** Run it once, after every spec in the shared worktree has committed, before the Consolidated Review Console renders.
+- **Action:** Run it once, after every spec in the shared worktree has committed, before the Consolidated Review Console renders. `--run` is omitted only when the run's `parallel` waves ran with two or more members (see `plugin/skills/flow/multispec-artifact-namespacing.md`).
 - **Should feel:** One command, one verdict — no manual `git log --numstat` reading required for the common case.
 - **Should understand:** Exit `0` means clean — stdout is `{"clean":true,"overwrites":[]}` — and the console renders normally. A path that was only ever added once, with no later modification, never even appears in the walk.
 - **Red flags:** A nonzero exit read as "clean" without checking it; a caller that greps stdout for a substring instead of parsing the JSON envelope.

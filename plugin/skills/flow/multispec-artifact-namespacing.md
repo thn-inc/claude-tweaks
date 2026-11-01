@@ -98,7 +98,8 @@ add, a list it shrinks rather than reflows, a step-markup change that also alter
 renumbered heading whose text changed, or an `Origin:` rewrite that drops a reference —
 is a real overwrite. HARD-GATE: stop before rendering the
 console and report the offending path, commit, and reason (the tool's `overwrites[]` array — exit
-code `1`) plus both commits' spec attributions (the `reason` text). A clean run (exit `0`, `overwrites: []`, or no
+code `1`) plus each commit's spec attribution the `reason` text gives (a mismatch names both sides; an
+unattributable reason names the side or sides with no attribution). A clean run (exit `0`, `overwrites: []`, or no
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
 is a malformed invocation of the tool itself (never a verdict about the walk); exit `3` means the
 walk could not run at all (an unresolvable `{EXPECTED_BASE}`, or a missing, unreadable,
