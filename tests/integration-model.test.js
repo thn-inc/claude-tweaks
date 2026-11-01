@@ -165,7 +165,7 @@ test('detectIntegrationModel: CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000 with no policy k
 
 test('detectIntegrationModel: explicit opts.timeoutMs 1000 beats env 20000 -> degraded local-merge after two attempts (AC2.2)', { skip: STUB_SKIP }, () => {
   const dir = gitRepo({ remote: GH_REMOTE });
-  const gh = fakeGh({ first: 'hang' });
+  const gh = fakeGh({ first: { slow: 8 } });
   const seen = [];
   try {
     withTimeoutEnv('20000', () => {
