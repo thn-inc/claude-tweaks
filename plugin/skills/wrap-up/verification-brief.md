@@ -88,7 +88,7 @@ not the general one-off record) — read `verification-brief-parent-gate.md` in 
 directory and follow it in full, in place of the rest of this file, whenever that condition
 holds. It covers, in order: the two entry shapes, what it deliberately skips (Step 2.5's
 visual-review safety net), Resolve the parent, Enumerate the parent's sub-issues, the
-Self-inclusion rule, Evaluate the gate (including its own Oversight-floor check), Close the
+Self-inclusion rule, Run the gate CLI, Evaluate the gate (including its own Oversight-floor check), Close the
 parent below the floor, Compose the parent brief, and Apply the gate.
 
 **No parent resolvable** — skip straight to Steps 1-4 below and apply `demo:pending` to this
@@ -115,10 +115,10 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
 - **`exceeds: false`** — this record does not clear the oversight floor. **Skip Step 1 through
   Step 4 entirely** — no `demo:pending` bootstrap, no observation plan, no brief composed or
   posted. The walkthrough is not skipped: the Try it block composed above posts alone
-  (**Posting it alone**), and the Pipeline Summary renders it. The record closes with no `demo:*` label and no ceremony (this is the *not required*
+  (**Posting it alone**), and the Pipeline Summary renders it. The record closes with no acceptance label and no ceremony (this is the *not required*
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
   request: `/claude-tweaks:demo #N`'s existing closing-commit-reconstruction fallback already
-  resolves a record carrying no `demo:pending` label, unchanged by this gate.
+  resolves a record carrying no pending acceptance label, unchanged by this gate.
 
   Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
   this record was deliberately skipped, not silently missed: add `N` to
@@ -147,12 +147,17 @@ Run the check-then-create loop from `_shared/label-bootstrap.md` with:
 
 ```js
 LABELS_JSON = [
-  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"]
+  ["demo:pending", "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo", "006B75"],
+  ["accept:pending",           "Acceptance: built and verified — awaiting the human's acceptance verdict", "006B75"],
+  ["accept:approved",          "Acceptance: a human verified this record does what was asked", "006B75"],
+  ["accept:approved-batch",    "Acceptance: approved in one batch verdict — no per-record walkthrough", "006B75"],
+  ["accept:changes-requested", "Acceptance: a human found a gap — see the linked follow-up record", "006B75"]
 ]
 ```
 
-Only `demo:pending` is bootstrapped here — `/wrap-up` never applies the other two acceptance
-labels (see `_shared/work-record.md`'s permission matrix).
+`/wrap-up` applies only `demo:pending` — it never applies the approved or changes-requested
+acceptance labels (see `_shared/work-record.md`'s permission matrix). The `accept:*` rows only
+create the labels in the repo (`_shared/label-bootstrap.md`, below its canonical array).
 
 ## Step 2: Author the observation plan
 

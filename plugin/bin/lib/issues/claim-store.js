@@ -11,13 +11,17 @@
 // budget). Both the claim-side preflight CLI and
 // `bin/lib/reconcile/release-merged.js`'s release path delegate their I/O
 // here so there is exactly one code path performing this keyspace's writes,
-// instead of multiple implementations drifting apart.
+// instead of multiple implementations drifting apart. `ensureClaimsBranch`
+// below is the one bootstrap that creates the branch itself when a remote has
+// none (#4495).
 //
 // The `deps.ghApi` seam is injectable (never real `gh` in tests):
 // `ghApi(args)` is invoked as if `gh api ${args.join(' ')}` and returns a
 // non-throwing `{stdout, failure, status}` — the same object shape
 // release-merged.js's own (pre-extraction) ghApi already used, extended
-// with `status` so a 404 can be told apart from a genuine failure.
+// with `status` so a 404 can be told apart from a genuine failure. A failed
+// call may also carry `error`, the thrown error's text (optional; `defaultGhApi`
+// sets it, #4495): a bootstrap refusal is surfaced to the user verbatim.
 // `defaultGhApi` below is the real implementation; release-merged.js keeps
 // supplying its own ghApi (which never sets `status`) and no `gitRunner`,
 // so `readClaimBlob`'s `absent` branch simply never fires there and it stays
@@ -40,9 +44,12 @@
 
 const { execFileSync } = require('child_process');
 const { CLAIMS_BRANCH } = require('./claims');
-const { readClaimBlobGit, writeClaimBlobGit, defaultRunner } = require('./claims-git-cas');
+const {
+  readClaimBlobGit, writeClaimBlobGit, bootstrapClaimsBranchGit, defaultRunner,
+} = require('./claims-git-cas');
 const { GH_TIMEOUT_MS, escapeRegExp } = require('../shared-primitives');
 const { normalizePrListing } = require('./mcp-pr-shape');
+const { ghOptions } = require('../repo-resolve');
 
 // How many times `writeClaimBlob` re-leases and re-pushes a git-CAS write
 // whose rejection a fresh read proves spurious (#787 final-review finding I1 —
@@ -93,6 +100,12 @@ function isWellFormedClaimContent(content) {
   return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed);
 }
 
+// The text of a caught execFileSync error: message, stderr and stdout joined.
+// `classifyGhApiError` matches on it; `defaultGhApi` returns it as `error`.
+function ghErrorText(e) {
+  return [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
+}
+
 // Pure: classify a caught execFileSync error into {failure, status} — split
 // out from defaultGhApi's catch block so the text-matching regexes below are
 // unit-testable without touching the real `gh` binary. `defaultGhApi` is the
@@ -137,7 +150,7 @@ function isWellFormedClaimContent(content) {
 // distinct, transient outcome).
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
-  const text = [e && e.message, e && e.stderr, e && e.stdout].filter(Boolean).map(String).join(' ');
+  const text = ghErrorText(e);
   if (/secondary rate limit|abuse detection mechanism|Retry-After/i.test(text)) return { failure: 'secondary-rate-limit', status: 403 };
   if (/HTTP 404|Not Found/.test(text)) return { failure: null, status: 404 };
   if (/HTTP 422|Unprocessable|Validation failed/.test(text)) return { failure: null, status: 422 };
@@ -145,17 +158,21 @@ function classifyGhApiError(e) {
   return { failure: 'network-failure', status: null };
 }
 
-// The real ghApi.
+// The real ghApi. A failed call also carries `error`, the thrown error's text
+// (#4495): a bootstrap refusal is surfaced to the user verbatim, and the
+// classified `{failure, status}` alone drops the reason (a 4xx is data, not
+// a throw, on this seam).
 function defaultGhApi(args) {
+  const ghArgs = ['api', ...args];
   try {
-    const stdout = execFileSync('gh', ['api', ...args], {
+    const stdout = execFileSync('gh', ghArgs, ghOptions(ghArgs, {
       encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
       windowsHide: true,
-    });
+    }));
     return { stdout, failure: null, status: null };
   } catch (e) {
     const { failure, status } = classifyGhApiError(e);
-    return { stdout: null, failure, status };
+    return { stdout: null, failure, status, error: ghErrorText(e) };
   }
 }
 
@@ -244,6 +261,8 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
     if (gitResult.failure === null) {
       return {
         content: gitResult.content, sha: gitResult.tipSha, failure: null, absent: gitResult.absent, via: 'git',
+        // (#4495) only when the remote has no claims-registry branch at all
+        ...(gitResult.branchMissing ? { branchMissing: true } : {}),
       };
     }
     // fall through to contents-API on a git-side transport failure
@@ -270,10 +289,10 @@ function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
 }
 
 function defaultRunGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     windowsHide: true,
-  });
+  }));
 }
 
 // (runGh?) -> string|null. `runGh(args)` returns stdout; a thrown error
@@ -431,6 +450,9 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
       // fresh git read before deciding.
       const freshGit = readClaimBlobGit({ issueNumber, runner: deps.gitRunner });
       if (freshGit.failure) return { ok: false, failure: 'transport-failure' };
+      // (#4495) the branch vanished between the rejected push and this re-read:
+      // a missing branch, not a claim someone else took.
+      if (freshGit.branchMissing) return { ok: false, branchMissing: true, failure: null };
       const unchanged = createOnly
         ? freshGit.absent
         : (!freshGit.absent && freshGit.content === expectedContent);
@@ -487,9 +509,85 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // earlier attempt whose local ack was lost, not a real contest.
     const fresh = readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
     if (!fresh.failure && !fresh.absent && fresh.content === content) return { ok: true, failure: null };
+    // (#4495) Nothing there: either a real contest (the claim was released or
+    // swept since) or the claims-registry branch itself does not exist, which
+    // makes the PUT fail the same way. Only the branch lookup tells them
+    // apart; an unanswerable one is transient, never a manufactured contest.
+    if (!fresh.failure && fresh.absent) {
+      const exists = claimsBranchExists(deps.ghApi, repoSlug);
+      if (exists === false) return { ok: false, branchMissing: true, failure: null };
+      if (exists === null) return { ok: false, failure: 'network-failure' };
+    }
     return { ok: false, conflict: true, failure: null };
   }
   return { ok: r.failure === null, failure: r.failure };
+}
+
+// (ghApi, repoSlug) -> true | false | null   (null = could not tell)
+// Whether the remote has the `CLAIMS_BRANCH` branch, over the same
+// never-throwing seam as every contents-API call here (#4495).
+function claimsBranchExists(ghApi, repoSlug) {
+  const r = ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name']);
+  if (r.status === 404) return false;
+  if (r.failure) return null;
+  return true;
+}
+
+// A contents-API refusal as a result. The reason is verbatim: the response text
+// when `defaultGhApi` kept it, else the classified failure, else the bare
+// status. A secondary rate limit is the one failure the classifier already
+// knows is transient, so it is flagged.
+function apiRefusal(r) {
+  return {
+    ok: false,
+    reason: r.error || r.failure || `HTTP ${r.status}`,
+    ...(r.failure === 'secondary-rate-limit' ? { transient: true } : {}),
+  };
+}
+
+// The contents-API leg of `ensureClaimsBranch`: create `CLAIMS_BRANCH` at the
+// default branch's tip via `POST git/refs`. A ref-creation 422 is ambiguous
+// (the branch already exists, or a ruleset forbids creating it), so only a
+// re-read of the branch settles it.
+function createClaimsBranchContentsApi(ghApi, repoSlug) {
+  const branchRead = ghApi([`repos/${repoSlug}`, '-q', '.default_branch']);
+  if (branchRead.failure || branchRead.status) return apiRefusal(branchRead);
+  const defaultBranch = String(branchRead.stdout || '').trim();
+  if (!defaultBranch) return { ok: false, reason: 'the repository reported no default branch' };
+  const encoded = defaultBranch.split('/').map(encodeURIComponent).join('/');
+  const tipRead = ghApi([`repos/${repoSlug}/git/ref/heads/${encoded}`, '-q', '.object.sha']);
+  if (tipRead.failure || tipRead.status) return apiRefusal(tipRead);
+  const tipSha = String(tipRead.stdout || '').trim();
+  if (!tipSha) return { ok: false, reason: `the default branch ${defaultBranch} reported no tip sha` };
+  const r = ghApi([
+    '--method', 'POST', `repos/${repoSlug}/git/refs`,
+    '-f', `ref=refs/heads/${CLAIMS_BRANCH}`,
+    '-f', `sha=${tipSha}`,
+  ]);
+  if (r.failure === null && r.status === null) return { ok: true, created: true };
+  if (r.status === 422 && claimsBranchExists(ghApi, repoSlug) === true) return { ok: true, created: false };
+  return apiRefusal(r);
+}
+
+// (deps: {ghApi, gitRunner?}, repoSlug)
+// -> { ok: true, created, via: 'git' | 'contents-api' } | { ok: false, reason, transient? }
+// Creates the missing `CLAIMS_BRANCH` (#4495) — the one bootstrap every
+// caller shares: a git push first (when a `gitRunner` is supplied), the
+// contents API when git cannot. A refusal is never retried; `reason` carries
+// each leg's own text verbatim. `transient: true` marks a contents-API leg
+// that hit a secondary rate limit — a later run may succeed, so it is no
+// refusal to act on.
+function ensureClaimsBranch(deps, repoSlug) {
+  const reasons = [];
+  if (deps.gitRunner) {
+    const g = bootstrapClaimsBranchGit({ runner: deps.gitRunner });
+    if (g.ok) return { ok: true, created: g.created, via: 'git' };
+    reasons.push(`git: ${g.reason}`);
+  }
+  const a = createClaimsBranchContentsApi(deps.ghApi, repoSlug);
+  if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
+  reasons.push(`contents-api: ${a.reason}`);
+  return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true } : {}) };
 }
 
 function isSameRepoPrUrl(link, owner, repo) {
@@ -610,6 +708,8 @@ module.exports = {
   listClaimNames,
   readClaimBlob,
   writeClaimBlob,
+  claimsBranchExists,
+  ensureClaimsBranch,
   defaultGhApi,
   claimPath,
   classifyGhApiError,

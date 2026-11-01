@@ -57,6 +57,7 @@ const { readRunStateWithParent, appendEvent, readEventLines } = require('../hook
 const { hasLoggedPrDegrade, hasLoggedPrEarlyStep1, hasNoUpstreamYet } = require('../hooks/pre-tool-use');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, GIT_PUSH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
 const { canonicalRealpath } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
 const prChecklist = require('../../pr-checklist');
 const prMergeState = require('../../pr-merge-state');
 
@@ -78,9 +79,9 @@ const realDeps = {
   git: (args, { timeout = GIT_TIMEOUT_MS } = {}) => execFileSync('git', args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout, windowsHide: true, maxBuffer: LARGE_MAX_BUFFER_BYTES,
   }),
-  gh: (args, cwd) => execFileSync('gh', args, {
+  gh: (args, cwd) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   resolvePolicy: (runDir, key, cwd) => execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, '--values', key], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
   }).split('\n')[0].trim(),

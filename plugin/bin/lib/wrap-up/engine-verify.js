@@ -25,12 +25,14 @@ const path = require('node:path');
 const { execFileSync } = require('node:child_process');
 const { isPathContained } = require('../shared-primitives');
 const { parseWorktreeList } = require('../hooks/worktree-reap');
-const { ghAvailable: sharedGhAvailable, parseRepo } = require('../repo-resolve');
+const {
+  ghAvailable: sharedGhAvailable, parseRepo, repoSlug, ghOptions,
+} = require('../repo-resolve');
 const { fetchNativeParent } = require('../issues/native-dependencies');
 const { fetchLinkedPRs } = require('../issues/linked-prs');
-const { parentGateState } = require('../issues/acceptance');
+const { parentGateState, dispositionState } = require('../issues/acceptance');
 const { exceedsOversightFloor, maxRiskTier } = require('../issues/oversight-floor');
-const { parseRecordFacets } = require('../issues/record');
+const { parseRecordFacets, LABELS } = require('../issues/record');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
@@ -41,15 +43,16 @@ const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
 // Shared factory (not two hand-duplicated functions) so defaultGit and
 // defaultGh can never again drift on their execFileSync options the way
 // #1230 found them to (defaultGit missing the `timeout` defaultGh already
-// had) -- one options object, reused by construction.
-function makeDefaultRunner(cmd) {
+// had) -- one options object, reused by construction. `wrap` transforms that
+// object per call: identity for git, ghOptions (#4505's GH_HOST seam) for gh.
+function makeDefaultRunner(cmd, wrap = (_args, o) => o) {
   return function run(args, cwd) {
-    return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true });
+    return execFileSync(cmd, args, wrap(args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 5000, windowsHide: true }));
   };
 }
 
 const defaultGit = makeDefaultRunner('git');
-const defaultGh = makeDefaultRunner('gh');
+const defaultGh = makeDefaultRunner('gh', ghOptions);
 
 // Registry of check functions, populated by Tasks 2-5. Each entry:
 // { name: string, fn: ({runDir, originalRunDir, base, repoRoot, cwd, expectations, deps}) => {result, detail} }.
@@ -915,8 +918,15 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         continue;
       }
     }
-    if (!labels.some((l) => l.name === 'demo:pending')) {
-      failing.push(`#${target}: missing demo:pending label`);
+    // The record's resolved acceptance state (acceptanceOf's precedence over both
+    // label vocabularies), not the mere presence of one pending label: a pending
+    // label a verdict outranks does not gate the record, and says so on its own line.
+    const labelNames = labels.map((l) => l.name);
+    if (dispositionState(labelNames) !== 'pending') {
+      const carriesPending = labelNames.includes(LABELS.DEMO_PENDING) || labelNames.includes(LABELS.ACCEPT_PENDING);
+      failing.push(carriesPending
+        ? `#${target}: pending label outranked by a verdict — run /claude-tweaks:demo #${target}`
+        : `#${target}: missing demo:pending label`);
       continue;
     }
     const comments = issueData.comments || [];
@@ -1024,7 +1034,7 @@ registerCheck('upstream-feedback', ({ expectations, deps, cwd }) => {
     if (!m) { failing.push(`could not parse issue URL: ${url}`); continue; }
     const [, owner, repo, number] = m;
     try {
-      deps.gh(['issue', 'view', number, '--repo', `${owner}/${repo}`, '--json', 'number'], cwd);
+      deps.gh(['issue', 'view', number, '--repo', repoSlug({ host: 'github.com', owner, repo }), '--json', 'number'], cwd);
     } catch (err) {
       failing.push(`${url}: gh issue view failed (${err.message})`);
     }

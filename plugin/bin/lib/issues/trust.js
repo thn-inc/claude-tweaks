@@ -25,7 +25,7 @@ const MIN_SAMPLES = 8;
 // Five is the smallest run that is not an anecdote, and at roughly ten closed
 // records per class per month it is reachable in weeks rather than quarters — the
 // binding constraint on this number is that an unreachable floor makes the whole
-// table decorative, which is the failure mode that already killed demo:pending.
+// table decorative, which is the failure mode that already killed the `demo:pending` label.
 const MIN_VERDICTS = 5;
 
 // provenance.js's `unstructured` kind is not a trust class — it is that
@@ -320,8 +320,8 @@ function trustRows(records, gitLog, now, policy) {
         band,
         total: 0,
         approved: 0,
-        // Of `approved` above, the subset whose demo:approved-batch marker
-        // says the verdict came from a #N,#M batch invocation rather than a
+        // Of `approved` above, the subset whose approved-batch marker (either
+        // label spelling) says the verdict came from a #N,#M batch invocation rather than a
         // per-record walkthrough (acceptance.js's `approvalProvenance`).
         // Always <= approved; never its own disposition.
         approvedBatch: 0,
@@ -345,13 +345,13 @@ function trustRows(records, gitLog, now, policy) {
     } else if (disposition === 'changes-requested') {
       cell.changesRequested += 1;
     } else if (disposition === 'none') {
-      // No demo:* disposition at all — try the operational path, then the
+      // No acceptance disposition at all — try the operational path, then the
       // failure-classification marker, before giving up. Scoped to 'none'
       // deliberately, symmetric with the pre-existing operational branch: a
-      // record already carrying a definitive demo:* verdict (approved,
+      // record already carrying a definitive acceptance verdict (approved,
       // changes-requested, or pending below) keeps that verdict as its own
       // disposition — an earlier failed attempt on the way to an eventual
-      // demo:approved is not read as contradicting that approval.
+      // approval is not read as contradicting that approval.
       const operational = resolveOperationalOutcome(record, gitLog, clock, windowDays);
       if (operational.known && operational.grade === 'good') {
         cell.operationalGood += 1;
@@ -362,16 +362,16 @@ function trustRows(records, gitLog, now, policy) {
         // A correctness/ambiguous-classified failed attempt somewhere in this
         // record's history (dispatch's Settle step, see settle-and-merge.md
         // Step 6.5) — negative evidence for the record's class even though
-        // the record itself eventually closed with no demo:* disposition.
+        // the record itself eventually closed with no acceptance disposition.
         cell.negativeEvidence += 1;
       } else {
         cell.undispositioned += 1;
       }
     } else {
-      // 'pending' — an outstanding, unresolved human-review request. It IS a
-      // demo:* disposition, so it must never reach the operational path above
+      // 'pending' — an outstanding, unresolved human-review request. It IS an
+      // acceptance disposition, so it must never reach the operational path above
       // and be silently promoted to known-good just because a human hasn't
-      // gotten to /demo yet. Any unrecognized state lands here too, undispositioned.
+      // gotten to acceptance yet. Any unrecognized state lands here too, undispositioned.
       cell.undispositioned += 1;
     }
 

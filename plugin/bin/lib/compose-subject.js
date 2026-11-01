@@ -47,11 +47,12 @@
 // malformed invocation and an uncomposable record share one code. A fourth
 // code would only be worth adding if some caller could act differently on
 // "bad CLI invocation" vs. "shaping defect in the record"; today every merge
-// site (pr-first-merge.md's two squash sites, and the four local-merge sites
-// in merge-subject-composer-conformance.test.js's LOCAL_SITES) treats any
+// site (pr-first-merge.md's two squash sites, and the one local-merge fence in
+// _shared/local-merge-sequence.md — merge-subject-composer-conformance.test.js's
+// LOCAL_SEQUENCE — that four callers run) treats any
 // non-zero compose-subject.js exit identically (the composer exiting non-zero stops the fence before any merge), so a fourth
 // code would carry no distinguishable behavior at the only call sites that
-// exist — six merge-site fences would need editing for a distinction nothing
+// exist — three merge-site fences would need editing for a distinction nothing
 // reads. Revisit if a caller ever needs to route "uncomposable" (park the
 // record) differently from "bad invocation" (a caller bug).
 'use strict';
@@ -64,7 +65,7 @@ const {
   parseRecordFacets, typeOf, extractSection: extractSectionShared,
 } = require('./issues/record');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, pinExplicitRepoHost,
 } = require('./repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./shared-primitives');
 const { readCommitScope, readListKey } = require('./policy');
@@ -249,12 +250,15 @@ function aggregateType(records) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the issue-type GraphQL fallback,
+  // which threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   // stderr piped, not inherited (#3028): execFileSync's default echoes the
   // child's stderr to ours, so the handled #2561 `Unknown JSON field:
   // "issueType"` rejection printed gh's full field list ahead of a successful
   // compose and read as a failure. err.stderr (isUnknownIssueTypeField) and
   // err.message (the fatal paths) still carry the text.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true })),
   fetchIssueType: fetchIssueTypeGraphQL,
   readCommitScope: () => readCommitScope(process.cwd()),
   readCommitScopePaths: () => readListKey(process.cwd(), 'commit-scope-paths'),
@@ -276,6 +280,7 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('compose-subject.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const slug = repoSlug(repoSpec);
 
   const records = [];

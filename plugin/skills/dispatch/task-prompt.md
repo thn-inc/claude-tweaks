@@ -27,7 +27,7 @@ that needs no resolution, only inclusion:
    | CLI | Canonical shape |
    |---|---|
    | `log-decision.js` | `node "{plugin-root}/bin/log-decision.js" --run "{minted-run-dir}" --status AUTO\|STAGED\|KEPT-PROMPT\|SCANNED\|REFUSED\|SKIP --text "..." [--reversibility high\|med\|low\|n/a[" (qualifier)"]]` |
-   | `claim-targets.js` | `node "{plugin-root}/bin/claim-targets.js" --run-id "{run-id}" --targets {n}[,{m}...] [--steps {step list}] [--keep-going] [--run "{minted-run-dir}"]` |
+   | `claim-targets.js` | `node "{plugin-root}/bin/claim-targets.js" --run-id "{run-id}" --targets {n}[,{m}...] [--steps {step list}] [--keep-going] [--run "{minted-run-dir}"] [--resume-pr "{pr-url}"]` |
    | `materialize.js` | `node "{plugin-root}/bin/materialize.js" <n> --run-dir "{minted-run-dir}" [--multi-record-slug <n>]` |
    | claims-registry read | `{minted-run-dir}/context/claims.md`'s "Reading claim state" git-trees path (`claims/issue-{n}.json` on the `claims-registry` branch) — never `gh api ...?ref=` query-string quoting, never `-f ref=` on a GET (if that bundle is absent, read `_shared/issue-claims.md` directly) |
 
@@ -133,6 +133,8 @@ template applied.
 
 A dispatched call is headless and cannot answer `interactive` prompts, so both calls pass `auto` explicitly; an explicit mode argument outranks the project's `auto-mode` policy (`_shared/auto-mode-contract.md`'s precedence: CLI arg > pipeline config > project policy > skill default), and the `autonomy` ceiling still bounds what the run may do. The `auto` suffix after the step list is independent of the `DISPATCH_HEADLESS=1 ` prefix before `/claude-tweaks:flow`.
 
+**Resume (#4588).** Only `dispatch resume` (`resume.md`) adds `RESUME_PR="{pr-url}" ` immediately before `/claude-tweaks:flow` on the first call's line; the second call and its continuations carry neither it nor `{resume-context}`. `dispatch resume` is typed by a human, so no call of a resume carries `DISPATCH_HEADLESS=1 `, exactly as for the explicit `#N` form above. The same session appends `{resume-context}` after the filled first-call template, never inside the fenced block, and omits it entirely outside resume: `Resuming stalled run {priorRunId} on PR {prUrl}; last logged phase: {section} {step}; open defects: {each}`. A null `lastPhase` renders `last logged phase: none recorded`; an empty `openDefects` renders `open defects: none recorded`. A first-call continuation keeps both, since the Continuation call inlines the template verbatim; `RESUME_PR` is then a no-op, because Step 2.8 returns the run's own claim as `alreadyOwned` before the `'stale'` branch.
+
 ```
 Task scope: Execute claude-tweaks build+test for this dispatch group of
 GitHub records: {issue list}. Singleton -> run
@@ -213,10 +215,11 @@ If your first commit is denied by the working-directory hook even though `pwd` a
 assignment once with `node "{plugin-root}/bin/hooks.js" record-worktree --run "<RUN_DIR>" "<WORKTREE>"`
 and retry the commit. If it is denied a second time, STOP and report BLOCKED.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
 CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim against the artifact
 you just produced -- this call is the producer, not a second call distrusting someone else's
@@ -406,10 +409,11 @@ If your first commit is denied by the working-directory hook even though `pwd` a
 assignment once with `node "{plugin-root}/bin/hooks.js" record-worktree --run "<RUN_DIR>" "<WORKTREE>"`
 and retry the commit. If it is denied a second time, STOP and report BLOCKED.
 
-Never run `git stash` or `git stash pop` -- the stash stack is shared repo-wide across every
-worktree of this checkout, so it can pop or clobber a sibling worktree's in-flight work. To
-compare against a baseline without mutating the tree, use `git show <rev>:<path>`; to set your
-own work aside, make a temporary WIP commit instead.
+Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or
+`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is
+shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
+a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
+`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
 Status line (required): the last non-empty line of your reply, after the OUTPUT FORMAT block
 below, must read exactly `STATUS: {WORD}`, where {WORD} is one of: DONE / DONE_WITH_CONCERNS /

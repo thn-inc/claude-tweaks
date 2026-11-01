@@ -60,9 +60,9 @@ const { appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { ghAvailable, parseRepo, repoSlug } = require('./lib/repo-resolve');
+const { ghAvailable, parseRepo, repoSlug, ghOptions } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, isTimeoutError } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: pr-early-open.js --run <run-dir> --target "#N[,#M]" --fixes N[,M] --title <text> --summary-file <path>\n'
   + '         [--worktree <path>] [--base <branch>] [--next-step build] [--help]\n'
@@ -101,9 +101,9 @@ function readFileSafe(p) {
 const realDeps = {
   cwd: () => process.cwd(),
   ghAvailable: () => ghAvailable(),
-  gh: (args, { cwd } = {}) => execFileSync('gh', args, {
+  gh: (args, { cwd } = {}) => execFileSync('gh', args, ghOptions(args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   // GIT_TIMEOUT_MS bounds the one network call here, the push.
   git: (args, { cwd } = {}) => execFileSync('git', args, {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
@@ -177,7 +177,16 @@ async function run(argv, overrides = {}) {
     let state = null;
     try { state = deps.readRunState(runDir); } catch { state = null; }
     const worktree = o.worktree || (state && typeof state.worktree === 'string' && state.worktree) || deps.cwd();
-    const gh = (args) => deps.gh(args, { cwd: worktree });
+    // A timed-out gh call is marked here, so the outer catch words the hint
+    // for gh alone — a git timeout on the same path keeps its bare error.
+    const gh = (args) => {
+      try {
+        return deps.gh(args, { cwd: worktree });
+      } catch (e) {
+        if (isTimeoutError(e)) e.ghTimedOut = true;
+        throw e;
+      }
+    };
     const git = (args, opts) => deps.git(args, { cwd: (opts && opts.cwd) || worktree });
 
     // The base: --base verbatim, else the configured key. The schema rejects
@@ -241,6 +250,9 @@ async function run(argv, overrides = {}) {
     deps.stdout(`${JSON.stringify(res)}\n`);
     return OK_OUTCOMES.has(res.outcome) ? 0 : 3;
   } catch (e) {
+    if (e && e.ghTimedOut) {
+      return internal(`${errText(e)}\ngh timed out after ${GH_TIMEOUT_MS} ms — override via the gh-timeout-ms policy key or the CLAUDE_TWEAKS_GH_TIMEOUT_MS env var (max 60000)`);
+    }
     return internal(errText(e));
   }
 }

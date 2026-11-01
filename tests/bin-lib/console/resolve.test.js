@@ -1063,7 +1063,9 @@ test('a converged-positive debate logged before the STAGED line does not superse
 test('a confirmed verdict for a scoped-package path supersedes its STAGED line (#4582 AC1)', () => {
   const f = tbFinding({ path: 'packages/@scope/x.ts', line: 4 });
   assert.deepStrictEqual(findings([stagedLow('3a', 'packages/@scope/x.ts:4'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n')), []);
-  // Direct key: both sides truncate to `scope/x.ts:4` without the fix, so the settle above passes either way.
+  // A sibling scoped path at the same lens and line: the pre-#4582 class truncates both to `scope/x.ts:4`, so it settled wrongly.
+  assert.deepStrictEqual(findings([stagedLow('3a', 'apps/@scope/x.ts:4'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged']);
+  // Direct key: both sides truncate to `scope/x.ts:4` without the fix, so the first settle above passes either way.
   assert.strictEqual(parseTiebreakLine(tbVerdict(f, { verdict: 'confirmed' }).entry).key, '3a|packages/@scope/x.ts:4');
 });
 test('a converged-positive debate naming a bracketed route path settles that finding (#4582 AC2)', () => {

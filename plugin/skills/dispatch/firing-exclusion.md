@@ -4,8 +4,9 @@ Referenced by `skills/dispatch/SKILL.md` Step 3's Loop. A prior version of that 
 "claimed/Settle-failed groups drop out automatically, via claim or `bot:blocked`" — false for two
 real terminal shapes, both leaving a group's labels exactly as eligible as before the attempt:
 
-- A claim-contest/in-flight pre-flight stop (`settle-and-merge.md`'s Claim-contest special case
-  explicitly adds neither label, since there was nothing to release or classify).
+- A claim-contest/in-flight/claims-branch-missing pre-flight stop (`settle-and-merge.md`'s
+  Claim-contest special case explicitly adds neither label, since there was nothing to release or
+  classify).
 - An ordinary build/test failure before `dispatch-retry-ceiling` is reached — the record keeps
   `auto:build` for up to two more genuine retries by design.
 
