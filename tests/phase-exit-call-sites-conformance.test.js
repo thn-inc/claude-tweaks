@@ -164,6 +164,8 @@ const SELF_LOGGING_SOURCES = {
   'express-lane.js escalate': ['plugin/bin/express-lane.js', 'plugin/bin/lib/express/cli.js'],
   'pre-review-catchup.js': ['plugin/bin/pre-review-catchup.js'],
   'stash-guard.js compare': ['plugin/bin/stash-guard.js'],
+  // The CLI appends its marker and AUTO/SKIP lines from the lib module it drives.
+  'post-merge-run.js': ['plugin/bin/post-merge-run.js', 'plugin/bin/lib/reconcile/post-merge.js'],
 };
 
 function listedSelfLoggers(text) {
