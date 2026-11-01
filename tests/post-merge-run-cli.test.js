@@ -197,26 +197,30 @@ test('a postMergeOne that throws prints an error entry and exits 0', async () =>
   assert.match(entry.detail, /seam exploded/);
 });
 
-test('a relative --run with a cwd other than the main checkout resolves to the anchored real path (IL-127)', async () => {
+test('a relative --run resolves to the absolute real path', async () => {
   const root = mainCheckout();
   const dir = archivedRun(root);
-  const sub = path.join(root, 'sub');
-  fs.mkdirSync(sub);
-  // Relative to the process cwd, which is what resolveTarget reads it against; the cwd seam points elsewhere.
-  const relative = path.relative(process.cwd(), dir);
-  assert.ok(!path.isAbsolute(relative) || process.platform === 'win32', 'the fixture is a relative path');
-  const links = fakeClosingLinks(NOTHING_CLOSED);
-  const r = await runCli(['--run', relative], root, {
-    cwd: () => sub,
-    prStates: fakePrStates({ 11: mergedState }),
-    postMergeDeps: { gh: () => '', closingLinksRun: links, closeParents: () => ({ closed: [], skipped: [] }) },
-  });
-  assert.equal(r.code, 0, r.err);
-  const entry = JSON.parse(r.out);
-  assert.equal(entry.runDir, dir);
-  assert.ok(path.isAbsolute(entry.runDir));
-  assert.equal(entry.action, 'ran');
-  assert.equal(links.calls[0].argv[1], dir);
+  // resolveTarget reads a relative value against the process cwd; stand in the checkout's parent so
+  // the same text resolved against the `cwd` seam (the checkout) would name a different, missing dir.
+  const before = process.cwd();
+  process.chdir(path.dirname(root));
+  try {
+    const relative = path.relative(process.cwd(), dir);
+    assert.ok(!path.isAbsolute(relative), 'the fixture is a relative path');
+    const links = fakeClosingLinks(NOTHING_CLOSED);
+    const r = await runCli(['--run', relative], root, {
+      prStates: fakePrStates({ 11: mergedState }),
+      postMergeDeps: { gh: () => '', closingLinksRun: links, closeParents: () => ({ closed: [], skipped: [] }) },
+    });
+    assert.equal(r.code, 0, r.err);
+    const entry = JSON.parse(r.out);
+    assert.equal(entry.runDir, dir);
+    assert.ok(path.isAbsolute(entry.runDir));
+    assert.equal(entry.action, 'ran');
+    assert.equal(links.calls[0].argv[1], dir);
+  } finally {
+    process.chdir(before);
+  }
 });
 
 test('the CLI exits through process.exitCode', () => {
