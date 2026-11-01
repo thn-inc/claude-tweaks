@@ -2099,6 +2099,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     let modelResolved = true;
     let degraded = false;
     const onDegrade = () => { degraded = true; };
+    // Hook-bounded, never gh-timeout-ms — see resolveRunPinnedIntegrationModel's
+    // comment (#4578 Q2).
     try {
       model = override
         ? override(mainRoot, { onDegrade })

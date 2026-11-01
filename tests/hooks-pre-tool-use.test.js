@@ -10,6 +10,8 @@ const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const { shellQuote } = require('./helpers/shell-quote');
 const { STUB_SKIP } = require('./helpers/path-stub');
 const { fakeGh } = require('./helpers/fake-gh');
+const { readText } = require('./helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-e1-'));
@@ -1299,17 +1301,41 @@ test('resolveRunPinnedIntegrationModel forwards opts.timeoutMs to forge detectio
   }
 });
 
+const GATE_CALL_SHAPE = /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/;
+
 test('the PreToolUse gate passes HOOK_FORGE_PROBE_TIMEOUT_MS within the 15 s hook budget (#4578 AC8.1, AC12.1, AC12.2)', () => {
   const { HOOK_FORGE_PROBE_TIMEOUT_MS, GIT_REMOTE_PROBE_TIMEOUT_MS } = require('../plugin/bin/lib/policy-schema');
   assert.strictEqual(HOOK_FORGE_PROBE_TIMEOUT_MS, 5000);
   assert.ok(GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * HOOK_FORGE_PROBE_TIMEOUT_MS <= 15000,
     'git probe + two gh attempts must fit the 15 s hook budget');
-  const source = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'), 'utf8');
+  // Scan LIVE code only: comments and literals are blanked, so a commented-out or quoted copy of the
+  // call shape cannot satisfy the match, and the verdict is taken on the same text the matcher reads.
+  const raw = readText(path.join(__dirname, '..', 'plugin', 'bin', 'lib', 'hooks', 'pre-tool-use.js'));
+  const code = stripComments(raw, { literals: 'blank' });
+  const verdict = stripperVerdict(raw, code);
+  assert.strictEqual(verdict, 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
   assert.match(
-    source,
-    /resolveRunPinnedIntegrationModel\(mainRoot,\s*ctx\.runDir,\s*\{\s*timeoutMs:\s*HOOK_FORGE_PROBE_TIMEOUT_MS,\s*onDegrade\s*\}\)/,
+    code,
+    GATE_CALL_SHAPE,
     'the gate must bound its forge probe with the hook constant and report degrades (Decision Q3, Q5)',
   );
+});
+
+test('the gate call-shape matcher sees live code only (#4578 go-red self-test)', () => {
+  const live = 'x = o ? o(m, { onDegrade }) : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });';
+  const scan = (src) => GATE_CALL_SHAPE.test(stripComments(src, { literals: 'blank' }));
+  assert.strictEqual(scan(live), true);
+  // The same text only in a line comment, a block comment, or a string: the live call is gone.
+  assert.strictEqual(scan(`// ${live}\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`/* ${live} */\nx = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  assert.strictEqual(scan(`x = '${live.replace(/'/g, '')}'; y = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir);`), false);
+  // A changed live call shape (no timeoutMs) is not matched even with a comment holding the old one after it.
+  assert.strictEqual(scan(`x = resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { onDegrade }); // ${live}`), false);
+  // The scan still sees the live call after a literal holding a comment opener.
+  assert.strictEqual(scan(`s = '/*'; ${live}`), true);
+  // A mis-parse is an offender, not a clean scan: a regex after ")" blanks the live call into a string.
+  const misparsed = `if (b) /'/.test(b); const c = 'x'; ${live}`;
+  assert.strictEqual(stripperVerdict(misparsed, stripComments(misparsed, { literals: 'blank' })), 'misparsed');
 });
 
 test('resolveRunPinnedIntegrationModel forwards opts.onDegrade to forge detection (#4578 Q5, AC15.1)', { skip: STUB_SKIP }, () => {
