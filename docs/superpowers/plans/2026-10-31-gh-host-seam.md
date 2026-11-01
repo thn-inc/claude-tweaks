@@ -4,15 +4,17 @@
 
 **Goal:** Every `gh` spawn under `plugin/bin/` sends its call to the `origin` remote's GitHub Enterprise host (via `GH_HOST` in the child env) without the user exporting `GH_HOST`, and a conformance scan keeps new call sites from regressing.
 
-**Architecture:** Extend `plugin/bin/lib/repo-resolve.js` with an options transform, `ghOptions(args, opts)`, that resolves `origin`'s host once per process per working directory and, when that host is a known GitHub Enterprise host and no explicit host signal in `args` or the env disagrees, returns a copy of `opts` whose `env` carries `GH_HOST`. Otherwise it returns `opts` itself, unchanged. Every `gh` spawn site wraps its options argument in `ghOptions(...)` (or calls the new `ghExecFileSync`). A transform, not a runner, because the sites spawn through many different runners: `execFileSync`, `execFileSyncTimed` (required inside `lib/reconcile/`), injected `deps.execFile`, and promisified `execFile`. A source-scan test then requires `ghOptions` in the argument text of every call that passes a `'gh'` literal.
+**Architecture:** Extend `plugin/bin/lib/repo-resolve.js` with an options transform, `ghOptions(args, opts)`, that resolves `origin`'s host once per process per working directory and, when that host is a known GitHub Enterprise host, the env carries no `GH_HOST`, and `args` carry no explicit `-R`/`--repo`/`--hostname`, returns a copy of `opts` whose `env` carries `GH_HOST`. Otherwise it returns `opts` itself, unchanged. Every `gh` spawn site wraps its options argument in `ghOptions(...)` (or calls the new `ghExecFileSync`). A transform, not a runner, because the sites spawn through many different runners: `execFileSync`, `execFileSyncTimed` (required inside `lib/reconcile/`), injected `deps.execFile`, and promisified `execFile`. A source-scan test then requires `ghOptions` in the argument text of every call that passes a `'gh'` literal.
 
 **Tech Stack:** Node 18+ CommonJS, `node:child_process`, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T181133-record-4505/work/4505-spec.md` (record #4505)
+**Spec:** `.claude-tweaks/pipelines/2026-11-01T023437-record-4505/work/4505-spec.md` (record #4505, re-materialized with the plan-review Decisions; the earlier run's copy at `2026-10-31T181133-record-4505` predates them)
 
 ## Global Constraints
 
-- Explicit `-R`/`--repo`/`--hostname` args still win (spec Deliverable 1). Here that means `ghOptions` never injects a host that disagrees with an explicit host signal in `args`.
+- Explicit `-R`/`--repo`/`--hostname` args still win (spec Deliverable 1). Verbatim from the record's plan-review decision (Q2, Reading A): "Any explicit `-R`/`--repo`/`--hostname` suppresses injection; a bare `owner/repo` slug means github.com, per `repoSlug`'s contract." So `ghOptions` injects nothing when `args` carry any of those flags, whatever value they name, including one that agrees with origin's host.
+- Verbatim from the record's plan-review decision (Q1, Reading B): "`GH_HOST` is injected only for a known GitHub host: one ending in `.ghe.com`, one listed in gh's `hosts.yml`, or any host when an enterprise-token env var is set. SSH host aliases such as `github-work` get no injection."
+- Verbatim from the record's closing decision: "Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above."
 - The seam carries the existing `GH_TIMEOUT_MS` bound and `windowsHide` (spec Deliverable 1). `GH_TIMEOUT_MS` is a lazy getter on `plugin/bin/lib/shared-primitives.js`. Read it at call time (`sharedPrimitives.GH_TIMEOUT_MS`), never destructure it at module load, never retype `5000`.
 - On a github.com origin, `gh` argument lists and child env are unchanged: no `GH_HOST` is injected (AC2). `ghOptions` returns the **same object** it was given whenever it injects nothing, so existing `deepStrictEqual`/identity pins on options still hold.
 - An exported `GH_HOST` set by the user is never overwritten (AC4). The check is "the key is present in the effective env" (`'GH_HOST' in base`), so an exported empty string also counts as set.
@@ -28,29 +30,41 @@
 ## Review Focus
 
 - **An SSH host alias as origin** (`git@github-work:acme/widgets.git`, `git@github.com-work:acme/widgets.git`). `parseRepo` reads the alias as a non-github.com host. Injecting it as `GH_HOST` would make gh refuse every remote-inferring command ("none of the git remotes … correspond to the GH_HOST environment variable"), so every gh call in the plugin would break for alias users, not only the #2538 sites. Expected behavior: inject only for a *known* GitHub host. That means the host is a top-level key of gh's `hosts.yml`, or ends in `.ghe.com`, or `GH_ENTERPRISE_TOKEN`/`GITHUB_ENTERPRISE_TOKEN` is set. Pinned in Task 1.
-- **An explicit `-R` naming a different repo on a GHE origin.** `file-feedback.js` files to the upstream github.com repo, and `engine-verify.js`'s `upstream-feedback` check reads one. Injecting the origin host would send those calls to the wrong host. Expected: a bare `owner/repo` slug that is not origin's owner/repo means github.com, so nothing is injected. Pinned in Task 1.
+- **An explicit `-R` naming another repo on a GHE origin.** `file-feedback.js` files to the upstream github.com repo, and `engine-verify.js`'s `upstream-feedback` check reads one. Injecting the origin host would send those calls to the wrong host. Expected (Decision Q2): any `-R`/`--repo`/`--hostname` suppresses injection, so nothing is injected. Pinned in Task 1.
+- **A GraphQL call that binds `-f owner=…` / `-f repo=…` variables** (`engine-verify.js`'s acceptance-labeling query, `compose-subject.js`'s issue-type fallback). The value `repo=widgets` is not the `--repo` flag. Expected: it is not read as an explicit repo, so the call still gets `GH_HOST`. This is the reported `engine-verify` failure. Pinned in Task 1.
 - **Calls that pass different `cwd`s in one process** (worktree, main checkout, a temp dir with no `origin`). Expected: the host is resolved and memoized per resolved `cwd`. No origin, no git, or a probe timeout yields "no host", never a throw. Pinned in Task 1.
 - **A caller that passes its own `opts.env`.** Expected: merge onto that env, not `process.env`, and treat a `GH_HOST` inside it as user-set. Pinned in Task 1.
-- **A `--hostname`/`-R` that agrees with origin's host.** Expected: inject anyway, since it is harmless and consistent. The reporter saw `GH_HOST` fix calls that already passed a host-qualified slug. Pinned in Task 1.
+- **A `--hostname`/`-R` that agrees with origin's host** (`compose-subject.js`'s `issue view --repo acme.ghe.com/acme/widgets`, `materialize.js`'s `repoSlug` args). Expected (Decision Q2): no injection; the call reaches the host through its own flag, which AC1's "or a host-qualified `-R`" accepts. Pinned in Task 1 and in Task 2's behavioral test.
 
 ## Spec premise notes (for the build log)
 
 - `plugin/bin/lib/compose-subject.js:217`'s `--hostname` is **kept**, not dropped. Its `repoSpec` can come from a caller-supplied `--repo` naming a host other than origin's (lines 277-278), and the seam only knows origin. Every per-site `--hostname` that threads a caller-supplied host stays, for the same reason (`link.js`, `linked-prs.js`, `native-dependencies.js`, `resolved-refusal.js`, `backlog-grant-gate.js`, `teardown-run.js`, `release.js`, `fetch-sub-issues.js`, `materialize.js`).
 - The spec's `engine-verify.js:1022` is at `:1034` on the base. Its regex matches github.com URLs only, so `repoSlug({ host: 'github.com', owner, repo })` yields the same string. The switch removes the hand-rolled slug the skill bans.
-- The spec says 30 files spawn `gh` directly. The base has 46 files that spawn `gh`, listed across Tasks 2-10.
+- The spec says 30 files spawn `gh` directly. The base (after merging `origin/main` at `aa2671fca`) has 47 files that spawn `gh`, listed across Tasks 2-11. `plugin/bin/lib/reconcile/post-merge.js:261` arrived with that merge. Proving grep: `git grep -n -E "['\"\`]gh['\"\`]" -- plugin/bin`, each hit classified by reading the line. Task 12's walk is the mechanical check that nothing was missed.
+- `compose-subject.js`'s `issue view` has passed a host-qualified `--repo` (`repoSlug(repoSpec)`) since `4bc74c101` (#1829). So under Decision Q2 the seam injects nothing there, and the call reaches the host through `--repo`, which AC1 accepts ("or a host-qualified `-R`"). The record reports this call timing out without `GH_HOST` and succeeding with it. That evidence does not separate a missing host from a cold-call timeout, and this record cannot reproduce it without a real GHE host. The review step should weigh this. It is recorded here rather than worked around, because injecting alongside an explicit `--repo` contradicts Decision Q2.
+- Decision Q2 leaves origin-derived bare slugs on github.com: `repoSlugOf` (`lib/hooks/git-exec.js:207`, which drops the host) in the `reconcile/` callers, and `claim-store.js:635`'s `${owner}/${repo}`. An explicit `--repo owner/repo` suppresses injection, so those calls keep their current github.com behavior on a GHE origin. The decision's own Reading A names this as a known limitation. This record does not change them, because `repoSlugOf`'s slug also feeds `repos/${slug}/…` API paths, where a host-qualified value would break. It is logged to the open-items ledger as a follow-up.
 
 ## Spec coverage map
 
 | Spec item | Task |
 |---|---|
 | Deliverable 1 (seam) | Task 1 |
-| Deliverable 2 (route every site; engine-verify `repoSlug`; per-site `--hostname`) | Tasks 2-10 |
-| Deliverable 3 (conformance test) | Task 11 |
+| Deliverable 2 (route every site; engine-verify `repoSlug`; per-site `--hostname`) | Tasks 2-11 |
+| Deliverable 3 (conformance test) | Task 12 |
 | Deliverable 4 (fake-`ghe.com` behavioral test) | Task 2 |
 | AC1.1 | Task 2 Step 1 |
-| AC2.1 | Task 1 Step 1 (identity), Tasks 2-10 Step 4 (existing suites unchanged) |
-| AC3.1 | Task 11 Step 1 |
+| AC2.1 | Task 1 Step 1 (identity), Tasks 2-11 Step 4 (existing suites unchanged) |
+| AC3.1 | Task 12 Step 1 |
 | AC4.1 | Task 1 Step 1 |
+| AC5.1, AC5.2 (Decision Q1: known-host filter, SSH alias gets nothing) | Task 1 Step 1 |
+| AC6.1, AC6.2 (Decision Q2: any explicit `-R`/`--repo`/`--hostname` suppresses; bare slug means github.com) | Task 1 Step 1 |
+
+Waived AC5.3: it amends the spec text (Deliverable 1), not runtime behavior; Global Constraints carry the amended rule.
+Waived AC5.4: a provenance label for the decision, with no behavior to test.
+Waived AC6.3: a provenance label for the decision, with no behavior to test.
+Waived AC7.1: the closing rule governs plan review, not runtime behavior.
+Waived AC7.2: governs plan review; this plan records the chosen behavior for each edge case in Review Focus and Spec premise notes, which the review step checks.
+Waived AC7.3: governs when plan review may stop the build; no runtime behavior.
 
 Waived `plugin/bin/wrap-up-pack.js`: it is a thin CLI over `plugin/bin/lib/wrap-up/pack.js`, which holds the probes. Task 2 Step 3 reads it to confirm it spawns no `gh` of its own.
 
@@ -76,10 +90,10 @@ Waived `plugin/bin/wrap-up-pack.js`: it is a thin CLI over `plugin/bin/lib/wrap-
 **Decision rules `ghOptions` implements, in order:**
 1. `base = opts.env || deps.env`. If `'GH_HOST' in base`, return `opts`.
 2. `host = resolveGhHost(opts.cwd || process.cwd(), deps)`. If `host` is null, return `opts`.
-3. Scan `args` for explicit host signals. `--hostname H`/`--hostname=H` disagrees when `H` ≠ host (case-insensitive). `-R V`/`--repo V`/`--repo=V` with 3+ `/`-segments disagrees when segment 0 ≠ host. A 2-segment `V` disagrees when it is not origin's `owner/repo` (case-insensitive). Any disagreement → return `opts`.
+3. Scan `args` for an explicit host signal (Decision Q2): an element equal to `-R`, `--repo` or `--hostname`, or starting with `--repo=`, `--hostname=`, or `-R` followed by at least one more character (pflag's attached shorthand, `-Racme/widgets`). Stop scanning at a bare `--` element. Any signal → return `opts`, whatever value it names. A `-f`/`-F` value such as `repo=widgets` is not a signal, because it starts with neither `--repo` nor `-R`.
 4. Return the injected copy. On the first injection for this host in the process, write `claude-tweaks: ${repoResolutionNote(spec)} — gh calls get GH_HOST=${host}\n` through `deps.stderr`.
 
-**`resolveGhHost` rules:** a probe that throws, a remote `parseRepo` rejects, or host `github.com` → `null`. Otherwise the host is used only when it is *known*: it ends with `.ghe.com`, or `deps.env.GH_ENTERPRISE_TOKEN` or `deps.env.GITHUB_ENTERPRISE_TOKEN` is non-empty, or it is a top-level key of gh's `hosts.yml` (match `/^([^\s#:][^:\s]*):\s*$/gm`, case-insensitive compare). Read `hosts.yml` from the first directory in gh's own order: `env.GH_CONFIG_DIR`, then `env.XDG_CONFIG_HOME + '/gh'`, then on win32 `env.AppData + '/GitHub CLI'`, then `homedir + '/.config/gh'`. An unknown host → `null`. Cache the `{ host, owner, repo }` spec (or null), because rule 3 needs `owner/repo`.
+**`resolveGhHost` rules:** a probe that throws, a remote `parseRepo` rejects, or host `github.com` → `null`. Otherwise the host is used only when it is *known*: it ends with `.ghe.com`, or `deps.env.GH_ENTERPRISE_TOKEN` or `deps.env.GITHUB_ENTERPRISE_TOKEN` is non-empty, or it is a top-level key of gh's `hosts.yml` (match `/^([^\s#:][^:\s]*):\s*$/gm`, case-insensitive compare). Read `hosts.yml` from the first directory in gh's own order: `env.GH_CONFIG_DIR`, then `env.XDG_CONFIG_HOME + '/gh'`, then on win32 `env.AppData + '/GitHub CLI'`, then `homedir + '/.config/gh'`. An unknown host → `null`. Cache the `{ host, owner, repo }` spec (or null), because rule 4's `repoResolutionNote(spec)` needs it.
 
 - [ ] **Step 1: Write the failing tests** (in `tests/bin-lib/repo-resolve.test.js`; each test calls `_resetGhHostCache()` first and passes fake `deps`, never the real `git`/`hosts.yml`)
 
@@ -103,23 +117,30 @@ test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opt
   const o2 = { cwd: '/r', env: { GH_HOST: '' } };
   assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
 });
-test('review focus: an SSH alias host is not injected; a hosts.yml-known GHES host is', () => {
+test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected; a hosts.yml-known GHES host is; an enterprise token admits any host', () => {
   const alias = { ...ghe, remoteUrl: () => 'git@github.com-work:acme/widgets.git' };
   const o = { cwd: '/a' };
   assert.strictEqual(ghOptions(['pr', 'list'], o, alias), o);
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/t' }, { ...alias, env: { GH_ENTERPRISE_TOKEN: 't' } }).env.GH_HOST, 'github.com-work');
   _resetGhHostCache();
   const ghes = { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' },
     readFile: (p) => { assert.equal(p, path.join('/cfg', 'hosts.yml')); return 'git.corp.example:\n    user: me\n'; } };
   assert.equal(ghOptions(['pr', 'list'], { cwd: '/b' }, ghes).env.GH_HOST, 'git.corp.example');
 });
-test('review focus: explicit host signals that disagree win; agreeing ones still inject', () => {
+test('AC6.1, AC6.2 (Decision Q2): any explicit -R/--repo/--hostname suppresses injection, agreeing with origin or not', () => {
   const o = { cwd: '/r' };
   for (const args of [['issue', 'view', '1', '--repo', 'thn-inc/claude-tweaks'], ['api', 'graphql', '--hostname', 'github.com'],
-    ['pr', 'list', '-R', 'other.example/acme/widgets'], ['issue', 'list', '--repo=thn-inc/claude-tweaks']]) {
+    ['pr', 'list', '-R', 'other.example/acme/widgets'], ['issue', 'list', '--repo=thn-inc/claude-tweaks'],
+    ['issue', 'view', '1', '--repo', 'acme.ghe.com/acme/widgets'], ['issue', 'view', '1', '-R', 'ACME/Widgets'],
+    ['api', 'graphql', '--hostname', 'acme.ghe.com'], ['api', 'graphql', '--hostname=acme.ghe.com'], ['pr', 'list', '-Racme/widgets']]) {
     assert.strictEqual(ghOptions(args, o, ghe), o, args.join(' '));
   }
-  for (const args of [['issue', 'view', '1', '--repo', 'acme.ghe.com/acme/widgets'], ['issue', 'view', '1', '-R', 'ACME/Widgets'],
-    ['api', 'graphql', '--hostname', 'acme.ghe.com']]) {
+});
+test('review focus: GraphQL -f owner=/repo= variables are not an explicit repo; args after -- are not scanned', () => {
+  const o = { cwd: '/r' };
+  for (const args of [['api', 'graphql', '-f', 'query=q', '-f', 'owner=acme', '-f', 'repo=widgets'],
+    ['issue', 'comment', '1', '--body', 'x', '--', '--repo']]) {
     assert.equal(ghOptions(args, o, ghe).env.GH_HOST, 'acme.ghe.com', args.join(' '));
   }
 });
@@ -178,8 +199,8 @@ git commit -m "Add the ghOptions host seam — GH_HOST from origin for known GHE
 - Consumes: `ghOptions`, `ghExecFileSync`, `_resetGhHostCache` from Task 1; `installStub`, `STUB_SKIP` from `tests/helpers/path-stub.js`.
 
 - [ ] **Step 1: Write the failing behavioral test** in `tests/gh-host-seam-behavior.test.js`. Each case builds a temp git repo whose `origin` is `https://acme.ghe.com/acme/widgets.git` and installs a fake `gh` with `installStub('gh', …)` (`{ skip: STUB_SKIP }`). The fake appends `GH_HOST=${GH_HOST-unset} ARGS=$*` to a log file and prints canned JSON keyed on its first two args. Each case deletes `GH_HOST` from the spawned env and asserts on the log.
-  - `AC1.1: pr-checklist.js on a *.ghe.com origin sends gh pr view to the enterprise host`. Spawn `node plugin/bin/pr-checklist.js --run <runDir> --phase build` with cwd = the temp repo (run-state.json carries `pr: { number: 7 }`, which is the minimal fixture `pr-checklist.js`'s `run()` reads). Assert every logged `gh` line has `GH_HOST=acme.ghe.com` or a `-R`/`--repo` starting `acme.ghe.com/`.
-  - `AC1.1: compose-subject.js on a *.ghe.com origin sends its issue view to the enterprise host`. Spawn `node plugin/bin/compose-subject.js 7 --tag human-approved` with cwd = the temp repo. Same assertion.
+  - `AC1.1: pr-checklist.js on a *.ghe.com origin sends gh pr view to the enterprise host`. Spawn `node plugin/bin/pr-checklist.js --run <runDir> --phase build` with cwd = the temp repo (run-state.json carries `pr: { number: 7 }`, which is the minimal fixture `pr-checklist.js`'s `run()` reads). Assert that the log holds at least one network-bound line (one whose `ARGS` is not `--version`, the `ghAvailable` probe in `repo-resolve.js`, which makes no network call), and that every such line has `GH_HOST=acme.ghe.com` or a `-R`/`--repo` starting `acme.ghe.com/`.
+  - `AC1.1: compose-subject.js on a *.ghe.com origin sends its issue view to the enterprise host`. Spawn `node plugin/bin/compose-subject.js 7 --tag human-approved` with cwd = the temp repo. Same assertion. Its `issue view` already passes `--repo acme.ghe.com/acme/widgets` (`repoSlug`), so under Decision Q2 that line carries `GH_HOST=unset` and the host-qualified `--repo`. Assert that exact pair for the `issue view` line, so a later change that drops the host from the slug turns this red.
   - `AC1.1: wrap-up-engine verify's gh runner reaches the enterprise host`. Call `require('../plugin/bin/lib/wrap-up/engine-verify').defaultGh(['api', 'graphql', '-f', 'query=q'], tmpRepo)` with the stub on PATH. Assert `GH_HOST=acme.ghe.com` in the log.
   - `AC1.1: the wrap-up pack's gh probe reaches the enterprise host`. Drive `gatherPack({ runDir, cwd: tmpRepo, only: ['<the gh-backed probe needing the least fixture, e.g. pr or recordLabels>'] })` with default deps. Assert `GH_HOST=acme.ghe.com` in the log.
   - `AC2.1: on a github.com origin the fake gh sees GH_HOST unset`. Re-run the `pr-checklist.js` case with origin `https://github.com/acme/widgets.git`. Assert `GH_HOST=unset`.
@@ -187,7 +208,7 @@ git commit -m "Add the ghOptions host seam — GH_HOST from origin for known GHE
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test tests/gh-host-seam-behavior.test.js`
-Expected: FAIL. The logged lines show `GH_HOST=unset` for the `ghe.com` cases.
+Expected: FAIL. The logged lines show `GH_HOST=unset` for the `pr-checklist.js`, wrap-up verify and pack cases. The `compose-subject.js` case passes already, because its slug is host-qualified, and it stays as a pin.
 
 - [ ] **Step 3: Apply the four module changes in the Files block.** Read `plugin/bin/wrap-up-pack.js` and confirm that it only calls `gatherPack`.
 
@@ -205,7 +226,7 @@ git commit -m "Route pr-checklist, compose-subject, wrap-up verify and pack gh c
 
 ---
 
-### Migration tasks 3-10 (same shape)
+### Migration tasks 3-11 (same shape)
 
 Each task applies one edit at every listed `gh` spawn: wrap the existing options argument in `ghOptions(args, …)`, passing the same argv array the spawn passes. The edit adds `require('<rel>/repo-resolve').ghOptions` (or extends an existing `repo-resolve` require) and changes nothing else at the site. Where a site's argv is built inline in the call, hoist it to a `const` first so the same array reaches both. Where `opts` arrives as a parameter (an injected runner such as `activity-gather.js:68`), wrap the merged literal. A wrapper that spawns both `git` and `gh` through one function (`residue.js:68`) applies `ghOptions` only when `argv[0] === 'gh'`.
 
@@ -233,12 +254,12 @@ Expected: PASS, 0 failures, with no existing test edited (AC2.1)
 ### Task 4: [batch] Top-level CLIs B
 
 **Files:**
-- Modify: `plugin/bin/activity-gather.js` (lines 68, 70), `plugin/bin/pr-early-open.js:104`, `plugin/bin/release-notes-publish.js:45`, `plugin/bin/closing-links.js:130`, `plugin/bin/console-resolve.js` (lines 111, 152) (read how its `execFile` is defined and wrap where it spawns)
+- Modify: `plugin/bin/activity-gather.js` (lines 68, 70), `plugin/bin/pr-early-open.js:104`, `plugin/bin/release-notes-publish.js:45`, `plugin/bin/closing-links.js:145`, `plugin/bin/console-resolve.js` (lines 111, 152) (read how its `execFile` is defined and wrap where it spawns)
 
 ### Task 5: [batch] Top-level CLIs C
 
 **Files:**
-- Modify: `plugin/bin/claim-targets.js:29`, `plugin/bin/backlog-grant-gate.js:101`, `plugin/bin/materialize.js` (lines 206, 212, 221) (keep its `--repo repoSlug(...)`/`--hostname`), `plugin/bin/hooks.js:1417`, `plugin/bin/residue.js:68` (argv runner: `argv[0] === 'gh'`). The argv array in `plugin/bin/lib/residue/probes/forge.js:32` stays as it is. Task 11 allow-lists it with the reason that `residue.js`'s runner applies `ghOptions`.
+- Modify: `plugin/bin/claim-targets.js:29`, `plugin/bin/backlog-grant-gate.js:101`, `plugin/bin/materialize.js` (lines 206, 212, 221) (keep its `--repo repoSlug(...)`/`--hostname`), `plugin/bin/hooks.js:1417`, `plugin/bin/residue.js:68` (argv runner: `argv[0] === 'gh'`). The argv array in `plugin/bin/lib/residue/probes/forge.js:32` stays as it is. Task 12 allow-lists it with the reason that `residue.js`'s runner applies `ghOptions`.
 
 ### Task 6: [batch] lib A
 
@@ -248,12 +269,12 @@ Expected: PASS, 0 failures, with no existing test edited (AC2.1)
 ### Task 7: [batch] lib/reconcile A
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/release-merged.js` (lines 172, 183, 223), `plugin/bin/lib/reconcile/preflight.js` (lines 15, 19), `plugin/bin/lib/reconcile/ledger-residue.js` (lines 256, 277, 284, 303), `plugin/bin/lib/reconcile/console-execute.js:145`, `plugin/bin/lib/reconcile/red-tip.js:91`
+- Modify: `plugin/bin/lib/reconcile/release-merged.js` (lines 172, 183, 223), `plugin/bin/lib/reconcile/preflight.js` (lines 15, 19), `plugin/bin/lib/reconcile/ledger-residue.js` (lines 256, 277, 284, 303)
 
 ### Task 8: [batch] lib/reconcile B and worktree/timing
 
 **Files:**
-- Modify: `plugin/bin/lib/reconcile/pr-state.js` (lines 102, 192, 203, 239, 268, 292, 315, 341), `plugin/bin/lib/reconcile/pr-state-batch.js:132` (its constant `--hostname` already disagrees on a GHE origin, so `ghOptions` injects nothing, which is correct), `plugin/bin/lib/worktree/remote-branch-collision.js:45`, `plugin/bin/lib/worktree/cherry-pick-provenance.js:46`, `plugin/bin/lib/timing/budget.js:171`
+- Modify: `plugin/bin/lib/reconcile/pr-state.js` (lines 102, 192, 203, 239, 268, 292, 315, 341), `plugin/bin/lib/reconcile/pr-state-batch.js:132` (its constant `--hostname` already disagrees on a GHE origin, so `ghOptions` injects nothing, which is correct), `plugin/bin/lib/worktree/remote-branch-collision.js:46`, `plugin/bin/lib/worktree/cherry-pick-provenance.js:46`, `plugin/bin/lib/timing/budget.js:171`
 
 ### Task 9: [batch] lib C
 
@@ -265,9 +286,14 @@ Expected: PASS, 0 failures, with no existing test edited (AC2.1)
 **Files:**
 - Modify: `plugin/bin/lib/issues/link.js:27`, `plugin/bin/lib/issues/capabilities-probe.js:30`, `plugin/bin/lib/issues/resolved-refusal.js:151`, `plugin/bin/lib/issues/claim-store.js` (lines 166, 290), `plugin/bin/lib/flow/preflight.js:294`
 
+### Task 11: [batch] lib/reconcile C
+
+**Files:**
+- Modify: `plugin/bin/lib/reconcile/console-execute.js:145`, `plugin/bin/lib/reconcile/red-tip.js:91`, `plugin/bin/lib/reconcile/post-merge.js:261` (the `timedGh` default: `execFileSyncTimed('gh', args, ghOptions(args, { cwd: root, input, … }))`; `deps.gh` stays the injected override, so `tests/bin-lib/reconcile/post-merge.test.js` stays green unedited)
+
 ---
 
-### Task 11: The seam conformance scan
+### Task 12: The seam conformance scan
 
 **Role:** judgment
 **Review risk:** high
