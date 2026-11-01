@@ -6,6 +6,8 @@ const { readText } = require('../../helpers/read-skill');
 const {
   CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
 } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
+const { IDENTITY_PROBE_FAILED_NOTE } = require('../../../plugin/bin/lib/issues/parent-gate');
+const { untrustedSkipNote } = require('../../../plugin/bin/lib/issues/comment-trust');
 
 const GATE_PROSE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'verification-brief-parent-gate.md');
 
@@ -121,7 +123,7 @@ function makeGh(world) {
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
-    if (key === 'api user --jq .login') return `${world.login || 'plugin-bot'}\n`;
+    if (key === 'api user --jq .login') return `${'login' in world ? world.login : 'plugin-bot'}\n`;
     if (/^issue comment \d+ --repo o\/r --body-file -$/.test(key)) return '';
     if (/^issue close \d+ --repo o\/r --reason /.test(key)) return '';
     throw new Error(`unexpected gh call: ${key}`);
@@ -274,6 +276,80 @@ test('idempotence: a comment from the current gh identity counts even with an un
   const { gh, calls } = makeGh(happyWorld({ login: 'plugin-bot', parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));
   closeBelowFloorParents(base({ gh }));
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
+});
+
+const callKeys = (calls) => calls.map((c) => c.args.join(' '));
+const probeCalls = (calls) => callKeys(calls).filter((k) => k.startsWith('api user'));
+const liveWith = (comments) => ({ 10: { state: 'OPEN', stateReason: '', comments } });
+const probeFails = (k) => k.startsWith('api user');
+
+test('#4770 AC1.4: a throwing identity probe still closes the due parent with the degrade note', () => {
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC2.2: a failed probe plus a trusted marker closes with no second comment and no note', () => {
+  const comments = [{ body: `${CLOSE_HEADING}\n\nEvery sub-issue...`, authorAssociation: 'MEMBER', author: { login: 'someone' } }];
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith(comments) }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC3.2: a failed probe plus the bot\'s own NONE marker posts a second comment (accepted duplicate)', () => {
+  const comment = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' }, url: 'https://example.test/c/2' };
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith([comment]) }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low', notes: [untrustedSkipNote(comment), IDENTITY_PROBE_FAILED_NOTE] }]);
+  assert.deepEqual(out.skipped, []);
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC4.2: an empty probe line behaves like a throwing one', () => {
+  const { gh, calls } = makeGh(happyWorld({ login: '' }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC5.1: the login is read at most once for a run closing two parents, working or throwing', () => {
+  const twoParents = (over) => ({
+    parentOf: { 11: 10, 21: 20 },
+    subs: { 10: [11], 20: [21] },
+    issues: { 11: { state: 'OPEN' }, 21: { state: 'OPEN' } },
+    ...over,
+  });
+  const ok = makeGh(twoParents());
+  const okOut = closeBelowFloorParents(base({ closingSet: [11, 21], gh: ok.gh }));
+  assert.deepEqual(okOut.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }]);
+  assert.equal(probeCalls(ok.calls).length, 1, callKeys(ok.calls).join(' | '));
+
+  const bad = makeGh(twoParents({ throwWhen: probeFails }));
+  const badOut = closeBelowFloorParents(base({ closingSet: [11, 21], gh: bad.gh }));
+  assert.deepEqual(badOut.closed, [
+    { parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] },
+    { parent: 20, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] },
+  ]);
+  assert.deepEqual(badOut.skipped, []);
+  assert.equal(probeCalls(bad.calls).length, 1, callKeys(bad.calls).join(' | '));
+});
+
+test('#4770 AC5.1: the cached login is replayed to a later parent — the bot\'s own NONE marker on parent 20 makes it close-only, one probe', () => {
+  const marker = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' } };
+  const { gh, calls } = makeGh({
+    parentOf: { 11: 10, 21: 20 },
+    subs: { 10: [11], 20: [21] },
+    issues: { 11: { state: 'OPEN' }, 21: { state: 'OPEN' } },
+    parentLive: { 20: { state: 'OPEN', stateReason: '', comments: [marker] } },
+  });
+  const out = closeBelowFloorParents(base({ closingSet: [11, 21], gh }));
+  const keys = callKeys(calls).join(' | ');
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }], keys);
+  assert.deepEqual(out.skipped, []);
+  assert.deepEqual(callKeys(writes(calls)).filter((k) => / 20 /.test(k)), ['issue close 20 --repo o/r --reason completed'], keys);
+  assert.equal(probeCalls(calls).length, 1, keys);
 });
 
 test('idempotence: a CONTRIBUTOR comment carrying the heading reads as absent, and is named in notes', () => {
