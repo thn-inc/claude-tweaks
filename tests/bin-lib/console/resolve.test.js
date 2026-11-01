@@ -908,6 +908,20 @@ test('a two-finding coincidence line needs both verdicts (#3949)', () => {
   assert.deepStrictEqual(findings([line, va.entry, vb.entry].join('\n')), [], 'both verdicts supersede it');
 });
 
+test('#4581: a coincidence line with a multi-word quoted lens keys both locations on the lens first token', () => {
+  const a = tbFinding({ lens: '3f', line: 4, claim: 'a' });
+  const b = tbFinding({ lens: '3f', line: 9, claim: 'b' });
+  const va = tbVerdict(a, { verdict: 'confirmed' });
+  const vb = tbVerdict(b, { verdict: 'confirmed' });
+  const multiWord = tbCoincidence({ ...a, lens: '3f Test quality' }, 9);
+  assert.strictEqual(findings([multiWord, va.entry].join('\n')).length, 1, 'the first key alone leaves the line open');
+  assert.strictEqual(findings([multiWord, vb.entry].join('\n')).length, 1, 'the second key alone leaves the line open');
+  assert.deepStrictEqual(findings([multiWord, va.entry, vb.entry].join('\n')), [], 'both keys settle it');
+  const singleToken = tbCoincidence(a, 9);
+  assert.strictEqual(findings([singleToken, va.entry].join('\n')).length, 1, 'single-token lens: one verdict leaves the line open');
+  assert.deepStrictEqual(findings([singleToken, va.entry, vb.entry].join('\n')), [], 'single-token lens: both verdicts settle it');
+});
+
 test('a verdict logged before the STAGED line does not supersede it (#3949)', () => {
   const f = tbFinding();
   assert.strictEqual(findings([tbVerdict(f, { verdict: 'confirmed' }).entry, tbStaged(f)].join('\n')).length, 1);

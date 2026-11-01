@@ -421,6 +421,18 @@ test('#4581: refuses two lens … finding clauses in one line', () => refusesAgg
 test('#4581: refuses a coincidence line with a shortened second location', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings plugin/bin/lib/reconcile/release-merged.js:46 / :46 share a location but not substance; both staged unconfirmed']));
 test('#4581: refuses an aggregate behind a lowercase marker', () => refusesAggregate(['--text', '/review reproduction: lens "3a" findings a/b.js:1 and c/d.js:2 surfaced by one agent only']));
 
+test('#4581: refuse — coincidence clause followed by an aggregate clause', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1 / a/b.js:2 share a location but not substance; lens "3c" 4 findings not reproduced']));
+
+test('#4581: refuse — aggregate via --text-file', () => {
+  const { main, root, run: runDir } = fixture();
+  const file = path.join(root, 'entry.txt');
+  fs.writeFileSync(file, `${RUN_4481_TEXT}\n`);
+  const out = [];
+  assert.equal(run(['--run', runDir, '--status', 'STAGED', '--step', 'Step 3', '--text-file', file], deps(main, out)), 2);
+  assert.ok(streamOf(out, 'err').includes('--text names several findings in one reproduction line — log one line per finding'));
+  assert.equal(fs.existsSync(path.join(runDir, 'decisions.md')), false);
+});
+
 test('#4581: --entries refuses the run 4481 aggregate element, names entries[1], and writes nothing', () => {
   const { main, root, run: runDir } = fixture();
   const file = entriesFile(root, [{ status: 'AUTO', text: 'ok' }, { status: 'STAGED', step: 'Step 3', text: RUN_4481_TEXT }, { status: 'STAGED', spec: '1921', text: SPEC_1921_TEXT }]);
@@ -449,5 +461,6 @@ test('#4581: accepts the coordination-form per-finding line', () => acceptsLine(
 test('#4581: accepts a per-finding line followed by lens commentary', () => acceptsLine(['--step', 'Step 3 reproduction', '--text', 'Reproduction: lens "3b" finding plugin/bin/lib/init/release-bootstrap.js:276 not reproduced. Staged to Review Console as low-confidence. Lenses 3a, 3c, 3f: both pair agents returned No findings (6 agents)']));
 test('#4581: accepts a per-finding line whose path contains "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding docs/plans/2026-10-25-short-circuit-tiebreak-findings-4171-ledger.md:6 not reproduced']));
 test('#4581: accept — singular finding whose path segment is "findings"', () => acceptsLine(['--text', 'Reproduction: lens "3a" finding findings/x.js:1 not reproduced']));
+test('#4581: accept — per-finding line with a colon-terminated lens in its commentary', () => acceptsLine(['--text', 'Reproduction: lens "3b" finding plugin/x.js:1 not reproduced. Lens 3c: no findings']));
 test('#4581: accepts an AUTO aggregate reproduction line (out of scope)', () => acceptsLine(['--text', 'Reproduction: lens "3a" 2 findings reproduced. Confirmed'], 'AUTO'));
 test('#4581: accepts a non-reproduction STAGED line naming several locations', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'findings a/b.js:1 and c/d.js:2 staged to staged/review-1.patch']));

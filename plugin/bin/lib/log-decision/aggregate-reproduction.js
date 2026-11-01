@@ -3,12 +3,13 @@
 // key (console/resolve.js's findingKey/lineKeys), so a line naming several findings can never be settled and
 // stays as residue. Detection is by grammar — a plural `findings` subject (a count, a lens noun phrase, or the
 // marker's own subject) or two `lens … finding` clauses — with the location shape shared with that reader
-// (console/finding-path.js), and lineKeys's two-full-path coincidence line exempted. Pure, no I/O.
+// (console/finding-path.js), and lineKeys's two-full-path coincidence clause exempted. Pure, no I/O.
 'use strict';
 
 const { FINDING_PATH } = require('../console/finding-path');
 
-const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
+// An unquoted lens name never holds a `:` — `Lens 3c: no findings` is commentary, not a lens noun phrase.
+const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|[^\s:]+)`;
 const WORD = String.raw`[\w/()-]+\s+`;
 const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`);
 const PATH_RE = new RegExp(String.raw`${FINDING_PATH}(?::\d+)?`, 'g');
@@ -26,8 +27,8 @@ function aggregateReproductionProblem({ status, step, text }) {
   const entry = step ? `${step}: ${String(text).trim()}` : String(text).trim();
   const at = entry.search(/\breproduction:\s/i);
   if (at < 0) return null;
-  const tail = entry.slice(at);
-  if (COINCIDENCE_RE.test(tail)) return null;
+  // The coincidence clause is exempt, not the whole line: drop it and judge whatever else the line says.
+  const tail = entry.slice(at).replace(COINCIDENCE_RE, ' ');
   // Neutralize paths so a path containing `findings` never counts as the plural subject.
   const bare = tail.replace(PATH_RE, 'PATH');
   const aggregate = PLURAL_SUBJECT_RES.some((re) => re.test(bare)) || (bare.match(LENS_FINDING_RE) || []).length >= 2;
