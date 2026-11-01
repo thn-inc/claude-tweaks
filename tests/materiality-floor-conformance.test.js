@@ -461,6 +461,7 @@ test('digest-sweep.md Expiry dates a github-issues line through materialityEntry
   assert.ok(expiry.includes('materialityEntryDate'));
   assert.ok(expiry.includes('materiality-first-seen'));
   assert.ok(expiry.includes('On `local-files`, the age comes from'));
+  assert.ok(expiry.includes('materialityEntryDate(line, comment.createdAt || comment.created_at)'), 'both comment-date spellings, as the fence reads them');
 });
 
 test('a re-run reaches a mark made on the old issue, and a later approval marks the carried copy', () => {
@@ -503,7 +504,7 @@ const stepText = (n) => {
   assert.ok(start !== -1 && end !== -1 && start < end, `rollover step ${n} not found: ${start}, ${end}`);
   return r.slice(start, end);
 };
-const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,o,\.\.\.cs\][^\n]*$/m;
+const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,c,o\][^\n]*$/m;
 const fenceOf = (src, pattern, label) => {
   const m = pattern.exec(src);
   assert.ok(m, `${label}: fence not found`);
@@ -546,8 +547,11 @@ test('the Resume verdict fence has one script body in digest-sweep.md, tidy Shap
   const names = [];
   for (const [name, v] of Object.entries(VERDICT_READERS)) {
     const line = fenceOf(v.src, VERDICT_FENCE, name);
-    assert.ok(line.endsWith(`"\${CLAUDE_PLUGIN_ROOT}" "$${v.old}" "$${v.cand}"`), `${name}: root, then the old issue, then the candidates`);
+    assert.ok(line.endsWith(`"\${CLAUDE_PLUGIN_ROOT}" "$${v.cand}" "$${v.old}"`), `${name}: root, then the one candidates file, then the old issue`);
     const block = blockHolding(v.src, line, name);
+    const fetches = block.split('\n').filter((l) => l.startsWith('gh api') && l.includes(`"$${v.cand}"`));
+    assert.strictEqual(fetches.length, 2, `${name}: two candidate fetches are documented`);
+    assert.ok(fetches[0].endsWith(` > "$${v.cand}"`) && fetches[1].endsWith(` >> "$${v.cand}"`), `${name}: the first candidate writes, the next appends: ${fetches}`);
     const mine = [...block.matchAll(/--value (\S+)\)/g)].map((m) => m[1]);
     assert.ok(mine.length >= 2 && mine.every((n) => n.startsWith(v.prefix)), `${name}: names ${mine}`);
     names.push(...mine.map((n) => n.replace(/\{[^}]*\}/g, '')));
@@ -562,39 +566,62 @@ test('the Resume verdict fence has one script body in digest-sweep.md, tidy Shap
   assert.ok(!NEXT_MODE.includes("tidy/digest-sweep.md`'s Resume"), 'the bare drain cannot be pointed at a sibling for the reads');
 });
 
-test('each copy of the Resume verdict fence runs: it takes every issue naming {old}, trusts only an owner, and reads an earlier generation as none', (t) => {
+// The documented block run exactly as written, in a fresh bash per case: only `gh` is replaced, by a shell
+// function that serves one fixture per issue number, and the placeholders are filled in. `reps` are the
+// issue numbers in listing order (the first writes with `>`, the rest append with `>>`).
+const runDocumentedVerdict = (dir, v, name, { old, reps, serve }) => {
+  const line = fenceOf(v.src, VERDICT_FENCE, name);
+  let block = blockHolding(v.src, line, name);
+  assert.ok(block.includes('{further}') && block.includes('{replacement}'), `${name}: the block documents two candidates`);
+  // One `{further}` line per issue after the first, as the prose says ("one line each"); none for a single candidate.
+  block = block.split('\n').flatMap((l) => (l.includes('{further}') ? reps.slice(1).map((r) => l.replace('{further}', String(r.number))) : [l])).join('\n');
+  block = block.replace(/\{owner\}\/\{repo\}/g, 'o/r').replace('{old}', String(old.number)).replace('{replacement}', String(reps[0].number));
+  assert.ok(!/\{(old|replacement|further)\}/.test(block), `${name}: a placeholder survived`);
+  const env = {};
+  const arms = [];
+  for (const issue of [old, ...reps]) {
+    const f = path.join(dir, `${v.cand}-served-${issue.number}.json`);
+    fs.writeFileSync(f, serve ? serve(issue) : JSON.stringify(issue));
+    env[`FX_${issue.number}`] = fwd(f);
+    // Real gh api prints a response body with no final newline (checked live); `--jq .` prints it compact with one.
+    arms.push(`*"/issues/${issue.number} --jq ."*) cat "$FX_${issue.number}"; echo;;`);
+    arms.push(`*"/issues/${issue.number}") cat "$FX_${issue.number}";;`);
+  }
+  const stub = `gh() { case "$*" in ${arms.join(' ')} *) echo '{"message":"Not Found"}'; return 1;; esac; }`;
+  return runFence(`${stub}\n${block}`, { ...env, ...sessionEnv(dir) });
+};
+
+test('each documented Resume verdict block runs as written: every issue naming {old} reaches one call, in either listing order', (t) => {
   const dir = scratch(t);
   const marker = (n) => `<!-- digest-rollover-of: ${n} -->`;
-  const issue = (number, over = {}) => ({ number, state: 'open', author_association: 'MEMBER', labels: [], body: '', ...over });
-  const labeled = { labels: [{ name: 'digest' }] };
+  const issue = (number, over = {}) => ({ number, state: 'open', author_association: 'MEMBER', labels: [], body: marker(10), ...over });
+  const planted = (number) => issue(number, { author_association: 'NONE' });
+  const oldIssue = (over = {}) => ({ number: 10, state: 'open', author_association: 'MEMBER', labels: [{ name: 'digest' }], body: '', ...over });
+  const resume20 = { state: 'resume', replacement: 20, extras: [] };
   const none = { state: 'none', replacement: null, extras: [] };
   const cases = [
-    { name: 'resume', cands: [[issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
-    { name: 'planted', cands: [[issue(21, { body: marker(10), author_association: 'NONE' })]], old: issue(10, labeled), want: none },
-    { name: 'earlier generation', cands: [[issue(20, { state: 'closed', body: marker(10) })]], old: issue(10, { state: 'closed' }), want: none },
-    // A planted #15 numbered below the real #20, each in its own file, and again as one flat array:
-    { name: 'planted below real', cands: [[issue(15, { body: marker(10), author_association: 'NONE' })], [issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
-    { name: 'one flat array', cands: [[issue(15, { body: marker(10), author_association: 'NONE' }), issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [] } },
-    { name: 'two trusted', cands: [[issue(25, { body: marker(10) })], [issue(20, { body: marker(10) })]], old: issue(10, labeled), want: { state: 'resume', replacement: 20, extras: [25] } },
+    { name: 'one trusted', old: oldIssue(), reps: [issue(20)], want: resume20 },
+    { name: 'one planted', old: oldIssue(), reps: [planted(21)], want: none },
+    { name: 'planted above real', old: oldIssue(), reps: [issue(20), planted(25)], want: resume20 },
+    { name: 'planted below real', old: oldIssue(), reps: [planted(15), issue(20)], want: resume20 },
+    { name: 'two trusted', old: oldIssue(), reps: [issue(20), issue(25)], want: { state: 'resume', replacement: 20, extras: [25] } },
+    { name: 'planted on both sides of the real one', old: oldIssue(), reps: [planted(15), issue(20), planted(25)], want: resume20 },
+    { name: 'three trusted', old: oldIssue(), reps: [issue(20), issue(25), issue(30)], want: { state: 'resume', replacement: 20, extras: [25, 30] } },
+    { name: 'earlier generation', old: oldIssue({ state: 'closed', labels: [] }), reps: [issue(20, { state: 'closed' })], want: none },
+    // MCP-written shape: one pretty-printed flat array (gh itself prints compact, one value per line)
+    { name: 'a flat array served', old: oldIssue(), reps: [issue(20)], serve: (i) => JSON.stringify(i.number === 20 ? [i] : i, null, 2), want: resume20 },
   ];
   for (const [name, v] of Object.entries(VERDICT_READERS)) {
-    const line = fenceOf(v.src, VERDICT_FENCE, name);
     for (const c of cases) {
-      const oldFile = path.join(dir, `${v.cand}-${c.name}-old.json`);
-      fs.writeFileSync(oldFile, JSON.stringify(c.old));
-      const files = c.cands.map((cand, i) => {
-        const f = path.join(dir, `${v.cand}-${c.name}-cand-${i}.json`);
-        fs.writeFileSync(f, JSON.stringify(cand));
-        return fwd(f);
-      });
-      const env = { [v.old]: fwd(oldFile), [v.cand]: files[0], EXTRA: files[1] || '' };
-      const r = runFence(files.length > 1 ? `${line} "$EXTRA"` : line, env);
+      const r = runDocumentedVerdict(dir, v, name, c);
       assert.strictEqual(r.status, 0, `${name} ${c.name}: ${r.stderr}`);
       assert.deepStrictEqual(JSON.parse(r.stdout), c.want, `${name} ${c.name}`);
     }
-    const absent = fwd(path.join(dir, 'absent.json'));
-    const r = runFence(line, { [v.old]: absent, [v.cand]: absent });
-    assert.notStrictEqual(r.status, 0, `${name}: an unreadable pair exits non-zero rather than printing a verdict`);
+    // The second fetch fails: gh prints its error body and exits 1, which lands in the file as a non-issue.
+    const broken = runDocumentedVerdict(dir, v, name, { old: oldIssue(), reps: [issue(20), { number: 99 }], serve: (i) => (i.number === 99 ? '{"message":"Not Found"}' : JSON.stringify(i)) });
+    assert.notStrictEqual(broken.status, 0, `${name}: a failed fetch exits non-zero rather than printing a verdict`);
+    const absent = runDocumentedVerdict(dir, v, name, { old: oldIssue(), reps: [issue(20)], serve: (i) => (i.number === 10 ? '' : JSON.stringify(i)) });
+    assert.notStrictEqual(absent.status, 0, `${name}: an unreadable {old} exits non-zero`);
   }
 });
 
@@ -656,13 +683,31 @@ test('Shape 1 keeps a rollover pair on any line that says so, never overrides a 
   assert.ok(TIDY_RECORDS.includes('over every issue naming `{old}` at once'));
 });
 
-test('the snapshot note names the one direct reader of {tmp-records-file}, and the floor\'s Dedup lines stay hard-wrapped', () => {
-  const queueFetch = read('plugin/skills/_shared/record-queue-fetch.md').replace(/\s+/g, ' ');
-  assert.ok(!queueFetch.includes('(none do today)'), 'step-1-records.md reads {tmp-records-file} directly now');
-  assert.ok(queueFetch.includes("(only `tidy/step-1-records.md`'s Shape 1 digest-rollover pair listing does today"));
-  const wrapped = FLOOR.split('\n').find((l) => l.includes('`OWNER`, `MEMBER`, or `COLLABORATOR` counts (`_shared/pr-run-comments.md`'));
-  assert.ok(wrapped, 'the Dedup trust sentence moved');
-  assert.ok(wrapped.length <= 100, `${wrapped.length} characters against the section's width`);
+test('the snapshot note makes no claim about who reads {tmp-records-file} directly', () => {
+  const queueFetch = read('plugin/skills/_shared/record-queue-fetch.md');
+  const note = queueFetch.split(/\n\n/).find((p) => p.startsWith('Note that `{tmp-records-file}` now holds'));
+  assert.ok(note, 'the snapshot note moved');
+  const flat = note.replace(/\s+/g, ' ');
+  assert.ok(flat.includes('A consumer that reads `{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` would need to apply the same filter itself.'));
+  // Several skills read the raw file (tidy Shape 1, trust-table.md, capture, specify's decomposition mode), so the
+  // note must neither count nor name its readers.
+  for (const claim of ['none do', 'does today', 'only `', 'step-1-records']) assert.ok(!flat.includes(claim), `the note enumerates readers: ${claim}`);
+});
+
+test('every line this change added to materiality-floor.md stays inside the section width', () => {
+  const paragraph = (anchor) => {
+    const p = FLOOR.split(/\n\n/).find((x) => x.includes(anchor));
+    assert.ok(p, `no paragraph holds ${anchor}`);
+    return p.split('\n');
+  };
+  const added = [
+    ...paragraph('A line a rollover carried'),
+    ...paragraph('While a rollover is in flight'),
+    ...FLOOR.split('\n').filter((l) => /read is paginated|implemented by `bin\/lib\/issues\/comment-trust|cannot suppress a finding/.test(l)),
+  ];
+  assert.ok(added.length >= 15, `${added.length} lines found`);
+  const tooLong = added.filter((l) => l.length > 100);
+  assert.deepStrictEqual(tooLong.map((l) => `${l.length}: ${l.slice(0, 40)}`), []);
 });
 
 test('Shape 1 pair-listing fence sets its own $TIDY_RECORDS and prints one line per {old} with every open issue naming it', (t) => {

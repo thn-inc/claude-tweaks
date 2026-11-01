@@ -89,15 +89,18 @@ TIDY_RECORDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value 
 node -e "const m=/^<!-- digest-rollover-of: (\d+) -->\s*$/m;const by=new Map();for(const r of require(process.argv[1]))if(String(r.state).toUpperCase()==='OPEN'){const h=m.exec(r.body||'');if(h)by.set(h[1],[...(by.get(h[1])||[]),r.number])}for(const [o,rs] of by)console.log(o+' '+rs.sort((a,b)=>a-b).join(' '))" -- "$TIDY_RECORDS"
 ```
 
-For each printed line, read `{old}` and every issue on it through REST, since only that read carries the author association (`gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the paths with the Write tool), and run, repeating the `TIDY_ROLLOVER_CAND` and `gh api` lines under each further issue's own number and adding its path as another argument:
+For each printed line, read `{old}` and every issue on it through REST, since only that read carries the author association (`gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the two files with the Write tool), and run:
 
 ```bash
 TIDY_ROLLOVER_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-old.json)"
-TIDY_ROLLOVER_CAND="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-cand-{replacement}.json)"
+TIDY_ROLLOVER_CAND="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value tidy-step1-rollover-cand.json)"
 gh api repos/{owner}/{repo}/issues/{old} > "$TIDY_ROLLOVER_OLD"
-gh api repos/{owner}/{repo}/issues/{replacement} > "$TIDY_ROLLOVER_CAND"
-node -e "const fs=require('fs');const [root,o,...cs]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>JSON.parse(fs.readFileSync(f,'utf8'));console.log(JSON.stringify(classifyRolloverResume([].concat(...cs.map(read)),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$TIDY_ROLLOVER_OLD" "$TIDY_ROLLOVER_CAND"
+gh api repos/{owner}/{repo}/issues/{replacement} --jq . > "$TIDY_ROLLOVER_CAND"
+gh api repos/{owner}/{repo}/issues/{further} --jq . >> "$TIDY_ROLLOVER_CAND"
+node -e "const fs=require('fs');const [root,c,o]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>{const t=fs.readFileSync(f,'utf8');try{return JSON.parse(t)}catch(e){if(!t.trim())throw e;return t.split('\n').filter((l)=>l.trim()).map((l)=>JSON.parse(l))}};console.log(JSON.stringify(classifyRolloverResume([].concat(read(c)),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$TIDY_ROLLOVER_CAND" "$TIDY_ROLLOVER_OLD"
 ```
+
+The first issue on the line writes with `>` and every further one appends with `>>`, one line each; a second `>` would replace the earlier candidates, so drop the `{further}` line when only one issue names `{old}` and never repeat the assignment. The script reads each file as one JSON value or, failing that, one JSON value per line, which is what `--jq .` makes `gh api` print (compact, with a final newline: plain `gh api` ends without one, so appended issues would run together).
 
 A `resume` or `stalled` verdict `Keep`s `{old}`, the printed `replacement` and every printed `extras` issue (an untrusted issue is in neither list). A record is kept when ANY line it appears on gives that verdict: a second-generation container is a replacement on one line and the old issue on the next, and the two verdicts can disagree. Any other verdict adds no exemption and never overrides one: a record already labeled `digest` stays `Keep` by the rule above whatever the verdict (`finished` included), and any other record is judged as before. A non-zero exit is an unreadable line, not a verdict: `Keep` every issue on it for this run and name the line in the report.
 

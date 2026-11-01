@@ -76,7 +76,8 @@ issue's comment *objects*, each with its `body` and author association (`authorA
 `gh issue view {n} --json comments`, `author_association` from REST and MCP), never bare bodies. The
 read is paginated (`tidy/digest-sweep.md`'s Container rollover). Only a comment whose author is
 `OWNER`, `MEMBER`, or `COLLABORATOR` counts (`_shared/pr-run-comments.md`'s Trusted authors,
-implemented by `bin/lib/issues/comment-trust.js`), so a marker planted by any other commenter cannot suppress a finding: it is routed as new. The
+implemented by `bin/lib/issues/comment-trust.js`), so a marker planted by any other commenter
+cannot suppress a finding: it is routed as new. The
 run's output names each skipped marker comment (`trustedMaterialityTexts(existingComments).skipped`).
 On `local-files` the caller passes the current file body, a single-writer string that is trusted.
 A match means the finding is already present and un-promoted — skip the append entirely, write no
