@@ -332,7 +332,7 @@ function assertNoSiblingReads(calls) {
 }
 function assertNoEnumeration(calls) {
   const argv = calls.map((c) => c.args.join(' '));
-  assert.ok(!calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && (c.args[3].startsWith('query={ __type') || c.args[3].includes('subIssues(first:100)'))), `no GraphQL enumeration: ${argv.join(' | ')}`);
+  assert.ok(!calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && (String(c.args[3]).startsWith('query={ __type') || String(c.args[3]).includes('subIssues(first:100)'))), `no GraphQL enumeration: ${argv.join(' | ')}`);
   assert.ok(!argv.some((a) => a.includes('sub_issues')), `no REST enumeration: ${argv.join(' | ')}`);
 }
 
@@ -357,6 +357,7 @@ test('#4799: a sibling in unsettled is gated before any sub-issue is read (the n
   const { gh, calls } = makeGh(happyWorld());
   const out = closeBelowFloorParents(base({ unsettled: [12], gh }));
   assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'sibling-unsettled' }] });
+  assert.ok(calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && String(c.args[3]).includes('subIssues(first:100)')), 'the sub-issue list was enumerated before the screen ran');
   assertNoSiblingReads(calls);
 });
 
