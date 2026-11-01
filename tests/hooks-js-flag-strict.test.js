@@ -1,0 +1,265 @@
+// tests/hooks-js-flag-strict.test.js
+//
+// #4777: every hooks.js verb refuses an undeclared `--*` flag with its own
+// usage line, before its handler runs. KNOWN_FLAGS covers the whole VERBS
+// table, and a verb missing its entry fails closed (refuses every flag).
+// Each verb's positive control runs without the typo and asserts the state
+// effect that run actually produces, so a "nothing changed" assertion on the
+// refused call can fail.
+'use strict';
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { execFileSync } = require('child_process');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { KNOWN_FLAGS, USAGE, VERBS } = require('../plugin/bin/hooks.js');
+
+const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
+const STATUS = path.join('.claude-tweaks', 'reconcile-background-status.json');
+
+function git(args, cwd) {
+  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+}
+
+// #1130: never let an omitted cwd fall through to the spawned subprocess's
+// own process.cwd() — that is the test runner's real working directory.
+const HOOK_SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-sandbox-'));
+
+// A reconcile pass under pr-first (forced by policy.yml in reconcileFixture)
+// fails its GitHub-health preflight at once against localhost, so it runs
+// only its git-only checks and never reaches a real GitHub repo through gh.
+const OFFLINE_GH = { GH_HOST: 'localhost', GH_TOKEN: 'x', GH_REPO: '' };
+
+function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
+  try {
+    // PIPELINE_RUN_DIR: '' neutralizes any ambient run-dir env var (#1130).
+    const stdout = execFileSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env } });
+    return { code: 0, stdout };
+  } catch (e) {
+    return { code: e.status, stdout: e.stdout || '' };
+  }
+}
+
+function runDirFixture(status) {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-')));
+  git(['init', '-q', '--initial-branch=main'], root);
+  git(['config', 'user.email', 'test@example.com'], root);
+  git(['config', 'user.name', 'Test'], root);
+  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
+  git(['add', 'a.txt'], root);
+  git(['commit', '-q', '-m', 'seed'], root);
+
+  const runId = '2026-08-14T120000-spec-999';
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', runId);
+  fs.mkdirSync(runDir, { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
+  fs.writeFileSync(path.join(runDir, 'decisions.md'), '# decisions\n');
+  fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status }));
+
+  return { root, runDir, runId };
+}
+
+// The runDirFixture('clean') shape plus a bare origin one commit ahead of
+// local main. policy.yml pins pr-first, so a reconcile pass gets past the
+// local-merge early return and writes its cache stamp; the ahead origin gives
+// the mirror check a fast-forward to make, so HEAD is an observable effect too.
+function reconcileFixture() {
+  const fixture = runDirFixture('clean');
+  const { root } = fixture;
+  const sib = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-origin-')));
+  const origin = path.join(sib, 'origin.git');
+  const other = path.join(sib, 'other');
+  git(['init', '-q', '--bare', '--initial-branch=main', origin], sib);
+  git(['remote', 'add', 'origin', origin], root);
+  git(['push', '-q', 'origin', 'main'], root);
+  git(['remote', 'set-head', 'origin', 'main'], root);
+  git(['clone', '-q', origin, other], sib);
+  git(['config', 'user.email', 'test@example.com'], other);
+  git(['config', 'user.name', 'Test'], other);
+  fs.writeFileSync(path.join(other, 'b.txt'), 'two\n');
+  git(['add', 'b.txt'], other);
+  git(['commit', '-q', '-m', 'ahead'], other);
+  git(['push', '-q', 'origin', 'main'], other);
+  fs.mkdirSync(path.join(root, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.claude-tweaks', 'policy.yml'), 'integration-model: pr-first\n');
+  fs.appendFileSync(path.join(root, '.git', 'info', 'exclude'), '.claude-tweaks/\n');
+  return fixture;
+}
+
+// A repo with one empty commit and no run dirs.
+function freshRepo() {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-fresh-')));
+  git(['init', '-q', '--initial-branch=main'], root);
+  git(['config', 'user.email', 'test@example.com'], root);
+  git(['config', 'user.name', 'Test'], root);
+  git(['commit', '-q', '--allow-empty', '-m', 'seed'], root);
+  return root;
+}
+
+// A linked worktree of `root`, outside the main checkout.
+function linkedWorktree(root) {
+  const parent = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-wt-'));
+  const wt = path.join(parent, 'wt');
+  git(['worktree', 'add', '-q', wt, '-b', `wt-${path.basename(parent)}`], root);
+  return fs.realpathSync(wt);
+}
+
+test('#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else', () => {
+  assert.deepStrictEqual(Object.keys(KNOWN_FLAGS).sort(), Object.keys(VERBS).sort());
+  assert.ok(fs.readFileSync(HOOKS, 'utf8').includes('\n  reconcile: ['));
+});
+
+test('#4777: every VERBS verb refuses an undeclared flag with its usage line', () => {
+  for (const verb of Object.keys(VERBS)) {
+    const result = runHook([verb, '--definitely-not-a-flag']);
+    assert.equal(result.code, 0, verb);
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, verb);
+  }
+});
+
+test('#4777 AC1.1 AC1.2: reconcile --dryrun prints the reconcile usage line and runs no check', () => {
+  const { root, runDir } = reconcileFixture();
+  const head = git(['rev-parse', 'HEAD'], root);
+  const usage = 'claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n';
+  for (const args of [['reconcile', '--dryrun'], ['reconcile', '--json', '--dryrun']]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.equal(result.stdout, usage, args.join(' '));
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
+    assert.ok(fs.existsSync(runDir), 'the run dir is still there');
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive')), 'nothing was archived');
+    assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
+  }
+  // Declared-flag control: the same verb with its real flags does not print the usage line.
+  // This goes red when reconcile's KNOWN_FLAGS entry is removed, since the fail-closed guard then refuses every flag.
+  const declared = runHook(['reconcile', '--dry-run', '--json'], { cwd: root });
+  assert.doesNotMatch(declared.stdout, /claude-tweaks: usage:/);
+});
+
+test('#4777: reconcile --json with no typo runs for real (positive control for the reconcile tests)', () => {
+  const { root } = reconcileFixture();
+  const head = git(['rev-parse', 'HEAD'], root);
+  const result = runHook(['reconcile', '--json'], { cwd: root });
+  assert.equal(result.code, 0);
+  assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'a real pass stamps reconcile-cache.json');
+  assert.notEqual(git(['rev-parse', 'HEAD'], root), head, 'the mirror check fast-forwards local main to the ahead origin');
+});
+
+test('#4777: declared value flags consume their value token', () => {
+  const { root } = reconcileFixture();
+  for (const args of [
+    ['reconcile', '--dry-run', '--checks', '--json'],
+    ['reconcile', '--dry-run', '--checks', ''],
+    // Discriminates --checks's VALUE_FLAGS membership: without it, --bogus reads as an undeclared flag.
+    ['reconcile', '--dry-run', '--checks', '--bogus'],
+  ]) {
+    const result = runHook(args, { cwd: root });
+    assert.doesNotMatch(result.stdout, /claude-tweaks: usage:/, args.join(' '));
+  }
+});
+
+test('#4777: a flagless verb still runs bare', () => {
+  const { root } = reconcileFixture();
+  const head = git(['rev-parse', 'HEAD'], root);
+  const result = runHook(['reconcile-summary'], { cwd: root });
+  assert.equal(result.code, 0);
+  assert.ok(result.stdout.startsWith('reconcile:'), result.stdout);
+  // Positive control for reconcile-summary's refusal test: a bare run fast-forwards local main.
+  assert.notEqual(git(['rev-parse', 'HEAD'], root), head, 'the bare run fast-forwarded local main');
+});
+
+test('#4777: reconcile-background and reconcile-summary refuse an undeclared flag and change nothing', () => {
+  const { root, runDir } = reconcileFixture();
+  const head = git(['rev-parse', 'HEAD'], root);
+  for (const verb of ['reconcile-background', 'reconcile-summary']) {
+    const result = runHook([verb, '--bogus'], { cwd: root });
+    assert.equal(result.code, 0, verb);
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, verb);
+    assert.ok(!fs.existsSync(path.join(root, STATUS)), `${verb} wrote no background status`);
+    assert.ok(fs.existsSync(runDir), `${verb} left the run dir alone`);
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive')), `${verb} archived nothing`);
+    assert.equal(git(['rev-parse', 'HEAD'], root), head, `${verb} left HEAD where it was`);
+  }
+});
+
+test('#4777: reconcile-background with no typo writes its status file (positive control)', () => {
+  const { root } = reconcileFixture();
+  const result = runHook(['reconcile-background'], { cwd: root });
+  assert.equal(result.stdout, 'claude-tweaks: reconcile-background complete\n');
+  assert.ok(fs.existsSync(path.join(root, STATUS)), 'a real background pass writes its status file');
+});
+
+test('#4777: adopt-run-dir refuses an undeclared flag before adopting', () => {
+  const { root, runDir, runId } = runDirFixture('clean');
+  const wt = linkedWorktree(root);
+  const copy = path.join(wt, '.claude-tweaks', 'pipelines', runId);
+  for (const args of [
+    ['adopt-run-dir', '--run', runDir, '--worktree', wt, '--bogus'],
+    ['adopt-run-dir', '--bogus', '--run', runDir, '--worktree', wt],
+  ]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['adopt-run-dir']}\n`, args.join(' '));
+    assert.ok(!fs.existsSync(copy), 'nothing was adopted into the worktree');
+  }
+  // Positive control: the same arguments without the typo adopt the run's decisions.md.
+  const adopted = runHook(['adopt-run-dir', '--run', runDir, '--worktree', wt], { cwd: root });
+  assert.equal(adopted.stdout, 'copied: decisions.md\n');
+  assert.ok(fs.existsSync(path.join(copy, 'decisions.md')));
+});
+
+// Shared by the two sweep-shadow tests: a main run dir that already holds
+// staged/ (sweep-shadow needs it to relocate into), and one shadow proposal
+// under the linked worktree's copy of the run dir.
+function sweepFixture() {
+  const { root, runDir, runId } = runDirFixture('clean');
+  fs.mkdirSync(path.join(runDir, 'staged'));
+  const wt = linkedWorktree(root);
+  const shadow = path.join(wt, '.claude-tweaks', 'pipelines', runId, 'staged', 'proposal.md');
+  fs.mkdirSync(path.dirname(shadow), { recursive: true });
+  fs.writeFileSync(shadow, 'proposal\n');
+  return { root, runDir, wt, shadow };
+}
+
+test('#4777: sweep-shadow refuses an undeclared flag before sweeping', () => {
+  const { root, runDir, wt, shadow } = sweepFixture();
+  for (const args of [
+    ['sweep-shadow', '--run', runDir, '--worktree', wt, '--bogus'],
+    ['sweep-shadow', '--bogus', '--run', runDir, '--worktree', wt],
+  ]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['sweep-shadow']}\n`, args.join(' '));
+    assert.ok(fs.existsSync(shadow), 'the shadow file is not swept');
+  }
+});
+
+test('#4777: sweep-shadow with no typo sweeps the shadow file (positive control)', () => {
+  const { root, runDir, wt, shadow } = sweepFixture();
+  const result = runHook(['sweep-shadow', '--run', runDir, '--worktree', wt], { cwd: root });
+  assert.equal(result.stdout, 'relocated: proposal.md\n');
+  assert.ok(!fs.existsSync(shadow), 'the shadow file is moved out of the worktree');
+  assert.ok(fs.existsSync(path.join(runDir, 'staged', 'proposal.md')), 'the proposal lands in the main run dir');
+});
+
+test('#4777: resolve-run-dir --create refuses an undeclared flag and mints nothing', () => {
+  const root = freshRepo();
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  for (const args of [
+    ['resolve-run-dir', '--spec-slug', 'x', '--create', '--bogus'],
+    ['resolve-run-dir', '--bogus', '--spec-slug', 'x', '--create'],
+  ]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, args.join(' '));
+    assert.ok(!fs.existsSync(pipelines) || fs.readdirSync(pipelines).length === 0, 'no run dir was minted');
+  }
+});
+
+test('#4777: resolve-run-dir --create with no typo mints a run dir (positive control)', () => {
+  const root = freshRepo();
+  const result = runHook(['resolve-run-dir', '--spec-slug', 'x', '--create'], { cwd: root });
+  assert.equal(result.code, 0);
+  assert.ok(fs.statSync(result.stdout.trim()).isDirectory(), 'a real --create run mints the run dir');
+});

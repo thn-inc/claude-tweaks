@@ -157,8 +157,6 @@ function usageText() {
     + `  <event>  (harness hook events, JSON on stdin: ${EVENTS.join(', ')})\n`;
 }
 
-const HELP_FLAGS = new Set(['--help', '-h']);
-
 // #1012: declared-flag sets for the flag-strict verbs — the mutating run-state
 // verbs (archive-run too, since it moves files and commits — #4773) plus the
 // read-only check-pass-reentry (#3553) and resolve-ledger (#3897), exactly the
@@ -189,12 +187,22 @@ const KNOWN_FLAGS = {
   'teardown-run': ['--run', '--merged', '--abandoned', '--remote-ref-only'],
   'resolve-console': ['--run', '--approve', '--decline', '--reverse-failed', '--filing-failed'],
   'check-pass-reentry': ['--run', '--online'],
+  'resolve-run-dir': ['--spec-slug', '--mode', '--standalone', '--create', '--root-only', '--archived'],
+  'sweep-shadow': ['--run', '--worktree'],
+  'adopt-run-dir': ['--run', '--worktree'],
+  'check-resume-freshness': ['--run'],
+  'check-staged-inventory': ['--run'],
+  'check-session-residue': ['--run'],
+  'check-sibling-sessions': ['--record'],
+  reconcile: ['--dry-run', '--json', '--mcp-reachable', '--checks'],
+  'reconcile-summary': [],
+  'reconcile-background': [],
 };
 
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
-const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger']);
+const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
@@ -1928,19 +1936,16 @@ async function main(argv) {
   // included — it is never declared) intercepts here, before resolveRunArg
   // or any lib call ever runs. Every other VERBS-table verb keeps the
   // narrower HELP_FLAGS-only guard unchanged.
-  if (verb && Object.hasOwn(KNOWN_FLAGS, cmd)) {
+  if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it as a token to classify — checked separately here,
     // same as --help itself (also never declared for any of these
     // verbs, so it always falls out as "unknown" via the scan below too).
     const argsAfterCmd = argv.slice(3);
-    if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd], argsAfterCmd)) {
+    if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
-  } else if (verb && argv.slice(3).some((a) => HELP_FLAGS.has(a))) {
-    process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
-    return 0;
   }
   if (verb) return verb.run(argv);
   if (!EVENTS.includes(cmd)) {
@@ -2030,4 +2035,4 @@ if (require.main === module) {
 // VERBS and its derived USAGE exported so tests/hooks-help-guard.test.js's
 // table-driven suite iterates the SAME verb table this dispatcher's --help/-h
 // guard and dispatch use, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, USAGE, VERBS };
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VERBS };
