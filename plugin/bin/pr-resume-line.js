@@ -10,7 +10,8 @@
 // Usage: pr-resume-line.js --body-file <path> --run-id <id> [--help]
 //   --body-file  the PR body's raw text, read from this file.
 //   --run-id     the run whose Resume line is expected (the line's run dir must
-//                end in it).
+//                end in it). Must match RUN_ID_SHAPE from lib/issues/claim-store.js;
+//                a non-matching value exits 1.
 // Output: one JSON line, exit 0, for every verdict — failure included:
 //   {"resume":"<line>","runDir":"<dir>","target":"<target>","steps":"<steps>","failure":null}
 //   {"resolve":"no-resume-line"|"resume-line-shape","failure":null}
