@@ -174,6 +174,7 @@ function enumerateSubIssues({
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
 // With no resolvable parent it stops after resolution; so does a body-text `Parent: #N` whose
 // task list does not list `subIssue` (the parent's task list wins), before any shape 5 or 6 read.
+// An empty or missing task list is not an omission: it keeps the parent, as before.
 // `host` is the origin's host; absent or 'github.com' leaves every argv as on github.com.
 function gatherGateFacts({
   subIssue, parent, owner, repo, host, workLinks, caller,
@@ -190,7 +191,7 @@ function gatherGateFacts({
   }
   const slug = repoSlug({ host, owner, repo });
   const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
-  if (!given(parent) && workLinks === 'body-text' && !numbers.includes(subIssue)) return noParent;
+  if (!given(parent) && workLinks === 'body-text' && numbers.length > 0 && !numbers.includes(subIssue)) return noParent;
   const subIssues = numbers.map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.

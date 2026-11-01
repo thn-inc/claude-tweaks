@@ -540,6 +540,15 @@ test("gatherGateFacts body-text: a Parent line the parent's task list omits reso
   assert.deepEqual(fromParent.subIssues.map((s) => s.number), [12]);
 });
 
+test("gatherGateFacts body-text: a parent with no task list keeps the parent (an empty list is not an omission)", () => {
+  for (const parentBody of ['', 'Just prose, no task list.\n']) {
+    const { calls, caller } = makeGh({ bodies: { 11: 'Parent: #10\n', 10: parentBody } });
+    const got = gatherGateFacts({ subIssue: 11, owner: 'o', repo: 'r', workLinks: 'body-text', caller });
+    assert.deepEqual(got, { parent: 10, parentLabels: ['parent-issue'], subIssues: [] }, JSON.stringify(parentBody));
+    assert.deepEqual(argvOf(calls), [SHAPE.body(11), SHAPE.body(10), SHAPE.labels(10)], JSON.stringify(parentBody));
+  }
+});
+
 test("gatherGateFacts native: a sub-issue list omitting the sub-issue keeps the parent (Reading B is body-text only)", () => {
   const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [12] } });
   const got = gatherGateFacts({ subIssue: 11, ...NATIVE, caller });

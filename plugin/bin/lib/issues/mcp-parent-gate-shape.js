@@ -27,8 +27,8 @@
 //      `parentLink` present (1) then guarded (3), or, under body-text, `subIssueGet`;
 //   3. `parentGet` present (1) then guarded (3);
 //   4. the enumeration source: `subIssueList` present (1), then guarded (3), or, under
-//      body-text, `parentGet`'s body; a sub-issue in hand that body-text's list omits has no
-//      parent (Reading B), so the result is the no-parent shape and 5 never runs;
+//      body-text, `parentGet`'s body; a sub-issue in hand that body-text's non-empty list
+//      omits has no parent (Reading B), so the result is the no-parent shape and 5 never runs;
 //   5. `subIssueGets` present (1), an object (3), its key set equal to the enumerated
 //      numbers (1), then each entry guarded in ascending order (3).
 // normalizeMcpFacts stops there. `parentComments` and `me` are read by
@@ -155,6 +155,9 @@ function normalizeComment(c) {
   };
 }
 
+// A fresh no-parent result per call, so no caller can mutate a shared one.
+const noParent = () => ({ gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null });
+
 // raw facts + { subIssue | parent, workLinks } -> { gate, idempotence }.
 //   gate         { parent, parentLabels, subIssues: [{ number, title, state, stateReason, labels, closedBy }] }
 //                (the facts shape gatherGateFacts returns; with no parent, { parent: null, parentLabels: [], subIssues: [] }).
@@ -165,18 +168,15 @@ function normalizeMcpFacts(raw, { subIssue, parent, workLinks } = {}) {
   if (!isPlainObject(raw)) throw absent('(top level)', 'must be a JSON object');
   const given = parent !== null && parent !== undefined;
   const resolved = given ? parent : resolveParent(raw, subIssue, workLinks);
-  if (resolved === null || resolved === undefined) {
-    return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
-  }
+  if (resolved === null || resolved === undefined) return noParent();
 
   const parentEntry = need(raw, 'parentGet');
   guardIssue(parentEntry, 'parentGet', resolved);
   const numbers = enumerate(raw, parentEntry, workLinks);
-  // Reading B, as parent-gate.js's gatherGateFacts: under body-text a `Parent: #N` whose task list
-  // does not list the sub-issue in hand resolves no parent.
-  if (!given && workLinks === 'body-text' && !numbers.includes(subIssue)) {
-    return { gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null };
-  }
+  // Reading B, as parent-gate.js's gatherGateFacts: under body-text a `Parent: #N` whose non-empty
+  // task list does not list the sub-issue in hand resolves no parent. An empty or missing list is
+  // not an omission: it keeps the parent.
+  if (!given && workLinks === 'body-text' && numbers.length > 0 && !numbers.includes(subIssue)) return noParent();
 
   const gets = need(raw, 'subIssueGets');
   if (!isPlainObject(gets)) throw invalid('subIssueGets', 'is not an object keyed by sub-issue number');

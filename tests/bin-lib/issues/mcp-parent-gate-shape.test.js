@@ -122,6 +122,21 @@ test("body-text: a Parent line the parent's task list omits resolves no parent (
   assert.equal(normalizeMcpFacts(native, { subIssue: 11, workLinks: 'native' }).gate.parent, 10);
 });
 
+test('body-text: a parent with no task list keeps the parent (an empty list is not an omission)', () => {
+  for (const body of ['', null, 'Just prose, no task list.']) {
+    const facts = {
+      subIssueGet: issue(11, { body: 'Parent: #10' }),
+      parentGet: issue(10, { state: 'open', state_reason: null, labels: [{ name: 'parent-issue' }], body }),
+      subIssueGets: {},
+    };
+    const got = normalizeMcpFacts(facts, { subIssue: 11, workLinks: 'body-text' });
+    assert.deepEqual(got, {
+      gate: { parent: 10, parentLabels: ['parent-issue'], subIssues: [] },
+      idempotence: { state: 'OPEN', stateReason: '' },
+    }, JSON.stringify(body));
+  }
+});
+
 function factsError(fn) {
   try { fn(); } catch (err) { return err; }
   return assert.fail('expected a FactsError');
