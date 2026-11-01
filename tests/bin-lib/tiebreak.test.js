@@ -480,8 +480,9 @@ test('same lens+path:line, different claims → two ids, two lines needed (AC7.1
   const b = { ...RAW[0], claim: 'never closes the fd' };
   assert.notEqual(findingId(a), findingId(b));
   writeFindings(dir, buildFindingsArtifact([a, b]));
-  // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
-  // path:line, which these two share — coverage keys on the id instead.
+  // The console/resolve.js matcher keys on lens + path:line (a verdict's whole
+  // path, a STAGED line's longest named candidate, #4632), which these two
+  // share — coverage keys on the id instead.
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
   fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);

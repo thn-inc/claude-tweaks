@@ -342,9 +342,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // each listed id" — matched on the verdict line's own shape (verdictLineRe:
 // the `Tiebreak tiebreak:{id}:` step, or the confirmed line's `confirmed by
 // tiebreak:{id}. Confirmed.`), never on the marker anywhere in a line, so a
-// marker quoted inside another line's text never counts. The #3772 matcher in
-// console/resolve.js (findingKey: lens + first path:line) is unchanged and
-// coarser than the id — two findings that differ only in claim share a key but
+// marker quoted inside another line's text never counts. The matcher in
+// console/resolve.js keys on lens + path:line — a verdict's whole path, a
+// STAGED line's longest candidate path a verdict names (#4632) — and is
+// coarser than the id: two findings that differ only in claim share a key but
 // need two verdict lines here.
 //
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact

@@ -465,13 +465,21 @@ const TIEBREAK_STEP_HEAD = `${VERDICT_LINE_HEAD}Tiebreak tiebreak:([0-9a-f]{12})
 const TIEBREAK_CANT_TELL_RE = new RegExp(`${TIEBREAK_STEP_HEAD}(console|digested): ([A-Za-z0-9:_-]+)\\. Severity: ${VERDICT_SEV}\\.(?: Recommendation: (file|drop|none)\\.)?${VERDICT_LINE_END}`);
 // The evidence path always equals the finding path (tiebreak.js's evidenceProblem), so it is a backreference.
 const TIEBREAK_DROPPED_RE = new RegExp(`${TIEBREAK_STEP_HEAD}dropped: refuted by tiebreak\\. Evidence: (\\3:\\d+ .*)\\. Severity: ${VERDICT_SEV}\\.${VERDICT_LINE_END}`);
-const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (\\S+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.`);
+// The path may hold a space (#4632): the greedy group is anchored on the resolver-written tail.
+const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (.+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.`);
 const STAGED_FILE_RE = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/;
+
+// A verdict's path is resolver-written, so it keys whole, never FINDING_PATH-truncated (#4632).
+// The lens goes through findingKey's own class, so a quoted `"3a b"` keys `3a` on both sides.
+function verdictKey(lens, file, lineNo) {
+  const l = /^[A-Za-z0-9_-]+/.exec(lens);
+  return l && /^\d+$/.test(lineNo) ? `${l[0]}|${file}:${lineNo}` : null;
+}
 
 function parseTiebreakLine(line) {
   if (!/^- (STAGED|AUTO) /.test(line)) return null;
   const verdict = (kind, [id, lens, file, lineNo], rest) => ({
-    kind, id, key: findingKey(line), lens, path: file, line: /^\d+$/.test(lineNo) ? Number(lineNo) : lineNo,
+    kind, id, key: verdictKey(lens, file, lineNo), lens, path: file, line: /^\d+$/.test(lineNo) ? Number(lineNo) : lineNo,
     severity: null, recommendation: null, reason: null, evidence: null, ...rest,
   });
   const c = TIEBREAK_CONFIRMED_RE.exec(line);
@@ -493,11 +501,17 @@ function approveAllDefault(recommendation) {
 
 // A STAGED line's finding keys: its first location's, plus the second location of a
 // two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
-function lineKeys(line) {
-  const keys = [findingKey(line)];
-  const co = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+findings\s+\S+?:\d+\s+\/\s+(\S+?):(\d+)\s+share a location/.exec(line);
-  if (co) keys.push(`${co[1]}|${co[2]}:${co[3]}`);
-  return keys.filter(Boolean);
+// Each location takes its longest candidate (locationCandidates) a settler's key names, else the
+// FINDING_PATH match (#4632). The second location's candidates start after the ` / `.
+function lineKeys(line, known = new Set()) {
+  const keys = [];
+  const lens = FINDING_LENS_RE.exec(line);
+  const loc = FINDING_LOC_RE.exec(line);
+  if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
+  const co = /\blens\s+"?([A-Za-z0-9_-]+)"?\s+findings\s+.+?:\d+\s+\/\s+(.+?:\d+\s+share a location)/.exec(line);
+  const second = co && FINDING_LOC_RE.exec(co[2]);
+  if (second) keys.push(namedCandidate(locationCandidates(co[2], second, co[1]), known));
+  return keys;
 }
 
 // A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
@@ -511,6 +525,28 @@ const FINDING_PATH = String.raw`(?:[A-Za-z0-9_./@+~%$-]|\[{1,2}[A-Za-z0-9_.@+~%$
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
 const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
 const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+const FINDING_LENS_RE = /\blens\s+"?([A-Za-z0-9_-]+)"?/i;
+const FINDING_PATH_CHAR = /[A-Za-z0-9_./@+~%$-]/; // FINDING_PATH's plain class
+
+// The candidate keys of one FINDING_LOC_RE match in `text`, shortest first (#4632). The first is
+// the FINDING_PATH match, which stops at a space. Each longer one starts right after another
+// character outside FINDING_PATH_CHAR further left, so `[a dir/x.ts:3]` also yields `a dir/x.ts`.
+// The scan stops at a `"`, an em dash or the text start, which bounds a prose lead-in.
+function locationCandidates(text, match, lens) {
+  const end = match.index + match[1].length;
+  const keys = [`${lens}|${match[1]}:${match[2]}`];
+  for (let j = match.index - 1; j >= 0 && text[j] !== '"' && text[j] !== '—'; j--) {
+    if (j === 0 || !FINDING_PATH_CHAR.test(text[j - 1])) keys.push(`${lens}|${text.slice(j, end)}:${match[2]}`);
+  }
+  return keys;
+}
+
+// A STAGED location's key: its longest candidate some settler's key names, else the shortest (#4632).
+function namedCandidate(candidates, known) {
+  for (let i = candidates.length - 1; i > 0; i--) if (known.has(candidates[i])) return candidates[i];
+  return candidates[0];
+}
+
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
@@ -521,22 +557,23 @@ const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
 // Which verdict decides a staged file settled by several: the one needing a human first.
 const VERDICT_PRECEDENCE = ['console', 'confirmed', 'digested', 'dropped'];
 
-// The finding keys a staged contested file's `## Positions` section names: one per
+// The findings a staged contested file's `## Positions` section names: one locationCandidates list per
 // `- **Finding X (lens …)**` bullet (step3-debate-and-refutation.md's Mixed / partial shape), up to
-// the next `## ` heading (#4563). Any other list line there — one inside a quoted claim — names
+// the next `## ` heading (#4563, #4632). Any other list line there — one inside a quoted claim — names
 // nothing. Null text or no such section names none.
-function contestedPositionKeys(text) {
+function contestedPositionCandidates(text) {
   if (typeof text !== 'string') return [];
-  const keys = [];
+  const out = [];
   let inPositions = false;
   for (const line of text.split(/\r?\n/)) {
     if (/^## /.test(line)) inPositions = /^## Positions\s*$/.test(line);
     else if (inPositions && /^- \*\*Finding [A-Z]\b/.test(line)) {
-      const key = findingKey(line);
-      if (key) keys.push(key);
+      const lens = FINDING_LENS_RE.exec(line);
+      const loc = FINDING_LOC_RE.exec(line);
+      if (lens && loc) out.push(locationCandidates(line, loc, lens[1]));
     }
   }
-  return keys;
+  return out;
 }
 
 // Every tiebreak verdict in decisions.md, indexed by the finding key it settles (latest wins) and by
@@ -561,6 +598,9 @@ function tiebreakModel(snapshot) {
     }
   });
   const settledAfter = (index, keys) => keys.length > 0 && keys.every((k) => settledByKey.has(k) && settledByKey.get(k).index > index);
+  // The keys some settler names: a STAGED location resolves to its longest candidate among them (#4632).
+  const known = new Set(settledByKey.keys());
+  const keysOf = (line) => lineKeys(line, known);
 
   const stagedNames = new Set(snapshot.staged.map((s) => s.name));
   const refused = refusedStagedNames(snapshot.decisions);
@@ -569,7 +609,7 @@ function tiebreakModel(snapshot) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
     const m = STAGED_FILE_RE.exec(line);
     if (!m || !stagedNames.has(m[1])) return;
-    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: lineKeys(line) }]);
+    naming.set(m[1], [...(naming.get(m[1]) || []), { index, keys: keysOf(line) }]);
   });
   function computeSettledFiles() {
     const settledFiles = new Map();
@@ -615,12 +655,14 @@ function tiebreakModel(snapshot) {
   const latestStaged = new Map();
   lines.forEach((line, index) => {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) return;
-    for (const key of lineKeys(line)) latestStaged.set(key, index);
+    for (const key of keysOf(line)) latestStaged.set(key, index);
   });
   const superseded = new Set(); // ids of console verdicts a re-stage outdated and a pair's verdict replaced
   for (const [name, chosen] of computeSettledFiles().settledFiles) {
     if (!/^review-contested-/.test(name)) continue;
-    for (const key of contestedPositionKeys(stagedText.get(name))) {
+    for (const candidates of contestedPositionCandidates(stagedText.get(name))) {
+      // The bullet's key is the one its STAGED lines resolve to (#4632): its own verdict names it.
+      const key = namedCandidate(candidates, known);
       const own = settledByKey.get(key);
       const stagedAt = latestStaged.get(key);
       if (!own || (own.index < stagedAt && chosen.index > stagedAt)) {
@@ -631,7 +673,7 @@ function tiebreakModel(snapshot) {
   }
   const result = computeSettledFiles();
   for (const id of superseded) result.absorbed.add(id);
-  return { lines, latestById, settledAfter, settledFiles: result.settledFiles, absorbed: result.absorbed };
+  return { lines, latestById, settledAfter, keysOf, settledFiles: result.settledFiles, absorbed: result.absorbed };
 }
 
 const tiebreakField = (v) => ({ id: v.id, key: v.key, lens: v.lens, path: v.path, line: v.line, severity: v.severity, recommendation: v.recommendation, reason: v.reason });
@@ -746,9 +788,12 @@ function engineItems(snapshot, stagedIds) {
 // review-contested file that lists it in its `## Positions` section (partner
 // inheritance in tiebreakModel, #4563). A keyless line is never superseded. A
 // can't-tell `console` verdict supersedes its STAGED line too, and re-enters
-// as one `tiebreak:{id}` item (#3949).
+// as one `tiebreak:{id}` item (#3949). A verdict line keys its whole
+// resolver-written path; a STAGED location takes its longest candidate
+// (locationCandidates) some settler's key names, else the FINDING_PATH match
+// findingKey returns, which the prose settlers above still key on (#4632).
 function findingKey(line) {
-  const lens = /\blens\s+"?([A-Za-z0-9_-]+)"?/i.exec(line);
+  const lens = FINDING_LENS_RE.exec(line);
   const loc = FINDING_LOC_RE.exec(line);
   return lens && loc ? `${lens[1]}|${loc[1]}:${loc[2]}` : null;
 }
@@ -774,7 +819,7 @@ function coordinationItems(snapshot, stagedIds) {
   const occurrences = new Map();
   for (const [i, line] of model.lines.entries()) {
     if (!/^- STAGED /.test(line) || parseTiebreakLine(line)) continue;
-    if (model.settledAfter(i, lineKeys(line))) continue;
+    if (model.settledAfter(i, model.keysOf(line))) continue;
     // Extension-anchored so trailing sentence punctuation (a period ending
     // the decisions.md line right after ".md") is never captured into the
     // filename — `.` is deliberately excluded from the body class.
@@ -793,7 +838,7 @@ function coordinationItems(snapshot, stagedIds) {
   for (const v of model.latestById.values()) {
     if (v.kind !== 'console' || model.absorbed.has(v.id)) continue;
     const contested = model.lines.some((line, i) => i < v.index && /^- STAGED /.test(line) && !parseTiebreakLine(line)
-      && lineKeys(line).includes(v.key) && lineSection(line) === SECTIONS.CONTESTED);
+      && model.keysOf(line).includes(v.key) && lineSection(line) === SECTIONS.CONTESTED);
     out.push({ id: `tiebreak:${v.id}`, section: contested ? SECTIONS.CONTESTED : SECTIONS.LOW, ...consoleVerdictResolution(v) });
   }
   return out;
