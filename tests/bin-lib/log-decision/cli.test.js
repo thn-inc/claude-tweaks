@@ -423,6 +423,8 @@ test('#4581: refuses an aggregate behind a lowercase marker', () => refusesAggre
 
 test('#4581: refuse — coincidence clause followed by an aggregate clause', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1 / a/b.js:2 share a location but not substance; lens "3c" 4 findings not reproduced']));
 
+test('#4581: refuse — colon-terminated lens with a plural subject (real line)', () => refusesAggregate(['--text', 'Step 3 reproduction: lens 3a: three single-agent findings, none reproduced']));
+
 test('#4581: refuse — aggregate via --text-file', () => {
   const { main, root, run: runDir } = fixture();
   const file = path.join(root, 'entry.txt');

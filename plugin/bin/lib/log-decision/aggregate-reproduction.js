@@ -8,15 +8,16 @@
 
 const { FINDING_PATH } = require('../console/finding-path');
 
-// An unquoted lens name never holds a `:` — `Lens 3c: no findings` is commentary, not a lens noun phrase.
-const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|[^\s:]+)`;
+const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 const WORD = String.raw`[\w/()-]+\s+`;
+// A plural subject opening on a zero quantifier (`no findings`, `zero …`, `0 …`) names no findings, not several.
+const NOT_ZERO = String.raw`(?!(?:no|zero|0)\s)`;
 const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+(?:"[^"]*"|[A-Za-z0-9_-]+)\s+findings\s+${FINDING_PATH}:\d+\s+\/\s+${FINDING_PATH}:\d+\s+share a location\b`);
 const PATH_RE = new RegExp(String.raw`${FINDING_PATH}(?::\d+)?`, 'g');
 const PLURAL_SUBJECT_RES = [
-  new RegExp(String.raw`\b\d+\s+(?:${WORD}){0,3}findings\b`, 'i'),
-  new RegExp(String.raw`\b${LENS}\s+(?:${WORD}){0,3}findings\b`, 'i'),
-  new RegExp(String.raw`\breproduction:\s+(?:${WORD}){0,4}findings\b`, 'i'),
+  new RegExp(String.raw`\b${NOT_ZERO}\d+\s+(?:${WORD}){0,3}findings\b`, 'i'),
+  new RegExp(String.raw`\b${LENS}\s+${NOT_ZERO}(?:${WORD}){0,3}findings\b`, 'i'),
+  new RegExp(String.raw`\breproduction:\s+${NOT_ZERO}(?:${WORD}){0,4}findings\b`, 'i'),
 ];
 const LENS_FINDING_RE = new RegExp(String.raw`\b${LENS}\s+(?:[\w-]+\s+)?finding\b`, 'gi');
 
