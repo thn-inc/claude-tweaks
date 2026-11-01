@@ -70,6 +70,7 @@ const VERB_FLAGS = {
 };
 const POSITIVE = /^[1-9]\d*$/;
 const NUMBER_FLAGS = new Set(['--old', '--new']);
+const COUNT_FLAGS = new Set(['--count', '--new-count']);
 // A paged comment read of a full digest walks several pages, so it earns more than a single call's bound.
 const PAGED_READ_TIMEOUT_MS = 30000;
 
@@ -84,8 +85,7 @@ function parseArgs(argv) {
     const value = rest[++i];
     if (typeof value !== 'string' || !value.trim() || value.startsWith('--')) return { error: `${flag} requires a value` };
     if (NUMBER_FLAGS.has(flag) && !POSITIVE.test(value)) return { error: `${flag} requires a positive integer` };
-    if (flag === '--count' && !/^\d+$/.test(value)) return { error: '--count requires a non-negative integer' };
-    if (flag === '--new-count' && !/^\d+$/.test(value)) return { error: '--new-count requires a non-negative integer' };
+    if (COUNT_FLAGS.has(flag) && !/^\d+$/.test(value)) return { error: `${flag} requires a non-negative integer` };
     if (flag === '--candidates' && !value.split(',').every((n) => POSITIVE.test(n))) return { error: '--candidates requires positive integers, comma-separated' };
     o[flag.slice(2)] = value;
   }
