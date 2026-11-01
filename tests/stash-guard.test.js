@@ -325,6 +325,7 @@ test('a store that writes nothing: probe B (two newer entries dropped) keeps the
 
 test('a nothing-written store keeps its recover command when another outcome carries one, and the printed commands restore the baseline', () => {
   const dir = fixture();
+  const { root, runDir } = withRunDir();
   const x = stashPush(dir, 'xx');
   const z = stashPush(dir, 'zz');
   git(dir, 'stash', 'store', '-m', x.subject, x.sha);
@@ -335,7 +336,7 @@ test('a nothing-written store keeps its recover command when another outcome car
   git(dir, 'stash', 'drop', 'stash@{0}');
   git(dir, 'stash', 'drop', 'stash@{0}');
   assert.deepEqual(stack(dir), [x]);
-  const r = compare(dir, baseline, ['--restore']);
+  const r = compare(dir, baseline, RUN_ARGS(runDir), { mainRoot: root, cwd: () => root });
   assert.equal(r.code, 3);
   assert.deepEqual(r.json.restored, [z.sha]);
   assert.equal(r.json.restoreFailed.length, 2);
@@ -347,6 +348,11 @@ test('a nothing-written store keeps its recover command when another outcome car
   assert.equal(movedX.error, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down');
   assert.doesNotMatch(r.err, NOTHING_TO_RECOVER);
   assert.deepEqual(stack(dir), [z, x]);
+  // The FAILED line keeps the held entry's recover command and its ordering error.
+  const heldLine = decisionsOf(runDir).split('\n').find((l) => l.startsWith('- FAILED ') && l.includes(`removed stash entry ${z.sha}`));
+  assert.ok(heldLine, 'a FAILED line names the held entry');
+  assert.ok(heldLine.includes('restore failed: git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands'));
+  assert.ok(heldLine.includes(`recover with: ${heldZ.command}.`));
   // Run the printed commands in the printed (stderr) order, as argv rather than a shell.
   const printed = [...r.err.matchAll(/restore failed for ([0-9a-f]{40}); recover with:\n(.+)\n/g)];
   assert.deepEqual(printed.map((m) => m[1]), [x.sha, z.sha]);

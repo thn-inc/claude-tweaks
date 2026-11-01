@@ -311,7 +311,7 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
       else if (finalStack[0] && finalStack[0].sha === entry.sha) onTop.push(p);
       else fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down', command);
     }
-    const otherCommand = outcomes.some((x) => x && x.failed && x.failed.command !== null);
+    const otherCommand = outcomes.some((x) => x && x.failed);
     for (const { i, entry, command } of onTop) {
       if (otherCommand) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands', command);
       else fail(i, entry, 'same commit still at stash@{0}; nothing to recover', null);
