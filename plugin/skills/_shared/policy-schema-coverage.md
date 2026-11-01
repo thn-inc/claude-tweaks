@@ -1,4 +1,4 @@
-<!-- Sibling of `_shared/policy-schema.md` — its `worktree-always`/teardown gate coverage blocks and the `merge-verification` derivation block, split out per #635 when the parent file pushed against the 40,960 B ceiling. -->
+<!-- Sibling of `_shared/policy-schema.md` — its `worktree-always`/teardown gate coverage blocks, the `merge-verification` derivation block, and the `resolveValue` coercion-contract section, split out per #635 when the parent file pushed against the 40,960 B ceiling. -->
 
 ## `worktree-always` coverage — canonical
 
@@ -75,3 +75,18 @@ Branches 3–4 obtain both branches through the canonical resolution in `_shared
 <!-- merge-verification-derivation:end -->
 
 A derived `off` still waits on a PR's own pending checks, and parks on a red one, at merge time — `_shared/pr-first-merge.md` Step 2.5's derived-`off` rule — so branches 2 and 4 skip the wait only for a PR whose checks have not reported at merge time.
+
+## `resolveValue` — canonical coercion contract
+
+`bin/lib/policy-schema.js` also exports `resolveValue(key, rawValue)`: look up `key` in
+`POLICY_KEYS`, validate `rawValue` against that entry's `type` (`boolean`, `integer`, `enum`,
+`string`, `list`, `opaque`), and fall back to the entry's `default` whenever `rawValue` is
+absent, empty, or fails validation — never throwing on malformed input. `integer` and `boolean`
+entries are additionally coerced to their native JS type; other types pass through unchanged once
+validated. A `string` entry rejects whitespace by default (a mistyped branch name); an entry carrying
+`allowWhitespace: true` — `release-hook`, a shell command, and the control-mode string keys — accepts it. An unrecognized
+`key` returns `rawValue` untouched (nothing to coerce against).
+`bin/lib/issues/trust.js`'s `resolveRevertWindowDays` is the first caller
+(`trust-revert-window-days`); any future lever of the same shape — read a policy key, coerce with a
+typed fallback to a documented default — should call `resolveValue` rather than re-deriving its own
+parsing.

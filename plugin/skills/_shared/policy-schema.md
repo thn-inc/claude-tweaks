@@ -41,18 +41,7 @@ Consolidating the two is deferred until a further derived lever appears (#580's 
 
 ## `resolveValue` — canonical coercion contract
 
-`bin/lib/policy-schema.js` also exports `resolveValue(key, rawValue)`: look up `key` in
-`POLICY_KEYS`, validate `rawValue` against that entry's `type` (`boolean`, `integer`, `enum`,
-`string`, `list`, `opaque`), and fall back to the entry's `default` whenever `rawValue` is
-absent, empty, or fails validation — never throwing on malformed input. `integer` and `boolean`
-entries are additionally coerced to their native JS type; other types pass through unchanged once
-validated. A `string` entry rejects whitespace by default (a mistyped branch name); an entry carrying
-`allowWhitespace: true` — `release-hook`, a shell command, and the control-mode string keys — accepts it. An unrecognized
-`key` returns `rawValue` untouched (nothing to coerce against).
-`bin/lib/issues/trust.js`'s `resolveRevertWindowDays` is the first caller
-(`trust-revert-window-days`); any future lever of the same shape — read a policy key, coerce with a
-typed fallback to a documented default — should call `resolveValue` rather than re-deriving its own
-parsing.
+Moved to `_shared/policy-schema-coverage.md`'s section of the same name (#4847, rail headroom). Cite that file, not this stub.
 
 ## Metadata fields
 
@@ -258,6 +247,7 @@ These levers resolve from `.claude-tweaks/policy.yml`, like every other lever in
 |---|---|---|---|---|
 | `depth-survey` | `policy.yml` | `/claude-tweaks:flow` | unset (enabled) | `off` disables the end-of-run Depth Opportunities survey project-wide (mirrors the `no-deepen` per-run flag) |
 | `creative-survey` | `policy.yml` | `/claude-tweaks:flow` | unset (enabled) | `off` disables the end-of-run Creative Opportunities survey project-wide (mirrors the `no-creative` per-run flag) |
+| `declare-claude-tweaks` | `policy.yml` | `/claude-tweaks:init` (Step 14), `/claude-tweaks:routine` (`fleet on` Step 2) | `true` | `false` keeps claude-tweaks out of the committed `.claude/settings.json` (`enabledPlugins` and the `claude-tweaks-marketplace` entry) and out of `scripts/claude-cloud-setup.sh`, for a project that relies on a user-scope install. `superpowers@claude-plugins-official` stays required, and the fleet check reports the missing declaration as information rather than a gap. Unset, and any value other than `true`/`false`, resolve `true` |
 | `backlog-fetch-limit` | `policy.yml` | `/claude-tweaks:help`, `/claude-tweaks:tidy`, `/claude-tweaks:backlog` | `1000` | Cap on `gh issue list --limit` for every `_shared/record-queue-fetch.md` consumer — `gh` auto-paginates internally; this bounds how many rows before a truncation warning fires, not a hard cutoff on backlog size. The limit bounds closed-record coverage, never open completeness — when the `--state all` union hits the cap, `record-queue-fetch.md`'s read-fresh-or-fetch block completes the open set with a second `--state open` fetch (#1919), so the *open* set stays complete even when closed-record coverage is truncated at the newest `{limit}` |
 | `record-snapshot-ttl-seconds` | `policy.yml` | `/claude-tweaks:backlog`, `/claude-tweaks:capture`, `/claude-tweaks:specify`, `_shared/trust-table.md`, `/claude-tweaks:help`, `/claude-tweaks:tidy`, `/claude-tweaks:visualize` | `300` | Freshness window for the session-scoped record snapshot (`_shared/record-queue-fetch.md`) — a consumer reads the cached `/tmp/ct-records-{session-id}.json` while its mtime is younger than this many seconds, and re-fetches once it ages past it |
 | `gh-timeout-ms` | `policy.yml` | `bin/lib/shared-primitives.js` (every `gh` subprocess call routed through its `GH_TIMEOUT_MS` export or its `runClassified`/`runClassifiedAsync` runner functions) | `5000` | Bounds (1000-60000) how long one `gh` subprocess call may run before it is killed. A call routed through `runClassified`/`runClassifiedAsync` with `retryOnTimeout: true` (`bin/lib/reconcile/release-merged.js`, `preflight.js`, `pr-state.js`, `ledger-residue.js`, and `bin/lib/claim-targets/claim-targets.js`) is retried exactly once at the same bound before its caller sees a failure; every other `GH_TIMEOUT_MS` consumer just uses the resolved bound directly, with no retry. `CLAUDE_TWEAKS_GH_TIMEOUT_MS` (an env var, not a policy key) takes precedence over this when both are set. Resolved once per process and cached — a project on GitHub Enterprise Server, where a cold `gh` call routinely exceeds the 5s default, raises this instead of every call failing until `gh` warms up |

@@ -17,7 +17,7 @@ node -e "const {auditPolicy}=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/policy-schem
 
 - **`invalidValues`** — a recognized key set to a value its schema entry rejects (wrong type, an
   enum value outside its list, an out-of-range integer). The lever silently runs on its schema
-  default until fixed (`resolveValue`'s coercion contract — see `_shared/policy-schema.md`).
+  default until fixed (`resolveValue`'s coercion contract — see `_shared/policy-schema-coverage.md`).
 - **`unrecognizedKeys`** — a `policy.yml` line whose key names no lever in `POLICY_KEYS` and no
   retired key in `RENAMED_KEYS` — most often a typo, or a stray leftover from a lever removed
   outright rather than renamed.
