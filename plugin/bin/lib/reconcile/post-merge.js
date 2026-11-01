@@ -277,9 +277,6 @@ async function prefetchPostMergePrStates(root, prStates) {
   await prStates.prefetch({ numbers: [...wanted] });
 }
 
-// The skip reasons only the single-run path (postMergeOne) reports; the loop treats those runs as silent.
-const SINGLE_ONLY_REASONS = new Set(['no-pr', 'already-done', 'not-merged']);
-
 // Steps 4.0 / 4.0b parameters. The loop runs more than MERGE_GRACE_MS after the merge, so closing-links
 // settles with no poll and a human's later reopen counts (#4599); the in-session run is within seconds of
 // the merge, with closing-links' default settle poll and the merging PR itself counted (null = flag omitted).
@@ -380,7 +377,7 @@ async function postMerge({
 
   for (const { dir, state } of candidateRuns(ctx.root)) {
     const { entry, defer } = await processCandidate({ dir, state, ctx, prStates, dryRun, now, budgetExceeded, deps });
-    if (entry && !SINGLE_ONLY_REASONS.has(entry.reason)) entries.push(entry);
+    if (entry) entries.push(entry);
     if (defer) deferred.push(dir);
   }
   return { entries, deferred };
@@ -410,8 +407,10 @@ function archivedRetryHint(runDir) {
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
 // { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records? }.
 async function postMergeOne({
-  runDir, cwd, prStates, now = Date.now, deps = {},
+  runDir: givenRunDir, cwd, prStates, now = Date.now, deps = {},
 } = {}) {
+  // One absolute path for every read, the claim file and closing-links' `--run`, whatever the process cwd is.
+  const runDir = path.resolve(cwd || process.cwd(), givenRunDir);
   const ctx = setupContext({ cwd, deps });
   if (ctx.failure) return { runDir, pr: null, action: 'skipped', reason: ctx.failure };
   if (!prStates || typeof prStates.byNumberAsync !== 'function') return { runDir, pr: null, action: 'skipped', reason: 'no-pr-states' };

@@ -1068,18 +1068,25 @@ function addArchivedRun(root, runId, { pr = 11, config } = {}) {
 test('postMergeOne processes an archive/{run-id} dir postMerge never walks', async () => {
   const root = mainCheckout();
   const dir = addArchivedRun(root, '2026-01-01T000000-spec-9');
+  // The loop first, while the archived dir holds no marker: it must not walk archive/ at all.
+  const loopLinks = fakeClosingLinks(ENVELOPE);
+  const loop = await run(root, { prs: { 11: merged() }, links: loopLinks, close: fakeCloseParents() });
+  assert.deepEqual(loop, { entries: [], deferred: [] });
+  assert.equal(loopLinks.calls.length, 0);
+  assert.equal(decisionsOf(dir), '');
+
   const links = fakeClosingLinks(ENVELOPE);
   const close = fakeCloseParents();
-  const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links, close }));
+  // A relative runDir resolves against `cwd`, not the process cwd.
+  const entry = await postMergeOne(oneArgs(root, path.relative(root, dir), { prs: { 11: merged() }, links, close }));
   assert.equal(entry.action, 'ran');
   assert.equal(entry.runDir, dir);
   assert.deepEqual(links.calls[0].argv, [
     '--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS),
   ]);
+  assert.equal(close.calls[0].selfInclude, false, 'past the grace: the late-merge parameters');
   assert.ok(hasPostMergeMarker(decisionsOf(dir)));
   assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
-  const loop = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
-  assert.deepEqual(loop, { entries: [], deferred: [] });
 });
 
 test('AC5.1: postMergeOne returns already-done when the marker is present', async () => {
@@ -1102,6 +1109,19 @@ test('postMergeOne reads a multi-spec spec-*/decisions.md marker', async () => {
   const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
   assert.equal(entry.reason, 'already-done');
   assert.equal(links.calls.length, 0);
+});
+
+test('postMergeOne re-reads the marker under the claim: one written after the first read gives already-done, no call', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const marker = formatEntry({ status: 'AUTO', now: NOW, step: MARKER_STEP, text: 'ran Steps 4.0 and 4.0b', reversibility: 'n/a' });
+  const links = fakeClosingLinks(ENVELOPE);
+  const entry = await postMergeOne(oneArgs(root, dir, {
+    prs: { 11: merged() }, links, close: fakeCloseParents(), extra: { beforeClaim: (d) => fs.writeFileSync(path.join(d, 'decisions.md'), `${marker}\n`) },
+  }));
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done' });
+  assert.equal(links.calls.length, 0);
+  assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
 });
 
 test('postMergeOne runs inside MERGE_GRACE_MS under the claim with the in-session parameters', async () => {
