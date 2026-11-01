@@ -612,6 +612,6 @@ function run(argv, deps) {
   }
 }
 
-module.exports = { run, parseArgs, realDeps };
+module.exports = { run, parseArgs, realDeps, classifyPriorRun };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
