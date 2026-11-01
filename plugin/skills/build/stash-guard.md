@@ -1,4 +1,4 @@
-# Stash Guard — Non-Zero Compare Outcomes
+# Stash Guard — Non-Zero Exit Outcomes
 
 Read by `dispatch.md`'s **Stash guard around every dispatch that can run git (#4559)** instruction only when a `stash-guard.js` `snapshot` or `compare` exits 3 or 2 — exit 0 needs nothing from this file.
 

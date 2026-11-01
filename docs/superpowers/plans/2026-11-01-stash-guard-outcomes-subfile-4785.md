@@ -84,7 +84,7 @@ Expected: FAIL after Step 1 — `ENOENT` reading `plugin/skills/build/stash-guar
 
 Create `plugin/skills/build/stash-guard.md` with this structure:
 
-1. Heading `# Stash Guard — Non-Zero Compare Outcomes`, a blank line, then one sentence: ``Read by `dispatch.md`'s **Stash guard around every dispatch that can run git (#4559)** instruction only when a `stash-guard.js` `snapshot` or `compare` exits 3 or 2 — exit 0 needs nothing from this file.``
+1. Heading `# Stash Guard — Non-Zero Exit Outcomes`, a blank line, then one sentence: ``Read by `dispatch.md`'s **Stash guard around every dispatch that can run git (#4559)** instruction only when a `stash-guard.js` `snapshot` or `compare` exits 3 or 2 — exit 0 needs nothing from this file.``
 2. The text of today's stanza from `Exit 3 means the CLI has already restored` through `its evidence lands in `decisions.md` and the Review Console.`, copied **byte-for-byte**, copied from `git show HEAD:plugin/skills/build/dispatch.md` line 19. The only change is blank-line paragraph breaks inserted immediately before these four sentence starts, each kept verbatim: `For an implementer or fix dispatch,`, `For a reviewer dispatch (task reviewer,`, `Exit 2 (an unreadable baseline,`, `The guard adds no new stop:`. No other word changes, and nothing else rewrapped.
 3. The file ends with a single trailing newline.
 

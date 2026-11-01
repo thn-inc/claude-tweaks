@@ -260,10 +260,11 @@ function stashGuardParagraph(text) {
   return text.slice(start, end);
 }
 
-// The reviewer-restore branch: from the reviewer clause to the next clause (the handoff carry-over).
+// The reviewer-restore branch: from the reviewer clause to the end of the reviewer paragraph (the next
+// blank line; the every-dispatch handoff carry-over is its own paragraph after it).
 // It lives in stash-guard.md (#4785), so the branch fact reads `outcomes`, never the stanza.
 const REVIEWER_BRANCH_START = 'a reviewer dispatch (task reviewer';
-const REVIEWER_BRANCH_END = 'every `restoreFailed` command';
+const REVIEWER_BRANCH_END = '\n\n';
 function reviewerBranch(paragraph) {
   const start = paragraph.indexOf(REVIEWER_BRANCH_START);
   if (start === -1) return '';
@@ -512,6 +513,19 @@ test('AC13.1: "no stop" is pinned inside the reviewer-restore branch, not elsewh
   assert.notStrictEqual(outcomes, texts.outcomes);
   assert.match(outcomes, /no new stop/, 'the file keeps its closing "no new stop" sentence outside the branch');
   assert.deepStrictEqual(missingStashGuardFacts({ ...texts, outcomes }), ['AC13.1 no stop (reviewer-restore branch)']);
+  // Go-red control for the branch end: "no stop" moved into the every-dispatch paragraph (the one after the
+  // reviewer paragraph) must not satisfy the pin once the reviewer paragraph itself has lost it.
+  // The lead-in sits between the paragraph break and `every \`restoreFailed\` command`, so it is exactly the span a
+  // branch end anchored on that command (rather than on the paragraph end) would wrongly include. Doctoring the
+  // lead-in also breaks the carry-over fact, which is reported alongside.
+  const leadIn = 'For every dispatch (implementer, fix or reviewer), ';
+  assert.strictEqual(texts.outcomes.split(leadIn).length, 2, 'the every-dispatch lead-in must occur exactly once');
+  const moved = outcomes.replace(leadIn, () => 'For every dispatch (implementer, fix or reviewer; no stop), ');
+  assert.notStrictEqual(moved, outcomes);
+  assert.deepStrictEqual(
+    missingStashGuardFacts({ ...texts, outcomes: moved }),
+    ['AC13.1 no stop (reviewer-restore branch)', 'carry-over applies to every dispatch'],
+  );
 });
 
 test("AC12.3/AC13.2/AC13.3: handoff-template.md's Stash guard section has a slot for each reviewer-restore shape", () => {
