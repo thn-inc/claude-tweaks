@@ -26,7 +26,9 @@
 - Stderr line (exact): `resolve-policy: degraded — integration-model: {formatForgeDegrade text}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`, printed once per process, in every output mode.
 - Decision Q13: JSON entry on a degraded detection: `{ value: 'local-merge', source: 'default', degraded: '{reason}' }`, where `{reason}` is the degrade object's reason code, `'timeout'` or `'timeout-then-exit'`. Non-degraded entries keep exactly `{ value, source }`. `--values` stdout unchanged. The stderr text is rendered from the degrade object (`formatForgeDegrade(degrade)`, which also needs `timeoutMs`), so `computeDerivedDefaults` reports the whole object through an opt-in side channel, `deps.onDegrade(key, degrade)` (called once per degraded key; a throwing callback is swallowed), the same pattern as #4141's `onInvalid`/`invalidRaw` map in `resolve-policy.js`: the entry shape stays exactly what the JSON documents.
 - Decision Q6: each degrade reason has its own text and its own CLI test — `timeout` (two timeouts) keeps "(x2)"; `timeout-then-exit` prints "…, then gh failed on retry".
-- Decision Q7: whenever `computeDerivedDefaults`'s merge-verification fallback actually calls `resolveIntegrationModel` — `merge-verification` requested WITHOUT `integration-model`, OR requested WITH an `integration-model` entry that is `invalid` (its value is not a reusable string, so the fallback re-detects) — it passes `onDegrade`; a reported degrade adds `degraded: '{reason}'` (Q13's reason code) to the `merge-verification` entry and reports `deps.onDegrade('merge-verification', degrade)` (its value stays whatever `deriveMergeVerification` derives from the degraded `local-merge`, i.e. `off`), and `resolve-policy.js` prints the merge-verification stderr line below once per process. When both keys are requested and `integration-model` resolved to a valid value, merge-verification reuses it (no second detection), so only the `integration-model` entry and line report the degrade.
+- Decision Q7: whenever `computeDerivedDefaults`'s merge-verification fallback actually calls `resolveIntegrationModel` — `merge-verification` requested WITHOUT `integration-model`, OR requested WITH an `integration-model` entry that is `invalid` (its value is not a reusable string, so the fallback re-detects) — it passes `onDegrade`; a reported degrade adds `degraded: '{reason}'` (Q13's reason code) to the `merge-verification` entry and reports `deps.onDegrade('merge-verification', degrade)` (its value stays whatever `deriveMergeVerification` derives from the degraded `local-merge`, i.e. `off`), and `resolve-policy.js` prints the merge-verification stderr line below once per process. When both keys are requested and `integration-model` resolved to a valid value, merge-verification reuses it (no second detection), so only the `integration-model` line and `deps.onDegrade('integration-model', …)` report the degrade — but when that reused `integration-model` entry is itself degraded, the `merge-verification` entry carries the same `degraded` reason code (plan review: its value was derived from the degraded detection; no second stderr line, no second `onDegrade` call — it is the same detection).
+- Plan review (implementer judgment under the closing rule): the Manifesto's `merge-verification` lever never pins a value derived from a degraded detection either. In `lib/flow/manifesto-write.js`'s `computeLevers`, a `merge-verification` entry with `source: 'default'` and a `degraded` field yields `{ value: 'wait', source: 'degraded' }`. Rationale: `_shared/pr-first-merge.md` Step 2.5 treats "a run-level `off` over another project value" as an explicit `off` (a blind merge), so a degraded-derived `off` pinned in `config.yml` would merge without waiting once a later detection resolves `pr-first`; the same step already rules that an unresolved lever is treated as `wait`, "never as `off`". A `policy.yml` value (`source: 'policy'`) is untouched. `writeManifesto` logs `AUTO Manifesto: merge-verification derived from a degraded forge detection → written as wait (an unresolved lever never becomes off, _shared/pr-first-merge.md Step 2.5)` when that lever's source is `degraded`.
+- Plan review (implementer judgment under the closing rule): `plugin/bin/lib/phase-exit/phase-exit.js`'s `realDeps.resolvePolicy` is the one other run-time `--run integration-model` reader that a Q10-unpinned run reaches by CLI with its own kill timeout (30 s `GIT_TIMEOUT_MS`). It runs `resolve-policy.js --run <dir> <key>` in JSON mode instead of `--values`, returns the entry's value as a string (empty for a null/error entry, exactly what `--values` printed), and throws `Error('forge detection degraded ({reason})')` when the entry carries `degraded`, so `runPhaseExit`'s existing unresolved branch logs `condition: integration-model unresolved (forge detection degraded (timeout)) → fallback: no phase-exit push this phase; the next phase exit retries` instead of routing a degraded `local-merge`. For the `integration-model` key its timeout is `GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(cwd) + GIT_TIMEOUT_MS` (the ladder's worst case plus the old bound as margin); every other key keeps `GIT_TIMEOUT_MS`. The `resolvePolicy(runDir, key, cwd) -> string` seam signature is unchanged, so injected test fakes keep working.
 - Decision Q8: the merge-verification fallback honours the run's pinned `integration-model` before any forge detection. `resolve-policy.js` passes `runConfigRaw` (already returned by `resolvePolicyConfig`) into `computeDerivedDefaults` as `deps.runConfigRaw`; the fallback resolves `resolvePolicyKeys(['integration-model'], { policyRaw: null, runConfigRaw: deps.runConfigRaw })` and, when that entry's `source === 'run-config'` and it is not `invalid`, derives from that value (`integrationModel: () => pinned`) and never calls `resolveIntegrationModel` (so never `gh` for forge detection, never `onDegrade`). No run pin → `resolveIntegrationModel(r, { mcpReachable, onDegrade })` as before, which already honours a `policy.yml` pin. `deps.runConfigRaw` absent (tests, other callers) → treated as no run pin. Note: `deriveMergeVerification`'s branch (3) `readDefaultBranch` is a separate `gh repo view` (defaultBranchRef) lookup outside forge detection, reached only for a `pr-first` model with PR-triggered CI under `.github/workflows`; the Q8 pin tests use a fixture repo with no `.github/workflows`, so ladder branch (2) returns `off` before it, and any `gh` invocation counted there is forge detection.
 - Decision Q9: the merge-verification stderr line reuses Deliverable 4's shape with only the key name swapped — exact: `resolve-policy: degraded — merge-verification: {formatForgeDegrade text}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms`. Its `{formatForgeDegrade text}` is the same two texts the `integration-model` key prints ("(x2)" / "…, then gh failed on retry"); no new wording anywhere.
 - Decision Q5: `resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {})` forwards `opts.timeoutMs` and `opts.onDegrade` to `detectIntegrationModel` (each only when set). The PR-stamp gate passes `{ timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade }`, where `onDegrade` sets a local `degraded` flag; after resolution, `degraded` → `modelResolved = false`, so no `prExempt` is written and the next covered call detects again. The test-only `deps.resolveIntegrationModel` override receives the same `{ onDegrade }` as a second argument (existing one-argument overrides ignore it).
@@ -238,6 +240,13 @@ test('computeDerivedDefaults: an invalid integration-model entry requested with 
   // deps.resolveIntegrationModel = (root, opts) => { opts.onDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }); return 'local-merge'; }
   // the invalid integration-model entry is left untouched (still invalid: true, no degraded field);
   // deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' })
+test('computeDerivedDefaults: merge-verification reusing a degraded integration-model carries the same degraded reason, with one onDegrade call (plan review)', ...)
+  // keys ['integration-model', 'merge-verification']; result['integration-model'] = { value: null, source: 'default' }
+  // deps.detectIntegrationModel = (root, opts) => { opts.onDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }); return 'local-merge'; }
+  // deps.resolveIntegrationModel = () => { resolveCalls++; return 'local-merge'; }   (reuse path: never called)
+  // seen = []; deps.onDegrade = (k, d) => seen.push(k)
+  // deepEqual(out['merge-verification'], { value: 'off', source: 'default', degraded: 'timeout' }); deepEqual(seen, ['integration-model']); resolveCalls === 0
+  // control: a clean detection on the same reuse path keeps exactly { value: 'off', source: 'default' }
 test('computeDerivedDefaults: a merge-verification-only request honours the run\'s config.yml integration-model pin before forge detection (Q8, AC18.1, AC18.2)', ...)
   // keys ['merge-verification']; deps.runConfigRaw = 'integration-model: pr-first\n'
   // deps.resolveIntegrationModel = () => { calls++; return 'local-merge'; }
@@ -294,7 +303,7 @@ Expected: FAIL — no `degraded` field, no stderr line; the Q8 pin tests see the
 
 - [ ] **Step 3: Implement**
 
-- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: degrade.reason` (Decision Q13) only when one was reported, then call `deps.onDegrade('integration-model', degrade)` inside a `try/catch` when that dep is a function. In the merge-verification fallback (every branch that does not reuse a valid `integration-model` string — not requested, or requested but invalid): first resolve the run pin per Decision Q8 from `deps.runConfigRaw`; a valid `run-config` pin → `integrationModel: () => pinned`, no `resolveModel` call; otherwise `resolveModel(r, { mcpReachable, onDegrade })`, and add `degraded: degrade.reason` to the `merge-verification` entry plus `deps.onDegrade('merge-verification', degrade)` when a degrade was reported. Update the header comment (name `deps.runConfigRaw`, `deps.onDegrade` and the Q8 pin-first rule beside the existing #1421 note).
+- `computeDerivedDefaults`: pass `{ mcpReachable, onDegrade }` to `detectModel`, capture the degrade, and add `degraded: degrade.reason` (Decision Q13) only when one was reported, then call `deps.onDegrade('integration-model', degrade)` inside a `try/catch` when that dep is a function. In the merge-verification fallback (every branch that does not reuse a valid `integration-model` string — not requested, or requested but invalid): first resolve the run pin per Decision Q8 from `deps.runConfigRaw`; a valid `run-config` pin → `integrationModel: () => pinned`, no `resolveModel` call; otherwise `resolveModel(r, { mcpReachable, onDegrade })`, and add `degraded: degrade.reason` to the `merge-verification` entry plus `deps.onDegrade('merge-verification', degrade)` when a degrade was reported. On the reuse path (a valid `integration-model` string resolved in this call), copy that entry's `degraded` field onto the `merge-verification` entry when present, with no `onDegrade` call (Global Constraints, plan review). Update the header comment (name `deps.runConfigRaw`, `deps.onDegrade` and the Q8 pin-first rule beside the existing #1421 note).
 - `resolve-policy.js`: pass `runConfigRaw` from `resolvePolicyConfig`'s return and an `onDegrade: (key, d) => degrades.set(key, d)` collector (a `Map`, beside `invalidRaw`) into `computeDerivedDefaults(result, keys, root, { mcpReachable, runConfigRaw, onDegrade })`. After `computeDerivedDefaults`, for `integration-model` then `merge-verification`, when `degrades` holds that key, write its stderr line (Global Constraints / Decision Q9), rendering the text with `formatForgeDegrade(degrades.get(key))`, once (all output modes; stdout unchanged). Extend the header comment's Output paragraph with the degrade lines and the additive `degraded` reason-code field.
 - `docs/plugin-structure.md` line 240 (the `resolve-policy.js` command-reference line): add one clause naming the degraded stderr line and the additive `degraded` JSON field (the reason code), for `integration-model` and a merge-verification request that runs its own detection, and that the merge-verification fallback honours a `--run` `integration-model` pin first (#4578).
 
@@ -448,7 +457,7 @@ git commit -m "Pass the hook-bounded forge probe timeout from SessionStart into 
 ### Task 5: The `/test` bookkeeping precondition reports a degraded detection as `degraded-detection` (Decision Q11)
 
 **Role:** integration
-**Review risk:** medium
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/pr-bookkeeping/precondition.js` (model resolution 106-113)
@@ -513,7 +522,7 @@ git commit -m "Report a degraded forge detection as degraded-detection in the /t
 ### Task 6: `manifesto-write.js` never pins a degraded detection as the run's `integration-model` (Decision Q10)
 
 **Role:** integration
-**Review risk:** medium
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/manifesto-write.js` (pin resolution 151-156)
@@ -547,9 +556,18 @@ test('CLI: a degraded integration-model resolve exits 0 unpinned and says so on 
 test('CLI: a clean local-merge resolve (no degraded field) still pins integration-model: local-merge', () => {
   // resolved({ 'integration-model': { value: 'local-merge', source: 'default' } }) -> config.yml has /^integration-model: local-merge$/m; stderr empty of 'degraded'
 });
+test('computeLevers: a derived merge-verification from a degraded detection becomes wait (source degraded); a policy value or a clean derived off is untouched (plan review)', () => {
+  // computeLevers({ ..., resolved: resolved({ 'merge-verification': { value: 'off', source: 'default', degraded: 'timeout' } }) })
+  //   -> the merge-verification lever deepEqual { key: 'merge-verification', value: 'wait', source: 'degraded' }
+  // controls: { value: 'off', source: 'policy', degraded: 'timeout' } -> { value: 'off', source: 'policy' }; { value: 'off', source: 'default' } -> { value: 'off', source: 'default' }
+});
+test('writeManifesto: a degraded-sourced merge-verification lever writes wait and logs the AUTO line naming pr-first-merge Step 2.5', () => {
+  // levers from the computeLevers call above; write -> config.yml has /^merge-verification: wait$/m
+  // assert.match(text, /— Manifesto: merge-verification derived from a degraded forge detection → written as wait \(an unresolved lever never becomes off, _shared\/pr-first-merge\.md Step 2\.5\)/)
+});
 ```
 
-All but the clean-`local-merge` control go red before the change (no `integrationModelDegraded` parameter; the CLI pins the degraded `local-merge`).
+All but the clean-`local-merge` control go red before the change (no `integrationModelDegraded` parameter; the CLI pins the degraded `local-merge`; `computeLevers` passes the degraded `off` through).
 
 - [ ] **Step 2: Run tests to verify they fail**
 
@@ -560,6 +578,7 @@ Expected: FAIL — the degraded resolve writes `integration-model: local-merge` 
 
 - `bin/manifesto-write.js`: `const integrationModelDegraded = pinEntry && typeof pinEntry.degraded === 'string' ? pinEntry.degraded : null;` and `integrationModel` becomes `null` whenever `integrationModelDegraded` is set; pass both to `writeManifesto`; stderr: degraded → `manifesto-write.js: integration-model forge detection degraded ({reason}) — config.yml written without the run pin (SKIP logged)`, else the existing empty line when `!integrationModel`. Extend the header comment's Writes paragraph (record #4578 Decision Q10).
 - `lib/flow/manifesto-write.js` `writeManifesto`: accept `integrationModelDegraded = null`, validate it, force `pin = null` when set, and log `SKIP` `condition: integration-model forge detection degraded ({reason}) → fallback: config.yml written without the run pin; later --run reads detect again` in place of the empty-value `SKIP`. Extend its doc comment.
+- `lib/flow/manifesto-write.js` `computeLevers`: before the generic `return { key, value: String(entry.value), source }`, a `merge-verification` entry with `source === 'default'` and a string `degraded` returns `{ key, value: 'wait', source: 'degraded' }` (Global Constraints, plan review); `writeManifesto` logs the `AUTO` line when the `merge-verification` lever's source is `degraded`. `'wait'` is a valid enum value, so `validateLever` passes.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -575,8 +594,7 @@ git commit -m "Never pin a degraded integration-model detection in manifesto-wri
 
 ### Task 7: The prose Write mechanism and the run-scoped-stability contract say a degraded detection is never pinned (Decision Q10)
 
-**Role:** docs
-**Review risk:** low
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/skills/flow/manifesto.md` (Write mechanism paragraph, line 167)
@@ -594,6 +612,7 @@ git commit -m "Never pin a degraded integration-model detection in manifesto-wri
 test('manifesto.md Write mechanism: a degraded resolve line is handled like the EMPTY value — no pin, a SKIP (#4578 Q10, AC20.1, AC20.2)', () => {
   // para = writeMechanismParagraph(readText(MANIFESTO))
   // assert.match(para, /resolve-policy: degraded — integration-model:/); assert.match(para, /never becomes the run pin/)
+  // assert.match(para, /`merge-verification` entry carries a `degraded` field[^.]*`wait`/)   (plan review: the derived lever)
 });
 test('integration-model.md Run-scoped stability: a degraded detection is never pinned (#4578 Q10, AC20.2)', () => {
   // section = text between '## Run-scoped stability' and the next '## ' heading of plugin/skills/_shared/integration-model.md
@@ -612,7 +631,7 @@ Expected: FAIL — `manifesto.md` and `integration-model.md` name no degrade cla
 
 - [ ] **Step 3: Implement**
 
-- `flow/manifesto.md` Write mechanism: after the EMPTY-value clause, add — when the resolve instead prints a `resolve-policy: degraded — integration-model:` line on stderr (forge detection timed out on both attempts), handle it exactly like the EMPTY value: omit the pair and log a `SKIP` naming the degrade, so a degraded detection never becomes the run pin and later `--run` reads detect again (#4578).
+- `flow/manifesto.md` Write mechanism: after the EMPTY-value clause, add — when the resolve instead prints a `resolve-policy: degraded — integration-model:` line on stderr (forge detection timed out on both attempts), handle it exactly like the EMPTY value: omit the pair and log a `SKIP` naming the degrade, so a degraded detection never becomes the run pin and later `--run` reads detect again (#4578); and when the levers' `merge-verification` entry carries a `degraded` field (derived from that same detection), write the lever as `wait`, never the derived `off` — `_shared/pr-first-merge.md` Step 2.5's unresolved-lever rule.
 - `_shared/integration-model.md` Run-scoped stability: add one sentence after "…never a fresh detection —" sentence: a degraded detection (the `gh` probe timed out on both attempts, `resolve-policy.js`'s `degraded —` line) never becomes the run pin — the Manifesto omits the pin and logs a `SKIP`, so the run proceeds unpinned and later `--run` reads detect again, the same path as an empty resolve (#4578).
 
 - [ ] **Step 4: Run tests to verify they pass**
@@ -625,4 +644,63 @@ Expected: PASS
 ```bash
 git add plugin/skills/flow/manifesto.md plugin/skills/_shared/integration-model.md tests/flow-manifesto-integration-model-pin.test.js
 git commit -m "Name the never-pin-a-degraded-detection rule in the Manifesto Write mechanism and the run-scoped-stability contract — refs #4578"
+```
+
+### Task 8: `phase-exit.js` treats a degraded `integration-model` read as unresolved and bounds it by the forge ladder (plan review)
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/phase-exit/phase-exit.js` (`realDeps.resolvePolicy`, 85-87; imports 53-60)
+- Test: `tests/bin-lib/phase-exit/phase-exit.test.js`
+
+**Interfaces:**
+- Consumes: the JSON `degraded` reason-code field (Task 2) and `resolveForgeProbeTimeoutMs` / `GIT_REMOTE_PROBE_TIMEOUT_MS` (Task 1, exported from `policy-schema.js`); `fakeGh` (Task 1).
+- Produces: `realDeps.resolvePolicy(runDir, key, cwd) -> string` keeps its signature; it now throws `Error('forge detection degraded ({reason})')` for a degraded entry. `runPhaseExit`'s existing `integration-model unresolved ({detail})` branch is unchanged.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/bin-lib/phase-exit/phase-exit.test.js`:
+
+```js
+test('realDeps.resolvePolicy: a degraded integration-model read throws "forge detection degraded (timeout)" instead of returning local-merge (#4578 plan review)', { skip: STUB_SKIP }, () => {
+  // repo = temp git repo under os.tmpdir() with origin https://github.com/o/n.git, no policy.yml; runDir = a temp dir outside every checkout, no config.yml
+  // env CLAUDE_TWEAKS_GH_TIMEOUT_MS = '1000' (saved/restored); gh = fakeGh({ first: 'hang' })
+  // assert.throws(() => realDeps.resolvePolicy(runDir, 'integration-model', repo), /forge detection degraded \(timeout\)/); gh.count() === 2
+});
+test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and a non-forge key still returns its plain value', { skip: STUB_SKIP }, () => {
+  // runDir config.yml 'integration-model: pr-first\n' -> 'pr-first', gh.count() === 0
+  // realDeps.resolvePolicy(runDir, 'integration-branch', repo) -> '' (unset, no default) — the --values-equivalent empty string
+});
+test('runPhaseExit: a degraded resolve logs the unresolved SKIP naming the degrade and pushes nothing (#4578 plan review)', () => {
+  // makeDeps(...) with resolvePolicy: (r, key) => { if (key === 'integration-model') throw new Error('forge detection degraded (timeout)'); return ''; }
+  // env.push.state === 'skipped'; the decisions.md text matches /integration-model unresolved \(forge detection degraded \(timeout\)\)/; no git push call recorded
+});
+test('phase-exit.js sizes the integration-model resolve timeout from the forge ladder (#4578 plan review)', () => {
+  // source scan of plugin/bin/lib/phase-exit/phase-exit.js: match /GIT_REMOTE_PROBE_TIMEOUT_MS\s*\+\s*2\s*\*\s*resolveForgeProbeTimeoutMs\(/
+});
+```
+
+`STUB_SKIP` / `fakeGh` from `../../helpers/path-stub` and `../../helpers/fake-gh`. The first and fourth go red before the change (`--values` prints `local-merge`; no ladder-sized timeout); the second and third are green controls that pin the unchanged seam and the existing unresolved branch.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test tests/bin-lib/phase-exit/phase-exit.test.js`
+Expected: FAIL — the degraded read returns `local-merge`; the source scan finds no ladder-sized timeout.
+
+- [ ] **Step 3: Implement**
+
+`realDeps.resolvePolicy`: spawn `process.execPath [RESOLVE_POLICY_JS, '--run', runDir, key]` (JSON mode) with `timeout: key === 'integration-model' ? GIT_REMOTE_PROBE_TIMEOUT_MS + 2 * resolveForgeProbeTimeoutMs(cwd) + GIT_TIMEOUT_MS : GIT_TIMEOUT_MS` in the existing options literal (keep `windowsHide: true`); `JSON.parse` stdout, read `parsed[key]`; a string `degraded` throws `new Error(\`forge detection degraded (${entry.degraded})\`)`; otherwise return `entry && entry.error === undefined && entry.value != null ? String(entry.value) : ''`. Require `{ GIT_REMOTE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs }` from `../policy-schema` (phase-exit already pulls policy-schema in transitively through `../hooks/pre-tool-use`, so no new cycle). Comment: a Q10-unpinned run re-detects here, so the read must outlast the ladder and must not route a degraded `local-merge` (record #4578 plan review).
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/bin-lib/phase-exit/phase-exit.test.js tests/phase-exit-call-sites-conformance.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/phase-exit/phase-exit.js tests/bin-lib/phase-exit/phase-exit.test.js
+git commit -m "Treat a degraded integration-model read as unresolved in phase-exit and size its timeout from the forge ladder — refs #4578"
 ```
