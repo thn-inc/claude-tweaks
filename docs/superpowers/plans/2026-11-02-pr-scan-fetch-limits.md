@@ -59,7 +59,7 @@
 - Modify: `docs/plugin-structure.md:116`
 - Modify: `docs/journeys/compose-a-per-run-context-bundle-1988.md:100`
 - Modify: `plugin/bin/lib/issues/pending-authorization.js:5-7` (comment only)
-- Test: `tests/pr-first-merge.test.js:399-403`, `tests/plan-review-dispatch-relay-conformance.test.js:164`, `tests/issue-claims-pr-scan-composition.test.js` (retargets — moved-prose pin grep at authoring found exactly these three content pins: `'3. **Auto-merged this week**'`, `'Render as three lines:'`, `TRIAGE_ITEM3`)
+- Test: `tests/pr-first-merge.test.js:399-403`, `tests/plan-review-dispatch-relay-conformance.test.js:164`, `tests/issue-claims-pr-scan-composition.test.js` (retargets — moved-prose pin grep at authoring found these three content pins: `'3. **Auto-merged this week**'`, `'Render as three lines:'`, `TRIAGE_ITEM3`), and `tests/skill-fence-guard-shapes.test.js:98` (plan review: its ratchet entry for triage item 3's `SINCE=$(node -e …)` fence is keyed by file, so the move would leave it stale and the moved fence unallowlisted)
 - No change (classified): `plugin/skills/_shared/pr-first-merge.md:324` and `plugin/skills/wrap-up/auto-merge-short-circuit.md:242` cite "`_shared/github-pr-scan.md` `triage-queue` item 3" — a citation the stub resolves in one hop, and `tests/pr-first-merge.test.js:64` pins that citation shape (`/github-pr-scan\.md.*triage-queue.*item 3/s`, which `github-pr-scan-triage.md` would not satisfy).
 
 **Interfaces:**
@@ -69,6 +69,7 @@
 
   - `tests/pr-first-merge.test.js:399`: `read('plugin', 'skills', '_shared', 'github-pr-scan.md')` → `read('plugin', 'skills', '_shared', 'github-pr-scan-triage.md')` (the `scan` variable feeding both `item3` and `jq`).
   - `tests/plan-review-dispatch-relay-conformance.test.js:164`: the `'Render as three lines:'` row's path → `path.join('plugin', 'skills', '_shared', 'github-pr-scan-triage.md')`.
+  - `tests/skill-fence-guard-shapes.test.js:98`: rekey `ratchet('_shared/github-pr-scan.md', 'gh-computed-input', 'SINCE=$(node -e …')` to `ratchet('_shared/github-pr-scan-triage.md', 'gh-computed-input', …)` — same detector, same anchor, so the allowlist does not grow.
   - `tests/issue-claims-pr-scan-composition.test.js`: drop `TRIAGE_ITEM3` from both `github-pr-scan.md` presence maps (mcp and gh/unresolved); add `const TRIAGE_FILE = 'plugin/skills/_shared/github-pr-scan-triage.md';` read through `readText`, and these tests:
 
 ```js
@@ -124,13 +125,13 @@ Line 3: `Stage 4.6, **\`triage-queue\`** scope;` → `Stage 4.6, **\`triage-queu
 
 - [ ] **Step 5: Run the suites to verify they pass**
 
-Run: `node --test tests/pr-first-merge.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/issue-claims-pr-scan-composition.test.js tests/skill-graph-dangling-pointer.test.js tests/skill-graph-table-structure.test.js`
+Run: `node --test tests/pr-first-merge.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/issue-claims-pr-scan-composition.test.js tests/skill-fence-guard-shapes.test.js tests/skill-graph-dangling-pointer.test.js tests/skill-graph-table-structure.test.js`
 Expected: PASS. Then `wc -c plugin/skills/_shared/github-pr-scan.md plugin/skills/_shared/github-pr-scan-triage.md plugin/skills/tidy/scan-procedures.md` — all three under 52,500.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/skills/_shared/github-pr-scan-triage.md plugin/skills/_shared/github-pr-scan.md plugin/skills/help/status-scan.md plugin/skills/tidy/scan-procedures.md docs/skill-graph.md docs/plugin-structure.md docs/journeys/compose-a-per-run-context-bundle-1988.md plugin/bin/lib/issues/pending-authorization.js tests/pr-first-merge.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/issue-claims-pr-scan-composition.test.js
+git add plugin/skills/_shared/github-pr-scan-triage.md plugin/skills/_shared/github-pr-scan.md plugin/skills/help/status-scan.md plugin/skills/tidy/scan-procedures.md docs/skill-graph.md docs/plugin-structure.md docs/journeys/compose-a-per-run-context-bundle-1988.md plugin/bin/lib/issues/pending-authorization.js tests/pr-first-merge.test.js tests/plan-review-dispatch-relay-conformance.test.js tests/issue-claims-pr-scan-composition.test.js tests/skill-fence-guard-shapes.test.js
 git commit -m "Move the triage-queue scope into its own pr-scan file — headroom for #4820's fetch limits
 
 refs #4820"
@@ -144,18 +145,21 @@ refs #4820"
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/_shared/github-pr-scan.md` (line 5 preamble; `current-pr` scope; `repo-wide` scope items 1, 3, 4, 5, 6, 7, 8, 9, 10)
+- Modify: `plugin/skills/_shared/github-pr-scan.md` (line 5 preamble; `current-pr` scope; `repo-wide` scope items 1, 3, 4, 5, 6, 7, 8, 9, 10; Output Contract's `[queue]` bullet)
 - Create: `tests/github-pr-scan-fetch-limit.test.js`
+- Modify: `tests/display-ci-readers-conformance.test.js:176` (plan review: it pins item 1's `--limit 100`; the pin becomes `/gh pr list --state open --json [^\n]*statusCheckRollup[^\n]*--limit \{resolved-limit\}/`)
 
 **Interfaces:**
 - Consumes: Task 1's moved file (this task never edits it).
-- Produces (in `tests/github-pr-scan-fetch-limit.test.js`, for Task 3): `fenceAfter(text, label, nth = 0) -> string` (the body of the `nth` ```` ```bash ```` fence after the first occurrence of `label`; asserts both found — "extraction pattern is out of sync" on a miss); `runFence(fence, { limit, ghRows = [], files = {}, env = {}, shell = 'bash' }) -> { status, stdout, stderr }` (substitutes every `{resolved-limit}` with `replaceAll`; writes `ghRows` as JSON to a temp file and prepends `gh() { cat "$FAKE_GH_OUT"; }`, passing that path forward-slashed in the spawn env; sets `CLAUDE_PLUGIN_ROOT` (forward-slashed `plugin/`) and a fresh `CLAUDE_CODE_SESSION_ID`; writes each `files` entry `{ name: rows }` — `rows` an array written as JSON, or a string written as-is — to `path.join(sessionTmpRoot(sessionId), name)` before the run (`tests/acceptance-scan-server-filter.test.js`'s `runClosedFence` is the shape to copy); `shell: 'zsh'` runs `zsh -f -c`, otherwise `bash --noprofile --norc -c`; removes the temp dir and session root after); `limitSites(text) -> string[]` (joins `\`-continued lines, then returns the captured limit token of every match of `` /gh (?:issue|pr) list\b[^`\n]*?--limit\s+([^\s`]+)/g `` — one match per call, two on item 4's line; `` [^`] `` keeps a match inside one code span, so line 5's prose naming `` `gh pr list` `` and `` `--limit {resolved-limit}` `` in separate spans is no match, and the capture stops before a closing backtick or trailing `.`. Run at authoring over the base file outside the triage scope it returns `["100","100","100","50","50","100","100","100","200","100","200","200"]`, inside it `["200","200"]`); `fixedLimitSites(text)` = `limitSites(text).filter((t) => /^\d+$/.test(t))`; `RULE` — the exact Fetch limit paragraph below, as a string.
+- Produces (in `tests/github-pr-scan-fetch-limit.test.js`, for Task 3): `fenceAfter(text, label, nth = 0) -> string` (the body of the `nth` ```` ```bash ```` fence after the first occurrence of `label`; asserts both found — "extraction pattern is out of sync" on a miss); `runFence(fence, { limit, ghRows = [], files = {}, env = {}, shell = 'bash' }) -> { status, stdout, stderr }` (substitutes every `{resolved-limit}` with `replaceAll`; writes `ghRows` as JSON to a temp file and prepends `gh() { cat "$FAKE_GH_OUT"; }`, passing that path forward-slashed in the spawn env; sets `CLAUDE_PLUGIN_ROOT` (forward-slashed `plugin/`) and a fresh `CLAUDE_CODE_SESSION_ID`; writes each `files` entry `{ name: rows }` — `rows` an array written as JSON, or a string written as-is — to `path.join(sessionTmpRoot(sessionId), name)` before the run (`tests/acceptance-scan-server-filter.test.js`'s `runClosedFence` is the shape to copy); `shell: 'zsh'` runs `zsh -f -c`, otherwise `bash --noprofile --norc -c`; removes the temp dir and session root after); `limitSites(text) -> string[]` (joins `\`-continued lines, then returns the captured limit token of every match of `` /gh (?:issue|pr) list\b[^`\n]*?--limit\s+([^\s`]+)/g `` — one match per call, two on item 4's line; `` [^`] `` keeps a match inside one code span, so line 5's prose naming `` `gh pr list` `` and `` `--limit {resolved-limit}` `` in separate spans is no match, and the capture stops before a closing backtick or trailing `.`. Run at authoring over the base file outside the triage scope it returns `["100","100","100","50","50","100","100","100","200","100","200","200"]`, inside it `["200","200"]`); `fixedLimitSites(text)` = `limitSites(text).filter((t) => /^\d+$/.test(t))`; `assertRule(scopeText)` — throws `AssertionError` with a message containing `Fetch limit` unless `scopeText.includes(RULE)`; `RULE` — the exact Fetch limit paragraph below, as a string.
 
 The Fetch limit paragraph (`RULE`), byte-exact, used in three places (current-pr here, repo-wide here, triage-queue in Task 3):
 
 ```markdown
-**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count.
+**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope's rows, never suppressed, and render a floor count as `{N}+`.
 ```
+
+(Plan review added the last sentence: a stderr warning the scan agent drops would leave `/tidy`'s report showing bare capped counts — the spec's observed symptom. It follows `_shared/github-pr-scan-acceptance.md`'s "Report its two `WARNING:` lines verbatim beside the rows; never suppress them.")
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -163,7 +167,8 @@ Header comment: cite #4820, the carve-out (the prose is the declared contract �
 
 1. `no gh list call in github-pr-scan.md carries a fixed --limit` — `assert.deepEqual(fixedLimitSites(LIVE), [])`. Prove the helper: `fixedLimitSites(PRE_CHANGE_ITEM8)` has length 1; `fixedLimitSites('gh pr list --state all --json number \\\n  --limit 200 > "$X"')` has length 1 (continuation join); `fixedLimitSites('gh issue list --state open --limit {resolved-limit}')` is `[]`; `fixedLimitSites('#    across \`--state all --limit 200\` exceed')` is `[]` (no `gh … list` on the line — item 10's node-budget comment stays).
 2. `every gh list call in github-pr-scan.md is sized from {resolved-limit}` — `limitSites(LIVE).filter((t) => t === '{resolved-limit}').length === 12` and `limitSites(LIVE).length === 12` (current-pr item 4; repo-wide items 1, 3, 4 ×2, 5, 6, 7, 8, 9, 10 ×2 — 12 `--limit` matches measured at the plan's base, outside the moved triage scope). Prove the counter on a synthetic pair: `` '`gh pr list --state merged --limit {resolved-limit}` AND `gh pr list --state closed --limit {resolved-limit}`' `` yields 2 sized tokens; the same string with `--limit 50` yields 0 sized and 2 fixed; `` 'Every `gh pr list` call takes `--limit {resolved-limit}`' `` yields 0 matches.
-3. `current-pr and repo-wide each carry the Fetch limit rule` — `assertRule(scopeText)` checks `scopeText.includes(RULE)` for the `## Scope: \`current-pr\`` and `## Scope: \`repo-wide\`` sections (sliced heading-to-next-`\n## `). Go-red: `assert.notEqual` then `assert.throws(() => assertRule(mutated), { message: /Fetch limit/ })` with `RULE` removed from the live repo-wide slice.
+3. `current-pr and repo-wide each carry the Fetch limit rule` — `assertRule(scopeText)` checks `scopeText.includes(RULE)` for the `## Scope: \`current-pr\`` and `## Scope: \`repo-wide\`` sections (sliced heading-to-next-`\n## `). Go-red: `assert.notEqual` then `assert.throws(() => assertRule(mutated), { message: /Fetch limit/ })` with `RULE` removed from the live repo-wide slice. Because `RULE` is matched whole, this also pins its "Report every `WARNING:` line verbatim … render a floor count as `{N}+`" sentence; prove that by stripping only that sentence from the live slice and asserting the same message-matched throw.
+3a. `the Output Contract's [queue] row renders a floor count` — the Output Contract bullet starting `` - `[queue]` `` contains `{N}+` (Step 3's exact addition). Go-red by mutating it out in memory, message-matched.
 4. `item 8 reproduces #4820: the pre-change fence reports capped counts silently` (AC1.1, with test 5 — "A test reproduces the behavior above and passes after the change.") — freeze `PRE_CHANGE_ITEM8` = the current item 8 fence body verbatim (from `PR_SCAN_RECORDS="$(node` through the closing `"` of its `node -e`, with `--limit 200`). Run it via `runFence` with `limit` irrelevant and the stub serving 200 rows `{ number, title, labels: [] }`: `status === 0`, `stdout` parses to `{ pending: 0, blocked: 0, backlog: 200 }`, and `stderr` contains no `WARNING:`.
 5. `item 8 warns when the open-issue fetch reaches the limit` — `fenceAfter(REPO_WIDE, '8. **Grant-queue counts**')`; limit 200, 200 rows → `status 0`, same stdout JSON, `stderr` matches `/^WARNING: \[queue\] fetched 200 open issues, the backlog-fetch-limit cap — these counts are a floor$/m`; limit 200, 199 rows → no `WARNING:`; limit 1500, 1000 rows → no `WARNING:` (unfiltered fetch, no 1000 cap). Run the 200-row case under `bash --noprofile --norc` and `zsh -f` (skip zsh with `t.skip('zsh not on PATH')` when `spawnSync('zsh', ['-f', '-c', 'true']).error`).
 6. `item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the PR-join cap` — `fenceAfter(REPO_WIDE, '10. **Unsettled run**', 1)` (the second bash fence, the `node -e` join); `files`: `pr-scan-unsettled-claims.jsonl` empty, `pr-scan-unsettled-labelled.json` 2 rows `{ number, updatedAt: <48h ago> }`, `pr-scan-unsettled-prs.json` N rows `{ number: 9000+i, url, closingIssuesReferences: [] }`; `env: { UNSETTLED_AGE: '24' }`. Limit 2, N=2 → stderr matches `/^WARNING: \[unsettled\] the bot:in-progress fetch reached its cap — issues past it are unchecked$/m`, and both stdout rows match `/no PR found \d+h after claim \(the PR fetch hit backlog-fetch-limit — an older PR may exist\) — resume:/`. Limit 3, N=2 → no `WARNING:`, no `(the PR fetch hit` in stdout. Limit 1500, labelled 1000 rows, N=2 → the `bot:in-progress` warning fires (label cap), the PR qualifier does not.
@@ -173,7 +178,7 @@ Header comment: cite #4820, the carve-out (the prose is the declared contract �
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `node --test tests/github-pr-scan-fetch-limit.test.js`
-Expected: FAIL — tests 1, 2, 3, 5 and 6 red (fixed limits present, rule absent, no warnings); test 4 passes (it pins the pre-change behavior).
+Expected: FAIL — tests 1, 2, 3, 3a, 5 and 6 red (fixed limits present, rule absent, no floor render, no warnings); test 4 passes (it pins the pre-change behavior).
 
 - [ ] **Step 3: Edit `github-pr-scan.md`**
 
@@ -190,6 +195,8 @@ Each edit replaces exactly one occurrence:
   directly after `const prs = require('$PR_SCAN_UNSETTLED_PRS');`:
   `const PR_CAPPED = prs.length >= LIMIT ? ' (the PR fetch hit backlog-fetch-limit — an older PR may exist)' : '';`
   and in the no-PR row, `'h after claim — resume: node` → `'h after claim' + PR_CAPPED + ' — resume: node` (the rest of that `console.log` unchanged; keep the line's existing `\"`/`\${…}` escaping). Each inserted line takes its fence's existing indentation.
+- Output Contract, the `[queue]` bullet: after `` `[queue] {N} pending authorization, {M} bot:blocked, {K} backlog` `` append ` — each count rendered \`{N}+\` when item 8's block warned that the fetch hit its cap`.
+- `tests/display-ci-readers-conformance.test.js:176`: `--limit 100/` → `--limit \{resolved-limit\}/` in that one regex.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -199,7 +206,7 @@ Expected: PASS. Then `wc -c plugin/skills/_shared/github-pr-scan.md` — under 5
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/_shared/github-pr-scan.md tests/github-pr-scan-fetch-limit.test.js
+git add plugin/skills/_shared/github-pr-scan.md tests/github-pr-scan-fetch-limit.test.js tests/display-ci-readers-conformance.test.js
 git commit -m "Size the PR scan's fetches from backlog-fetch-limit — warn instead of truncating silently
 
 refs #4820"
@@ -210,18 +217,19 @@ refs #4820"
 ### Task 3: Size the `triage-queue` fetches and render capped counts as floors
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/github-pr-scan-triage.md`
 - Test: `tests/github-pr-scan-fetch-limit.test.js`
 
 **Interfaces:**
-- Consumes: Task 1's file; Task 2's `fenceAfter`, `runFence`, `fixedLimitSites`, `RULE`.
+- Consumes: Task 1's file; Task 2's `fenceAfter`, `runFence`, `limitSites`, `fixedLimitSites`, `assertRule`, `RULE`.
 
 - [ ] **Step 1: Write the failing tests** (append to `tests/github-pr-scan-fetch-limit.test.js`)
 
 1. `no gh list call in github-pr-scan-triage.md carries a fixed --limit` — `fixedLimitSites(TRIAGE) → []`, and `limitSites(TRIAGE)` is exactly `['{resolved-limit}', '{resolved-limit}']` (items 1 and 2).
-2. `triage-queue carries the Fetch limit rule and the floor render` — `TRIAGE.includes(RULE + ' A line whose count is a floor renders as \`{N}+\`.')`; go-red by removing that sentence in memory, message-matched as in Task 2 test 3.
+2. `triage-queue carries the Fetch limit rule and the floor render` — `assertRule(TRIAGE)` (`TRIAGE` = `readText` of `github-pr-scan-triage.md`; Task 2's helper; `RULE` already carries the `{N}+` floor-render sentence); go-red by removing `RULE` from the live text in memory, message-matched as in Task 2 test 3.
 3. `triage item 1 warns at the ready-fetch cap` — `fenceAfter(TRIAGE, '1. **Pending authorization**')`; stub rows `{ number, labels: [{ name: 'ready' }] }`. Limit 2, 2 rows → `stdout.trim() === '2'`, stderr matches `/^WARNING: \[triage\] the ready fetch reached its cap — the pending count is a floor$/m`; limit 3, 2 rows → no `WARNING:`; limit 1500, 1000 rows → warns (label cap); limit 1500, 999 rows → no `WARNING:`.
 
 - [ ] **Step 2: Run the tests to verify they fail**
@@ -231,7 +239,7 @@ Expected: FAIL — the three triage tests red; Task 2's tests stay green.
 
 - [ ] **Step 3: Edit `github-pr-scan-triage.md`**
 
-- Insert, as its own paragraph directly after the scope's intro paragraph ("Three cheap counts for the dashboard's Triage Queue section. … on the same dashboard."): `RULE` followed by ` A line whose count is a floor renders as \`{N}+\`.`
+- Insert `RULE` as its own paragraph directly after the scope's intro paragraph ("Three cheap counts for the dashboard's Triage Queue section. … on the same dashboard.").
 - Item 1: `--limit 200` → `--limit {resolved-limit}`; directly after `const issues = require('$TRIAGE_QUEUE_READY');` insert `if (issues.length >= Math.min({resolved-limit}, 1000)) console.error('WARNING: [triage] the ready fetch reached its cap — the pending count is a floor');`
 - Item 2: `--limit 200 -q 'length'` → `--limit {resolved-limit} -q 'length'`.
 
