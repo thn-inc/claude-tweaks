@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T07:31:30.038Z",
+  "computedAt": "2026-11-01T16:52:36.314Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -29,13 +29,8 @@
         "state": "OPEN"
       },
       {
-        "number": 4645,
-        "updatedAt": "2026-10-31T23:15:19Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4640,
-        "updatedAt": "2026-11-01T00:04:18Z",
+        "updatedAt": "2026-11-01T07:32:10Z",
         "state": "OPEN"
       },
       {
@@ -115,17 +110,12 @@
       },
       {
         "number": 4611,
-        "updatedAt": "2026-10-31T13:08:48Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4603,
-        "updatedAt": "2026-11-01T01:56:15Z",
+        "updatedAt": "2026-11-01T09:25:31Z",
         "state": "OPEN"
       },
       {
         "number": 4593,
-        "updatedAt": "2026-11-01T00:19:57Z",
+        "updatedAt": "2026-11-01T09:21:08Z",
         "state": "OPEN"
       },
       {
@@ -135,12 +125,7 @@
       },
       {
         "number": 4589,
-        "updatedAt": "2026-10-31T14:24:25Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4578,
-        "updatedAt": "2026-10-31T20:40:54Z",
+        "updatedAt": "2026-11-01T07:48:37Z",
         "state": "OPEN"
       },
       {
@@ -190,12 +175,7 @@
       },
       {
         "number": 4557,
-        "updatedAt": "2026-10-31T20:40:47Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4555,
-        "updatedAt": "2026-11-01T06:09:51Z",
+        "updatedAt": "2026-11-01T12:48:12Z",
         "state": "OPEN"
       },
       {
@@ -534,13 +514,18 @@
         "state": "OPEN"
       },
       {
+        "number": 4351,
+        "updatedAt": "2026-11-01T16:38:20Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4350,
         "updatedAt": "2026-10-31T09:57:56Z",
         "state": "OPEN"
       },
       {
         "number": 4347,
-        "updatedAt": "2026-10-27T16:00:53Z",
+        "updatedAt": "2026-11-01T07:37:52Z",
         "state": "OPEN"
       },
       {
@@ -785,7 +770,7 @@
       },
       {
         "number": 3977,
-        "updatedAt": "2026-10-26T22:27:36Z",
+        "updatedAt": "2026-11-01T07:37:44Z",
         "state": "OPEN"
       },
       {
@@ -810,7 +795,7 @@
       },
       {
         "number": 3942,
-        "updatedAt": "2026-10-26T20:36:05Z",
+        "updatedAt": "2026-11-01T07:37:36Z",
         "state": "OPEN"
       },
       {
@@ -881,6 +866,11 @@
       {
         "number": 3721,
         "updatedAt": "2026-10-27T16:47:48Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 3508,
+        "updatedAt": "2026-11-01T16:38:16Z",
         "state": "OPEN"
       },
       {
@@ -1180,7 +1170,7 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/plan-audit.js --task-markers {plan}` reads each task's optional `**Role:**` / `**Review risk:**` markers (#3378) and prints `{\"markers\", \"tasks\": [{index, title, role, risk}], \"findings\"?}`. `/build`'s per-task tier forwarding (`plugin/skills/build/dispatch.md`, the \"Per-task role/review-risk tier forwarding (#3378)\" paragraph) is its one consumer: a task reported `risk: \"high\"` gets a Capable task review; `risk: null` falls back to the run's `size:`-derived tier.\n\nThe parser (`plugin/bin/lib/plan-audit/parser.js`, `extractTaskMarkers`) captures everything after the key to end of line (`RISK_MARKER_RE = /^\\*\\*Review risk:\\*\\*[ \\t]*(.*)$/m`, same shape for `ROLE_MARKER_RE`), trims it, and recognizes it only on an exact whole-value match against the closed sets `TASK_MARKER_RISKS = ['high']` / `TASK_MARKER_ROLES = ['transcription', 'integration', 'judgment']`. So `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` yields `riskRaw = \"high (a read-once/…)\"`, `risk: null`. The same holds for a `**Role:** judgment (needs design judgment)` line.\n\nThe mis-parse is then invisible end to end:\n\n- `checkTaskMarkers` (`plugin/bin/lib/plan-audit/checks.js`) records a `findings` entry, but `--task-markers` (`plugin/bin/plan-audit.js`) only embeds it in the stdout JSON — exit 0, nothing on stderr. `plugin/skills/build/plan-audit.md` documents findings as warn-only, never exit-changing.\n- `dispatch.md`'s tier-forwarding paragraph never reads `findings` at all — it keys only on `markers` and each task's `role`/`risk`.\n- `plugin/skills/build/plan-authoring-checks.md` documents the syntax as `**Review risk:** high` but never says the value must stand alone on the line, and a trailing reason reads as valid to a human author.\n\nNet effect: a task its author explicitly marked high-risk silently drops from a Capable review to the unpinned tier. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) parses correctly — confirmed by the reporter on plugin 6.156.1.\n\n**Related:** #3986, #4618, #4549, #4559 (near-duplicate screen: shared Key Files / body anchors only — no title similarity; #4618 adds a different risk axis to plan-audit and shares `plan-audit.js`/`checks.js`)\n\n## Deliverables\n\n1. **Accept a trailing annotation after a recognized marker value.** In `extractTaskMarkers`, a `**Role:**` / `**Review risk:**` value is recognized when its leading token is in the closed set and is either the whole value or is followed by whitespace (the annotation after it is ignored). `**Review risk:** high (reason)` → `risk: \"high\"`; `**Role:** judgment — needs design judgment` → `role: \"judgment\"`. A leading token not in the closed set (`medium`, `hgih`, `high-ish`) stays unrecognized (`null`) exactly as today. `roleRaw`/`riskRaw` keep carrying the full raw trimmed line value.\n2. **Make an unrecognized marker value visible on stderr.** When `--task-markers` produces any `findings` entry, print one warning line per finding to stderr naming the task index, title, field, and raw value (e.g. `plan-audit.js: warning: task 3 \"X\" — unrecognized Review risk value \"medium\"; the task reads as unmarked`). Stdout JSON and the exit code (0) are unchanged — findings stay warn-only per `plan-audit.md`.\n3. **Surface findings in `/build`'s tier forwarding.** `dispatch.md`'s Per-task role/review-risk tier forwarding paragraph: when the `--task-markers` output carries `findings`, log one decision-log line naming each offending task/field/value (via `log-decision.js`, status per `_shared/auto-decision-log.md`'s Status semantics — not `STAGED`, since nothing is staged) and continue dispatch with those tasks treated as unmarked — never a stop.\n4. **Document the accepted shape.** `plan-authoring-checks.md`'s marker paragraph and `plan-audit.md`'s `--task-markers` paragraph state that a trailing annotation after the value is allowed and ignored, and that an unrecognized value is now warned on stderr as well as listed in `findings`.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-audit.js --task-markers plan.md` on a plan with `### Task 1: X` followed by `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` prints task 1 with `\"risk\": \"high\"`, no `findings` key, exit 0.\n- The same for `**Role:** judgment (needs design judgment)` → `\"role\": \"judgment\"`, and for a value followed by an em-dash annotation (`**Review risk:** high — reason`).\n- `**Review risk:** high` and `**Role:** transcription` with no annotation still parse exactly as today (existing `tests/bin-lib/plan-audit/parser.test.js` / `cli.test.js` #3378 cases stay green unmodified).\n- `**Review risk:** medium`, `**Review risk:** high-ish`, and `**Role:** trivial` still yield `null` plus a `findings` entry carrying the full raw value; `--task-markers` exits 0 and writes one stderr warning line per finding naming the task index, field, and raw value.\n- A plan with no findings writes nothing to stderr under `--task-markers`.\n- `dispatch.md`'s tier-forwarding paragraph names the `findings` field and the decision-log line it writes; `tests/plan-task-markers-conformance.test.js` (or a sibling conformance test) pins that the paragraph references `findings`.\n- `plan-authoring-checks.md` and `plan-audit.md` each state that a trailing annotation after the marker value is ignored.\n- New unit tests in `tests/bin-lib/plan-audit/parser.test.js` and `tests/bin-lib/plan-audit/cli.test.js` cover the annotated forms and the stderr warning, and each goes red when the parser change (respectively the stderr write) is reverted.\n- `npm test` passes.\n\n## Release Note\n\nFix plan-audit's task markers silently ignoring `**Review risk:** high` when a reason follows the value on the same line, and warn about unrecognized marker values instead of dropping them quietly.\n\n## Technical Approach\n\nParser: keep `ROLE_MARKER_RE` / `RISK_MARKER_RE` capturing the full line (so `roleRaw`/`riskRaw` and the findings' `value` stay the raw text), then derive the recognized value from the leading token — e.g. `const lead = raw.split(/\\s/, 1)[0]` and recognize `lead` when it is in the closed set. Splitting on whitespace (not on any non-word character) is what keeps `high-ish` / `high,` unrecognized rather than read as `high`; decide in the build whether a directly-attached separator like `high,` should also be accepted, and test whichever way it lands. `checkTaskMarkers` must use the same recognition rule as `extractTaskMarkers` (today it re-tests `TASK_MARKER_RISKS.includes(t.riskRaw)` against the raw value — switch it to test the recognized `t.risk`/`t.role` being null while the raw is non-null, so an annotated valid value is not reported as a finding).\n\nCLI: in the `parsed.taskMarkers` branch of `plan-audit.js`, after computing `findings`, write each to `process.stderr` before the stdout JSON line; leave `process.exitCode` untouched.\n\nSkill prose: the `dispatch.md` change is one sentence inside the existing tier-forwarding paragraph; keep the `markers: false` branch byte-for-byte as the paragraph promises.\n\n### Key Files\n\n- `plugin/bin/lib/plan-audit/parser.js` — `extractTaskMarkers`: leading-token recognition for Role / Review risk\n- `plugin/bin/lib/plan-audit/checks.js` — `checkTaskMarkers`: finding iff raw present and recognized value null\n- `plugin/bin/plan-audit.js` — `--task-markers` branch: one stderr warning line per finding\n- `plugin/skills/build/dispatch.md` — tier-forwarding paragraph: log `findings` to the decision log, continue with the task unmarked\n- `plugin/skills/build/plan-authoring-checks.md` — marker paragraph: trailing annotation allowed and ignored\n- `plugin/skills/build/plan-audit.md` — `--task-markers` paragraph: annotation rule + stderr warning\n- `tests/bin-lib/plan-audit/parser.test.js` — annotated-value cases\n- `tests/bin-lib/plan-audit/checks.test.js` — annotated valid value yields no finding\n- `tests/bin-lib/plan-audit/cli.test.js` — stdout risk/role + stderr warning cases\n- `tests/plan-task-markers-conformance.test.js` — pin `dispatch.md`'s `findings` handling\n\n## Gotchas\n\n- `tests/plan-task-markers-conformance.test.js` pins the marker syntax in `plan-authoring-checks.md` with `/\\*\\*Review risk:\\*\\* (\\S+)`/` and the dispatch tier wording — edit the prose so those pins still match, or update the pins in the same change.\n- The `markers` flag semantics are unchanged: a recognized key with an unrecognized value still sets `markers: true`.\n- Keep the matcher same-line-only (`[ \\t]*`, never `\\s*`) — `parser.js`'s own comment explains why `\\s` would read into the next line.\n- Exit code for findings must stay 0 — `plan-audit.md` documents findings as warn-only and `dispatch.md` runs this call unconditionally before SDD dispatch.\n\n## Original request\n\nplan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently\n\n**Summary:** `plan-audit.js --task-markers` reads a `**Review risk:** high` line that has a trailing reason as no risk, with no warning.\n\n**Kind:** Defect\n\n**Affected component:** `bin/plan-audit.js --task-markers` (with `skills/build/plan-authoring-checks.md`'s marker paragraph and `skills/build/dispatch.md`'s per-task tier forwarding)\n\n**Repro steps:**\n1. Write a plan with `### Task 1: X`, followed by the line `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)`.\n2. Run `node bin/plan-audit.js --task-markers plan.md`.\n\n**Expected vs. actual:**\nExpected: task 1 reports `\"risk\": \"high\"`, or the CLI exits non-zero or warns, naming the task and the unparsed value.\nActual: task 1 reports `\"risk\": null`. A `findings` entry quotes the raw value, but the exit code is 0 and nothing is printed to stderr. `/build`'s per-task tier forwarding keys on `risk: \"high\"`, so the task's review would silently drop from Capable to the unpinned tier. The marker reads as valid to a human, so the degradation is invisible. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) gives `\"risk\": \"high\"`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-e271bd38 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **AC8 \"respectively\": Reading B (split by coverage).** Annotated-form tests (parser tests, plus the CLI criterion-1 test) go red when the parser change is reverted; stderr-warning tests go red when the stderr write is reverted. The criterion-5 \"a plan with no findings writes nothing to stderr under `--task-markers`\" test is a negative control, exempt from the go-red requirement.\n",
+        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/plan-audit.js --task-markers {plan}` reads each task's optional `**Role:**` / `**Review risk:**` markers (#3378) and prints `{\"markers\", \"tasks\": [{index, title, role, risk}], \"findings\"?}`. `/build`'s per-task tier forwarding (`plugin/skills/build/dispatch.md`, the \"Per-task role/review-risk tier forwarding (#3378)\" paragraph) is its one consumer: a task reported `risk: \"high\"` gets a Capable task review; `risk: null` falls back to the run's `size:`-derived tier.\n\nThe parser (`plugin/bin/lib/plan-audit/parser.js`, `extractTaskMarkers`) captures everything after the key to end of line (`RISK_MARKER_RE = /^\\*\\*Review risk:\\*\\*[ \\t]*(.*)$/m`, same shape for `ROLE_MARKER_RE`), trims it, and recognizes it only on an exact whole-value match against the closed sets `TASK_MARKER_RISKS = ['high']` / `TASK_MARKER_ROLES = ['transcription', 'integration', 'judgment']`. So `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` yields `riskRaw = \"high (a read-once/…)\"`, `risk: null`. The same holds for a `**Role:** judgment (needs design judgment)` line.\n\nThe mis-parse is then invisible end to end:\n\n- `checkTaskMarkers` (`plugin/bin/lib/plan-audit/checks.js`) records a `findings` entry, but `--task-markers` (`plugin/bin/plan-audit.js`) only embeds it in the stdout JSON — exit 0, nothing on stderr. `plugin/skills/build/plan-audit.md` documents findings as warn-only, never exit-changing.\n- `dispatch.md`'s tier-forwarding paragraph never reads `findings` at all — it keys only on `markers` and each task's `role`/`risk`.\n- `plugin/skills/build/plan-authoring-checks.md` documents the syntax as `**Review risk:** high` but never says the value must stand alone on the line, and a trailing reason reads as valid to a human author.\n\nNet effect: a task its author explicitly marked high-risk silently drops from a Capable review to the unpinned tier. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) parses correctly — confirmed by the reporter on plugin 6.156.1.\n\n**Related:** #3986, #4618, #4549, #4559 (near-duplicate screen: shared Key Files / body anchors only — no title similarity; #4618 adds a different risk axis to plan-audit and shares `plan-audit.js`/`checks.js`)\n\n## Deliverables\n\n1. **Accept a trailing annotation after a recognized marker value.** In `extractTaskMarkers`, a `**Role:**` / `**Review risk:**` value is recognized when its leading token is in the closed set and is either the whole value or is followed by whitespace (the annotation after it is ignored). `**Review risk:** high (reason)` → `risk: \"high\"`; `**Role:** judgment — needs design judgment` → `role: \"judgment\"`. A leading token not in the closed set (`medium`, `hgih`, `high-ish`) stays unrecognized (`null`) exactly as today. `roleRaw`/`riskRaw` keep carrying the full raw trimmed line value.\n2. **Make an unrecognized marker value visible on stderr.** When `--task-markers` produces any `findings` entry, print one warning line per finding to stderr naming the task index, title, field, and raw value (e.g. `plan-audit.js: warning: task 3 \"X\" — unrecognized Review risk value \"medium\"; the task reads as unmarked`). Stdout JSON and the exit code (0) are unchanged — findings stay warn-only per `plan-audit.md`.\n3. **Surface findings in `/build`'s tier forwarding.** `dispatch.md`'s Per-task role/review-risk tier forwarding paragraph: when the `--task-markers` output carries `findings`, log one decision-log line naming each offending task/field/value (via `log-decision.js`, status per `_shared/auto-decision-log.md`'s Status semantics — not `STAGED`, since nothing is staged) and continue dispatch with those tasks treated as unmarked — never a stop.\n4. **Document the accepted shape.** `plan-authoring-checks.md`'s marker paragraph and `plan-audit.md`'s `--task-markers` paragraph state that a trailing annotation after the value is allowed and ignored, and that an unrecognized value is now warned on stderr as well as listed in `findings`.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-audit.js --task-markers plan.md` on a plan with `### Task 1: X` followed by `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` prints task 1 with `\"risk\": \"high\"`, no `findings` key, exit 0.\n- The same for `**Role:** judgment (needs design judgment)` → `\"role\": \"judgment\"`, and for a value followed by an em-dash annotation (`**Review risk:** high — reason`).\n- `**Review risk:** high` and `**Role:** transcription` with no annotation still parse exactly as today (existing `tests/bin-lib/plan-audit/parser.test.js` / `cli.test.js` #3378 cases stay green unmodified).\n- `**Review risk:** medium`, `**Review risk:** high-ish`, and `**Role:** trivial` still yield `null` plus a `findings` entry carrying the full raw value; `--task-markers` exits 0 and writes one stderr warning line per finding naming the task index, field, and raw value.\n- A plan with no findings writes nothing to stderr under `--task-markers`.\n- `dispatch.md`'s tier-forwarding paragraph names the `findings` field and the decision-log line it writes; `tests/plan-task-markers-conformance.test.js` (or a sibling conformance test) pins that the paragraph references `findings`.\n- `plan-authoring-checks.md` and `plan-audit.md` each state that a trailing annotation after the marker value is ignored.\n- New unit tests in `tests/bin-lib/plan-audit/parser.test.js` and `tests/bin-lib/plan-audit/cli.test.js` cover the annotated forms and the stderr warning, and each goes red when the parser change (respectively the stderr write) is reverted.\n- `npm test` passes.\n\n## Release Note\n\nFix plan-audit's task markers silently ignoring `**Review risk:** high` when a reason follows the value on the same line, and warn about unrecognized marker values instead of dropping them quietly.\n\n## Technical Approach\n\nParser: keep `ROLE_MARKER_RE` / `RISK_MARKER_RE` capturing the full line (so `roleRaw`/`riskRaw` and the findings' `value` stay the raw text), then derive the recognized value from the leading token — e.g. `const lead = raw.split(/\\s/, 1)[0]` and recognize `lead` when it is in the closed set. Splitting on whitespace (not on any non-word character) is what keeps `high-ish` / `high,` unrecognized rather than read as `high`; decide in the build whether a directly-attached separator like `high,` should also be accepted, and test whichever way it lands. `checkTaskMarkers` must use the same recognition rule as `extractTaskMarkers` (today it re-tests `TASK_MARKER_RISKS.includes(t.riskRaw)` against the raw value — switch it to test the recognized `t.risk`/`t.role` being null while the raw is non-null, so an annotated valid value is not reported as a finding).\n\nCLI: in the `parsed.taskMarkers` branch of `plan-audit.js`, after computing `findings`, write each to `process.stderr` before the stdout JSON line; leave `process.exitCode` untouched.\n\nSkill prose: the `dispatch.md` change is one sentence inside the existing tier-forwarding paragraph; keep the `markers: false` branch byte-for-byte as the paragraph promises.\n\n### Key Files\n\n- `plugin/bin/lib/plan-audit/parser.js` — `extractTaskMarkers`: leading-token recognition for Role / Review risk\n- `plugin/bin/lib/plan-audit/checks.js` — `checkTaskMarkers`: finding iff raw present and recognized value null\n- `plugin/bin/plan-audit.js` — `--task-markers` branch: one stderr warning line per finding\n- `plugin/skills/build/dispatch.md` — tier-forwarding paragraph: log `findings` to the decision log, continue with the task unmarked\n- `plugin/skills/build/plan-authoring-checks.md` — marker paragraph: trailing annotation allowed and ignored\n- `plugin/skills/build/plan-audit.md` — `--task-markers` paragraph: annotation rule + stderr warning\n- `tests/bin-lib/plan-audit/parser.test.js` — annotated-value cases\n- `tests/bin-lib/plan-audit/checks.test.js` — annotated valid value yields no finding\n- `tests/bin-lib/plan-audit/cli.test.js` — stdout risk/role + stderr warning cases\n- `tests/plan-task-markers-conformance.test.js` — pin `dispatch.md`'s `findings` handling\n\n## Gotchas\n\n- `tests/plan-task-markers-conformance.test.js` pins the marker syntax in `plan-authoring-checks.md` with `/\\*\\*Review risk:\\*\\* (\\S+)`/` and the dispatch tier wording — edit the prose so those pins still match, or update the pins in the same change.\n- The `markers` flag semantics are unchanged: a recognized key with an unrecognized value still sets `markers: true`.\n- Keep the matcher same-line-only (`[ \\t]*`, never `\\s*`) — `parser.js`'s own comment explains why `\\s` would read into the next line.\n- Exit code for findings must stay 0 — `plan-audit.md` documents findings as warn-only and `dispatch.md` runs this call unconditionally before SDD dispatch.\n\n## Original request\n\nplan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently\n\n**Summary:** `plan-audit.js --task-markers` reads a `**Review risk:** high` line that has a trailing reason as no risk, with no warning.\n\n**Kind:** Defect\n\n**Affected component:** `bin/plan-audit.js --task-markers` (with `skills/build/plan-authoring-checks.md`'s marker paragraph and `skills/build/dispatch.md`'s per-task tier forwarding)\n\n**Repro steps:**\n1. Write a plan with `### Task 1: X`, followed by the line `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)`.\n2. Run `node bin/plan-audit.js --task-markers plan.md`.\n\n**Expected vs. actual:**\nExpected: task 1 reports `\"risk\": \"high\"`, or the CLI exits non-zero or warns, naming the task and the unparsed value.\nActual: task 1 reports `\"risk\": null`. A `findings` entry quotes the raw value, but the exit code is 0 and nothing is printed to stderr. `/build`'s per-task tier forwarding keys on `risk: \"high\"`, so the task's review would silently drop from Capable to the unpinned tier. The marker reads as valid to a human, so the degradation is invisible. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) gives `\"risk\": \"high\"`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-e271bd38 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **AC8 \"respectively\": Reading B (split by coverage).** Annotated-form tests (parser tests, plus the CLI criterion-1 test) go red when the parser change is reverted; stderr-warning tests go red when the stderr write is reverted. The criterion-5 \"a plan with no findings writes nothing to stderr under `--task-markers`\" test is a negative control, exempt from the go-red requirement.\n\nSecond plan-review round (2026-11-01, question issuecomment-6550904623):\n\n- **Deliverable 3 decision-log line count: Reading A.** Per-task tier forwarding writes one `SKIP` line per `--task-markers` run, and that one line lists every offending task/field/value. This follows `_shared/auto-decision-log.md`'s Degrade-trace rule (\"One line per documented conditional action per run attempt\") and the spec's literal \"one … line naming each\".\n",
         "createdAt": "2026-10-30T14:43:37Z",
         "labels": [
           {
@@ -1241,7 +1231,7 @@
         "number": 4640,
         "state": "OPEN",
         "title": "plan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently",
-        "updatedAt": "2026-11-01T00:04:18Z",
+        "updatedAt": "2026-11-01T07:32:10Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1769,7 +1759,7 @@
         "number": 4611,
         "state": "OPEN",
         "title": "Acceptance packet: schema, canonical marker comment, new sections",
-        "updatedAt": "2026-10-31T13:08:48Z",
+        "updatedAt": "2026-11-01T09:25:31Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1798,7 +1788,7 @@
     ],
     [
       {
-        "body": "Surface: backend\n\n## Current State\n\nThe multi-spec artifact-overwrite completion check (`plugin/skills/flow/multispec-artifact-namespacing.md`, run before the Consolidated Review Console) calls `plugin/bin/check-artifact-overwrite.js`. It finds every `docs/journeys/` or `stories/` path that one commit in the run added and a later commit modified. A hunk with deletions passes only if one of three extension tests in `plugin/bin/lib/flow/artifact-overwrite-check.js` accepts it: same-spec self-edit, list reflow, or step-markup reformat. Anything else is reported as an overwrite (exit 1), which HARD-GATEs the run.\n\nThe same-spec self-edit test (`artifact-overwrite-check.js:310`, `const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs)`) attributes commits only through a `refs #N` trailer on the commit message (`extractRefs`, `:85`). Most of the pipeline's commit sites (stories, review fix waves, wrap-up) write no such trailer; only `plugin/skills/build/micro-plan.md:66` asks for `refs #{n}`. In a run where neither commit has a trailer, the test can never match. A spec's own review fix to a story or journey file it added earlier in the same run then trips the HARD-GATE as a false positive, and the run stops for a manual ruling. This is the most common legitimate edit of that kind.\n\nThe run already records which spec was running when. Every `spec-status` call appends `{ phase, status, at }` to `specs[].phases[]` in the multi-spec run's `manifest.yml` (`plugin/bin/lib/flow/manifest.js`'s `transitionSpec`, `spec.phases.push({ phase, status, at: nowIso })`), and `startedAt` is set on a spec's first `running` transition. `readManifest(runDir)` is exported from the same module. The check does not read the manifest today.\n\n## Deliverables\n\n- **Manifest-window attribution fallback.** `checkArtifactOverwrite` accepts an optional `manifest` (or `runDir`) input. A commit is attributed to spec ids in this order:\n  1. its own `refs #N` trailer, when present (unchanged);\n  2. otherwise, the single spec whose manifest window contains the commit's author date. A spec's window runs from its first recorded transition (`startedAt`, else its earliest `phases[].at`) up to the next spec's first recorded transition. The last spec's window is open-ended.\n  3. otherwise the commit is unattributed (an empty set, as today).\n\n  The same-spec self-edit test then compares these attributions for the deleting commit and every blamed commit. A commit whose author date falls inside no window, or inside more than one, stays unattributed. The fallback never guesses.\n- **CLI flag.** `plugin/bin/check-artifact-overwrite.js` gains an optional `--run <dir>` flag that reads `manifest.yml` from that directory and passes it through. Without the flag, or with no readable manifest there, behavior stays as it is today, refs-only. An unreadable or unparseable manifest named by `--run` is the walk's own failure (exit 3), never a silent fall back to refs-only.\n- **Distinct unattributable reason.** When a self-edit judgment fails because the deleting commit or a blamed commit has no attribution from either source, the `overwrites[]` entry's `reason` says so explicitly (\"unattributable — no refs trailer and no manifest window\"). It must not reuse the \"refs trailer does not match\" wording, so whoever makes the manual ruling can tell a missing attribution from a confirmed cross-spec deletion. The entry still fails closed: it stays in `overwrites[]`, and the exit code is still 1.\n- **Procedure update.** `plugin/skills/flow/multispec-artifact-namespacing.md`'s invocation passes `--run \"{parent}\"`, the multi-spec parent run directory that holds `manifest.yml`. Its test-1 description names both attribution sources and their order.\n- The module header comment's description of test 1 is updated to match.\n\n## Acceptance Criteria\n\n- [ ] Fixture: spec A adds `stories/x-A.yaml`, and a later commit inside spec A's manifest window changes one of its lines. Neither commit carries a `refs` trailer. With the manifest supplied, the result is `clean: true`.\n- [ ] Fixture: same history, but the modifying commit's author date falls inside spec B's window. The result is still an overwrite: one entry for that path and commit.\n- [ ] Fixture: the same untrailered self-edit with no manifest supplied still reports an overwrite. Its `reason` contains `unattributable`, not `refs trailer does not match`.\n- [ ] Fixture: a commit with a `refs #N` trailer is attributed by the trailer even when its author date falls in a different spec's manifest window (the trailer takes precedence).\n- [ ] Fixture: an author date that falls before every spec's first transition leaves the commit unattributed.\n- [ ] `check-artifact-overwrite.js --run <dir>` with no `manifest.yml` in `<dir>` exits 3, and stderr names the missing manifest.\n- [ ] Each new attribution test goes red when the manifest fallback is removed.\n- [ ] Every existing test in `tests/bin-lib/flow/artifact-overwrite-check.test.js` and `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` still passes unchanged.\n- [ ] `multispec-artifact-namespacing.md`'s command block includes `--run \"{parent}\"`, and `tests/multispec-artifact-namespacing-conformance.test.js` passes.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.\n\n## Technical Approach\n\nAttribution becomes a per-commit function that the existing `getRefs` cache wraps. It tries the trailer first, then the manifest window looked up by the commit's author date (`git log -1 --format=%aI {sha}`, fetched alongside `%B` in the same call so the walk does not add a git call per commit). `selfEdit` keeps its current shape over the attribution sets. Parse the manifest with `manifest.js`'s `parseManifestYaml`/`readManifest` rather than adding a second YAML reader. Window computation is a small pure function over `multispec.specs` (ordered by first transition) so it can be unit-tested without git.\n\nAlternatives the record offered, and why they lose:\n- **Namespace-suffix attribution** (`-{N}` in the filename): this names the file's owner, not the author of the deleting commit. Spec B editing spec A's `-A` file is exactly the overwrite the check exists to catch, so the suffix cannot separate the self-edit from the real overwrite.\n- **Writing `refs #{N}` trailers at every commit site**: the check's stated design (`multispec-artifact-namespacing.md`) is to verify the outcome from git history \"rather than trusting that every present-and-future write path\" follows a convention. A trailer convention spread across build, stories, review, and wrap-up commit sites, including subagent-authored commits, is that kind of trust. It is also incomplete for commits made before the convention lands.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — manifest-window attribution fallback, the unattributable reason string, and the header comment\n- `plugin/bin/check-artifact-overwrite.js` — `--run <dir>` flag, manifest read, and exit 3 on an unreadable manifest\n- `plugin/bin/lib/flow/manifest.js` — read only; reuse `readManifest`/`parseManifestYaml` (no change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — pass `--run \"{parent}\"` and describe the two attribution sources\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — untrailered self-edit, cross-window, trailer-precedence, and out-of-window fixtures\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — `--run` flag and missing-manifest exit 3\n- `tests/multispec-artifact-namespacing-conformance.test.js` — keep passing against the updated command block\n\n## Gotchas\n\n- Use the commit's **author** date, not the committer date. A rebase or cherry-pick rewrites the committer date to the time of the rewrite, which would move a commit out of its spec's window. The author date is preserved.\n- Fixture commits must pin `GIT_AUTHOR_DATE` (and `GIT_COMMITTER_DATE`) explicitly. Commits made seconds apart in a test otherwise all land in one window, and the cross-window fixture would pass for the wrong reason.\n- Manifest windows apply only to a shared-worktree (sequential) multi-spec run. Parallel-wave members build in their own worktrees, so their windows can overlap. The \"more than one window, unattributed\" rule is what keeps an overlap from being read as a self-edit.\n- `#4590` adds two more extension tests (step renumber, reference-preserving `Origin:` line) to the same module and the same procedure doc. It is a sibling change, not a dependency. Whichever lands second rebases its header-comment and doc edits onto the other's.\n\n**Related:** #4590, #3831, #3974, #4353, #4429\n\n## Original request\n\nflow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer\n\n**Summary:** The multi-spec artifact-overwrite completion check reports a spec's own review-fix edit to its own namespaced artifact as a cross-spec overwrite (a HARD-GATE) whenever the run's commits carry no `refs #N` trailer — which the pipeline's own commit sites never write.\n\n**Kind:** Defect\n\n**Affected component:** /claude-tweaks:flow — multi-spec artifact-overwrite completion check (`skills/flow/multispec-artifact-namespacing.md`, `bin/check-artifact-overwrite.js`, `bin/lib/flow/artifact-overwrite-check.js`)\n\n**Repro steps:**\n1. Run a two-spec `/flow` in one shared worktree (specs A then B).\n2. Spec A's `/stories` commit adds a namespaced story file, e.g. `stories/x-A.yaml`.\n3. Spec A's own review fix wave changes one line in that file (two locator strings updated to match a copy change made in the same commit).\n4. None of the run's commits (build, stories, review fix waves) carry a `refs #A` trailer.\n5. At end of run, `check-artifact-overwrite.js --base {EXPECTED_BASE} --path docs/journeys/ --path stories/` runs over the run's range.\n\n**Expected vs. actual:**\nExpected: the edit is recognised as a same-spec self-correction (both commits are spec A's; the manifest phase timestamps put both inside spec A's test/review window, spec B started hours later; the file carries spec A's `-A` namespace suffix), so the check passes.\nActual: exit 1 with one overwrite reported. The \"same-spec self-edit\" test requires the deleting commit and the blamed commit to share the same `refs #{N}` trailer, so it can never match in a run whose commit sites don't write that trailer. The procedure treats this as a HARD-GATE before the consolidated console, so the run stops for a manual ruling on a false positive — the most common legitimate edit shape (a spec correcting its own artifact during review).\n\nSuggested fixes (any of):\n1. When neither commit has a `refs #N` trailer, fall back to spec attribution from the run's `manifest.yml` phase windows (`specs[].phases[].at`), or from the artifact's own `-{N}` namespace suffix (a file namespaced to spec A, modified while spec A is the running spec, is a self-edit).\n2. Have the pipeline's commit sites (build, stories, review fix waves, wrap-up) write a `refs #{N}` trailer in multi-spec runs, so the existing test works.\n3. At minimum, report \"unattributable (no refs trailer)\" as its own verdict instead of an overwrite.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\nRelated (different false-positive shape in the same check): #4590.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-58618f68 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (AC7 scope): Reading B.** \"Each new attribution test goes red when the manifest fallback is removed\" covers only the fixtures whose expected verdict depends on the fallback (AC1, AC2, AC4, AC5). AC3 (no manifest) is proven by reverting its unattributable reason string instead; the pure `computeSpecWindows`/`attributeByWindow` unit tests are exempt.\n- **Q2 (mixed-execution runs): Reading B.** Window attribution turns off whenever the manifest names a `not-run` spec — the check falls back to today's refs-only behavior for that run, so it never produces a false clean. This also covers a default-mode run that stopped after a failure (it too keeps refs-only behavior).\n",
+        "body": "Surface: backend\n\n## Current State\n\nThe multi-spec artifact-overwrite completion check (`plugin/skills/flow/multispec-artifact-namespacing.md`, run before the Consolidated Review Console) calls `plugin/bin/check-artifact-overwrite.js`. It finds every `docs/journeys/` or `stories/` path that one commit in the run added and a later commit modified. A hunk with deletions passes only if one of three extension tests in `plugin/bin/lib/flow/artifact-overwrite-check.js` accepts it: same-spec self-edit, list reflow, or step-markup reformat. Anything else is reported as an overwrite (exit 1), which HARD-GATEs the run.\n\nThe same-spec self-edit test (`artifact-overwrite-check.js:310`, `const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs)`) attributes commits only through a `refs #N` trailer on the commit message (`extractRefs`, `:85`). Most of the pipeline's commit sites (stories, review fix waves, wrap-up) write no such trailer; only `plugin/skills/build/micro-plan.md:66` asks for `refs #{n}`. In a run where neither commit has a trailer, the test can never match. A spec's own review fix to a story or journey file it added earlier in the same run then trips the HARD-GATE as a false positive, and the run stops for a manual ruling. This is the most common legitimate edit of that kind.\n\nThe run already records which spec was running when. Every `spec-status` call appends `{ phase, status, at }` to `specs[].phases[]` in the multi-spec run's `manifest.yml` (`plugin/bin/lib/flow/manifest.js`'s `transitionSpec`, `spec.phases.push({ phase, status, at: nowIso })`), and `startedAt` is set on a spec's first `running` transition. `readManifest(runDir)` is exported from the same module. The check does not read the manifest today.\n\n## Deliverables\n\n- **Manifest-window attribution fallback.** `checkArtifactOverwrite` accepts an optional `manifest` (or `runDir`) input. A commit is attributed to spec ids in this order:\n  1. its own `refs #N` trailer, when present (unchanged);\n  2. otherwise, the single spec whose manifest window contains the commit's author date. A spec's window runs from its first recorded transition (`startedAt`, else its earliest `phases[].at`) up to the next spec's first recorded transition. The last spec's window is open-ended.\n  3. otherwise the commit is unattributed (an empty set, as today).\n\n  The same-spec self-edit test then compares these attributions for the deleting commit and every blamed commit. A commit whose author date falls inside no window, or inside more than one, stays unattributed. The fallback never guesses.\n- **CLI flag.** `plugin/bin/check-artifact-overwrite.js` gains an optional `--run <dir>` flag that reads `manifest.yml` from that directory and passes it through. Without the flag, or with no readable manifest there, behavior stays as it is today, refs-only. An unreadable or unparseable manifest named by `--run` is the walk's own failure (exit 3), never a silent fall back to refs-only.\n- **Distinct unattributable reason.** When a self-edit judgment fails because the deleting commit or a blamed commit has no attribution from either source, the `overwrites[]` entry's `reason` says so explicitly (\"unattributable — no refs trailer and no manifest window\"). It must not reuse the \"refs trailer does not match\" wording, so whoever makes the manual ruling can tell a missing attribution from a confirmed cross-spec deletion. The entry still fails closed: it stays in `overwrites[]`, and the exit code is still 1.\n- **Procedure update.** `plugin/skills/flow/multispec-artifact-namespacing.md`'s invocation passes `--run \"{parent}\"`, the multi-spec parent run directory that holds `manifest.yml`. Its test-1 description names both attribution sources and their order.\n- The module header comment's description of test 1 is updated to match.\n\n## Acceptance Criteria\n\n- [ ] Fixture: spec A adds `stories/x-A.yaml`, and a later commit inside spec A's manifest window changes one of its lines. Neither commit carries a `refs` trailer. With the manifest supplied, the result is `clean: true`.\n- [ ] Fixture: same history, but the modifying commit's author date falls inside spec B's window. The result is still an overwrite: one entry for that path and commit.\n- [ ] Fixture: the same untrailered self-edit with no manifest supplied still reports an overwrite. Its `reason` contains `unattributable`, not `refs trailer does not match`.\n- [ ] Fixture: a commit with a `refs #N` trailer is attributed by the trailer even when its author date falls in a different spec's manifest window (the trailer takes precedence).\n- [ ] Fixture: an author date that falls before every spec's first transition leaves the commit unattributed.\n- [ ] `check-artifact-overwrite.js --run <dir>` with no `manifest.yml` in `<dir>` exits 3, and stderr names the missing manifest.\n- [ ] Each new attribution test goes red when the manifest fallback is removed.\n- [ ] Every existing test in `tests/bin-lib/flow/artifact-overwrite-check.test.js` and `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` still passes unchanged.\n- [ ] `multispec-artifact-namespacing.md`'s command block includes `--run \"{parent}\"`, and `tests/multispec-artifact-namespacing-conformance.test.js` passes.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.\n\n## Technical Approach\n\nAttribution becomes a per-commit function that the existing `getRefs` cache wraps. It tries the trailer first, then the manifest window looked up by the commit's author date (`git log -1 --format=%aI {sha}`, fetched alongside `%B` in the same call so the walk does not add a git call per commit). `selfEdit` keeps its current shape over the attribution sets. Parse the manifest with `manifest.js`'s `parseManifestYaml`/`readManifest` rather than adding a second YAML reader. Window computation is a small pure function over `multispec.specs` (ordered by first transition) so it can be unit-tested without git.\n\nAlternatives the record offered, and why they lose:\n- **Namespace-suffix attribution** (`-{N}` in the filename): this names the file's owner, not the author of the deleting commit. Spec B editing spec A's `-A` file is exactly the overwrite the check exists to catch, so the suffix cannot separate the self-edit from the real overwrite.\n- **Writing `refs #{N}` trailers at every commit site**: the check's stated design (`multispec-artifact-namespacing.md`) is to verify the outcome from git history \"rather than trusting that every present-and-future write path\" follows a convention. A trailer convention spread across build, stories, review, and wrap-up commit sites, including subagent-authored commits, is that kind of trust. It is also incomplete for commits made before the convention lands.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — manifest-window attribution fallback, the unattributable reason string, and the header comment\n- `plugin/bin/check-artifact-overwrite.js` — `--run <dir>` flag, manifest read, and exit 3 on an unreadable manifest\n- `plugin/bin/lib/flow/manifest.js` — read only; reuse `readManifest`/`parseManifestYaml` (no change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — pass `--run \"{parent}\"` and describe the two attribution sources\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — untrailered self-edit, cross-window, trailer-precedence, and out-of-window fixtures\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — `--run` flag and missing-manifest exit 3\n- `tests/multispec-artifact-namespacing-conformance.test.js` — keep passing against the updated command block\n\n## Gotchas\n\n- Use the commit's **author** date, not the committer date. A rebase or cherry-pick rewrites the committer date to the time of the rewrite, which would move a commit out of its spec's window. The author date is preserved.\n- Fixture commits must pin `GIT_AUTHOR_DATE` (and `GIT_COMMITTER_DATE`) explicitly. Commits made seconds apart in a test otherwise all land in one window, and the cross-window fixture would pass for the wrong reason.\n- Manifest windows apply only to a shared-worktree (sequential) multi-spec run. Parallel-wave members build in their own worktrees, so their windows can overlap. The \"more than one window, unattributed\" rule is what keeps an overlap from being read as a self-edit.\n- `#4590` adds two more extension tests (step renumber, reference-preserving `Origin:` line) to the same module and the same procedure doc. It is a sibling change, not a dependency. Whichever lands second rebases its header-comment and doc edits onto the other's.\n\n**Related:** #4590, #3831, #3974, #4353, #4429\n\n## Original request\n\nflow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer\n\n**Summary:** The multi-spec artifact-overwrite completion check reports a spec's own review-fix edit to its own namespaced artifact as a cross-spec overwrite (a HARD-GATE) whenever the run's commits carry no `refs #N` trailer — which the pipeline's own commit sites never write.\n\n**Kind:** Defect\n\n**Affected component:** /claude-tweaks:flow — multi-spec artifact-overwrite completion check (`skills/flow/multispec-artifact-namespacing.md`, `bin/check-artifact-overwrite.js`, `bin/lib/flow/artifact-overwrite-check.js`)\n\n**Repro steps:**\n1. Run a two-spec `/flow` in one shared worktree (specs A then B).\n2. Spec A's `/stories` commit adds a namespaced story file, e.g. `stories/x-A.yaml`.\n3. Spec A's own review fix wave changes one line in that file (two locator strings updated to match a copy change made in the same commit).\n4. None of the run's commits (build, stories, review fix waves) carry a `refs #A` trailer.\n5. At end of run, `check-artifact-overwrite.js --base {EXPECTED_BASE} --path docs/journeys/ --path stories/` runs over the run's range.\n\n**Expected vs. actual:**\nExpected: the edit is recognised as a same-spec self-correction (both commits are spec A's; the manifest phase timestamps put both inside spec A's test/review window, spec B started hours later; the file carries spec A's `-A` namespace suffix), so the check passes.\nActual: exit 1 with one overwrite reported. The \"same-spec self-edit\" test requires the deleting commit and the blamed commit to share the same `refs #{N}` trailer, so it can never match in a run whose commit sites don't write that trailer. The procedure treats this as a HARD-GATE before the consolidated console, so the run stops for a manual ruling on a false positive — the most common legitimate edit shape (a spec correcting its own artifact during review).\n\nSuggested fixes (any of):\n1. When neither commit has a `refs #N` trailer, fall back to spec attribution from the run's `manifest.yml` phase windows (`specs[].phases[].at`), or from the artifact's own `-{N}` namespace suffix (a file namespaced to spec A, modified while spec A is the running spec, is a self-edit).\n2. Have the pipeline's commit sites (build, stories, review fix waves, wrap-up) write a `refs #{N}` trailer in multi-spec runs, so the existing test works.\n3. At minimum, report \"unattributable (no refs trailer)\" as its own verdict instead of an overwrite.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\nRelated (different false-positive shape in the same check): #4590.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-58618f68 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (AC7 scope): Reading B.** \"Each new attribution test goes red when the manifest fallback is removed\" covers only the fixtures whose expected verdict depends on the fallback (AC1, AC2, AC4, AC5). AC3 (no manifest) is proven by reverting its unattributable reason string instead; the pure `computeSpecWindows`/`attributeByWindow` unit tests are exempt.\n- **Q2 (mixed-execution runs): Reading B.** Window attribution turns off whenever the manifest names a `not-run` spec — the check falls back to today's refs-only behavior for that run, so it never produces a false clean. This also covers a default-mode run that stopped after a failure (it too keeps refs-only behavior).\n\nSecond plan-review round (2026-11-01, question issuecomment-6551069601):\n\n- **Q3 (window end): Reading A.** Keep the Deliverables rule as written: a spec's window ends at the next spec's first recorded transition (the last spec's window is open-ended). Window attribution is switched off for a `parallel` run, which falls back to today's refs-only check, per the Gotcha \"Manifest windows apply only to a shared-worktree (sequential) multi-spec run\". The procedure tells a parallel run apart by omitting `--run` for it (or an equivalent explicit signal); no max-based window end.\n- **Q4 (run whose last spec failed): Reading B.** Window attribution is also switched off when any spec's status is `failed`, not only when the manifest names a `not-run` spec. This keeps Q2's intent: a run stopped by a failure keeps today's refs-only behavior.\n",
         "createdAt": "2026-10-30T09:13:20Z",
         "labels": [
           {
@@ -1859,7 +1849,7 @@
         "number": 4593,
         "state": "OPEN",
         "title": "flow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer",
-        "updatedAt": "2026-11-01T00:19:57Z",
+        "updatedAt": "2026-11-01T09:21:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1937,7 +1927,7 @@
         "number": 4589,
         "state": "OPEN",
         "title": "Render dispatch Task prompts from a CLI instead of hand-substituting task-prompt.md",
-        "updatedAt": "2026-10-31T14:24:25Z",
+        "updatedAt": "2026-11-01T07:48:37Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1961,96 +1951,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\n`integration-model` has no static schema default. When neither the run's `config.yml` pin nor `.claude-tweaks/policy.yml` sets it, `detectIntegrationModel` (`plugin/bin/lib/policy-schema.js:642-659`) computes it from the forge-detection ladder (`plugin/skills/_shared/forge-detection.md`, checks 1 and 3). Verified on `main` at `fed17360e`:\n\n- Line 644 builds one `execOpts` with a hardcoded `timeout: 5000` for both the `git remote get-url origin` probe and the `gh repo view --json owner,name` probe. The project's `gh-timeout-ms` policy key (`policy-schema.js:134`, bounded 1000–60000, default 5000) and the `CLAUDE_TWEAKS_GH_TIMEOUT_MS` env override, which every other direct `gh` call honours through `plugin/bin/lib/shared-primitives.js`'s `GH_TIMEOUT_MS` ladder (env > policy > default), are never read here.\n- Lines 652-656: any throw from the `gh` probe returns `'local-merge'`. A timeout (the child killed after 5 s) cannot be told apart from a definitive \"not authenticated / not a GitHub repo\" exit, and nothing records which one happened.\n- The function is called in three places: `plugin/bin/lib/policy-derived-defaults.js:45` (behind `bin/resolve-policy.js`'s `integration-model` branch), `resolveIntegrationModel` (`policy-schema.js:670-676`, used by `bin/lib/reconcile/index.js`), and `plugin/bin/lib/hooks/pre-tool-use.js:1659` (`resolveRunPinnedIntegrationModel`, the PR-stamp gate's fallback for a run with no pin yet).\n\nObserved effect (reported against plugin 6.156.3): on a GitHub Enterprise host where `gh` calls routinely take 4–14 s, two unpinned reads of `integration-model` during one `/claude-tweaks:flow #A,#B,#C` run returned `local-merge` and then `pr-first`, both `source: default`. `/build` logged a SKIP of the draft-PR bootstrap, and the bookkeeping-stamps gate then denied the next write (`bookkeeping-stamp-deny`, record-pr) until the run was corrected by hand. A contributing factor is that the first read ran without `--run`, so it bypassed the run-scoped pin (`plugin/skills/_shared/integration-model.md`, \"Run-scoped stability\"). That caller-side miss is a separate concern. This record covers the detection function: it fails on a slow forge and leaves no trace.\n\n## Deliverables\n\n1. `detectIntegrationModel` bounds its `gh repo view` probe with the resolved `gh` timeout for the repo it is detecting: `CLAUDE_TWEAKS_GH_TIMEOUT_MS` (when valid within the key's bounds) > `gh-timeout-ms` read from `{repoRoot}/.claude-tweaks/policy.yml` > the 5000 ms schema default. This is the same precedence as `shared-primitives.js`'s ladder, but anchored on `repoRoot` rather than `process.cwd()`. An explicit `opts.timeoutMs` passed by a caller wins over the ladder. The `git remote get-url origin` probe keeps a short local bound; it does not need the `gh` budget.\n2. A `gh` probe that ends by timeout (`ETIMEDOUT` / killed by signal) is retried once with the same timeout before detection gives up. That matches `gh-timeout-ms`'s documented \"killed and retried once\" semantics. A definitive outcome is not retried: a non-zero exit, or `gh` absent (`ENOENT`).\n3. Detection reports *why* it resolved `local-merge`. A timeout that survives the retry is a **degraded** detection, kept distinct from a detected `local-merge` (no remote, `gh` absent, or `gh repo view` exiting non-zero). Whatever form the signal takes, `detectIntegrationModel(repoRoot, opts)` keeps returning a bare enum string for every existing caller (additive only). Callers that want the reason get it through a new opt-in surface, for example an `opts.onDegrade` callback or a sibling export.\n4. `bin/resolve-policy.js`'s `integration-model` resolution (through `policy-derived-defaults.js`) surfaces a degraded detection in two ways: a `degraded — integration-model: forge detection timed out after {ms} ms (x2); resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms` line on stderr, and an additive `degraded: \"<reason>\"` field on that key's JSON entry. `--values` output is unchanged (still the bare value on stdout).\n5. `pre-tool-use.js`'s `resolveRunPinnedIntegrationModel` passes an explicit `opts.timeoutMs` chosen so that its worst case (probe plus one retry) stays within the hook's spawn budget (the \"I5\" budget its own comment cites). A comment at the call site explains why the hook does not inherit a 60 s `gh-timeout-ms`.\n6. `plugin/skills/_shared/forge-detection.md`'s \"Code twin\" paragraph and `detectIntegrationModel`'s header comment (`policy-schema.js:623-641`, which currently says \"Each check runs under a 5s timeout\") describe the new timeout source, the retry-once rule, and the degraded-vs-detected distinction.\n7. Tests in `tests/integration-model.test.js`, `tests/merge-verification.test.js` (which pins `computeDerivedDefaults` today), and `tests/resolve-policy-cli.test.js` cover the new behaviour. Each one must go red against the current code.\n\n## Acceptance Criteria\n\n- With `gh-timeout-ms: 20000` in a fixture repo's `policy.yml` and a fake `gh` on `PATH` that sleeps 8 s and then prints valid JSON, `detectIntegrationModel(fixture)` returns `pr-first`. Today it returns `local-merge` after 5 s.\n- With `CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000` and no policy key, the same fake resolves `pr-first`. With an explicit `opts.timeoutMs: 1000`, it resolves `local-merge` as a degraded detection.\n- When the fake `gh` times out on its first call and succeeds on its second, the result is `pr-first`, and the fake records exactly two invocations.\n- When the fake `gh` exits non-zero immediately (no timeout), the result is `local-merge`, the fake is invoked exactly once, and no degrade is reported.\n- When `gh` is absent from `PATH` and a remote is present, the result is `local-merge` with no degrade, which is today's behaviour for the MCP-only environment. `mcpReachable: true` still short-circuits to `pr-first`.\n- When the fake `gh` always times out, `node bin/resolve-policy.js integration-model` (JSON mode, no `--run`, no pin) prints `local-merge` with `source: \"default\"` and a `degraded` field, and prints exactly one `degraded — integration-model: …` line on stderr. `--values integration-model` prints only `local-merge` on stdout.\n- With `integration-model: pr-first` pinned in `policy.yml`, or in `--run`'s `config.yml`, none of the above invokes `gh` at all: the pin still wins outright.\n- `resolveRunPinnedIntegrationModel` passes an explicit `timeoutMs`, and a test (or a source-scan assertion) pins that value at or below the hook budget it cites.\n- `forge-detection.md`'s Code-twin paragraph and the `detectIntegrationModel` header comment no longer state a fixed 5 s timeout.\n- `npm test` passes.\n- **Decision (plan review, 2026-10-31):** `session-start.js` passes a hook-bounded `timeoutMs` into `reconcile()`, which forwards it to `resolveIntegrationModel`/`detectIntegrationModel`, pinned by a test like Deliverable 5's pre-tool-use one. The SessionStart path gets the same bound as the pre-tool-use hook. (Plan-review Q1: Reading B.)\n- **Decision (plan review, 2026-10-31):** The pre-tool-use hook keeps 5000 ms per gh attempt. With one retry plus the 5 s git probe its worst case is 15 s, and \"the hook budget\" in Deliverable 5 and the criterion above means that 15 s bound, not the I5 spawn-count fast path. (Q2: Reading B.)\n- **Decision (plan review, 2026-10-31):** `resolveRunPinnedIntegrationModel` takes the timeout as a parameter. The hook passes its hook-bounded value; `plugin/bin/lib/pr-bookkeeping/precondition.js` (behind `check-pr-bookkeeping.js`) passes nothing and follows the `gh-timeout-ms` ladder. (Q3: Reading B.)\n- **Decision (plan review, 2026-10-31):** Any failed retry after a first-attempt timeout (a second timeout or a non-zero exit) is a degraded detection. A test with a fake `gh` that times out and then exits non-zero asserts two invocations and one degrade. (Q4: Reading B.)\n- **Decision (plan review, 2026-10-31):** A degraded detection is never cached. `resolveRunPinnedIntegrationModel` forwards `onDegrade`, and the PR-stamp gate in `pre-tool-use.js` handles a degraded result like its catch branch: no `prExempt` is saved, so the next call detects again. (Plan-review Q5: Reading B.)\n- **Decision (plan review, 2026-10-31):** The timeout-then-failed-retry degrade has its own text, \"forge detection timed out after {ms} ms, then gh failed on retry\", pinned by its own CLI test. The \"(x2)\" text stays for two timeouts. (Q6: Reading B.)\n- **Decision (plan review, 2026-10-31):** A `merge-verification` request that runs forge detection through `resolveIntegrationModel` reports a degraded detection the same way the `integration-model` key does, with a test. (Q7: Reading B.)\n- **Decision (plan review, 2026-10-31):** A `merge-verification` request honors the run's pinned `integration-model` (the `--run` `config.yml` pin) before any forge detection, exactly as an `integration-model` request does; it calls `gh` only when no pin exists. A test pins that a pinned run makes no `gh` call. (Plan-review Q8.)\n- **Decision (plan review, 2026-10-31):** A `merge-verification` degrade prints the same texts as the `integration-model` key: \"forge detection timed out after {ms} ms (x2)\" for two timeouts, and \"forge detection timed out after {ms} ms, then gh failed on retry\" for the Q6 case. No new wording. (Q9.)\n- **Decision (plan review, 2026-10-31):** A `degraded —` stderr line from `resolve-policy.js --values` is handled like the empty-value branch: the Manifesto pins no `integration-model` and logs a `SKIP`, with a `manifesto.md` task and a test. A degraded detection never becomes the run's pin. (Plan-review Q10: Reading B.)\n- **Decision (plan review, 2026-10-31):** `precondition.js` forwards `onDegrade` and returns a distinct `degraded-detection` reason, never `not-pr-first`, so the `/test` gate does not pass silently on a degraded detection. (Q11: Reading B.)\n- **Decision (plan review, 2026-10-31):** An invalid `--run` `integration-model` value is not a pin: a `merge-verification` request runs detection, as the plan already does. (Q12: Reading B.)\n- **Decision (plan review, 2026-10-31):** The JSON `degraded` field holds the reason code (`timeout` or `timeout-then-exit`), per Deliverable 4's `\"<reason>\"`; the stderr text is rendered from that code. (Q13: Reading A.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nForge detection for `integration-model` now honours `gh-timeout-ms`, retries once on a timeout, and reports a degraded detection instead of silently resolving `local-merge` on a slow GitHub host.\n\n## Technical Approach\n\nKeep `detectIntegrationModel`'s string return and add the reason through an opt-in surface, so no existing caller changes shape (expand-contract). Resolve the timeout inside `policy-schema.js` from `repoRoot`. `readFileSafe` and `resolveValue` already live in that module, so the policy read needs no new dependency. Do not top-level require `./policy`, which itself requires `./policy-schema`, or `./shared-primitives`, whose `GH_TIMEOUT_MS` getter reads `process.cwd()` rather than the repo being detected. Classify the `execFileSync` error: `err.code === 'ETIMEDOUT'` or a set `err.signal` means timeout and is eligible for one retry; `ENOENT` means `gh` is absent, a definitive result; anything else is a definitive non-zero exit. Thread the reason through `computeDerivedDefaults` into the result entry, and have `resolve-policy.js` print the stderr degrade line in the existing `degraded —` style (`bin/verify-run-bookends.js:205`). Tests reuse `tests/integration-model.test.js`'s `gitRepo()` / `ghAbsentPath()` fixtures. Add a fake-`gh` shim directory placed first on `PATH`, configurable for sleep duration, exit code and an invocation counter.\n\n### Key Files\n\n- `plugin/bin/lib/policy-schema.js` — `detectIntegrationModel`: resolved timeout, retry-once on timeout, degrade reason; header comment updated\n- `plugin/bin/lib/policy-derived-defaults.js` — carry the degrade reason into the `integration-model` result entry\n- `plugin/bin/resolve-policy.js` — emit the stderr `degraded —` line and the additive JSON `degraded` field\n- `plugin/bin/lib/hooks/pre-tool-use.js` — `resolveRunPinnedIntegrationModel` passes an explicit hook-bounded `timeoutMs`\n- `plugin/bin/lib/shared-primitives.js` — read-only reference for the env > policy > default ladder and bounds (`timeoutFromEnv`, `policyKeyBounds`); change only if a repoRoot-anchored helper is extracted here\n- `plugin/skills/_shared/forge-detection.md` — Code-twin paragraph: timeout source, retry, degraded vs detected\n- `tests/integration-model.test.js` — fake-`gh` timeout/retry/degrade cases\n- `tests/merge-verification.test.js` — `computeDerivedDefaults` degrade-field propagation\n- `tests/resolve-policy-cli.test.js` — stderr degrade line and JSON `degraded` field; `--values` unchanged\n\n## Gotchas\n\n- The reporter's `gh-timeout-ms: 90000` is above the key's schema max of 60000 (`policy-schema.js:134`). `resolveValue` silently turns an out-of-range value into the 5000 default, so even after this fix that exact setting still resolves to 5 s. The acceptance tests deliberately use in-range values. Whether an out-of-range timeout should warn is a separate concern and is not changed here.\n- The fallback value stays `local-merge` on a degraded detection. `forge-detection.md` documents the ladder as fail-open, and `pr-first` with an unreachable `gh` would fail at the draft-PR bootstrap instead. Run-to-run stability inside a pipeline comes from the run-scoped pin (`_shared/integration-model.md`), which this record leaves untouched. This record makes a failed detection visible and less likely; it does not invent a cross-call cache.\n- `pre-tool-use.js` runs inside a lifecycle hook. Inheriting a 60 s `gh-timeout-ms` plus one retry there could exceed the hook's own timeout and break the session-safety invariant in `docs/hooks.md`, so that call site must keep an explicit bound.\n- Requiring `./policy` from `policy-schema.js` at module top level creates a require cycle (`policy.js` requires `policy-schema.js`). Read `policy.yml` with `readFileSafe` and `resolveValue` in place, or lazy-require inside the function.\n- The live-repo test (`detectIntegrationModel: this repo … resolves a valid enum value`) asserts shape only, so it must not start depending on network latency. Keep every new case on the fake `gh`.\n\n## Original request\n\npolicy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge\n\n**Summary:** Forge detection for `integration-model` uses a hardcoded 5 s `gh repo view` timeout. It ignores the project's `gh-timeout-ms` and silently returns `local-merge` on any failure, so on a slow GitHub Enterprise host the resolved model flips from run to run.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/policy-schema.js` (`detectIntegrationModel`), used by `resolve-policy.js integration-model`\n\n**Repro steps:**\n1. Use a project with no `integration-model:` key in `.claude-tweaks/policy.yml`. Set `gh-timeout-ms: 90000` because the forge is a GitHub Enterprise host where `gh` calls routinely take 4–14 s.\n2. Run `/claude-tweaks:flow #A,#B,#C` (a multi-record run on the default worktree strategy).\n3. Resolve `integration-model` once before the worktree catch-up and once again inside the worktree minutes later.\n\n**Expected vs. actual:**\nExpected: the same model on every resolution. Detection should honour `gh-timeout-ms`; if it can't decide, it should fall back to a stable value with a logged degrade, not silently switch models.\nActual: one read returned `local-merge` and a later read returned `pr-first`. Both came from detection (`source: default`), because the hardcoded `timeout: 5000` (`bin/lib/policy-schema.js:644,652-654`, still present on main at bcd27902c) sometimes fails and falls back to `local-merge` without a trace. `/build` logged a SKIP of the draft-PR bootstrap. The bookkeeping-stamps gate then denied the next write (`bookkeeping-stamp-deny`, record-pr), and a manual correction was needed before the draft PR opened. Contributing factor: the first read ran without `--run`, so it bypassed the Manifesto's run-scoped pin (`_shared/integration-model.md`, \"Run-scoped stability\").\n\n**Suggested fix:** pass the resolved `gh-timeout-ms` to the detection `gh` call. When detection fails, keep the pinned or default model rather than silently returning `local-merge`, and log a degrade line so that \"detected local-merge\" can be told apart from \"detection failed\". Workaround: pin `integration-model:` explicitly in `.claude-tweaks/policy.yml`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.3\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-deff65bd -->\n\n\n\n\n",
-        "createdAt": "2026-10-30T07:53:55Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4578,
-        "state": "OPEN",
-        "title": "policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge",
-        "updatedAt": "2026-10-31T20:40:54Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -2363,90 +2263,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #3758, #4030, #4549, #4559, #4589, #3706, #3822, #3835, #3875, #4358, #4363, #4548\n\n## Current State\n\nDuring a `/flow #N build,test,review,polish auto` run, the build controller dispatched an implementer for a multi-file task (four files plus tests) and waited on it with a fixed 60 x `sleep 20` budget (20 minutes). At the bound it stopped with `STATUS: BLOCKED`, citing the rule that a file-editing child must not be redone in-session. The implementer was healthy and committed its task seconds later. Cost: one false BLOCKED stop, a fresh-agent resume of about 1.7 h wall clock, and the run's third and last allowed context handoff.\n\nThe original report could not locate the fixed budget's source. It is the plugin's own contract, not an improvised loop:\n\n- `plugin/skills/_shared/subagent-dispatch-core.md:70` (Foreground Execution Discipline, \"Nested `Agent` children\"): a dispatched agent keeps its turn alive with \"repeated `sleep 20` Bash calls, at most 60 (20 minutes) per wave of children\", and never reads or tails a running child's `output_file` (`:74`).\n- `plugin/skills/_shared/subagent-dispatch-core.md:96-98`: \"a write-capable child (one that edits files) still silent at the bound is never redone in-session ... stop, and end with `STATUS: BLOCKED`\". \"Silent\" means only that no `<task-notification>` has arrived — nothing checks whether the child is still making progress.\n- The same primitive and stop rule are restated in the prompts handed to dispatched agents: `plugin/skills/dispatch/task-prompt.md` (item 7 at `:48`/`:65`, first-call template `:153`/`:167`, second-call template `:329`/`:343`), `plugin/skills/dispatch/express-prompt.md` (`:38`/`:52`, `:121`/`:135`), and `plugin/skills/flow/context-handoff.md`'s handoff-child template (`:81`/`:98`).\n- `plugin/skills/flow/context-handoff.md:52` already says a top-level session waits on its child with no bound because \"a child phase often runs past 20 minutes\" — but a handoff child is itself a subagent, so it inherits the 20-minute bound for its own nested implementer dispatches. A handoff-continued build therefore hits it.\n- `tests/foreground-execution-instruction.test.js:375-398` pins the primitive (`sleep 20`, at most 60, 20 minutes) to appear exactly once in four copies (core section, task-prompt item 7, both task-prompt call templates); `:138` pins the write-capable never-redone clause; `tests/flow-context-handoff-conformance.test.js:115` pins the handoff template's copy.\n\nNever-redo-in-session is itself correct — an abandoned child keeps running and may still write. The defect is that the stop fires on elapsed time alone, against a write-capable child that is visibly working.\n\n## Deliverables\n\n1. **Progress check at the bound for write-capable children**, in `subagent-dispatch-core.md`'s Foreground Execution Discipline. When the 60-wait bound expires with a write-capable child still outstanding, probe the child's working tree read-only — the worktree path the dispatcher already passed under Working Directory Discipline — with `git -C {worktree} rev-parse HEAD` and `git -C {worktree} --no-optional-locks status --porcelain`, compared against the same probe taken right after the wave launched (and at each later bound). If either value changed, the child is progressing: log one line and grant one further window of the same primitive. Stop with `STATUS: BLOCKED` only when a whole window passes with no change in either value, or when a hard ceiling of 3 windows (60 minutes) per wave is reached; the BLOCKED report names which condition fired (`no progress for one window` or `ceiling reached while progressing`).\n   - The probe never reads the child's `output_file` (the existing rule stands) and never writes.\n   - Read-only children (a lens, a single read, a judge) keep today's behavior: self-judged at the first bound. The extension applies to write-capable children only.\n   - Never-redo-in-session is unchanged on every branch.\n2. **Every restated copy updated in the same change**: `dispatch/task-prompt.md` (item 7 and both call templates), `dispatch/express-prompt.md` (both copies), and `flow/context-handoff.md`'s handoff-child template each carry the progress-check extension, worded consistently with the core section. The base primitive (`sleep 20`, at most 60, 20 minutes) stays stated exactly once per copy, so `primitiveCopies`' agreement check keeps its meaning.\n3. **Conformance tests**: extend `tests/foreground-execution-instruction.test.js` (and `tests/flow-context-handoff-conformance.test.js` for the template copy) so every copy is asserted to state the progress probe, the one-window-without-change stall condition, and the 3-window ceiling — each new assertion with a discrimination proof that goes red when the clause is removed from any single copy, following the file's existing pattern (`:400`).\n\n## Acceptance Criteria\n\n- `subagent-dispatch-core.md`'s Foreground Execution Discipline states: at the bound, a still-outstanding write-capable child gets a read-only `git -C {worktree}` progress probe (HEAD and `--no-optional-locks status --porcelain`); a change since the previous probe grants one more window of the same primitive; `STATUS: BLOCKED` fires only after one full window with no change, or at the 3-window (60-minute) ceiling, and the report names which.\n- Read-only children are unaffected: still self-judged at the first bound.\n- The never-redone-in-session rule for write-capable children and the never-read-`output_file` rule both stand unchanged.\n- All six restated copies (task-prompt x3, express-prompt x2, context-handoff template x1) carry the extension, and each still states the base primitive exactly once.\n- `tests/foreground-execution-instruction.test.js` and `tests/flow-context-handoff-conformance.test.js` assert the extension in every copy, with a discrimination test per new assertion that fails when the clause is removed from any single copy.\n- `npm test` passes.\n- **Decision (plan review, 2026-10-31):** The stall rule applies per wave. Keep granting windows while any write-capable child in the wave shows a change, up to the 3-window (60-minute) ceiling. At the stop, report `STATUS: BLOCKED` naming every child that showed no change. Children sharing one worktree count as progressing together, since the probe cannot tell them apart. (Plan-review question: Reading B.)\n- **Decision (plan review, 2026-10-31):** A wait call that fails during an extension window counts as that window's bound expiring: the progress probe runs exactly as at any bound. There is no third named stop condition. (Plan-review question on a failed wait call.)\n- **Decision (plan review, 2026-10-31):** The progress probe compares a hash of `git diff HEAD` alongside `git status --porcelain`, so continued edits to files a child has already modified count as progress. (Plan-review question on the probe missing re-edits.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nKeep waiting on a dispatched implementer that is still committing or changing files at the 20-minute wait bound, instead of stopping the build as blocked — up to 60 minutes, then stop as before.\n\n## Technical Approach\n\nA prose change to the shared contract and its restated copies; no `bin/` code. The probe is two read-only git commands the waiting agent can already run, recorded in the per-wait log line it already writes (the bounded-polling paragraph, `subagent-dispatch-core.md:107`). Take the baseline probe right after the wave launches so the first bound has something to compare against. Keep the base primitive's wording byte-identical in every copy so the existing `PRIMITIVE` regex count holds, and add the extension as a separate sentence that the new assertions match.\n\nThe probe reads the child's worktree, which the dispatcher already knows (task prompts pass it per Working Directory Discipline). When a child's worktree is unknown, there is nothing to probe and the existing stop applies.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — add the at-bound progress check and 3-window ceiling for write-capable children\n- `plugin/skills/dispatch/task-prompt.md` — mirror the extension in item 7 and both call templates\n- `plugin/skills/dispatch/express-prompt.md` — mirror the extension in both copies\n- `plugin/skills/flow/context-handoff.md` — mirror the extension in the handoff-child template\n- `tests/foreground-execution-instruction.test.js` — assert the extension in every copy, with discrimination proofs\n- `tests/flow-context-handoff-conformance.test.js` — assert the extension in the handoff template copy\n\n## Gotchas\n\n- A child running a long test suite can go several minutes with no HEAD or file change; a full 20-minute window with zero change is the stall signal, which a suite run does not normally reach. A child that writes only outside its worktree shows no progress and falls back to today's stop — acceptable.\n- A probe that fails (lock contention, a refused command) counts as \"no observed change\" for that probe, never as progress, and is never retried in another form — the existing wait-call failure rule.\n- Byte-pinned prose: `tests/foreground-execution-instruction.test.js` requires the base primitive exactly once per copy — the extension's wording must not restate `sleep 20` ... `at most 60 (20 minutes)`.\n- ASSUMPTION — verify at build: the controller that stopped in the reported run was a handoff child (a subagent) waiting on a nested implementer, so the subagent bound applied — confirm via the report's \"handoff 3 of 3\" against `flow/context-handoff.md:52`'s top-level-unbounded rule; if a top-level session was the one that stopped, `_shared/dispatch-waiting.md` also needs to forbid a fixed poll budget at top level.\n\n## Original request\n\nbuild: a fixed wait budget abandoned a live implementer seconds before it committed, costing a full handoff\n\n**Summary:** During `/flow` build Common Step 2, the controller waited a fixed 60 x 20 s (20 min) for a background implementer, then declared it stalled and stopped the pipeline as BLOCKED. The implementer was working normally and committed its task seconds later.\n\n**Kind:** Defect\n\n**Affected component:** build Common Step 2 — how the controller waits on a dispatched implementer (source of the fixed 60 x 20 s budget not located in the skill text; it may be an agent-improvised poll loop the skill does not forbid)\n\n**Objective:** run efficiency / no false stops\n\n**Measurement:** 1 false BLOCKED stop; the resume consumed handoff 3 of 3 (the run's last allowed handoff).\n\n**Cost this session:** one full fresh-agent resume (about 1.7 h wall clock) and the loss of the run's last handoff margin.\n\n**Repro steps:**\n1. Run `/flow #N build,test,review,polish auto` on a record with a multi-file task (four files plus tests).\n2. In Common Step 2, the controller dispatches the implementer in the background and polls for its report with a fixed budget.\n3. The implementer takes longer than 20 minutes; the controller stops with BLOCKED, citing the rule that a file-editing agent must not be redone in the same session.\n\n**Expected vs. actual:**\nExpected: the controller waits for the background agent's completion notification, or judges a stall from lack of progress (no file changes, no commits, no output growth for a long window) before stopping.\nActual: a fixed 20-minute poll budget, with no progress check, ended the run while the agent was mid-commit.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-b117e576 -->\n\n\n",
-        "createdAt": "2026-10-29T17:31:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4557,
-        "state": "OPEN",
-        "title": "build: a fixed wait budget abandoned a live implementer seconds before it committed, costing a full handoff",
-        "updatedAt": "2026-10-31T20:40:47Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
@@ -6880,6 +6696,90 @@
     ],
     [
       {
+        "body": "Origin: speed analysis of the #4026 dispatch (run 2026-10-25T132807-record-4026)\n\nDefer-reason: tangential\n\n## Current State\n\nBuild's Common Step 5 and `/test` Step 1 run the full suite locally through `verify.js` (`plugin/skills/test/verification.md`). The runner writes the pass stamp that `verify.js --stamp-status` and `artifact-verdict.js`'s `deriveTestVerdict` read.\n\nConcurrent pipeline sessions on one machine compete for CPU. On 2026-10-25 the #4026 run (`2026-10-25T132807-record-4026`, PR #4277) spent 55 min on one local full run and 1h34 on a second, while #4027, #4140 and #4317 ran their own suites. An unloaded local run takes about 20 min.\n\nThe same suite (~17,900 tests) already runs on every PR push in `.github/workflows/test.yml` (ubuntu-latest, Node 20, 15-min timeout). On PR #4277 it took 3.5 min (run 40216510908, 17:26:55Z to 17:30:30Z). Every phase exit already pushes the run branch, and the merge gate (`merge-verification: merge-when-green`) already requires that check green. So today the local full run duplicates a check that is faster, contention-free, free for this public repo, and required anyway.\n\n## Deliverables\n\n- `.claude-tweaks/verify-scope.json` can declare a CI source for a suite (workflow file and job name). Without one, behavior is unchanged, so consumer projects are not affected.\n\n- With a CI source declared, `verify.js`'s full-suite run for that suite requires HEAD to be pushed and equal to the run PR's head. It waits for the declared job's run on that exact head SHA (bounded wait, polling, never backgrounded) and writes the pass stamp from the job's conclusion. The stamp records `source: ci` with the run id and URL.\n\n- A failed CI run fetches the failing test files from the job log and re-runs only those locally for baseline adjudication (the existing `baseline.js` path). A test that is red at the fork point or passes on isolated re-run is adjudicated exactly as a local failure would be.\n\n- Fallback to the local full run, with the reason named in `report.json`, when no CI run for the head SHA appears within the wait (a DIRTY PR gets no `pull_request` runs, the workflow did not trigger, Actions is down), when the run was cancelled, or when `gh` is unavailable.\n\n- `deriveTestVerdict` and `/test`'s Skip-if-recent read accept a `source: ci` stamp the same as a local one.\n\n- `verification.md` states what the CI pass does not cover: macOS and Node 22 (the local platform), and Windows (still post-merge via `windows-regression.yml`).\n\n## Acceptance Criteria\n\n- [ ] With the CI source declared and a green CI run on HEAD, Common Step 5 writes a full-scope pass stamp with `source: ci` and runs no local suite.\n\n- [ ] A red CI run whose only failures are red at the fork point is adjudicated a baseline pass, and only the failing files were re-run locally.\n\n- [ ] A red CI run with a real failure fails verification and names the failing tests from the CI log.\n\n- [ ] A head SHA with no CI run within the wait (simulated DIRTY PR) falls back to the local full run, and `report.json` names the fallback reason.\n\n- [ ] Without a declared CI source, `verify.js` output and stamps are byte-identical to today's.\n\n- [ ] Each new branch has a test that fails against the current `verify.js`. The gh calls go through the injectable runner seam, never the network.\n\n## Release Note\n\nProjects can point final test verification at their CI run, so a pipeline waits a few minutes for CI instead of running the whole suite on a busy local machine.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/verify.js` — CI-backed full-suite mode: wait for the declared check run on HEAD, stamp from its result\n- `plugin/bin/lib/verify/declaration.js` — accept a declared CI source (workflow, job) for a suite\n- `plugin/bin/lib/verify/stamp.js` — pass stamp records its source (local or ci, with run id and URL)\n- `plugin/bin/lib/verify/baseline.js` — adjudicate a CI failure against the base by re-running only the failing files\n- `plugin/bin/lib/dispatch/artifact-verdict.js` — deriveTestVerdict accepts a ci-sourced stamp\n- `plugin/skills/test/verification.md` — document the CI-backed mode, its fallbacks and what it does not cover\n- `plugin/skills/build/SKILL.md` — Common Step 5 uses the CI-backed mode when declared\n- `.claude-tweaks/verify-scope.json` — declare this repo's test.yml test job as the CI source\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-10-25T20:00:11Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMTcg",
+            "name": "risk:high",
+            "description": "Scoring: high blast radius — human review required",
+            "color": "D93F0B"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXTZ8w",
+            "name": "demo:pending",
+            "description": "Acceptance: built and verified — awaiting human sign-off via /claude-tweaks:demo",
+            "color": "1D76DB"
+          }
+        ],
+        "number": 4347,
+        "state": "OPEN",
+        "title": "Take the full-suite verification from the PR's CI run instead of a local run when the declaration names one",
+        "updatedAt": "2026-11-01T07:37:52Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "high",
+          "size": "high",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": "pending",
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "**Related:** #4346\n\nOrigin: review lenses 3a and 3e (convention and architecture), four agents independently, refs #4026\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4026 made ten CLIs append their own `decisions.md` entry. Each hand-rolls the same `formatEntry` -> `deps.appendDecision` -> `catch` -> stderr block (`closing-links.js`, `console-filings.js`, `pr-checks.js`, `pr-merge-state.js`, `pr-checklist.js`, `set-config.js`, `review-coordination.js`, `verify-run-bookends.js`, `hooks.js` `logLeftOnDisk`, `lib/phase-exit/phase-exit.js`), and each reports a failed append differently: a `logged: false` boolean (`pr-checks.js`, `pr-merge-state.js`, `review-coordination.js`, `verify-run-bookends.js`), `logFailed: true` (`closing-links.js`, gh-absent envelope only), a `logFailures` array (`console-filings.js`, `phase-exit.js`), or a stderr line alone (`pr-checklist.js`, `set-config.js`, `hooks.js`). `_shared/auto-decision-log.md` therefore lists four \"append failed\" signals and the consuming skill prose branches on each. `logged: false` also means both \"nothing owed\" and \"append failed\" in some CLIs. The `now` seam is `Date.now()` in some and `new Date()` in others. Moving the signal is a contract change on ten CLIs' JSON envelopes and their consumers, so it needs the expand-contract sequence. Refs #4026.\n\n## Deliverables\n\n1. A single helper in `plugin/bin/lib/log-decision/append.js` (for example `appendBestEffort({ runDir, section, entry }) -> { ok, error? }`) that owns the anchoring rule, the try/catch and the stderr wording.\n2. One envelope field for \"the decision did not land\" (kept alongside the existing spellings until every consumer is migrated, then the old ones removed with a recorded removal condition).\n3. `_shared/auto-decision-log.md` and the skill prose that branch on the failure signal cite the one field.\n\n## Acceptance Criteria\n\n- [ ] No self-logging CLI contains its own `catch` around `appendDecision`.\n- [ ] `_shared/auto-decision-log.md` names one failure signal.\n- [ ] The conformance pin (`tests/phase-exit-call-sites-conformance.test.js`) checks every listed CLI calls the helper.\n\n## Release Note\n\nEvery CLI that logs its own decision now reports a failed log write the same way.\n\n_Filed by `review` via specShapedBody._\n",
         "createdAt": "2026-10-25T19:53:25Z",
         "labels": [
@@ -9244,6 +9144,84 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n**Related:** #2724 (auto-filed structurally-stuck tracker, kept), #3898 (release runs are owned there)\n\n## Overview\n\nRun directories pile up because nothing closes a run whose session died. Measured 2026-10-22: 78 empty `-adhoc-standalone` directories (0 staged items and 0 decision lines in every one), and 27 stale formal runs (20 open PRs, 6 closed-unmerged, 1 merged). A session that crashes never fires SessionEnd, so its run stays `active` forever. The SessionStart \"unfinished runs\" banner shows 3 only because `MAX_REPORTED = 3` caps it with no overflow line, and it has no liveness filter: it listed three runs that sibling sessions were probably still driving.\n\nThis record is the report-only half of the fix. It adds a pure disposition function (run shape by liveness verdict gives close, leave, or orphan, with a reason), runs it inside reconcile in report-only mode so reconcile says what it would close and closes nothing, narrows the SessionStart banner to dead-and-orphaned runs with an overflow line, and makes a session archive its own ad hoc run at SessionEnd. Closing for real is a later record that must ship in a release after this one, so every consumer project gets a dry run on its own pile first.\n\nThe asymmetry the maintainer agreed on governs every rule here: settle findings aggressively, close runs conservatively. Closing a run a live sibling session is still driving ends that run's enforcement and event logging invisibly. A run left open by mistake costs one more banner line.\n\n**Complexity:** Medium\n**Estimated tasks:** 8\n\n## Non-Goals\n\n- Reconcile closes nothing in this record. No `run-state.json` is flipped to `clean` by the new rows, no staged item is dropped, no directory is archived by them. Turning that on, and `close-run --abandon`, are #3978.\n- Reconcile gains no GitHub write and no skill-file write, and never carries out a staged item's outcome. It never deletes a branch, removes a worktree, or changes claim labels.\n- No filing of backlog records per orphaned run, and no listing of live sibling runs \"for information\"; both relocate the noise.\n- No change to the existing merged, `orphaned-mint`, `adhoc-superseded`, and `abandoned-interrupted` archive paths beyond the `live` skip; replacing `abandoned-interrupted`'s recency test is #3979.\n- Release runs (`-release-standalone`) closing at their own end is #3898's scope; this record only covers dead ones through the standalone row.\n- Not the auto-filed structurally-stuck tracker (#2724), which stays as it is.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #3973 | Add a run-liveness verdict module and an owner block in run-state.json | must merge first: this record consumes `runLiveness` |\n| #3845 | A nested `claude -p` inside a pipeline session marks the parent's run interrupted at its SessionEnd | in progress; it also edits `session-end.js` and writes a false `interrupted` this record must tolerate |\n\n## Current State\n\n- `classifyRunDir(ctx, now)` in `plugin/bin/lib/reconcile/archive-merged.js` (line 1602) walks `CLASSIFY_ORDER = ['orphaned-mint', 'abandoned-interrupted', 'adhoc-superseded', 'merged', 'structurally-stuck']`. `adhoc-superseded` requires an ad hoc mint whose worktree is gone and a directory idle for `ADHOC_SUPERSEDED_TTL_MS` (30 days). `abandoned-interrupted` requires `status: interrupted` and no owner-attributed event within `STALE_INTERRUPTED_TTL_MS` (24 hours); `orphaned-mint` requires a directory with no `config.yml` idle for `ORPHAN_MINT_TTL_MS` (24 hours).\n- `collectStaleRuns(cwd, { cache, exclude, pluginRoot })` in `plugin/bin/lib/hooks/session-residue.js` (line 56) walks `iterRunDirsWithState`, skips ad hoc directories (`isAdHocRunDir`), and stops at `MAX_REPORTED = 3` (line 36) with no overflow line. Its sibling `CONSOLE_OVERFLOW_LINE` (line 201) is the existing overflow pattern: `- … more run(s) may have unreviewed console items (newest 3 shown).`\n- `plugin/bin/lib/hooks/session-start.js` renders the banner; line 148 carries the instruction text \"Say with it that only the session owning a run should close it: a listed run may be live in a sibling session right now, ...\", the warning this record drops.\n- `plugin/bin/lib/hooks/session-end.js` stamps `{ status: 'interrupted', lastEvent: 'session-end' }` onto the session's own non-`fallback` run, then appends a `session-end` event.\n- Staged items live in the run's `staged/` (and `spec-*/staged/`); `listStagedItems` and `hasStagedItems` are in `archive-merged.js` (lines 443 and 461). Kinds are classified by `classifyStagedItem(filename, text, siblingText)` in `plugin/bin/lib/console/resolve.js` (line 179); review findings are the `review-unconfirmed-` and `review-contested-`/`review-debate-` prefixes (`SECTION_MAP`, line 47).\n- Reconcile writes its results to `.claude-tweaks/reconcile-cache.json` (`plugin/bin/lib/reconcile/cache.js`, `CACHE_FILENAME`) and renders them through `plugin/bin/lib/reconcile/format-summary.js`'s `CATEGORIES` table (line 50).\n- `#3973` provides `runLiveness(runDir, { now, probes }) -> { verdict: 'live' | 'dead' | 'unknown', evidence }` and the `owner` block in `run-state.json`.\n- Tests: `tests/bin-lib/reconcile/archive-merged.test.js` (classifier fixtures), `tests/hooks-session-start.test.js` (banner), `tests/reconcile.test.js`.\n\n## Deliverables\n\n- [ ] A pure disposition function, `plugin/bin/lib/run-liveness/disposition.js` (next to the verdict module), taking run shape, liveness verdict, PR state, branch and worktree facts, and staged inventory, and returning `{ action: 'close' | 'leave' | 'orphan', reason, evidence, dropFindings }` and exporting the set of reasons that return `close` as `CLOSE_REASONS`. The ordered rules below are its contract, evaluated first match wins with a default of `leave`.\n- [ ] A facts gatherer next to it (`plugin/bin/lib/run-liveness/facts.js`, injectable git and `gh` runners) that produces the inputs the function needs and maps any failed probe to the \"cannot determine\" value (never to a value that closes): `pr` is `merged | closed-unmerged | open | none | unknown`; `branch` is `{ localExists, remoteExists, uniqueCommits }` where `uniqueCommits` is a count against the integration branch's merge-base or `null` when it cannot be computed; `worktree` is `{ exists, dirty }` with `dirty` `null` when `git status` fails. `pr: 'unknown'` (a `gh`-absent environment, an API error, or the SessionStart fast path) and any `null` fact yield `leave` for every new row.\n- [ ] The `live` skip: no archive path, existing ones included, acts on a run whose verdict is `live`. The skip is one guard at the top of the per-run loop in `archiveMerged`, which computes the verdict once per run and hands it to `classifyRunDir` as `ctx.liveness` (the classifier stays pure); a run directory with no `run-state.json` yields `unknown`. The existing merged, `orphaned-mint`, and `adhoc-superseded` paths gain only this skip and keep acting on `unknown`, each having its own evidence (a merged PR, a mint that never wrote `config.yml`, a worktree gone for 30 days). The existing `abandoned-interrupted` path also gains the skip; its own 24 hour recency test stays, and it keeps acting on `unknown`, until #3979 replaces it with the verdict.\n- [ ] Reconcile evaluates the disposition for every non-clean run in REPORT-ONLY mode, behind one module constant `RUN_AUTO_CLOSE_REPORT_ONLY = true` in `plugin/bin/lib/reconcile/archive-merged.js` read at exactly one call site: it writes `would close {run} ({reason}, evidence ...)` lines to its summary and to `reconcile-cache.json` (`wouldClose`), lists the `orphan` runs in the same cache (`orphaned`, each with its PR number and reason) and in the archive check's `--json` output, reports a count of `unknown` runs in the summary (never in the banner), and closes nothing. Each pass records `reportOnlyPassAt` in `reconcile-cache.json`, the marker #3978 reads so that auto-close never acts on a checkout that has not first had a report-only pass. The summary renders wherever reconcile's summary already renders; a false positive is reported through `/claude-tweaks:feedback`.\n- [ ] Banner: `collectStaleRuns` lists only runs that are `dead` and orphaned, newest run id first, keeps the 3-row cap, and adds an overflow line in the style of `CONSOLE_OVERFLOW_LINE`: `- … and {N} more orphaned run(s) (newest {MAX_REPORTED} shown): node \"{root}/bin/hooks.js\" reconcile --dry-run --json --checks archive`. The banner stays network-free: it reads the `orphaned` list from `reconcile-cache.json`, re-checks each entry's verdict offline with `runLiveness`, drops an entry that is no longer `dead`, and lists nothing for a run absent from the cache (nothing is listed before the first reconcile pass). Each row names its reason and a resume command, using the existing integrity-derived line text where it applies (the shipped-unclosed and consolidated-pass lines are kept as the text of rows that pass the filter). The \"only the owning session should close a run\" instruction text in `session-start.js` is removed.\n- [ ] `session-end.js` closes and archives its own ad hoc run directly instead of marking it `interrupted`, keeping `events.jsonl` in the archive for `/claude-tweaks:feedback`. Order: append the `session-end` event first, then `closeRunState` (recording `closedBy: 'session-end'`) and `archiveRunDir`, with no write to the run directory afterwards (a late write would recreate the archived directory). It applies only when the `reason` on the SessionEnd input is one after which the session cannot continue (not `clear`, not `resume`) and when `staged/` is empty or holds only review findings; otherwise today's `interrupted` stamp is kept.\n- [ ] `docs/reconcile-checks.md` documents the disposition table and the report-only switch; the switch is a release step, not a policy key.\n- [ ] Review this repository's report-only output by hand before the enabling record; record the result in the PR body. Pass criterion: every `would close` line on a formal run names a run the maintainer agrees is abandoned; any disagreement blocks the enabling record until the disposition is fixed. The 27 stale formal runs measured on 2026-10-22 (20 open PRs, 6 closed-unmerged, 1 merged) are the review set; the 20 open-PR runs are `orphan` by design and the banner stays loud for them until their PR merges or closes or a human runs the abandon command.\n\nThe disposition rules, in order, first match wins, default `leave` (\"staged ok\" means `staged/` and every `spec-*/staged/` is empty or holds only review findings; \"other staged\" means any other kind):\n\n| # | Run shape | Conditions | Disposition |\n|---|---|---|---|\n| 1 | any | verdict `live` | `leave`; never touched by any archive path |\n| 2 | any | verdict `unknown` | `leave` for the new rows; existing paths keep acting on `unknown` |\n| 3 | `-adhoc-standalone` | verdict `dead`, staged ok | `close` (no 30-day wait); `events.jsonl` moves with it |\n| 4 | `-adhoc-standalone` | verdict `dead`, other staged | `orphan`, reason `staged items need an outcome` |\n| 5 | other standalone (`-tidy-`, `-sweep-`, `-release-standalone`) | verdict `dead`, `staged/` empty | `close` |\n| 6 | other standalone | verdict `dead`, `staged/` not empty | `leave` (the existing staged-proposals banner and #3898 own it) |\n| 7 | formal | PR merged | `leave` here; the existing merged path acts, unchanged |\n| 8 | formal | verdict `dead`, PR closed unmerged, staged ok | `close`, reason `pr-closed-unmerged`, `dropFindings` set |\n| 9 | formal | verdict `dead`, PR closed unmerged, other staged | `orphan`, reason `staged items need an outcome` |\n| 10 | formal | verdict `dead`, PR open (draft or ready) | `orphan`, reason `draft PR #N, session gone` or `PR #N open, session gone`; never closed |\n| 11 | formal | verdict `dead`, no PR, (`uniqueCommits` greater than 0 or worktree dirty) | `orphan`, reason `unpushed commits on {branch}` or `uncommitted changes in {worktree}` |\n| 12 | formal | verdict `dead`, no PR, (branch absent locally and on origin, or `uniqueCommits` 0), (worktree absent or clean), no owner-attributed event for 24 hours, staged ok | `close`, reason `nothing-to-resume`, `dropFindings` set |\n| 13 | formal | verdict `dead`, no PR, otherwise as row 12 but other staged | `orphan`, reason `staged items need an outcome` |\n| 14 | any | anything else (including any `unknown` fact: `pr: 'unknown'`, `uniqueCommits: null`, `dirty: null`) | `leave` |\n\nRow 12's 24 hour floor is the existing `abandoned-interrupted` window (`STALE_INTERRUPTED_TTL_MS`) reused so a just-started or just-paused run is never closable sooner than today; the design table does not state it, and it only narrows what can close.\n\nStaged items: for rows 8 and 12, review findings (the `review-unconfirmed-`, `review-contested-`, `review-debate-` kinds) would be dropped with reason `run-abandoned`, which report-only mode lists in `dropFindings` but does not do. Any other staged kind (reflect, queue write, skill update, `shadow-dup-*`) makes a run not closable and orphaned, as rows 4, 9 and 13 say. `run-abandoned` is introduced here as report vocabulary and registered in `_shared/auto-decision-log.md` by #3978, where the drop becomes real.\n\n## Acceptance Criteria\n\n1. A fixture run whose owner PID is alive with a matching start time (a live-PID fixture) is never listed by the banner, never reported as `would close`, and is skipped by the merged, `orphaned-mint`, `adhoc-superseded`, and `abandoned-interrupted` paths; one test per path. The first three still act on an `unknown` fixture.\n2. Each numbered rule of the disposition table has a test asserting its `action` and `reason`, including the default row; a run with verdict `unknown` yields `leave` for every new row, and `pr: 'unknown'`, `uniqueCommits: null`, and `dirty: null` each yield `leave` even when every other fact says close (a `gh`-absent fixture does not close a run whose PR was never seen).\n3. Fail-open variants of the disposition function (treating verdict `unknown` as `dead`, and treating `pr: 'unknown'` as `none`) are present as injected faults and the corresponding tests fail against each.\n   a. A falsely `interrupted` run (status `interrupted`, owner PID alive with a matching start time, as #3845 produces) is `live`: not listed, not `would close`, and left by the `abandoned-interrupted` path.\n   b. The report-only constant is read at one call site (a source-scan test finds exactly one); with the constant set, the act path is unreachable (a test calling it with the constant true observes no write).\n4. A reconcile run over a fixture containing a dead ad hoc run, a dead closed-unmerged-PR run, and a dead no-PR run with nothing to resume writes three `would close` lines to the summary and to `reconcile-cache.json`, and leaves every `run-state.json`, `staged/`, and directory byte-identical (a test snapshots the tree before and after).\n5. A dead formal run with an open draft PR, and one with unique commits and no PR, yield `orphan`, appear in the banner, and are not in the `would close` lines.\n6. A dead run holding a non-review staged item (for example `reflect-1.md`) yields `orphan` with reason `staged items need an outcome`; a dead closed-unmerged-PR run holding only `review-unconfirmed-*` items yields a `would close` line that also lists the findings it would drop with reason `run-abandoned`, and drops none.\n7. With five dead orphaned runs in `reconcile-cache.json` the banner prints the newest three rows and one overflow line naming the remaining count (2) and the listing command; with three or fewer it prints no overflow line. With only `live`, `unknown`, or would-close runs, or with no cache, the banner prints nothing about runs. A cached orphan whose verdict is now `live` is dropped.\n8. Each banner row names its reason (for example `draft PR #N, session gone`, `unpushed commits on {branch}`, `staged items need an outcome`) and a resume command; the text \"only the session owning a run should close it\" no longer appears in `session-start.js` (a grep test pins this).\n9. `session-end.js`, given a session whose own run is ad hoc and a terminal SessionEnd reason, closes the run (status `clean`, `closedBy: 'session-end'`) and archives the directory including `events.jsonl`, with the `session-end` event appended before the archive and no write afterwards (the archived directory is not recreated); given a non-terminal reason (`clear`, `resume`), or an ad hoc run holding a non-review staged item, it stamps `interrupted` exactly as before; given a formal run it still stamps `interrupted` exactly as before; given a `fallback` attribution it touches nothing.\n   a. The set of terminal reasons is taken from the SessionEnd `reason` values the harness actually emits (see the Gotchas probe), and the test enumerates each.\n10. `docs/reconcile-checks.md` states that the new rows are report-only in this release and that the switch is deleted by the record that enables closing.\n\n## Release Note\n\nAdded a dry-run report of runs that could be closed automatically, trimmed the unfinished-runs banner to runs that really need attention, and made sessions archive their own scratch run when they end.\n\n## Technical Approach\n\nThe disposition function is pure (no I/O): reconcile gathers the facts (PR state from the existing merged-proof path, branch and worktree facts, staged inventory, the verdict from `runLiveness`) and passes them in, so the table is tested without a filesystem. Report-only is one module constant read at the single call site that would act, so the enabling record is a one-line flip plus deleting the constant.\n\nThe banner reuses the same disposition: it lists exactly the runs whose action is `orphan` and whose verdict is `dead`. A `would close` run is not listed in the banner (it is reconcile's to report) and is not closed in this release.\n\n### Data / API Surface\n\n`disposition({ shape, verdict, pr, branch, worktree, staged })` returns `{ action, reason, evidence, dropFindings: string[] }`, where `shape` is one of `adhoc`, `standalone`, `formal`; `pr` is `merged | closed-unmerged | open | none`; `dropFindings` lists staged files that would be dropped with reason `run-abandoned`. Reconcile's summary gains a `would-close` category (`format-summary.js`'s `CATEGORIES`) and `reconcile-cache.json` gains a `wouldClose` list of `{ runDir, reason, evidence }`.\n\n### Key Files\n\n- `plugin/bin/lib/run-liveness/disposition.js` — new, the pure disposition function\n- `plugin/bin/lib/run-liveness/index.js` — `runLiveness`, consumed (created by #3973)\n- `plugin/bin/lib/reconcile/archive-merged.js` — `live` skip in `classifyRunDir`'s callers and the report-only evaluation\n- `plugin/bin/lib/reconcile/format-summary.js` — `would-close` summary category\n- `plugin/bin/lib/reconcile/cache.js` — `wouldClose` persisted in `reconcile-cache.json`\n- `plugin/bin/lib/hooks/session-residue.js` — `collectStaleRuns` filter, overflow line\n- `plugin/bin/lib/hooks/session-start.js` — banner render, removal of the owning-session warning text\n- `plugin/bin/lib/hooks/session-end.js` — close-and-archive of the session's own ad hoc run\n- `docs/reconcile-checks.md` — disposition table and report-only switch\n\n## Gotchas\n\n- ASSUMPTION — verify at build: the resume command each banner row prints actually re-enters the run. Existing re-entry text in `collectStaleRuns` covers the shipped-unclosed and consolidated-pass cases; for `draft PR, session gone` and `unpushed commits` confirm what `/claude-tweaks:flow` adoption (`flow/preflight.js`'s `computeAdoption`) accepts before wording the command.\n- ASSUMPTION — verify at build: the SessionEnd `reason` values the harness emits (for example `clear`, `resume`, and the exit reasons) and which of them leave the session running; probe it from a real hook invocation and record the raw values in the PR body before fixing the terminal set. Until verified, treat any reason other than a clearly terminal one as non-terminal.\n- Reconcile must never act on `unknown`, and a probe error is `unknown`, never `dead`; do not add a shortcut that treats a missing `owner` block as dead (the legacy 72 hour route in `runLiveness` is the only legacy path to `dead`).\n- The SessionEnd ad hoc close is safe only because the run is the ending session's own and ad hoc runs never resume (a resumed session mints a fresh one). Keep the `fallback`-attribution guard that `session-end.js` already has: a guessed run is never closed.\n- Nested `claude -p` sessions (#3845) can fire SessionEnd against the parent's run. The ad hoc direct close must be gated on the same own-run attribution as the existing stamp, never on `ctx.runDir`.\n- Report-only means no write of any kind to a run directory by the new rows: no `closedBy`, no `decisions.md` line, no archive move. The only writes are the summary and `reconcile-cache.json`.\n- `reconcile` runs on a fast path at SessionStart (`FAST_CHECKS`) and a background path; the disposition needs PR state, which may require `gh`. Respect the existing gh-absent posture (`_shared/github-write-transport.md`'s MCP path and the accepted MCP gap documented in `docs/reconcile-checks.md`): without PR state a formal run is `leave`, not `close`.\n- The banner currently skips ad hoc runs (`isAdHocRunDir`) so they cannot crowd out a real interrupted run; keep that skip for ad hoc and listing only `orphan` rows keeps the cap meaningful.\n- File overlap with open records: `archive-merged.js` with #3975 (same file, sequential), #3945, #3740, and #3721; `session-residue.js` with #3950; `session-end.js` with #3845. Related: #2724 (the structurally-stuck tracker stays) and #3898 (release runs close at their own end there).\n- Skill edges, if any, go in `docs/skill-graph.md` only; new reconcile checks follow `docs/reconcile-checks.md`'s \"Adding a new check\" registration list, including the `reconcile-threw` fallback duplicate in `hooks.js`.\n\n\n<!-- work-fingerprint: 2026-10-22-run-directory-cleanup:close-dead-runs-in-report-only-mode-show-only-orphaned-runs -->\nwork-fingerprint: 2026-10-22-run-directory-cleanup:close-dead-runs-in-report-only-mode-show-only-orphaned-runs",
+        "createdAt": "2026-10-22T17:04:08Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 3977,
+        "state": "OPEN",
+        "title": "Close dead runs in report-only mode, show only orphaned runs in the SessionStart banner, and archive a session's own ad hoc run at SessionEnd",
+        "updatedAt": "2026-11-01T07:37:44Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n**Related:** #3721 (same `archiveRunDir` commit code; build sequentially), #3855 (superseded by this project)\n\n## Overview\n\nWhen a run's gitignored half has been archived but its git-tracked `work/{N}-spec.md` header (or `spec-{N}/work/`) is still live, the directory is in the \"split state\" of #3855. Measured on 2026-10-22: 254 local live directories hold only a tracked spec header with an archive twin, and 258 of the 264 tracked live run directories on `origin/main` have a twin. Reconcile never reports them, because `iterRunDirsWithState` skips a directory whose archive twin is clean. The completion command reconcile would emit for that state (`hooks.js archive-run --run`) also always fails, because `archive-run` refuses a directory with no `run-state.json`. And `archiveRunDir` has a latent hazard in the same code path: when it stages only twin resolutions and no `workMoves`, it runs `git commit -m ... --` with no paths, which commits the whole staged index.\n\nThis record makes the split state visible, ships a command that can actually complete it, fixes the commit hazard, and runs the command once on this repository. Every consumer project on pr-first has the same pile, so the command ships in the plugin rather than as a maintainer-only script.\n\n**Complexity:** Medium\n**Estimated tasks:** 7\n\n## Non-Goals\n\n- No change to where new runs' headers end up; moving the header on the run branch before merge is #3976. This record cleans what already exists and reports what recurs.\n- No dual-path reader work (#3974).\n- Not a general run-directory janitor. The CLI handles live directories that hold only tracked `work/` (or `spec-*/work/`), nothing else.\n- No change to `archive-run`'s refusal of directories with no `run-state.json`; `tests/archive-run-verb.test.js` pins that refusal and it stays.\n- No archive retention or pruning of `archive/` itself.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #3721 | archive-run: commits the archive move on the current branch without reporting the commit or its branch | open; edits the same `archiveRunDir` commit code, so build the two sequentially |\n\n## Current State\n\n- `iterRunDirsWithState` (`plugin/bin/lib/hooks/context.js` line 225) skips a live directory when `readRunState(archive/{name})` reports `status: 'clean'`. A directory with no `run-state.json` of its own passes the earlier `wantClean` test, then falls to that skip.\n- `isArchivedPendingTrackedMove(root, dir)` (`plugin/bin/lib/reconcile/archive-merged.js` line 798) detects the split state: the archive twin exists and every live entry is a git-tracked `work/` or `spec-{n}/work/`. `archivedPendingTrackedMoveCommand(dir)` (line 831) returns `node \"${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" archive-run --run \"<dir>\"`. Under `worktree-always: true` the sweep skips with reason `archived-pending-tracked-move` and that command; without it the sweep completes the archival in-process.\n- `archiveRunDir` (line 1014) stages `twinPlan` resolutions and `workMoves`, then commits with `commitPaths = workMoves.flatMap(([src, dest]) => [src, dest])` (line 1301). When `workMoves` is empty and only `twinPlan` is non-empty, `commitPaths` is empty and the call is `git commit -m \"[reconcile] archive run <id>\" --`, which commits the whole index (#2241 scoped the commit for the `workMoves` case only).\n- `plugin/bin/sweep-stray-run-dirs.js` is a one-time sweep (#593) that already moves tracked `work/` subtrees into `archive/{run-id}/` through `archiveRunDir`, folds `events.jsonl` into an existing twin, and commits once per directory. It has `--root`, `--dry-run`, and `--log`.\n- `housekeeping-auto-merge` is a policy key (`plugin/bin/lib/policy-schema.js`, `plugin/skills/_shared/policy-schema.md` row 141) derived from `autonomy` (`true` at `trusted`/`unattended`), consumed by tidy Step 7.5 and wrap-up's `residue-sweep.md` to auto-arm a housekeeping PR.\n- Reconcile check registration is documented in `docs/reconcile-checks.md` (\"Adding a new check\", line 37); the split-state skip reasons are in its \"Archive skip reasons and residue pruning (#1892)\" section (line 127).\n- Tests: `tests/bin-lib/reconcile/archive-merged.test.js` has the split-state tests at lines 3685 to 3935 (the `worktree-always` skip at 3898 and the in-process completion at 3922); `tests/archive-run-verb.test.js` line 71 pins the no-`run-state.json` refusal.\n\n## Deliverables\n\n- [ ] `iterRunDirsWithState` gains an opt-in option (for example `includeTrackedShells: true`) under which the clean-twin skip no longer hides a live directory that holds only tracked `work/` or `spec-*/work/`; reconcile's archive check passes it and reports each such directory as `archived-pending-tracked-move`. The default behavior is unchanged, so `resolveRun`'s fallback scan and `session-start.js`'s unfinished-run report keep not seeing the shells.\n- [ ] New shipped CLI `plugin/bin/archive-tracked-shells.js` (name may change at build): moves every such shell to `archive/{run-id}/`, or deletes the live copy when an identical archived copy is already tracked; enumerates the shells read-only in the main checkout (a shell is a live directory that holds only tracked `work/` or `spec-*/work/` and whose archive twin's `run-state.json` is `clean`; that clean twin is the definition of a finished run), then does the moves in a scratch worktree cut from `origin/main` (`_shared/scratch-worktree.md`) on a fresh branch, comparing against the tracked archived copy; opens one batched housekeeping PR for every shell found; never commits on the main checkout; honors the `housekeeping-auto-merge` policy key (read from the main checkout's `policy.yml` through `resolve-policy.js`; the key's derived default applies when unset) for whether that PR is armed. Reuses `sweep-stray-run-dirs.js`'s mechanics rather than reimplementing the move.\n- [ ] Reconcile prints that command (not `archive-run`) as the `archived-pending-tracked-move` completion under `worktree-always`; without `worktree-always` it performs the same move in place, as `archiveRunDir` does today.Resolved by the maintainer (2026-10-22): without worktree-always, reconcile completes at most one shell in place per reconcile pass; any larger batch is delegated to the shipped CLI's single housekeeping PR, so the pile is never mass-committed in place on whatever branch is checked out.\n- [ ] `archiveRunDir`'s commit passes an explicit pathspec in every case, including the twin-only case.\n- [ ] List the CLI in `docs/plugin-structure.md`'s CLI listing and update `docs/reconcile-checks.md`'s skip-reason section for the new completion command. The CLI is a standalone bin run by a human or by a session following reconcile's printed command; it is not a reconcile check and needs none of that file's check-registration sites.\n- [ ] One-time: run the CLI on this repository. About 258 tracked live directories on `origin/main` have an archive twin; the roughly 6 without one are not touched by the CLI (they have no clean twin to prove a finished run); the CLI lists them in its envelope as `untwinned`, and they are classified individually by hand in the same PR (archive, keep, or delete, each with a reason in the PR body).\n\n## Acceptance Criteria\n\n1. `node plugin/bin/hooks.js reconcile --dry-run --json --checks archive`, run against a fixture whose archive twin carries a clean `run-state.json` and whose live directory holds only tracked `work/`, lists that directory with reason `archived-pending-tracked-move`. Run before the change, the same fixture lists nothing (the test is red against the old iterator).\n2. The command reconcile emits for that state succeeds in a test fixture under `worktree-always: true`: it exits 0, creates a branch, moves the shell to `archive/{run-id}/`, opens one PR (the `gh` runner is injected and asserted), and makes no commit on the main checkout's branch (`git rev-parse HEAD` on the main checkout is unchanged).\n3. With three shells in the fixture the CLI opens exactly one PR and the branch carries every move; a re-run after the PR is simulated merged is a no-op that exits 0 with `moved` empty. A re-run while the first PR is still open reuses the deterministic branch `housekeeping/archive-tracked-shells` and the open PR (printing its URL) rather than opening a second one, and a re-run after a crash partway through resumes from the branch's current state.\n4. A shell whose archive twin is byte-identical is deleted rather than moved; a shell whose twin differs is left in place and named in the output with the differing path (the same `compareWorkTwin` rule `archiveRunDir` applies, which compares file bytes; the delete path never uses a looser comparison). The PR still opens for the shells that were clean, and the CLI exits 1 to flag the left-behind ones.\n5. With `housekeeping-auto-merge` resolving `true` the CLI arms the PR with `gh pr merge --auto --squash`; resolving `false` it leaves the PR unarmed and says so in its output. A rejected arming call (for example a repository with no branch protection) leaves the PR unarmed and reports the rejection; it is not an error exit.\n6. A test calls `archiveRunDir` in the twin-only case (empty `workMoves`, non-empty `twinPlan`) with an unrelated file staged in the index, and asserts that file is not in the resulting commit and that the recorded `git commit` argv ends with an explicit, non-empty pathspec. Run against the old code the test fails.\n7. The CLI honors `--dry-run` and makes no change and no PR. With `--no-pr` it makes the branch and commits locally, pushes nothing, and prints the branch name. In a `local-merge` project, or where `gh` is absent, it refuses with exit 2 and a message naming `--no-pr`, unless `--no-pr` was given. A failure after the scratch worktree exists removes the worktree and leaves no half-built branch on the remote.\n8. `docs/plugin-structure.md` lists the CLI with its flags and `docs/reconcile-checks.md`'s skip-reason section names it as the `archived-pending-tracked-move` completion; the existing docs conformance tests pass.\n9. Build-time check: the housekeeping PR opened for this repository contains a move or delete for every shell the CLI's dry run lists, and its body classifies each of the roughly 6 `untwinned` directories. Post-merge check: `git ls-tree origin/main .claude-tweaks/pipelines/` lists no live tracked directory that has a clean archive twin; directories classified \"keep\" in the PR body are the only exceptions.\n10. The default `iterRunDirsWithState` call (no option) still skips a live shell whose twin is clean, so `session-start.js`'s unfinished-run report and `resolveRun`'s fallback scan list none of the shells; a test per caller pins this.\n\n## Release Note\n\nAdded a command that archives stranded run spec headers through one housekeeping pull request, and made reconcile report them instead of ignoring them.\n\n## Technical Approach\n\nKeep the move itself in `archiveRunDir` (git mv, `compareWorkTwin`, `resolveIdenticalWorkTwin`) and have the CLI orchestrate: enumerate shells with `isArchivedPendingTrackedMove`, create a fresh branch in a scratch worktree, run `archiveRunDir` for each, then push and open one PR. The in-process path (no `worktree-always`) and the CLI differ only in where the commit lands.\n\n### Data / API Surface\n\n`archive-tracked-shells.js [--root <dir>] [--dry-run] [--no-pr]`: prints one JSON envelope `{ moved: [...], deleted: [...], conflicts: [...], untwinned: [...], pr: { number, url, armed } | null }` and exits 0 on success (including nothing to do), 2 on a malformed call or an unsupported environment, and 1 when any shell was left because its twin differs. Reconcile prints one line for the whole batch, `node \"${CLAUDE_PLUGIN_ROOT}/bin/archive-tracked-shells.js\" --root \"<root>\"`, rather than one command per directory.\n\n### Key Files\n\n- `plugin/bin/lib/hooks/context.js` — `iterRunDirsWithState` clean-twin skip\n- `plugin/bin/lib/reconcile/archive-merged.js` — `isArchivedPendingTrackedMove`, `archivedPendingTrackedMoveCommand`, `archiveRunDir` commit pathspec\n- `plugin/bin/archive-tracked-shells.js` — new CLI\n- `plugin/bin/sweep-stray-run-dirs.js` — mechanics to reuse (and the CLI listed in `docs/plugin-structure.md`)\n- `docs/reconcile-checks.md` — registration and the skip-reason table\n- `tests/bin-lib/reconcile/archive-merged.test.js` — split-state fixtures and the pathspec regression test\n- `tests/archive-run-verb.test.js` — refusal that must stay pinned\n\n## Gotchas\n\n- The existing split-state tests pass because they create the archive twin as an empty directory with no `run-state.json`; the real 258 cases have a twin with a clean `run-state.json`. Build the new fixtures with the real shape, or the regression will not reproduce.\n- The skip in `iterRunDirsWithState` serves other callers too (`resolveRun`'s fallback scan, `session-start.js`'s unfinished-run report). That is why the new behavior is an opt-in option passed only by reconcile's archive check, not a change to the default (a default flip would list about 254 shells as unfinished runs in every SessionStart banner).\n- `archive-run` refuses a directory with no `run-state.json`, naming `archiveOrphanedMint`; do not weaken that refusal, because the CLI is the supported path for this shape.\n- Under `worktree-always`, nothing may be committed on the main checkout: do the work in a scratch branch and worktree (`_shared/scratch-worktree.md`), and never `git stash`.\n- Memory note: `archive-run` commits the whole staged index, so run `git status` and assert a clean index before the CLI starts, and commit with explicit pathspecs.\n- Batching is deliberate: one PR for every shell found, not one per directory, so the housekeeping pass does not itself produce a pile of PRs. `housekeeping-auto-merge` decides arming only; it never bypasses the merge-verification gate.\n- ASSUMPTION — verify at build: the CLI can rely on `archiveRunDir(root, runDir)` committing per directory on the scratch branch with a result it can read (its current contract). #3721 is changing that commit and its reporting; after rebasing on #3721, re-pin the assumed return shape with a test.\n- The twin's non-`work/` content (`run-state.json`) is gitignored and exists only in the main checkout, which is why enumeration runs there and the moves run in the scratch worktree against the tracked archived `work/`.\n- The first reconcile after this ships will see the whole pile and print the CLI command once; run the one-time housekeeping PR before relying on a quiet reconcile summary.\n- Cited line numbers are as of 2026-10-22; find the code by symbol (`iterRunDirsWithState`, `isArchivedPendingTrackedMove`, `archiveRunDir`, `commitPaths`) and the tests by name.\n- Related: #3855 (this record implements its second and third deliverables). #3721 edits the same commit code; build sequentially and rebase on it.\n- File overlap with in-progress and open records: `archive-merged.js` with #3945, #3740, and #3721; `context.js` with #3845, #3836, #3811, and #3736. Rebase before opening the PR.\n- Windows: the CLI shells out to `git` and `gh`; apply the `windows-checkout-test-parity` skill to any path assertion and use the injectable runner seam for the PR step (`gh-api-module-pattern` skill).\n\n\n<!-- work-fingerprint: 2026-10-22-run-directory-cleanup:report-stranded-spec-shell-dirs-ship-a-command-that-archives -->\nwork-fingerprint: 2026-10-22-run-directory-cleanup:report-stranded-spec-shell-dirs-ship-a-command-that-archives",
         "createdAt": "2026-10-22T17:03:58Z",
         "labels": [
@@ -9459,6 +9437,78 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "**Related:** #3880\nOrigin: build final review of #3880\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nAt the Wrap-Up Review Console, ratifying an `sdd-ruling-*` item (`apply`, per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet) writes its ledger row to `accepted` and files nothing; only `reverse` composes a record proposal (`staged/ledger-record-sdd-ruling-{N}.md`). #3880 added a safe-deferral class that console-auto ratifies at `unattended`: `Defers: yes` with exactly one valid `Defer-reason:` header (including `tangential` and `pre-existing-outside-diff`). That deferred work ends as a terminal `accepted` row, the ledger is deleted once nothing is open, and the work reaches no backlog record. This contradicts CLAUDE.md's \"No implicit deferrals\" and `_shared/deferral-gate.md`'s premise that a `Defer-reason:` goes with a record. It is not a regression: before #3880 every ratified ruling was dropped the same way. Found by #3880's final whole-branch review (finding I-3). The ratify contract is shared by the single-run console (`review-console.md` step 1 and step 7), the multi-spec console (`flow/multispec-review-console.md`), the interactive Override vocabulary (`review-console-interactive.md`), the on-PR console (`_shared/console-on-pr.md`, `_shared/console-execution.md`, `bin/lib/reconcile/console-execute.js`), and `finish-console`.\n\n## Deliverables\n\nRatifying a deferral ruling (`Defers: yes`, or any `Defer-reason:` header line, with a valid reason) composes a record proposal via `specShapedBody`, the same way `reverse` does today. Current State is the ruling and the finding it deferred; Deliverables is the deferred work; the record carries the staged file's own `Defer-reason:` value. The proposal routes through the console's record-creation step in the same pass. Once the record exists, the ledger row is written `deferred` with Resolution `ratified → #{n}`; if creation fails or is refused, the row stays `open`.\n\nRatifying a `Defers: no` ruling (a settled design decision) keeps today's `accepted` write-back unchanged.\n\nApply the same rule at every console surface that ratifies a ruling: single-run, multi-spec, interactive, on-PR/reconciler execution, and `finish-console`.\n\nAdd a conformance test pinning the ratify-files-a-record rule in `wrap-up/review-console-appendix.md` and its code twin, if one exists.\n\n## Acceptance Criteria\n\nRatifying a `Defers: yes` `sdd-ruling-*` item with a valid `Defer-reason:` produces a backlog record carrying that reason, and the ledger row is `deferred` with the record number.\n\nRatifying a `Defers: no` ruling still writes the row `accepted` with no record.\n\nA refused or failed record creation leaves the row `open`, never `accepted` or `deferred` without a record number.\n\n`npm test` passes in full.\n\n## Release Note\n\nRatifying a deferred SDD ruling at the Review Console now files the deferred work as a backlog record instead of closing it silently.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/review-console-appendix.md` — modify\n- `plugin/skills/wrap-up/review-console.md` — modify\n- `plugin/skills/_shared/console-execution.md` — modify\n- `plugin/bin/lib/reconcile/console-execute.js` — modify\n\n_Filed by `build` via specShapedBody._",
+        "createdAt": "2026-10-22T08:52:58Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 3942,
+        "state": "OPEN",
+        "title": "Ratifying a deferral SDD ruling at the Review Console files no backlog record",
+        "updatedAt": "2026-11-01T07:37:36Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -9892,6 +9942,78 @@
     ],
     [
       {
+        "body": "Origin: ledger resolve gate (wrap-up of #3222, ledger item 9)\n\n**Decision (2026-10-31, human):** the Parent-Gate Procedure (`plugin/skills/wrap-up/verification-brief-parent-gate.md`) is authoritative over #3222's Deliverable 2 for `gated`/`resolved` parents. This settles the record's earlier `needs-human-decision` deferral.\n\n## Current State\n\n`plugin/bin/lib/wrap-up/engine-verify.js`'s `acceptance-labeling` check evaluates `parentGateState` and the parent-path oversight floor (#3222) once a parent target resolves. A gate state of `incomplete`, or a `due` parent below the floor, skips. A `gated` or `resolved` parent still goes through the same floor check and then the `demo:pending` + Verification Brief requirement, because #3222's Deliverable 2 named `due`/`gated`/`resolved` literally:\n\n- `engine-verify.js:904`: `if (gate === 'incomplete') {` is the only gate value that skips.\n- `engine-verify.js:918-919` pushes `missing demo:pending label` unconditionally for any parent left after the floor check.\n- `plugin/bin/lib/issues/acceptance.js:104-105` returns `'resolved'` for `demo:approved`/`demo:changes-requested` and `'gated'` for `demo:pending`.\n\n`verification-brief-parent-gate.md:252` treats `gated`/`resolved` as a no-op, so the two disagree. As a result, a sub-issue reopened or wrapped up after its parent was already accepted reads `missing demo:pending label` (the label was swapped for the disposition) and BLOCKS closure. A below-floor `gated` parent's brief also goes unchecked. All references were verified at d4d40c982 (evidence carried over from duplicate #4093).\n\n## Deliverables\n\n- [ ] `resolved` parent: `acceptance-labeling` renders `skip` with the reason `parent #P already dispositioned`, never `missing demo:pending label`.\n- [ ] `gated` parent: the Verification Brief is checked whatever the parent's risk tier, and the oversight floor never skips it.\n- [ ] The oversight floor applies only to `due` parents. `incomplete` keeps today's skip.\n- [ ] `verification-brief-parent-gate.md` and `engine-verify.js` state the same rule for all four gate states.\n- [ ] Pin each gate state (`incomplete`, `due` above and below the floor, `gated` below the floor, `resolved`) with a test beside the existing `parentGateRow` cases in `tests/bin-lib/wrap-up/engine-verify.test.js`.\n\n## Acceptance Criteria\n\n- [ ] A parent carrying `demo:approved`, with every sibling closed, yields a `skip` row naming `already dispositioned`, and the check does not BLOCK.\n- [ ] A parent carrying `demo:pending` with a below-floor risk tier still has its brief checked: a missing brief fails the check.\n- [ ] A `due` parent below the floor still skips, and a `due` parent above the floor still requires `demo:pending` + a brief.\n- [ ] Each new test fails with today's `engine-verify.js:904` condition restored.\n- [ ] `npm test` passes in full.\n\n## Release Note\n\nWrap-up verification no longer blocks closing a sub-issue whose parent was already accepted.\n\n## Technical Approach\n\nBranch on the gate state before the floor check in `acceptance-labeling`'s parent path. `resolved` returns the skip row. `gated` goes straight to the brief check. Only `due` reaches the floor. Then align the procedure file's \"Evaluate the gate\" text with the code, if they differ after the change.\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js`: the `acceptance-labeling` parent path (:904-919)\n- `plugin/bin/lib/issues/acceptance.js`: read only (`parentGateState`'s mapping, :104-105)\n- `plugin/skills/wrap-up/verification-brief-parent-gate.md`: the authoritative rule (:252)\n- `tests/bin-lib/wrap-up/engine-verify.test.js`: the gate-state pins\n\n## Gotchas\n\n- Blocked by #4603 (PR #4678), which moves the Parent-Gate Procedure's evaluation into a tested CLI. Build after it merges, and re-read where the rule lives then: the procedure-side half of this change may land in #4603's CLI rather than in `verification-brief-parent-gate.md`.\n- #4625 proposes removing the `demo:*` labels entirely. If it merges first, re-check whether this record still applies before building.\n- The floor change is narrow: `due` keeps its floor. Don't remove the floor from the parent path altogether.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-10-18T06:04:54Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 3508,
+        "state": "OPEN",
+        "title": "engine-verify.js: acceptance-labeling's gated/resolved parent handling disagrees with the Parent-Gate Procedure",
+        "updatedAt": "2026-11-01T16:38:16Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "## Current State\n\nDigest #1426 holds 3 below-materiality-floor findings in `docs`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [docs] No claim recoverable (claim-empty): lens \"3a\" finding docs/journeys/tidy-holds-a-pr-whose-labeling-never-landed-3877.md:36 not reproduced. — docs/journeys/tidy-holds-a-pr-whose-labeling-never-landed-3877.md:36 — Defer-reason: console-backfill-no-claim — 2026-10-24T105021-spec-4045\n- [docs] No claim recoverable (claim-empty): lens \"3f\" finding docs/journeys/close-out-a-parked-pr-whose-labeling-never-landed-3783.md:46 not reproduced. — docs/journeys/close-out-a-parked-pr-whose-labeling-never-landed-3783.md:46 — Defer-reason: console-backfill-no-claim — 2026-10-24T105021-spec-4045\n- [docs] No claim recoverable (claim-empty): lens \"3a\" finding docs/plans/2026-10-24-spec-3898-4012-4041-ledger.md:11 not reproduced. — docs/plans/2026-10-24-spec-3898-4012-4041-ledger.md:11 — Defer-reason: console-backfill-no-claim — 2026-10-24T103516-spec-3898-4012-4041/spec-3898\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `docs`; no user-facing change.\n",
         "createdAt": "2026-10-26T11:41:43Z",
         "labels": [
@@ -9973,6 +10095,96 @@
           "grants": {
             "build": true,
             "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "## Current State\n\nDigest #1426 holds 3 below-materiality-floor findings in `tidy`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [tidy] `_shared/github-pr-scan.md` classifies a PR as housekeeping when its body carries `<! -- tidy-housekeeping-pr -->` / `<! -- wrap-up-residue-pr -->` before it looks at the `claude-tweaks-run:` marker,  — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] the suite pins the vocabulary \"is held, not armed\" and never \"staged\", so the prose uses two words for one outcome. Behavior is the same (reported, logged, not armed). — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] No claim recoverable (claim-empty): lens \"3f\" finding plugin/skills/tidy/actions-github-issues.md:97 not reproduced. — plugin/skills/tidy/actions-github-issues.md:97 — Defer-reason: console-backfill-no-claim — 2026-10-24T105021-spec-4045\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `tidy`; no user-facing change.\n",
+        "createdAt": "2026-10-26T11:41:36Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 4414,
+        "state": "OPEN",
+        "title": "Settle 3 below-floor digest findings in tidy",
+        "updatedAt": "2026-10-30T04:27:39Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -12184,8 +12396,8 @@
         }
       },
       {
-        "body": "## Current State\n\nDigest #1426 holds 3 below-materiality-floor findings in `tidy`, accumulated by review/reflect/wrap-up runs and never promoted.\n\n## Deliverables\n\n- [tidy] `_shared/github-pr-scan.md` classifies a PR as housekeeping when its body carries `<! -- tidy-housekeeping-pr -->` / `<! -- wrap-up-residue-pr -->` before it looks at the `claude-tweaks-run:` marker,  — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] the suite pins the vocabulary \"is held, not armed\" and never \"staged\", so the prose uses two words for one outcome. Behavior is the same (reported, logged, not armed). — plugin/skills/tidy/actions-github-issues.md — Defer-reason: tiebreak-cant-tell — 2026-10-22T135715-record-3877\n- [tidy] No claim recoverable (claim-empty): lens \"3f\" finding plugin/skills/tidy/actions-github-issues.md:97 not reproduced. — plugin/skills/tidy/actions-github-issues.md:97 — Defer-reason: console-backfill-no-claim — 2026-10-24T105021-spec-4045\n\n## Acceptance Criteria\n\n- Each Deliverables entry is fixed, or explicitly dropped with a one-line reason in this record.\n- Each promoted entry line in #1426 carries `→ #{this record}`.\n\n## Release Note\n\nInternal maintenance — settles below-floor digest findings in `tidy`; no user-facing change.\n",
-        "createdAt": "2026-10-26T11:41:36Z",
+        "body": "Surface: backend\n\n**Related:** #4531, #4350, #4502, #4561\n\n## Current State\n\n`shapeGate` (`plugin/bin/lib/issues/materialize-format.js`) scans for unresolved placeholders only in the text before the first `## Original request` heading (`ORIGINAL_REQUEST_RE`, #1240). `plugin/bin/lib/compose-record/compose.js` and `plugin/bin/lib/issues/ambiguity-resolve.js` bound the same way. None of those searches skips fenced code blocks, unlike `sectionText`/`extractSection` since #4169.\n\nA body that quotes a document containing `## Original request` inside a fence, before a real unresolved deliverable, passes `shapeGate` with `{ ok: true }`, because the scan stops at the quoted heading. The #4169 whole-branch review probe found this. No known producer reaches it today.\n\n`splitSections` in `compose.js` has the same blind spot: it lists every `## ` line with no fence tracking, so a fenced quoted heading becomes a section boundary for `validateShaped`.\n\n## Deliverables\n\n- The `## Original request` boundary search in `shapeGate`, `compose.js` and `ambiguity-resolve.js` skips headings inside fenced blocks, using `fencedLineRanges` (`record-payload.js`).\n- `splitSections` skips fenced lines, or the code records why it is exempt.\n- A test with a fenced `## Original request` before a real placeholder.\n\n## Acceptance Criteria\n\n1. `shapeGate` on a body with a fenced `## Original request` followed by an unfenced placeholder in an authored section reports `unresolved-placeholder`.\n2. A real, unfenced `## Original request` section still exempts the markers after it.\n3. `shapeGate`, `compose.js` and `ambiguity-resolve.js` agree on where the exempt tail starts for a body with a fenced `## Original request` heading.\n4. `npm test` passes.\n\n## Release Note\n\nA record that quotes an \"Original request\" heading inside a code block can no longer hide an unresolved placeholder from the shape gate.\n\n## Technical Approach\n\nRoute the three boundary searches through one fence-aware helper so they cannot disagree, then decide `splitSections` on its own.\n\n### Key Files\n\n- `plugin/bin/lib/issues/materialize-format.js` — Original-request boundary skips fenced headings\n- `plugin/bin/lib/compose-record/compose.js` — same boundary rule, plus `splitSections`\n- `plugin/bin/lib/issues/ambiguity-resolve.js` — same boundary rule\n\n## Gotchas\n\n- `ORIGINAL_REQUEST_RE` is exported and matched with `text.search`, so keep the regex as it is and add the fence check around the search rather than changing its meaning for other importers.\n\n## Original request\n\nSkip a fenced \"## Original request\" heading when shapeGate bounds its placeholder scan\n\nOrigin: build final whole-branch review of #4169 (Minor 6)\n\nDefer-reason: tangential\n\n## Current State\n\n`shapeGate` (`plugin/bin/lib/issues/materialize-format.js`) scans for TBD/TODO/ambiguity placeholders only in the text before the first `## Original request` heading (`ORIGINAL_REQUEST_RE`, #1240), and `plugin/bin/lib/compose-record/compose.js` bounds the same way. That search does not skip fenced code blocks, unlike `sectionText`/`extractSection` since #4169.\n\nA body that quotes a document containing `## Original request` inside a fence before a real `- [ ] TBD` deliverable passes `shapeGate` (`{ ok: true }`), because the placeholder scan stops at the quoted heading. Found by the #4169 whole-branch review probe; not reachable by any known producer today.\n\n## Deliverables\n\n- [ ] the `## Original request` boundary search in `shapeGate` and `compose-record/compose.js` skips headings inside fenced blocks (via `fencedLineRanges`, record-payload.js)\n- [ ] a test with a fenced `## Original request` before a real placeholder\n\n## Acceptance Criteria\n\n1. `shapeGate` on a body with a fenced `## Original request` followed by an unfenced `TBD` in an authored section reports `unresolved-placeholder`.\n2. A real (unfenced) `## Original request` section still exempts the markers after it.\n3. `npm test` passes.\n\n## Release Note\n\nA record that quotes an \"Original request\" heading inside a code block can no longer hide an unresolved placeholder from the shape gate.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/materialize-format.js` — Original-request boundary skips fenced headings\n- `plugin/bin/lib/compose-record/compose.js` — same boundary rule\n\n_Filed by `build` via specShapedBody._\n\n## Absorbed: 2026-10-26 — the third boundary site and splitSections\n\nFrom the post-release review of #4169 (staged review-85, review-90). Two more sites with the same fence-blind boundary, not named above:\n\n- [ ] `plugin/bin/lib/issues/ambiguity-resolve.js` (~line 27) bounds its scan at the first column-0 `## Original request` line with the same fence-blind `ORIGINAL_REQUEST_RE` — apply the same fenced-heading skip there.\n\n- [ ] `splitSections` (`plugin/bin/lib/compose-record/compose.js` ~line 22, exported) lists every `## ` line with no fence tracking, so a fenced quoted heading becomes a section boundary for `validateShaped`. Make it skip fenced lines via `fencedLineRanges`, or record why it is exempt — #4169's plan said no list-all section reader existed, and this one does.\n\nAdditional acceptance: `shapeGate`, `compose.js` and `ambiguity-resolve.js` agree on where the exempt tail starts for a body with a fenced `## Original request` heading.\n",
+        "createdAt": "2026-10-25T21:00:47Z",
         "labels": [
           {
             "id": "LA_kwDORUwzVM8AAAACruyqXw",
@@ -12206,16 +12418,10 @@
             "color": "D4C5F9"
           },
           {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACrzEqFA",
@@ -12242,12 +12448,12 @@
             "color": "ededed"
           }
         ],
-        "number": 4414,
+        "number": 4351,
         "state": "OPEN",
-        "title": "Settle 3 below-floor digest findings in tidy",
-        "updatedAt": "2026-10-30T04:27:39Z",
+        "title": "Skip a fenced \"## Original request\" heading when shapeGate bounds its placeholder scan",
+        "updatedAt": "2026-11-01T16:38:20Z",
         "facets": {
-          "origin": "capture",
+          "origin": null,
           "risk": "low",
           "size": "low",
           "ceremony": "fast-lane",
@@ -12746,7 +12952,7 @@
       "records": [
         4243,
         4300,
-        4414
+        4351
       ]
     },
     {
