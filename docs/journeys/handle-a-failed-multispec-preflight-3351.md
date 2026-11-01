@@ -35,7 +35,7 @@ files:
 
 ### 3. A malformed call or a dependency cycle stops at once
 - **URL:** `plugin/skills/flow/multispec-preflight-failure.md`, "Exit 2"
-- **Action:** On exit 2 (an invocation bug, an unresolvable owner/repo under `native`, a `--records-json` input problem, or a `--waves` dependency cycle), `/flow` STOPs before claiming, with no retry, quoting stderr.
+- **Action:** On exit 2 (an invocation bug, an unresolvable owner/repo under `native` or for a `--blocker-landing` blocker set, a `Blocked by #0` blocker number, a `--records-json` or `--blocker-states-json` input problem, or a `--waves` dependency cycle), `/flow` STOPs before claiming, with no retry, quoting stderr.
 - **Should feel:** Immediate — retrying can't fix a malformed call.
 - **Should understand:** A `--waves` cycle under `parallel` also STOPs, and never drops to a sequential run. Step 4 would hard-fail the same cycle anyway.
 - **Red flags:** An exit-2 run that retries, or that falls back to sequential.

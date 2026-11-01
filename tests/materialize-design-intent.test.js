@@ -143,8 +143,14 @@ test('--check on a shaped record exits 0 with a gate-passed envelope, no --run-d
   const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet'));
   assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
   assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')), {
-    record: N, check: 'passed', title: 'Check-mode record', ceremony: 'standard', surface: 'web',
+    record: N, check: 'passed', title: 'Check-mode record', ceremony: 'standard', surface: 'web', bodyBlockedBy: [],
   });
+});
+
+test('AC11.1: --check reports the body\'s Blocked by numbers as bodyBlockedBy (#4553)', () => {
+  const { exitCode, deps } = checkWithBody(shapedBody('Design-intent: quiet') + '\nBlocked by #5\nBlocked by #7\n');
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  assert.deepStrictEqual(JSON.parse(deps.calls.stdout.join('')).bodyBlockedBy, [5, 7]);
 });
 
 test('--check reports ceremony null for an unlabeled record instead of the missing-ceremony exit 2 (#4027)', () => {
