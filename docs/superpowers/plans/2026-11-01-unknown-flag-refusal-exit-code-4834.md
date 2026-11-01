@@ -29,6 +29,19 @@
 4. **Stderr truncation at `process.exit`.** Expected: both refusal lines arrive complete. The `fs.writeSync` constraint covers it, and every refusal assertion compares the full stderr string.
 5. **A harness hook event given a stray flag** (`session-start --bogus` via stdin JSON). Expected: never refused, exit 0. `hooks-help-guard.test.js`'s `session-start --help` case already covers the EVENTS bypass and must pass unmodified.
 
+## AC Coverage
+
+| Clauses | Covered by |
+|---|---|
+| AC1.1, AC1.2 | Task 1: the `reconcile --dryrun` repin (literal two-line stderr, exit 1, no reconcile-cache.json, HEAD unchanged) |
+| AC2.1, AC2.2, AC2.3 | Task 1: the `a value flag followed by a flag` repin of `resolve-run-dir --spec-slug --create`, plus `assertNoRunDirMinted` |
+| AC3.1 | Task 1: `#4834: a captured resolve-run-dir --root-only with a typo …` (stdout `''`, exit 1) |
+| AC4.1, AC4.2 | Task 1 Step 4: `tests/hooks-help-guard.test.js` passes with an empty `git diff` |
+| AC5.1 | Task 1: `#4834: help wins over an unknown flag in the same call`, with its go-red control in Step 5 |
+| AC6.1, AC6.2 | Task 1: value-returning `resolve-run-dir`; mutating `archive-run`, `adopt-run-dir` and `sweep-shadow`. `assertRefused` checks stdout, stderr and code separately, and the nothing-moved checks are kept |
+| AC7.1, AC7.2 | Task 2 Step 2 |
+| AC8.1 | `/build` Common Step 5 (the full suite via verify.js) |
+
 ---
 
 ### Task 1: Split the guard and repin every unknown-flag test
@@ -60,7 +73,7 @@ function assertRefused(result, verb, firstLine, label) {
 
 The expected first lines are literal strings in each test, never built from production code.
 
-- [ ] **Step 1: Repin the existing tests to the new shape (red)**
+- [ ] **Step 1: Repin the existing tests and add the new ones (red)**
 
 In `tests/hooks-js-flag-strict.test.js`:
 - Make the `runHook` catch return `stderr: e.stderr || ''`.
@@ -81,7 +94,7 @@ The other files:
 - `tests/hooks-dispatcher.test.js` `#1012`: `code === 1`, `stdout === ''`, `stderr === "claude-tweaks: record-worktree: unknown flag '--bogus-flag'\nclaude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n"`. Keep the byte-unchanged `run-state.json` assertion.
 - `tests/hooks-resolve-console.test.js`: `code === 1`, `stdout === ''`, `stderr` matching `/^claude-tweaks: resolve-console: unknown flag '--bogus'\nclaude-tweaks: usage: resolve-console --run <dir>/`.
 
-- [ ] **Step 2: Add the new tests to `tests/hooks-js-flag-strict.test.js` (red)**
+New tests in `tests/hooks-js-flag-strict.test.js`:
 
 ```js
 test('#4834: help wins over an unknown flag in the same call', () => {
@@ -103,12 +116,12 @@ test('#4834: a captured resolve-run-dir --root-only with a typo yields an empty 
 
 `resolve-run-dir --root-only` is the value-returning verb, and `archive-run`, `adopt-run-dir` and `sweep-shadow` are the mutating ones (AC6).
 
-- [ ] **Step 3: Run the five suites and confirm red**
+- [ ] **Step 2: Run the five suites and confirm red**
 
 Run: `node --test tests/hooks-js-flag-strict.test.js tests/archive-run-verb.test.js tests/hooks-check-pass-reentry.test.js tests/hooks-dispatcher.test.js tests/hooks-resolve-console.test.js > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/ec124c25-8b00-4cfa-8947-0c852b7f7961/scratchpad/4834-t1-red.txt 2>&1`
 Expected: the repinned and new refusal tests fail with `actual: 0, expected: 1`. The help-wins test passes even before the change, so it is a control, not proof. Every other test passes.
 
-- [ ] **Step 4: Implement**
+- [ ] **Step 3: Implement**
 
 - `firstUnknownFlag`: return `{ token: a, valueFlag: null }` for an undeclared flag, `{ token: next, valueFlag: a }` for a value flag followed by a `--` token, and `null` otherwise. Update its comment to name the return shape.
 - In `main()`:
@@ -116,16 +129,16 @@ Expected: the repinned and new refusal tests fail with `actual: 0, expected: 1`.
   - Then `const unknown = firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)`. When it is non-null, write the first line chosen by `unknown.valueFlag`, then `claude-tweaks: usage: ${verb.usage}\n`, both with `fs.writeSync(2, …)`, and return 1.
 - Rewrite the guard comment's last sentence (lines 1946-1949). It should say `--help`/`-h` keeps the #1012/#1143 stdout/exit-0 shape. An undeclared flag is a caller mistake, so it is refused on stderr with exit 1, the unknown-verb shape (#1586, #4834). A caller capturing stdout therefore gets an empty value and a non-zero exit.
 
-- [ ] **Step 5: Run the five suites plus the help guard, and confirm green**
+- [ ] **Step 4: Run the five suites plus the help guard, and confirm green**
 
 Run: `node --test tests/hooks-js-flag-strict.test.js tests/archive-run-verb.test.js tests/hooks-check-pass-reentry.test.js tests/hooks-dispatcher.test.js tests/hooks-resolve-console.test.js tests/hooks-help-guard.test.js tests/hooks-adopt-run-dir.test.js > /private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks/ec124c25-8b00-4cfa-8947-0c852b7f7961/scratchpad/4834-t1-green.txt 2>&1`
 Expected: `# fail 0`. `git diff --stat -- tests/hooks-help-guard.test.js` prints nothing.
 
-- [ ] **Step 6: Go-red control for the help-wins branch**
+- [ ] **Step 5: Go-red control for the help-wins branch**
 
 Temporarily swap the two checks in `main()` so the unknown-flag scan runs first. Run `node --test tests/hooks-js-flag-strict.test.js`, and expect the `#4834: help wins` test to fail with `actual: 1, expected: 0`. Restore with `git checkout -- plugin/bin/hooks.js` only if the swap was the sole uncommitted change; otherwise undo the swap by hand. Then re-run it green.
 
-- [ ] **Step 7: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
 git add plugin/bin/hooks.js tests/hooks-js-flag-strict.test.js tests/archive-run-verb.test.js tests/hooks-check-pass-reentry.test.js tests/hooks-dispatcher.test.js tests/hooks-resolve-console.test.js
