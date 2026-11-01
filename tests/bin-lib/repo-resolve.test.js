@@ -229,7 +229,7 @@ test('review (#4505): an origin probe timeout is noted once and not memoized, so
   _resetGhHostCache();
   let probes = 0; const notes = [];
   const timeout = Object.assign(new Error('spawnSync git ETIMEDOUT'), { code: 'ETIMEDOUT' });
-  const d = { ...ghe, remoteUrl: () => { probes++; if (probes === 1 || probes === 2) throw timeout; return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
+  const d = { ...ghe, remoteUrl: () => { probes++; if (probes <= 2) throw timeout; return ghe.remoteUrl(); }, stderr: (s) => notes.push(s) };
   const o = { cwd: '/s' };
   assert.strictEqual(ghOptions(['a'], o, d), o);
   assert.strictEqual(ghOptions(['b'], o, d), o);
