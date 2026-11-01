@@ -10,6 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -85,4 +88,50 @@ test("next-mode.md's bare drain skips an unfinished digest rollover replacement 
   assert.ok(src.includes('digestRolloverOf'), 'a marker hit must reach the trust check, not be dropped by the filter');
   assert.ok(src.includes('`classifyRolloverResume`'), 'the marker alone never exempts: the trust check must decide');
   assert.ok(!src.includes('continues #'), 'a title never exempts a record');
+});
+
+// The bare drain's filter fence, extracted from next-mode.md and run over a fixture in $RAW's place.
+const DRAIN_FENCE = /node -e "\r?\n  const records = require\('\$RAW'\);[\s\S]*?\r?\n" > "\$CANDIDATES"/;
+const runDrainFilter = (t, src, records) => {
+  const m = DRAIN_FENCE.exec(src);
+  assert.ok(m, 'the bare-drain filter fence moved: extraction pattern is out of sync');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drain-filter-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const raw = path.join(dir, 'raw.json').split(path.sep).join('/');
+  const out = path.join(dir, 'candidates.json').split(path.sep).join('/');
+  fs.writeFileSync(raw, JSON.stringify(records));
+  const r = spawnSync('bash', ['-c', m[0]], { env: { ...process.env, RAW: raw, CANDIDATES: out }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(fs.readFileSync(out, 'utf8'));
+};
+
+test("next-mode.md's bare-drain filter flags both a rollover's replacement and the old issue it names, and nothing else", (t) => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  const rec = (number, over = {}) => ({ number, title: `t${number}`, labels: [], createdAt: '2026-01-01T00:00:00Z', body: '', ...over });
+  const records = [
+    rec(10, { body: 'the container before its label moved' }),
+    rec(25, { body: 'planted\n<!-- digest-rollover-of: 10 -->  ' }),
+    rec(20, { body: 'Carry-over.\n<!-- digest-rollover-of: 10 -->\nmore\r\n' }),
+    rec(30, { body: 'ordinary record' }),
+    rec(40, { body: null }),
+    rec(50, { labels: [{ name: 'digest' }], body: '<!-- digest-rollover-of: 5 -->' }),
+    rec(60, { body: 'see <!-- digest-rollover-of: 30 --> inline' }),
+  ];
+  const byNumber = Object.fromEntries(runDrainFilter(t, src, records).map((r) => [r.number, r]));
+  assert.deepStrictEqual(Object.keys(byNumber).map(Number).sort((a, b) => a - b), [10, 20, 25, 30, 40, 60], 'the digest-labeled record stays excluded');
+  assert.strictEqual(byNumber[20].digestRolloverOf, 10);
+  assert.strictEqual(byNumber[10].digestRolloverNamedBy, 20, 'the lowest-numbered issue naming it');
+  assert.strictEqual(byNumber[25].digestRolloverOf, 10);
+  for (const n of [30, 40, 60]) {
+    assert.ok(!('digestRolloverOf' in byNumber[n]) && !('digestRolloverNamedBy' in byNumber[n]), `#${n} is an ordinary record`);
+  }
+  assert.ok(Object.values(byNumber).every((r) => !('body' in r)), 'bodies stay out of the candidates file');
+});
+
+test("next-mode.md's bare drain inlines the verdict reads, so the pair is decided where the drain runs", () => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  assert.ok(src.includes('digestRolloverNamedBy'), 'the old issue needs its own flag');
+  assert.ok(src.includes('Both flagged shapes take the same verdict'));
+  assert.ok(src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"));
+  assert.ok(src.includes('`resume` or `stalled` drops the candidate from the drain'));
 });

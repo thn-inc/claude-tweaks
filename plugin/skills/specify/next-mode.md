@@ -192,17 +192,37 @@ fi
 node -e "
   const records = require('$RAW');
   const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest']);
+  const MARKER = /^<!-- digest-rollover-of: (\d+) -->\s*$/m;
+  const namedBy = new Map();
+  for (const r of records) {
+    const hit = MARKER.exec(r.body || '');
+    if (hit && (!namedBy.has(Number(hit[1])) || r.number < namedBy.get(Number(hit[1])))) namedBy.set(Number(hit[1]), r.number);
+  }
   const eligible = records.filter((r) =>
     !r.labels.some((l) => EXCLUDE.has(l.name) || l.name.startsWith('needs:'))
   ).map(({ body, ...r }) => {
-    const hit = /^<!-- digest-rollover-of: (\d+) -->\s*$/m.exec(body || '');
-    return hit ? { ...r, digestRolloverOf: Number(hit[1]) } : r;
+    const hit = MARKER.exec(body || '');
+    return {
+      ...r,
+      ...(hit && { digestRolloverOf: Number(hit[1]) }),
+      ...(namedBy.has(r.number) && { digestRolloverNamedBy: namedBy.get(r.number) }),
+    };
   });
   console.log(JSON.stringify(eligible));
 " > "$CANDIDATES"
 ```
 
-A candidate carrying `digestRolloverOf` may be a digest rollover's unfinished replacement, not yet labeled. Before shaping it, read it and that `{old}` through REST and run `classifyRolloverResume` (`tidy/digest-sweep.md`'s Resume an unfinished rollover): with `{old}` still open and a `resume` or `stalled` verdict, drop it from the drain. Any other verdict makes it an ordinary record, since the line alone proves nothing.
+A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled. One carrying `digestRolloverNamedBy: {replacement}` may be the old issue itself, which loses its `digest` label before the rollover closes it. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate read both issues of the pair through REST (only that read carries the author association: `gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the two paths with the Write tool) and run `classifyRolloverResume`:
+
+```bash
+RESUME_CANDS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value digest-resume-candidates.json)"
+RESUME_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value digest-resume-old.json)"
+gh api repos/{owner}/{repo}/issues/{replacement} --jq '[.]' > "$RESUME_CANDS"
+gh api repos/{owner}/{repo}/issues/{old} > "$RESUME_OLD"
+node -e "const fs=require('fs');const [root,c,o]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>JSON.parse(fs.readFileSync(f,'utf8'));console.log(JSON.stringify(classifyRolloverResume(read(c),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$RESUME_CANDS" "$RESUME_OLD"
+```
+
+Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain. Any other verdict makes it an ordinary record. A non-zero exit is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
 
 No further claim-state filtering runs here — the `bot:in-progress`
 exclusion above is a cheap label pre-filter only, same posture as

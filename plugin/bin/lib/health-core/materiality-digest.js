@@ -36,8 +36,8 @@ const FIRST_SEEN_MARKER = new RegExp(`<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: (\\
 const FIRST_SEEN_STRIP = new RegExp(`\\s*<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: \\S+? -->`, 'g');
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DEFAULT_MAX_CHARS = 60000;
-// Room each carried entry line keeps for a marker edit: a space, then `→ expired` (10 characters)
-// or `→ #` and up to ten digits (13).
+// Room each carried entry line keeps for a marker edit: a space, then `→ expired` (9 characters, 10
+// with the space) or `→ #` and up to ten digits (13 characters, 14 with the space).
 const MARK_RESERVE = 14;
 const TOMBSTONE_HEADER = 'Fingerprint-only tombstones: promoted or expired findings kept for dedup (tidy/digest-sweep.md\'s Container rollover).';
 
@@ -419,9 +419,10 @@ function hasDigestLabel(issue) {
 // candidates: REST issue objects ({ number, body, author_association, state, labels: [{ name }] });
 // oldIssue: the issue being rolled over. A candidate is a replacement only when a trusted author's
 // body holds the marker for oldIssue.number as a whole line. Returns { state, replacement, extras }:
-// none (no replacement), resume (carry on), stalled (the digest label sits on neither issue — a
-// human finishes the move), finished (old closed, replacement labeled). replacement is the
-// lowest-numbered match; extras are the others, ascending.
+// none (no replacement, or the old issue is closed and neither issue holds the label — a past
+// generation), resume (carry on), stalled (the old issue is open and the digest label sits on
+// neither issue — a human finishes the move), finished (old closed, replacement labeled).
+// replacement is the lowest-numbered match; extras are the others, ascending.
 function classifyRolloverResume(candidates, oldIssue) {
   if (!Array.isArray(candidates)) throw new CarryOverInputError('candidates: expected an array of issue objects');
   if (!oldIssue || typeof oldIssue !== 'object' || Array.isArray(oldIssue) || !Number.isInteger(oldIssue.number)) {
@@ -444,9 +445,13 @@ function classifyRolloverResume(candidates, oldIssue) {
   const extras = others.map((c) => c.number);
   const oldHas = hasDigestLabel(oldIssue);
   const newHas = hasDigestLabel(chosen);
+  const oldOpen = String(oldIssue.state).toLowerCase() === 'open';
+  // A replacement keeps its marker for good, so once a later rollover has moved the label on, the
+  // closed old issue and its closed replacement hold no label: that is a finished past, not a stall.
+  if (!oldHas && !newHas && !oldOpen) return { state: 'none', replacement: null, extras: [] };
   let state = 'resume';
   if (!oldHas && !newHas) state = 'stalled';
-  else if (String(oldIssue.state).toLowerCase() !== 'open' && newHas) state = 'finished';
+  else if (!oldOpen && newHas) state = 'finished';
   return { state, replacement: chosen.number, extras };
 }
 

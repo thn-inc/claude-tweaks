@@ -603,6 +603,7 @@ test('a re-plan after the selected live line moved posts the item marker the car
   const again = planOf(old2, entriesOnly);
   assert.strictEqual(again.live, 1);
   assert.strictEqual(again.carried, 1);
+  assert.strictEqual(again.tombstones, 1, 'the marked first line adds none: its fingerprint marker is on the live line');
   assert.deepStrictEqual(again.markerEdits, []);
   assert.deepStrictEqual(again.tombstonesPending, [item]);
   assert.strictEqual(again.verified, false, 'the item marker is on neither side yet');
@@ -611,6 +612,20 @@ test('a re-plan after the selected live line moved posts the item marker the car
   assert.strictEqual(done.verified, true);
   assert.deepStrictEqual(done.bodies, []);
   assert.strictEqual(done.tombstones, done.tombstonesCarried);
+});
+
+test('one item marker on two live fingerprints is tombstoned once when both carried copies lack it', () => {
+  const item = '<!-- consolebackfill-item: shared1 -->';
+  const old = [posted(`${findingLine(1)} ${item}\n${findingLine(2)} ${item}`)];
+  const entriesOnly = [posted(`${stamped(findingLine(1))}\n${stamped(findingLine(2))}`)]; // interrupted before the item markers
+  const p = planOf(old, entriesOnly);
+  assert.strictEqual(p.live, 2);
+  assert.strictEqual(p.carried, 2);
+  assert.strictEqual(p.tombstones, 1, 'the shared marker is one tombstone');
+  assert.deepStrictEqual(p.tombstonesPending, [item]);
+  assert.deepStrictEqual(tombstoneLines(p.bodies), [item]);
+  assert.strictEqual(p.verified, false);
+  assert.strictEqual(planOf(old, [...entriesOnly, ...postBodies(p)]).verified, true);
 });
 
 test('a fingerprint-less live duplicate is not counted in unfingerprintedMarked', () => {
@@ -659,12 +674,33 @@ test('classifyRolloverResume resumes on the marker plus the digest label on eith
   assert.deepStrictEqual(onReplacement, { state: 'resume', replacement: 10, extras: [] });
 });
 
-test('classifyRolloverResume names a stalled label move', () => {
-  for (const state of ['open', 'closed']) {
+test('classifyRolloverResume names a stalled label move only while the old issue is open', () => {
+  for (const state of ['open', 'OPEN']) {
     const out = classifyRolloverResume([candidate(10)], { ...OLD_ISSUE, state, labels: [] });
     assert.deepStrictEqual(out, { state: 'stalled', replacement: 10, extras: [] }, state);
   }
+  const none = { state: 'none', replacement: null, extras: [] };
+  for (const state of ['closed', 'CLOSED']) {
+    assert.deepStrictEqual(classifyRolloverResume([candidate(10)], { ...OLD_ISSUE, state, labels: [] }), none, state);
+  }
   assert.strictEqual(classifyRolloverResume([candidate(10, { body: 'x' })], { ...OLD_ISSUE, labels: [] }).state, 'none');
+});
+
+test('a second-generation rollover: the first replacement keeps its marker, and only the live pair is resumable', () => {
+  const none = { state: 'none', replacement: null, extras: [] };
+  const GEN0 = { number: 10, state: 'closed', labels: [], body: '' };
+  // R1 rolled over to R2 and the label moved on: R1 is closed and unlabeled, its marker still names #10.
+  const r1Closed = candidate(20, { state: 'closed', body: digestReplacementMarker(10) });
+  assert.deepStrictEqual(classifyRolloverResume([r1Closed], GEN0), none, 'R1 against closed gen-0 is a finished past, not a stall');
+  // R2 continues R1 while R1 is still the open, labeled container: an interrupted rollover.
+  const r1Open = { number: 20, state: 'open', labels: [{ name: 'digest' }], body: digestReplacementMarker(10) };
+  const r2 = candidate(30, { body: digestReplacementMarker(20) });
+  assert.deepStrictEqual(classifyRolloverResume([r2], r1Open), { state: 'resume', replacement: 30, extras: [] });
+  // Once it finishes, R1 is closed and R2 holds the label.
+  const r1Done = { ...r1Open, state: 'closed', labels: [] };
+  const r2Done = { ...r2, labels: [{ name: 'digest' }] };
+  assert.deepStrictEqual(classifyRolloverResume([r2Done], r1Done), { state: 'finished', replacement: 30, extras: [] });
+  assert.deepStrictEqual(classifyRolloverResume([r1Closed], GEN0), none, 'and the earlier pair stays quiet');
 });
 
 test('classifyRolloverResume treats a closed old issue with a labeled replacement as finished', () => {

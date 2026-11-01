@@ -7,6 +7,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
+const fs = require('fs');
+const os = require('os');
+const { spawnSync } = require('child_process');
 
 const { DEFER_REASONS } = require('../plugin/bin/lib/issues/record');
 const { trustedJqSelect, untrustedJqNote } = require('../plugin/bin/lib/issues/comment-trust');
@@ -24,6 +27,7 @@ const TIDY_STEP6_AUTO = read('plugin/skills/tidy/step-6-auto.md');
 const TIDY_SCAN_EXECUTION = read('plugin/skills/tidy/scan-execution.md');
 const HEALTH_DIGEST = read('plugin/skills/_shared/health-filing-digest.md');
 const REVIEW_ROUTING = read('plugin/skills/review/step3-routing.md');
+const NEXT_MODE = read('plugin/skills/specify/next-mode.md');
 
 const DIGEST_ACTIONS = [
   'Merge-close duplicate digest',
@@ -409,7 +413,10 @@ test('digest-sweep.md verifies both counts, carries tombstones, and refuses a ba
   assert.ok(r.includes('fingerprint-only tombstone'));
   assert.ok(r.includes('consolebackfill-item'));
   assert.ok(r.includes('A non-zero exit is a refused read'));
-  assert.ok(r.indexOf('Remove `digest` from the old issue') < r.indexOf('add it to the replacement'), 'label removal must precede the add');
+  const removal = r.indexOf('Remove `digest` from the old issue');
+  const add = r.indexOf('add it to the replacement');
+  assert.ok(removal !== -1 && add !== -1, `label removal and add must both be named: ${removal}, ${add}`);
+  assert.ok(removal < add, 'label removal must precede the add');
 });
 
 test('digest-sweep.md reads the true count and paginates every digest read', () => {
@@ -445,7 +452,7 @@ test('digest-sweep.md skips the carry for a zero-comment issue and re-reads the 
   assert.ok(r.includes('A digest issue with zero comments has nothing to carry'));
   const close = r.indexOf('Close the old issue');
   const recount = r.indexOf('Re-read its true comment count');
-  assert.ok(recount !== -1 && close < recount, 'the post-close recount must follow the close');
+  assert.ok(close !== -1 && recount !== -1 && close < recount, `the post-close recount must follow the close: ${close}, ${recount}`);
   assert.ok(r.includes('name any gap that remains in the report'));
 });
 
@@ -474,8 +481,159 @@ test('every rollover restatement carries the carry-over, not a bare bootstrap', 
   assert.match(tier, /\| Stage \| Stage \| Stage — /);
 });
 
+test('both rollover trigger cells name an unfinished rollover to resume, not only the comment cap', () => {
+  const row = TIDY_SKILL.split('\n').find((l) => l.startsWith('| **Rollover digest container**'));
+  assert.ok(row.includes('or an unfinished rollover to resume'), 'tidy/SKILL.md trigger cell');
+  const tier = TIDY_STEP6_AUTO.split('\n').find((l) => l.startsWith('| **Rollover digest container**'));
+  assert.ok(tier.includes('or an unfinished rollover to resume'), 'step-6-auto.md trigger cell');
+});
+
 test('tidy Shape 1 keeps an unfinished rollover replacement by its trusted body marker', () => {
   assert.ok(TIDY_RECORDS.includes('`<!-- digest-rollover-of: {old} -->`'));
   assert.ok(TIDY_RECORDS.includes('`classifyRolloverResume`'));
   assert.ok(!TIDY_RECORDS.includes('(continues #{old})'));
+});
+
+// --- Fix round 1 (#4848): the rollover procedure's wording, fences and consumers ---
+
+const stepText = (n) => {
+  const r = rollover();
+  const start = r.indexOf(`\n${n}. **`);
+  const end = n === 6 ? r.length : r.indexOf(`\n${n + 1}. **`);
+  assert.ok(start !== -1 && end !== -1 && start < end, `rollover step ${n} not found: ${start}, ${end}`);
+  return r.slice(start, end);
+};
+const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,c,o\][^\n]*$/m;
+const EXPIRY_FENCE = /^node -e "const fs=require\('fs'\);const \{materialityEntryDate\}[^\n]*$/m;
+const fenceOf = (src, pattern, label) => {
+  const m = pattern.exec(src);
+  assert.ok(m, `${label}: fence not found`);
+  return m[0];
+};
+const fwd = (p) => p.split(path.sep).join('/');
+const scratch = (t) => {
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'rollover-fence-'));
+  t.after(() => fs.rmSync(d, { recursive: true, force: true }));
+  return d;
+};
+const PLUGIN_ROOT = fwd(path.join(REPO_ROOT, 'plugin'));
+const runFence = (line, env) => spawnSync('bash', ['-c', line], { env: { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, ...env }, encoding: 'utf8' });
+
+test('the Resume verdict fence is the same line in digest-sweep.md, tidy Shape 1 and the bare drain, and each copy runs', (t) => {
+  const sources = { 'digest-sweep.md': SWEEP, 'step-1-records.md': TIDY_RECORDS, 'next-mode.md': NEXT_MODE };
+  const lines = Object.entries(sources).map(([name, src]) => fenceOf(src, VERDICT_FENCE, name));
+  assert.ok(lines.every((l) => l === lines[0]), 'the three copies drifted apart');
+  for (const [name, src] of [['step-1-records.md', TIDY_RECORDS], ['next-mode.md', NEXT_MODE]]) {
+    assert.ok(src.includes('`classifyRolloverResume`'), name);
+    assert.ok(src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"), `${name}: the fence's require path`);
+    assert.ok(src.includes('"${CLAUDE_PLUGIN_ROOT}" "$RESUME_CANDS" "$RESUME_OLD"'), `${name}: root passed as an argument`);
+  }
+  assert.ok(!/`classifyRolloverResume`\s*\(`digest-sweep\.md`\)/.test(TIDY_RECORDS), 'the Work Records agent cannot read digest-sweep.md');
+  assert.ok(!NEXT_MODE.includes("tidy/digest-sweep.md`'s Resume"), 'the bare drain cannot be pointed at a sibling for the reads');
+
+  const dir = scratch(t);
+  const marker = (n) => `<!-- digest-rollover-of: ${n} -->`;
+  const issue = (number, over = {}) => ({ number, state: 'open', author_association: 'MEMBER', labels: [], body: '', ...over });
+  const cases = [
+    { name: 'resume', cands: [issue(20, { body: marker(10) })], old: issue(10, { labels: [{ name: 'digest' }] }), want: { state: 'resume', replacement: 20, extras: [] } },
+    { name: 'planted', cands: [issue(21, { body: marker(10), author_association: 'NONE' })], old: issue(10, { labels: [{ name: 'digest' }] }), want: { state: 'none', replacement: null, extras: [] } },
+    { name: 'earlier generation', cands: [issue(20, { state: 'closed', body: marker(10) })], old: issue(10, { state: 'closed' }), want: { state: 'none', replacement: null, extras: [] } },
+  ];
+  for (const line of lines) {
+    for (const c of cases) {
+      const candsFile = path.join(dir, `${c.name}-cands.json`);
+      const oldFile = path.join(dir, `${c.name}-old.json`);
+      fs.writeFileSync(candsFile, JSON.stringify(c.cands));
+      fs.writeFileSync(oldFile, JSON.stringify(c.old));
+      const r = runFence(line, { RESUME_CANDS: fwd(candsFile), RESUME_OLD: fwd(oldFile) });
+      assert.strictEqual(r.status, 0, `${c.name}: ${r.stderr}`);
+      assert.deepStrictEqual(JSON.parse(r.stdout), c.want, c.name);
+    }
+    const r = runFence(line, { RESUME_CANDS: fwd(path.join(dir, 'absent.json')), RESUME_OLD: fwd(path.join(dir, 'absent.json')) });
+    assert.notStrictEqual(r.status, 0, 'an unreadable pair exits non-zero rather than printing a verdict');
+  }
+});
+
+test('the Resume list prints numbers only, resolves every path through session-tmp-resolve, and takes no action on an unreadable {old}', () => {
+  const filter = `--jq '.[] | select(.body | test("(?m)^<!-- digest-rollover-of: [0-9]+ -->\\\\s*$")) | .number'`;
+  assert.ok(SWEEP.includes(filter), 'the documented list filter');
+  assert.ok(SWEEP.includes('`list_issues`') && SWEEP.includes('`perPage: {window}`'), 'the MCP form');
+  assert.ok(SWEEP.includes('that pair gets no action'));
+  assert.ok(SWEEP.includes('`bin/session-tmp-resolve.js --value`'));
+  assert.ok(SWEEP.includes('distinct from `/claude-tweaks:specify`\'s `$CANDIDATES`'));
+  for (const stale of ['{CANDIDATES}', '{OLDISSUE}', '{OLD}', '{NEW}', '{COUNT}', '{CARRYDIR}', '{plugin-root}']) {
+    assert.ok(!SWEEP.includes(stale), `${stale} has no location`);
+  }
+  assert.ok(SWEEP.includes('"${CLAUDE_PLUGIN_ROOT}" "$CARRY_OLD" "$CARRY_NEW" "{count}" "$CARRY_DIR"'));
+});
+
+test('a stalled move needs an open old issue, and an earlier generation reads none', () => {
+  const resume = SWEEP.slice(SWEEP.indexOf('**Resume an unfinished rollover.**'), SWEEP.indexOf('No-ops silently'));
+  assert.ok(resume.includes('while the old issue is still open'));
+  assert.ok(resume.includes('an earlier generation'));
+  assert.ok(resume.includes('a replacement keeps its marker for good'));
+});
+
+test('step 1 re-lists through the trust gate: the Resume fence decides the replacement, and none means create', () => {
+  const s = stepText(1);
+  assert.ok(s.includes('run the **Resume an unfinished rollover** list'));
+  assert.ok(s.includes('run its fence over every candidate naming `{old}`'));
+  assert.ok(s.includes('Take the printed `replacement` and `extras`'));
+  assert.ok(s.includes('a `none` verdict means create one'));
+  assert.ok(!s.includes('the same list and filter'), 'a bare body-line filter is no trust gate');
+});
+
+test('the steps stay re-runnable from every caller: zero count, mismatch, pointer and summary comments, close', () => {
+  const r = rollover();
+  assert.ok(stepText(2).includes('continue with the step that called them'));
+  assert.ok(!r.includes('go to step 4'), 'step 5 and step 6 call steps 2 and 3 too');
+  const s3 = stepText(3);
+  assert.ok(s3.includes('A mismatch stops here'));
+  assert.ok(s3.includes('the issue being carried keeps every entry and nothing closes'));
+  assert.ok(!s3.includes('still holds `digest`'), 'false when steps 2 and 3 re-run from step 4, 5 or 6');
+  for (const n of [4, 6]) assert.ok(stepText(n).includes('<!-- digest-rollover-to: {replacement} -->'), `step ${n} comment marker`);
+  assert.ok(stepText(4).includes('unless it is already closed'));
+  assert.ok(stepText(6).includes('skip the close and go to the recount'));
+  const preamble = r.slice(r.indexOf('Each step below is safe to re-run'), r.indexOf('\n1. **'));
+  assert.ok(preamble.includes('post only when the issue\'s trusted comments'));
+  assert.ok(preamble.includes('a close is skipped on an issue already closed'));
+});
+
+test('Shape 1 keeps both issues of a rollover pair, and its pair-listing fence prints only open marker-bearing records', (t) => {
+  assert.ok(TIDY_RECORDS.includes('and `{old}` itself, which loses its `digest` label before the rollover closes it'));
+  assert.ok(TIDY_RECORDS.includes('A `resume` or `stalled` verdict `Keep`s both issues.'));
+  assert.ok(TIDY_RECORDS.includes('`Keep` both for this run and name the pair in the report'));
+  const dir = scratch(t);
+  const file = path.join(dir, 'records.json');
+  fs.writeFileSync(file, JSON.stringify([
+    { number: 20, state: 'OPEN', body: 'x\n<!-- digest-rollover-of: 10 -->\n' },
+    { number: 21, state: 'CLOSED', body: '<!-- digest-rollover-of: 10 -->' },
+    { number: 22, state: 'OPEN', body: 'inline <!-- digest-rollover-of: 10 --> text' },
+    { number: 23, state: 'OPEN', body: null },
+    { number: 24, state: 'OPEN', body: '<!-- digest-rollover-of: 7 -->\r\n' },
+  ]));
+  const r = runFence(fenceOf(TIDY_RECORDS, /^node -e "const m=\/\^<!-- digest-rollover-of[^\n]*$/m, 'Shape 1 pair listing'), { TIDY_RECORDS: fwd(file) });
+  assert.strictEqual(r.status, 0, r.stderr);
+  assert.deepStrictEqual(r.stdout.trim().split('\n'), ['20 10', '24 7']);
+});
+
+test('Expiry\'s date fence runs: a run-id, a stamped line, the comment date, and null when nothing parses', (t) => {
+  const { materialityEntryLine } = require('../plugin/bin/lib/health-core/materiality-digest');
+  const base = { area: 'tidy', fileRefs: 'a.js', deferReason: 'direct-filing-sweep' };
+  const runId = materialityEntryLine({ ...base, finding: 'one', provenance: '2026-08-24T183516-tidy-standalone' });
+  const skill = materialityEntryLine({ ...base, finding: 'two', provenance: 'harness-health' });
+  const stamped = `${materialityEntryLine({ ...base, finding: 'three', provenance: 'harness-health' })} <!-- materiality-first-seen: 2026-02-02T00:00:00Z -->`;
+  const comments = [
+    { url: 'https://example.test/c#issuecomment-1', createdAt: '2026-11-01T00:00:00Z', body: `a note\n${runId}\n${skill}\n${stamped}` },
+    { url: 'https://example.test/c#issuecomment-2', body: skill },
+  ];
+  const dir = scratch(t);
+  const file = path.join(dir, 'expiry-comments.json');
+  fs.writeFileSync(file, JSON.stringify(comments));
+  const r = runFence(fenceOf(SWEEP, EXPIRY_FENCE, 'Expiry'), { EXPIRY_COMMENTS: fwd(file) });
+  assert.strictEqual(r.status, 0, r.stderr);
+  const rows = r.stdout.trim().split('\n').map((l) => l.split('\t'));
+  assert.deepStrictEqual(rows.map((x) => x[0]), ['2026-08-24T18:35:16.000Z', '2026-11-01T00:00:00.000Z', '2026-02-02T00:00:00.000Z', 'null']);
+  assert.deepStrictEqual(rows.map((x) => x[2]), [runId, skill, stamped, skill]);
+  assert.ok(rows[3][1].endsWith('issuecomment-2'));
 });
