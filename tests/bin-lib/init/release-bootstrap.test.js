@@ -198,6 +198,33 @@ test('renderWorkflowYaml: throws on an invalid branch name instead of silently d
   assert.doesNotThrow(() => rb.renderWorkflowYaml({ branch: 'feat.v1' }));
 });
 
+test('renderWorkflowYaml: refuses an Actions expression in the branch, and bootstrapRelease writes no file (#4714)', () => {
+  const expr = '${{secrets.RELEASE_PLEASE_TOKEN}}';
+  assert.throws(() => rb.renderWorkflowYaml({ branch: expr }), /invalid branch name.*Actions expression/);
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  assert.throws(() => rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: expr, listTags: () => [] }), /invalid branch name.*Actions expression/);
+  assert.deepEqual(fs.readdirSync(root), ['package.json']);
+});
+
+test('renderWorkflowYaml: always double-quotes the filter and target-branch scalars (#4714)', () => {
+  const lines = rb.renderWorkflowYaml({ branch: 'develop' }).split('\n');
+  assert.ok(lines.includes('      - "develop"'));
+  assert.ok(lines.includes('          target-branch: "develop"'));
+  for (const name of ['#main', '&x', '"x', '{a}', '@x', '|x', '>x', '%x', '1.10', 'true', 'null']) {
+    const target = '          target-branch: ' + JSON.stringify(name);
+    assert.ok(rb.renderWorkflowYaml({ branch: name }).split('\n').includes(target), name);
+  }
+});
+
+test('renderWorkflowYaml: backslash-escapes filter metacharacters in the branches entry only (#4714)', () => {
+  const plus = rb.renderWorkflowYaml({ branch: 'release+1' }).split('\n');
+  assert.ok(plus.includes('      - ' + JSON.stringify('release\\+1')));
+  assert.ok(plus.includes('          target-branch: ' + JSON.stringify('release+1')));
+  const bang = rb.renderWorkflowYaml({ branch: '!x' }).split('\n');
+  assert.ok(bang.includes('      - ' + JSON.stringify('\\!x')));
+  assert.ok(bang.includes('          target-branch: ' + JSON.stringify('!x')));
+});
+
 test('bootstrapRelease: refuses an invalid branch on the pr-first path before any write; local-merge ignores an invalid branch entirely (ledger row 34)', () => {
   const root = tmp(); write(root, 'package.json', '{"name":"x"}');
   assert.throws(() => rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: 'bad branch', listTags: () => [] }), /invalid branch name/);
@@ -210,12 +237,12 @@ test('bootstrapRelease: refuses an invalid branch on the pr-first path before an
 test('renderers: workflow, config, manifest, policy rows', () => {
   const wf = rb.renderWorkflowYaml({ branch: 'develop' });
   assert.match(wf, /uses: googleapis\/release-please-action@v4/);
-  assert.match(wf, /branches:\n\s+- develop/);
+  assert.match(wf, /branches:\n\s+- "develop"/);
   assert.match(wf, /contents: write/);
   assert.match(wf, /pull-requests: write/);
   assert.match(wf, /config-file: release-please-config\.json/);
   assert.match(wf, /manifest-file: \.release-please-manifest\.json/);
-  assert.match(wf, /target-branch: develop/); // F4
+  assert.match(wf, /target-branch: "develop"/); // F4
   assert.match(wf, /# token: \$\{\{ secrets\.RELEASE_PLEASE_TOKEN \}\}/); // F5
   assert.match(wf, /do not trigger/); // F5
   const cfg = JSON.parse(rb.renderConfig({ releaseType: 'node', extraFiles: [] }));

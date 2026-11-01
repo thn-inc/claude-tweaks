@@ -266,14 +266,18 @@ function seedManifestVersion({ tags, manifestVersion } = {}) {
 
 function renderWorkflowYaml({ branch } = {}) {
   if (!isValidBranchName(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
-  const b = branch;
+  // Quoting alone does not close this: Actions evaluates ${{ }} inside quoted scalars too.
+  if (branch.includes('${{')) throw new Error(`invalid branch name: ${JSON.stringify(branch)} contains an Actions expression`);
+  const b = JSON.stringify(branch);
+  // on.push.branches entries are GitHub filter patterns, so '+' and a leading '!' must be escaped to match literally.
+  const filter = JSON.stringify(branch.replace(/\+/g, '\\+').replace(/^!/, '\\!'));
   return [
     'name: release-please',
     '',
     'on:',
     '  push:',
     '    branches:',
-    `      - ${b}`,
+    `      - ${filter}`,
     '',
     'permissions:',
     '  contents: write',
