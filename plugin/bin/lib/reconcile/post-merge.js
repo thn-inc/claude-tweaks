@@ -45,7 +45,15 @@
 // it reads true, every remaining run that would have run skips `budget-exhausted`
 // and is deferred to the next pass.
 //
-// Returns { entries, deferred, failure? }. `deferred` lists the run dirs skipped
+// `postMergeOne` runs the same guarded path (marker check, PR state, claim, marker re-check,
+// Steps 4.0/4.0b) for ONE named run dir, an `archive/{run-id}` dir included — the
+// reconciler never walks `archive/`. Its caller is `bin/post-merge-run.js`, merge mode's
+// Already merged section (#4692). It runs inside MERGE_GRACE_MS too, where the loop defers:
+// it holds the same per-run claim and writes the same marker, so it and the reconciler
+// never run the steps concurrently — a held claim reads `in-flight`, and the in-grace run
+// takes the in-session parameters (`closing-links`' default settle poll, `selfInclude: true`).
+//
+// `postMerge` returns { entries, deferred, failure? }. `deferred` lists the run dirs skipped
 // for a RETRYABLE reason — archive must not archive them in this pass, or the
 // retry never comes (archive-merged.js's `postMergeDeferred`). Exactly six
 // reasons are retryable: `merge-grace`, `in-flight`, `claim-failed`, the
@@ -61,13 +69,14 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSyncTimed } = require('./timing');
-const { listRunDirsWithState } = require('../hooks/context');
+const { listRunDirsWithState, readRunState } = require('../hooks/context');
 const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const { repoSpecOf } = require('../hooks/git-exec');
 const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { resolveWithin } = require('../path-guard');
 const { ghOptions } = require('../repo-resolve');
 const { closeBelowFloorParents } = require('../issues/below-floor-parent-close');
 const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
@@ -243,6 +252,7 @@ function parseEnvelope(stdoutText) {
 }
 
 const numbers = (values) => (Array.isArray(values) ? values : []).map(Number).filter(Number.isInteger);
+const issuesOf = (list) => (Array.isArray(list) ? list : []).map((f) => f && f.issue).filter(Number.isInteger);
 
 function candidateRuns(root) {
   return [...listRunDirsWithState(root), ...listRunDirsWithState(root, { status: 'clean' })];
@@ -267,19 +277,23 @@ async function prefetchPostMergePrStates(root, prStates) {
   await prStates.prefetch({ numbers: [...wanted] });
 }
 
-async function postMerge({
-  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
-} = {}) {
-  const entries = [];
-  const deferred = [];
+// The skip reasons only the single-run path (postMergeOne) reports; the loop treats those runs as silent.
+const SINGLE_ONLY_REASONS = new Set(['no-pr', 'already-done', 'not-merged']);
+
+// Steps 4.0 / 4.0b parameters. The loop runs more than MERGE_GRACE_MS after the merge, so closing-links
+// settles with no poll and a human's later reopen counts (#4599); the in-session run is within seconds of
+// the merge, with closing-links' default settle poll and the merging PR itself counted (null = flag omitted).
+const LATE_MERGE_PARAMS = { settleMs: '0', closeWindowMs: CLOSE_WINDOW_MS, selfInclude: false };
+const IN_SESSION_PARAMS = { settleMs: null, closeWindowMs: null, selfInclude: true };
+
+// -> { failure } when this project or caller cannot run the check, else the context both paths share.
+function setupContext({ cwd, deps }) {
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start) || start;
-  if (readWorkBackend(root) !== 'github-issues') return { entries, deferred, failure: 'not-github-issues' };
+  if (readWorkBackend(root) !== 'github-issues') return { failure: 'not-github-issues' };
   // The host too: off github.com, Step 4.0b's gh calls name it (`--repo host/owner/repo`, `--hostname`).
   const repoSpec = repoSpecOf(root);
-  if (!repoSpec) return { entries, deferred, failure: 'no-remote' };
-  // A missing resolver is a caller bug; the per-run catch below must never relabel it a transient network failure.
-  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
+  if (!repoSpec) return { failure: 'no-remote' };
   const { host, owner, repo } = repoSpec;
 
   const policyFile = readPolicyRaw(root);
@@ -300,76 +314,142 @@ async function postMerge({
   const closeParents = deps.closeParents || closeBelowFloorParents;
   const writeEntries = deps.appendEntries || appendEntries;
 
-  for (const { dir, state } of candidateRuns(root)) {
-    const pr = state && state.pr && state.pr.number;
-    if (!Number.isInteger(pr) || pr <= 0) continue;
-    if (runHasMarker(dir)) continue;
+  return {
+    root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries,
+  };
+}
 
-    let prState;
-    try { prState = await prStates.byNumberAsync(pr); } catch { prState = TRANSIENT_PR_FAILURE; } // a real throw from the lookup is a transport failure
-    if (!prState || typeof prState !== 'object') {
-      const reason = typeof prState === 'string' ? prState : 'no-pr-state';
-      entries.push({ runDir: dir, pr, action: 'skipped', reason });
-      if (reason === TRANSIENT_PR_FAILURE) deferred.push(dir);
-      continue;
-    }
-    if (prState.state !== 'MERGED') continue;
+// One run through the guards and, when it clears them, Steps 4.0 and 4.0b. Order: recorded PR -> marker ->
+// PR state -> MERGED -> grace -> dry-run -> budget -> claim -> marker re-read -> processRun -> release.
+// -> { entry, defer }: `entry` null is a silent skip; `defer` says archive must keep the run for a retry.
+// `single` (postMergeOne) runs inside the grace under the in-session parameters instead of skipping it, and
+// returns its silent skips (`no-pr`, `already-done`, `not-merged`) as entries.
+async function processCandidate({
+  dir, state, ctx, prStates, dryRun, now, budgetExceeded, deps, single = false, retryHint, includeRecords = false,
+}) {
+  const pr = state && state.pr && state.pr.number;
+  if (!Number.isInteger(pr) || pr <= 0) {
+    return { entry: single ? { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr' } : null, defer: false };
+  }
+  const skipped = (reason, extra = {}) => ({ runDir: dir, pr, action: 'skipped', reason, ...extra });
+  if (runHasMarker(dir)) return { entry: single ? skipped('already-done') : null, defer: false };
 
-    const mergedAt = Date.parse(prState.mergedAt);
-    // `<=`: a run is processed only strictly past the grace, so strictly past CLOSE_WINDOW_MS too
-    // (closing-links settles a still-open will-close record only once the clock is past mergedAt + window).
-    if (Number.isNaN(mergedAt) || now() - mergedAt <= MERGE_GRACE_MS) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'merge-grace' });
-      deferred.push(dir);
-      continue;
-    }
-    if (dryRun) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'dry-run' });
-      continue;
-    }
-    // Checked between runs, never mid-run: a run left over is the next pass's, so archive keeps it.
-    if (typeof budgetExceeded === 'function' && budgetExceeded()) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'budget-exhausted' });
-      deferred.push(dir);
-      continue;
-    }
+  let prState;
+  try { prState = await prStates.byNumberAsync(pr); } catch { prState = TRANSIENT_PR_FAILURE; } // a real throw from the lookup is a transport failure
+  if (!prState || typeof prState !== 'object') {
+    const reason = typeof prState === 'string' ? prState : 'no-pr-state';
+    return { entry: skipped(reason), defer: reason === TRANSIENT_PR_FAILURE };
+  }
+  if (prState.state !== 'MERGED') return { entry: single ? skipped('not-merged', { detail: String(prState.state) }) : null, defer: false };
 
-    if (deps.beforeClaim) deps.beforeClaim(dir);
-    const claim = (deps.takeClaim || takeClaim)(dir, now());
-    if (!claim.ok) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: claim.reason });
-      deferred.push(dir);
-      continue;
-    }
-    try {
-      // A pass that finished between the first read and the claim wrote its marker already.
-      if (runHasMarker(dir)) continue;
-      const entry = processRun({
-        dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
-      });
-      entries.push(entry);
-      if (entry.reason === TRANSIENT_REASON) deferred.push(dir);
-    } catch (e) {
-      entries.push({ runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e) });
-    } finally {
-      releaseClaim(dir);
-    }
+  const mergedAt = Date.parse(prState.mergedAt);
+  // `<=`: a run is processed only strictly past the grace, so strictly past CLOSE_WINDOW_MS too
+  // (closing-links settles a still-open will-close record only once the clock is past mergedAt + window).
+  const inGrace = Number.isNaN(mergedAt) || now() - mergedAt <= MERGE_GRACE_MS;
+  if (inGrace && !single) return { entry: skipped('merge-grace'), defer: true };
+  if (dryRun) return { entry: skipped('dry-run'), defer: false };
+  // Checked between runs, never mid-run: a run left over is the next pass's, so archive keeps it.
+  if (typeof budgetExceeded === 'function' && budgetExceeded()) return { entry: skipped('budget-exhausted'), defer: true };
+
+  if (deps.beforeClaim) deps.beforeClaim(dir);
+  const claim = (deps.takeClaim || takeClaim)(dir, now());
+  if (!claim.ok) return { entry: skipped(claim.reason), defer: true };
+  try {
+    // A pass that finished between the first read and the claim wrote its marker already.
+    if (runHasMarker(dir)) return { entry: single ? skipped('already-done') : null, defer: false };
+    const entry = processRun({
+      dir, pr, ...ctx, now, params: inGrace ? IN_SESSION_PARAMS : LATE_MERGE_PARAMS, retryHint, includeRecords,
+    });
+    return { entry, defer: entry.reason === TRANSIENT_REASON };
+  } catch (e) {
+    return { entry: skipped('error', { detail: oneLine(e && e.message ? e.message : e) }), defer: false };
+  } finally {
+    releaseClaim(dir);
+  }
+}
+
+async function postMerge({
+  cwd, prStates, dryRun = false, now = Date.now, budgetExceeded, deps = {},
+} = {}) {
+  const entries = [];
+  const deferred = [];
+  const ctx = setupContext({ cwd, deps });
+  if (ctx.failure) return { entries, deferred, failure: ctx.failure };
+  // A missing resolver is a caller bug; the per-run catch must never relabel it a transient network failure.
+  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { entries, deferred, failure: 'no-pr-states' };
+
+  for (const { dir, state } of candidateRuns(ctx.root)) {
+    const { entry, defer } = await processCandidate({ dir, state, ctx, prStates, dryRun, now, budgetExceeded, deps });
+    if (entry && !SINGLE_ONLY_REASONS.has(entry.reason)) entries.push(entry);
+    if (defer) deferred.push(dir);
   }
   return { entries, deferred };
 }
 
+// Is this run dir under `{main checkout}/.claude-tweaks/pipelines/archive/`? Real paths on both sides.
+function isArchivedRunDir(runDir, root) {
+  return resolveWithin(runDir, path.join(root, '.claude-tweaks', 'pipelines', 'archive')) !== null;
+}
+
+// The run's config.yml `spec:` value, or null when the file or the line is unreadable.
+function readSpecNumber(runDir) {
+  let text;
+  try { text = fs.readFileSync(path.join(runDir, 'config.yml'), 'utf8'); } catch { return null; }
+  const m = /^spec:\s*(\S+)/m.exec(text);
+  return m ? m[1].replace(/^#/, '') : null;
+}
+
+// The ATTEMPT_STEP line's retry clause. An archived run is never walked by the reconcile pass, so its retry
+// is the next `/claude-tweaks:wrap-up {n} merge`; a live run's is the next reconcile pass.
+const RECONCILE_RETRY_HINT = 'the next reconcile pass retries Steps 4.0 and 4.0b';
+function archivedRetryHint(runDir) {
+  const spec = readSpecNumber(runDir);
+  return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
+}
+
+// The single-run path (see the header): one named run dir, archived included. -> one entry:
+// { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records? }.
+async function postMergeOne({
+  runDir, cwd, prStates, now = Date.now, deps = {},
+} = {}) {
+  const ctx = setupContext({ cwd, deps });
+  if (ctx.failure) return { runDir, pr: null, action: 'skipped', reason: ctx.failure };
+  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { runDir, pr: null, action: 'skipped', reason: 'no-pr-states' };
+  const retryHint = isArchivedRunDir(runDir, ctx.root) ? archivedRetryHint(runDir) : RECONCILE_RETRY_HINT;
+  const { entry } = await processCandidate({
+    dir: runDir, state: readRunState(runDir), ctx, prStates, dryRun: false, now, deps, single: true, retryHint, includeRecords: true,
+  });
+  return entry;
+}
+
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
+// `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
+// of an attempt line; `includeRecords` adds Step 4.0's record lists to a `ran` entry (postMergeOne only).
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
+  params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
 }) {
   let out = '';
   const code = runClosingLinks(
-    ['--run', dir, '--mode', 'post-merge', '--settle-ms', '0', '--close-window-ms', String(CLOSE_WINDOW_MS)],
+    [
+      '--run', dir, '--mode', 'post-merge',
+      ...(params.settleMs !== null ? ['--settle-ms', params.settleMs] : []),
+      ...(params.closeWindowMs !== null ? ['--close-window-ms', String(params.closeWindowMs)] : []),
+    ],
     {
       cwd: () => root, mainRoot: root, ghAvailable: () => true, gh: timedGh, stdout: (s) => { out += s; }, stderr: () => {},
     },
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
+  // Step 4.0's record lists (issue numbers), for a caller that surfaces them; omitted with no envelope.
+  const recordsOf = (env) => (includeRecords && env ? {
+    records: {
+      failed: issuesOf(env.failed),
+      closeFailed: issuesOf(env.closeFailed),
+      pendingClose: numbers(env.pendingClose),
+      unchecked: numbers(env.unchecked),
+    },
+  } : {});
   const stamp = now();
   // A failed write still reports the parents Step 4.0b closed: they are closed on GitHub either way.
   const write = (items, ran, parentsClosed = 0) => {
@@ -385,7 +465,7 @@ function processRun({
   const retry = (condition) => {
     const attempt = countAttempts(readDecisions(dir)) + 1;
     if (attempt > MAX_ATTEMPTS) return null;
-    const text = oneLine(`condition: ${condition} (attempt ${attempt} of ${MAX_ATTEMPTS}) → fallback: the next reconcile pass retries Steps 4.0 and 4.0b; after ${MAX_ATTEMPTS} attempts the tidy parent-gate backstop recovers the parent`);
+    const text = oneLine(`condition: ${condition} (attempt ${attempt} of ${MAX_ATTEMPTS}) → fallback: ${retryHint}; after ${MAX_ATTEMPTS} attempts the tidy parent-gate backstop recovers the parent`);
     const item = { entry: formatEntry({ status: 'SKIP', now: stamp, step: ATTEMPT_STEP, text, reversibility: 'n/a' }) };
     return write([item], {
       runDir: dir, pr, action: 'skipped', reason: TRANSIENT_REASON, detail: oneLine(condition), attempt,
@@ -412,7 +492,7 @@ function processRun({
     // `step40Failed` is the structured signal that Step 4.0 itself failed (non-zero exit, an unreadable
     // envelope, or an unread base), as opposed to an envelope that legitimately carries no closing set (`not-merged`, …).
     return write([item], {
-      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable || baseUnchecked ? { step40Failed: true } : {}),
+      runDir: dir, pr, action: 'ran', closingLinks: returned, parentsClosed: 0, ...(code !== 0 || unreadable || baseUnchecked ? { step40Failed: true } : {}), ...recordsOf(envelope),
     });
   }
 
@@ -422,17 +502,16 @@ function processRun({
   const closingSet = numbers(envelope.closingSet).filter((n) => !afterWindow.has(n));
   // A `closeFailed[]` record (non-default base: Step 4.0 could not read or close it) is OPEN or unknown,
   // so it holds its parent the way a `failed[]` one does (#4549).
-  const issuesOf = (list) => (Array.isArray(list) ? list : []).map((f) => f && f.issue).filter(Number.isInteger);
   const unsettled = [
     ...numbers(envelope.reopened), ...numbers(envelope.pendingClose),
     ...issuesOf(envelope.failed), ...issuesOf(envelope.closeFailed),
   ];
-  // selfInclude: false — this runs more than MERGE_GRACE_MS after the merge, so every closing record's live
-  // state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
+  // selfInclude: false (LATE_MERGE_PARAMS) — this runs more than MERGE_GRACE_MS after the merge, so every
+  // closing record's live state is the truth: a sub-issue a human reopened since keeps its parent open (#4599).
   // An unreadable policy or a rejected risk-floor skips the close outright (policySkipOf): no gh call.
   const { closed, skipped } = policySkip ? { closed: [], skipped: [policySkip] } : closeParents({
     closingSet, unsettled, mergingPr: pr, owner, repo, host, workLinks, riskFloor, gh: timedGh,
-    selfInclude: false,
+    selfInclude: params.selfInclude,
   });
   const items = closed.map((c) => ({
     entry: formatEntry({
@@ -452,10 +531,12 @@ function processRun({
       reversibility: 'n/a',
     }),
   });
-  return write(items, { runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length }, closed.length);
+  return write(items, {
+    runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope),
+  }, closed.length);
 }
 
 module.exports = {
-  postMerge, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText,
+  postMerge, postMergeOne, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };
