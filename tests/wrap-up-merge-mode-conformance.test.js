@@ -25,14 +25,15 @@ function assertEachFactGoesRed(text, facts) {
 const HINT = '[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]';
 
 const MERGE_MODE_FACTS = {
-  invocation: /`\/claude-tweaks:wrap-up #\{n\} merge`/,
+  // Anchored on its own sentence: the Already merged section also names this command as the failure next step.
+  invocation: /`\/claude-tweaks:wrap-up #\{n\} merge` merges the record's already-open PR now/,
   'human-confirmation': /typed invocation is the human merge confirmation/,
   tag: /`\{tag\}` = `human-approved`/,
   'no-console-resolve': /never runs `console-resolve\.js`/,
   'no-console-question': /never asks a `"Review Console"`-headed question/,
   'run-dir': /`_shared\/run-dir-resolution\.md`'s resolution order/,
   'not-resume': /not the `resume` form/,
-  'precondition-open': /PR is not `OPEN`/,
+  'precondition-open': /the PR is neither `OPEN` nor `MERGED`/,
   'precondition-pr': /`run-state\.json` carries no `pr` object/,
   'precondition-model': /`integration-model: pr-first`/,
   'steps-1-4': /`_shared\/pr-first-merge\.md` Steps 1 through 4/,
@@ -42,7 +43,6 @@ const MERGE_MODE_FACTS = {
   'release-reason': /with reason `merged: spec \{n\}` and `\$LINK` set to the merge commit sha/,
   'human-turn': /The confirmation holds only on a human's own turn: a subagent, a scheduled Routine, or any other headless caller that reaches this file stops and reports `pending-review`, reason `no-human-confirmation`/,
   'record-binding': /bind the adopted run to the typed record: its `config\.yml` `spec:` value must equal `\{n\}`/,
-  'merged-pr-next': /names `\/claude-tweaks:wrap-up #\{n\} cleanup-only` as the next step/,
   'budget-ignored': /they have no effect here and the report says they were ignored/,
   'branch5-once': /This happens once per invocation: a second branch-5 error accepts `pending-review`/,
   'other-stops': /Any other stop inside `pr-first-merge\.md` before the merge — Step 1\.5's curation guard, a non-zero `compose-subject` exit — reports `pending-review` naming that step/,
@@ -67,6 +67,43 @@ const MERGE_MODE_FACTS = {
   'anything-else': /Anything else: accept `pending-review`/,
   outcomes: /`merged`, `armed`, or `pending-review`/,
   bundle: /--step merge/,
+  // `## Already merged` (#4692). assertEachFactGoesRed strips only a pattern's first match, so no
+  // sentence below may contain text another fact matches: the section points at Procedure step 3
+  // for Section C, Section E and the reconcile call instead of restating them.
+  'merged-routes-already': /A `MERGED` PR — an `armed` run's auto-merge, or a merge on GitHub, landing before the human types this — skips Procedure steps 1-2 and runs the Already merged section below/,
+  'already-cli': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/post-merge-run\.js" --run "\$PIPELINE_RUN_DIR"/,
+  'already-claim': /runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/,
+  'already-marker': /a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/,
+  'already-json-line': /It exits 0 whenever it prints its one JSON line, whatever the outcome, so route on that line, never the exit code/,
+  // The CLI owns the outcome classification ([IL-168]): the section routes on `verdict` and `next` and
+  // hand-lists none of the words post-merge.js classifies (the hand-list test below).
+  'already-routes-verdict': /The CLI classifies its own outcome: the line's `verdict` picks the report line and its `next` the next step, so never re-derive either from its `closingLinks` word or its `reason`, which the report only quotes/,
+  'already-verdict-clean': /`verdict` `clean`: report `ran` with its `closingLinks` word and `parentsClosed` count/,
+  'already-verdict-done': /`verdict` `already-done`:/,
+  'already-in-flight': /`verdict` `in-flight` — another process holds the run's claim and is running them now: report `in-flight`, never `ran`/,
+  'already-in-flight-live': /With `next` `none`, a live run, that is the whole line/,
+  'already-in-flight-archived': /`next` `rerun-after-stale-claim` marks an archived run \(the adopted path is under `archive\/`\), whose holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again once the claim is past its 10-minute stale window \(`CLAIM_STALE_MS`\), in case that holder died/,
+  'already-failed-steps': /`verdict` `failed` on a `ran` entry reports only the steps its `failedSteps` names/,
+  'already-failed-ran': /When `failedSteps` includes `4\.0`: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
+  'already-parent-failures': /When `failedSteps` includes `4\.0b`: one `cleanup: post-merge closes failed — Step 4\.0b \{reason\} on #\{parent\}` line per `parentFailures` element/,
+  'already-pending-close': /Merge mode skips the re-run half of that `pendingClose` action, because the re-run would print `already-done` here, so its `pendingClose` records go straight to the hand check: reopen one by hand if it closed/,
+  'already-log-failed': /Any line reporting a `ran` entry that carries `logFailed`, clean or a failure, also notes that Step 4\.0 could not append a `decisions\.md` line/,
+  'already-step40-citations': /citing `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
+  'already-step40b-citation': /names no target\), citing the same `parent-gate` backstop/,
+  'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: no line names a `\/claude-tweaks:wrap-up` re-run/,
+  'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line/,
+  'already-exit-nonzero': /Any CLI exit other than 0 leaves no line to route on, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
+  'already-unparseable': /an exit 0 whose stdout is empty or will not parse as JSON reads `cleanup: post-merge closes failed — unparseable output`/,
+  'already-next-routes': /A failure line's next step follows its `next`/,
+  'already-retry': /`rerun` names `\/claude-tweaks:wrap-up #\{n\} merge`, because with no marker written yet a re-run tries the closes again; the non-zero exit line and the unparseable-output line name it too, since neither wrote a marker/,
+  'already-next-gh': /`rerun-where-gh` names that re-run from an environment where `gh` is available, since this one cannot run the closes at all, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop/,
+  'already-next-none': /`none` names no next step: a `ran` failure's marker is written, and any other skip fails the same way on a re-run/,
+  'already-step-4-1-line': /Step 4\.1's own release-status line is reported as that step defines it: it is none of the per-step words here and never adds a next step/,
+  'already-done-word': /A target that is already gone — worktree reaped, branch deleted, claim released — reports `already done`, never `failed`/,
+  'already-link': /`\$LINK` is the PR's `mergeCommit\.oid` from `gh pr view \{pr\} --json mergeCommit,mergedAt,mergedBy`/,
+  'already-teardown': /then the rest of Procedure step 3 from Step 4\.1 on, in its order, with Step 4\.2's reconcile call last/,
+  'already-outcome': /`already merged \{mergedAt\} by \{mergedBy\} — merge mode ran only the post-merge steps`/,
+  'already-no-next': /names no next step when every line reads `ran`, `already done` or a live run's `in-flight`; Step 4\.1's release-status line is none of these words and never adds one/,
 };
 
 // SKILL.md's router bullet: `merge` routes on the token alone, so a bare `merge` reaches
@@ -95,9 +132,123 @@ test('merge-mode.md facts each go red when stripped', () => {
   assertEachFactGoesRed(mergeModeRegion(), MERGE_MODE_FACTS);
 });
 
+// The archived `in-flight` line's stale window is the claim's own (#4692): prose and code agree.
+test('merge-mode.md states the claim stale window as post-merge.js has it', () => {
+  const { CLAIM_STALE_MS } = require('../plugin/bin/lib/reconcile/post-merge');
+  const m = /past its (\d+)-minute stale window \(`CLAIM_STALE_MS`\)/.exec(mergeModeRegion());
+  assert.ok(m, 'merge-mode.md names the claim stale window');
+  assert.strictEqual(Number(m[1]) * 60 * 1000, CLAIM_STALE_MS);
+});
+
+function alreadyMergedSection() {
+  const raw = read('plugin', 'skills', 'wrap-up', 'merge-mode.md');
+  const start = raw.indexOf('## Already merged');
+  const end = raw.indexOf('\n## ', start + 1);
+  assert.ok(start !== -1 && end > start, 'merge-mode.md carries an `## Already merged` section');
+  return flat(raw.slice(start, end));
+}
+
+// [IL-168]: post-merge.js classifies the outcome, so the section must not hand-list the words it classifies —
+// a restated list is a second classifier that no unit test runs.
+test('the Already merged section hand-lists none of the words post-merge.js classifies', () => {
+  const {
+    CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
+  } = require('../plugin/bin/lib/reconcile/post-merge');
+  const owned = [
+    ...CLEAN_CLOSING_LINKS, ...RERUN_REASONS, ...RERUN_WHERE_GH_REASONS,
+    // Words the classifier denies by default: the failure action words and the no-next-step skip reasons.
+    'reopen-failed', 'close-failed', 'close-pending', 'base-unchecked',
+    'not-github-issues', 'no-remote', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable',
+  ];
+  const section = alreadyMergedSection();
+  assert.deepEqual(owned.filter((w) => section.includes(`\`${w}\``)), []);
+});
+
+// Prose-code twin: the section names every verdict and next value classifyEntry can return, and no other.
+test('the Already merged section routes on exactly the verdict and next values classifyEntry returns', () => {
+  const {
+    classifyEntry, CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
+  } = require('../plugin/bin/lib/reconcile/post-merge');
+  const entries = [
+    { action: 'ran', closingLinks: [...CLEAN_CLOSING_LINKS][0] },
+    { action: 'ran', closingLinks: 'close-failed' },
+    { action: 'ran', closingLinks: [...CLEAN_CLOSING_LINKS][0], parentFailures: [{ parent: 9, reason: 'gh-failed' }] },
+    ...['already-done', 'in-flight', 'no-remote', ...RERUN_REASONS, ...RERUN_WHERE_GH_REASONS].map((reason) => ({ action: 'skipped', reason })),
+  ];
+  const verdicts = new Set();
+  const nexts = new Set();
+  const steps = new Set();
+  for (const archived of [false, true]) {
+    for (const e of entries) {
+      const { verdict, next, failedSteps = [] } = classifyEntry(e, { archived });
+      verdicts.add(verdict);
+      nexts.add(next);
+      for (const s of failedSteps) steps.add(s);
+    }
+  }
+  const section = alreadyMergedSection();
+  // Each failedSteps value gates its own report lines, and the prose names no other value.
+  assert.deepEqual([...section.matchAll(/`failedSteps` includes `([^`]+)`/g)].map((m) => m[1]).sort(), [...steps].sort());
+  assert.deepEqual([...section.matchAll(/`verdict` `([a-z-]+)`/g)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i).sort(), [...verdicts].sort());
+  for (const next of nexts) assert.ok(section.includes(`\`${next}\``), `the section names next \`${next}\``);
+});
+
+test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules rejection', () => {
+  const text = flat(read('plugin', 'skills', 'wrap-up', 'merge-mode.md'));
+  assert.strictEqual((text.match(/cleanup-only/g) || []).length, 1);
+  assert.ok(text.includes('`merge` with `cleanup-only` is rejected'), 'the one match is the Token rules rejection');
+});
+
+// Step 4.0 of the shared post-merge doc names merge mode's in-session caller (#4692).
+const POST_MERGE_EXCEPTION = {
+  'merge-mode-caller': /merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\) runs this step in-session for an already-merged PR/,
+  'merge-mode-caller-4-0b': /The one in-session caller that runs this step after a merge it did not make is merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\), through `bin\/post-merge-run\.js`/,
+};
+
+test('pr-first-merge-post-merge.md Step 4.0 names merge mode as an in-session caller', () => {
+  const text = flat(read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md'));
+  assert.deepStrictEqual(missingFactsOf(text, POST_MERGE_EXCEPTION), []);
+  assertEachFactGoesRed(text, POST_MERGE_EXCEPTION);
+});
+
 test('AC4.1: merge-mode.md no longer claims a parked run stays active', () => {
   assert.ok(!read('plugin', 'skills', 'wrap-up', 'merge-mode.md').includes('a parked `pending-review` run stays `status: active`'));
   assert.ok(!read('docs', 'journeys', 'merge-a-parked-unattended-pr-3784.md').includes('a parked run stays `status: active`'));
+});
+
+// #4692's final review: the journey, the graph and the CLI docs describe the shipped Already merged route.
+test('the journey, skill-graph and CLI docs describe the Already merged route, not the retired stop', () => {
+  const journey = flat(read('docs', 'journeys', 'merge-a-parked-unattended-pr-3784.md'));
+  assert.ok(!journey.includes('A PR a sibling already merged stops the command with no cleanup'), 'journey: retired no-cleanup stop');
+  assert.ok(!journey.includes('any merge, label, or teardown step on a closed or merged PR'), 'journey: red flag not narrowed');
+  assert.match(journey, /goes to `merge-mode\.md`'s `## Already merged` section, which runs the post-merge closes once through `bin\/post-merge-run\.js` and then step 6's teardown/);
+  assert.match(journey, /A second invocation on an already-merged PR reports `already done`/);
+  assert.match(journey, /A merge or acceptance-label step on a closed or merged PR\./);
+
+  // Both skill-graph rows (Section C/E's and Steps 4.0/4.0b's) carry the edge: meaning, not wording.
+  const edgeRows = read('docs', 'skill-graph.md').split('\n').filter((line) => line.includes('#4692'));
+  assert.equal(edgeRows.length, 2, 'skill-graph: one #4692 edge in each of the two rows');
+  for (const row of edgeRows) {
+    for (const part of ['`## Already merged`', 'bin/post-merge-run.js', '4.0b', 'Section C', 'Section E']) {
+      assert.ok(row.includes(part), `skill-graph #4692 row names ${part}`);
+    }
+  }
+
+  for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md'], ['docs', 'reconcile-checks.md']]) {
+    const text = flat(read(...file));
+    assert.ok(!/when `gh pr merge` finds the PR already/.test(text), `${file.join('/')}: wrong trigger`);
+    assert.ok(!text.includes('when Step 4.0 did not finish cleanly'), `${file.join('/')}: inverted records claim`);
+    assert.match(text, /`gh pr view --json state` finds the PR `?MERGED/, `${file.join('/')}: the Preconditions trigger`);
+    assert.match(text, /failedSteps/, `${file.join('/')}: documents failedSteps`);
+  }
+  for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
+    const text = flat(read(...file));
+    assert.match(text, /parentFailures/, `${file.join('/')}: names parentFailures`);
+    assert.match(text, /logFailed/, `${file.join('/')}: names logFailed`);
+    assert.match(text, /merged-at-unreadable/, `${file.join('/')}: names merged-at-unreadable`);
+    assert.match(text, /verdict, next, failedSteps\?\}/, `${file.join('/')}: the entry shape carries verdict, next and failedSteps`);
+    assert.match(text, /classifyEntry/, `${file.join('/')}: names the classifier that derives them`);
+  }
 });
 
 test('pipeline-run-dir.md documents --archived', () => {
@@ -304,6 +455,25 @@ test('docs/plugin-structure.md states the narrowed merge-mode.md read condition'
   const structure = flat(read('docs', 'plugin-structure.md'));
   assert.ok(!/read only when `\$ARGUMENTS` carries `merge`/.test(structure), 'stale read condition');
   assert.match(structure, /merge-mode\.md \(the `#N merge` same-session merge entry, read only when `\$ARGUMENTS` is only the `merge` token, at most one record reference, and the skill's own flags\)/);
+});
+
+// flags.md's cleanup-only bullet states its own run-dir lookup so teardown never mints a stray -standalone dir.
+const CLEANUP_ONLY_FACTS = {
+  'lookup-order': /`cleanup-only` resolves its run dir from an inherited `PIPELINE_RUN_DIR` first, else `resolve-run-dir --spec-slug \{slug\}` with no `--create`/,
+  'never-mints': /it never mints a run dir/,
+  'stops-naming-record': /When nothing resolves it stops and names the record/,
+  'merged-pointer': /when that record's PR is `MERGED`, the stop names `\/claude-tweaks:wrap-up #\{n\} merge`/,
+  // How cleanup-only learns the PR state when no run-state.json resolves: the flow resume check's lookup, adapted to merged.
+  'merged-pr-lookup': /`gh pr list --search "closes:#\{n\}" --state merged --json number,closingIssuesReferences`, or the MCP equivalent/,
+};
+
+test('AC6.1: flags.md states cleanup-only\'s run-dir lookup', () => {
+  const flags = flat(read('plugin', 'skills', 'wrap-up', 'flags.md'));
+  assert.deepStrictEqual(missingFactsOf(flags, CLEANUP_ONLY_FACTS), []);
+});
+
+test('AC6.1: cleanup-only facts each go red when stripped', () => {
+  assertEachFactGoesRed(flat(read('plugin', 'skills', 'wrap-up', 'flags.md')), CLEANUP_ONLY_FACTS);
 });
 
 test('summary-template.md Next Actions list line backticks consoleAutoResolve', () => {

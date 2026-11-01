@@ -7,6 +7,7 @@ files:
   - plugin/skills/flow/summary-template.md
   - plugin/bin/lib/hooks/run-dir-resolve.js
   - plugin/skills/_shared/pipeline-run-dir.md
+  - plugin/bin/post-merge-run.js
   - tests/wrap-up-merge-mode-conformance.test.js
 ---
 
@@ -58,10 +59,16 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 
 ### 3. Pass the preconditions
 - **URL:** `merge-mode.md`'s Preconditions
-- **Action:** the agent checks three things: `integration-model: pr-first`, a `pr` object in `run-state.json`, and the PR still `OPEN`.
-- **Should feel:** safe to re-run. A PR a sibling already merged stops the command with no cleanup.
-- **Should understand:** each failed precondition is named, and none of them runs a merge step first.
-- **Red flags:** any merge, label, or teardown step on a closed or merged PR.
+- **Action:** the agent checks three things: `integration-model: pr-first`, a `pr` object in `run-state.json`, and the PR `OPEN` or `MERGED`.
+  - An `OPEN` PR goes on to step 4.
+  - A `MERGED` PR (an armed auto-merge, a merge queue, or a human merged it first) skips steps 4 and 5. It goes to `merge-mode.md`'s `## Already merged` section, which runs the post-merge closes once through `bin/post-merge-run.js` and then step 6's teardown from Step 4.1 on.
+- **Should feel:** safe to re-run. A second invocation on an already-merged PR reports `already done` for each step the first one finished, and changes nothing.
+- **Should understand:**
+  - **Failed preconditions.** Each one is named, and none of them runs a merge step first. A `CLOSED` PR stops with no cleanup.
+  - **Already merged.** The outcome is `merged`, led by an `already merged {mergedAt} by {mergedBy}` line. A post-merge close that failed gets its own `cleanup:` line, never `ran`.
+- **Red flags:**
+  - A merge or acceptance-label step on a closed or merged PR.
+  - An already-merged PR that stops with no cleanup, or reports a failed post-merge close as `ran`.
 
 ### 4. Merge through the shared procedure
 - **URL:** `_shared/pr-first-merge.md` Steps 1-3 (acceptance labeling, curation guard, mark ready, the merge-verification gate, the merge), read through the composed `merge` bundle
@@ -110,3 +117,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Created during build of #3784. The record adds `wrap-up/merge-mode.md` and the `merge` routing token, an attended Conflict-path branch, and the `consoleAutoResolve` summary row. It was observed on #3712's run (PR #3749): the summary recommended a resume that would have re-parked the PR, and the human's "go ahead" had to be honored by running the merge procedure by hand.
 - Updated during build of #3865: Step 2's run adoption now matches the record's spec slug as a whole name segment, not a substring, so a record never adopts a run belonging to another record whose number starts with the same digits.
 - Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand. The build's review then made the fallback refuse when a newer run of the same record is still open.
+- Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
