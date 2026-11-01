@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T19:09:21.293Z",
+  "computedAt": "2026-11-01T19:13:01.174Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -15,7 +15,7 @@
       },
       {
         "number": 4848,
-        "updatedAt": "2026-11-01T19:07:54Z",
+        "updatedAt": "2026-11-01T19:10:51Z",
         "state": "OPEN"
       },
       {
@@ -371,11 +371,6 @@
       {
         "number": 4552,
         "updatedAt": "2026-10-30T13:47:25Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4551,
-        "updatedAt": "2026-11-01T18:24:54Z",
         "state": "OPEN"
       },
       {
@@ -1205,84 +1200,6 @@
           "origin": "capture",
           "risk": "medium",
           "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "## Current State\n\n`plugin/skills/tidy/digest-sweep.md:102-106` closes the digest issue at 100 comments, bootstraps a fresh one, and calls the closed issue's history the archive. It has no step that carries entries over. Cluster promotion, expiry and `isMaterialityDuplicate` all read only the open container (`_shared/materiality-floor.md`'s Dedup and Container sections), so a live entry left in the closed issue can never cluster or expire, and the same finding routes as new on its next sighting.\n\nThe rollover has never run: #1426 is the only digest issue ever created. On 2026-11-01 it held 101 comments and 711 entry lines: 633 marked, 78 live. `gh issue list --json comments` reported 100 for those 101, so that read truncates. The 100 threshold has no stated rationale.\n\n## Deliverables\n\n- The `Rollover digest container` procedure carries every live entry (trusted author, no trailing `→` marker) into the new container, keeping its line, fingerprint, provenance and original timestamp. Expiry's age read must survive the move.\n- The procedure is ordered so a failure loses nothing: create the new issue without the `digest` label, post the carried entries, verify the count, then move the label and pin, then close the old issue. A partial run is safe to re-run and never leaves two open `digest` issues for bootstrap-race repair to merge.\n- Keep the 100-comment trigger and state why: it compacts promoted and expired lines out of every sweep's read, and it matches the point where `gh issue list --json comments` truncates. The threshold read uses the true count (REST `.comments`), and any digest reader uses a paginated read.\n- A helper in `plugin/bin/lib/health-core/materiality-digest.js` selects the carry-over set, sharing the trusted-author filter so a planted line is never carried.\n- Rollover stays Stage at every tier.\n\n## Acceptance Criteria\n\n- A unit test gives the helper trusted live, marked, expired and untrusted lines, and only the trusted live lines are selected.\n- A test proves a carried entry's fingerprint still makes `isMaterialityDuplicate` return true against the new container.\n- A test proves a carried entry's expiry age comes from its original timestamp, not the new comment's.\n- `digest-sweep.md` names the ordering, the count verification before the close, and the threshold's rationale, pinned in `tests/materiality-floor-conformance.test.js`.\n\n## Release Note\n\nKeep open low-priority findings tracked when the digest issue fills up and rolls over.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/digest-sweep.md` — modify\n- `plugin/skills/tidy/SKILL.md` — modify\n- `plugin/skills/tidy/step-6-auto.md` — modify\n- `plugin/skills/_shared/materiality-floor.md` — modify\n- `plugin/bin/lib/health-core/materiality-digest.js` — modify\n- `tests/materiality-floor-conformance.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T19:07:53Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4848,
-        "state": "OPEN",
-        "title": "Digest rollover drops live entries from clustering, expiry and dedup",
-        "updatedAt": "2026-11-01T19:07:54Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
