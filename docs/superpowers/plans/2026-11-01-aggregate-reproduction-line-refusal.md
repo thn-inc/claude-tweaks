@@ -10,7 +10,7 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-01T182321-spec-4581/work/4581-spec.md` (record #4581)
 
-Scope keywords: Reproduction: lens, log-decision
+Scope keywords: FINDING_PATH
 
 ## Global Constraints
 
@@ -45,6 +45,19 @@ A probe over every `decisions.md` under the main checkout's `.claude-tweaks/pipe
 
 Each has a test in Task 2.
 
+## Acceptance criteria coverage
+
+| AC clause | Covered by |
+|---|---|
+| AC1.1 | Task 2 Step 1: refuse — run 4481 (`--step "Step 3"`), refuse — spec #1921 (`--spec 1921`), refuse — split step; each asserts exit 2 and no `decisions.md` |
+| AC2.1 | Task 2 Step 1: refuse — `--entries` (stderr names `entries[1]`, nothing written) |
+| AC3.1 | Task 2 Step 1: refuse — location list, refuse — lowercase marker (two full locations, no count, plural `findings`) |
+| AC4.1 | Task 2 Step 1: accept — per-finding, accept — coincidence, accept — single-read coverage, accept — vacuity downgrade, accept — AUTO aggregate (AUTO lines, including `reproduced. Confirmed`, `severity contested` and absence-claim-refuted, are never refused: status gate) |
+| AC5.1 | Task 2 Step 1: accept — non-reproduction STAGED with several locations (the marker is now case-insensitive `reproduction:`, departure 2 above; a non-reproduction line still never matches) |
+| AC6.1 | Task 2 Step 1: the `refusesAggregate` helper asserts stderr includes `one line per finding` and `--entries` on every refusal |
+| AC7.1 | Task 2 Step 5: go-red proof |
+| AC8.1 | Task 3 Step 4: `grep -c "one line per finding"` on `step3-lens-dispatch.md`, plus the `--entries` mention in the Step 1 replacement |
+
 ---
 
 ### Task 1: Move the finding-path grammar into its own module
@@ -54,6 +67,8 @@ Each has a test in Task 2.
 **Files:**
 - Create: `plugin/bin/lib/console/finding-path.js`
 - Modify: `plugin/bin/lib/console/resolve.js:508-510` (the `FINDING_PATH` declaration and the two `#4582` comment lines above it; lines 505-507 describe the debate regex and stay)
+- Test: `tests/bin-lib/console/backfill.test.js` (unchanged — run in Step 3: `plugin/bin/lib/console/backfill.js:16` imports `FINDING_PATH` from `./resolve`, whose re-export this task keeps, so it needs no edit)
+- No change (Check B scope sweep, frozen records of shipped work): `docs/superpowers/plans/2026-10-30-finding-key-path-class-4582.md`, `docs/superpowers/plans/2026-10-31-console-backfill-finding-path-4631.md`, `docs/superpowers/plans/2026-10-31-record-4647-test-digest-findings.md`
 
 **Interfaces:**
 - Produces: `require('./finding-path')` → `{ FINDING_PATH }` (a regex *source string*, byte-identical to today's `resolve.js:510` value). `resolve.js` keeps exporting `FINDING_PATH` (now re-exported from the new module).
@@ -64,7 +79,7 @@ Each has a test in Task 2.
   Run: `node -e "const a=require('./plugin/bin/lib/console/resolve.js').FINDING_PATH,b=require('./plugin/bin/lib/console/finding-path.js').FINDING_PATH;console.log(a===b, a.length)"`
   Expected: `true 99` (99 is the length today's constant prints, measured at authoring).
   Run: `node --test tests/bin-lib/console/`
-  Expected: PASS, same count as before the change.
+  Expected: PASS, same count as before the change (includes `backfill.test.js`, the one `FINDING_PATH` consumer outside `resolve.js`).
 - [ ] **Step 4: Commit** — `git add plugin/bin/lib/console/finding-path.js plugin/bin/lib/console/resolve.js`; message `Move FINDING_PATH into console/finding-path.js — shared by resolve.js and log-decision`.
 
 ### Task 2: Detector module and the log-decision.js refusal
@@ -136,6 +151,8 @@ Wiring: single-entry → `return usageError(\`--text ${reason}\`)`; `entryProble
 - Modify: `plugin/skills/_shared/auto-decision-log.md` (the `**Text from git or a user: \`--text-file\`.**` paragraph, after its "a `--text-file` with an interior line break exits 2." sentence)
 - Modify: `docs/plugin-structure.md:196`
 
+Waived plugin/skills/release/SKILL.md: read-only — Step 4 checks line 194's description of `Reproduction:` lines still reads true; no edit expected.
+
 **Interfaces:**
 - Consumes: the refusal's behavior from Task 2 (exit 2, `--entries` hint). No code.
 
@@ -153,4 +170,6 @@ Wiring: single-entry → `return usageError(\`--text ${reason}\`)`; `entryProble
   Expected: `1`.
   Run: `node --test tests/skill-size-single-source.test.js tests/review-cross-lens-corroboration-conformance.test.js tests/review-vacuity-evidence-conformance.test.js tests/review-absence-claim-ground-truth-conformance.test.js tests/log-decision-text-file-sites-conformance.test.js tests/auto-decision-log-test-gate-completeness.test.js tests/auto-decision-log-worktree-gate.test.js`
   Expected: PASS. (These read the edited bullet or `auto-decision-log.md`; the first three pin the bullet's `> - Findings present in only one agent's output` prefix, its `At \`medium\`` sentence and its `step3-cross-lens-corroboration.md` citation, all kept by the replacement.)
+  Run: `sed -n '194p' plugin/skills/release/SKILL.md`
+  Expected: its description of `Reproduction:` lines (one finding per line, no severity) is still true after this change; no edit unless it contradicts the new rule.
 - [ ] **Step 5: Commit** — `git add plugin/skills/review/step3-lens-dispatch.md plugin/skills/_shared/auto-decision-log.md docs/plugin-structure.md`; message `State one reproduction line per finding — review prose, decision-log contract, plugin-structure`.
