@@ -287,8 +287,9 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
       wrote = (countBySha(after).get(entry.sha) || 0) > (seen === null ? expected : seen);
     } catch { /* trust the exit code */ }
     if (!wrote) {
-      if (after && after[0] && after[0].sha === entry.sha) pending.push({ i, entry });
-      else fail(i, entry, 'git stash store exited 0 but the entry is not back on the stack', storeCommand(entry.subject, entry.sha));
+      const command = storeCommand(entry.subject, entry.sha);
+      if (after && after[0] && after[0].sha === entry.sha) pending.push({ i, entry, command });
+      else fail(i, entry, 'git stash store exited 0 but the entry is not back on the stack', command);
       continue;
     }
     outcomes[i] = { restored: true };
@@ -305,15 +306,14 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
     // and its stderr block prints after every other recover command.
     const onTop = [];
     for (const p of pending) {
-      const { i, entry } = p;
-      const command = storeCommand(entry.subject, entry.sha);
+      const { i, entry, command } = p;
       if (finalStack === null) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); stack could not be re-read', command);
       else if (finalStack[0] && finalStack[0].sha === entry.sha) onTop.push(p);
       else fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down', command);
     }
     const otherCommand = outcomes.some((x) => x && x.failed && x.failed.command !== null);
-    for (const { i, entry } of onTop) {
-      if (otherCommand) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands', storeCommand(entry.subject, entry.sha));
+    for (const { i, entry, command } of onTop) {
+      if (otherCommand) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); run it after the other recover commands', command);
       else fail(i, entry, 'same commit still at stash@{0}; nothing to recover', null);
     }
   }
