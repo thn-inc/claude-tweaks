@@ -10,9 +10,9 @@
 // Runs from the repo checkout (git uses the process cwd). One JSON object per
 // line on stdout:
 //   {"number":N,"state":"live|stale|tombstone|unreadable","claimedAt":"..."}
-//     one per blob read, sorted by issue number; `state` follows classifyClaimBlob's
-//     rules (claims.js) applied to one parse of the blob; `claimedAt` is present
-//     when the blob parses as an object carrying a string claimedAt
+//     one per blob read, sorted by issue number; `state` is classifyClaimBlob's
+//     (claims.js); `claimedAt` is present when the blob parses as an object
+//     carrying a string claimedAt
 //   {"number":N,"state":"could-not-read","reason":"transport-failure"}
 //     a blob the batched read could not fetch
 //   {"number":null,"state":"complete","count":C}
@@ -26,7 +26,7 @@
 // could-not-read row as unread: an interpreter that dies before run() leaves it empty.
 'use strict';
 
-const { isStale } = require('./lib/issues/claims');
+const { classifyClaimBlob } = require('./lib/issues/claims');
 const {
   CLAIMS_BRANCH, classifyGitError, defaultRunner, errText, readClaimBlobsGitBatch,
 } = require('./lib/issues/claims-git-cas');
@@ -55,7 +55,7 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
 };
 
-// The blob's one JSON.parse. null for anything that is not a JSON object.
+// The claimedAt read. null for anything that is not a JSON object.
 function parseBlob(content) {
   try {
     const parsed = JSON.parse(content);
@@ -65,14 +65,6 @@ function parseBlob(content) {
   }
 }
 
-// The same rules as claims.js's classifyClaimBlob (unparseable or non-object →
-// unreadable, released → tombstone, isStale → stale, else live), applied to the
-// parse already in hand. tests/read-claims-cli.test.js pins the two to each other.
-function stateOf(parsed, now) {
-  if (!parsed) return 'unreadable';
-  if (parsed.released === true) return 'tombstone';
-  return isStale(parsed, now) ? 'stale' : 'live';
-}
 
 const line = (row) => `${JSON.stringify(row)}\n`;
 
@@ -99,7 +91,7 @@ function run(argv, deps) {
         } else if (!r.absent) {
           const parsed = parseBlob(r.content);
           const claimedAt = parsed && typeof parsed.claimedAt === 'string' ? { claimedAt: parsed.claimedAt } : {};
-          blobRows.push({ number: n, state: stateOf(parsed, now), ...claimedAt });
+          blobRows.push({ number: n, state: classifyClaimBlob(r.content, now).state, ...claimedAt });
         }
       }
     }

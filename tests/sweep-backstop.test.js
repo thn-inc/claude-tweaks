@@ -252,7 +252,7 @@ test('item 10 routes the PR body Resume line through pr-resume-line.js, not a re
 // #4818: item 10's evaluation script, run against fixture files. The three
 // $PR_SCAN_UNSETTLED_* placeholders become temp paths (the isolateItem9 pattern),
 // UNSETTLED_AGE=24 is set, and the PR list is empty so no `gh pr view` runs.
-function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]' }) {
+function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]', extraEnv = {} }) {
   const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
   assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
@@ -268,7 +268,7 @@ function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText =
     .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
   const file = path.join(dir, 'item10-eval.js');
   fs.writeFileSync(file, script);
-  return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24' } });
+  return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });
 }
 
 const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
@@ -331,6 +331,8 @@ test('item 10: an unreadable bot:in-progress list judges no label-only candidate
   });
   assert.match(out, /\[unsettled\] bot:in-progress list could not be read — label-only candidates not judged/);
   assert.match(out, /\[unsettled\] #12: no PR found/);
+  // #13 is a fresh claim (1h old, under the 24h threshold): the age gate must skip it.
+  assert.doesNotMatch(out, /#13/);
 });
 
 test('item 10: an unreadable PR list judges no candidate, so a stale claim is not reported as no PR found (#4818)', () => {
@@ -341,6 +343,43 @@ test('item 10: an unreadable PR list judges no candidate, so a stale claim is no
   });
   assert.match(out, /\[unsettled\] PR list could not be read — no candidate judged/);
   assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a stale claim past the threshold with no PR is judged like a live one (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 15, state: 'stale', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+  });
+  assert.match(out, /\[unsettled\] #15: no PR found/);
+});
+
+// #4818: the PR-progress comparison runs only through `gh pr view`. A fake `gh` shim first on
+// PATH prints one fixed commit date per case, so the real gh is never called. Skipped on
+// win32: a `#!/bin/sh` shim does not run there.
+function runItem10WithFakeGh(committedDate) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-fakegh-'));
+  const gh = path.join(binDir, 'gh');
+  const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
+  fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
+  fs.chmodSync(gh, 0o755);
+  return runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
+    extraEnv: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+  });
+}
+
+test('item 10: PR progress newer than claimedAt means the claim is not unsettled (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(1));
+  assert.doesNotMatch(out, /#12/);
+});
+
+test('item 10: PR progress older than claimedAt reports the PR as silent (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(30));
+  assert.match(out, /\[unsettled\] #12: PR #40 silent 25h after claim/);
+});
+
+test('item 10: the MCP fallback for the registry read writes the same rows, ending with the complete row (#4818)', () => {
+  assert.match(SCAN, /writes the rows `bin\/read-claims\.js` prints, `could-not-read` for an unread blob, ending with the `complete` row/);
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {

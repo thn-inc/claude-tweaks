@@ -12,7 +12,6 @@ const os = require('os');
 const path = require('path');
 const { execFileSync, spawnSync } = require('child_process');
 const { run } = require('../plugin/bin/read-claims');
-const { classifyClaimBlob } = require('../plugin/bin/lib/issues/claims');
 
 const NOW = Date.parse('2026-11-01T12:00:00Z');
 const CLI = path.join(__dirname, '..', 'plugin', 'bin', 'read-claims.js');
@@ -126,23 +125,6 @@ test('happy path: live, stale, tombstone and unreadable blobs classify to their 
     { number: 9, state: 'unreadable' },
     { number: null, state: 'complete', count: 4 },
   ]);
-});
-
-test('the per-blob state matches classifyClaimBlob for every blob shape the registry can hold', () => {
-  const shapes = {
-    1: JSON.stringify({ claimedAt: '2026-11-01T11:00:00Z' }), // live, default TTL
-    2: JSON.stringify({ claimedAt: '2026-10-01T00:00:00Z', ttlHours: 1 }), // stale
-    3: JSON.stringify({ claimedAt: '2026-10-01T00:00:00Z', released: true }), // tombstone
-    4: '[]', 5: 'null', 6: '"text"', 7: '7', 8: '{not json',
-    9: JSON.stringify({ released: false, claimedAt: 5 }), // non-string claimedAt: state still classified
-  };
-  const { out, deps } = harness(fakeGit({}, shapes));
-  assert.equal(run([], deps), 0);
-  const rows = rowsOf(out);
-  assert.equal(rows.length, 10, 'nine blob rows plus the terminator');
-  for (const row of rows.filter((r) => r.number !== null)) {
-    assert.equal(row.state, classifyClaimBlob(shapes[row.number], NOW).state, `issue ${row.number}`);
-  }
 });
 
 test('a registry with no claims-registry branch is an empty registry: exit 0, the terminator with count 0', () => {
