@@ -742,13 +742,63 @@ function riskAllowedSlugs(policyRaw) {
   return [...BUILTIN_RISK_CATEGORIES, ...raw.split(',').map((slug) => slug.trim())];
 }
 
+// Bound on detectIntegrationModel's `git remote get-url origin` probe — local
+// and fixed, never the gh budget (a git remote read is not a network call).
+const GIT_REMOTE_PROBE_TIMEOUT_MS = 5000;
+// The per-attempt `gh` bound both lifecycle hooks (session-start, pre-tool-use)
+// pass as `timeoutMs`. Hook worst case: git 5 s + two 5 s gh attempts = 15 s
+// (record #4578 Decision Q2) — one constant so the two hooks cannot drift.
+const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
+
+// The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
+// explicit positive-integer `opts.timeoutMs` (returns before any file read) >
+// env CLAUDE_TWEAKS_GH_TIMEOUT_MS, when within gh-timeout-ms's bounds (an
+// invalid value falls through, never throws) > `gh-timeout-ms` in
+// {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
+// 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
+// GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
+// probing a repo other than the cwd's.
+function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
+  const explicit = opts && opts.timeoutMs;
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  const raw = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
+  const policyRaw = readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml'));
+  return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
+}
+
+// Renders detectIntegrationModel's degrade object for a human: one string per
+// reason, shared by every surface that reports it.
+function formatForgeDegrade(degrade) {
+  if (degrade.reason === 'timeout-then-exit') {
+    return `forge detection timed out after ${degrade.timeoutMs} ms, then gh failed on retry`;
+  }
+  return `forge detection timed out after ${degrade.timeoutMs} ms (x2)`;
+}
+
 // Computed default for `integration-model` when absent from every config
 // source (run-config, policy.yml) — bin/resolve-policy.js's code twin of
 // skills/_shared/forge-detection.md's three-check ladder. Impure (shells out),
 // unlike resolvePolicyKeys above; kept separate so that function stays pure.
 // Never throws — fails open to 'local-merge' on any error, including no git
 // remote at all (checked first, so a local-files project with no remote never
-// shells out to gh). Each check runs under a 5s timeout.
+// shells out to gh).
+//
+// Bounds: the `git remote get-url origin` probe has its own fixed bound,
+// GIT_REMOTE_PROBE_TIMEOUT_MS, and never draws on the gh budget. The `gh repo
+// view` probe runs under resolveForgeProbeTimeoutMs's ladder (explicit
+// `opts.timeoutMs` > env CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in
+// policy.yml > 5000). A gh call that TIMES OUT on the first attempt is retried
+// once with the same timeout; a first attempt that exits non-zero or finds no
+// `gh` binary is definitive — one invocation, no retry. 'local-merge' therefore
+// means two different things: DETECTED (no remote, gh absent, gh exiting
+// non-zero first time — the forge really isn't there) or DEGRADED (a timeout,
+// then a failed retry — the forge was never reached, so the answer is a guess).
+// A degraded fallback is reported through the optional `opts.onDegrade(d)`
+// callback with `d = { reason, timeoutMs, attempts: 2 }` — reason 'timeout'
+// when the retry timed out too, 'timeout-then-exit' when it failed any other
+// way; a callback that throws is swallowed. The return value stays a bare
+// string for every caller.
 //
 // `opts.mcpReachable` (optional, default undefined/falsy) is a caller-supplied
 // override — never resolved inside this function, per docs/incident-log.md
@@ -762,26 +812,47 @@ function riskAllowedSlugs(policyRaw) {
 // runs with no agent turn active and can never supply it (see
 // resolveRunPinnedIntegrationModel's own comment).
 function detectIntegrationModel(repoRoot, opts = {}) {
-  const { mcpReachable } = opts;
+  const { mcpReachable, onDegrade } = opts;
   // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
   // policy-schema and policy back, so a load-time edge from this file would close a cycle.
   const { ghOptions } = require('./repo-resolve');
-  const execOpts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
   try {
-    execFileSync('git', ['remote', 'get-url', 'origin'], execOpts);
+    execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_REMOTE_PROBE_TIMEOUT_MS, encoding: 'utf8', windowsHide: true,
+    });
   } catch {
     return 'local-merge';
   }
   if (mcpReachable === true) return 'pr-first';
-  try {
-    // windowsHide restated in the call: the windows-hide scan reads a bare
-    // execOpts, never one wrapped in ghOptions (#4505's GH_HOST seam).
-    const args = ['repo', 'view', '--json', 'owner,name'];
-    execFileSync('gh', args, ghOptions(args, { ...execOpts, windowsHide: true }));
-  } catch {
-    return 'local-merge';
+  const ghTimeoutMs = resolveForgeProbeTimeoutMs(repoRoot, opts);
+  const args = ['repo', 'view', '--json', 'owner,name'];
+  const probe = () => {
+    try {
+      // windowsHide restated in the call: the windows-hide scan reads a bare
+      // options object, never one wrapped in ghOptions (#4505's GH_HOST seam).
+      execFileSync('gh', args, ghOptions(args, {
+        cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: ghTimeoutMs, encoding: 'utf8', windowsHide: true,
+      }));
+      return 'ok';
+    } catch (err) {
+      if (err && (err.code === 'ETIMEDOUT' || err.signal)) return 'timeout';
+      if (err && err.code === 'ENOENT') return 'absent';
+      return 'exit';
+    }
+  };
+  const first = probe();
+  if (first === 'ok') return 'pr-first';
+  if (first !== 'timeout') return 'local-merge'; // definitive: gh absent, or exited non-zero
+  const second = probe();
+  if (second === 'ok') return 'pr-first';
+  if (typeof onDegrade === 'function') {
+    try {
+      onDegrade({ reason: second === 'timeout' ? 'timeout' : 'timeout-then-exit', timeoutMs: ghTimeoutMs, attempts: 2 });
+    } catch {
+      // A reporting callback must never break "never throws".
+    }
   }
-  return 'pr-first';
+  return 'local-merge';
 }
 
 // Full integration-model resolution for a caller that just wants the answer
@@ -917,4 +988,5 @@ function auditPolicy(repoRoot) {
 module.exports = {
   POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
+  GIT_REMOTE_PROBE_TIMEOUT_MS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
 };

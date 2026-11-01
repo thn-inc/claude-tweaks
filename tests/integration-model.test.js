@@ -6,9 +6,12 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { detectIntegrationModel, resolvePolicyKeys, POLICY_KEYS } = require('../plugin/bin/lib/policy-schema');
+const {
+  detectIntegrationModel, resolveIntegrationModel, resolveForgeProbeTimeoutMs, formatForgeDegrade, resolvePolicyKeys, POLICY_KEYS,
+} = require('../plugin/bin/lib/policy-schema');
 const { readText } = require('./helpers/read-skill');
-const { pathWithOnly } = require('./helpers/path-stub');
+const { pathWithOnly, STUB_SKIP } = require('./helpers/path-stub');
+const { fakeGh } = require('./helpers/fake-gh');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const RESOLVE_POLICY = path.join(__dirname, '..', 'plugin', 'bin', 'resolve-policy.js');
@@ -107,6 +110,188 @@ test('detectIntegrationModel: no override (undefined opts) is unchanged — gh a
 test('detectIntegrationModel: mcpReachable:false is unchanged from no-override — gh absent still resolves local-merge (AC3)', () => {
   const dir = gitRepo({ remote: 'https://example.invalid/nowhere/nothing.git' });
   assert.strictEqual(detectIntegrationModel(dir, { mcpReachable: false }), 'local-merge');
+});
+
+// --- gh timeout ladder, retry-once, degrade callback (#4578) ---
+
+const GH_REMOTE = 'https://github.com/o/n.git';
+const TIMEOUT_ENV = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+
+// Runs fn with CLAUDE_TWEAKS_GH_TIMEOUT_MS set to `value` (undefined -> deleted),
+// then restores the original — deleted when it was originally unset.
+function withTimeoutEnv(value, fn) {
+  const original = process.env[TIMEOUT_ENV];
+  if (value === undefined) delete process.env[TIMEOUT_ENV];
+  else process.env[TIMEOUT_ENV] = value;
+  try {
+    return fn();
+  } finally {
+    if (original === undefined) delete process.env[TIMEOUT_ENV];
+    else process.env[TIMEOUT_ENV] = original;
+  }
+}
+
+function writePolicy(dir, text) {
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'policy.yml'), text);
+}
+
+test('detectIntegrationModel: gh-timeout-ms 20000 in policy.yml outlasts an 8 s gh -> pr-first (AC1.1, AC1.2)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  writePolicy(dir, 'gh-timeout-ms: 20000\n');
+  const gh = fakeGh({ first: { slow: 8 } });
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir), 'pr-first');
+    });
+    assert.strictEqual(gh.count(), 1);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: CLAUDE_TWEAKS_GH_TIMEOUT_MS=20000 with no policy key outlasts an 8 s gh -> pr-first (AC2.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: { slow: 8 } });
+  try {
+    withTimeoutEnv('20000', () => {
+      assert.strictEqual(detectIntegrationModel(dir), 'pr-first');
+    });
+    assert.strictEqual(gh.count(), 1);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: explicit opts.timeoutMs 1000 beats env 20000 -> degraded local-merge after two attempts (AC2.2)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'hang' });
+  const seen = [];
+  try {
+    withTimeoutEnv('20000', () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 2);
+    assert.deepStrictEqual(seen, [{ reason: 'timeout', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: timeout on the first call, success on the second -> pr-first, two invocations, no degrade (AC3.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'hang', rest: 'ok' });
+  const seen = [];
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'pr-first');
+    });
+    assert.strictEqual(gh.count(), 2);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: timeout then non-zero exit on retry -> degraded local-merge, two invocations, one degrade (AC14.1, AC14.2)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'hang', rest: 'fail' });
+  const seen = [];
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 2);
+    assert.deepStrictEqual(seen, [{ reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 }]);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: immediate non-zero gh exit -> local-merge, one invocation, no degrade (AC4.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'fail' });
+  const seen = [];
+  try {
+    withTimeoutEnv(undefined, () => {
+      assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 1);
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: a throwing onDegrade never escapes -> local-merge', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    withTimeoutEnv(undefined, () => {
+      const result = detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: () => { throw new Error('boom'); } });
+      assert.strictEqual(result, 'local-merge');
+    });
+    assert.strictEqual(gh.count(), 2);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('detectIntegrationModel: gh absent with a remote -> local-merge, no degrade (AC5.1)', () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  const originalPath = process.env.PATH;
+  process.env.PATH = ghAbsentPath();
+  const seen = [];
+  try {
+    assert.strictEqual(detectIntegrationModel(dir, { timeoutMs: 1000, onDegrade: (d) => seen.push(d) }), 'local-merge');
+    assert.deepStrictEqual(seen, []);
+  } finally {
+    process.env.PATH = originalPath;
+  }
+});
+
+test('resolveIntegrationModel: a policy.yml pin never invokes gh (AC7.1)', { skip: STUB_SKIP }, () => {
+  const dir = gitRepo({ remote: GH_REMOTE });
+  writePolicy(dir, 'integration-model: pr-first\n');
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    assert.strictEqual(resolveIntegrationModel(dir), 'pr-first');
+    assert.strictEqual(gh.count(), 0);
+  } finally {
+    gh.restore();
+  }
+});
+
+test('resolveForgeProbeTimeoutMs: explicit > valid env > policy > 5000; invalid env falls through to policy', () => {
+  const bare = gitRepo();
+  const withPolicy = gitRepo();
+  writePolicy(withPolicy, 'gh-timeout-ms: 7000\n');
+  const outOfRange = gitRepo();
+  writePolicy(outOfRange, 'gh-timeout-ms: 90000\n');
+
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(bare)), 5000);
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(withPolicy)), 7000);
+  assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy)), 9000);
+  for (const bad of ['abc', '0', '90000']) {
+    assert.strictEqual(withTimeoutEnv(bad, () => resolveForgeProbeTimeoutMs(withPolicy)), 7000, `env ${bad} falls through to policy`);
+  }
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(outOfRange)), 5000);
+  assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: 1234 })), 1234);
+  for (const bad of [0, -1, 'x', 1.5, null, undefined]) {
+    assert.strictEqual(withTimeoutEnv('9000', () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: bad })), 9000, `opts.timeoutMs ${String(bad)} ignored`);
+  }
+  assert.strictEqual(withTimeoutEnv(undefined, () => resolveForgeProbeTimeoutMs(withPolicy, { timeoutMs: 0 })), 7000);
+});
+
+test('formatForgeDegrade renders both exact degraded strings', () => {
+  assert.strictEqual(
+    formatForgeDegrade({ reason: 'timeout', timeoutMs: 1000, attempts: 2 }),
+    'forge detection timed out after 1000 ms (x2)',
+  );
+  assert.strictEqual(
+    formatForgeDegrade({ reason: 'timeout-then-exit', timeoutMs: 1000, attempts: 2 }),
+    'forge detection timed out after 1000 ms, then gh failed on retry',
+  );
 });
 
 test('resolveIntegrationModel: forwards opts through to detectIntegrationModel', () => {
