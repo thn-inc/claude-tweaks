@@ -192,6 +192,62 @@ test('AC9.1: a NOT_FOUND on an unrequested alias path is a whole-query failure',
   assert.equal(recoverNotFound({ stdout: JSON.stringify({ data: { repository: {} }, errors: [] }) }, [5]), null, 'empty errors is not a recovery');
 });
 
+test('AC9.1: a null or absent b{n} alias that no NOT_FOUND error names is a whole-query failure, zero compare calls', () => {
+  const resolved = () => closed({ closer: { __typename: 'PullRequest', ...pr(90, 'aaa111') } });
+  const cases = {
+    'null alias, no errors': [[5, 6], () => JSON.stringify({ data: { repository: { b5: resolved(), b6: null } } })],
+    'absent alias, no errors': [[5, 6], () => JSON.stringify({ data: { repository: { b5: resolved() } } })],
+    // The recovery covers only the alias its NOT_FOUND names: b6 is null with no error of its own.
+    'recovered throw, a second null alias unnamed': [[5, 6, 999999], notFoundThrow({
+      repository: { b5: resolved(), b6: null, b999999: null },
+      errors: [{ type: 'NOT_FOUND', path: ['repository', 'b999999'] }],
+    })],
+  };
+  for (const [name, [blockers, graphql]] of Object.entries(cases)) {
+    const runner = fakeRunner({ graphql, statuses: { aaa111: 'behind' } });
+    const { results, error } = fetchBlockerLanding({ ...base, blockers, runner });
+    assert.equal(results, null, name);
+    assert.match(error, /\bb6\b/, `${name}: the error names the missing alias`);
+    assert.equal(runner.compares().length, 0, name);
+  }
+});
+
+test('Review Focus 1: a NOT_FOUND-only errors array on exit-0 stdout is accepted like the thrown-stdout recovery', () => {
+  const runner = fakeRunner({
+    graphql: () => JSON.stringify({ data: { repository: recoveredRepo() }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'b999999'] }] }),
+    statuses: { aaa111: 'behind' },
+  });
+  const { results, error } = fetchBlockerLanding({ ...base, blockers: [5, 999999], runner });
+  assert.equal(error, null);
+  assert.deepEqual(results.get(999999), { blocker: 999999, verdict: 'undetermined', commit: null, via: 'not-found' });
+  assert.deepEqual(results.get(5), { blocker: 5, verdict: 'landed', commit: 'aaa111', via: 'closer-pr' });
+});
+
+test('AC9.1: a NOT_FOUND whose path is longer than [repository, b{n}], or not rooted at repository, is a whole-query failure', () => {
+  for (const path of [['repository', 'b5', 'x'], ['viewer', 'b5']]) {
+    const runner = fakeRunner({
+      graphql: notFoundThrow({ repository: { b5: closed({ closer: { __typename: 'PullRequest', ...pr(90, 'aaa111') } }) }, errors: [{ type: 'NOT_FOUND', path }] }),
+      statuses: { aaa111: 'behind' },
+    });
+    const { results, error } = fetchBlockerLanding({ ...base, blockers: [5], runner });
+    assert.equal(results, null, JSON.stringify(path));
+    assert.ok(typeof error === 'string' && error.length > 0, JSON.stringify(path));
+    assert.equal(runner.compares().length, 0, JSON.stringify(path));
+  }
+});
+
+test('buildBlockerLandingQuery throws on a blocker that is not a positive safe integer; fetchBlockerLanding returns it as a whole-query failure with zero runner calls', () => {
+  for (const bad of [0, -1, 1.5, '5', NaN, 2 ** 53, null]) {
+    assert.throws(() => buildBlockerLandingQuery([5, bad]), /blocker/, String(bad));
+    const runner = fakeRunner({ repository: { b5: open() } });
+    let out;
+    assert.doesNotThrow(() => { out = fetchBlockerLanding({ ...base, blockers: [5, bad], runner }); }, String(bad));
+    assert.equal(out.results, null, String(bad));
+    assert.ok(typeof out.error === 'string' && out.error.length > 0, String(bad));
+    assert.equal(runner.calls.length, 0, String(bad));
+  }
+});
+
 test('AC9.1: GraphQL throw with no parseable stdout, unparseable stdout, and data.repository null → whole-query failure, zero compare calls', () => {
   const cases = {
     'throw, no stdout': () => { throw new Error('HTTP 502'); },

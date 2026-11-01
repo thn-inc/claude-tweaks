@@ -15,13 +15,17 @@
 // candidate is reachable from the integration branch — a fix merged into
 // `dev` by a second PR counts, whatever the closer was.
 //
-// A whole-query failure (the GraphQL call throwing, unparseable output, no
-// data.repository, any non-NOT_FOUND error) is never `undetermined`:
-// fetchBlockerLanding returns `{results: null, error}` and the CLI stops the
-// run. The one recovered throw is NOT_FOUND-only: `gh api graphql` exits 1
-// when any alias fails to resolve but still prints the partial data, so when
-// every error is a NOT_FOUND on a requested `b{n}` alias the call counts as
-// succeeded and that blocker reads `undetermined`/`not-found`.
+// A whole-query failure (a blocker that is not a positive safe integer, the
+// GraphQL call throwing, unparseable output, no data.repository, any
+// non-NOT_FOUND error, or a null/absent `b{n}` alias that no NOT_FOUND error
+// names) is never `undetermined`: fetchBlockerLanding returns
+// `{results: null, error}` and the CLI stops the run — a malformed response
+// fails whole, as bin/lib/issues/native-dependencies.js's does (#723). The one
+// recovery is NOT_FOUND-only: `gh api graphql` exits 1 when any alias fails to
+// resolve but still prints the partial data, so when every error (thrown or
+// on exit-0 stdout) is a NOT_FOUND on a requested `b{n}` alias the call counts
+// as succeeded, and exactly the aliases those errors name read
+// `undetermined`/`not-found`.
 //
 // Reachability goes through the REST compare API, not local git: the local
 // clone may be shallow or stale (a cloud sandbox's usually is), and answering
@@ -44,8 +48,11 @@ function result(blocker, verdict, commit, via) {
 }
 
 // blockers: number[] -> the aliased query string, or null for empty/non-array.
+// Each blocker is interpolated, so one that is not a positive safe integer throws.
 function buildBlockerLandingQuery(blockers) {
   if (!Array.isArray(blockers) || blockers.length === 0) return null;
+  const bad = blockers.findIndex((n) => !(Number.isSafeInteger(n) && n > 0));
+  if (bad !== -1) throw new Error(`invalid blocker number: ${String(blockers[bad])}`);
   const fields = blockers
     .map((n) => `b${n}: issue(number:${n}){ number state stateReason timelineItems(itemTypes:[CLOSED_EVENT], last:1){ nodes{ ... on ClosedEvent { closer { __typename ... on PullRequest { number merged baseRefName mergeCommit{ oid } } ... on Commit { oid } } } } } closedByPullRequestsReferences(first:10, includeClosedPrs:true){ nodes{ number merged baseRefName mergeCommit{ oid } } } }`)
     .join(' ');
@@ -152,13 +159,20 @@ function notFoundOnlyRepository(parsed, blockers) {
   return ok ? repository : null;
 }
 
-// A thrown GraphQL call -> the partial repository when its stdout carries a
-// NOT_FOUND-only error list; else null (a whole-query failure).
-function recoverNotFound(err, blockers) {
+// A thrown GraphQL call -> its parsed stdout when that carries a NOT_FOUND-only
+// error list; else null (a whole-query failure).
+function recoveredResponse(err, blockers) {
   if (!err || err.stdout == null) return null;
   let parsed;
   try { parsed = JSON.parse(String(err.stdout)); } catch { return null; }
-  return notFoundOnlyRepository(parsed, blockers);
+  return notFoundOnlyRepository(parsed, blockers) ? parsed : null;
+}
+
+// A thrown GraphQL call -> the partial repository when its stdout carries a
+// NOT_FOUND-only error list; else null (a whole-query failure).
+function recoverNotFound(err, blockers) {
+  const parsed = recoveredResponse(err, blockers);
+  return parsed ? parsed.data.repository : null;
 }
 
 const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type)) || JSON.stringify(e)).join('; ');
@@ -172,30 +186,38 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
     || (typeof integrationBranch !== 'string' || !integrationBranch ? 'integrationBranch is required' : null);
   if (bad) return { results: null, error: bad };
 
-  const query = buildBlockerLandingQuery(blockers);
+  let query;
+  try { query = buildBlockerLandingQuery(blockers); } catch (err) { return { results: null, error: errorText(err) }; }
   const args = ['api', 'graphql', ...(host && host !== 'github.com' ? ['--hostname', host] : []),
     '-f', `query=${query}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`];
-  let repository;
+  let parsed;
   let out;
   try {
     out = runner(args);
   } catch (err) {
-    repository = recoverNotFound(err, blockers);
-    if (!repository) return { results: null, error: errorText(err) };
+    parsed = recoveredResponse(err, blockers);
+    if (!parsed) return { results: null, error: errorText(err) };
   }
-  if (!repository) {
-    let parsed;
+  if (!parsed) {
     try { parsed = JSON.parse(out); } catch (err) {
       return { results: null, error: `unparseable GraphQL response: ${errorText(err)}` };
     }
     const errors = Array.isArray(parsed && parsed.errors) ? parsed.errors : [];
-    repository = parsed && parsed.data && parsed.data.repository;
-    if (!repository || typeof repository !== 'object') {
+    const data = parsed && parsed.data;
+    if (!data || !data.repository || typeof data.repository !== 'object') {
       return { results: null, error: `GraphQL response has no data.repository${errors.length ? `: ${errorMessages(errors)}` : ''}` };
     }
     if (errors.length && !notFoundOnlyRepository(parsed, blockers)) {
       return { results: null, error: `GraphQL errors: ${errorMessages(errors)}` };
     }
+  }
+  const { repository } = parsed.data;
+  // Every error left is a NOT_FOUND on a requested alias; only the aliases those
+  // errors name may be null or absent.
+  const notFound = new Set((Array.isArray(parsed.errors) ? parsed.errors : []).map((e) => e.path[1]));
+  const missing = blockers.map((n) => `b${n}`).filter((a) => repository[a] == null && !notFound.has(a));
+  if (missing.length) {
+    return { results: null, error: `GraphQL response has no node for ${missing.join(', ')} and no NOT_FOUND error naming it` };
   }
 
   const reach = new Map();

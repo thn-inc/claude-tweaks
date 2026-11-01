@@ -74,7 +74,7 @@ Stop the pipeline with this message. **Do not** silently proceed — the design-
 
 ## 2.7b — Blocker landing (single-record)
 
-A closed prerequisite is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received (#4553). This substep covers a single record target only; a multi-spec run gets the same verdicts from `multi-spec.md` Validation step 3's call and never runs 2.7b. It runs after 2.7, ahead of Step 2.8's claim, in this order:
+A closed prerequisite is not enough — its closing commit must have reached `origin/{integration-branch}`, or the run builds on code the integration branch never received (#4553). This substep covers a run invoked with one record target only; a run invoked with several — even one the merge-state gate splits down to a single record — gets the same verdicts from `multi-spec.md` Validation step 3's call and never runs 2.7b. It runs after 2.7, ahead of Step 2.8's claim, in this order:
 
 1. **`work-backend: local-files`** — skip the substep entirely, the way Step 2.8 skips itself: no `preflight-records.js` call and no log line. This is the first check, ahead of every `work-links` branch.
 2. **An unresolved topic name (no record number), or a step list with neither `build` nor `test`** — Step 2.8's own skip conditions (a `review,polish,wrap-up` resume, a `/claude-tweaks:dispatch` second call included, has already built): skip with no call and no log line.

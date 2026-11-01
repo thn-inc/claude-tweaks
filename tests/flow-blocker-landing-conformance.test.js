@@ -46,7 +46,7 @@ function assertUnlandedCard(text) {
   // escape commands also carry #{blocker}, {commit} and the branch, so searching the
   // whole card would pass even if the message itself dropped them.
   const lines = card.split('\n');
-  const firstHeading = lines.findIndex((l) => /^# /.test(l));
+  const firstHeading = lines.findIndex((l) => /^# Escape/.test(l));
   assert.ok(firstHeading > 0, 'card has a message before its first escape heading');
   const message = lines.slice(0, firstHeading).join('\n');
   assert.match(message, /#\{blocker\}/, 'card message names the blocker');
@@ -56,7 +56,22 @@ function assertUnlandedCard(text) {
   assert.ok(lines.includes('git merge --ff-only origin/{integration-branch}'), 'escape 1: git merge --ff-only origin/{integration-branch} on its own line');
   assert.ok(lines.includes('git merge {commit}'), 'escape 1: git merge {commit} on its own line');
   assert.ok(lines.some((l) => l.startsWith('gh api -X DELETE')), 'escape 2: gh api -X DELETE on its own line');
+  const cherry = lines.indexOf(CHERRY_COMMENT);
+  assert.ok(cherry !== -1, 'escape 1 carries the cherry-pick-only comment line');
+  const esc1 = lines.findIndex((l) => l.startsWith('# Escape 1'));
+  const esc2 = lines.findIndex((l) => l.startsWith('# Escape 2'));
+  assert.ok(esc1 !== -1 && esc1 < cherry && cherry < esc2, 'the cherry-pick comment sits under escape 1, before escape 2');
   assert.match(section, /cherry-picked landing reads `unlanded`/, 'cherry-pick caveat present');
+}
+const CHERRY_COMMENT = "# To land only the fix (not the commit's whole history), cherry-pick it, then take escape 2";
+
+// The `{text-file}` holder sentence: from its opening words to the first sentence-ending period.
+function holderSentence(section) {
+  const at = section.indexOf('`{text-file}` holds one line');
+  if (at === -1) return '';
+  const rest = section.slice(at);
+  const end = rest.search(/\.(?=\s|$)/);
+  return end === -1 ? rest : rest.slice(0, end + 1);
 }
 
 function assertUndeterminedSkip(text) {
@@ -76,7 +91,8 @@ function assertUndeterminedSkip(text) {
     holder[1] === 'condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}',
     'text-file line carries the condition and fallback wording',
   );
-  assert.match(section, /Text from git or a user paragraph/, 'cites auto-decision-log.md\'s "Text from git or a user" paragraph');
+  assert.match(holderSentence(section), /written per `_shared\/auto-decision-log\.md`'s Text from git or a user paragraph/, 'cites auto-decision-log.md\'s "Text from git or a user" paragraph');
+  assert.match(section, /write the file, log it, then rewrite it for the next blocker/, 'one text file, rewritten for each next blocker');
 }
 
 function assertFailedQueryIsNotUndetermined(orderingText, failureText) {
@@ -110,6 +126,11 @@ function assertGhAbsentOpenStop(text) {
   assert.match(para, /every other closed blocker `undetermined`/, 'any other closed blocker reads undetermined');
   assert.match(para, /`issue_read` cannot fetch[^.]*is a \*\*STOP before claiming\*\* that names it/, 'an unfetchable blocker is a STOP naming it');
   assert.match(para, /exit 2 — a \*\*STOP before claiming\*\*/, 'a states-file problem is exit 2');
+  assert.match(
+    para,
+    /The transports differ here on purpose: on the `gh` path an unresolvable blocker reads `undetermined`\/`not-found` and proceeds with a `SKIP`, but the states file cannot express not-found, so on this path it is a STOP\./,
+    'records the deliberate gh / gh-absent difference for an unresolvable blocker',
+  );
 }
 
 // A fresh mutated copy that provably differs from the live text.
@@ -144,6 +165,15 @@ test('AC5.2: the unlanded card carries blocker, commit, integration branch and b
   assert.throws(() => assertUnlandedCard(mutate(text, /^git merge --ff-only origin\/\{integration-branch\}\n/m, '')), { message: 'escape 1: git merge --ff-only origin/{integration-branch} on its own line' });
   assert.throws(() => assertUnlandedCard(mutate(text, /cherry-picked landing reads `unlanded`/, 'cherry-picked landing reads `landed`')), { message: 'cherry-pick caveat present' });
   assert.throws(() => assertUnlandedCard(mutate(text, /(\| `unlanded` \|[^\n]*)before Step 2\.8/, '$1before claiming')), { message: 'the unlanded row stops before Step 2.8' });
+  // No "# Escape" heading line left: the message/escape split point is gone.
+  assert.throws(() => assertUnlandedCard(mutate(text, /^# Escape[^\n]*\n/gm, '')), { message: 'card has a message before its first escape heading' });
+  // The cherry-pick-only comment: deleted, then moved below escape 2's heading (permutation).
+  const withoutCherry = mutate(text, `${CHERRY_COMMENT}\n`, '');
+  assert.throws(() => assertUnlandedCard(withoutCherry), { message: 'escape 1 carries the cherry-pick-only comment line' });
+  assert.throws(
+    () => assertUnlandedCard(mutate(withoutCherry, /^(# Escape 2[^\n]*\n)/m, (line) => `${line}${CHERRY_COMMENT}\n`)),
+    { message: 'the cherry-pick comment sits under escape 1, before escape 2' },
+  );
 });
 
 test('AC7.1, AC7.2: undetermined proceeds and writes one SKIP per blocker, shell-safe', () => {
@@ -174,6 +204,18 @@ test('AC7.1, AC7.2: undetermined proceeds and writes one SKIP per blocker, shell
   assert.throws(
     () => assertUndeterminedSkip(mutate(text, /Text from git or a user paragraph/, 'logging paragraph')),
     { message: 'cites auto-decision-log.md\'s "Text from git or a user" paragraph' },
+  );
+  // The citation moved out of the holder sentence into a sentence of its own: the
+  // section still carries it, so only the sentence-scoped pin can see the move.
+  const CITATION = ", written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph";
+  const moved = mutate(text, /(`\{text-file\}` holds one line, [^\n]*?), written per `_shared\/auto-decision-log\.md`'s Text from git or a user paragraph([^\n]*?shell quoting\.)/,
+    (_, head, tail) => `${head}${tail} Written per \`_shared/auto-decision-log.md\`'s Text from git or a user paragraph.`);
+  assert.ok(outOfRunSection(moved).includes("Text from git or a user paragraph"), 'the moved copy still carries the citation');
+  assert.ok(!holderSentence(outOfRunSection(moved)).includes(CITATION.slice(2)), 'the moved copy holds the citation outside the holder sentence');
+  assert.throws(() => assertUndeterminedSkip(moved), { message: 'cites auto-decision-log.md\'s "Text from git or a user" paragraph' });
+  assert.throws(
+    () => assertUndeterminedSkip(mutate(text, /write the file, log it, then rewrite it for the next blocker/, 'one file per blocker')),
+    { message: 'one text file, rewritten for each next blocker' },
   );
 });
 
@@ -213,6 +255,9 @@ test('AC6.1, AC7.1 (gh-absent): multispec-preflight-failure.md keeps the open st
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /every other closed blocker `undetermined`/, 'every other closed blocker `landed`')), { message: 'any other closed blocker reads undetermined' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is a \*\*STOP before claiming\*\* that names it/, 'is skipped')), { message: 'an unfetchable blocker is a STOP naming it' });
   assert.throws(() => assertGhAbsentOpenStop(mutate(text, /is exit 2 — a \*\*STOP before claiming\*\*/, 'is ignored')), { message: 'a states-file problem is exit 2' });
+  const TRANSPORT_MSG = 'records the deliberate gh / gh-absent difference for an unresolvable blocker';
+  assert.throws(() => assertGhAbsentOpenStop(mutate(text, 'reads `undetermined`/`not-found` and proceeds with a `SKIP`', 'reads `open`')), { message: TRANSPORT_MSG });
+  assert.throws(() => assertGhAbsentOpenStop(mutate(text, 'the states file cannot express not-found', 'the MCP read is slower')), { message: TRANSPORT_MSG });
 });
 
 // ---- Task 5: the single-record substep 2.7b (validation.md, SKILL.md, express-entry.md) ----
@@ -234,10 +279,21 @@ function requireOrder(text, markers) {
   }
 }
 
-const section27b = (text) => {
+// 2.7b runs from its heading to the next `## ` heading, or EOF.
+const bounds27b = (text) => {
   const at = text.indexOf(SEC_HEADING);
   assert.notStrictEqual(at, -1, `marker missing: ${SEC_HEADING}`);
-  return text.slice(at);
+  const next = text.indexOf('\n## ', at + SEC_HEADING.length);
+  return [at, next === -1 ? text.length : next];
+};
+const section27b = (text) => {
+  const [at, end] = bounds27b(text);
+  return text.slice(at, end);
+};
+// mutate(), acting inside the 2.7b section only.
+const mutate27b = (text, from, to) => {
+  const [at, end] = bounds27b(text);
+  return text.slice(0, at) + mutate(text.slice(at, end), from, to) + text.slice(end);
 };
 const assertFacts = (haystack, facts) => {
   for (const f of facts) assert.match(haystack, f.re, f.msg);
@@ -263,11 +319,20 @@ test('AC6.1: SKILL.md lists 2.7b after 2.7 and before 2.8', () => {
   assertPointer(text);
   assert.throws(() => assertCount(mutate(text, 'Five checks, then a route', 'Four checks, then a route')), { message: COUNT_MSG });
   assert.throws(() => assertPointer(mutate(text, "for 2.5-2.7b's detailed procedure", "for 2.5-2.7's detailed procedure")), { message: POINTER_MSG });
-  // The bullet mirrors Step 2.8's "unresolved topic name" skip.
+  // The bullet mirrors Step 2.8's skip list: an unresolved topic name, or a step list with neither build nor test.
   const TOPIC_MSG = 'SKILL.md 2.7b bullet skips on an unresolved topic name';
-  const assertTopic = (t) => assert.match(skillBullet(t), /or an unresolved topic name:/, TOPIC_MSG);
+  const assertTopic = (t) => assert.match(skillBullet(t), /`work-backend: local-files`, an unresolved topic name, or/, TOPIC_MSG);
   assertTopic(text);
-  assert.throws(() => assertTopic(mutate(text, ' or an unresolved topic name:', ':')), { message: TOPIC_MSG });
+  assert.throws(() => assertTopic(mutate(text, ', an unresolved topic name, or', ', or')), { message: TOPIC_MSG });
+  const STEPS_MSG = 'SKILL.md 2.7b bullet skips on a step list with neither build nor test';
+  const assertSteps = (t) => assert.match(skillBullet(t), /, or a step list with neither `build` nor `test`:/, STEPS_MSG);
+  assertSteps(text);
+  assert.throws(() => assertSteps(mutate(text, /(- 2\.7b —[^\n]*), or a step list with neither `build` nor `test`:/, '$1:')), { message: STEPS_MSG });
+  // Keyed to the invocation, not the record count left after the merge-state gate.
+  const INVOKED_MSG = 'SKILL.md 2.7b bullet is keyed to a run invoked with one record';
+  const assertInvoked = (t) => assert.match(skillBullet(t), /^- 2\.7b — Blocker landing, if invoked with one record;/, INVOKED_MSG);
+  assertInvoked(text);
+  assert.throws(() => assertInvoked(mutate(text, 'Blocker landing, if invoked with one record;', 'Blocker landing. Single record target only;')), { message: INVOKED_MSG });
 });
 
 const RUN_FACTS = [
@@ -278,6 +343,8 @@ const RUN_FACTS = [
   { re: /`undetermined` proceeds, holding that file's per-blocker `SKIP`/, msg: '2.7b: undetermined holds the per-blocker SKIP', from: ", holding that file's per-blocker `SKIP`", to: '' },
   { re: /`multispec-dependency-ordering\.md`'s out-of-run verdict table/, msg: '2.7b applies the out-of-run verdict table', from: "`multispec-dependency-ordering.md`'s out-of-run verdict table", to: 'the verdict table' },
   { re: /`_shared\/integration-branch\.md`/, msg: '2.7b resolves $INTEGRATION_BRANCH per _shared/integration-branch.md', from: ' per `_shared/integration-branch.md`', to: '' },
+  { re: /This substep covers a run invoked with one record target only;/, msg: '2.7b is keyed to a run invoked with one record target', from: 'a run invoked with one record target only', to: 'a single record target only' },
+  { re: /even one the merge-state gate splits down to a single record —[^\n]*never runs 2\.7b/, msg: 'a run the merge-state gate splits down to one record never runs 2.7b', from: ' — even one the merge-state gate splits down to a single record —', to: '' },
 ];
 function assertRunsAndStops(text) {
   requireOrder(text, ['## 2.7 —', SEC_HEADING]);
@@ -287,9 +354,12 @@ function assertRunsAndStops(text) {
 test("AC6.1: validation.md's 2.7b runs the landing call and stops before Step 2.8", () => {
   const text = readText(VALIDATION);
   assertRunsAndStops(text);
-  for (const f of RUN_FACTS) assert.throws(() => assertRunsAndStops(mutate(text, f.from, f.to)), { message: f.msg });
+  for (const f of RUN_FACTS) assert.throws(() => assertRunsAndStops(mutate27b(text, f.from, f.to)), { message: f.msg });
   assert.throws(() => assertRunsAndStops(mutate(text, 'Run substeps 2.5, 2.6, 2.7, and 2.7b in order.', 'Run substeps 2.5, 2.6, and 2.7 in order.')), { message: 'line 5 names 2.7b' });
   assert.throws(() => assertRunsAndStops(mutate(text, SEC_HEADING, '## 2.7c — Blocker landing (single-record)')), /marker missing/);
+  // Bounded section: a fact that survives only under a later `## ` heading does not count.
+  const later = `${mutate27b(text, '`undetermined` proceeds', '`undetermined` is BLOCKED too')}\n## 2.7c — Later\n\n\`undetermined\` proceeds\n`;
+  assert.throws(() => assertRunsAndStops(later), { message: '2.7b: undetermined proceeds' });
 });
 
 const GATE_FACTS = [
@@ -304,7 +374,7 @@ function assertGate(text) { assertFacts(section27b(text), GATE_FACTS); }
 test('AC11.1, AC11.2, AC6.2: the call is skipped only under body-text with bodyBlockedBy: [], and native is a no-op on blockerLanding: []', () => {
   const text = readText(VALIDATION);
   assertGate(text);
-  for (const f of GATE_FACTS) assert.throws(() => assertGate(mutate(text, f.from, f.to)), { message: f.msg });
+  for (const f of GATE_FACTS) assert.throws(() => assertGate(mutate27b(text, f.from, f.to)), { message: f.msg });
 });
 
 const EXIT_FACTS = [
@@ -319,7 +389,7 @@ function assertExit(text) { assertFacts(section27b(text), EXIT_FACTS); }
 test('AC9.1: a non-zero 2.7b exit stops before claiming and is never "no blockers"', () => {
   const text = readText(VALIDATION);
   assertExit(text);
-  for (const f of EXIT_FACTS) assert.throws(() => assertExit(mutate(text, f.from, f.to)), { message: f.msg });
+  for (const f of EXIT_FACTS) assert.throws(() => assertExit(mutate27b(text, f.from, f.to)), { message: f.msg });
 });
 
 const PLAN_REVIEW_FACTS = [
@@ -338,14 +408,17 @@ function assertPlanReview(valText, expText) {
   assertFacts(section27b(valText), PLAN_REVIEW_FACTS);
   assert.match(expText, /`validation\.md`'s 2\.7b/, 'express-entry.md Bind step names 2.7b');
   assert.match(expText, /2\.7b held — once: Step 3 does not write them again on escalation/, 'express-entry.md Bind step writes the SKIPs once, not again at Step 3');
+  // Every held SKIP, the native-links-unchecked one included — not only the per-blocker ones.
+  assert.match(expText, /then write any `SKIP` lines `validation\.md`'s 2\.7b held/, 'express-entry.md Bind step writes every SKIP 2.7b held');
 }
 test('plan-review: 2.7b skips on a step list with neither build nor test, writes its SKIPs after Step 3 or after express Bind, and treats nativeLinksUnchecked as never "no blockers"', () => {
   const val = readText(VALIDATION);
   const exp = readText(EXPRESS_ENTRY);
   assertPlanReview(val, exp);
-  for (const f of PLAN_REVIEW_FACTS) assert.throws(() => assertPlanReview(mutate(val, f.from, f.to), exp), { message: f.msg });
+  for (const f of PLAN_REVIEW_FACTS) assert.throws(() => assertPlanReview(mutate27b(val, f.from, f.to), exp), { message: f.msg });
   assert.throws(() => assertPlanReview(val, mutate(exp, "`validation.md`'s 2.7b", '`validation.md`')), { message: 'express-entry.md Bind step names 2.7b' });
   assert.throws(() => assertPlanReview(val, mutate(exp, ' — once: Step 3 does not write them again on escalation', '')), { message: 'express-entry.md Bind step writes the SKIPs once, not again at Step 3' });
+  assert.throws(() => assertPlanReview(val, mutate(exp, 'write any `SKIP` lines', 'write any per-blocker `SKIP` lines')), { message: 'express-entry.md Bind step writes every SKIP 2.7b held' });
   // The sentence sits in the Bind step (step 2 of the Express path), before step 3's Procedure.
   const BIND_ORDER = ['2. **Bind.**', "`validation.md`'s 2.7b", '3. **Procedure.**'];
   requireOrder(exp, BIND_ORDER);
@@ -360,14 +433,14 @@ test('AC12.1: under work-backend: local-files 2.7b is skipped entirely, ahead of
   const WORK_LINKS_READ = 'resolve-policy.js" --values work-links';
   assertFacts(sec, [LOCAL]);
   requireOrder(sec, ['work-backend: local-files', WORK_LINKS_READ]);
-  assert.throws(() => assertFacts(section27b(mutate(text, ' and no log line', '')), [LOCAL]), { message: LOCAL.msg });
+  assert.throws(() => assertFacts(section27b(mutate27b(text, ' and no log line', '')), [LOCAL]), { message: LOCAL.msg });
   // Deletion control: the whole local-files step gone -> the existence half throws.
   const step1 = sec.match(/^1\. [^\n]*\n/m)[0];
   assert.ok(step1.includes('work-backend: local-files'), 'step 1 is the local-files step');
-  const deleted = mutate(text, step1, '');
+  const deleted = mutate27b(text, step1, '');
   assert.throws(() => requireOrder(section27b(deleted), ['work-backend: local-files', WORK_LINKS_READ]), /marker missing: work-backend: local-files/);
   // Permutation control: the same step moved below the work-links read.
-  const moved = mutate(deleted, '4. **Call.**', `${step1}4. **Call.**`);
+  const moved = mutate27b(deleted, '4. **Call.**', `${step1}4. **Call.**`);
   assert.throws(() => requireOrder(section27b(moved), ['work-backend: local-files', WORK_LINKS_READ]), /must come after/);
   // The SKILL.md bullet names the skip.
   const skill = readText(SKILL_MD);

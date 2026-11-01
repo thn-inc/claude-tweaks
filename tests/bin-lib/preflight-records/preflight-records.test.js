@@ -817,17 +817,34 @@ test('AC4.1: without --blocker-landing the envelope is byte-identical and no ext
   assert.equal(run(['10', '11'], plain.deps), 0);
   const text = plain.out.join('');
   assert.doesNotMatch(text, /blockerLanding/);
-  const seen = JSON.parse(text);
+  // Fully literal: nothing below is read back from the output under test.
+  const facets = () => ({
+    origin: null,
+    risk: null,
+    size: null,
+    ceremony: null,
+    solutionUnjustified: false,
+    breaking: false,
+    needsDefinition: false,
+    priority: null,
+    stage: 'backlog',
+    grants: { build: false, merge: false },
+    bot: { inProgress: false, blocked: false, parked: false },
+    acceptance: null,
+    isParentIssue: false,
+    notPlanned: false,
+    shapedHeadless: false,
+  });
   const expected = {
     records: {
       10: {
-        title: 'Ten', facets: seen.records['10'].facets, blockedBy: [], openBlocker: null, keyFiles: ['a.js'], fingerprint: seen.records['10'].fingerprint,
+        title: 'Ten', facets: facets(), blockedBy: [], openBlocker: null, keyFiles: ['a.js'], fingerprint: null,
       },
       11: {
-        title: 'Eleven', facets: seen.records['11'].facets, blockedBy: [10, 5], openBlocker: null, keyFiles: ['b.js'], fingerprint: seen.records['11'].fingerprint,
+        title: 'Eleven', facets: facets(), blockedBy: [10, 5], openBlocker: null, keyFiles: ['b.js'], fingerprint: null,
       },
     },
-    overlapGroups: seen.overlapGroups,
+    overlapGroups: [[10], [11]],
     directOverlaps: [],
     workLinks: 'body-text',
   };

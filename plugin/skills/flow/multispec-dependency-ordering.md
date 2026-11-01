@@ -48,7 +48,7 @@ If record 159 depends on record 142 (not in the run list) — via `blocked-by:` 
 node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --section "/flow" --status SKIP --step "Step 2 blocker landing (undetermined)" --reversibility n/a --text-file "{text-file}"
 ```
 
-`{text-file}` holds one line, `condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}`, one file per blocker, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the integration branch is git-derived, so the text never passes through shell quoting.
+`{text-file}` holds one line, `condition: #{blocker} blocker landing undetermined (via {via}) → fallback: proceeded without confirming its closing commit reached origin/{integration-branch}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — the integration branch is git-derived, so the text never passes through shell quoting. With several blockers, write the file, log it, then rewrite it for the next blocker.
 
 A failed blocker query is not `undetermined` — the call exits non-zero and the run stops before claiming (`multispec-preflight-failure.md`).
 
@@ -65,6 +65,7 @@ git switch {integration-branch}
 git merge --ff-only origin/{integration-branch}
 git merge {commit}
 git push origin {integration-branch}
+# To land only the fix (not the commit's whole history), cherry-pick it, then take escape 2
 
 # Escape 2 — remove the edge, then re-run. work-links: native:
 gh api -X DELETE "repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by/$(gh api repos/{owner}/{repo}/issues/{blocker} --jq .id)"
