@@ -22,6 +22,8 @@ const TASK_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'task-prompt.md');
 const BUILD_DISPATCH = path.join(PLUGIN, 'skills', 'build', 'dispatch.md');
 const CORE = path.join(PLUGIN, 'skills', '_shared', 'subagent-dispatch-core.md');
 const OUTPUT_CONTRACT = path.join(PLUGIN, 'skills', '_shared', 'subagent-output-contract.md');
+const EXPRESS_PROMPT = path.join(PLUGIN, 'skills', 'dispatch', 'express-prompt.md');
+const HANDOFF = path.join(PLUGIN, 'skills', 'flow', 'context-handoff.md');
 
 // The load-bearing facts a reader (human or dispatched agent) must come away with — the exact
 // failure mode #1965 documents. Each `\s+` absorbs the templates' hard line wrapping; the
@@ -370,18 +372,33 @@ test('each output-contract abandoned-child assertion can actually go red on its 
   assertEachPatternGoesRed(readText(OUTPUT_CONTRACT), CONTRACT_ABANDONED, contractAbandonedMissing);
 });
 
-// The primitive's numbers (sleep interval, call cap, minutes) are restated in four copies; they must
+// context-handoff.md's one fenced template carries the rule as its "Async-wait discipline (required):" paragraph.
+function handoffWaitParagraph(text) {
+  const blocks = fencedBlocks(text);
+  assert.equal(blocks.length, 1, `context-handoff.md must hold exactly one fenced template, found ${blocks.length}`);
+  const found = blocks[0].split(/\r?\n\r?\n/).filter((p) => p.startsWith('Async-wait discipline (required):'));
+  assert.equal(found.length, 1, `expected exactly one "Async-wait discipline (required):" paragraph in the handoff template, found ${found.length}`);
+  return found[0];
+}
+
+// The primitive's numbers (sleep interval, call cap, minutes) are restated in seven copies; they must
 // agree. Each copy is reduced to the one place the primitive appears in it.
 const PRIMITIVE = /`sleep\s+(\d+)`\s+Bash\s+calls,\s+at\s+most\s+(\d+)\s+\((\d+)\s+minutes\)/g;
 const EXPECTED_PRIMITIVE = '20/60/20';
 function primitiveCopies() {
   const taskPrompt = readText(TASK_PROMPT);
   const [firstCall, secondCall] = templateBlocks(taskPrompt);
+  const expressBlocks = fencedBlocks(readText(EXPRESS_PROMPT));
+  assert.equal(expressBlocks.length, 2, `expected exactly two fenced express-prompt blocks, found ${expressBlocks.length}`);
+  const [expressExpress, expressReview] = expressBlocks;
   return {
     'subagent-dispatch-core.md': coreForegroundSection(readText(CORE)),
     'task-prompt.md item 7': item7Block(taskPrompt),
     'task-prompt.md first-call template': foregroundParagraph(firstCall),
     'task-prompt.md second-call template': foregroundParagraph(secondCall),
+    'express-prompt.md express call': foregroundParagraph(expressExpress),
+    'express-prompt.md review call': foregroundParagraph(expressReview),
+    'context-handoff.md template': handoffWaitParagraph(readText(HANDOFF)),
   };
 }
 const primitiveOf = (text) => [...text.matchAll(PRIMITIVE)].map((m) => m.slice(1).join('/'));
@@ -393,7 +410,7 @@ const mismatchedPrimitiveCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => !statesPrimitiveOnce(text))
   .map(([name]) => name);
 
-test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all four copies (#3078)', () => {
+test('the keep-alive primitive (sleep 20, at most 60, 20 minutes) agrees across all seven copies (#3078, #4557)', () => {
   assert.deepEqual(mismatchedPrimitiveCopies(primitiveCopies()), [], 'every copy of the keep-alive primitive must state sleep 20, at most 60 (20 minutes), exactly once');
 });
 
@@ -506,4 +523,97 @@ test('the core Background work paragraph names the measured re-wake facts (#3722
 });
 test('each core measured-fact assertion can actually go red on its own (discrimination proof)', () => {
   assertEachPatternGoesRed(coreForegroundSection(readText(CORE)), CORE_MEASURED, coreMeasuredMissing);
+});
+
+// #4557: at the sleep 20 x 60 bound, a still-outstanding write-capable child's worktree is probed
+// read-only and the wait continues while it progresses, instead of stopping BLOCKED on elapsed time
+// alone. One passage, the same words in all seven copies; each pattern matches once per copy.
+const PROGRESS_CHECK = [
+  [/probe\s+the\s+worktree\s+its\s+prompt\s+names,\s+read-only/, 'the probe reads the worktree the child prompt names, read-only'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+rev-parse\s+HEAD`/, 'the probe reads the child worktree HEAD'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+status\s+--porcelain`/, 'the probe reads its --no-optional-locks porcelain status'],
+  [/`git\s+-C\s+"\{child-worktree\}"\s+--no-optional-locks\s+diff\s+HEAD`\s+piped\s+to\s+`git\s+hash-object\s+--stdin`\s+\(a\s+`fatal:`\s+line\s+fails\s+the\s+probe\)/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
+  [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
+  [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
+  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
+  [/stop\s+when\s+a\s+whole\s+window\s+passes\s+with\s+no\s+change/, 'BLOCKED only after a whole window with no change'],
+  [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)\s+per\s+wave/, 'the 3-window (60-minute) ceiling'],
+  [/\(`no\s+progress\s+for\s+one\s+window`\s+or\s+`ceiling\s+reached\s+while\s+progressing`\)/, 'the BLOCKED report names which of exactly two conditions fired — no third (AC8.2)'],
+  [/and\s+every\s+unchanged\s+child/, 'the BLOCKED report names every child that showed no change (Decision: Reading B)'],
+  [/Children\s+sharing\s+a\s+worktree\s+progress\s+together/, 'children sharing one worktree count as progressing together (Decision: Reading B)'],
+  [/a\s+child\s+whose\s+prompt\s+names\s+no\s+worktree\s+counts\s+as\s+unchanged/, 'a child with no named worktree counts as unchanged (spec Technical Approach)'],
+  [/A\s+failed\s+wait\s+call\s+counts\s+as\s+no\s+wait\s+but\s+ends\s+its\s+window,\s+and\s+the\s+probe\s+runs\s+as\s+at\s+any\s+bound/, 'a failed wait call in an extension window expires that bound and the probe runs (AC8.1)'],
+  [/failed\s+probe\s+command\s+counts\s+as\s+no\s+change,\s+never\s+retried\s+in\s+another\s+form/, 'a failed probe command counts as no change and is never retried in another form'],
+  [/Read-only\s+units\s+keep\s+the\s+first-bound\s+self-judge/, 'a read-only unit is still self-judged at the first bound'],
+];
+// The two standing rules the passage sits between must survive byte-unchanged in every copy.
+const STANDING_RULES = [
+  [/never\s+reading\s+or\s+tailing\s+a\s+running\s+child's\s+`output_file`/, 'the never-read output_file rule stands'],
+  [/write-capable\s+child\s+\(one\s+that\s+edits\s+files\)\s+still\s+silent\s+at\s+the\s+bound\s+is\s+never\s+redone\s+in-session/, 'the never-redone-in-session rule stands'],
+];
+const missingProgress = missingFactsOf(PROGRESS_CHECK);
+const missingStanding = missingFactsOf(STANDING_RULES);
+
+test('AC1.1 AC1.2 AC1.3 AC2.1 AC4.1 AC7.1 AC7.2 AC7.3 AC7.4 AC8.1 AC8.2 AC9.1: every copy states the at-bound progress check for write-capable children (#4557)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingProgress(text), [], name);
+  }
+});
+
+test('AC5.1: each progress-check assertion goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, PROGRESS_CHECK, missingProgress);
+  }
+});
+
+test('AC3.1: the never-redone and never-read-output_file rules stand in every copy (#4557)', () => {
+  for (const [name, text] of Object.entries(primitiveCopies())) {
+    assert.deepEqual(missingStanding(text), [], name);
+  }
+});
+
+test('AC3.1: each standing-rule assertion goes red when removed from any single copy (discrimination proof)', () => {
+  for (const text of Object.values(primitiveCopies())) {
+    assertEachPatternGoesRed(text, STANDING_RULES, missingStanding);
+  }
+});
+
+// The passage extends the write-capable stop, so it must follow that stop's last sentence in each
+// copy, directly: only the lead-in `Before that stop` (core adds `(#4557)`) may sit between them.
+const STOP_SENTENCE = 'naming that child and its unit.';
+const LEAD_IN = /^\s*Before that stop( \(#4557\))?,\s*$/;
+const anchorsOf = (text) => ({ stopAt: text.indexOf(STOP_SENTENCE), passageAt: text.search(PROGRESS_CHECK[0][0]) });
+const misorderedCopies = (copies) => Object.entries(copies)
+  .filter(([, text]) => {
+    const { stopAt, passageAt } = anchorsOf(text);
+    return stopAt === -1 || passageAt === -1 || stopAt > passageAt
+      || !LEAD_IN.test(text.slice(stopAt + STOP_SENTENCE.length, passageAt));
+  })
+  .map(([name]) => name);
+
+test('AC1.3: the progress check follows the write-capable stop sentence in every copy', () => {
+  assert.deepEqual(misorderedCopies(primitiveCopies()), []);
+});
+
+test('AC1.3: a copy with the passage moved before the stop sentence goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const [name, text] of Object.entries(copies)) {
+    const { stopAt, passageAt } = anchorsOf(text);
+    assert.ok(stopAt !== -1 && passageAt !== -1, `anchor text for the stop sentence or the passage not found in ${name}`);
+    const first = text.slice(passageAt).match(/^[^.]*\./)[0];
+    const doctored = text.slice(0, stopAt) + first + ' ' + text.slice(stopAt, passageAt) + text.slice(passageAt + first.length);
+    assert.notEqual(doctored, text, `permutation anchor for ${name} not found`);
+    assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `moving the passage before the stop sentence in only ${name} must turn exactly that copy red`);
+  }
+});
+
+test('AC1.3: a copy with an unrelated sentence between the stop sentence and the passage goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const [name, text] of Object.entries(copies)) {
+    const { stopAt } = anchorsOf(text);
+    assert.notEqual(stopAt, -1, `anchor text for the stop sentence not found in ${name}`);
+    const stopEnd = stopAt + STOP_SENTENCE.length;
+    const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
+    assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `an unrelated sentence before the passage in only ${name} must turn exactly that copy red`);
+  }
 });
