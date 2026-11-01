@@ -109,8 +109,10 @@ test('#3553: the caller\'s CLAUDE_CODE_SESSION_ID is passed as sessionId (own ru
   assert.equal(verdictOf(other).reason, 'parent-live');
 });
 
-test('#3553: an unknown flag prints the usage line, never verdict JSON', () => {
+test('#3553 #4834: an unknown flag exits 1 with the usage line on stderr, never verdict JSON', () => {
   const { root, runDir } = reentryFixture();
   const r = runCli(['check-pass-reentry', '--run', runDir, '--onlin'], { cwd: root });
-  assert.equal(r.stdout, `claude-tweaks: usage: ${USAGE['check-pass-reentry']}\n`);
+  assert.equal(r.code, 1);
+  assert.equal(r.stdout, '');
+  assert.equal(r.stderr, `claude-tweaks: check-pass-reentry: unknown flag '--onlin'\nclaude-tweaks: usage: ${USAGE['check-pass-reentry']}\n`);
 });

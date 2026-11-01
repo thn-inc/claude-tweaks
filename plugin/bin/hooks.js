@@ -162,7 +162,7 @@ function usageText() {
 // verb and fails closed: a verb with no entry refuses every flag, and a flagless
 // verb carries `[]`. `--help`/`-h` are never declared; main() intercepts both
 // anywhere in the argument list (value positions included) before the
-// undeclared-flag scan.
+// undeclared-flag scan. An undeclared flag is refused on stderr with exit 1 (#4834).
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
 // unambiguousOnly is chosen per call site (resolveOpts), not by this table —
@@ -206,21 +206,23 @@ const KNOWN_FLAGS = {
 // declares it, so it must never be a boolean flag on another verb.
 const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
-// First `--*`-shaped token in `args` that isn't declared for this verb, or
-// null when every `--*` token is declared (or there are none). Scans the
-// FULL argument list, not just a fixed position. A token consumed as a value
-// is skipped, so main() checks --help and -h over every position separately
-// (#1143's "anywhere in the argument list" guarantee).
+// null when every `--*` token is declared (or there are none), else
+// `{ token, valueFlag }`: `token` is the first refused token, and `valueFlag`
+// is the declared VALUE_FLAGS member whose value position held it, or null
+// when `token` is itself undeclared. Scans the FULL argument list, not just a
+// fixed position. A token consumed as a value is skipped, so main() checks
+// --help and -h over every position separately (#1143's "anywhere in the
+// argument list" guarantee).
 function firstUnknownFlag(knownFlags, args) {
   const known = new Set(knownFlags);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (typeof a !== 'string' || !a.startsWith('--')) continue;
-    if (!known.has(a)) return a;
+    if (!known.has(a)) return { token: a, valueFlag: null };
     if (VALUE_FLAGS.has(a)) {
       // A value flag followed by a "--" token has no value: refuse that token.
       const next = args[i + 1];
-      if (typeof next === 'string' && next.startsWith('--')) return next;
+      if (typeof next === 'string' && next.startsWith('--')) return { token: next, valueFlag: a };
       i += 1; // skip this flag's own value
     }
   }
@@ -1943,10 +1945,11 @@ async function main(argv) {
   // #1012, #4777: ANY undeclared --* argument (--help included — it is never
   // declared) intercepts here, before resolveRunArg or any lib call ever runs,
   // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
-  // closed and refuses every flag. The refusal keeps the #1012/#1143 shape —
-  // usage on stdout, exit 0 (tests/hooks-help-guard.test.js pins it) — even for
-  // resolve-run-dir, whose callers capture stdout as a path: such a caller gets
-  // the usage line, not an empty value.
+  // closed and refuses every flag. --help/-h keeps the #1012/#1143 shape — usage
+  // on stdout, exit 0 (tests/hooks-help-guard.test.js pins it). An undeclared
+  // flag is a caller mistake, so it is refused on stderr with exit 1, the
+  // unknown-verb shape (#1586, #4834): a caller capturing stdout gets an empty
+  // value and a non-zero exit.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it. --help is checked in every position too: the scan
@@ -1954,9 +1957,18 @@ async function main(argv) {
     // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
     const hasHelpFlag = argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help');
-    if (hasHelpFlag || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
+    if (hasHelpFlag) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
+    }
+    const unknown = firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd);
+    if (unknown) {
+      const reason = unknown.valueFlag
+        ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
+        : `unknown flag '${unknown.token}'`;
+      fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
+      fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
+      return 1;
     }
   }
   if (verb) return verb.run(argv);

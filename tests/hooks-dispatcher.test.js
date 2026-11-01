@@ -248,8 +248,8 @@ test('record-worktree accepts --run before or after the worktree positional', ()
 //
 // #1012 note: a `--`-prefixed positional (the original `--bogus-flag`) is
 // now intercepted even earlier, by the KNOWN_FLAGS unknown-flag guard shared
-// by all five mutating verbs (any undeclared `--*` argument prints usage and
-// exits 0, before this branch — or resolveRunArg itself — ever runs; see
+// by all five mutating verbs (#4834: any undeclared `--*` argument is refused
+// on stderr with exit 1, before this branch — or resolveRunArg itself — ever runs; see
 // tests/hooks-help-guard.test.js and the KNOWN_FLAGS-specific cases below).
 // This test now uses a single-dash shape (`-x`), which that scan does not
 // classify (it only recognizes `--`-prefixed tokens), so it still reaches
@@ -271,7 +271,7 @@ test('record-worktree with an explicit --run still rejects a flag-shaped worktre
 // #1012: the new, broader guard's own coverage of the `--`-prefixed shape —
 // any undeclared `--*` argument anywhere in a KNOWN_FLAGS verb's arguments
 // (including one that LOOKS like it could be a worktree-path positional)
-// prints usage and exits 0 before resolveRunArg or any write ever runs.
+// is refused on stderr with exit 1 (#4834) before resolveRunArg or any write ever runs.
 test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-flag) via the KNOWN_FLAGS guard, before any write', () => {
   const project = tmpProject();
   const run = path.join(project, '.claude-tweaks', 'pipelines', '2026-07-01T090000-spec-1');
@@ -280,8 +280,9 @@ test('#1012: record-worktree rejects an undeclared --* argument (e.g. --bogus-fl
   const before = readRunState(run);
 
   const result = runHook(['record-worktree', '--run', run, '--bogus-flag'], { cwd: project });
-  assert.strictEqual(result.code, 0);
-  assert.strictEqual(result.stdout, 'claude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n');
+  assert.strictEqual(result.code, 1);
+  assert.strictEqual(result.stdout, '');
+  assert.strictEqual(result.stderr, "claude-tweaks: record-worktree: unknown flag '--bogus-flag'\nclaude-tweaks: usage: record-worktree --run <dir> <worktree-path> [--dispatch]\n");
   assert.deepStrictEqual(readRunState(run), before, 'run-state.json must be byte-unchanged');
 });
 
