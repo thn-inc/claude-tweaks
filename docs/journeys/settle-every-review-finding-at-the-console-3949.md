@@ -44,10 +44,10 @@ files:
   - A finding a converged-positive cross-lens debate confirmed is gone; the partner in a tiebroken contested pair takes the pair's outcome, and an inherited can't-tell partner is dismissed as covered by the carrier file.
   - The staged review file a finding's STAGED line names (`staged/review-contested-{N}.md`, for example) takes that verdict's outcome instead of lingering.
   - A row with no recommendation at all is the legacy shape: it stays undecided.
-  - A finding at a path holding a space (`a dir/x.ts:3`) leaves only on its own verdict; a sibling at `b dir/x.ts:3` keeps its row. The tiebreak (`plugin/bin/lib/tiebreak.js`) reads evidence at such a path, so the finding can be confirmed or refuted like any other.
+  - A finding at a path holding a space (`a dir/x.ts:3`) is settled by a tiebreak verdict at its whole path; that verdict leaves a sibling at `b dir/x.ts:3` on its row. Two settlers still read only the plain suffix (`dir/x.ts:3`), as before #4632: a reproduction `Confirmed.` elevation line, which settles both siblings, and a tiebreak verdict at plain `dir/x.ts:3`, which settles a space-path sibling that has no verdict of its own. The tiebreak (`plugin/bin/lib/tiebreak.js`) reads evidence at such a path, so the finding can be confirmed or refuted like any other.
 - **Red flags:**
   - a confirmed finding still shows as Low-confidence
-  - a verdict on `a dir/x.ts:3` also removes the `b dir/x.ts:3` row
+  - a tiebreak verdict on `a dir/x.ts:3` also removes the `b dir/x.ts:3` row
   - one finding appears as two rows
   - a row shows no recommendation although decisions.md carries one
 
