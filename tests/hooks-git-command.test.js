@@ -619,8 +619,23 @@ test('#4548: processKillByName flags image- and name-based kills', () => {
     'C:\\Windows\\System32\\taskkill.exe /IM node.exe', 'sudo pkill node', 'sudo -u root pkill node',
     'FOO=1 pkill node', 'env pkill node', 'env -u HOME FOO=1 pkill node', 'timeout 10 pkill node',
     'timeout -s KILL 5 killall node', 'nohup killall node', 'command pkill node', 'exec pkill node',
-    'nice -n 5 pkill node', 'doas pkill node', 'time pkill node', 'sudo nice pkill node',
+    'nice -n 5 pkill node', 'doas pkill node', 'time pkill node', 'sudo nice pkill node', 'sudo FOO=1 pkill node',
   ]) assert.ok(hit(c), c);
+});
+
+test('#4548: processKillByName reads past control keywords, and arms on a spaced pgrep substitution', () => {
+  for (const c of [
+    'if true; then pkill node; fi', 'if pgrep node; then pkill node; fi', 'for p in $(pgrep node); do kill $p; done',
+    'while true; do killall node; done', '! taskkill /IM node.exe', 'if x; then :; else killall node; fi',
+    'kill $( pgrep node )', 'kill $(  pidof node)',
+  ]) assert.ok(hit(c), c);
+  // A quoted keyword is a command name, not a keyword (bash reserves no quoted word).
+  assert.ok(!hit('"then" pkill node'));
+});
+
+test('#4548: processKillByName does not scan a command substitution body (a deliberate narrow miss)', () => {
+  assert.deepStrictEqual(processKillByName('echo $(pkill node)', '/repo'), []);
+  assert.deepStrictEqual(processKillByName('git commit -m "$(pkill node)"', '/repo'), []);
 });
 
 test('#4548: processKillByName flags pgrep-fed kills, non-PID taskkill filters and Get-Process pipelines', () => {
@@ -647,7 +662,7 @@ test('#4548: processKillByName stays silent on PID-scoped kills, data mentions a
     'kill 12345', 'kill -9 12345', 'kill -- -12345', 'taskkill /PID 12345 /T /F', 'taskkill /FI "PID eq 123"',
     'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill', 'kill $(lsof -nP -iTCP:3000 -sTCP:LISTEN -t)',
     'Stop-Process -Id 123', 'Get-Process -Id 123 | Stop-Process', 'echo pkill', 'grep killall notes.txt',
-    'echo "$(pgrep node)"', 'pgrep node', 'git commit -m "pkill node"', 'bash script.sh', "sh -c 'echo pkill'",
+    'command -v pkill', 'command -V pkill', 'echo "$(pgrep node)"', 'pgrep node', 'git commit -m "pkill node"', 'bash script.sh', "sh -c 'echo pkill'",
     "bash -c 'kill 123'", 'cmd /c "taskkill /PID 12 /F"', 'powershell -File kill.ps1', '',
   ]) assert.ok(!hit(c), c);
 });

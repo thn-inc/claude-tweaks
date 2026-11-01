@@ -1193,7 +1193,11 @@ function powershellOpaqueCommand(command, cwd) {
 // Their argument still carries a kill word, which the whitespace-splitting prefilter
 // reads. Command names match case-insensitively because `taskkill` and PowerShell cmdlets
 // are case-insensitive on Windows. A `PID eq {n}` filter is the only silent `/FI` filter.
-// `-EncodedCommand` (base64) is not decoded.
+// `-EncodedCommand` (base64) is not decoded. Deliberate narrow miss: a command substitution's
+// body (`echo $(pkill node)`, `git commit -m "$(pkill node)"`, backticks) is not scanned — the
+// shared segment walk keeps `$(…)` inside its enclosing segment's tokens and exposes no nested
+// segment, and widening that scanner is out of this parser's scope. Only the pgrep/pidof arming
+// reads into a substitution.
 const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
 const PROCESS_KILL_MAX_DEPTH = 4;
 // `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
@@ -1242,7 +1246,13 @@ function leadNames(t, quoting, i) {
 // (`sudo`, `env`, `timeout 10`, …) and `xargs`, with their flags and flag values.
 function processKillLead(t, quoting) {
   let i = 0;
-  while (i < t.length && SIMPLE_ASSIGNMENT_RE.test(t[i])) i += 1;
+  // A control keyword (`then pkill node`, `do kill $p`, `! taskkill …`) leads a segment the walk
+  // hands over whole. It counts only as a bare word, as compoundBodyEnd reads it (#4281).
+  const isControlKeyword = (k) => {
+    const raw = quoting.raw[k];
+    return raw !== undefined && COMPOUND_LEAD_WORDS.has(raw) && quoting.spanKinds[k] === 'b'.repeat(raw.length);
+  };
+  while (i < t.length && (SIMPLE_ASSIGNMENT_RE.test(t[i]) || isControlKeyword(i))) i += 1;
   while (i < t.length) {
     const names = leadNames(t, quoting, i);
     const wrapper = names.find((n) => READER_WRAPPER_WORDS.has(n) || n === 'timeout');
@@ -1267,7 +1277,8 @@ function processKillLabels(command, cwd, depth) {
     if (again || !t.length) return;
     const slot = { labels: [], killLed: false, stopConsumer: false };
     slots.push(slot);
-    if (t.some((word) => PGREP_SUBSTITUTION_RE.test(word))) pgrepSeen = true;
+    // Joined, because the tokenizer splits a spaced `$( pgrep node )` after its `$(`.
+    if (PGREP_SUBSTITUTION_RE.test(t.join(' '))) pgrepSeen = true;
     const i = processKillLead(t, quoting);
     if (i >= t.length) return;
     const names = leadNames(t, quoting, i);
