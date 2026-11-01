@@ -236,6 +236,8 @@ function unmatched(from, against) {
   });
 }
 
+const isTop = (stack, sha) => Boolean(stack && stack[0] && stack[0].sha === sha);
+
 // Store the removed entries back, oldest first (the list is newest first, so the
 // relative order among the restored entries comes back). The stack is re-read right
 // before each store: a sibling guard may have restored the entry in between, and a
@@ -268,10 +270,11 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
       handled.set(entry.sha, (handled.get(entry.sha) || 0) + 1);
       continue;
     }
+    const command = storeCommand(entry.subject, entry.sha);
     try {
       deps.git(['-C', repo, 'stash', 'store', '-m', entry.subject, entry.sha]);
     } catch (e) {
-      fail(i, entry, oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e)), storeCommand(entry.subject, entry.sha));
+      fail(i, entry, oneLine((e && e.stderr && String(e.stderr).trim()) || messageOf(e)), command);
       continue;
     }
     // `git stash store` of a sha already at stash@{0} exits 0 without writing an entry, so a
@@ -287,8 +290,7 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
       wrote = (countBySha(after).get(entry.sha) || 0) > (seen === null ? expected : seen);
     } catch { /* trust the exit code */ }
     if (!wrote) {
-      const command = storeCommand(entry.subject, entry.sha);
-      if (after && after[0] && after[0].sha === entry.sha) pending.push({ i, entry, command });
+      if (isTop(after, entry.sha)) pending.push({ i, entry, command });
       else fail(i, entry, 'git stash store exited 0 but the entry is not back on the stack', command);
       continue;
     }
@@ -308,7 +310,7 @@ function restoreRemoved(deps, repo, removed, currentCounts) {
     for (const p of pending) {
       const { i, entry, command } = p;
       if (finalStack === null) fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); stack could not be re-read', command);
-      else if (finalStack[0] && finalStack[0].sha === entry.sha) onTop.push(p);
+      else if (isTop(finalStack, entry.sha)) onTop.push(p);
       else fail(i, entry, 'git stash store wrote nothing (same commit was at stash@{0}); a later restore moved it down', command);
     }
     const otherCommand = outcomes.some((x) => x && x.failed);
