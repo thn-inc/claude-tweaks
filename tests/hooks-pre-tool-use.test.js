@@ -1544,6 +1544,9 @@ test('#4830 memo: a throwing onDegrade on a memo hit neither throws nor spawns g
   }
 });
 
+// Regression guard (pre-change code already writes nothing). Red against the
+// mutation that replaces the guarded clear with an unconditional plain patch,
+// `else ctxLib.writeRunState(runDir, { forgeDegradedAt: null })`.
 test('#4830 memo: a clean detection with no run-state.json writes nothing', { skip: STUB_SKIP }, () => {
   const repo = unpinnedRepoWithOrigin();
   const run = memoRunDir();

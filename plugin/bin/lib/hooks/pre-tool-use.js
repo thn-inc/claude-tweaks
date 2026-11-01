@@ -1668,7 +1668,9 @@ function isFreshForgeDegradeMemo(at, now, ttlMs) {
 // `opts.timeoutMs` / `opts.onDegrade` (#4578) are forwarded to
 // detectIntegrationModel, each only when set (an absent opt adds no key), and
 // only the fresh-detection fallback uses them: a pin returns first and never
-// calls `onDegrade`. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
+// calls `onDegrade`. With the #4830 memo opted in (below), `onDegrade` is
+// instead always wrapped, so the memo can see the degrade, and is also called
+// on a memo hit with no detection at all. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
 // rather than inheriting `gh-timeout-ms` (up to 60 s, retried once = 120 s)
 // because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in
 // hooks.json, so Claude Code's default command-hook timeout applies) and must
@@ -1730,6 +1732,10 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   };
   const model = detectIntegrationModel(root, detectOpts);
   if (degraded) ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  // Clear on a clean detection. The outer `memoAt != null` check keeps the
+  // common no-memo path free of the run-state lock and write. The updater
+  // re-checks under the lock and returns null when a concurrent call already
+  // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
   else if (memoAt != null) ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
   return model;
 }
@@ -2573,7 +2579,9 @@ module.exports = {
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
   resolveRunPinnedIntegrationModel,
-  // Exported for the run-scoped forge degrade memo (#4830) — the freshness rule
-  // its PR-stamp gate reads, pure over (stamp, now, ttlMs).
+  // Exported only for its unit test (#4830): the one place the degrade memo's
+  // boundary cases (age equal to the TTL, a future stamp, a non-finite or
+  // non-numeric stamp) are pinned directly. Its sole production caller is
+  // resolveRunPinnedIntegrationModel above.
   isFreshForgeDegradeMemo,
 };

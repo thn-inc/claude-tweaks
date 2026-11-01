@@ -1830,7 +1830,7 @@ function degradeMemoFixture() {
 }
 const readRunState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
 
-test('bookkeeping-stamps gate (#4830 AC1): three covered calls inside the TTL probe gh once — the memo skips the rest', { skip: STUB_SKIP }, () => {
+test('bookkeeping-stamps gate (#4830 AC1): three covered calls inside the TTL run one detection (two gh attempts) — the memo skips the rest', { skip: STUB_SKIP }, () => {
   const { wt, project } = degradeMemoFixture();
   const { run } = mkRunDir(project, wt, undefined);
   const gh = fakeGh({ first: 'hang' });
@@ -1863,6 +1863,29 @@ test('bookkeeping-stamps gate (#4830 AC3): an expired memo plus a recovered gh c
     const persisted = readRunState(run);
     assert.strictEqual(persisted.forgeDegradedAt, null, 'a clean detection clears the memo');
     assert.strictEqual(persisted.prExempt, true, 'a clean local-merge verdict persists prExempt');
+  } finally {
+    gh.restore();
+  }
+});
+
+// The safety direction of Q5: once the memo expires and `gh` answers, a
+// GitHub-backed run resolves pr-first again and the gate enforces. Red against
+// the mutation `return model;` -> `return 'local-merge';` at the end of
+// resolveRunPinnedIntegrationModel, which every 'fail'-mode recovery case misses.
+test('bookkeeping-stamps gate (#4830): an expired memo plus a recovered gh resolving pr-first clears the memo and denies (enforcement returns)', { skip: STUB_SKIP }, () => {
+  const { wt, project } = degradeMemoFixture();
+  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS });
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    assert.ok(out.json, 'expected a deny once the recovered detection resolves pr-first with no PR recorded');
+    const spec = out.json.hookSpecificOutput;
+    assert.strictEqual(spec.permissionDecision, 'deny');
+    assert.match(spec.permissionDecisionReason, /record-pr|PR-early/);
+    assert.strictEqual(gh.count(), 1, 'the expired memo re-probes once');
+    const persisted = readRunState(run);
+    assert.strictEqual(persisted.forgeDegradedAt, null, 'a clean detection clears the memo');
+    assert.strictEqual(persisted.prExempt, undefined, 'a pr-first verdict never persists prExempt');
   } finally {
     gh.restore();
   }
