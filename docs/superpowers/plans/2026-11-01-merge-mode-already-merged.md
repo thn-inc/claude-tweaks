@@ -169,6 +169,7 @@ git commit -m "Add post-merge-run.js — run the reconciler's guarded post-merge
   - `'merged-routes-already'`: `/A `MERGED` PR — an `armed` run's auto-merge, or a merge on GitHub, landing before the human types this — skips Procedure steps 1-2 and runs the Already merged section below/`
   - `'already-cli'`: `/node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/post-merge-run\.js" --run "\$PIPELINE_RUN_DIR"/`
   - `'already-claim'`: `/runs Step 4\.0 and Step 4\.0b once under the run's `\.post-merge\.lock` claim, choosing the in-session or the late-merge arguments by the merge's age/`
+  - `'already-marker'`: `/a run whose `decisions\.md` already holds the post-merge marker prints `already-done` and runs neither step/` (AC3.1's marker guard, AC5.1)
   - `'already-in-flight'`: `/`in-flight` — a reconcile pass holds the run's claim and is running them now: report `in-flight`, never `ran`/`
   - `'already-step40-failed'`: `/a `ran` entry carrying `step40Failed`, or a `closingLinks` other than `nothing-closed`, `closed` or `reopened`, is a failure: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/`
   - `'already-retry'`: `/every failure line here names `\/claude-tweaks:wrap-up #\{n\} merge` as the next step: with no marker written yet, a re-run tries the closes again/`
