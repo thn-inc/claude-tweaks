@@ -87,7 +87,7 @@ const {
 const { firstLineRunId } = require('./lib/flow/pr-checklist');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--close-window-ms <n>] [--help]\n'
@@ -142,9 +142,9 @@ const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   ghAvailable: () => ghAvailable(),
-  gh: (args, input) => execFileSync('gh', args, {
+  gh: (args, input) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }),
   appendDecision: ({ runDir, section, entry }) => appendEntry({ runDir, section, entry }),
   now: () => new Date(),

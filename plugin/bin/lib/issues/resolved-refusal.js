@@ -28,6 +28,7 @@
 const { execFileSync } = require('child_process');
 const { isTrustedComment, untrustedSkipNote } = require('./comment-trust');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 
 const GRANT_DECISION_UNITS = ['backlog-refine', 'backlog-grant'];
 const SUPPRESSING_CHOICES = ['keep', 'build it myself'];
@@ -148,12 +149,12 @@ function buildResolvedRefusalQuery() {
 }
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8',
     windowsHide: true,
     timeout: GH_TIMEOUT_MS,
     stdio: ['ignore', 'pipe', 'pipe'],
-  });
+  }));
 }
 
 // Throws on a gh failure, on a GraphQL `errors` body, or when the issue is missing —

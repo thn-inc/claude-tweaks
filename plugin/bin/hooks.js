@@ -1410,13 +1410,14 @@ async function runResolveConsole(argv) {
   const mainRoot = wtDetect.mainCheckoutRoot(process.cwd()) || process.cwd();
   const execFileAsync = promisify(execFile);
   const RESOLVE_CONSOLE_GH_TIMEOUT_MS = 15000;
+  const { ghOptions } = require('./lib/repo-resolve');
   const deps = {
     now: () => Date.now(),
     writeFile: (p, content) => fs.writeFileSync(p, content),
     gh: async (args) => {
-      const { stdout } = await execFileAsync('gh', args, {
+      const { stdout } = await execFileAsync('gh', args, ghOptions(args, {
         cwd: mainRoot, encoding: 'utf8', timeout: RESOLVE_CONSOLE_GH_TIMEOUT_MS, windowsHide: true,
-      });
+      }));
       return stdout;
     },
   };

@@ -17,7 +17,7 @@
 const { execFileAsyncTimed } = require('./timing');
 const { pickGoverningPr } = require('./pr-state');
 const { runGit } = require('../hooks/git-exec');
-const { parseRepo } = require('../repo-resolve');
+const { parseRepo, ghOptions } = require('../repo-resolve');
 const { runWithConcurrency } = require('./gh-pool');
 
 const BATCH_CHUNK = 50; // aliases per query (numbers + heads) — one rate-limit point
@@ -129,9 +129,9 @@ function parseBatchResponse(stdout, { numbers = [], heads = [] } = {}) {
 
 function defaultRunner(root) {
   return async (args) => {
-    const { stdout } = await execFileAsyncTimed('gh', args, {
+    const { stdout } = await execFileAsyncTimed('gh', args, ghOptions(args, {
       cwd: root, encoding: 'utf8', timeout: BATCH_TIMEOUT_MS, maxBuffer: BATCH_MAX_BUFFER, windowsHide: true,
-    });
+    }));
     return stdout;
   };
 }

@@ -54,7 +54,7 @@ const { execFileSync } = require('child_process');
 const { openPrListArgs, staleClaimRunId, matchStaleClaimPr } = require('./lib/issues/claim-store');
 const { normalizePrListing } = require('./lib/issues/mcp-pr-shape');
 const { resumeVerdict } = require('./lib/flow/pr-body');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
 const USAGE = 'usage: stale-claim-pr.js --claim-file <path> [--listing <path>] [--repo owner/name] [--resume] [--help]\n';
@@ -83,10 +83,10 @@ function parseArgs(argv) {
 // maxBuffer: `gh pr list --json url,body,...` carries every open PR's body,
 // which overflows Node's 1 MiB default (ENOBUFS) well before its 1000-PR limit.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 const realDeps = {

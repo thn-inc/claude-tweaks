@@ -17,6 +17,7 @@ const { compareVersions, nextVersion } = require('../changelog.js');
 const { splitNul } = require('../git-z');
 const { resolvePolicyConfig } = require('../policy-schema.js');
 const { wrapProbe, withTimeout } = require('../wrap-up/pack.js');
+const { ghOptions } = require('../repo-resolve.js');
 
 const PROBE_NAMES = ['engine', 'lastTag', 'unreleased', 'proposedVersion', 'releasePr', 'ciTip', 'openReleasePrConflict', 'hook'];
 const PROBE_TIMEOUT_MS = 60000;
@@ -110,7 +111,7 @@ function defaultDeps(cwd) {
     // 1 MB default (this repo's own is ~1.02 MB at 6.121.0), and an ENOBUFS
     // there degrades unreleased, proposedVersion and lastTag together.
     git: (args) => execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], ...EXEC_OPTS, windowsHide: true }),
-    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts })).stdout,
+    execFileAsync: async (cmd, args, opts = {}) => (await execFileAsync(cmd, args, { cwd, encoding: 'utf8', ...EXEC_OPTS, ...opts, windowsHide: true })).stdout,
     readFile: (p) => { try { return fs.readFileSync(p, 'utf8'); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return null; throw e; } },
     readdir: (p) => { try { return fs.readdirSync(p); } catch (e) { if (e.code === 'ENOENT' || e.code === 'ENOTDIR') return []; throw e; } },
     now: () => Date.now(),
@@ -182,7 +183,9 @@ function memo(fn) {
 // one rev-parse per process rather than the same spawn twice. `runDir`, when
 // the CLI resolved one, is where a run's pinned config.yml overrides policy.yml
 // — the same precedence every other consumer of resolvePolicyConfig honours.
-function prepare({ deps, rootArg, runDir }) {
+// `cwd` is the directory deps.execFileAsync runs gh in; ghOptions (#4505's GH_HOST
+// seam) resolves the host from the same one.
+function prepare({ deps, rootArg, runDir, cwd }) {
   const gitForPolicy = rootArg
     ? (args) => (args.join(' ') === 'rev-parse --show-toplevel' ? `${rootArg}\n` : deps.git(args))
     : deps.git;
@@ -302,7 +305,8 @@ function prepare({ deps, rootArg, runDir }) {
   const historyOf = () => dependency('history', history);
   const releasePr = memo(async () => {
     if (needEngine() === 'local-merge') return 'none';
-    const prs = JSON.parse(await deps.execFileAsync('gh', ['pr', 'list', '--state', 'open', '--limit', String(PR_LIST_LIMIT), '--json', 'number,state,mergeable,headRefName,title']));
+    const prListArgs = ['pr', 'list', '--state', 'open', '--limit', String(PR_LIST_LIMIT), '--json', 'number,state,mergeable,headRefName,title'];
+    const prs = JSON.parse(await deps.execFileAsync('gh', prListArgs, ghOptions(prListArgs, { cwd })));
     const pr = prs.find(isReleasePr);
     // A miss on a full page is not "there is no release PR" — the release PR
     // may simply be off the end of the page. Say so rather than reporting a
@@ -347,12 +351,14 @@ function prepare({ deps, rootArg, runDir }) {
     ciTip: async () => {
       if (needEngine() === 'local-merge') return 'n/a';
       const localSha = deps.git(['rev-parse', tipRef]).trim();
-      const { nameWithOwner } = JSON.parse(await deps.execFileAsync('gh', ['repo', 'view', '--json', 'nameWithOwner']));
+      const repoViewArgs = ['repo', 'view', '--json', 'nameWithOwner'];
+      const { nameWithOwner } = JSON.parse(await deps.execFileAsync('gh', repoViewArgs, ghOptions(repoViewArgs, { cwd })));
       // per_page belongs in the query string, not in `-f`: any -f/-F parameter
       // flips `gh api` to POST, and this endpoint answers a POST with 404 (seen
       // live against this repo before the switch). Every sibling call site in
       // the repo spells a GET parameter the same way.
-      const runs = JSON.parse(await deps.execFileAsync('gh', ['api', `repos/${nameWithOwner}/commits/${branch}/check-runs?per_page=100`]));
+      const runsArgs = ['api', `repos/${nameWithOwner}/commits/${branch}/check-runs?per_page=100`];
+      const runs = JSON.parse(await deps.execFileAsync('gh', runsArgs, ghOptions(runsArgs, { cwd })));
       const list = runs.check_runs || [];
       const counts = { total: runs.total_count || 0, success: 0, failure: 0, pending: 0 };
       for (const r of list) {
@@ -360,9 +366,10 @@ function prepare({ deps, rootArg, runDir }) {
         else if (r.conclusion === 'success' || r.conclusion === 'skipped' || r.conclusion === 'neutral') counts.success += 1;
         else counts.failure += 1;
       }
+      const shaArgs = ['api', `repos/${nameWithOwner}/commits/${branch}`, '--jq', '.sha'];
       const headSha = list.length && list[0].head_sha
         ? String(list[0].head_sha)
-        : (await deps.execFileAsync('gh', ['api', `repos/${nameWithOwner}/commits/${branch}`, '--jq', '.sha'])).trim();
+        : (await deps.execFileAsync('gh', shaArgs, ghOptions(shaArgs, { cwd }))).trim();
       let state;
       if (counts.total === 0) state = 'none';
       else if (counts.failure) state = 'failure';
@@ -377,7 +384,8 @@ function prepare({ deps, rootArg, runDir }) {
     openReleasePrConflict: async () => {
       const pr = await dependency('releasePr', releasePr);
       if (pr === 'none') return false;
-      const { commits } = JSON.parse(await deps.execFileAsync('gh', ['pr', 'view', String(pr.number), '--json', 'commits']));
+      const prViewArgs = ['pr', 'view', String(pr.number), '--json', 'commits'];
+      const { commits } = JSON.parse(await deps.execFileAsync('gh', prViewArgs, ghOptions(prViewArgs, { cwd })));
       const list = commits || [];
       if (list.some((c) => !c.authors || !c.authors.length)) throw new Error('release PR commit authorship unavailable');
       return !list.every((c) => c.authors.every(isBotAuthor));
@@ -402,7 +410,7 @@ async function gatherReleasePreflight({ cwd = process.cwd(), only = null, deps: 
   const names = PROBE_NAMES.filter((n) => !only || only.includes(n));
   let context;
   try {
-    context = prepare({ deps, rootArg, runDir });
+    context = prepare({ deps, rootArg, runDir, cwd });
   } catch (err) {
     // Ruling 13: the preamble is inside the envelope discipline. Every probe
     // degrades with the same cause and the pack is still written (exit 0) with

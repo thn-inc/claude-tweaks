@@ -49,7 +49,7 @@ const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
 const { parseDependencies } = require('./lib/issues/record');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
@@ -77,10 +77,10 @@ const HOOKS_JS = path.join(__dirname, 'hooks.js');
 
 // maxBuffer: the PR listing carries every matching PR's body.
 function defaultGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 // Local reads only; a non-zero exit throws with the child's status (rev-parse --verify --quiet → 1).
@@ -92,10 +92,10 @@ function defaultGit(args) {
 }
 
 function nativeGh(args) {
-  return execFileSync('gh', args, {
+  return execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: NATIVE_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-  });
+  }));
 }
 
 // `resolve-policy.js --values work-links`, in process: the same resolvePolicyConfig that CLI runs.

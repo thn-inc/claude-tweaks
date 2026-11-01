@@ -20,7 +20,7 @@ const {
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
-const { repoSlug } = require('../repo-resolve');
+const { repoSlug, ghOptions } = require('../repo-resolve');
 
 // Every call here contacts GitHub, so each is bounded (an unbounded execFileSync
 // hangs pre-flight on a black-holed remote). 30s, not the 5s single-call default:
@@ -29,7 +29,7 @@ const { repoSlug } = require('../repo-resolve');
 const GH_CALL_TIMEOUT_MS = 30000;
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_CALL_TIMEOUT_MS, windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_CALL_TIMEOUT_MS, windowsHide: true }));
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a
