@@ -23,7 +23,7 @@ function runHook(args, { cwd } = {}) {
     });
     return { code: 0, stdout };
   } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
+    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
   }
 }
 
@@ -115,14 +115,15 @@ test('resolve-console without --run exits non-zero with a usage message, perform
   assert.equal(fs.readdirSync(runDir).length, 0, 'nothing should be written when --run is omitted');
 });
 
-// Unknown-flag interception is verb-agnostic and, per this dispatcher's own
-// "never break a session" cardinal invariant, always exits 0 — the usage
-// line itself is the rejection signal, not the exit code (same convention
-// every other KNOWN_FLAGS verb in this file already follows).
-test('resolve-console with an unrecognized flag prints usage instead of silently proceeding', () => {
+// Unknown-flag refusal is verb-agnostic (#4834): stdout stays empty, the
+// flag and the usage line go to stderr, and the exit is 1 — the same shape
+// as an unknown verb (#1586). It is a caller mistake, not a hook event, so
+// the never-break-a-session invariant does not cover it.
+test('resolve-console with an unrecognized flag is refused on stderr with exit 1, instead of silently proceeding', () => {
   const result = runHook(['resolve-console', '--run', '/tmp', '--bogus', 'x']);
-  assert.equal(result.code, 0);
-  assert.match(result.stdout, /usage: resolve-console --run <dir>/);
+  assert.equal(result.code, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /^claude-tweaks: resolve-console: unknown flag '--bogus'\nclaude-tweaks: usage: resolve-console --run <dir>/);
 });
 
 test('resolve-console with a --run path that is not a real directory is rejected', () => {
