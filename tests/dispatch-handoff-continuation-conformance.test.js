@@ -59,6 +59,9 @@ test('task-prompt.md: a continuation is the same template with its step list rep
 
 test('#4548: task-prompt.md\'s Continuation call heading points at continuation-call.md', () => {
   assert.match(read('task-prompt.md'), /## Continuation call — after `OUTCOME: handoff` \(#4027\)\n\nRead `continuation-call\.md` in this skill's directory\./);
+  // The body moved out: a copy left behind in task-prompt.md would be a second, drifting statement of it.
+  assert.doesNotMatch(read('task-prompt.md'), /Every other sentence stays verbatim/);
+  assert.match(read('continuation-call.md'), /Every other sentence stays verbatim/);
 });
 
 test('the first-call continuation substitution: NEXT_STEPS replaces both invocation step lists and the stop sentence survives verbatim', () => {

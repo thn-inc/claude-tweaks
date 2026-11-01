@@ -240,6 +240,11 @@ shared repo-wide across every worktree of this checkout, so any of them can pop,
 a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
 `git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
+
 CRITICAL: before reporting `DONE`/`build-test-ok`, confirm your own claim against the artifact
 you just produced -- this call is the producer, not a second call distrusting someone else's
 prior claim, so there is no earlier report to check here, only your own freshly written result.
@@ -440,6 +445,11 @@ Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `dr
 shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber
 a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
 `git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
+
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
 
 Status line (required): the last non-empty line of your reply, after the OUTPUT FORMAT block
 below, must read exactly `STATUS: {WORD}`, where {WORD} is one of: DONE / DONE_WITH_CONCERNS /

@@ -70,10 +70,69 @@ test('#4548: build/dispatch.md forwards the no-name-kill rule to every dispatch 
   assert.notStrictEqual(cite, -1, "build/dispatch.md must cite _shared/subagent-dispatch-core.md's no-name-kill rule rather than restate it");
   // The forward sits after the whole stash-guard paragraph, not between it and the no-stash forbid
   // sentence: tests/dispatch-no-stash-conformance.test.js requires those two to be adjacent.
-  const guard = text.indexOf('**Stash guard around every dispatch');
-  const cherryPick = text.indexOf('**Cherry-pick source-branch PR check');
+  const guardLabel = '**Stash guard around every dispatch';
+  const cherryPickLabel = '**Cherry-pick source-branch PR check';
+  const guard = text.indexOf(guardLabel);
+  const cherryPick = text.indexOf(cherryPickLabel);
   assert.notStrictEqual(guard, -1, 'the "Stash guard around every dispatch" label is gone');
   assert.notStrictEqual(cherryPick, -1, 'the "Cherry-pick source-branch PR check" label is gone');
+  // Each ordering anchor occurs exactly once, so a later duplicate mention cannot shift the window silently.
+  assert.strictEqual(text.indexOf(guardLabel, guard + 1), -1, 'the "Stash guard around every dispatch" label occurs twice — the ordering window is ambiguous');
+  assert.strictEqual(text.indexOf(cherryPickLabel, cherryPick + 1), -1, 'the "Cherry-pick source-branch PR check" label occurs twice — the ordering window is ambiguous');
   assert.ok(label > guard && label < cherryPick, 'the no-name-kill forward must sit after the stash-guard paragraph and before the cherry-pick check');
   assert.ok(cite > label && cite < cherryPick, 'the no-name-kill citation must sit inside the forwarded sentence');
+});
+
+// ---- The three literal prompt templates carry the rule verbatim (agents see only their prompt) ----
+//
+// Same region split as tests/dispatch-no-stash-conformance.test.js: each Task() prompt is checked on its
+// own, since a whole-file check would false-pass if one call regressed while another kept the rule.
+const TASK_PROMPT = read('plugin', 'skills', 'dispatch', 'task-prompt.md');
+const EXPRESS_PROMPT = read('plugin', 'skills', 'dispatch', 'express-prompt.md');
+const MULTISPEC = read('plugin', 'skills', 'flow', 'multispec-parallel-waves.md');
+
+function between(text, file, startMarker, endMarker) {
+  const start = text.indexOf(startMarker);
+  assert.notStrictEqual(start, -1, `${file} no longer has "${startMarker}" — this guard has lost its anchor`);
+  const end = text.indexOf(endMarker, start);
+  assert.notStrictEqual(end, -1, `${file} no longer has "${endMarker}" after "${startMarker}" — this guard has lost its anchor`);
+  return text.slice(start, end);
+}
+
+const NAME_KILL_LITERALS = ['`taskkill /IM`', '`pkill`', '`killall`', '`Stop-Process -Name`', '`pgrep`'];
+
+function assertNameKillRule(region) {
+  assert.match(region, /Never kill a process by image or name/, 'the region must forbid killing a process by image or name');
+  for (const literal of NAME_KILL_LITERALS) {
+    assert.ok(region.includes(literal), `the region must name ${literal} as a forbidden form`);
+  }
+  assert.match(region, /-sTCP:LISTEN/, "the region must give the own-port-listener alternative (lsof … -sTCP:LISTEN)");
+}
+
+const NAME_KILL_REGIONS = [
+  ['skills/dispatch/task-prompt.md (first call)', between(TASK_PROMPT, 'skills/dispatch/task-prompt.md', '## First call', '## Second call')],
+  ['skills/dispatch/task-prompt.md (second call)', between(TASK_PROMPT, 'skills/dispatch/task-prompt.md', '## Second call', 'None of Templates A/B/C')],
+  ['skills/dispatch/express-prompt.md (express call)', between(EXPRESS_PROMPT, 'skills/dispatch/express-prompt.md', '## Express call', '## Post-merge sample review call')],
+  ['skills/flow/multispec-parallel-waves.md (member prompt)', between(MULTISPEC, 'skills/flow/multispec-parallel-waves.md', '## Member prompt', '## Failure handling')],
+];
+
+for (const [name, region] of NAME_KILL_REGIONS) {
+  test(`#4548: ${name} forbids name-based process kills`, () => {
+    assertNameKillRule(flat(region));
+  });
+}
+
+// express-prompt.md's no-stash paragraph (lines 85-89) before #4548, verbatim: the template as it stood,
+// with no name-kill rule anywhere in it.
+const PRE_CHANGE_EXPRESS =
+  'Never run `git stash` in any form -- bare `git stash`/`push`, `save`, `pop`, `drop`, `clear` or\n' +
+  '`store`; only the read-only `git stash list` and `git stash show` are allowed. The stash stack is\n' +
+  "shared repo-wide across every worktree of this checkout, so any of them can pop, drop or clobber\n" +
+  "a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use\n" +
+  '`git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.\n';
+
+test('#4548: the pre-change express template (no-stash paragraph alone) fails the same helper', () => {
+  assert.throws(() => assertNameKillRule(flat(PRE_CHANGE_EXPRESS)), (err) => /by image or name/.test(err.message), 'the helper must go red on the missing rule, not on something else');
+  // The frozen control must itself be the real no-stash paragraph, or the throw above proves nothing.
+  assert.ok(flat(EXPRESS_PROMPT).includes(flat(PRE_CHANGE_EXPRESS).trim()), 'PRE_CHANGE_EXPRESS has drifted from the live no-stash paragraph');
 });
