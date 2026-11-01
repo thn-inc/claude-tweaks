@@ -628,8 +628,9 @@ test('AC3.1: the restore line build/stash-guard.md documents is the line the CLI
   // Go-red controls, through the same helper.
   const drifted = doc.split('restored via git stash store').join('restored');
   assert.notEqual(drifted, doc, 'the template drift matched nothing');
-  assert.equal(documentedRestoreLineProblems(drifted, emitted).filter((p) => p.startsWith('restore line does not match the documented template: ')).length, 3);
-  assert.equal(documentedRestoreLineProblems(drifted, emitted).length, 3);
+  const driftedProblems = documentedRestoreLineProblems(drifted, emitted);
+  assert.equal(driftedProblems.filter((p) => p.startsWith('restore line does not match the documented template: ')).length, 3);
+  assert.equal(driftedProblems.length, 3);
   const shortList = doc.replace('`{role} dispatch`', '');
   assert.notEqual(shortList, doc, 'the who-list drift matched nothing');
   assert.equal(documentedRestoreLineProblems(shortList, emitted).length, 1);

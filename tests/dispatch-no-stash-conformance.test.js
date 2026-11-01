@@ -288,7 +288,10 @@ const outcomesFact = homeFact('outcomes');
 const branchFact = (label, pattern) => ({
   label,
   test: (t) => pattern.test(reviewerBranch(t.outcomes)),
-  strip: (t) => ({ ...t, outcomes: t.outcomes.replace(reviewerBranch(t.outcomes), () => reviewerBranch(t.outcomes).replace(globalOf(pattern), () => '')) }),
+  strip: (t) => {
+    const branch = reviewerBranch(t.outcomes);
+    return { ...t, outcomes: t.outcomes.replace(branch, () => branch.replace(globalOf(pattern), () => '')) };
+  },
 });
 
 const STASH_GUARD_FACTS = [
