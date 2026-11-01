@@ -249,9 +249,9 @@ test('item 10 routes the PR body Resume line through pr-resume-line.js, not a re
   assert.match(ITEM10, /Report the `resume` line it prints only when the verdict is `resume`/);
 });
 
-test('item 10 takes {run-id} from the claim blob runId, never from the PR body own marker', () => {
+test("item 10 takes {run-id} from the claim blob runId, never from the PR body's own marker", () => {
   assert.match(ITEM10, /`\{run-id\}` being the `runId` of the record's claim blob/);
-  assert.match(ITEM10, /Never take `\{run-id\}` from the PR body's own marker here: it is the trust anchor the CLI checks the Resume line against, and this route has the claim blob's `runId` to anchor with/);
+  assert.match(ITEM10, /Never take `\{run-id\}` from the PR body's own marker here/);
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {
