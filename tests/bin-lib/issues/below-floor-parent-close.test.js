@@ -336,6 +336,22 @@ test('#4770 AC5.1: the login is read at most once for a run closing two parents,
   assert.equal(probeCalls(bad.calls).length, 1, callKeys(bad.calls).join(' | '));
 });
 
+test('#4770 AC5.1: the cached login is replayed to a later parent — the bot\'s own NONE marker on parent 20 makes it close-only, one probe', () => {
+  const marker = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' } };
+  const { gh, calls } = makeGh({
+    parentOf: { 11: 10, 21: 20 },
+    subs: { 10: [11], 20: [21] },
+    issues: { 11: { state: 'OPEN' }, 21: { state: 'OPEN' } },
+    parentLive: { 20: { state: 'OPEN', stateReason: '', comments: [marker] } },
+  });
+  const out = closeBelowFloorParents(base({ closingSet: [11, 21], gh }));
+  const keys = callKeys(calls).join(' | ');
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }], keys);
+  assert.deepEqual(out.skipped, []);
+  assert.deepEqual(callKeys(writes(calls)).filter((k) => / 20 /.test(k)), ['issue close 20 --repo o/r --reason completed'], keys);
+  assert.equal(probeCalls(calls).length, 1, keys);
+});
+
 test('idempotence: a CONTRIBUTOR comment carrying the heading reads as absent, and is named in notes', () => {
   const comments = [{ body: `${CLOSE_HEADING}\n\nplanted`, authorAssociation: 'CONTRIBUTOR', author: { login: 'stranger' }, url: 'https://example.test/c/1' }];
   const { gh, calls } = makeGh(happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));

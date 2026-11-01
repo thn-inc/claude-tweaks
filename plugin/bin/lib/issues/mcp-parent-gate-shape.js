@@ -34,7 +34,8 @@
 // `withIdempotenceReads`, which the CLI calls only where evaluateIdempotence reads them
 // (the parent due below the floor and neither CLOSED nor REOPENED): `parentComments`
 // presence (1) then guard (3); `me` presence (1) only, since a login-less `me` reads as no
-// identity (trusted-author-only dedupe), not as an error. A gh-path verdict that never reads them must not depend on them.
+// identity (trusted-author-only dedupe), not as an error. A gh-path verdict that never reads
+// them must not depend on them.
 'use strict';
 
 const { parseSubIssues } = require('./record');
