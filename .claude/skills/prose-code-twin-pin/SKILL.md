@@ -266,6 +266,11 @@ its shape owes:
   the listing line, the bare listing line and the not-planned line.
 - *A number the prose states* is an exported constant. `tests/below-floor-parent-close-conformance.test.js`
   pins the prose's "10 minutes" and asserts `MERGE_GRACE_MS` and `CLOSE_WINDOW_MS` equal it.
+- *A string the shared module emits and the prose quotes* is a twin too, even though sharing the
+  code already keeps the CLI and the reconciler together: sharing binds code to code, never the
+  prose to either. The same suite's #4770 case pulls the backticked `identity probe failed …` note
+  out of **Close the parent below the floor** step 1 and asserts it equals `parent-gate.js`'s
+  exported `IDENTITY_PROBE_FAILED_NOTE`, with the note stripped from the prose as its go-red control.
 - *A marker line the prose writes and the code reads* is the writer/reader row in Anti-Patterns. The
   same suite parses `--step` and `--text` out of Step 4.0b's summary command, runs them through
   `formatEntry`, and asserts `hasPostMergeMarker` reads the result, with a renamed `--step` as the
