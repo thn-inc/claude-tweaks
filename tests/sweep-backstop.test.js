@@ -386,8 +386,67 @@ test('item 10: PR progress older than claimedAt reports the PR as silent (#4818)
   assert.match(out, /\[unsettled\] #12: PR #40 silent 25h after claim/);
 });
 
-test('item 10: the MCP fallback for the registry read writes the same rows, ending with the complete row (#4818)', () => {
-  assert.match(SCAN, /writes the rows `bin\/read-claims\.js` prints, `could-not-read` for an unread blob, ending with the `complete` row/);
+test('item 10: without git access the registry read is reported unreadable, with no MCP fallback promised (#4818)', () => {
+  assert.match(SCAN, /without git access to `claims-registry` it prints a registry `could-not-read` row and item 10 reports the registry unreadable, never empty/);
+  assert.ok(!SCAN.includes('List all claims'), 'no unrouted fallback to issue-claims.md "List all claims" — that section writes none of the rows item 10 reads');
+});
+
+// The producer/consumer seam: run bin/read-claims.js's real run() against a faked git, and hand the
+// rows it actually prints to the evaluation script, so a row-vocabulary drift on either side goes red.
+function printedByReadClaims({ fetchFails = false, missingBlob = false } = {}) {
+  const { run } = require('../plugin/bin/read-claims');
+  const live = JSON.stringify({ issueNumber: 12, claimedAt: HOURS_AGO(25), runId: 'r12' });
+  const lsTree = ['12', '13'].map((n) => `100644 blob sha${n}\tclaims/issue-${n}.json\0`).join('');
+  const git = (args, opts = {}) => {
+    if (args[0] === 'fetch' && fetchFails) throw Object.assign(new Error('Command failed: git fetch'), { stderr: 'fatal: 403\n' });
+    if (args[0] === 'ls-tree') return lsTree;
+    if (args[0] === 'rev-parse') return 'tip\n';
+    if (args[0] === 'cat-file') {
+      const shas = Buffer.from(opts.input).toString('utf8').split('\n').filter(Boolean);
+      return Buffer.concat(shas.map((sha) => (sha === 'sha13' && missingBlob
+        ? Buffer.from(`${sha} missing\n`)
+        : Buffer.from(`${sha} blob ${Buffer.byteLength(live)}\n${live}\n`))));
+    }
+    return '';
+  };
+  const lines = [];
+  run([], { runner: git, now: () => Date.now(), stdout: (s) => lines.push(s), stderr: () => {} });
+  return lines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a refused fetch reports the registry unreadable (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ fetchFails: true }), labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }] });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a missing blob is named, its sibling still judged (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ missingBlob: true }) });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+});
+
+test('item 10: a readable live claim is still judged when another blob could not be read (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [
+      { number: 12, state: 'live', claimedAt: HOURS_AGO(25) },
+      { number: 13, state: 'could-not-read', reason: 'transport-failure' },
+      COMPLETE(2),
+    ],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+  assert.match(out, /\[unsettled\] #14: no PR found/);
+  assert.doesNotMatch(out, /claims-registry could not be read/);
+});
+
+test('item 10: the evaluation fence resolves unsettled-age-hours itself, since a fresh bash invocation inherits no variable (#4818)', () => {
+  assert.match(
+    ITEM10,
+    /UNSETTLED_AGE=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values unsettled-age-hours\) node -e "/,
+    'an unset UNSETTLED_AGE makes AGE_HOURS NaN, which skips no candidate by age',
+  );
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {

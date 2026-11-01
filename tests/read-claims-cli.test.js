@@ -76,12 +76,50 @@ function scratchRefOf(calls) {
   return refspec.slice(refspec.indexOf(':') + 1);
 }
 
-test('a registry read that fails on transport is one could-not-read registry row, exit 3, no terminator (#4818)', () => {
-  const git = fakeGit({ fetch: () => { throw new Error('HTTP 403 ... rate limit'); } });
+test('a git fetch refused with a 403 is one could-not-read registry row, exit 3, no terminator, and stderr names the 403 (#4818)', () => {
+  // execFileSync's real shape: the message line is only the command; git's own reason is on err.stderr.
+  const refused = Object.assign(
+    new Error('Command failed: git fetch -q origin claims-registry:refs/claims-scan-read/x\nfatal: unable to access'),
+    { stderr: "fatal: unable to access 'https://github.com/o/r.git/': The requested URL returned error: 403\n" },
+  );
+  const git = fakeGit({ fetch: () => { throw refused; } });
   const { out, deps } = harness(git);
   assert.equal(run([], deps), 3);
   assert.deepEqual(rowsOf(out), [REGISTRY_ROW]);
-  assert.match(out.stderr.join(''), /read-claims\.js: could not read claims-registry/);
+  assert.match(out.stderr.join(''), /read-claims\.js: could not read claims-registry: fatal: unable to access .*error: 403/);
+});
+
+test('a registry too large for execFileSync\'s 1 MiB default still reads: the batched reads lift the buffer cap (#4818)', () => {
+  // 25000 claims: past 1 MiB for both the ls-tree listing and the cat-file stream, so each read's cap is exercised.
+  const COUNT = 25000;
+  const big = {};
+  for (let n = 1; n <= COUNT; n++) big[n] = JSON.stringify({ issueNumber: n, claimedAt: '2026-11-01T11:00:00Z' });
+  const inner = fakeGit({}, big);
+  // execFileSync throws ENOBUFS when stdout outgrows maxBuffer (1 MiB when unset).
+  const runner = (args, opts = {}) => {
+    const outText = inner.runner(args, opts);
+    if (Buffer.byteLength(outText) > (opts.maxBuffer ?? 1024 * 1024)) throw Object.assign(new Error('spawnSync git ENOBUFS'), { code: 'ENOBUFS' });
+    return outText;
+  };
+  const { out, deps } = harness({ runner });
+  assert.equal(run([], deps), 0);
+  const rows = rowsOf(out);
+  assert.equal(rows.length, COUNT + 1);
+  assert.ok(rows.slice(0, COUNT).every((r) => r.state === 'live'), 'no blob row may be could-not-read');
+  assert.deepEqual(rows[COUNT], { number: null, state: 'complete', count: COUNT });
+});
+
+test('a listed blob that cat-file --batch reports missing is could-not-read, never absent (#4818)', () => {
+  const git = fakeGit({ 'cat-file': (args, opts) => catFile(opts.input, { sha5: BLOBS[5] }) });
+  const { out, deps } = harness(git);
+  assert.equal(run([], deps), 0);
+  assert.deepEqual(rowsOf(out), [
+    { number: 3, state: 'could-not-read', reason: 'transport-failure' },
+    { number: 5, state: 'stale', claimedAt: '2026-10-01T00:00:00Z' },
+    { number: 8, state: 'could-not-read', reason: 'transport-failure' },
+    { number: 9, state: 'could-not-read', reason: 'transport-failure' },
+    { number: null, state: 'complete', count: 4 },
+  ]);
 });
 
 test('a fetch timeout carries timedOut: true on the registry row', () => {
@@ -174,6 +212,9 @@ test('--remote with no value is a malformed invocation: exit 1, git never called
   const { out, deps } = harness(git);
   assert.equal(run(['--remote'], deps), 1);
   assert.equal(run(['--remote', ''], deps), 1);
+  // a leading dash of either kind would reach `git fetch` as an option
+  assert.equal(run(['--remote', '-x'], deps), 1);
+  assert.equal(run(['--remote', '--upload-pack=evil'], deps), 1);
   assert.equal(git.calls.length, 0);
   assert.match(out.stderr.join(''), /--remote needs a remote name/);
 });
@@ -188,6 +229,7 @@ test('real git: a temp origin with two live claim blobs reads as two rows and th
   git(['clone', '-q', origin, work], root);
   git(['config', 'user.email', 'test@example.com']);
   git(['config', 'user.name', 'Test']);
+  git(['config', 'commit.gpgsign', 'false']);
   git(['checkout', '-q', '--orphan', 'claims-registry']);
   fs.mkdirSync(path.join(work, 'claims'));
   const claimedAt = new Date().toISOString();

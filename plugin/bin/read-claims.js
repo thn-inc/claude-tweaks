@@ -41,7 +41,8 @@ function parseArgs(argv) {
     if (a === '--help' || a === '-h') o.help = true;
     else if (a === '--remote') {
       const v = argv[++i];
-      if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: '--remote needs a remote name' };
+      // A leading dash of either kind would reach `git fetch` as an option, not a remote.
+      if (typeof v !== 'string' || !v.trim() || v.startsWith('-')) return { error: '--remote needs a remote name' };
       o.remote = v;
     } else return { error: `unknown argument: ${a}` };
   }
@@ -63,6 +64,13 @@ function parseBlob(content) {
   } catch {
     return null;
   }
+}
+
+// The line that names why git failed: its own first stderr line (403, auth, network),
+// since an execFileSync error's message line is only "Command failed: git fetch ...".
+function failureDetail(err) {
+  const stderrLine = String((err && err.stderr) || '').split('\n').map((l) => l.trim()).find(Boolean);
+  return stderrLine || errText(err).split('\n')[0];
 }
 
 function line(row) {
@@ -99,7 +107,7 @@ function run(argv, deps) {
   } catch (err) {
     // A remote with no claims-registry branch is an empty registry, not a failure.
     if (classifyGitError(err).kind !== 'missing-branch') {
-      failure = { detail: errText(err).split('\n')[0], timedOut: isTimeoutError(err) };
+      failure = { detail: failureDetail(err), timedOut: isTimeoutError(err) };
     }
   } finally {
     try { deps.runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the read's own outcome */ }
