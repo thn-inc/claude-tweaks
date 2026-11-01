@@ -466,13 +466,13 @@ const TIEBREAK_CANT_TELL_RE = new RegExp(`${TIEBREAK_STEP_HEAD}(console|digested
 // The evidence path always equals the finding path (tiebreak.js's evidenceProblem), so it is a backreference.
 const TIEBREAK_DROPPED_RE = new RegExp(`${TIEBREAK_STEP_HEAD}dropped: refuted by tiebreak\\. Evidence: (\\3:\\d+ .*)\\. Severity: ${VERDICT_SEV}\\.${VERDICT_LINE_END}`);
 // The path may hold a space (#4632): the greedy group is anchored on the resolver-written tail.
-const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (.+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.`);
+const TIEBREAK_CONFIRMED_RE = new RegExp(`${VERDICT_LINE_HEAD}Reproduction: lens "([^"]*)" finding (.+):([^\\s:]+) confirmed by tiebreak:([0-9a-f]{12})\\. Confirmed\\.${VERDICT_LINE_END}`);
 const STAGED_FILE_RE = /staged\/([A-Za-z0-9_-]+\.(?:md|patch))/;
 
 // A verdict's path is resolver-written, so it keys whole, never FINDING_PATH-truncated (#4632).
 // The lens goes through findingKey's own class, so a quoted `"3a b"` keys `3a` on both sides.
 function verdictKey(lens, file, lineNo) {
-  const l = /^[A-Za-z0-9_-]+/.exec(lens);
+  const l = VERDICT_LENS_RE.exec(lens);
   return l && /^\d+$/.test(lineNo) ? `${l[0]}|${file}:${lineNo}` : null;
 }
 
@@ -521,12 +521,15 @@ function lineKeys(line, known = new Set()) {
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
 // The path of a finding key `{lens}|{path}:{line}` (#4582): `@ + ~ % $` join the plain class, and `[id]` / `(group)` count only as a
 // closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
-const FINDING_PATH = String.raw`(?:[A-Za-z0-9_./@+~%$-]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
+const FINDING_PATH_CLASS = String.raw`A-Za-z0-9_./@+~%$-`; // the plain class, also locationCandidates' boundary test (#4632)
+const FINDING_LENS_CLASS = String.raw`A-Za-z0-9_-`; // a lens token, on STAGED and verdict lines alike (#4632)
+const FINDING_PATH = String.raw`(?:[${FINDING_PATH_CLASS}]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
 const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([A-Za-z0-9_-]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
 const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
-const FINDING_LENS_RE = /\blens\s+"?([A-Za-z0-9_-]+)"?/i;
-const FINDING_PATH_CHAR = /[A-Za-z0-9_./@+~%$-]/; // FINDING_PATH's plain class
+const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
+const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
+const FINDING_PATH_CHAR = new RegExp(`[${FINDING_PATH_CLASS}]`);
 
 // The candidate keys of one FINDING_LOC_RE match in `text`, shortest first (#4632). The first is
 // the FINDING_PATH match, which stops at a space. Each longer one starts right after another
@@ -542,6 +545,8 @@ function locationCandidates(text, match, lens) {
 }
 
 // A STAGED location's key: its longest candidate some settler's key names, else the shortest (#4632).
+// That fallback lets drifted prose (`finding at src/a.ts:4`) settle, so a space path with no verdict
+// of its own (`b dir/x.ts:3`) still settles on a plain-path verdict at its suffix (`dir/x.ts:3`), as before.
 function namedCandidate(candidates, known) {
   for (let i = candidates.length - 1; i > 0; i--) if (known.has(candidates[i])) return candidates[i];
   return candidates[0];

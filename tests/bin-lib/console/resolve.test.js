@@ -1119,6 +1119,8 @@ test('AC3.1: a confirmed verdict at my dir/x.ts:3 parses with the whole path and
   const v = tbVerdict(tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3 }), { verdict: 'confirmed' });
   const p = parseTiebreakLine(v.entry);
   assert.deepStrictEqual([p.kind, p.path, p.key], ['confirmed', 'my dir/x.ts', '3b|my dir/x.ts:3']);
+  // Anchored on the line end like the other verdict shapes: text after `Confirmed.` is not a verdict.
+  assert.strictEqual(parseTiebreakLine(v.entry.replace(' Reversibility:', ' Then more. Reversibility:')), null);
 });
 test('AC4.1: drifted STAGED prose before a space-free path still settles (#4632)', () => {
   const v = tbVerdict(tbFinding({ lens: '3c', path: 'plugin/a.ts', line: 4 }), { verdict: 'refuted' }).entry;
