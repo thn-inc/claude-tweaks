@@ -30,8 +30,11 @@ const {
   isStepMarkupReformat,
   isStepRenumber,
   isReferencePreservingOriginLine,
+  computeSpecWindows,
+  attributeByWindow,
   ArtifactOverwriteCheckError,
 } = require(MOD);
+const { manifestInit, transitionSpec, readManifest } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'manifest.js'));
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
@@ -59,6 +62,30 @@ function commit(fx, message) {
   fx.git('commit', '-q', '-m', message);
   return fx.git('rev-parse', 'HEAD').trim();
 }
+
+const T0 = '2026-01-01T10:00:00.000Z'; // spec 10 first transition
+const T1 = '2026-01-01T12:00:00.000Z'; // spec 11 first transition
+function commitAt(fx, message, iso) {
+  fx.git('add', '-A');
+  execFileSync('git', ['commit', '-q', '-m', message], {
+    cwd: fx.dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...process.env, GIT_AUTHOR_DATE: iso, GIT_COMMITTER_DATE: iso },
+  });
+  return fx.git('rev-parse', 'HEAD').trim();
+}
+// Real writer: manifestInit + transitionSpec with a pinned clock.
+function manifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
+  const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-manifest-')));
+  manifestInit({ runDir, specs: ids, parent: 'p/' });
+  for (const [specId, status, phase, iso] of transitions) transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+  return { runDir, manifest: readManifest(runDir) };
+}
+const SEQUENTIAL = [[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', T1], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
+// A parallel wave: both members move to running, then spec 10 keeps transitioning after spec 11 started.
+const INTERLEAVED = [[10, 'running', 'build', T0], [11, 'running', 'build', T1], [10, 'running', 'test', '2026-01-01T12:30:00.000Z'], [10, 'complete', 'wrap-up', '2026-01-01T13:00:00.000Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']];
+const STORY = 'stories/x-10.yaml';
+const STORY_V1 = 'name: x\nsteps:\n  locator: old-a\n  other: keep\n';
+const STORY_V2 = 'name: x\nsteps:\n  locator: new-a\n  other: keep\n';
 
 // --- Unit tests: the small parsers ---
 
@@ -936,4 +963,222 @@ test('isStepRenumber: a blank deleted line beside the renumbered heading is igno
   ].join('\n');
   const hunks = parseHunks(diff);
   assert.strictEqual(isStepRenumber(hunks[0]), true);
+});
+
+// --- Manifest-window attribution (refs #4593) ---
+
+test('AC1.1, AC1.2, AC1.3: untrailered self-edit inside spec 10\'s window is clean with the manifest', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.deepStrictEqual(result, { clean: true, overwrites: [] });
+});
+
+test('AC2.1, AC2.2: the modifying commit in spec 11\'s window is still one overwrite, reported as a spec mismatch', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  assert.strictEqual(result.overwrites[0].path, STORY);
+  assert.strictEqual(result.overwrites[0].commit, modifySha);
+  const { reason } = result.overwrites[0];
+  assert.match(reason, /#10/);
+  assert.match(reason, /#11/);
+  assert.match(reason, /by manifest window/);
+  assert.doesNotMatch(reason, /unattributable/);
+});
+
+test('AC3.1, AC3.2: the untrailered self-edit with no manifest reports an unattributable overwrite', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes('unattributable — no refs trailer and no manifest window'), reason);
+  assert.ok(!reason.includes('refs trailer does not match'), reason);
+  assert.ok(reason.includes(`deleting commit ${modifySha} and blamed commit ${addSha}`), reason);
+  assert.ok(reason.includes('(manifest windows off: no manifest)'), reason);
+});
+
+test('AC4.1: a refs #N trailer wins over a different spec\'s manifest window', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Fix locator (refs #10)', '2026-01-01T12:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, true, JSON.stringify(result.overwrites));
+});
+
+test('AC5.1: an author date before every spec\'s first transition leaves that commit unattributed', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); const addSha = commitAt(fx, 'Add story', '2026-01-01T09:00:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T10:30:00Z');
+  const { manifest } = manifestRun(SEQUENTIAL);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`blamed commit ${addSha}`), reason);
+  assert.ok(reason.includes('unattributable'), reason);
+  assert.ok(!reason.includes('deleting commit'), reason);
+});
+
+test('Q2/Q4: a manifest naming a failed spec keeps refs-only behavior for the AC1 history', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', T1], [11, 'failed', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec #11 is failed)'), result.overwrites[0].reason);
+});
+
+test('Q6: an interleaved (parallel-wave) manifest keeps refs-only behavior for the AC1 history', () => {
+  // Under INTERLEAVED windows both commits would fall in spec 10's [T0, T1)
+  // window — a clean — if the interleave guard were absent.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const { manifest } = manifestRun(INTERLEAVED);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec transitions interleave'), result.overwrites[0].reason);
+});
+
+test('Q10: a modifying commit authored in the same second as spec 11\'s first transition stays unattributed', () => {
+  // The ordinary lookup would put 12:00:00.000 inside spec 10's window (spec 11
+  // starts at 12:00:00.400) — a clean — so this goes red without the Q10 rule.
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T11:00:00Z');
+  write(fx.dir, STORY, STORY_V2); const modifySha = commitAt(fx, 'Review fix: locator', '2026-01-01T12:00:00Z');
+  const { manifest } = manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:59:00.000Z'], [11, 'running', 'build', '2026-01-01T12:00:00.400Z'], [11, 'complete', 'wrap-up', '2026-01-01T14:00:00.000Z']]);
+  const result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest });
+  assert.strictEqual(result.clean, false);
+  assert.strictEqual(result.overwrites.length, 1);
+  const { reason } = result.overwrites[0];
+  assert.ok(reason.includes(`deleting commit ${modifySha}`), reason);
+  assert.ok(reason.includes('unattributable'), reason);
+});
+
+test('Q8: a complete spec with no recorded transition turns windows off, never throws', () => {
+  const fx = repo();
+  write(fx.dir, STORY, STORY_V1); commitAt(fx, 'Add story', '2026-01-01T10:30:00Z');
+  write(fx.dir, STORY, STORY_V2); commitAt(fx, 'Review fix: locator', '2026-01-01T11:30:00Z');
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status: 'complete' }] } };
+  let result;
+  assert.doesNotThrow(() => { result = checkArtifactOverwrite({ base: fx.base, paths: ['stories/'], cwd: fx.dir, manifest }); });
+  assert.strictEqual(result.clean, false);
+  assert.ok(result.overwrites[0].reason.includes('(manifest windows off: spec #11 has no recorded transition)'), result.overwrites[0].reason);
+});
+
+test('Q5: checkArtifactOverwrite throws ArtifactOverwriteCheckError on an unusable manifest before walking', () => {
+  const stub = () => { throw new Error('git must not be called'); };
+  const manifest = { multispec: { parent: 'p/', specs: [] } };
+  assert.throws(
+    () => checkArtifactOverwrite({ base: 'x', git: stub, manifest }),
+    (e) => e instanceof ArtifactOverwriteCheckError && /manifest unusable: manifest names no specs/.test(e.message),
+  );
+});
+
+test('computeSpecWindows: sequential specs tile [start, next start) with an open-ended last window', () => {
+  const { windows, off } = computeSpecWindows(manifestRun(SEQUENTIAL).manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [
+    { id: 10, start: Date.parse(T0), end: Date.parse(T1) },
+    { id: 11, start: Date.parse(T1), end: Infinity },
+  ]);
+});
+
+test('computeSpecWindows: phases[].at gives the first transition when startedAt is absent', () => {
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', phases: [{ phase: 'build', status: 'running', at: T1 }, { phase: 'test', status: 'running', at: T0 }] }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [{ id: 10, start: Date.parse(T0), end: Infinity }]);
+});
+
+test('computeSpecWindows: off for a not-run, failed or pending spec, an interleaved run, and no manifest', () => {
+  const notRun = computeSpecWindows(manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:00:00.000Z'], [11, 'not-run', 'build', T1]]).manifest);
+  assert.deepStrictEqual(notRun, { windows: null, off: 'spec #11 is not-run' });
+  const failed = computeSpecWindows(manifestRun([[10, 'running', 'build', T0], [10, 'complete', 'wrap-up', '2026-01-01T11:00:00.000Z'], [11, 'failed', 'build', T1]]).manifest);
+  assert.deepStrictEqual(failed, { windows: null, off: 'spec #11 is failed' });
+  const pending = computeSpecWindows(manifestRun([[10, 'running', 'build', T0]]).manifest);
+  assert.deepStrictEqual(pending, { windows: null, off: 'spec #11 is pending' });
+  const interleaved = computeSpecWindows(manifestRun(INTERLEAVED).manifest);
+  assert.deepStrictEqual(interleaved, { windows: null, off: 'spec transitions interleave (spec #10 has a transition at or after spec #11\'s first transition)' });
+  const equalStarts = computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status: 'complete', startedAt: T0 }] } });
+  assert.strictEqual(equalStarts.windows, null);
+  assert.ok(equalStarts.off.startsWith('spec transitions interleave'), equalStarts.off);
+  assert.deepStrictEqual(computeSpecWindows(null), { windows: null, off: 'no manifest' });
+});
+
+test('computeSpecWindows (Q8): a spec with no recorded transition turns windows off for any status, never throws', () => {
+  const expected = {
+    complete: 'spec #11 has no recorded transition',
+    running: 'spec #11 has no recorded transition',
+    'not-run': 'spec #11 is not-run',
+    'wrap-up-done (hand-written)': 'spec #11 is wrap-up-done (hand-written)',
+  };
+  for (const [status, off] of Object.entries(expected)) {
+    const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0 }, { id: 11, status, phases: [] }] } };
+    let result;
+    assert.doesNotThrow(() => { result = computeSpecWindows(manifest); }, status);
+    assert.deepStrictEqual(result, { windows: null, off }, status);
+  }
+  const noAt = { multispec: { parent: 'p/', specs: [{ id: 11, status: 'complete', phases: [{ phase: 'build', status: 'running' }] }] } };
+  let result;
+  assert.doesNotThrow(() => { result = computeSpecWindows(noAt); });
+  assert.deepStrictEqual(result, { windows: null, off: 'spec #11 has no recorded transition' });
+});
+
+test('computeSpecWindows: throws manifest unusable for no specs, a bad startedAt, and a bad phases[].at', () => {
+  // Each fixture differs from a valid one in exactly that one field, so each
+  // assertion isolates its own guard.
+  const unusable = (re) => (e) => e instanceof ArtifactOverwriteCheckError && re.test(e.message);
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [] } }),
+    unusable(/manifest unusable: manifest names no specs/),
+  );
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: 'not-a-date' }] } }),
+    unusable(/manifest unusable: spec #10 startedAt is not a valid date \(not-a-date\)/),
+  );
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T0, phases: [{ phase: 'build', status: 'running', at: 'garbage' }] }] } }),
+    unusable(/manifest unusable: spec #10 phases\[0\]\.at is not a valid date \(garbage\)/),
+  );
+  // Guard order: validation precedes the status off check.
+  assert.throws(
+    () => computeSpecWindows({ multispec: { parent: 'p/', specs: [{ id: 10, status: 'not-run', startedAt: 'not-a-date' }] } }),
+    unusable(/manifest unusable: spec #10 startedAt is not a valid date \(not-a-date\)/),
+  );
+});
+
+test('attributeByWindow: start is inclusive, the next start exclusive; no match and two matches are both unattributed', () => {
+  // Whole-second values: a later window's own start second falls under the Q10
+  // rule (pinned separately below), so 200000 is unattributed here.
+  const windows = [{ id: 10, start: 100000, end: 200000 }, { id: 11, start: 200000, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(windows, 100000)], [10]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 199999)], [10]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 201000)], [11]);
+  assert.deepStrictEqual([...attributeByWindow(windows, 200000)], []);
+  assert.deepStrictEqual([...attributeByWindow(windows, 99999)], []);
+  assert.deepStrictEqual([...attributeByWindow(windows, NaN)], []);
+  assert.deepStrictEqual([...attributeByWindow(null, 150)], []);
+  const tied = [{ id: 10, start: 100, end: Infinity }, { id: 11, start: 100, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(tied, 150)], []);
+});
+
+test('attributeByWindow (Q10): a commit second equal to a later window start\'s whole second is unattributed', () => {
+  const windows = [{ id: 10, start: 1000, end: 5400 }, { id: 11, start: 5400, end: Infinity }];
+  assert.deepStrictEqual([...attributeByWindow(windows, 5000)], []); // 5.000 s: ordinary lookup says #10
+  assert.deepStrictEqual([...attributeByWindow(windows, 4000)], [10]); // previous second: unaffected
+  assert.deepStrictEqual([...attributeByWindow(windows, 6000)], [11]); // next second: unaffected
+  assert.deepStrictEqual([...attributeByWindow(windows, 1000)], [10]); // earliest window's own start second: no Q10 rule
 });
