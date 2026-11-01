@@ -63,6 +63,7 @@ const { readWorkBackend } = require('../work-backend');
 const { resolvePolicyKeys } = require('../policy-schema');
 const { appendEntries, formatEntry, parseEntry } = require('../log-decision/append');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 const { closeBelowFloorParents } = require('../issues/below-floor-parent-close');
 const { run: closingLinksRun, EXIT_GH_FAILURE, ERR_TEXT_MAX } = require('../../closing-links');
 
@@ -258,9 +259,9 @@ async function postMerge({
   const workLinks = policy['work-links'].value;
   const riskFloor = policy['risk-floor'].value;
 
-  const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, {
+  const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }));
+  })));
   const runClosingLinks = deps.closingLinksRun || closingLinksRun;
   const closeParents = deps.closeParents || closeBelowFloorParents;
   const writeEntries = deps.appendEntries || appendEntries;

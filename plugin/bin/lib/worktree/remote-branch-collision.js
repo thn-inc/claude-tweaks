@@ -28,6 +28,7 @@
 
 const { execFileSync } = require('child_process');
 const { GH_TIMEOUT_MS } = require('../shared-primitives');
+const { ghOptions } = require('../repo-resolve');
 const { firstLineRunId } = require('../flow/pr-checklist');
 const { prClosesIssue } = require('../reconcile/release-merged');
 const { isValidBranchName } = require('../branch-name');
@@ -43,7 +44,7 @@ function defaultGit(args) {
 }
 
 function defaultGh(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_TIMEOUT_MS, windowsHide: true }));
 }
 
 const SHA_RE = /^[0-9a-f]{40,64}$/;
