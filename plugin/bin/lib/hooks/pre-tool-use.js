@@ -34,7 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
-const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
+const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
@@ -2155,13 +2155,15 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     try {
       model = override
         ? override(mainRoot, { onDegrade })
-        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
     // Decision Q5: a degraded detection is never cached as `prExempt` — the next
-    // covered call detects again, exactly like the catch branch above.
+    // covered call detects again once the run's degrade memo expires (#4830),
+    // exactly like the catch branch above. A memo hit arrives through `onDegrade`
+    // too, so it never persists `prExempt` either.
     if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
     // before doing anything else in this branch — this is a narrow, one-shot
