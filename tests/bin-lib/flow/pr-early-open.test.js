@@ -272,15 +272,15 @@ test('AC1.1: a reused-PR rebind whose body write fails its first-line check is a
   }
   assert.equal(recorded.calls.find(isPush), undefined, 'the recorded path never pushes');
   assert.deepEqual(listed.records, [{ number: 7, url: URL7 }]);
-  assert.ok(listed.calls.findIndex((c) => c[0] === 'record') < listed.calls.findIndex(isPush), 'the listed path still records, then pushes');
+  assert.ok(idx(listed.calls, (c) => c[0] === 'record') < idx(listed.calls, isPush), 'the listed path still records, then pushes');
 });
 
 const LIFECYCLE_DOC = path.join(__dirname, '../../../plugin/skills/_shared/pr-early-run-lifecycle.md');
 const collapse = (text) => text.replace(/\s+/g, ' ');
 const REBIND_TEMPLATE = /`((?:AUTO|SKIP) \{time\} — PR-early run lifecycle: (?:rebound|rebind of) (?:reused|reopened) PR [^`]*)`/g;
 
-function assertRebindTwins(docText, emitted) {
-  const templates = [...collapse(docText).matchAll(REBIND_TEMPLATE)].map((m) => m[1]);
+function assertRebindTwins(collapsedDoc, emitted) {
+  const templates = [...collapsedDoc.matchAll(REBIND_TEMPLATE)].map((m) => m[1]);
   assert.equal(templates.length, 4, 'expected 4 rebind templates in pr-early-run-lifecycle.md');
   assert.deepEqual([...emitted].sort(), [...templates].sort(), 'rebind log lines drift between pr-early-open.js and pr-early-run-lifecycle.md');
 }
