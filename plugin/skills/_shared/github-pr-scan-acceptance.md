@@ -485,7 +485,7 @@ node -e "
   const { IDENTITY_PROBE_FAILED_NOTE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
   const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
   const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
-  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login, so a close marker posted by the current identity under an untrusted association reads as absent; open-parent rows are unaffected.');
+  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login; open-parent rows are unaffected.');
   const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
@@ -505,7 +505,7 @@ node -e "
 When this block fails — the state-map-search guard throws, or a failed
 `gh` call leaves a fetch file unreadable — the scope stops: report no `[parent-gate]` rows at all and quote the error verbatim.
 `$PARENTS` is emptied first; never read it or `$ALL_STATES` afterwards — a 0-row state map would
-read every sub-issue as `OPEN`. An empty login is not a stop: the scope runs with trusted-author close-marker matching, and the WARNING is reported verbatim with its rows.
+read every sub-issue as `OPEN`. An empty login is not a stop: report its WARNING verbatim with the rows.
 
 The state map's `labels` field (added alongside `number`/`state`) is what lets the oversight-floor
 pre-filter below read each sub-issue's `risk:*` label from data already fetched here — no second
