@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T20:23:56.626Z",
+  "computedAt": "2026-11-01T20:42:50.035Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -19,6 +19,21 @@
         "state": "OPEN"
       },
       {
+        "number": 4847,
+        "updatedAt": "2026-11-01T20:30:27Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4845,
+        "updatedAt": "2026-11-01T20:41:57Z",
+        "state": "OPEN"
+      },
+      {
+        "number": 4833,
+        "updatedAt": "2026-11-01T20:41:52Z",
+        "state": "OPEN"
+      },
+      {
         "number": 4829,
         "updatedAt": "2026-11-01T18:32:11Z",
         "state": "OPEN"
@@ -35,7 +50,7 @@
       },
       {
         "number": 4824,
-        "updatedAt": "2026-11-01T18:31:58Z",
+        "updatedAt": "2026-11-01T20:36:13Z",
         "state": "OPEN"
       },
       {
@@ -115,7 +130,7 @@
       },
       {
         "number": 4805,
-        "updatedAt": "2026-11-01T20:15:49Z",
+        "updatedAt": "2026-11-01T20:33:37Z",
         "state": "OPEN"
       },
       {
@@ -200,7 +215,7 @@
       },
       {
         "number": 4782,
-        "updatedAt": "2026-11-01T20:02:05Z",
+        "updatedAt": "2026-11-01T20:25:57Z",
         "state": "OPEN"
       },
       {
@@ -210,7 +225,7 @@
       },
       {
         "number": 4756,
-        "updatedAt": "2026-11-01T20:22:47Z",
+        "updatedAt": "2026-11-01T20:26:28Z",
         "state": "OPEN"
       },
       {
@@ -305,7 +320,7 @@
       },
       {
         "number": 4611,
-        "updatedAt": "2026-11-01T19:18:15Z",
+        "updatedAt": "2026-11-01T20:36:57Z",
         "state": "OPEN"
       },
       {
@@ -535,7 +550,7 @@
       },
       {
         "number": 4439,
-        "updatedAt": "2026-10-30T06:35:18Z",
+        "updatedAt": "2026-11-01T20:24:30Z",
         "state": "OPEN"
       },
       {
@@ -1057,11 +1072,6 @@
         "number": 3508,
         "updatedAt": "2026-11-01T16:38:16Z",
         "state": "OPEN"
-      },
-      {
-        "number": 4495,
-        "updatedAt": "2026-10-31T21:23:00Z",
-        "state": "CLOSED"
       }
     ]
   },
@@ -1205,6 +1215,168 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: session removing project-scope claude-tweaks installs across six repos (thn-inc/claude-tweaks PR #4841)\n\nDefer-reason: tangential\n\n## Current State\n\n`/init` Step 14 (`plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md`) treats `claude-tweaks@claude-tweaks-marketplace` as one of two hard requirements: its Detect section always makes it a declaration candidate, and its Apply section always adds it to the project's `.claude/settings.json#enabledPlugins` plus a `claude-tweaks-marketplace` entry under `extraKnownMarketplaces`, then writes the matching `marketplace add`/`update` lines and `PLUGIN_SPECS` entry into `scripts/claude-cloud-setup.sh`.\n\n`/routine`'s fleet check (`plugin/skills/routine/fleet.md`, step 1) confirms the same declaration is present.\n\nThere is no way to say \"this project relies on a user-scope install of claude-tweaks; don't declare it at project scope.\" A maintainer who removes the declaration on purpose (done 2026-11-01 across six repos, including this one in PR #4841) gets it re-added by the next `/init` run, and the fleet check reads the missing line as a fault.\n\n## Deliverables\n\n1. A policy key in `.claude-tweaks/policy.yml` (added per the `policy-key-addition` project skill) that turns off claude-tweaks' own project-scope declaration. Default keeps today's behavior.\n2. `/init` Step 14 honors the key: when it is off, Detect drops claude-tweaks from the hard-requirement candidates, Apply neither adds nor re-adds the `enabledPlugins` and `extraKnownMarketplaces` entries, and the generated `scripts/claude-cloud-setup.sh` omits the claude-tweaks marketplace lines and `PLUGIN_SPECS` entry. `superpowers@claude-plugins-official` stays a hard requirement.\n3. `/routine`'s fleet check honors the key: when it is off, a missing claude-tweaks declaration is not reported as a failure. Instead the check states that cloud firings in this project will not have claude-tweaks installed by the project declaration.\n\n## Acceptance Criteria\n\n- [ ] With the key unset, `/init` Step 14 and the fleet check behave exactly as today. A conformance test pins the default.\n- [ ] With the key off, `/init` Step 14's documented Apply output for a project with no claude-tweaks entry leaves `.claude/settings.json` without `claude-tweaks@claude-tweaks-marketplace` or a `claude-tweaks-marketplace` marketplace entry, and the generated setup script has no `claude-tweaks-marketplace` line. A test pins this against the step's template text.\n- [ ] With the key off, the fleet check's documented procedure reports the missing declaration as an informational line, not a failure, and names the cloud consequence. A test pins the wording.\n- [ ] `superpowers@claude-plugins-official` is still required in both places whatever the key says.\n- [ ] `npm test` passes.\n\n## Release Note\n\nProjects that rely on a user-scope install of claude-tweaks can now tell /init not to declare it in their committed settings, so re-running /init no longer adds it back.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` — Detect/Apply honor the opt-out key\n- `plugin/skills/routine/fleet.md` — Fleet check reports, not fails, when opted out\n- `plugin/bin/lib/policy-schema.js` — Register the new policy key\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-01T19:06:38Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 4847,
+        "state": "OPEN",
+        "title": "Let a project opt out of /init declaring claude-tweaks in its committed settings",
+        "updatedAt": "2026-11-01T20:30:27Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\nOrigin: split out of #4593 at its third plan review (issuecomment-6562062652, Q7) — the maintainer chose Reading A, filing first-parent filtering as its own record\n\nDefer-reason: tangential\n\n**Related:** #4593\n\n## Current State\n\n`plugin/bin/lib/flow/artifact-overwrite-check.js` collects its A/M events with `git log --reverse --diff-filter=AM --name-status -z --format=%H {base}..{head}` (line 350), with no `--first-parent`. Every commit a catch-up merge brought in through its second parent is therefore walked as if it were one of the run's own commits. The raw fallback walk in `plugin/skills/flow/multispec-artifact-namespacing.md` (`git -C \"$WORKTREE\" log --name-status --diff-filter=AM \"{EXPECTED_BASE}..HEAD\" -- docs/journeys/ stories/`, the walk used when the tool exits 2 or 3) has the same gap.\n\nThis is a false positive today, independent of #4593. Probed on 2026-11-01 (git 2.56.0) with a scratch repo: base; spec A adds `docs/journeys/a.md` (`refs #1`); upstream adds `docs/journeys/up.md` (`refs #999`); the run catch-up merges main; spec B (`refs #2`) edits a line of `up.md`. Today's walk sees `A up.md` (the upstream commit) followed by `M up.md` (spec B), and `checkArtifactOverwrite` returns `clean: false`, with the deleted line traced to the upstream commit \"whose refs trailer does not match\". Spec B only updated a journey that already existed upstream, so no spec's artifact was overwritten.\n\nThe same probe shows why `--first-parent` alone is not enough. On git 2.31 and later it implies `--diff-merges=first-parent`, so the catch-up merge commit itself reports `A up.md` and the false positive comes back, attributed to the merge. Only `--first-parent --no-merges` drops the upstream event: the walk then sees `A a.md` (spec A) and `M up.md` (spec B) with no preceding add, and the path is skipped.\n\nOnce #4593 adds manifest-window attribution, upstream commits authored inside a spec's window could additionally be attributed to that spec. The maintainer asked for first-parent filtering on #4593 (issuecomment-6555467984: \"Filter to first-parent run commits before attributing\"), and #4593's third plan review (issuecomment-6562062652, Q7) split it out into this record.\n\n## Deliverables\n\n1. `checkArtifactOverwrite`'s event walk runs `git log --first-parent --no-merges` over the run range, so a commit reachable only through a catch-up merge's second parent, and the catch-up merge commit itself, are never among the run's own A/M events.\n2. In the per-hunk blame test, a deleted line whose blamed commit is not on the run's own first-parent chain (`git rev-list --first-parent {base}..{head}`, catch-up merge commits included) counts as updating content that predates the run's own work, from the base or from upstream, not as a cross-spec overwrite. A line blamed to a catch-up merge commit stays inside the set and keeps failing closed, because a merge carries no `refs #N` trailer, so a conflict resolution that rewrote a spec's lines is never cleared this way. A deleted line with no blame attribution still fails closed, as today.\n3. `multispec-artifact-namespacing.md`'s raw fallback walk adds `--first-parent --no-merges`, and the prose names the first-parent scope once, so a manual ruling sees the same event set as the tool.\n4. Test fixtures in `tests/bin-lib/flow/artifact-overwrite-check.test.js`:\n   - The probe's shape: an upstream-added journey edited by a run spec after a catch-up merge is clean.\n   - Through the test file's existing `fakeGit` seam: a run-added journey whose later spec deletes a line that blame attributes to a SHA outside the first-parent chain is clean (Deliverable 2). The same deletion blamed to a first-parent merge commit is still an overwrite.\n   - A genuine cross-spec overwrite that sits after a catch-up merge is still reported.\n\n## Acceptance Criteria\n\n- [ ] With a catch-up merge in the range, an upstream commit is never reported as a run event: the probe-shaped fixture returns `clean: true`.\n- [ ] The `fakeGit` fixture returns `clean: true` when the deleted line is blamed to a SHA outside the first-parent chain, and `clean: false` when it is blamed to a first-parent merge commit.\n- [ ] A genuine cross-spec overwrite after a catch-up merge still returns `clean: false`, naming the overwriting spec's commit.\n- [ ] Removing `--first-parent` turns the probe-shaped fixture red. So does keeping `--first-parent` but removing `--no-merges`, since the merge commit re-attributes the upstream add. Both red runs are quoted in the PR.\n- [ ] The existing fixtures and the live replays (the #1988–#1997 range and the `729a5ae5e..4706f21db` step insertion) keep their current verdicts.\n- [ ] `multispec-artifact-namespacing.md`'s raw walk command includes `--first-parent --no-merges`.\n- [ ] `npm test` passes.\n\n## Release Note\n\nStop the multi-spec artifact-overwrite check from flagging a run's edit to a journey that a catch-up merge brought in from upstream.\n\n## Technical Approach\n\n- In `checkArtifactOverwrite`, add `--first-parent` and `--no-merges` to the A/M `git log` call. Compute the run's own commit set once with `git rev-list --first-parent {base}..{head}` (merges included, unlike the event walk) through the module's injectable `git` runner, and pass it to the blame test so that test checks `runCommits.has(blamedSha)` before the refs comparison. A blamed SHA outside the set is pre-run content and clears that line. A blamed SHA inside the set keeps today's same-refs self-edit test, which a merge commit always fails.\n- Update the raw walk command and one sentence of prose in `multispec-artifact-namespacing.md`.\n- Build the fixtures with the module's existing scratch-repo helpers in the test file, adding a merge step. Pin `GIT_CEILING_DIRECTORIES`, `HOME` and the author/committer identity the way the existing fixtures do.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — first-parent, non-merge event walk; the blame test treats a blamed SHA outside the run's own commits as pre-run content\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — raw fallback walk gains `--first-parent --no-merges`; name the first-parent scope\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — catch-up-merge fixtures (upstream-added journey, upstream lines in a run-added journey, overwrite after a merge) plus the two revert-red checks\n\n## Gotchas\n\n- **`--first-parent` implies `--diff-merges=first-parent`** on git 2.31 and later, which makes the merge commit itself report the upstream file changes. `--no-merges` is required alongside it. The second revert-red AC pins this.\n- **Conflict-resolution edits inside a catch-up merge are no longer walked.** A merge commit's own resolution is not a spec's edit, so this is intended. Don't add `-m` or `--cc` to bring it back.\n- **Blame still runs on `{commit}~1` over full history**, not first-parent. That is correct, because the deleted line's true origin is what matters. Only the run-commit membership test is first-parent.\n- **Shares a file with #4593** (`artifact-overwrite-check.js` and its test file). The two are a strong near-duplicate pair, so dispatch holds the later one while the other's claim is live. Whichever lands second rebases onto the first. #4593's window attribution should read its events from the same first-parent walk.\n- `bin/check-artifact-overwrite.js` needs no change. Its `--base`/`--head`/`--path` flags and exit codes stay the same.\n\n## Original request\n\nArtifact-overwrite check: attribute only the run's own first-parent commits\n\nOrigin: split out of #4593 at its third plan review (issuecomment-6562062652, Q7) — the maintainer chose Reading A, filing first-parent filtering as its own record\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/flow/artifact-overwrite-check.js` walks `{EXPECTED_BASE}..HEAD` without `--first-parent`, so upstream commits brought in by a catch-up merge are part of the walk. Those commits are authored inside the run's own spec windows, so once #4593 adds manifest-window attribution they can be attributed to whichever spec's window they fall in.\n\nThe maintainer asked for this on #4593 (issuecomment-6555467984: \"Filter to first-parent run commits before attributing\"). #4593's third plan review (issuecomment-6562062652, Q7) kept it out of that record: the plan argued it is a different false-positive shape, since a same-window attribution can only clear a deletion whose deleting and blamed commits both fall in one spec's window.\n\n## Deliverables\n\n1. The overwrite walk collects A/M events with `git log --first-parent --no-merges` over the run range, so a commit reachable only through a catch-up merge's second parent is never one of the run's own events.\n2. A deletion whose blamed commit is outside the run's own first-parent commits is treated as updating a pre-existing artifact, not as a cross-spec overwrite.\n3. A test fixture with a catch-up merge whose upstream commit falls inside a spec window: the upstream commit is not attributed to that spec, and the test goes red when first-parent filtering is reverted.\n\n## Acceptance Criteria\n\n- [ ] An upstream commit merged in by a catch-up merge, authored inside spec A's window, is never reported as spec A's event.\n- [ ] A run with no catch-up merge produces the same verdicts as before.\n- [ ] Reverting the first-parent filter turns the new fixture red.\n\n## Release Note\n\nThe multi-spec artifact-overwrite check no longer counts upstream commits that a catch-up merge brought in as the run's own edits.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — Walk A/M events over first-parent, non-merge commits; a deletion blamed outside the run's own commits reads as updating a pre-existing artifact\n- `plugin/bin/check-artifact-overwrite.js` — Pass the first-parent range through (no flag change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — Describe the first-parent scope of the walk\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — Catch-up-merge fixture: an upstream commit inside a spec window is never attributed to that spec\n\n_Filed by `capture` via specShapedBody._\n",
+        "createdAt": "2026-11-01T19:03:44Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4845,
+        "state": "OPEN",
+        "title": "Artifact-overwrite check: attribute only the run's own first-parent commits",
+        "updatedAt": "2026-11-01T20:41:57Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "low",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -1433,78 +1605,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4603 made the parent gate's reads and the reconciler's two writes (`plugin/bin/lib/issues/below-floor-parent-close.js`) target one repository, adding `--repo {owner}/{repo}` to each (SDD rulings 18 and 19), so a multi-remote checkout never splits one gate across remotes. The gate's prose still carries bare writes with no `--repo`: `plugin/skills/wrap-up/verification-brief-parent-gate.md` runs `gh issue comment $PARENT_NUM --body-file ...` (around lines 439 and 594) and `gh issue close $PARENT_NUM --reason completed` / `--reason \"not planned\"` (around lines 447 and 455). On a checkout whose `gh` base repo differs from `origin`, those writes land in a different repository than the gate's reads. The same bare-write shape exists across the rest of the prose class (`_shared/health-filing-mechanics.md`, `_shared/issue-claims.md`'s claim comment, and similar fences), so this needs a plugin-wide pass, not a one-file edit. It was deferred in #4603 because it needs a verdict field or a resolution step that supplies `{owner}/{repo}` to the prose, plus a sweep of the class.\n\nLedger row 20 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] The Parent-Gate Procedure's Close and Apply fences pass `--repo {owner}/{repo}` on every `gh issue comment` and `gh issue close`, with `{owner}/{repo}` taken from the gate's own resolution (the CLI's verdict or the prose's resolution step), so reads and writes of one gate target one repository.\n- [ ] The same bare `gh issue` write shape is inventoried across `plugin/skills/**/*.md`; each fence either carries `--repo` or is recorded as intentionally cwd-scoped.\n\n## Acceptance Criteria\n\n- [ ] `grep -nE \"gh issue (comment|close)\" plugin/skills/wrap-up/verification-brief-parent-gate.md` lists only lines that also contain `--repo`, run first against the unfixed file to see it match the four bare lines.\n- [ ] A conformance test pins that every `gh issue comment|close` fence in that file carries `--repo`, and goes red when one is removed.\n- [ ] The inventory of the remaining prose fences is committed or filed, with no fence left unclassified.\n\n## Release Note\n\nThe close procedure for a decomposed feature's parent now comments and closes in the same repository it read from, so a checkout with more than one remote no longer writes to the wrong one.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/verification-brief-parent-gate.md` — the bare `gh issue comment` and `gh issue close` fences\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — the reconciler's writes already carry `--repo`; the pattern to copy\n- `plugin/bin/parent-gate.js` — supplies the resolved slug to the prose\n\n_Filed by `wrap-up` via specShapedBody._\n",
-        "createdAt": "2026-11-01T07:51:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4824,
-        "state": "OPEN",
-        "title": "Pass --repo on the parent gate prose's gh issue comment and close writes",
-        "updatedAt": "2026-11-01T18:31:58Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -2520,6 +2620,84 @@
           "origin": "capture",
           "risk": "low",
           "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: tangential\n\n## Current State\n\n#4603 added `plugin/bin/parent-gate.js` and its shared core `plugin/bin/lib/issues/parent-gate.js` (paginated enumeration with `stateReason`, the self-inclusion rule, the oversight floor, cross-repo closing-reference filtering, reopen handling), and moved `plugin/skills/wrap-up/verification-brief-parent-gate.md` onto it. Two evaluators still compute the gate their own way:\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` (around lines 705-735 and 900-915) enumerates `sub_issues` with its own `gh api --paginate` call, reading no `stateReason`, and calls `parentGateState` directly. Its verdict can diverge from the CLI's on not-planned sub-issues and the oversight floor.\n- `plugin/skills/demo/entry-paths.md` (around lines 254-262) composes its own sub-issue enumeration in prose instead of calling `bin/parent-gate.js`.\n\nLedger rows 28 and 29 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] `engine-verify.js` evaluates the parent gate through `lib/issues/parent-gate.js` (or `bin/parent-gate.js`), with no `sub_issues` call of its own.\n- [ ] `demo/entry-paths.md` calls `bin/parent-gate.js` for enumeration instead of composing the `gh api` call.\n\n## Acceptance Criteria\n\n- [ ] `grep -n \"sub_issues\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- [ ] `grep -F \"issues/\\$PARENT_NUM/sub_issues\" plugin/skills/demo/entry-paths.md` returns nothing.\n- [ ] A unit test shows engine-verify's verdict for a parent whose sub-issues are all closed not-planned matches `bin/parent-gate.js`'s verdict for the same input.\n\n## Release Note\n\nThe wrap-up check and the demo flow now judge a decomposed feature's parent with the same tested code the close procedure uses, so all three agree on edge cases such as cancelled sub-issues.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — route the parent gate through the shared core\n- `plugin/skills/demo/entry-paths.md` — call bin/parent-gate.js for enumeration\n- `plugin/bin/lib/issues/parent-gate.js` — reuse\n\n_Filed by `capture` via specShapedBody._",
+        "createdAt": "2026-11-01T07:34:15Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          }
+        ],
+        "number": 4805,
+        "state": "OPEN",
+        "title": "Move the remaining parent-gate evaluators onto the shared parent-gate core",
+        "updatedAt": "2026-11-01T20:33:37Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "medium",
+          "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
@@ -3648,84 +3826,6 @@
     ],
     [
       {
-        "body": "Blocked by #4495\n\nOrigin: #4495 review (sdd-ruling-1, PR #4723)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`claim-targets.js` bootstraps a missing `claims-registry` branch once per run (#4495, PR #4723). In `handleBranchMissing` (`plugin/bin/lib/claim-targets/claim-targets.js`), a bootstrap result that is `!ok && transient` (a secondary rate limit) takes the transient exit 4 path (`claims-branch-bootstrap-rate-limited`); every other `!ok` result exits 6 (\"branch missing on origin and could not be created\").\n\n`classifyGhApiError` (`plugin/bin/lib/issues/claim-store.js`) recognises ENOENT, the secondary rate limit, 404, 422 and 409; everything else, a permission 403 or 401 included, becomes `failure: 'network-failure'`. So `ensureClaimsBranch` cannot tell a transport failure (network blip, timeout, 5xx) from a permission refusal, and a plain network blip during the bootstrap exits 6: the record is stopped as if the branch were permanently uncreatable.\n\n#4495's review flagged this (5 lenses, tiebreak-confirmed, medium). The unattended Review Console ratified exit 6 as-is (sdd-ruling-1, run `2026-10-31T133106-record-4495`), because changing it needs the classifier split below.\n\n## Deliverables\n\n1. `classifyGhApiError` classifies a permission failure (HTTP 401, and HTTP 403 that is neither a secondary rate limit nor primary rate-limit exhaustion) as its own refusal outcome, distinct from `network-failure`. Every existing caller of `classifyGhApiError` / `defaultGhApi` keeps its current exit behaviour for a 403/401, or is updated deliberately with the change named in the PR.\n2. `ensureClaimsBranch` reports a transport-class failure (`network-failure` after the split) as `transient`, so `handleBranchMissing` routes it to exit 4 with its own error name (for example `claims-branch-bootstrap-network-failure`), under `--keep-going` a skip, like the rate-limited case.\n3. Every bootstrap failure is classified by one rule, stated in `classifyGhApiError`'s outcomes (after Deliverable 1's split) rather than as a list of HTTP statuses. The rule applies to every call the bootstrap makes: the default-branch read, the tip-sha read, the `POST git/refs` create, and the follow-up branch re-read. (Plan-review round 3: one rule replaces the case lists.)\n   - **Transient (exit 4; a `--keep-going` skip):** `network-failure` and `secondary-rate-limit`. `network-failure` covers everything the classifier does not recognise: a transport error, a timeout, a 5xx, a primary rate limit (Deliverable 5), and any HTTP status it has no pattern for (a 400, say). Treating an unrecognised 4xx as transient is accepted; this record does not add patterns for more statuses.\n   - **Refusal (exit 6):** the new permission outcome (401/403, Deliverable 1); `gh-absent`; every answer the classifier returns with a status and `failure: null` (404, 409 for example an empty repository, 422), except the lost-race 422 below; and the non-HTTP refusals unchanged from today (a repository that reports no default branch, a default branch that reports no tip sha).\n   - **Lost-race 422:** a `POST git/refs` 422 whose follow-up re-read shows the branch exists is success, as today. A 422 whose re-read succeeds and shows no branch is a refusal (a ruleset). A 422 whose re-read fails takes the re-read failure's own class under this rule (Deliverable 6).\n   - **Error names:** a `secondary-rate-limit` reports `claims-branch-bootstrap-rate-limited`; a `network-failure` reports `claims-branch-bootstrap-network-failure`, primary rate limit included. (Round 3, decision 1, Reading B.)\n4. The exit-code prose that names exit 6 (`plugin/bin/claim-targets.js` usage, `plugin/skills/flow/claim-targets.md`, `plugin/skills/dispatch/settle-and-merge.md`, `plugin/skills/_shared/issue-claims.md`, `docs/plugin-structure.md`) states that a network failure during bootstrap is transient (exit 4), not exit 6.\n5. A primary rate-limit 403 or 429 (`API rate limit exceeded`, or `X-RateLimit-Remaining: 0`) is classified `network-failure`, never the new permission outcome, as `plugin/skills/_shared/github-rate-limit.md` already treats it as transient. During the bootstrap it exits 4 with `claims-branch-bootstrap-network-failure`, never 6. (Plan-review decision 2, Reading B; error name pinned by round 3, decision 1, Reading B.)\n6. Deliverable 3's rule applied to the 422 re-read: the bootstrap needs the re-read's failure kind, so it can no longer decide from `claimsBranchExists`'s bare `null`. A re-read that fails with `network-failure` exits 4 with `claims-branch-bootstrap-network-failure`; with `secondary-rate-limit`, exit 4 with `claims-branch-bootstrap-rate-limited`; with the permission outcome or `gh-absent`, exit 6. The existing claim-store test \"POST git/refs 422 with an unreadable branches endpoint is a refusal\" is rewritten to pin the transient outcome for a network-failure re-read. (Plan-review decision 1, Reading B; narrowed by round 2, decision 1, Reading B.)\n7. Under `--keep-going` with two or more targets, a transient bootstrap failure on one target does not leave later targets reporting `claims-branch-missing`, which means a bootstrap that reported success. Each later target that finds the branch missing is skipped with the same transient error name the failed bootstrap produced (a `--keep-going` transient skip, like the rate-limited case today). (Plan-review round 2, reviewer note, added by the human.)\n\n## Acceptance Criteria\n\n- [ ] A unit test feeds `classifyGhApiError` an HTTP 403 (not a secondary rate limit) and an HTTP 401 and gets the new refusal outcome, not `network-failure`; it fails against the current classifier.\n- [ ] A `claim-targets` test with a bootstrap whose create call fails with a transport error (no HTTP status) exits 4 with the new error name, and under `--keep-going` skips that target; it exits 6 against the current code.\n- [ ] A `claim-targets` test with a bootstrap refused by a permission 403 still exits 6 and prints the one-line reason.\n- [ ] The secondary-rate-limit bootstrap case still exits 4 (`claims-branch-bootstrap-rate-limited`).\n- [ ] No remaining exit-code prose says a network failure during bootstrap exits 6.\n- [ ] A `classifyGhApiError` test with a primary rate-limit 403 (`API rate limit exceeded`, no `Retry-After`) gets a transient outcome, not the new refusal outcome.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a network-failure branch re-read gets a transient result, and a `claim-targets` test with that bootstrap exits 4 with `claims-branch-bootstrap-network-failure`.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a permission 403 branch re-read gets a refusal, and a `claim-targets` test with that bootstrap exits 6.\n- [ ] The `gh-absent`, no-default-branch and no-tip-sha bootstrap refusals still exit 6.\n- [ ] A two-target `claim-targets --keep-going` test whose first bootstrap fails with a transport error skips both targets with `claims-branch-bootstrap-network-failure`, never `claims-branch-missing`.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a primary-rate-limit branch re-read gets a transient result reported as `claims-branch-bootstrap-network-failure`.\n- [ ] A `claim-targets` test with a bootstrap whose `POST git/refs` answers 409 exits 6.\n\n## Release Note\n\nA network blip while the plugin creates the claims branch is now retried on a later run instead of stopping the record as if the branch could never be created.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/claim-store.js` — split a permission refusal out of network-failure in classifyGhApiError; transient bootstrap result\n- `plugin/bin/lib/claim-targets/claim-targets.js` — route a transport-class bootstrap failure to exit 4\n- `tests/bin-lib/issues/claim-store.test.js` — classifier and bootstrap cases\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — exit 4 vs exit 6 bootstrap cases\n- `plugin/skills/flow/claim-targets.md` — exit-code prose\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-31T16:00:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4756,
-        "state": "OPEN",
-        "title": "claim-targets: a network blip while bootstrapping the claims branch exits 6 instead of the transient exit 4",
-        "updatedAt": "2026-11-01T20:22:47Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: reflect full from #4602\n\nDefer-reason: tangential\n\n## Current State\n\nA review tiebreak agent on #4602 (run `2026-10-31T075610-record-4602`) was refused when it ran `git -C \".../review-ctx/agent-scratch/tb-2/src\" init -q -b main` to build a git fixture at its sanctioned `SCRATCH:` path. The run recorded a `gate-denial` event for that path (`friction-events.js`, ts 2026-10-31T09:06:10Z), immediately after a `wd-guard-refusal` for the same command at 09:06:09Z.\n\n`plugin/skills/review/step3-tiebreak.md`, `step3-debate-and-refutation.md` and `step3-lens-dispatch.md` give every dispatched review agent a `SCRATCH: {ctx-dir}/agent-scratch/{agent-id}` path under the run directory, which is anchored to the main checkout, and tell it to create probe fixtures there with plain `mkdir`/`printf`/`node -e` calls. None of them mentions that a fixture needing a git repository cannot be created at that path from a `worktree-always` session: the gate refuses `git init` there.\n\nIntegration-branch probe (#3987): `git fetch origin main`, then `git grep -n -F -e \"agent-scratch\" origin/main -- plugin/bin` and `git grep -n -i -F -e \"git init\" origin/main -- plugin/skills/review` both matched nothing (exit 1), so main carries neither a gate exemption for the scratch path nor skill text for git fixtures.\n\n## Deliverables\n\nAdd one clause to the `SCRATCH:` instruction in each of `step3-tiebreak.md`, `step3-debate-and-refutation.md` (both its dispatch templates) and `step3-lens-dispatch.md`: a probe that needs a git repository creates it under the session scratchpad directory (`_shared/session-tmp-root.md`) instead of `{ctx-dir}/agent-scratch/`, because `git init` at the run-dir path is refused from a worktree session.\n\nKeep the three copies word-identical so one test pin covers all of them.\n\n## Acceptance Criteria\n\nEach of the three files names the git-fixture exception inside its `SCRATCH:` instruction: `grep -c -F \"git init\" plugin/skills/review/step3-tiebreak.md plugin/skills/review/step3-debate-and-refutation.md plugin/skills/review/step3-lens-dispatch.md` prints a count of at least 1 for every file.\n\nA conformance test pins the clause in all three files and goes red when it is removed from any one of them.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md` — add the git-fixture clause to the SCRATCH line\n- `plugin/skills/review/step3-debate-and-refutation.md` — add the git-fixture clause to both SCRATCH lines\n- `plugin/skills/review/step3-lens-dispatch.md` — add the git-fixture clause to the SCRATCH line\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-31T09:32:51Z",
         "labels": [
@@ -4380,7 +4480,7 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nReplace wrap-up's Verification Brief with an **acceptance packet** for every project — universal, not gated on control mode. The packet is what the human finds at the acceptance control point: it makes validating a finished feature cheap, and it is the only artifact `/accept` and Dispatch both read. Control mode (separate units) later adds the stop-removing behaviors; the packet itself is a plain improvement that ships for everyone, migrated expand-contract.\n\nSections, in order (design section 6):\n\n1. **What changed** — user-facing summary, not a diff tour.\n2. **Recording** — the walkthrough of the feature in use (filled by the recording record; a placeholder section here).\n3. **Test guide** — numbered manual steps, each with a direct link that lands in the right state (role, test data). Credentials are referenced by vault entry name, never embedded as session tokens or passwords.\n4. **Couldn't test** — what the agent could not verify and why (no backend, no dev server, needs a real device, needs real credentials). **A check that skipped itself is listed here, never shown as silence.**\n5. **Tried to break** — the negative stories and edge cases run, with results.\n6. **Least confident** — where the agent's judgment is weakest (\"if I were you I'd poke here\"); sourced from review's low-confidence findings.\n7. **Risk proofs** — present only when risk flags were kept (the specific evidence per flag; filled by the risk-flag record).\n8. **Decisions left for you** — carried-forward items (filled by the control-mode records); omitted when empty.\n9. **Deploy status** — target and, for `dev`, whether the feature is confirmed live (filled by the dev-target record; for `local` it states the target).\n\n**Canonical copy:** a marker-block comment on the work record (a GitHub comment; the PR links to it). The run-dir copy is a working copy and is never read after the run. **One packet per work item; re-posting updates the same comment in place** (find by marker, edit by comment id), never a second comment. **Fact-validated narration:** every claim in sections 3-7 cites a gathered fact (story report, screenshot, test output, review finding) and the citations are validated against the gathered fact set, following the repo's gather / narrate / render pattern as `/activity` implements it (`plugin/bin/lib/activity/gather.js` and `render.js`; the `fact-validated-narration` skill is the checklist).\n\nAnti-goals this record carries: a \"tested X\" claim with no run behind it; a skipped check that shows as nothing; packet links that point at a build lacking the feature (deploy status owns that); secrets reaching a public surface (the recording record owns redaction, but this record must never embed credential-shaped values in the Test guide).\n\n**Contract decisions this record pins (the packet contract file states them; later records cite it):**\n\n- **Marker and lookup.** The canonical comment carries `<!-- acceptance-packet: v1 -->` on its first line (registered in `_shared/pr-run-comments.md`'s marker registry). A writer lists the work record's comments, keeps those that carry the marker and pass `comment-trust.js`, and edits the earliest by comment id; extra marker comments are reported, never edited or deleted. If the matched comment cannot be edited by the current identity, the run reports that visibly and posts nothing (never a second packet). The PR gets one idempotently appended body line `Acceptance packet: {comment url}`; with no PR (the `local-merge` model) there is no link and none is needed. Under `local-files` the packet lives in the record body between `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->` and is replaced in place between the delimiters.\n- **Facts and claims.** A fact is `{ id, kind, status, reason?, source }` with `kind` one of `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`; `status` one of `passed`, `failed`, `skipped`, `not-run`; ids are stable strings such as `check:unit-tests` or `story:login#negative-2`. A claim is `{ section, text, refs[] }` with `section` one of `what-changed`, `test-guide`, `tried-to-break`, `least-confident`, `risk-proofs`. Section-to-kind table (in the contract): what-changed cites `change`; test-guide cites `story` and `link`; tried-to-break cites `story` and `check`; least-confident cites `finding`; risk-proofs cites `flag` plus the proof fact. Sections 2 (Recording), 8 (Decisions) and 9 (Deploy status) render facts of kind `recording`, `decision` and `deploy` directly and are not narrated claims. `schemaVersion: 1` is one constant used by the facts file and the marker alike; later records add fact kinds only by extending the contract's table.\n- **Validation policy: visible drop.** `validatePacket` drops any claim whose `refs` is empty, names an absent fact, or names a fact incompatible with the claim, and the packet always states `N claims were dropped for missing evidence` (and lists them in the run-dir working copy). It never posts silently thinner. Compatibility: a claim asserting verification (tested, verified, works) may cite only `passed` facts; a claim citing a `failed` fact renders under Tried to break with the failure; one citing `skipped` or `not-run` moves to Couldn't test.\n- **The expected check set comes from outside the facts.** Gather derives the checks and stories expected for the work (the spec's Acceptance Criteria and verify expectations, the planned stories) independently of what ran; an expected check with no result fact renders under Couldn't test as `not run`, so a self-skipped check cannot be silent. Gather is `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic; a partial gather renders a stated `partial` note); narration is an LLM step in the wrap-up prose; wrap-up runs gather, narrate, validate, render, post in that order.\n- **Failure contract.** If the post or edit fails, the pending acceptance label is not applied and the failure is reported. The reader function `readPacket(comments)` in the same module applies the reader rules: an unknown `schemaVersion` reads as unreadable (stated, no second packet), duplicates resolve to the earliest trusted comment, an untrusted-author marker is ignored, and the run-dir copy is never consulted (a test proves a stale local copy is ignored).\n- **Links.** Test-guide links must be http(s) on the local base URL host or the `dev-base-url` host only; any other host is refused. A shared constant defines the credential-shaped key set, matched case-insensitively after normalization in query, fragment and userinfo: `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`. The Recording record reuses this one constant for its redactor. When the deploy section is not confirmed live, each Test-guide link carries `(link unverified: deploy not confirmed live)`.\n- **Facts-poor and infra items.** A section with nothing to say renders one line stating why (`not applicable: no UI surface`), never an empty heading. For `Surface: infra`/`backend` work the Test guide lists commands to run instead of links. For decomposed work the packet lives on the parent (the feature-acceptance record owns the gate); a sub-issue's wrap-up posts nothing and the existing parent-gate routing stands.\n- **Size.** The renderer caps the comment at 60,000 characters (GitHub's limit is 65,536) and truncates by omitting whole items with a stated `truncated: N items omitted` line.\n- **Section 1 is cited too.** `what-changed` claims cite `change` facts (changed files, commits), so every narrated section is validated.\n- **Old brief.** All five Routing call sites land in `verification-brief.md`, so replacing its template migrates them at once; the old section map (The ask to What changed; What shipped to What changed; Confirmed to Test guide and Tried to break; Observation plan to Test guide) is a table in the contract. Briefs already posted stay readable through `plugin/skills/demo/legacy-brief-compatibility.md` (kept until the final cleanup record). A work item with only a legacy brief comment gets a new packet comment; the legacy comment is left untouched, and \"exactly one\" applies to packet comments.\n\n## Non-Goals\n\n- Not posting the recording or redaction (separate record), not deploy-status refresh (dev-target record), not the control-mode \"Decisions left for you\" population (control-mode records) — this record defines the sections and renders them when data exists.\n- Not the `/accept` skill or the verdict handler.\n- Not Dispatch's display of the packet.\n- Not removing the legacy-brief reader (`demo/legacy-brief-compatibility.md`); the five call sites in `verification-brief.md`'s Routing table keep working and now land on the packet.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none intra-batch | — |\n\n## Current State\n\n- The Verification Brief: `plugin/skills/wrap-up/verification-brief.md` (about 31 KB). Its `## Routing` section lists five call sites (wrap-up Phase 4 acceptance-labeling, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate, dispatch close-out step 3, tidy's Open-parent-gate action). Its `## Verification Brief` template has sections The ask / What shipped / Confirmed / Observation plan. It already composes a **Try it block** for every record (`## Try it block`, backed by `plugin/skills/_shared/try-it.md`).\n- Parent-gate: `plugin/skills/wrap-up/verification-brief-parent-gate.md` (a decomposed sub-issue never carries its own pending label; its parent carries one gate). Feature-level acceptance for decomposed work is a separate record; here, keep the existing routing intact.\n- Engine: `plugin/bin/lib/wrap-up/engine-render.js` renders wrap-up output; `plugin/bin/lib/wrap-up/engine-verify.js` verifies it.\n- Pattern to follow: `/activity` splits gather (`gh` to `facts.json`) / narrate / render, and `render.js` drops every `refs[]` citation not present in the facts (warning forms: `dropped citation`, `ambiguous citation`, `unparseable citation`), refuses a schemaVersion mismatch, and neutralizes newlines and link brackets in free text so a citation-shaped string in prose cannot forge a heading or link.\n- Raw material: `/stories` negative stories, qa-agent step screenshots, review's low-confidence findings, `/walkthrough`'s GIF encoder.\n- A shared contract file for the packet does not exist yet: `plugin/skills/_shared/acceptance-packet.md` is new.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/acceptance-packet.md` (new): the packet contract — section list and order, the marker-block comment format and its find-by-marker/edit-in-place rule, the fact schema (what each of sections 3-7 may cite), the untrusted-content rules for free text, and which other units fill which sections.\n- [ ] A packet builder module (pure, under `plugin/bin/lib/wrap-up/`) with `validatePacket(facts, narrative)` and `renderPacket(facts, narrative)`: drops or fails any claim in sections 3-7 whose citation is absent from the gathered facts; renders a skipped check under **Couldn't test**; neutralizes newlines and link brackets in narrative text per `/activity`'s `inline()` approach.\n- [ ] Wrap-up posts exactly one packet comment per work item through the existing github write transport (`_shared/github-write-transport.md`), edits it in place on re-run, and links it from the PR; under `work-backend: local-files` it writes the packet into the record body section instead.\n- [ ] `verification-brief.md` and `_shared/try-it.md` reworked so the Try it block and observation plan feed the packet's Test guide and Tried-to-break sections; the old brief sections are mapped, not silently dropped (a mapping table in the packet contract).\n- [ ] `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic gather, partial-gather note) and `readPacket` (reader rules above) with the wrap-up prose that runs gather, narrate, validate, render, post in order; the PR-link line and the `local-files` delimiters from the contract decisions.\n- [ ] Tests: validation rejects an uncited claim; a skipped check lands in Couldn't test; re-render with an existing marker comment edits rather than posts; schema mismatch is refused.\n\n## Acceptance Criteria\n\n1. Given facts containing a story report with one failed and one skipped check, `renderPacket` outputs the skipped check under `Couldn't test` (with its reason) and the failure under `Tried to break`; nothing is omitted silently (a test counts input checks against rendered rows).\n2. A claim in the Test guide whose `refs` cites a fact id absent from the gathered facts is dropped by `validatePacket`, and the rendered packet states `1 claim was dropped for missing evidence`; a claim with no `refs` is dropped the same way; a \"verified\" claim citing a `failed` fact renders under Tried to break with the failure; one citing a `skipped` fact moves to Couldn't test. Each is pinned by a test.\n2a. An expected check (derived from the spec's Acceptance Criteria or planned stories) with no result fact at all renders under Couldn't test as `not run`.\n2b. `readPacket` returns the earliest trusted marker comment among duplicates, ignores an untrusted-author marker, reports `schemaVersion: 2` as unreadable, and never reads the run-dir copy.\n2c. When the post or edit fails (fake runner returns an error) the pending acceptance label is not applied and the failure is reported.\n2d. A packet that would exceed 60,000 characters is truncated by whole items with a `truncated: N items omitted` line.\n3. Wrap-up's second run on a work item that already has a packet comment edits that comment (same comment id) and the work item ends with exactly one comment carrying the marker (test against the fake runner).\n4. A narrative string containing `[x](https://evil.example)` or a forged `## Couldn't test` heading is rendered as inert prose (brackets escaped, newlines collapsed).\n5. The packet contract states, and a conformance test pins, that credentials appear only as vault entry names and that the link rules above hold: a link to a host other than the local base URL host or `dev-base-url` is refused; a link carrying any key from the shared credential-key constant in its query, fragment or userinfo is refused after case and percent-encoding normalization (tests for `TOKEN=`, `tok%65n=`, `#sig=`, `user:pass@`, `sessionid=`); a benign `/docs/token-guide` path is accepted. For a `Surface: infra` record the Test guide lists commands and renders no links; sections with nothing to say render a one-line reason.\n6. The five call sites in `verification-brief.md`'s Routing table still resolve and still apply the pending acceptance label; existing wrap-up tests pass unchanged apart from intended renames.\n7. `npm test` passes.\n\n## Release Note\n\nReplaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.\n\n## Technical Approach\n\nThree-stage gather / narrate / render. Gather is deterministic and writes a facts file in the run directory (working copy). The narration step is judgment and writes a narrative with `refs[]` per claim. The renderer is deterministic and trusts only the facts. The canonical copy is the posted comment, found by its marker and edited in place; the run-dir copy is never read afterward. The packet is the same artifact for control mode on or off — only which sections are populated differs.\n\n### Data / API Surface\n\n- Marker: a fenced marker block comment, versioned (`schemaVersion: 1`), following the repo's other marker-comment convention (`_shared/pr-run-comments.md`); author-trust-gated on read (`plugin/bin/lib/issues/comment-trust.js`).\n- Facts: `{ checks[], stories[], findings[], links[], decisions[], deploy }` with stable ids that `refs[]` cite.\n- Sections 2, 7, 8, 9 render a stated placeholder (`not recorded`, `no kept risk flags`, none, `target: local`) until their owning records populate them.\n\n### Key Files\n\n- `plugin/skills/_shared/acceptance-packet.md` — new packet contract\n- `plugin/skills/wrap-up/verification-brief.md` — migrate to the packet; keep Routing\n- `plugin/skills/_shared/try-it.md` — Try it block feeds the Test guide\n- `plugin/bin/lib/wrap-up/engine-render.js` — render integration\n- `plugin/bin/lib/wrap-up/packet-gather.js` — new gather, `readPacket`, `validatePacket`, `renderPacket` (builder's split into sibling modules)\n- `plugin/skills/_shared/pr-run-comments.md` — register the `acceptance-packet` marker\n- `plugin/bin/lib/activity/render.js` — reference pattern for citation validation (read, do not edit)\n- `plugin/bin/lib/issues/comment-trust.js` — trust gate for reading the marker comment\n- `tests/try-it-contract-conformance.test.js` — pins the Try it contract; update with the move\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — keep green\n\n## Gotchas\n\n- Replacing, not adding: two packets on one item is the failure mode; the old template is replaced in place in `verification-brief.md`, not kept beside the new one.\n- Do not read the run-dir copy after the run; `/accept` and Dispatch read GitHub (AC 2b proves the reader ignores a stale local copy).\n- The authenticated identity that posted the packet may differ on a re-run (cloud, Routine); AC 2c's failure path covers \"cannot edit\". Concurrent wrap-up runs on one record are prevented by the record claim; if one slips through, last write wins and the loser reports.\n- The gather step must never silently pass a failed gather: a partial gather renders a stated \"partial\" note, mirroring `/activity`'s Partial gather handling.\n- `tests/try-it-contract-conformance.test.js` and other prose-pinning tests fail when prose moves; run the whole suite (not only touched files) before merge.\n- The wrap-up skill text must stay within its size ceiling; put packet detail in the new `_shared` contract and cite it.\n- Parent-linked sub-issues keep today's routing (the parent carries the gate) until the feature-level-acceptance record changes it.\n\n**Related:** #4269\n\n\n<!-- work-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio -->\nwork-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Q1, what the parent gate posts: Reading A.** The parent gate keeps posting the legacy `## Verification Brief` until the feature-level acceptance record (#4617) changes it. Move the brief template verbatim into `plugin/skills/wrap-up/verification-brief-parent-gate.md`, so the parent path, `/tidy`'s opened-parent-gate check and `engine-verify.js`'s parent path stay unchanged in this record. `verification-brief.md` Step 4 still holds exactly one template (the packet), never two.\n- **Q2, credential screening scope: Reading B.** Apply the shared credential-key constant to `command` strings and Test-guide claim text as well as links (`key=`, `--key`, `Authorization:` and the other key shapes, matched case-insensitively). A matching entry is dropped from the packet and its omission noted in the packet, never rendered; the packet as a whole still posts. Add tests for a command and a claim-text match alongside AC5's link cases.\n- **Q3, where passed happy-path checks and stories render: Reading A.** `Tried to break` lists only negative stories (`negative: true`), edge-case checks and failures. Every other passed check or story renders in its own stated list (for example a \"Checks that passed\" block under Test guide), so a routine pass never reads as an attempt to break the feature. AC1's row count still holds across every section: each check/story fact renders exactly one row.\n- **Q4, an MCP-transport re-run that finds an existing packet: Reading A.** The gh-absent transport cannot edit a comment, so a re-run that finds a packet already posted counts as a failed edit under the Failure contract: it reports the failure, posts nothing, and applies no pending acceptance label. `/accept` never reads a stale packet under a pending label.\n- **Q5, records below the oversight floor: Reading B.** Every record with no parent gets a packet, below the floor included: the packet posts without `--label` there, and the below-floor \"Posting it alone\" path (the Try it block posted by itself) is retired. The packet stays universal, one per work item.\n- **Q6, where the expected verify-check names come from: Reading A.** Gather derives the expected checks itself from the project's verify-scope declaration (the checks `verify.js` reads through `decl.checks`, such as `tests`, `types`, `lint`). No new field is added to `verify-expectations.json`, and wrap-up passes no check list.\n- **Q7, whether a `local` deploy target counts as not confirmed live: Reading B.** The `(link unverified: deploy not confirmed live)` suffix applies only when the deploy target is `dev` and the feature is not confirmed live. Links on a `local` target carry no suffix; the deploy section still states the target.\n- **Q8, what makes a check an edge-case check: Reading A.** No check counts as an edge case until a signal for it exists, so `Tried to break` holds negative stories (`negative: true`) and failures only. A passing check renders under \"Checks that passed\". Defining an edge-case signal is out of scope for this record.\n",
+        "body": "Surface: infra\n\n## Overview\n\nReplace wrap-up's Verification Brief with an **acceptance packet** for every project — universal, not gated on control mode. The packet is what the human finds at the acceptance control point: it makes validating a finished feature cheap, and it is the only artifact `/accept` and Dispatch both read. Control mode (separate units) later adds the stop-removing behaviors; the packet itself is a plain improvement that ships for everyone, migrated expand-contract.\n\nSections, in order (design section 6):\n\n1. **What changed** — user-facing summary, not a diff tour.\n2. **Recording** — the walkthrough of the feature in use (filled by the recording record; a placeholder section here).\n3. **Test guide** — numbered manual steps, each with a direct link that lands in the right state (role, test data). Credentials are referenced by vault entry name, never embedded as session tokens or passwords.\n4. **Couldn't test** — what the agent could not verify and why (no backend, no dev server, needs a real device, needs real credentials). **A check that skipped itself is listed here, never shown as silence.**\n5. **Tried to break** — the negative stories and edge cases run, with results.\n6. **Least confident** — where the agent's judgment is weakest (\"if I were you I'd poke here\"); sourced from review's low-confidence findings.\n7. **Risk proofs** — present only when risk flags were kept (the specific evidence per flag; filled by the risk-flag record).\n8. **Decisions left for you** — carried-forward items (filled by the control-mode records); omitted when empty.\n9. **Deploy status** — target and, for `dev`, whether the feature is confirmed live (filled by the dev-target record; for `local` it states the target).\n\n**Canonical copy:** a marker-block comment on the work record (a GitHub comment; the PR links to it). The run-dir copy is a working copy and is never read after the run. **One packet per work item; re-posting updates the same comment in place** (find by marker, edit by comment id), never a second comment. **Fact-validated narration:** every claim in sections 3-7 cites a gathered fact (story report, screenshot, test output, review finding) and the citations are validated against the gathered fact set, following the repo's gather / narrate / render pattern as `/activity` implements it (`plugin/bin/lib/activity/gather.js` and `render.js`; the `fact-validated-narration` skill is the checklist).\n\nAnti-goals this record carries: a \"tested X\" claim with no run behind it; a skipped check that shows as nothing; packet links that point at a build lacking the feature (deploy status owns that); secrets reaching a public surface (the recording record owns redaction, but this record must never embed credential-shaped values in the Test guide).\n\n**Contract decisions this record pins (the packet contract file states them; later records cite it):**\n\n- **Marker and lookup.** The canonical comment carries `<!-- acceptance-packet: v1 -->` on its first line (registered in `_shared/pr-run-comments.md`'s marker registry). A writer lists the work record's comments, keeps those that carry the marker and pass `comment-trust.js`, and edits the earliest by comment id; extra marker comments are reported, never edited or deleted. If the matched comment cannot be edited by the current identity, the run reports that visibly and posts nothing (never a second packet). The PR gets one idempotently appended body line `Acceptance packet: {comment url}`; with no PR (the `local-merge` model) there is no link and none is needed. Under `local-files` the packet lives in the record body between `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->` and is replaced in place between the delimiters.\n- **Facts and claims.** A fact is `{ id, kind, status, reason?, source }` with `kind` one of `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`; `status` one of `passed`, `failed`, `skipped`, `not-run`; ids are stable strings such as `check:unit-tests` or `story:login#negative-2`. A claim is `{ section, text, refs[] }` with `section` one of `what-changed`, `test-guide`, `tried-to-break`, `least-confident`, `risk-proofs`. Section-to-kind table (in the contract): what-changed cites `change`; test-guide cites `story` and `link`; tried-to-break cites `story` and `check`; least-confident cites `finding`; risk-proofs cites `flag` plus the proof fact. Sections 2 (Recording), 8 (Decisions) and 9 (Deploy status) render facts of kind `recording`, `decision` and `deploy` directly and are not narrated claims. `schemaVersion: 1` is one constant used by the facts file and the marker alike; later records add fact kinds only by extending the contract's table.\n- **Validation policy: visible drop.** `validatePacket` drops any claim whose `refs` is empty, names an absent fact, or names a fact incompatible with the claim, and the packet always states `N claims were dropped for missing evidence` (and lists them in the run-dir working copy). It never posts silently thinner. Compatibility: a claim asserting verification (tested, verified, works) may cite only `passed` facts; a claim citing a `failed` fact renders under Tried to break with the failure; one citing `skipped` or `not-run` moves to Couldn't test.\n- **The expected check set comes from outside the facts.** Gather derives the checks and stories expected for the work (the spec's Acceptance Criteria and verify expectations, the planned stories) independently of what ran; an expected check with no result fact renders under Couldn't test as `not run`, so a self-skipped check cannot be silent. Gather is `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic; a partial gather renders a stated `partial` note); narration is an LLM step in the wrap-up prose; wrap-up runs gather, narrate, validate, render, post in that order.\n- **Failure contract.** If the post or edit fails, the pending acceptance label is not applied and the failure is reported. The reader function `readPacket(comments)` in the same module applies the reader rules: an unknown `schemaVersion` reads as unreadable (stated, no second packet), duplicates resolve to the earliest trusted comment, an untrusted-author marker is ignored, and the run-dir copy is never consulted (a test proves a stale local copy is ignored).\n- **Links.** Test-guide links must be http(s) on the local base URL host or the `dev-base-url` host only; any other host is refused. A shared constant defines the credential-shaped key set, matched case-insensitively after normalization in query, fragment and userinfo: `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`. The Recording record reuses this one constant for its redactor. When the deploy section is not confirmed live, each Test-guide link carries `(link unverified: deploy not confirmed live)`.\n- **Facts-poor and infra items.** A section with nothing to say renders one line stating why (`not applicable: no UI surface`), never an empty heading. For `Surface: infra`/`backend` work the Test guide lists commands to run instead of links. For decomposed work the packet lives on the parent (the feature-acceptance record owns the gate); a sub-issue's wrap-up posts nothing and the existing parent-gate routing stands.\n- **Size.** The renderer caps the comment at 60,000 characters (GitHub's limit is 65,536) and truncates by omitting whole items with a stated `truncated: N items omitted` line.\n- **Section 1 is cited too.** `what-changed` claims cite `change` facts (changed files, commits), so every narrated section is validated.\n- **Old brief.** All five Routing call sites land in `verification-brief.md`, so replacing its template migrates them at once; the old section map (The ask to What changed; What shipped to What changed; Confirmed to Test guide and Tried to break; Observation plan to Test guide) is a table in the contract. Briefs already posted stay readable through `plugin/skills/demo/legacy-brief-compatibility.md` (kept until the final cleanup record). A work item with only a legacy brief comment gets a new packet comment; the legacy comment is left untouched, and \"exactly one\" applies to packet comments.\n\n## Non-Goals\n\n- Not posting the recording or redaction (separate record), not deploy-status refresh (dev-target record), not the control-mode \"Decisions left for you\" population (control-mode records) — this record defines the sections and renders them when data exists.\n- Not the `/accept` skill or the verdict handler.\n- Not Dispatch's display of the packet.\n- Not removing the legacy-brief reader (`demo/legacy-brief-compatibility.md`); the five call sites in `verification-brief.md`'s Routing table keep working and now land on the packet.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none intra-batch | — |\n\n## Current State\n\n- The Verification Brief: `plugin/skills/wrap-up/verification-brief.md` (about 31 KB). Its `## Routing` section lists five call sites (wrap-up Phase 4 acceptance-labeling, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate, dispatch close-out step 3, tidy's Open-parent-gate action). Its `## Verification Brief` template has sections The ask / What shipped / Confirmed / Observation plan. It already composes a **Try it block** for every record (`## Try it block`, backed by `plugin/skills/_shared/try-it.md`).\n- Parent-gate: `plugin/skills/wrap-up/verification-brief-parent-gate.md` (a decomposed sub-issue never carries its own pending label; its parent carries one gate). Feature-level acceptance for decomposed work is a separate record; here, keep the existing routing intact.\n- Engine: `plugin/bin/lib/wrap-up/engine-render.js` renders wrap-up output; `plugin/bin/lib/wrap-up/engine-verify.js` verifies it.\n- Pattern to follow: `/activity` splits gather (`gh` to `facts.json`) / narrate / render, and `render.js` drops every `refs[]` citation not present in the facts (warning forms: `dropped citation`, `ambiguous citation`, `unparseable citation`), refuses a schemaVersion mismatch, and neutralizes newlines and link brackets in free text so a citation-shaped string in prose cannot forge a heading or link.\n- Raw material: `/stories` negative stories, qa-agent step screenshots, review's low-confidence findings, `/walkthrough`'s GIF encoder.\n- A shared contract file for the packet does not exist yet: `plugin/skills/_shared/acceptance-packet.md` is new.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/acceptance-packet.md` (new): the packet contract — section list and order, the marker-block comment format and its find-by-marker/edit-in-place rule, the fact schema (what each of sections 3-7 may cite), the untrusted-content rules for free text, and which other units fill which sections.\n- [ ] A packet builder module (pure, under `plugin/bin/lib/wrap-up/`) with `validatePacket(facts, narrative)` and `renderPacket(facts, narrative)`: drops or fails any claim in sections 3-7 whose citation is absent from the gathered facts; renders a skipped check under **Couldn't test**; neutralizes newlines and link brackets in narrative text per `/activity`'s `inline()` approach.\n- [ ] Wrap-up posts exactly one packet comment per work item through the existing github write transport (`_shared/github-write-transport.md`), edits it in place on re-run, and links it from the PR; under `work-backend: local-files` it writes the packet into the record body section instead.\n- [ ] `verification-brief.md` and `_shared/try-it.md` reworked so the Try it block and observation plan feed the packet's Test guide and Tried-to-break sections; the old brief sections are mapped, not silently dropped (a mapping table in the packet contract).\n- [ ] `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic gather, partial-gather note) and `readPacket` (reader rules above) with the wrap-up prose that runs gather, narrate, validate, render, post in order; the PR-link line and the `local-files` delimiters from the contract decisions.\n- [ ] Tests: validation rejects an uncited claim; a skipped check lands in Couldn't test; re-render with an existing marker comment edits rather than posts; schema mismatch is refused.\n\n## Acceptance Criteria\n\n1. Given facts containing a story report with one failed and one skipped check, `renderPacket` outputs the skipped check under `Couldn't test` (with its reason) and the failure under `Tried to break`; nothing is omitted silently (a test counts input checks against rendered rows).\n2. A claim in the Test guide whose `refs` cites a fact id absent from the gathered facts is dropped by `validatePacket`, and the rendered packet states `1 claim was dropped for missing evidence`; a claim with no `refs` is dropped the same way; a \"verified\" claim citing a `failed` fact renders under Tried to break with the failure; one citing a `skipped` fact moves to Couldn't test. Each is pinned by a test.\n2a. An expected check (derived from the spec's Acceptance Criteria or planned stories) with no result fact at all renders under Couldn't test as `not run`.\n2b. `readPacket` returns the earliest trusted marker comment among duplicates, ignores an untrusted-author marker, reports `schemaVersion: 2` as unreadable, and never reads the run-dir copy.\n2c. When the post or edit fails (fake runner returns an error) the pending acceptance label is not applied and the failure is reported.\n2d. A packet that would exceed 60,000 characters is truncated by whole items with a `truncated: N items omitted` line.\n3. Wrap-up's second run on a work item that already has a packet comment edits that comment (same comment id) and the work item ends with exactly one comment carrying the marker (test against the fake runner).\n4. A narrative string containing `[x](https://evil.example)` or a forged `## Couldn't test` heading is rendered as inert prose (brackets escaped, newlines collapsed).\n5. The packet contract states, and a conformance test pins, that credentials appear only as vault entry names and that the link rules above hold: a link to a host other than the local base URL host or `dev-base-url` is refused; a link carrying any key from the shared credential-key constant in its query, fragment or userinfo is refused after case and percent-encoding normalization (tests for `TOKEN=`, `tok%65n=`, `#sig=`, `user:pass@`, `sessionid=`); a benign `/docs/token-guide` path is accepted. For a `Surface: infra` record the Test guide lists commands and renders no links; sections with nothing to say render a one-line reason.\n6. The five call sites in `verification-brief.md`'s Routing table still resolve and still apply the pending acceptance label; existing wrap-up tests pass unchanged apart from intended renames.\n7. `npm test` passes.\n\n## Release Note\n\nReplaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.\n\n## Technical Approach\n\nThree-stage gather / narrate / render. Gather is deterministic and writes a facts file in the run directory (working copy). The narration step is judgment and writes a narrative with `refs[]` per claim. The renderer is deterministic and trusts only the facts. The canonical copy is the posted comment, found by its marker and edited in place; the run-dir copy is never read afterward. The packet is the same artifact for control mode on or off — only which sections are populated differs.\n\n### Data / API Surface\n\n- Marker: a fenced marker block comment, versioned (`schemaVersion: 1`), following the repo's other marker-comment convention (`_shared/pr-run-comments.md`); author-trust-gated on read (`plugin/bin/lib/issues/comment-trust.js`).\n- Facts: `{ checks[], stories[], findings[], links[], decisions[], deploy }` with stable ids that `refs[]` cite.\n- Sections 2, 7, 8, 9 render a stated placeholder (`not recorded`, `no kept risk flags`, none, `target: local`) until their owning records populate them.\n\n### Key Files\n\n- `plugin/skills/_shared/acceptance-packet.md` — new packet contract\n- `plugin/skills/wrap-up/verification-brief.md` — migrate to the packet; keep Routing\n- `plugin/skills/_shared/try-it.md` — Try it block feeds the Test guide\n- `plugin/bin/lib/wrap-up/engine-render.js` — render integration\n- `plugin/bin/lib/wrap-up/packet-gather.js` — new gather, `readPacket`, `validatePacket`, `renderPacket` (builder's split into sibling modules)\n- `plugin/skills/_shared/pr-run-comments.md` — register the `acceptance-packet` marker\n- `plugin/bin/lib/activity/render.js` — reference pattern for citation validation (read, do not edit)\n- `plugin/bin/lib/issues/comment-trust.js` — trust gate for reading the marker comment\n- `tests/try-it-contract-conformance.test.js` — pins the Try it contract; update with the move\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — keep green\n\n## Gotchas\n\n- Replacing, not adding: two packets on one item is the failure mode; the old template is replaced in place in `verification-brief.md`, not kept beside the new one.\n- Do not read the run-dir copy after the run; `/accept` and Dispatch read GitHub (AC 2b proves the reader ignores a stale local copy).\n- The authenticated identity that posted the packet may differ on a re-run (cloud, Routine); AC 2c's failure path covers \"cannot edit\". Concurrent wrap-up runs on one record are prevented by the record claim; if one slips through, last write wins and the loser reports.\n- The gather step must never silently pass a failed gather: a partial gather renders a stated \"partial\" note, mirroring `/activity`'s Partial gather handling.\n- `tests/try-it-contract-conformance.test.js` and other prose-pinning tests fail when prose moves; run the whole suite (not only touched files) before merge.\n- The wrap-up skill text must stay within its size ceiling; put packet detail in the new `_shared` contract and cite it.\n- Parent-linked sub-issues keep today's routing (the parent carries the gate) until the feature-level-acceptance record changes it.\n\n**Related:** #4269\n\n\n<!-- work-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio -->\nwork-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Q1, what the parent gate posts: Reading A.** The parent gate keeps posting the legacy `## Verification Brief` until the feature-level acceptance record (#4617) changes it. Move the brief template verbatim into `plugin/skills/wrap-up/verification-brief-parent-gate.md`, so the parent path, `/tidy`'s opened-parent-gate check and `engine-verify.js`'s parent path stay unchanged in this record. `verification-brief.md` Step 4 still holds exactly one template (the packet), never two.\n- **Q2, credential screening scope: Reading B.** Apply the shared credential-key constant to `command` strings and Test-guide claim text as well as links (`key=`, `--key`, `Authorization:` and the other key shapes, matched case-insensitively). A matching entry is dropped from the packet and its omission noted in the packet, never rendered; the packet as a whole still posts. Add tests for a command and a claim-text match alongside AC5's link cases.\n- **Q3, where passed happy-path checks and stories render: Reading A.** `Tried to break` lists only negative stories (`negative: true`), edge-case checks and failures. Every other passed check or story renders in its own stated list (for example a \"Checks that passed\" block under Test guide), so a routine pass never reads as an attempt to break the feature. AC1's row count still holds across every section: each check/story fact renders exactly one row.\n- **Q4, an MCP-transport re-run that finds an existing packet: Reading A.** The gh-absent transport cannot edit a comment, so a re-run that finds a packet already posted counts as a failed edit under the Failure contract: it reports the failure, posts nothing, and applies no pending acceptance label. `/accept` never reads a stale packet under a pending label.\n- **Q5, records below the oversight floor: Reading B.** Every record with no parent gets a packet, below the floor included: the packet posts without `--label` there, and the below-floor \"Posting it alone\" path (the Try it block posted by itself) is retired. The packet stays universal, one per work item.\n- **Q6, where the expected verify-check names come from: Reading A.** Gather derives the expected checks itself from the project's verify-scope declaration (the checks `verify.js` reads through `decl.checks`, such as `tests`, `types`, `lint`). No new field is added to `verify-expectations.json`, and wrap-up passes no check list.\n- **Q7, whether a `local` deploy target counts as not confirmed live: Reading B.** The `(link unverified: deploy not confirmed live)` suffix applies only when the deploy target is `dev` and the feature is not confirmed live. Links on a `local` target carry no suffix; the deploy section still states the target.\n- **Q8, what makes a check an edge-case check: Reading A.** No check counts as an edge case until a signal for it exists, so `Tried to break` holds negative stories (`negative: true`) and failures only. A passing check renders under \"Checks that passed\". Defining an edge-case signal is out of scope for this record.\n- **Q9, a Test-guide manual step citing a not-run story: Reading B.** Only claims that assert verification (\"tested\", \"verified\", \"works\") route by the status of the fact they cite: failed to `Tried to break`, skipped or not-run to `Couldn't test`. A plain manual step stays in the Test guide whatever its cited story's status, so a packet built without QA keeps its testing steps.\n- **Q10, section 7 Risk proofs with no kept risk flags: Reading A.** The section always renders; with no kept risk flags it shows the placeholder `no kept risk flags`, so an empty section is never confused with a missing one.\n",
         "createdAt": "2026-10-30T11:46:06Z",
         "labels": [
           {
@@ -4429,7 +4529,7 @@
         "number": 4611,
         "state": "OPEN",
         "title": "Acceptance packet: schema, canonical marker comment, new sections",
-        "updatedAt": "2026-11-01T19:18:15Z",
+        "updatedAt": "2026-11-01T20:36:57Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -6715,7 +6815,7 @@
         "number": 4439,
         "state": "OPEN",
         "title": "Give the open-items ledger a sanctioned append/settle CLI",
-        "updatedAt": "2026-10-30T06:35:18Z",
+        "updatedAt": "2026-11-01T20:24:30Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -12397,6 +12497,84 @@
           "risk": "medium",
           "size": "low",
           "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\nOrigin: reflect full from #4640\n\nDefer-reason: tangential\n\n**Related:** #4492, #4494, #4499, #4812\n\n## Current State\n\n`openPrEarly` in `plugin/bin/lib/flow/pr-early-open.js` picks a CLOSED prior-attempt PR for the branch and calls `deps.gh(['pr', 'reopen', String(pick.number), '--repo', repo])`. Today \"the call did not throw\" is the whole success test (`reopenRejected === null`). On that test alone it logs `reopened PR #{n} for {branch} (retry)`, rebinds an adopted PR's body, records the PR in `run-state.json`, pushes, and returns outcome `reopened`. It never reads the PR's state after the reopen.\n\nObserved on run `2026-11-01T165322-record-4640`: `decisions.md` has `AUTO 17:57:27 — log-decision: PR-early run lifecycle: reopened PR #4789 for worktree-dispatch-record-4640 (retry)`, yet `gh api repos/thn-inc/claude-tweaks/issues/4789/events` lists only `closed` (16:42:27Z) and `head_ref_deleted` (16:42:52Z), with no `reopened` event. The PR stayed CLOSED. The first PR-checklist refresh (18:37:51) was refused as a run-marker mismatch, and the phase-exit recovery at 18:39 opened a replacement draft PR #4832, about 40 minutes after the log claimed success.\n\nThe record's \"defect in `deps.gh`\" hypothesis was ruled out on 2026-11-01. The CLI's runner is `execFileSync('gh', args, …)` (`plugin/bin/pr-early-open.js:104`), wrapped at lines 182-189 so that it only tags timeouts and rethrows. Any non-zero `gh` exit throws, so `gh` 2.102.0 really did exit 0 on that reopen. In this code the reopen also runs before Step 2's push, so when a prior run's head branch was deleted, the head ref does not exist on the remote at reopen time. In the observed run it had been deleted at 16:42:52Z.\n\nThe create path already handles a PR it cannot see clearly. `lookForLanded` re-lists open PRs for the head after a failed `gh pr create`, and it adopts a PR that turns out to exist.\n\n## Deliverables\n\n1. After a non-throwing `gh pr reopen`, `openPrEarly` re-lists the branch's PRs with the existing `listPrs()` read and requires the picked PR to read `state: OPEN`. Only then does it log `reopened PR #{n} for {branch} (retry)`, rebind, record, push, and return `reopened`.\n2. When the re-read shows the picked PR still not OPEN, the call takes the existing rejected-reopen path in the same invocation. `reopenRejected` is set to the picked number, so the result carries `reopenRejected` for the caller's pointer-comment repoint. One distinct `decisions.md` line names the cause: `reopen of closed PR #{n} for {branch} exited 0 but the PR still reads {state}; creating`. Then a new draft PR is created through the existing create path.\n3. When the re-read itself fails (the `gh pr list` call throws or returns a non-array), the reopen is unconfirmed. It is handled like item 2, and the line says `could not confirm reopen of closed PR #{n} for {branch} ({error}); creating`. The existing create path's `lookForLanded` adopts the PR if the reopen did land. When the adopted PR is the picked prior-attempt PR, it is rebound to this run (`rebind(n, 'reopened')`) before the result returns, so a landed reopen never leaves a body naming the old run.\n4. The cause of the exit 0 is researched from `gh`'s own source for the installed version (`pkg/cmd/pr/reopen` in cli/cli at the tag matching `gh --version`). Do not create, close or reopen any real PR to reproduce it. The PR that fixes this states which branch of that command's code returns 0 without reopening, or states plainly that the source does not explain it.\n5. Fake-`gh` tests in `tests/bin-lib/flow/pr-early-open.test.js` cover:\n   - a reopen that exits 0 while the re-list still shows CLOSED, which ends in outcome `opened` with `reopenRejected` set;\n   - a re-list that throws after the reopen;\n   - the existing confirmed-reopen tests, updated so their `lists` sequence returns OPEN on the confirming read.\n\n## Acceptance Criteria\n\n- [ ] A reopen that exits 0 with the confirming list still showing the PR CLOSED never writes the `reopened PR #{n} … (retry)` line, never records that PR, and returns outcome `opened` with `reopenRejected: {n}` and the new PR's number.\n- [ ] That case's `decisions.md` contains the `exited 0 but the PR still reads CLOSED; creating` line.\n- [ ] A confirming list that throws produces the `could not confirm reopen` line and reaches the create path. When the create path's `lookForLanded` then finds the picked PR OPEN, the result is that PR and its body is rebound to this run.\n- [ ] A reopen whose confirming list shows OPEN behaves exactly as today: the same log line, rebind, record, push, and `reopened` outcome. The existing reopen tests pass with only their `lists` fixtures extended.\n- [ ] Removing the post-reopen confirmation turns the CLOSED-after-reopen test red. The red run is quoted in the PR.\n- [ ] The fixing PR's description records the source-level finding for item 4, or says the source does not explain it.\n- [ ] `npm test` passes.\n\n## Release Note\n\nStop the early draft-PR step from reporting a reopened PR that GitHub never reopened. It now opens a fresh draft instead.\n\n## Technical Approach\n\n- In `openPrEarly`'s CLOSED branch, after the `try { deps.gh(['pr', 'reopen', …]) }` succeeds, call `listPrs()` inside its own try. Treat `find((p) => p.number === pick.number && p.state === 'OPEN')` as the confirmation. On no match or a throw, set `reopenRejected = pick.number` and log the matching item 2 or item 3 line. The block that follows then skips straight to the create path, as it does for a thrown reopen.\n- The existing `if (reopenRejected !== null) log('reopen of closed PR … was rejected; creating')` line must not double-log for the new cases. Keep one line per cause.\n- For item 3's rebind, compare `created.number` with the remembered `pick.number` after the create path. When they match and the PR came from `lookForLanded`, run `namesOtherRun` and `rebind` on it.\n- Tests use the suite's existing `harness({ lists: [...] })` sequence to return OPEN, CLOSED or an Error on the confirming read.\n\n### Key Files\n\n- `plugin/bin/lib/flow/pr-early-open.js` — confirm OPEN with a `listPrs()` re-read after a non-throwing reopen; route an unconfirmed reopen to the create path with its own `decisions.md` line; rebind a landed picked PR\n- `tests/bin-lib/flow/pr-early-open.test.js` — CLOSED-after-reopen and failed-confirmation cases; extend the existing reopen tests' `lists` fixtures\n\n## Gotchas\n\n- **`plugin/bin/pr-early-open.js` needs no change.** Its runner already throws on any non-zero exit (Current State). Item 4 can still find that `gh` returns 0 without reopening, but that is `gh`'s behavior, and the state read is the fix either way.\n- **Don't reproduce against the real repo.** Opening, closing and reopening throwaway PRs to watch `gh` writes public state and notifications. Item 4 is source research only.\n- **The reopen still runs before the push.** Moving the push ahead of the reopen could change whether GitHub accepts a reopen whose head ref was deleted, but it also changes the push-then-create order the existing tests pin. That is out of scope here. The confirmation makes the order safe either way.\n- **The phase-exit recovery that opened #4832 later is a separate path.** This record keeps its behavior unchanged. After this fix it should no longer be needed for this case.\n- `**Related:**` lists only the near-duplicate hits that share a Key File (the #4492/#4494/#4499 policy-in-worktree family and the #4812 flow digest). The other 34 score-1 hits on 2026-11-01 matched on generic anchors (the noise #4846 tracks) and are not related.\n\n## Original request\n\npr-early-open logs \"reopened PR\" after a gh exit 0 without confirming the PR is OPEN\n\nOrigin: reflect full from #4640\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/flow/pr-early-open.js` (lines 187-207 on `origin/main`) calls `gh pr reopen` on a CLOSED prior-attempt PR and, when the call does not throw, logs `reopened PR #{n} for {branch} (retry)`, records the PR in `run-state.json`, and returns outcome `reopened`. It never re-reads the PR to confirm it is OPEN afterwards.\n\nObserved on run `2026-11-01T165322-record-4640`: `decisions.md` has `AUTO 17:57:27 — log-decision: PR-early run lifecycle: reopened PR #4789 for worktree-dispatch-record-4640 (retry)`, yet `gh api repos/thn-inc/claude-tweaks/issues/4789/events` lists only `closed` (16:42:27Z) and `head_ref_deleted` (16:42:52Z) — no `reopened` event ever. The PR stayed CLOSED, so the first PR-checklist refresh (18:37:51) was refused as a run-marker mismatch, and the phase-exit recovery at 18:39 had to open a replacement draft PR #4832 about 40 minutes after the log claimed success.\n\nIntegration-branch probe: `git grep -n -F -e 'reopen' origin/main -- plugin/bin/lib/flow/pr-early-open.js` matched only the reopen call, the rejected-reopen branch and the success log — no state read after the reopen — so the gap is present on `origin/main`.\n\n## Deliverables\n\nReproduce why `gh pr reopen` exited 0 against a CLOSED PR whose head branch had been deleted (the later 18:38 attempt on the same PR was rejected, so the first exit-0 is the unexplained one), and record the cause in the PR that fixes this.\n\nMake `pr-early-open.js` confirm the PR reads OPEN after a non-throwing reopen before it logs `reopened`, records the PR, or returns outcome `reopened`; a PR that is still CLOSED takes the existing rejected-reopen path and creates a new draft PR in the same call. Cover it with a fake-gh test in the neighbouring `pr-early-open` suite.\n\n## Open Question\n\nIs the unexplained exit 0 a `gh` behaviour (reopen succeeds silently or no-ops without an error for some PR/branch state), a race with the branch re-push, or a defect in how `deps.gh` wraps the call? The answer decides whether the fix is a post-reopen state read in `pr-early-open.js` alone or also a change to the gh runner.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/flow/pr-early-open.js` — confirm OPEN after a non-throwing reopen\n- `plugin/bin/pr-early-open.js` — gh runner wiring, if the cause is there\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-01T18:07:12Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4833,
+        "state": "OPEN",
+        "title": "pr-early-open logs \"reopened PR\" after a gh exit 0 without confirming the PR is OPEN",
+        "updatedAt": "2026-11-01T20:41:52Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
