@@ -23,10 +23,10 @@ const URL = 'https://github.com/o/r/pull/4604';
 const OID = 'a'.repeat(40);
 const SLUG = 'o/r';
 const MAIN = '/repo';
-const ROOT = '/repo/.claude-tweaks/pipelines';
-const ARCH = `${ROOT}/archive/${RUN}`;
-const RUNDIR = `${ROOT}/${RUN}`;
-const WT = '/repo/.claude/worktrees/dispatch-record-4589';
+const ROOT = path.join(MAIN, '.claude-tweaks', 'pipelines');
+const ARCH = path.join(ROOT, 'archive', RUN);
+const RUNDIR = path.join(ROOT, RUN);
+const WT = path.join(MAIN, '.claude', 'worktrees', 'dispatch-record-4589');
 const NOW = Date.parse('2026-10-31T12:00:00Z');
 const HOUR = 3600 * 1000;
 const SESSION = 'resuming-session';
@@ -78,7 +78,7 @@ function makeEnv(over = {}) {
   // default world: run archived, stalled worktree present
   if (!over.files && !over.dirs) {
     cfg.dirs[ARCH] = ['run-state.json', 'decisions.md'];
-    cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({
+    cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({
       status: 'clean', sessionId: 'dispatcher', worktree: null, worktreeAtClose: WT,
     });
     cfg.dirs[WT] = ['x'];
@@ -162,9 +162,9 @@ function exec(env, argv = ['--issue', String(N)]) {
 
 function setRunState(env, state, { files = ['run-state.json', 'work'] } = {}) {
   delete env.cfg.dirs[ARCH];
-  delete env.cfg.files[`${ARCH}/run-state.json`];
+  delete env.cfg.files[path.join(ARCH, 'run-state.json')];
   env.cfg.dirs[RUNDIR] = files;
-  if (state !== undefined) env.cfg.files[`${RUNDIR}/run-state.json`] = typeof state === 'string' ? state : JSON.stringify(state);
+  if (state !== undefined) env.cfg.files[path.join(RUNDIR, 'run-state.json')] = typeof state === 'string' ? state : JSON.stringify(state);
 }
 const OWNER = { sessionId: 'other-session', host: 'h1', pid: 4242, pidStartedAt: 'T0' };
 
@@ -204,7 +204,7 @@ test('the gh pr list argv pins the head branch, repo and a --json list that incl
 
 test('context is read from the archived decisions.md', () => {
   const env = makeEnv();
-  env.cfg.files[`${ARCH}/decisions.md`] = readText(DECISIONS);
+  env.cfg.files[path.join(ARCH, 'decisions.md')] = readText(DECISIONS);
   const r = exec(env);
   assert.equal(r.code, 0);
   assert.deepStrictEqual(r.json.context.lastPhase, { section: '/build', step: 'Common Step 1.5' });
@@ -214,16 +214,16 @@ test('context is read from the archived decisions.md', () => {
 test('context falls back to the root decisions.md when the run is not archived', () => {
   const env = makeEnv();
   setRunState(env, { status: 'clean' });
-  env.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: built. Reversibility: n/a.\n';
+  env.cfg.files[path.join(RUNDIR, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 1: built. Reversibility: n/a.\n';
   const r = exec(env);
   assert.deepStrictEqual(r.json.context.lastPhase, { section: '/build', step: 'Step 1' });
 });
 
 test('context prefers the archived decisions.md over a root stub of the same run', () => {
   const env = makeEnv();
-  env.cfg.files[`${ARCH}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 7: archived. Reversibility: n/a.\n';
+  env.cfg.files[path.join(ARCH, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 7: archived. Reversibility: n/a.\n';
   env.cfg.dirs[RUNDIR] = ['work', 'decisions.md'];
-  env.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: stub. Reversibility: n/a.\n';
+  env.cfg.files[path.join(RUNDIR, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 1: stub. Reversibility: n/a.\n';
   assert.deepStrictEqual(exec(env).json.context.lastPhase, { section: '/build', step: 'Step 7' });
 });
 
@@ -527,9 +527,9 @@ test('archive-first: archive/{runId} plus a work/-only root dir reads archived (
 // failed attempt leaves the marker next to the real root dir (#1103 removed the existence-only check).
 const ARCHIVING = JSON.stringify({ status: 'archiving', worktree: null });
 function archivingMarkerPlusRoot(env, rootState, rootFiles = ['run-state.json', 'work', 'decisions.md']) {
-  env.cfg.files[`${ARCH}/run-state.json`] = ARCHIVING;
+  env.cfg.files[path.join(ARCH, 'run-state.json')] = ARCHIVING;
   env.cfg.dirs[RUNDIR] = rootFiles;
-  if (rootState !== undefined) env.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify(rootState);
+  if (rootState !== undefined) env.cfg.files[path.join(RUNDIR, 'run-state.json')] = JSON.stringify(rootState);
 }
 
 test('an archiving marker in archive/{runId} plus a root dir with a live owner -> exit 3 prior-run-live, owner probed', () => {
@@ -568,7 +568,7 @@ test('an archiving marker plus a root dir holding only work/ or nothing -> archi
   assert.equal(r.json.priorRunDir, 'archived');
   assert.equal(r.json.archivePriorRun, false);
   const gone = makeEnv();
-  gone.cfg.files[`${ARCH}/run-state.json`] = ARCHIVING;
+  gone.cfg.files[path.join(ARCH, 'run-state.json')] = ARCHIVING;
   assert.equal(exec(gone).json.priorRunDir, 'archived');
 });
 
@@ -581,7 +581,7 @@ test('an archiving marker plus a root dir with no run-state.json but other entri
 test('a real archive (status clean) wins even when the root dir holds a run-state.json', () => {
   const env = makeEnv();
   env.cfg.dirs[RUNDIR] = ['run-state.json', 'work'];
-  env.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active', owner: OWNER });
+  env.cfg.files[path.join(RUNDIR, 'run-state.json')] = JSON.stringify({ status: 'active', owner: OWNER });
   const r = exec(env);
   assert.equal(r.code, 0);
   assert.equal(r.json.priorRunDir, 'archived');
@@ -590,19 +590,19 @@ test('a real archive (status clean) wins even when the root dir holds a run-stat
 
 test('an archive dir with no run-state.json, or an unparseable or non-object one, plus a root run-state.json -> root classification', () => {
   for (const [label, arrange] of [
-    ['no run-state.json', (env) => { delete env.cfg.files[`${ARCH}/run-state.json`]; }],
-    ['unparseable', (env) => { env.cfg.files[`${ARCH}/run-state.json`] = '{nope'; }],
-    ['non-object', (env) => { env.cfg.files[`${ARCH}/run-state.json`] = '[]'; }],
+    ['no run-state.json', (env) => { delete env.cfg.files[path.join(ARCH, 'run-state.json')]; }],
+    ['unparseable', (env) => { env.cfg.files[path.join(ARCH, 'run-state.json')] = '{nope'; }],
+    ['non-object', (env) => { env.cfg.files[path.join(ARCH, 'run-state.json')] = '[]'; }],
   ]) {
     const live = makeEnv();
     arrange(live);
     live.cfg.dirs[RUNDIR] = ['run-state.json', 'work'];
-    live.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active', owner: OWNER });
+    live.cfg.files[path.join(RUNDIR, 'run-state.json')] = JSON.stringify({ status: 'active', owner: OWNER });
     assert.equal(exec(live).json.reason, 'prior-run-live', label);
     const noOwner = makeEnv();
     arrange(noOwner);
     noOwner.cfg.dirs[RUNDIR] = ['run-state.json'];
-    noOwner.cfg.files[`${RUNDIR}/run-state.json`] = JSON.stringify({ status: 'active' });
+    noOwner.cfg.files[path.join(RUNDIR, 'run-state.json')] = JSON.stringify({ status: 'active' });
     const r = exec(noOwner);
     assert.equal(r.json.priorRunDir, 'dead-owner', label);
     assert.equal(r.json.archivePriorRun, true, label);
@@ -612,9 +612,9 @@ test('an archive dir with no run-state.json, or an unparseable or non-object one
 test('the context read and the own-lock state follow the chosen directory: root when the archive is only a marker, archive when it is real', () => {
   const marker = makeEnv();
   archivingMarkerPlusRoot(marker, { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } });
-  marker.cfg.files[`${ARCH}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: archive stub. Reversibility: n/a.\n';
+  marker.cfg.files[path.join(ARCH, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 1: archive stub. Reversibility: n/a.\n';
   marker.cfg.dirs[ARCH] = ['run-state.json', 'decisions.md'];
-  marker.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 8: real root. Reversibility: n/a.\n';
+  marker.cfg.files[path.join(RUNDIR, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 8: real root. Reversibility: n/a.\n';
   const r = exec(marker);
   assert.equal(r.code, 0, JSON.stringify(r.json));
   assert.deepStrictEqual(r.json.context.lastPhase, { section: '/build', step: 'Step 8' });
@@ -624,14 +624,14 @@ test('the context read and the own-lock state follow the chosen directory: root 
   // archived with a root stub: only the archive's decisions.md is read, never the stub's
   const real = makeEnv();
   real.cfg.dirs[RUNDIR] = ['work', 'decisions.md'];
-  real.cfg.files[`${RUNDIR}/decisions.md`] = '## /build\n- AUTO 10:00:00 — Step 1: stub. Reversibility: n/a.\n';
+  real.cfg.files[path.join(RUNDIR, 'decisions.md')] = '## /build\n- AUTO 10:00:00 — Step 1: stub. Reversibility: n/a.\n';
   assert.deepStrictEqual(exec(real).json.context, { lastPhase: null, openDefects: [] });
 });
 
 test('a root dir absent and not archived -> absent, eligible, priorRunPath null', () => {
   const env = makeEnv();
   delete env.cfg.dirs[ARCH];
-  delete env.cfg.files[`${ARCH}/run-state.json`];
+  delete env.cfg.files[path.join(ARCH, 'run-state.json')];
   const r = exec(env);
   assert.equal(r.code, 0);
   assert.equal(r.json.priorRunDir, 'absent');
@@ -663,7 +663,7 @@ test('run-state.json reported present but gone by the read (ENOENT) -> stateless
   setRunState(env, { status: 'active' });
   const readFile = env.deps.readFile;
   env.deps.readFile = (p) => {
-    if (p === `${RUNDIR}/run-state.json`) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
+    if (p === path.join(RUNDIR, 'run-state.json')) throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' });
     return readFile(p);
   };
   const r = exec(env);
@@ -771,7 +771,7 @@ test('an unreadable run-state.json (it exists but the read throws) and a throwin
   const a = makeEnv();
   setRunState(a, { status: 'active' });
   const readFile = a.deps.readFile;
-  a.deps.readFile = (p) => { if (p === `${RUNDIR}/run-state.json`) throw new Error('EACCES'); return readFile(p); };
+  a.deps.readFile = (p) => { if (p === path.join(RUNDIR, 'run-state.json')) throw new Error('EACCES'); return readFile(p); };
   const ra = exec(a);
   assert.equal(ra.json.reason, 'prior-run-live');
   assert.match(ra.json.line, /\(unknown\)/);
@@ -1020,7 +1020,7 @@ test('a throwing sibling check -> exit 4', () => {
 
 test('own kept lock (Review Focus 18): the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
   const env = makeEnv();
-  env.cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({
+  env.cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({
     status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT,
   });
   env.cfg.sibling = (ref, opts) => {
@@ -1043,7 +1043,7 @@ test('own kept lock: a different recorded session id, or a conflict on another p
   assert.equal(exec(differentSession).json.reason, 'live-sibling');
 
   const otherPath = makeEnv();
-  otherPath.cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
+  otherPath.cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
   otherPath.cfg.sibling = () => ({ path: '/some/other/worktree' });
   assert.equal(exec(otherPath).json.reason, 'live-sibling');
 });
@@ -1059,7 +1059,7 @@ test('own kept lock where the prior run is at the root (not archived) and record
 
 test('the prior run listing entry is added only when the sessionId is non-empty and matches', () => {
   const none = makeEnv({ sessionId: '' });
-  none.cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({ status: 'clean', sessionId: '', worktree: null, worktreeAtClose: WT });
+  none.cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({ status: 'clean', sessionId: '', worktree: null, worktreeAtClose: WT });
   exec(none);
   assert.deepStrictEqual(none.calls.findSibling[0].opts.listRunDirsWithState(MAIN), []);
   const other = makeEnv();
@@ -1069,13 +1069,13 @@ test('the prior run listing entry is added only when the sessionId is non-empty 
 
 test('own kept lock plus a second in-use #N worktree: the real findConflictingSession still returns the second (live-sibling)', () => {
   const env = makeEnv();
-  env.cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
+  env.cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
   const lock = `locked claude (pid ${process.pid})`;
   const porcelain = [
     `worktree ${MAIN}`, `HEAD ${OID}`, 'branch refs/heads/main', '',
     `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, '',
     '', // spacer
-    'worktree /repo/.claude/worktrees/flow-spec-4589', `HEAD ${OID}`, 'branch refs/heads/worktree-flow-spec-4589', lock, '',
+    `worktree ${path.join(MAIN, '.claude', 'worktrees', 'flow-spec-4589')}`, `HEAD ${OID}`, 'branch refs/heads/worktree-flow-spec-4589', lock, '',
   ].join('\n');
   env.cfg.sibling = (ref, opts) => findConflictingSession(ref, { ...opts, run: () => porcelain });
   const r = exec(env);
@@ -1084,7 +1084,7 @@ test('own kept lock plus a second in-use #N worktree: the real findConflictingSe
 
   // control: with only the own kept lock the same real function returns null
   const alone = makeEnv();
-  alone.cfg.files[`${ARCH}/run-state.json`] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
+  alone.cfg.files[path.join(ARCH, 'run-state.json')] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
   const lone = [`worktree ${MAIN}`, `HEAD ${OID}`, 'branch refs/heads/main', '', `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, ''].join('\n');
   alone.cfg.sibling = (ref, opts) => findConflictingSession(ref, { ...opts, run: () => lone });
   assert.equal(exec(alone).code, 0);
@@ -1148,7 +1148,7 @@ test('the printed refusal line equals the line of the verdict for the same input
 
 // ---- --bound-run ----
 
-const NEW_RUN = `${ROOT}/2026-10-31T120000-record-4589`;
+const NEW_RUN = path.join(ROOT, '2026-10-31T120000-record-4589');
 const BOUND = ['--issue', String(N), '--bound-run', NEW_RUN];
 
 test('--bound-run with nothing else bound -> exit 0 {concurrent:false}; no gh, no verdict', () => {
@@ -1165,7 +1165,7 @@ test('--bound-run: a second non-terminal top-level run dir bound to the worktree
   const env = makeEnv();
   env.cfg.runDirs = [
     { dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: WT } },
-    { dir: `${ROOT}/2026-10-31T115900-record-4589`, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
+    { dir: path.join(ROOT, '2026-10-31T115900-record-4589'), state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
   ];
   const r = exec(env, BOUND);
   assert.equal(r.code, 3);
@@ -1178,18 +1178,18 @@ test('--bound-run: a second non-terminal top-level run dir bound to the worktree
 
 test('--bound-run: the rival with an interrupted status still counts; terminal status or another worktree does not', () => {
   const interrupted = makeEnv();
-  interrupted.cfg.runDirs = [{ dir: `${ROOT}/r1`, state: { status: 'interrupted', sessionId: 'rival', worktree: WT } }];
+  interrupted.cfg.runDirs = [{ dir: path.join(ROOT, 'r1'), state: { status: 'interrupted', sessionId: 'rival', worktree: WT } }];
   assert.equal(exec(interrupted, BOUND).code, 3);
   for (const state of [
     { status: 'clean', sessionId: 'rival', worktree: WT },
     { status: 'closed', sessionId: 'rival', worktree: WT },
-    { status: 'active', sessionId: 'rival', worktree: '/repo/.claude/worktrees/other' },
+    { status: 'active', sessionId: 'rival', worktree: path.join(MAIN, '.claude', 'worktrees', 'other') },
     { status: 'active', sessionId: 'rival', worktree: null },
     { status: 'active', sessionId: 'rival' },
     null,
   ]) {
     const env = makeEnv();
-    env.cfg.runDirs = [{ dir: `${ROOT}/r1`, state }];
+    env.cfg.runDirs = [{ dir: path.join(ROOT, 'r1'), state }];
     const r = exec(env, BOUND);
     assert.equal(r.code, 0, JSON.stringify(state));
     assert.deepStrictEqual(r.json, { concurrent: false });
@@ -1201,7 +1201,7 @@ test('--bound-run: an ad-hoc dir bound there never counts, whichever session sta
   for (const [sessionId, sid] of [[SESSION, SESSION], ['rival', SESSION], ['', '']]) {
     const env = makeEnv({ sessionId: sid });
     env.cfg.runDirs = [{
-      dir: `${ROOT}/2026-10-31T061116-adhoc-standalone`,
+      dir: path.join(ROOT, '2026-10-31T061116-adhoc-standalone'),
       state: { status: 'active', sessionId, worktree: WT, owner: { ...OWNER, sessionId: sessionId || 'x' } },
     }];
     const r = exec(env, BOUND);
@@ -1211,7 +1211,7 @@ test('--bound-run: an ad-hoc dir bound there never counts, whichever session sta
 });
 
 const HOOKS_JS = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'hooks.js');
-const LEFTOVER = `${ROOT}/2026-10-31T115900-record-4589`;
+const LEFTOVER = path.join(ROOT, '2026-10-31T115900-record-4589');
 const staleLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to run ${path.basename(dir)}, which never finished and whose owner is gone — close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
 const concurrentLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${N} once that run ends`;
 const ownSessionLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)} owned by this same session — if another dispatch resume in this session is still running, stop it, then run /claude-tweaks:dispatch resume #${N}; if an earlier resume in this session crashed and left that run open, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
@@ -1280,8 +1280,8 @@ test('verdict mode: a live run bound to the worktree -> exit 3 concurrent-resume
   assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
   for (const entry of [
     { dir: LEFTOVER, state: { status: 'clean', sessionId: 'rival', worktree: WT, owner: OWNER } },
-    { dir: `${ROOT}/2026-10-31T061116-adhoc-standalone`, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
-    { dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: '/repo/.claude/worktrees/other', owner: OWNER } },
+    { dir: path.join(ROOT, '2026-10-31T061116-adhoc-standalone'), state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
+    { dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: path.join(MAIN, '.claude', 'worktrees', 'other'), owner: OWNER } },
   ]) {
     const env = makeEnv();
     env.cfg.runDirs = [entry];
@@ -1319,7 +1319,7 @@ test('verdict mode: a failing run-dir listing -> exit 4', () => {
 test('--bound-run: a live sibling on the lock check -> exit 3 live-sibling (checked before the run-dir scan)', () => {
   const env = makeEnv();
   env.cfg.sibling = () => ({ path: WT });
-  env.cfg.runDirs = [{ dir: `${ROOT}/r1`, state: { status: 'active', sessionId: 'rival', worktree: WT } }];
+  env.cfg.runDirs = [{ dir: path.join(ROOT, 'r1'), state: { status: 'active', sessionId: 'rival', worktree: WT } }];
   const r = exec(env, BOUND);
   assert.equal(r.code, 3);
   assert.equal(r.json.concurrent, true);
@@ -1337,9 +1337,9 @@ test('--bound-run: a throwing sibling check -> exit 4', () => {
 
 test('--bound-run outside the main root pipelines dir -> exit 2 (a worktree-local run dir, an unanchored path, a missing dir)', () => {
   for (const dir of [
-    '/repo/.claude/worktrees/dispatch-record-4589/.claude-tweaks/pipelines/2026-10-31T120000-record-4589',
+    path.join(WT, '.claude-tweaks', 'pipelines', '2026-10-31T120000-record-4589'),
     '/tmp/elsewhere/2026-10-31T120000-record-4589',
-    `${ROOT}/..`,
+    `${ROOT}${path.sep}..`,
   ]) {
     const env = makeEnv();
     const r = exec(env, ['--issue', String(N), '--bound-run', dir]);
