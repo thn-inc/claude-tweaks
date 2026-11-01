@@ -374,6 +374,21 @@ test('a store that exits 0 but leaves a different sha at stash@{0} keeps its rec
   assert.match(r.err, new RegExp(`restore failed for ${older.sha}; recover with:`));
 });
 
+test('a store that exits 0 and leaves the stack empty keeps its recover command (no stash@{0} to judge)', () => {
+  const dir = fixture();
+  const only = stashPush(dir, 'only');
+  const baseline = snapshot(dir);
+  git(dir, 'stash', 'drop', 'stash@{0}');
+  assert.deepEqual(stack(dir), []);
+  const r = compare(dir, baseline, ['--restore'], { git: noopStore() });
+  assert.equal(r.code, 3);
+  assert.equal(r.json.restoreFailed.length, 1);
+  assert.equal(r.json.restoreFailed[0].sha, only.sha);
+  assert.equal(r.json.restoreFailed[0].error, 'git stash store exited 0 but the entry is not back on the stack');
+  assert.equal(r.json.restoreFailed[0].command, storeCommand(only.subject, only.sha));
+  assert.match(r.err, new RegExp(`restore failed for ${only.sha}; recover with:`));
+});
+
 test('AC3.2: without --restore the stack is left unchanged', () => {
   const dir = fixture();
   stashPush(dir, 'one');
