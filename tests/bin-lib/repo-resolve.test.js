@@ -161,7 +161,7 @@ test('AC4.1: an exported GH_HOST is never overwritten (process-style env and opt
   const o2 = { cwd: '/r', env: { GH_HOST: '' } };
   assert.strictEqual(ghOptions(['api', 'graphql'], o2, ghe), o2);
 });
-test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token admits an HTTPS host', () => {
+test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with an enterprise token; a hosts.yml-known GHES host is; a token alone admits no HTTPS host (#4854)', () => {
   _resetGhHostCache();
   const alias = { ...ghe, remoteUrl: () => 'git@github.com-work:acme/widgets.git' };
   const o = { cwd: '/a' };
@@ -170,7 +170,8 @@ test('AC5.1, AC5.2 (Decision Q1): an SSH alias host is not injected, even with a
   const o2 = { cwd: '/t' };
   assert.strictEqual(ghOptions(['pr', 'list'], o2, { ...alias, env: { GH_ENTERPRISE_TOKEN: 't' } }), o2);
   _resetGhHostCache();
-  assert.equal(ghOptions(['pr', 'list'], { cwd: '/u' }, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }).env.GH_HOST, 'git.corp.example');
+  const o4 = { cwd: '/u' };
+  assert.strictEqual(ghOptions(['pr', 'list'], o4, { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', env: { GITHUB_ENTERPRISE_TOKEN: 't' } }), o4);
   _resetGhHostCache();
   const o3 = { cwd: '/m' };
   assert.strictEqual(ghOptions(['pr', 'list'], o3, { ...ghe, remoteUrl: () => 'https://GitHub.com/acme/widgets.git' }), o3); // mixed-case github.com is github.com
@@ -213,13 +214,14 @@ test('review focus: memoized per cwd, probe failure is "no host", note logged on
   assert.equal(notes.length, 1);
   assert.match(notes[0], /resolved repo acme\.ghe\.com\/acme\/widgets \(host: acme\.ghe\.com\) — gh calls get GH_HOST=acme\.ghe\.com/);
 });
-test('review (#4505): the enterprise-token clause never admits a non-GitHub forge, so the token is not sent there; a hosts.yml key still does', () => {
-  const tokenEnv = { GH_ENTERPRISE_TOKEN: 't' };
+test('#4854: an enterprise token alone admits no host, forge or not, so the token is never sent there; a hosts.yml key still does', () => {
   for (const url of ['https://gitlab.com/acme/widgets.git', 'https://bitbucket.org/acme/widgets.git', 'https://dev.azure.com/acme/widgets.git',
-    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git']) {
-    _resetGhHostCache();
-    const o = { cwd: '/f' };
-    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: tokenEnv }), o, url);
+    'https://acme.visualstudio.com/acme/widgets.git', 'https://codeberg.org/acme/widgets.git', 'https://git.corp.invalid/o/r.git']) {
+    for (const env of [{ GH_ENTERPRISE_TOKEN: 't' }, { GITHUB_ENTERPRISE_TOKEN: 't' }]) {
+      _resetGhHostCache();
+      const o = { cwd: '/f' };
+      assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env }), o, url);
+    }
   }
   _resetGhHostCache();
   const configured = { ...ghe, remoteUrl: () => 'https://gitlab.com/acme/widgets.git', env: { GH_CONFIG_DIR: '/cfg' }, readFile: () => 'gitlab.com:\n    user: me\n' };
@@ -253,11 +255,33 @@ test("resolveGhHost: hosts.yml is read from gh's own config-dir order, keys matc
     assert.equal(host, 'git.corp.example');
   }
 });
-test('resolveGhHost: a user-less scp-style remote is SSH, so the token clause skips it; an unknown HTTPS host without a token is null', () => {
+test('resolveGhHost: a user-less scp-style remote with a token is not admitted; an unknown HTTPS host without a token is null', () => {
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'git.corp.example:acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
   assert.equal(resolveGhHost('/n', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git' }), null);
+});
+
+// #4854: the enterprise-token clause is gone, so no spelling of an SSH remote or a
+// non-GitHub forge can sidestep a guard: a token alone admits nothing.
+test('#4854: bypass spellings of the old guards inject nothing with a token set', () => {
+  for (const url of ['https://gitlab.com./o/r.git', 'https://GITLAB.COM./o/r.git', 'git+ssh://alias/o/r', 'ssh+git://alias/o/r', 'git+ssh://git@alias/o/r.git']) {
+    _resetGhHostCache();
+    const o = { cwd: '/b' };
+    assert.strictEqual(ghOptions(['pr', 'list'], o, { ...ghe, remoteUrl: () => url, env: { GH_ENTERPRISE_TOKEN: 't' } }), o, url);
+  }
+});
+test('#4854: the origin host is normalized (case, trailing dots) before the .ghe.com and hosts.yml checks, and GH_HOST carries the normalized host', () => {
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://acme.ghe.com./acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/r' }, { ...ghe, remoteUrl: () => 'https://ACME.ghe.com../acme/widgets.git' }).env.GH_HOST, 'acme.ghe.com');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example./acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(resolveGhHost('/c', { ...ghe, remoteUrl: () => 'https://git.corp.example/acme/widgets.git', readFile: () => 'Git.Corp.Example.:\n' }), 'git.corp.example');
+  _resetGhHostCache();
+  assert.equal(ghOptions(['pr', 'list'], { cwd: '/g' }, { ...ghe, remoteUrl: () => 'https://gitlab.com./acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' }, readFile: () => 'gitlab.com:\n' }).env.GH_HOST, 'gitlab.com');
 });
 
 // Fix round 1: an explicit --repo's host against the host ghOptions would reach from cwd.
@@ -311,7 +335,7 @@ test('final review: ssh://, user[:pass]@ and :port origins on *.ghe.com inject G
     assert.doesNotMatch(notes[0], /tok|user|git@|:443|:8443|:22/, url);
   }
 });
-test('final review: an ssh:// remote stays SSH for the token clause; hosts.yml admits it; a token admits an https:// remote with userinfo and a port', () => {
+test('final review: an ssh:// remote with a token is not admitted; hosts.yml admits it; a token does not admit an https:// remote with userinfo and a port (#4854)', () => {
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
@@ -319,7 +343,7 @@ test('final review: an ssh:// remote stays SSH for the token clause; hosts.yml a
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@git.corp.example/acme/widgets.git', readFile: () => 'git.corp.example:\n' }), 'git.corp.example');
   _resetGhHostCache();
-  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), 'git.corp.example');
+  assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'https://x:tok@git.corp.example:8443/acme/widgets.git', env: { GH_ENTERPRISE_TOKEN: 't' } }), null);
   _resetGhHostCache();
   assert.equal(resolveGhHost('/s', { ...ghe, remoteUrl: () => 'ssh://git@github.com/acme/widgets.git' }), null); // github.com stays github.com
 });
