@@ -242,9 +242,27 @@ function reopeningRow(md) {
 }
 function newOriginSentences(section) {
   const i = section.indexOf('When a `deferred` row');
-  const j = section.indexOf('A refused proposal with **no**');
+  const j = section.indexOf('A refused proposal that no');
   assert.ok(i >= 0 && j > i, 'new Ledger origin sentences not found');
   return section.slice(i, j);
+}
+function specQualifiedSentence(paragraph) {
+  const i = paragraph.indexOf('In a multi-spec run,');
+  const end = paragraph.indexOf('names one proposal.', i);
+  assert.ok(i >= 0 && end > i, 'no spec-qualified path sentence');
+  return paragraph.slice(i, end + 'names one proposal.'.length);
+}
+function step3Parenthetical(md) {
+  const f = flat(md);
+  const i = f.indexOf('(`spec-{N}/staged/review-followup-{n}.md`');
+  assert.ok(i >= 0, 'step3-routing.md has no spec-qualified parenthetical');
+  return f.slice(i, f.indexOf(')', i) + 1);
+}
+const DEFER_KEEP_PATH_RE = /names the staged path, `staged\/ledger-record-\{slug\}\.md`|naming the staged path \(`staged\/ledger-record-\{slug\}\.md`\)/;
+function assertDeferKeepPathsQualified(md) {
+  const lines = md.split('\n').filter((l) => DEFER_KEEP_PATH_RE.test(l));
+  assert.ok(lines.length >= 4, `expected at least 4 Defer/Keep Resolution-path lines, found ${lines.length}`);
+  for (const l of lines) assert.ok(l.includes('spec-qualified in a multi-spec run'), `a Defer/Keep line writes a bare staged path: ${l.slice(0, 80)}`);
 }
 function exceptionSentence(paragraph) {
   const i = paragraph.indexOf('The one exception:');
@@ -264,7 +282,8 @@ function assertLedgerOrigin(section) {
     '`staged/review-followup-*.md`',
     '`proposal refused — no defer reason`',
     'delete the staged file',
-    'with **no** ledger origin',
+    'that no `deferred` ledger row names',
+    "`_shared/ledger-format.md`'s Location section's resolution rule",
     'Under `--dry-run`',
     "`_shared/ledger-format.md`'s Resolution-text requirements",
   ]) assert.ok(section.includes(anchor), `Ledger origin is missing: ${anchor}`);
@@ -300,6 +319,18 @@ test('AC1.1 go-red: the ledger-record-*-only opening fails the Ledger origin pin
   assert.notEqual(mutated, s);
   assert.throws(() => assertLedgerOrigin(mutated));
 });
+test('AC1.1 go-red: dropping the "Today\'s producers are" sentence fails the positive anchor loop', () => {
+  const s = ledgerOriginSection(REFUSED_MD);
+  const i = s.indexOf("Today's producers are");
+  const end = s.indexOf("record proposal).", i) + "record proposal).".length;
+  assert.ok(i >= 0 && end > i);
+  const mutated = s.slice(0, i) + s.slice(end + 1);
+  assert.notEqual(mutated, s);
+  assert.throws(() => assertLedgerOrigin(mutated), /Ledger origin is missing/);
+});
+test('AC1.1: the rationale for the spec-qualified path lives in ledger-format.md only', () => {
+  assert.ok(!ledgerOriginSection(REFUSED_MD).includes('never match each other'));
+});
 test('AC2.1: ledger-format.md records the refused-proposal reopen as the one exception, deferred rows only', () => {
   assertReopenException(resolutionTextParagraph(LEDGER));
 });
@@ -326,8 +357,27 @@ test('AC3.1: ledger/SKILL.md\'s Reopening row points at the exception', () => {
 test('AC3.1 go-red: the pre-change row fails the pin', () => {
   assert.throws(() => assertReopeningRowPointer(OLD_ROW));
 });
+test('Defer/Keep bullets in ledger-format.md spec-qualify the Resolution path they tell the writer to record', () => {
+  assertDeferKeepPathsQualified(LEDGER);
+});
+test('Defer/Keep go-red: stripping the pointer from one such line fails the pin', () => {
+  const pointer = ' (spec-qualified in a multi-spec run, per the Resolution-text requirements)';
+  const lines = LEDGER.split('\n');
+  const k = lines.findIndex((l) => DEFER_KEEP_PATH_RE.test(l) && l.includes(pointer));
+  assert.ok(k >= 0);
+  lines[k] = lines[k].replace(pointer, '');
+  const mutated = lines.join('\n');
+  assert.notEqual(mutated, LEDGER);
+  assert.throws(() => assertDeferKeepPathsQualified(mutated), /bare staged path/);
+});
 test('AC5.2: no DEFER_REASONS value in the edited spans', () => {
-  const spans = [newOriginSentences(ledgerOriginSection(REFUSED_MD)), exceptionSentence(resolutionTextParagraph(LEDGER)), reopeningRow(LEDGER_SKILL)];
+  const spans = [
+    newOriginSentences(ledgerOriginSection(REFUSED_MD)),
+    exceptionSentence(resolutionTextParagraph(LEDGER)),
+    specQualifiedSentence(resolutionTextParagraph(LEDGER)),
+    step3Parenthetical(STEP3_ROUTING),
+    reopeningRow(LEDGER_SKILL),
+  ];
   for (const v of DEFER_REASONS) for (const s of spans) assert.ok(!s.includes(v), `edited text names Defer-reason value ${v}`);
 });
 
