@@ -13,8 +13,8 @@
 // only trusted fingerprint sources (#3766): a github-issues caller passes comment objects, and
 // only OWNER/MEMBER/COLLABORATOR comments (issues/comment-trust.js) can suppress a finding.
 // The carry-over helpers (selectCarryOverEntries, planCarryOver, materialityEntryDate,
-// classifyRolloverResume) plan a digest container rollover (#4848); tidy/digest-sweep.md's
-// Container rollover procedure is their caller.
+// classifyRolloverResume) plan a digest container rollover (#4848); bin/digest-rollover.js does
+// the reads for tidy/digest-sweep.md's Container rollover procedure and calls them.
 'use strict';
 
 const { fingerprintFromBasis, normalizeText, parseMarkerFingerprints } = require('./fingerprint');
@@ -419,10 +419,11 @@ function hasDigestLabel(issue) {
 // candidates: REST issue objects ({ number, body, author_association, state, labels: [{ name }] });
 // oldIssue: the issue being rolled over. A candidate is a replacement only when a trusted author's
 // body holds the marker for oldIssue.number as a whole line. Returns { state, replacement, extras }:
-// none (no replacement, or the old issue is closed and neither issue holds the label — a past
-// generation), resume (carry on), stalled (the old issue is open and the digest label sits on
-// neither issue — a human finishes the move), finished (old closed, replacement labeled).
-// replacement is the lowest-numbered match; extras are the others, ascending.
+// none (no replacement, or the old issue is closed and neither issue holds the label), resume
+// (carry on), stalled (the old issue is open and the digest label sits on neither issue — a human
+// finishes the move), finished (old closed, replacement labeled). replacement is the
+// lowest-numbered match; extras are the others, ascending. A none over a closed old issue adds
+// orphan: the lowest-numbered open match, when there is one.
 function classifyRolloverResume(candidates, oldIssue) {
   if (!Array.isArray(candidates)) throw new CarryOverInputError('candidates: expected an array of issue objects');
   if (!oldIssue || typeof oldIssue !== 'object' || Array.isArray(oldIssue) || !Number.isInteger(oldIssue.number)) {
@@ -446,9 +447,15 @@ function classifyRolloverResume(candidates, oldIssue) {
   const oldHas = hasDigestLabel(oldIssue);
   const newHas = hasDigestLabel(chosen);
   const oldOpen = String(oldIssue.state).toLowerCase() === 'open';
-  // A replacement keeps its marker for good, so once a later rollover has moved the label on, the
-  // closed old issue and its closed replacement hold no label: that is a finished past, not a stall.
-  if (!oldHas && !newHas && !oldOpen) return { state: 'none', replacement: null, extras: [] };
+  // A replacement keeps its marker for good, so once a later rollover has moved the label on, a
+  // closed old issue and its replacement hold no label: a finished past, not a stall. This reads as
+  // the same state when a person closed the old issue during an interrupted move and the replacement
+  // is still open, so an open match is reported as orphan, for the caller to tell the two apart by
+  // whether another issue holds the label.
+  if (!oldHas && !newHas && !oldOpen) {
+    const orphan = matches.find((c) => String(c.state).toLowerCase() === 'open');
+    return { state: 'none', replacement: null, extras: [], ...(orphan && { orphan: orphan.number }) };
+  }
   let state = 'resume';
   if (!oldHas && !newHas) state = 'stalled';
   else if (!oldOpen && newHas) state = 'finished';

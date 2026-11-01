@@ -37,7 +37,7 @@
 - Real shapes the fixtures must include: `… — {run-id} → #3900` (no fingerprint), `… <!-- materiality-fingerprint: x --> → #4413` (mark after the comment), a live line with `→` inside the finding, provenance that is a skill name (`harness-health`) or free text (`reflect full mode, /flow #1153 wrap-up`), and non-entry lines in the same comment.
 - Run-ids are UTC (`2026-11-01T190941` minted at `19:09:31Z`), so a run-id date parses as UTC.
 - `gh issue edit --remove-label` on an absent label fails the whole edit, so the label move reads labels first.
-- Unverified: `gh api -X PATCH repos/{owner}/{repo}/issues/comments/{id} -F body=@{file}` has no read-only form. `gh api --help` documents `-F key=@path` as reading the value from a file. Task review should not take this as run.
+- Verified live on a throwaway issue: `gh api -X PATCH repos/{owner}/{repo}/issues/comments/{id} -F body=@{file}` writes the file's bytes (read back equal, `{owner}`, `@…` and digits left literal), and `gh issue pin`/`unpin` both succeed.
 
 ## Review Focus
 

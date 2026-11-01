@@ -476,6 +476,21 @@ test('AC7.2: a promotion on the old issue mid-rollover reaches the carried copy'
   }
 });
 
+test('a marker edit on a CRLF comment puts the mark before the carriage return, leaving other line ends alone', () => {
+  const rows = [findingLine(1), findingLine(2)];
+  const old = [posted(rows.join('\n'))];
+  const p = planOf(old);
+  const crlf = { ...posted(p.bodies[0]) };
+  crlf.body = p.pending.join('\r\n');
+  const marked = [{ ...old[0], body: `${rows[0]} → #99\n${rows[1]}` }];
+  const again = planOf(marked, [crlf]);
+  assert.strictEqual(again.markerEdits.length, 1);
+  assert.strictEqual(again.markerEdits[0].body, `${p.pending[0]} → #99\r\n${p.pending[1]}`);
+  const done = planOf(marked, [{ ...crlf, body: again.markerEdits[0].body }]);
+  assert.deepStrictEqual(done.markerEdits, [], 'the mark reads as trailing, so nothing is edited twice');
+  assert.strictEqual(done.verified, true);
+});
+
 test('AC10.1: a re-plan after posting returns no marker edit for a key that is still live on the old issue', () => {
   const old = [posted(`${findingLine(1)}\n${findingLine(1)} → #12`)];
   const fresh = postBodies(planOf(old));
@@ -681,9 +696,24 @@ test('classifyRolloverResume names a stalled label move only while the old issue
   }
   const none = { state: 'none', replacement: null, extras: [] };
   for (const state of ['closed', 'CLOSED']) {
-    assert.deepStrictEqual(classifyRolloverResume([candidate(10)], { ...OLD_ISSUE, state, labels: [] }), none, state);
+    assert.deepStrictEqual(classifyRolloverResume([candidate(10, { state: 'closed' })], { ...OLD_ISSUE, state, labels: [] }), none, state);
   }
   assert.strictEqual(classifyRolloverResume([candidate(10, { body: 'x' })], { ...OLD_ISSUE, labels: [] }).state, 'none');
+});
+
+test('classifyRolloverResume reports an open replacement of a hand-closed old issue as orphan, still none', () => {
+  const closedOld = { ...OLD_ISSUE, state: 'closed', labels: [] };
+  const none = { state: 'none', replacement: null, extras: [] };
+  assert.deepStrictEqual(classifyRolloverResume([candidate(10)], closedOld), { ...none, orphan: 10 });
+  assert.deepStrictEqual(classifyRolloverResume([candidate(10, { state: 'OPEN' })], closedOld), { ...none, orphan: 10 }, 'gh casing');
+  assert.deepStrictEqual(
+    classifyRolloverResume([candidate(10, { state: 'closed' }), candidate(11), candidate(12)], closedOld),
+    { ...none, orphan: 11 },
+    'the lowest-numbered open match',
+  );
+  assert.deepStrictEqual(classifyRolloverResume([candidate(10, { author_association: 'NONE' })], closedOld), none, 'an untrusted marker is no orphan');
+  assert.deepStrictEqual(classifyRolloverResume([candidate(10, { state: 'closed' })], closedOld), none, 'a closed past generation stays quiet');
+  assert.ok(!('orphan' in classifyRolloverResume([candidate(10)], { ...OLD_ISSUE, labels: [] })), 'a stalled move is not an orphan');
 });
 
 test('a second-generation rollover: the first replacement keeps its marker, and only the live pair is resumable', () => {

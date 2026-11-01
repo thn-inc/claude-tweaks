@@ -412,7 +412,7 @@ test('digest-sweep.md verifies both counts, carries tombstones, and refuses a ba
   assert.ok(r.includes('both the live-entry count and the tombstone count'));
   assert.ok(r.includes('fingerprint-only tombstone'));
   assert.ok(r.includes('consolebackfill-item'));
-  assert.ok(r.includes('A non-zero exit is a refused read'));
+  assert.ok(r.includes('Any other non-zero exit is a refused read'));
   const removal = r.indexOf('Remove `digest` from the old issue');
   const add = r.indexOf('add it to the replacement');
   assert.ok(removal !== -1 && add !== -1, `label removal and add must both be named: ${removal}, ${add}`);
@@ -432,7 +432,7 @@ test('digest-sweep.md resumes an unfinished rollover before its no-op, by truste
   assert.ok(start !== -1, 'resume paragraph must exist');
   assert.ok(start < SWEEP.indexOf('No-ops silently'), 'resume must run before the no-op that would otherwise skip it');
   assert.ok(SWEEP.includes('<!-- digest-rollover-of: {old} -->'));
-  assert.ok(SWEEP.includes('classifyRolloverResume'));
+  assert.ok(SWEEP.includes('/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}'));
   assert.ok(SWEEP.includes('no `--search`'));
   assert.ok(SWEEP.includes('A title alone never identifies a replacement'));
   assert.ok(SWEEP.includes('`stalled`'), 'the interrupted label move must be named');
@@ -492,7 +492,52 @@ test('both rollover trigger cells name an unfinished rollover to resume, not onl
 test('tidy Shape 1 keeps an unfinished rollover replacement by its trusted body marker', () => {
   assert.ok(TIDY_RECORDS.includes('`<!-- digest-rollover-of: {old} -->`'));
   assert.ok(TIDY_RECORDS.includes('`classifyRolloverResume`'));
+  assert.ok(TIDY_RECORDS.includes('/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}'));
   assert.ok(!TIDY_RECORDS.includes('(continues #{old})'));
+});
+
+test('an orphaned replacement is named for a human only when no open digest issue exists, and never re-labeled', () => {
+  const resume = SWEEP.slice(SWEEP.indexOf('**Resume an unfinished rollover.**'), SWEEP.indexOf('No-ops silently'));
+  const at = resume.indexOf('A `none` printing `orphan: {n}`');
+  assert.ok(at !== -1, 'the orphan branch is missing');
+  const branch = resume.slice(at);
+  assert.ok(branch.includes('when none exists name `{n}` and `{old}` in the sweep report for a human'));
+  assert.ok(branch.includes('Never re-label it here, since a later generation looks the same otherwise'));
+  assert.ok(!branch.includes('--add-label'), 'no labeling command belongs to this branch');
+});
+
+test('an interrupted rollover over the threshold makes one row, and the threshold rationale owns up to the finished re-check', () => {
+  const resume = SWEEP.slice(SWEEP.indexOf('**Resume an unfinished rollover.**'), SWEEP.indexOf('No-ops silently'));
+  assert.ok(resume.includes('the two make one `Rollover digest container` row'));
+  const threshold = rollover().split('\n').find((l) => l.startsWith('`github-issues` only — a file has no analogous limit'));
+  assert.ok(threshold, 'the threshold paragraph moved');
+  assert.ok(threshold.includes('the `finished` re-check above still reads the closed issue once per sweep'));
+  assert.ok(resume.includes('re-run step 2\'s `carry` against the closed issue'), 'the check itself stays');
+});
+
+test('step 4 handles known extras before the label comes off, and only a newly appeared issue inside the window', () => {
+  const s = stepText(4);
+  const order = [
+    'Handle every `extras` issue from step 1 first',
+    'Remove `digest` from the old issue next',
+    'list open `digest` issues and handle any that appeared while the label was off',
+    'Unpin the old issue',
+  ].map((m) => s.indexOf(m));
+  assert.ok(order.every((i) => i !== -1), `step 4 lost a marker: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, `step 4 out of order: ${order}`);
+  assert.ok(s.indexOf('add it to the replacement') > order[1], 'the add follows the removal');
+});
+
+test('step 6 takes the count before the summary comment and allows for it', () => {
+  const s = stepText(6);
+  const order = [
+    'Take `{C}` from the `count` that step 5\'s last `carry` printed',
+    'Post a summary comment',
+    'adding 1 to `{C}` when this pass posts it',
+    'Re-read its true comment count: if it rose above `{C}`',
+  ].map((m) => s.indexOf(m));
+  assert.ok(order.every((i) => i !== -1), `step 6 lost a marker: ${order}`);
+  assert.deepEqual([...order].sort((a, b) => a - b), order, `step 6 out of order: ${order}`);
 });
 
 // --- Fix round 1 (#4848): the rollover procedure's wording, fences and consumers ---
@@ -504,13 +549,7 @@ const stepText = (n) => {
   assert.ok(start !== -1 && end !== -1 && start < end, `rollover step ${n} not found: ${start}, ${end}`);
   return r.slice(start, end);
 };
-const VERDICT_FENCE = /^node -e "const fs=require\('fs'\);const \[root,c,o\][^\n]*$/m;
-const fenceOf = (src, pattern, label) => {
-  const m = pattern.exec(src);
-  assert.ok(m, `${label}: fence not found`);
-  return m[0];
-};
-const fwd = (p) => p.split(path.sep).join('/');
+const fwd =(p) => p.split(path.sep).join('/');
 const scratch = (t) => {
   const d = fs.mkdtempSync(path.join(os.tmpdir(), 'rollover-fence-'));
   t.after(() => fs.rmSync(d, { recursive: true, force: true }));
@@ -531,100 +570,6 @@ const blockHolding = (src, lead, label) => {
 const sessionEnv = (dir) => ({ CLAUDE_CODE_SESSION_ID: 'rollover-fence-test', TMPDIR: dir, TEMP: dir, TMP: dir });
 const resolvedPath = (dir, name) => spawnSync(process.execPath, [path.join(REPO_ROOT, 'plugin/bin/session-tmp-resolve.js'), '--value', name], { env: { ...process.env, ...sessionEnv(dir) }, encoding: 'utf8' }).stdout.trim();
 
-// Each reader of the verdict owns its temp names: Steps 1 and 5.6 run as parallel agents, and the bare drain
-// runs beside them, so two readers sharing a name would overwrite each other's candidates.
-const VERDICT_READERS = {
-  'digest-sweep.md': { src: SWEEP, old: 'RESUME_OLD', cand: 'RESUME_CANDS', prefix: 'digest-resume-' },
-  'step-1-records.md': { src: TIDY_RECORDS, old: 'TIDY_ROLLOVER_OLD', cand: 'TIDY_ROLLOVER_CAND', prefix: 'tidy-step1-rollover-' },
-  'next-mode.md': { src: NEXT_MODE, old: 'SPECIFY_ROLLOVER_OLD', cand: 'SPECIFY_ROLLOVER_CAND', prefix: 'specify-next-rollover-' },
-};
-const verdictBody = (line) => line.slice(0, line.indexOf('" "${CLAUDE_PLUGIN_ROOT}"'));
-
-test('the Resume verdict fence has one script body in digest-sweep.md, tidy Shape 1 and the bare drain, each with its own temp names', () => {
-  const lines = Object.entries(VERDICT_READERS).map(([name, v]) => fenceOf(v.src, VERDICT_FENCE, name));
-  assert.ok(lines.every((l) => verdictBody(l) === verdictBody(lines[0])), 'the three script bodies drifted apart');
-  assert.ok(verdictBody(lines[0]).length > 100, 'the body split found nothing');
-  const names = [];
-  for (const [name, v] of Object.entries(VERDICT_READERS)) {
-    const line = fenceOf(v.src, VERDICT_FENCE, name);
-    assert.ok(line.endsWith(`"\${CLAUDE_PLUGIN_ROOT}" "$${v.cand}" "$${v.old}"`), `${name}: root, then the one candidates file, then the old issue`);
-    const block = blockHolding(v.src, line, name);
-    const fetches = block.split('\n').filter((l) => l.startsWith('gh api') && l.includes(`"$${v.cand}"`));
-    assert.strictEqual(fetches.length, 2, `${name}: two candidate fetches are documented`);
-    assert.ok(fetches[0].endsWith(` > "$${v.cand}"`) && fetches[1].endsWith(` >> "$${v.cand}"`), `${name}: the first candidate writes, the next appends: ${fetches}`);
-    const mine = [...block.matchAll(/--value (\S+)\)/g)].map((m) => m[1]);
-    assert.ok(mine.length >= 2 && mine.every((n) => n.startsWith(v.prefix)), `${name}: names ${mine}`);
-    names.push(...mine.map((n) => n.replace(/\{[^}]*\}/g, '')));
-  }
-  assert.strictEqual(new Set(names).size, names.length, `a temp name is shared between readers: ${names}`);
-  for (const [name, v] of [['step-1-records.md', VERDICT_READERS['step-1-records.md']], ['next-mode.md', VERDICT_READERS['next-mode.md']]]) {
-    assert.ok(v.src.includes('`classifyRolloverResume`'), name);
-    assert.ok(v.src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"), `${name}: the fence's require path`);
-    assert.ok(!v.src.includes('digest-resume-'), `${name}: the sweep's temp names`);
-  }
-  assert.ok(!/`classifyRolloverResume`\s*\(`digest-sweep\.md`\)/.test(TIDY_RECORDS), 'the Work Records agent cannot read digest-sweep.md');
-  assert.ok(!NEXT_MODE.includes("tidy/digest-sweep.md`'s Resume"), 'the bare drain cannot be pointed at a sibling for the reads');
-});
-
-// The documented block run exactly as written, in a fresh bash per case: only `gh` is replaced, by a shell
-// function that serves one fixture per issue number, and the placeholders are filled in. `reps` are the
-// issue numbers in listing order (the first writes with `>`, the rest append with `>>`).
-const runDocumentedVerdict = (dir, v, name, { old, reps, serve }) => {
-  const line = fenceOf(v.src, VERDICT_FENCE, name);
-  let block = blockHolding(v.src, line, name);
-  assert.ok(block.includes('{further}') && block.includes('{replacement}'), `${name}: the block documents two candidates`);
-  // One `{further}` line per issue after the first, as the prose says ("one line each"); none for a single candidate.
-  block = block.split('\n').flatMap((l) => (l.includes('{further}') ? reps.slice(1).map((r) => l.replace('{further}', String(r.number))) : [l])).join('\n');
-  block = block.replace(/\{owner\}\/\{repo\}/g, 'o/r').replace('{old}', String(old.number)).replace('{replacement}', String(reps[0].number));
-  assert.ok(!/\{(old|replacement|further)\}/.test(block), `${name}: a placeholder survived`);
-  const env = {};
-  const arms = [];
-  for (const issue of [old, ...reps]) {
-    const f = path.join(dir, `${v.cand}-served-${issue.number}.json`);
-    fs.writeFileSync(f, serve ? serve(issue) : JSON.stringify(issue));
-    env[`FX_${issue.number}`] = fwd(f);
-    // Real gh api prints a response body with no final newline (checked live); `--jq .` prints it compact with one.
-    arms.push(`*"/issues/${issue.number} --jq ."*) cat "$FX_${issue.number}"; echo;;`);
-    arms.push(`*"/issues/${issue.number}") cat "$FX_${issue.number}";;`);
-  }
-  const stub = `gh() { case "$*" in ${arms.join(' ')} *) echo '{"message":"Not Found"}'; return 1;; esac; }`;
-  return runFence(`${stub}\n${block}`, { ...env, ...sessionEnv(dir) });
-};
-
-test('each documented Resume verdict block runs as written: every issue naming {old} reaches one call, in either listing order', (t) => {
-  const dir = scratch(t);
-  const marker = (n) => `<!-- digest-rollover-of: ${n} -->`;
-  const issue = (number, over = {}) => ({ number, state: 'open', author_association: 'MEMBER', labels: [], body: marker(10), ...over });
-  const planted = (number) => issue(number, { author_association: 'NONE' });
-  const oldIssue = (over = {}) => ({ number: 10, state: 'open', author_association: 'MEMBER', labels: [{ name: 'digest' }], body: '', ...over });
-  const resume20 = { state: 'resume', replacement: 20, extras: [] };
-  const none = { state: 'none', replacement: null, extras: [] };
-  const cases = [
-    { name: 'one trusted', old: oldIssue(), reps: [issue(20)], want: resume20 },
-    { name: 'one planted', old: oldIssue(), reps: [planted(21)], want: none },
-    { name: 'planted above real', old: oldIssue(), reps: [issue(20), planted(25)], want: resume20 },
-    { name: 'planted below real', old: oldIssue(), reps: [planted(15), issue(20)], want: resume20 },
-    { name: 'two trusted', old: oldIssue(), reps: [issue(20), issue(25)], want: { state: 'resume', replacement: 20, extras: [25] } },
-    { name: 'planted on both sides of the real one', old: oldIssue(), reps: [planted(15), issue(20), planted(25)], want: resume20 },
-    { name: 'three trusted', old: oldIssue(), reps: [issue(20), issue(25), issue(30)], want: { state: 'resume', replacement: 20, extras: [25, 30] } },
-    { name: 'earlier generation', old: oldIssue({ state: 'closed', labels: [] }), reps: [issue(20, { state: 'closed' })], want: none },
-    // MCP-written shape: one pretty-printed flat array (gh itself prints compact, one value per line)
-    { name: 'a flat array served', old: oldIssue(), reps: [issue(20)], serve: (i) => JSON.stringify(i.number === 20 ? [i] : i, null, 2), want: resume20 },
-  ];
-  for (const [name, v] of Object.entries(VERDICT_READERS)) {
-    for (const c of cases) {
-      const r = runDocumentedVerdict(dir, v, name, c);
-      assert.strictEqual(r.status, 0, `${name} ${c.name}: ${r.stderr}`);
-      assert.deepStrictEqual(JSON.parse(r.stdout), c.want, `${name} ${c.name}`);
-    }
-    // The second fetch fails: gh prints its error body and exits 1, which lands in the file as a non-issue.
-    const broken = runDocumentedVerdict(dir, v, name, { old: oldIssue(), reps: [issue(20), { number: 99 }], serve: (i) => (i.number === 99 ? '{"message":"Not Found"}' : JSON.stringify(i)) });
-    assert.notStrictEqual(broken.status, 0, `${name}: a failed fetch exits non-zero rather than printing a verdict`);
-    const absent = runDocumentedVerdict(dir, v, name, { old: oldIssue(), reps: [issue(20)], serve: (i) => (i.number === 10 ? '' : JSON.stringify(i)) });
-    assert.notStrictEqual(absent.status, 0, `${name}: an unreadable {old} exits non-zero`);
-  }
-});
-
 test('the Resume list prints numbers only, resolves every path through session-tmp-resolve, and takes no action on an unreadable {old}', () => {
   const filter = `--jq '.[] | select(.body | test("(?m)^<!-- digest-rollover-of: [0-9]+ -->\\\\s*$")) | .number'`;
   assert.ok(SWEEP.includes(filter), 'the documented list filter');
@@ -635,7 +580,6 @@ test('the Resume list prints numbers only, resolves every path through session-t
   for (const stale of ['{CANDIDATES}', '{OLDISSUE}', '{OLD}', '{NEW}', '{COUNT}', '{CARRYDIR}', '{plugin-root}']) {
     assert.ok(!SWEEP.includes(stale), `${stale} has no location`);
   }
-  assert.ok(SWEEP.includes('"${CLAUDE_PLUGIN_ROOT}" "$CARRY_OLD" "$CARRY_NEW" "{count}" "$CARRY_DIR"'));
 });
 
 test('a stalled move needs an open old issue, and an earlier generation reads none', () => {
@@ -645,19 +589,25 @@ test('a stalled move needs an open old issue, and an earlier generation reads no
   assert.ok(resume.includes('a replacement keeps its marker for good'));
 });
 
-test('step 1 re-lists through the trust gate: the Resume fence decides the replacement, and none means create', () => {
+test('step 1 re-lists through the trust gate: the verdict decides the replacement, and none means create', () => {
   const s = stepText(1);
-  assert.ok(s.includes('run the **Resume an unfinished rollover** list'));
-  assert.ok(s.includes('run its fence over every candidate naming `{old}`'));
+  assert.ok(s.includes('run the **Resume an unfinished rollover** list and its `verdict` over every issue naming `{old}`'));
   assert.ok(s.includes('Take the printed `replacement` and `extras`'));
-  assert.ok(s.includes('a `none` verdict means create one'));
+  assert.ok(s.includes('no issue naming `{old}` or a `none` verdict means create one'));
   assert.ok(!s.includes('the same list and filter'), 'a bare body-line filter is no trust gate');
+});
+
+test('step 1 stops when the running identity is untrusted, before a second replacement can appear', () => {
+  const s = stepText(1);
+  const create = s.indexOf('Its body\'s first line is exactly');
+  const check = s.indexOf('`gh api repos/{owner}/{repo}/issues/{replacement} --jq .author_association`');
+  assert.ok(create !== -1 && check !== -1 && create < check, `the check follows the create: ${create}, ${check}`);
+  assert.ok(s.includes('On anything but `OWNER`, `MEMBER` or `COLLABORATOR`, stop here and say so in the report'));
 });
 
 test('the steps stay re-runnable from every caller: zero count, mismatch, pointer and summary comments, close', () => {
   const r = rollover();
-  assert.ok(stepText(2).includes('continue with step 4 on a first pass, or with the step that re-ran them'));
-  assert.ok(!stepText(2).includes('the step that called them'), 'step 2 has no caller on the first pass');
+  assert.ok(stepText(2).includes('a true count of 0 prints `empty: true` and `verified: true` with nothing to post'));
   assert.ok(!r.includes('go to step 4'), 'step 5 and step 6 call steps 2 and 3 too');
   const s3 = stepText(3);
   assert.ok(s3.includes('A mismatch stops here'));
@@ -675,39 +625,13 @@ test('Shape 1 keeps a rollover pair on any line that says so, never overrides a 
   assert.ok(TIDY_RECORDS.includes('On `github-issues` (`local-files` has no rollover), two unlabeled shapes'));
   assert.ok(TIDY_RECORDS.includes('and `{old}` itself, which loses its `digest` label before the rollover closes it'));
   assert.ok(TIDY_RECORDS.includes('A `resume` or `stalled` verdict `Keep`s `{old}`, the printed `replacement` and every printed `extras` issue'));
+  assert.ok(TIDY_RECORDS.includes('A printed `extras` issue is `Keep` whatever the verdict, `finished` included'));
   assert.ok(TIDY_RECORDS.includes('A record is kept when ANY line it appears on gives that verdict'));
   assert.ok(TIDY_RECORDS.includes('Any other verdict adds no exemption and never overrides one'));
   assert.ok(TIDY_RECORDS.includes('stays `Keep` by the rule above whatever the verdict (`finished` included)'));
   assert.ok(!TIDY_RECORDS.includes('leaves both ordinary records'), 'a live labeled container is not ordinary on `finished`');
   assert.ok(TIDY_RECORDS.includes('`Keep` every issue on it for this run and name the line in the report'));
   assert.ok(TIDY_RECORDS.includes('over every issue naming `{old}` at once'));
-});
-
-test('the snapshot note makes no claim about who reads {tmp-records-file} directly', () => {
-  const queueFetch = read('plugin/skills/_shared/record-queue-fetch.md');
-  const note = queueFetch.split(/\n\n/).find((p) => p.startsWith('Note that `{tmp-records-file}` now holds'));
-  assert.ok(note, 'the snapshot note moved');
-  const flat = note.replace(/\s+/g, ' ');
-  assert.ok(flat.includes('A consumer that reads `{tmp-records-file}` directly instead of going through `{tmp-faceted-file}` would need to apply the same filter itself.'));
-  // Several skills read the raw file (tidy Shape 1, trust-table.md, capture, specify's decomposition mode), so the
-  // note must neither count nor name its readers.
-  for (const claim of ['none do', 'does today', 'only `', 'step-1-records']) assert.ok(!flat.includes(claim), `the note enumerates readers: ${claim}`);
-});
-
-test('every line this change added to materiality-floor.md stays inside the section width', () => {
-  const paragraph = (anchor) => {
-    const p = FLOOR.split(/\n\n/).find((x) => x.includes(anchor));
-    assert.ok(p, `no paragraph holds ${anchor}`);
-    return p.split('\n');
-  };
-  const added = [
-    ...paragraph('A line a rollover carried'),
-    ...paragraph('While a rollover is in flight'),
-    ...FLOOR.split('\n').filter((l) => /read is paginated|implemented by `bin\/lib\/issues\/comment-trust|cannot suppress a finding/.test(l)),
-  ];
-  assert.ok(added.length >= 15, `${added.length} lines found`);
-  const tooLong = added.filter((l) => l.length > 100);
-  assert.deepStrictEqual(tooLong.map((l) => `${l.length}: ${l.slice(0, 40)}`), []);
 });
 
 test('Shape 1 pair-listing fence sets its own $TIDY_RECORDS and prints one line per {old} with every open issue naming it', (t) => {

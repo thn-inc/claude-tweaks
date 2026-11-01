@@ -125,23 +125,27 @@ test("next-mode.md's bare-drain filter flags both a rollover's replacement and t
   assert.deepStrictEqual(byNumber[10].digestRolloverNamedBy, [15, 20], 'every naming issue, ascending, with no pick made on unverified bodies');
   assert.ok(!('digestRolloverOf' in byNumber[10]));
   assert.strictEqual(byNumber[15].digestRolloverOf, 10);
+  assert.deepStrictEqual(byNumber[15].digestRolloverPeers, [15, 20], 'the replacement role sends every issue naming the same old');
   assert.ok(!('digestRolloverNamedBy' in byNumber[15]));
   assert.strictEqual(byNumber[20].digestRolloverOf, 10, 'a second-generation container carries both flags');
+  assert.deepStrictEqual(byNumber[20].digestRolloverPeers, [15, 20]);
   assert.deepStrictEqual(byNumber[20].digestRolloverNamedBy, [30]);
   for (const n of [35, 40, 60]) {
-    assert.ok(!('digestRolloverOf' in byNumber[n]) && !('digestRolloverNamedBy' in byNumber[n]), `#${n} is an ordinary record`);
+    assert.ok(!('digestRolloverOf' in byNumber[n]) && !('digestRolloverNamedBy' in byNumber[n]) && !('digestRolloverPeers' in byNumber[n]), `#${n} is an ordinary record`);
   }
   assert.ok(Object.values(byNumber).every((r) => !('body' in r)), 'bodies stay out of the candidates file');
 });
 
-test("next-mode.md's bare drain inlines the verdict reads, so the pair is decided where the drain runs", () => {
+test("next-mode.md's bare drain runs the verdict CLI itself, so the pair is decided where the drain runs", () => {
   const src = read('plugin/skills/specify/next-mode.md');
   assert.ok(src.includes('digestRolloverNamedBy'), 'the old issue needs its own flag');
   assert.ok(src.includes('Both flagged shapes take the same verdict'));
-  assert.ok(src.includes("require(root+'/bin/lib/health-core/materiality-digest.js')"));
-  assert.ok(src.includes('`resume` or `stalled` drops the candidate from the drain'));
-  assert.ok(src.includes('A candidate is dropped when ANY of its pairs gives that verdict'), 'two generations can disagree; the pair read last must not release a record');
+  assert.ok(src.includes('/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}'));
+  assert.ok(src.includes('`resume` or `stalled` drops the candidate from the drain when it is `{old}`, the printed `replacement` or a printed `extras` issue'), 'a planted peer of a real replacement stays ordinary');
+  assert.ok(src.includes('a printed `extras` issue is dropped whatever the verdict, `finished` included'));
+  assert.ok(src.includes('A candidate is dropped when ANY of its pairs drops it'), 'two generations can disagree; the pair read last must not release a record');
   assert.ok(src.includes('digestRolloverNamedBy: [{replacement}, …]'), 'the old issue gets every naming issue, not a pick');
   assert.ok(src.includes('every listed issue is a candidate, in one call'));
+  assert.ok(src.includes('the candidates are `digestRolloverPeers`'), 'the replacement role sends every issue naming the same old');
   assert.ok(src.includes('specify-next-rollover-old.json') && !src.includes('digest-resume-'), 'its own temp names, apart from the sweep and Shape 1');
 });

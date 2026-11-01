@@ -204,7 +204,7 @@ node -e "
     const hit = MARKER.exec(body || '');
     return {
       ...r,
-      ...(hit && { digestRolloverOf: Number(hit[1]) }),
+      ...(hit && { digestRolloverOf: Number(hit[1]), digestRolloverPeers: namedBy.get(Number(hit[1])).sort((a, b) => a - b) }),
       ...(namedBy.has(r.number) && { digestRolloverNamedBy: namedBy.get(r.number).sort((a, b) => a - b) }),
     };
   });
@@ -212,19 +212,19 @@ node -e "
 " > "$CANDIDATES"
 ```
 
-A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled. One carrying `digestRolloverNamedBy: [{replacement}, …]` may be the old issue itself, which loses its `digest` label before the rollover closes it; the array holds every issue whose body names it, so the trust check can pick among them and no unverified body picks first. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate read the issues of each pair through REST (only that read carries the author association: `gh api repos/{owner}/{repo}/issues/{n}`, `issue_read` get mode on MCP, written to the paths with the Write tool) and run `classifyRolloverResume`. For `digestRolloverOf`, `{old}` is the flag's value and the candidate is the one candidate. For `digestRolloverNamedBy`, `{old}` is the candidate and every listed issue is a candidate, in one call. Fetch them into the two files and run:
+A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled; its `digestRolloverPeers` holds every issue naming that `{old}`, itself included. One carrying `digestRolloverNamedBy: [{replacement}, …]` may be the old issue itself, which loses its `digest` label before the rollover closes it; the array holds every issue whose body names it. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate run the `classifyRolloverResume` verdict on each of its pairs: every issue naming `{old}` goes to one call, so the trust check picks among them and no unverified body picks first. For `digestRolloverOf`, `{old}` is the flag's value and the candidates are `digestRolloverPeers`. For `digestRolloverNamedBy`, `{old}` is the candidate and every listed issue is a candidate, in one call:
 
 ```bash
-SPECIFY_ROLLOVER_OLD="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json)"
-SPECIFY_ROLLOVER_CAND="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand.json)"
-gh api repos/{owner}/{repo}/issues/{old} > "$SPECIFY_ROLLOVER_OLD"
-gh api repos/{owner}/{repo}/issues/{replacement} --jq . > "$SPECIFY_ROLLOVER_CAND"
-gh api repos/{owner}/{repo}/issues/{further} --jq . >> "$SPECIFY_ROLLOVER_CAND"
-node -e "const fs=require('fs');const [root,c,o]=process.argv.slice(1);const {classifyRolloverResume}=require(root+'/bin/lib/health-core/materiality-digest.js');const read=(f)=>{const t=fs.readFileSync(f,'utf8');try{return JSON.parse(t)}catch(e){if(!t.trim())throw e;return t.split('\n').filter((l)=>l.trim()).map((l)=>JSON.parse(l))}};console.log(JSON.stringify(classifyRolloverResume([].concat(read(c)),read(o))))" "${CLAUDE_PLUGIN_ROOT}" "$SPECIFY_ROLLOVER_CAND" "$SPECIFY_ROLLOVER_OLD"
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}
 ```
 
-The first issue writes with `>` and every further one appends with `>>`, one line each; a second `>` would replace the earlier candidates, so drop the `{further}` line when only one issue is a candidate and never repeat the assignment. The script reads each file as one JSON value or, failing that, one JSON value per line, which is what `--jq .` makes `gh api` print (compact, with a final newline: plain `gh api` ends without one, so appended issues would run together).
-Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain. A candidate is dropped when ANY of its pairs gives that verdict: a second-generation container carries both flags, its two pairs can disagree, and the pair read last never releases it. When none does, it is an ordinary record. A non-zero exit is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
+Exit 2 means `gh` is absent: read `{old}` and each candidate with `issue_read` get mode, Write `{old}` as one object and the candidates as one flat JSON array to the paths `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json` and `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand.json` print, and run this instead:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json)" --candidates-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand.json)"
+```
+
+Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain when it is `{old}`, the printed `replacement` or a printed `extras` issue, and a printed `extras` issue is dropped whatever the verdict, `finished` included. An untrusted issue is in neither list, so it stays an ordinary record. A candidate is dropped when ANY of its pairs drops it: a second-generation container carries both flags, its two pairs can disagree, and the pair read last never releases it. When none does, it is an ordinary record. A non-zero exit other than 2 is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
 
 No further claim-state filtering runs here — the `bot:in-progress`
 exclusion above is a cheap label pre-filter only, same posture as
