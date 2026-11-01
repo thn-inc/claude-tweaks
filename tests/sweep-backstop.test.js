@@ -365,7 +365,7 @@ function runItem10WithFakeGh(committedDate) {
     const gh = path.join(binDir, 'gh');
     const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
     fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
-    fs.chmodSync(gh, 0o755);
+    fs.chmodSync(gh, 0o755); // root-safe: makes the shim executable, not a denial simulation
     return runItem10Evaluation({
       claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
       prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
