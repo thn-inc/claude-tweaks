@@ -546,4 +546,4 @@ None of Templates A/B/C (A in `_shared/subagent-dispatch-core.md`; B/C in `_shar
 
 ## Continuation call — after `OUTCOME: handoff` (#4027)
 
-A call that reports `OUTCOME: handoff` crossed `/flow`'s context cap at a phase boundary (`flow/context-handoff.md`'s Dispatched call) and is continued in a fresh `Task()` call, never treated as a failure. The continuation is that call's own template above, inlined verbatim with the same substitutions: the same `{minted-run-dir}`, `{context-pack}` and `DISPATCH_HEADLESS=1 ` decision, and the same model profile (`capable` for the first call, `standard` for the second). One thing changes: the step list on both invocation lines (`build,test`, or `review,polish,wrap-up`) is replaced by the report's `NEXT_STEPS` value. Every other sentence stays verbatim. In the first call's template that includes "Stop after the test gate", which holds a `test` continuation to `test`, because a single step argument otherwise resumes from that step onward (`flow/steps-and-gates.md`'s Step Arguments). `two-call-gate.md` section 8 owns the bound and what the gate reads afterward.
+Read `continuation-call.md` in this skill's directory.

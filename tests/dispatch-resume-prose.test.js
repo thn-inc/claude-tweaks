@@ -395,8 +395,8 @@ test('task-prompt.md: the claim-targets row lists --resume-pr', () => {
   assertPinned(TASK_PROMPT, /\[--run "\{minted-run-dir\}"\] \[--resume-pr "\{pr-url\}"\]/, 'claim-targets --resume-pr');
 });
 
-test('task-prompt.md: the Continuation call paragraph is not edited', () => {
-  assertPinned(TASK_PROMPT, /Every other sentence stays verbatim\./, 'continuation sentence');
+test('continuation-call.md: the Continuation call paragraph is not edited', () => {
+  assertPinned(read('continuation-call.md'), /Every other sentence stays verbatim\./, 'continuation sentence');
 });
 
 test('task-prompt.md: the fenced first-call template carries no RESUME_PR or resume-context', () => {
