@@ -14,11 +14,10 @@
 'use strict';
 const fs = require('fs');
 const { closeRunState } = require('./close-run-state');
-const { runGit } = require('./git-exec');
+const { runGit, repoSpecOf } = require('./git-exec');
 const { parseWorktreeList, findWorktreeEntry, isWorktreeLocked, resolveIntegrationBranch, bareIntegrationName } = require('./worktree-reap');
 const { mainCheckoutRoot } = require('./worktree-detect');
 const { fallbackBranch, worktreePathForBranch } = require('./run-integrity');
-const { parseRepo } = require('../repo-resolve');
 
 const GH_TIMEOUT_MS = 15000;
 
@@ -60,16 +59,11 @@ function modeGateSkip(mode, branch, isIntegrationBranch, label) {
   return null;
 }
 
-// -> { host, owner, repo } | null. Delegates to repo-resolve.js's shared parseRepo (the one
-// owner/repo/host regex in the codebase, #1177) instead of this module's own narrower
-// owner/repo-only regex, which discarded the host segment a GitHub Enterprise Server remote
-// carries — the discarded host was exactly what made Step 5's `gh api` call below always target
-// github.com regardless of the actual remote.
-function repoSpecOf(root) {
-  const remote = runGit(['remote', 'get-url', 'origin'], root);
-  if (remote.failure || !remote.stdout) return null;
-  return parseRepo(remote.stdout);
-}
+// repoSpecOf (git-exec.js, #4603) -> { host, owner, repo } | null: repo-resolve.js's shared
+// parseRepo (the one owner/repo/host regex in the codebase, #1177), not an owner/repo-only
+// regex that discards the host segment a GitHub Enterprise Server remote carries — the
+// discarded host was exactly what made Step 5's `gh api` call below always target github.com
+// regardless of the actual remote. This module used to carry its own copy; re-exported below.
 
 // Branch registered for `worktreePath` in `git worktree list --porcelain`, or null when the
 // worktree isn't registered at all. Deliberately independent from run-integrity.js's own
