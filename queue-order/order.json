@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T16:52:36.314Z",
+  "computedAt": "2026-11-01T18:13:04.445Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -30,7 +30,7 @@
       },
       {
         "number": 4640,
-        "updatedAt": "2026-11-01T07:32:10Z",
+        "updatedAt": "2026-11-01T17:41:25Z",
         "state": "OPEN"
       },
       {
@@ -110,12 +110,12 @@
       },
       {
         "number": 4611,
-        "updatedAt": "2026-11-01T09:25:31Z",
+        "updatedAt": "2026-11-01T18:11:51Z",
         "state": "OPEN"
       },
       {
         "number": 4593,
-        "updatedAt": "2026-11-01T09:21:08Z",
+        "updatedAt": "2026-11-01T18:11:38Z",
         "state": "OPEN"
       },
       {
@@ -125,7 +125,7 @@
       },
       {
         "number": 4589,
-        "updatedAt": "2026-11-01T07:48:37Z",
+        "updatedAt": "2026-11-01T18:12:12Z",
         "state": "OPEN"
       },
       {
@@ -174,18 +174,13 @@
         "state": "OPEN"
       },
       {
-        "number": 4557,
-        "updatedAt": "2026-11-01T12:48:12Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4552,
         "updatedAt": "2026-10-30T13:47:25Z",
         "state": "OPEN"
       },
       {
         "number": 4551,
-        "updatedAt": "2026-10-31T20:40:40Z",
+        "updatedAt": "2026-11-01T17:16:05Z",
         "state": "OPEN"
       },
       {
@@ -1170,96 +1165,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`plugin/bin/plan-audit.js --task-markers {plan}` reads each task's optional `**Role:**` / `**Review risk:**` markers (#3378) and prints `{\"markers\", \"tasks\": [{index, title, role, risk}], \"findings\"?}`. `/build`'s per-task tier forwarding (`plugin/skills/build/dispatch.md`, the \"Per-task role/review-risk tier forwarding (#3378)\" paragraph) is its one consumer: a task reported `risk: \"high\"` gets a Capable task review; `risk: null` falls back to the run's `size:`-derived tier.\n\nThe parser (`plugin/bin/lib/plan-audit/parser.js`, `extractTaskMarkers`) captures everything after the key to end of line (`RISK_MARKER_RE = /^\\*\\*Review risk:\\*\\*[ \\t]*(.*)$/m`, same shape for `ROLE_MARKER_RE`), trims it, and recognizes it only on an exact whole-value match against the closed sets `TASK_MARKER_RISKS = ['high']` / `TASK_MARKER_ROLES = ['transcription', 'integration', 'judgment']`. So `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` yields `riskRaw = \"high (a read-once/…)\"`, `risk: null`. The same holds for a `**Role:** judgment (needs design judgment)` line.\n\nThe mis-parse is then invisible end to end:\n\n- `checkTaskMarkers` (`plugin/bin/lib/plan-audit/checks.js`) records a `findings` entry, but `--task-markers` (`plugin/bin/plan-audit.js`) only embeds it in the stdout JSON — exit 0, nothing on stderr. `plugin/skills/build/plan-audit.md` documents findings as warn-only, never exit-changing.\n- `dispatch.md`'s tier-forwarding paragraph never reads `findings` at all — it keys only on `markers` and each task's `role`/`risk`.\n- `plugin/skills/build/plan-authoring-checks.md` documents the syntax as `**Review risk:** high` but never says the value must stand alone on the line, and a trailing reason reads as valid to a human author.\n\nNet effect: a task its author explicitly marked high-risk silently drops from a Capable review to the unpinned tier. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) parses correctly — confirmed by the reporter on plugin 6.156.1.\n\n**Related:** #3986, #4618, #4549, #4559 (near-duplicate screen: shared Key Files / body anchors only — no title similarity; #4618 adds a different risk axis to plan-audit and shares `plan-audit.js`/`checks.js`)\n\n## Deliverables\n\n1. **Accept a trailing annotation after a recognized marker value.** In `extractTaskMarkers`, a `**Role:**` / `**Review risk:**` value is recognized when its leading token is in the closed set and is either the whole value or is followed by whitespace (the annotation after it is ignored). `**Review risk:** high (reason)` → `risk: \"high\"`; `**Role:** judgment — needs design judgment` → `role: \"judgment\"`. A leading token not in the closed set (`medium`, `hgih`, `high-ish`) stays unrecognized (`null`) exactly as today. `roleRaw`/`riskRaw` keep carrying the full raw trimmed line value.\n2. **Make an unrecognized marker value visible on stderr.** When `--task-markers` produces any `findings` entry, print one warning line per finding to stderr naming the task index, title, field, and raw value (e.g. `plan-audit.js: warning: task 3 \"X\" — unrecognized Review risk value \"medium\"; the task reads as unmarked`). Stdout JSON and the exit code (0) are unchanged — findings stay warn-only per `plan-audit.md`.\n3. **Surface findings in `/build`'s tier forwarding.** `dispatch.md`'s Per-task role/review-risk tier forwarding paragraph: when the `--task-markers` output carries `findings`, log one decision-log line naming each offending task/field/value (via `log-decision.js`, status per `_shared/auto-decision-log.md`'s Status semantics — not `STAGED`, since nothing is staged) and continue dispatch with those tasks treated as unmarked — never a stop.\n4. **Document the accepted shape.** `plan-authoring-checks.md`'s marker paragraph and `plan-audit.md`'s `--task-markers` paragraph state that a trailing annotation after the value is allowed and ignored, and that an unrecognized value is now warned on stderr as well as listed in `findings`.\n\n## Acceptance Criteria\n\n- `node plugin/bin/plan-audit.js --task-markers plan.md` on a plan with `### Task 1: X` followed by `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)` prints task 1 with `\"risk\": \"high\"`, no `findings` key, exit 0.\n- The same for `**Role:** judgment (needs design judgment)` → `\"role\": \"judgment\"`, and for a value followed by an em-dash annotation (`**Review risk:** high — reason`).\n- `**Review risk:** high` and `**Role:** transcription` with no annotation still parse exactly as today (existing `tests/bin-lib/plan-audit/parser.test.js` / `cli.test.js` #3378 cases stay green unmodified).\n- `**Review risk:** medium`, `**Review risk:** high-ish`, and `**Role:** trivial` still yield `null` plus a `findings` entry carrying the full raw value; `--task-markers` exits 0 and writes one stderr warning line per finding naming the task index, field, and raw value.\n- A plan with no findings writes nothing to stderr under `--task-markers`.\n- `dispatch.md`'s tier-forwarding paragraph names the `findings` field and the decision-log line it writes; `tests/plan-task-markers-conformance.test.js` (or a sibling conformance test) pins that the paragraph references `findings`.\n- `plan-authoring-checks.md` and `plan-audit.md` each state that a trailing annotation after the marker value is ignored.\n- New unit tests in `tests/bin-lib/plan-audit/parser.test.js` and `tests/bin-lib/plan-audit/cli.test.js` cover the annotated forms and the stderr warning, and each goes red when the parser change (respectively the stderr write) is reverted.\n- `npm test` passes.\n\n## Release Note\n\nFix plan-audit's task markers silently ignoring `**Review risk:** high` when a reason follows the value on the same line, and warn about unrecognized marker values instead of dropping them quietly.\n\n## Technical Approach\n\nParser: keep `ROLE_MARKER_RE` / `RISK_MARKER_RE` capturing the full line (so `roleRaw`/`riskRaw` and the findings' `value` stay the raw text), then derive the recognized value from the leading token — e.g. `const lead = raw.split(/\\s/, 1)[0]` and recognize `lead` when it is in the closed set. Splitting on whitespace (not on any non-word character) is what keeps `high-ish` / `high,` unrecognized rather than read as `high`; decide in the build whether a directly-attached separator like `high,` should also be accepted, and test whichever way it lands. `checkTaskMarkers` must use the same recognition rule as `extractTaskMarkers` (today it re-tests `TASK_MARKER_RISKS.includes(t.riskRaw)` against the raw value — switch it to test the recognized `t.risk`/`t.role` being null while the raw is non-null, so an annotated valid value is not reported as a finding).\n\nCLI: in the `parsed.taskMarkers` branch of `plan-audit.js`, after computing `findings`, write each to `process.stderr` before the stdout JSON line; leave `process.exitCode` untouched.\n\nSkill prose: the `dispatch.md` change is one sentence inside the existing tier-forwarding paragraph; keep the `markers: false` branch byte-for-byte as the paragraph promises.\n\n### Key Files\n\n- `plugin/bin/lib/plan-audit/parser.js` — `extractTaskMarkers`: leading-token recognition for Role / Review risk\n- `plugin/bin/lib/plan-audit/checks.js` — `checkTaskMarkers`: finding iff raw present and recognized value null\n- `plugin/bin/plan-audit.js` — `--task-markers` branch: one stderr warning line per finding\n- `plugin/skills/build/dispatch.md` — tier-forwarding paragraph: log `findings` to the decision log, continue with the task unmarked\n- `plugin/skills/build/plan-authoring-checks.md` — marker paragraph: trailing annotation allowed and ignored\n- `plugin/skills/build/plan-audit.md` — `--task-markers` paragraph: annotation rule + stderr warning\n- `tests/bin-lib/plan-audit/parser.test.js` — annotated-value cases\n- `tests/bin-lib/plan-audit/checks.test.js` — annotated valid value yields no finding\n- `tests/bin-lib/plan-audit/cli.test.js` — stdout risk/role + stderr warning cases\n- `tests/plan-task-markers-conformance.test.js` — pin `dispatch.md`'s `findings` handling\n\n## Gotchas\n\n- `tests/plan-task-markers-conformance.test.js` pins the marker syntax in `plan-authoring-checks.md` with `/\\*\\*Review risk:\\*\\* (\\S+)`/` and the dispatch tier wording — edit the prose so those pins still match, or update the pins in the same change.\n- The `markers` flag semantics are unchanged: a recognized key with an unrecognized value still sets `markers: true`.\n- Keep the matcher same-line-only (`[ \\t]*`, never `\\s*`) — `parser.js`'s own comment explains why `\\s` would read into the next line.\n- Exit code for findings must stay 0 — `plan-audit.md` documents findings as warn-only and `dispatch.md` runs this call unconditionally before SDD dispatch.\n\n## Original request\n\nplan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently\n\n**Summary:** `plan-audit.js --task-markers` reads a `**Review risk:** high` line that has a trailing reason as no risk, with no warning.\n\n**Kind:** Defect\n\n**Affected component:** `bin/plan-audit.js --task-markers` (with `skills/build/plan-authoring-checks.md`'s marker paragraph and `skills/build/dispatch.md`'s per-task tier forwarding)\n\n**Repro steps:**\n1. Write a plan with `### Task 1: X`, followed by the line `**Review risk:** high (a read-once/write-last ordering, and branching on computed state)`.\n2. Run `node bin/plan-audit.js --task-markers plan.md`.\n\n**Expected vs. actual:**\nExpected: task 1 reports `\"risk\": \"high\"`, or the CLI exits non-zero or warns, naming the task and the unparsed value.\nActual: task 1 reports `\"risk\": null`. A `findings` entry quotes the raw value, but the exit code is 0 and nothing is printed to stderr. `/build`'s per-task tier forwarding keys on `risk: \"high\"`, so the task's review would silently drop from Capable to the unpinned tier. The marker reads as valid to a human, so the degradation is invisible. Putting the reason on its own line (`**Review risk:** high`, then `Why: …`) gives `\"risk\": \"high\"`.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-e271bd38 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **AC8 \"respectively\": Reading B (split by coverage).** Annotated-form tests (parser tests, plus the CLI criterion-1 test) go red when the parser change is reverted; stderr-warning tests go red when the stderr write is reverted. The criterion-5 \"a plan with no findings writes nothing to stderr under `--task-markers`\" test is a negative control, exempt from the go-red requirement.\n\nSecond plan-review round (2026-11-01, question issuecomment-6550904623):\n\n- **Deliverable 3 decision-log line count: Reading A.** Per-task tier forwarding writes one `SKIP` line per `--task-markers` run, and that one line lists every offending task/field/value. This follows `_shared/auto-decision-log.md`'s Degrade-trace rule (\"One line per documented conditional action per run attempt\") and the spec's literal \"one … line naming each\".\n",
-        "createdAt": "2026-10-30T14:43:37Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4640,
-        "state": "OPEN",
-        "title": "plan-audit: --task-markers reads '**Review risk:** high (reason)' as no risk, silently",
-        "updatedAt": "2026-11-01T07:32:10Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Verified-as-of: 3470ac15cf3e74adb9443080aa2329a07ac56bb8\n\nOrigin: /claude-tweaks:release v6.157.0 release-gate review (run 2026-10-30T134829-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nOn a base:{ref} whole-branch scope the own-work filter drops shipping work: it treats any file absent from the first-parent walk as arriving from {base}, but the base is a tag. In this range #4587, #4423 and #4466 sit on the second parent of first-parent merges, so following the rule would have excluded 32 non-run-dir paths from the release gate.\n\nFound at `plugin/skills/review/merge-provenance-check.md:15` by the release-gate review of v6.157.0 (range v6.156.3...3470ac15c).\n\n## Deliverables\n\nFix the defect at `plugin/skills/review/merge-provenance-check.md:15`, with a regression test.\n\n## Acceptance Criteria\n\nA base:{ref} review scope includes every path in the diff outside run directories, and the merge check names what it excluded only when content really arrived from the base.\n\n## Release Note\n\nThe release gate reviews every merged change in the release, including work that reached main through a merge commit.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/merge-provenance-check.md` — the defect named above\n\n_Filed by `release` via specShapedBody._",
         "createdAt": "2026-10-30T14:21:37Z",
         "labels": [
@@ -1710,175 +1615,7 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nReplace wrap-up's Verification Brief with an **acceptance packet** for every project — universal, not gated on control mode. The packet is what the human finds at the acceptance control point: it makes validating a finished feature cheap, and it is the only artifact `/accept` and Dispatch both read. Control mode (separate units) later adds the stop-removing behaviors; the packet itself is a plain improvement that ships for everyone, migrated expand-contract.\n\nSections, in order (design section 6):\n\n1. **What changed** — user-facing summary, not a diff tour.\n2. **Recording** — the walkthrough of the feature in use (filled by the recording record; a placeholder section here).\n3. **Test guide** — numbered manual steps, each with a direct link that lands in the right state (role, test data). Credentials are referenced by vault entry name, never embedded as session tokens or passwords.\n4. **Couldn't test** — what the agent could not verify and why (no backend, no dev server, needs a real device, needs real credentials). **A check that skipped itself is listed here, never shown as silence.**\n5. **Tried to break** — the negative stories and edge cases run, with results.\n6. **Least confident** — where the agent's judgment is weakest (\"if I were you I'd poke here\"); sourced from review's low-confidence findings.\n7. **Risk proofs** — present only when risk flags were kept (the specific evidence per flag; filled by the risk-flag record).\n8. **Decisions left for you** — carried-forward items (filled by the control-mode records); omitted when empty.\n9. **Deploy status** — target and, for `dev`, whether the feature is confirmed live (filled by the dev-target record; for `local` it states the target).\n\n**Canonical copy:** a marker-block comment on the work record (a GitHub comment; the PR links to it). The run-dir copy is a working copy and is never read after the run. **One packet per work item; re-posting updates the same comment in place** (find by marker, edit by comment id), never a second comment. **Fact-validated narration:** every claim in sections 3-7 cites a gathered fact (story report, screenshot, test output, review finding) and the citations are validated against the gathered fact set, following the repo's gather / narrate / render pattern as `/activity` implements it (`plugin/bin/lib/activity/gather.js` and `render.js`; the `fact-validated-narration` skill is the checklist).\n\nAnti-goals this record carries: a \"tested X\" claim with no run behind it; a skipped check that shows as nothing; packet links that point at a build lacking the feature (deploy status owns that); secrets reaching a public surface (the recording record owns redaction, but this record must never embed credential-shaped values in the Test guide).\n\n**Contract decisions this record pins (the packet contract file states them; later records cite it):**\n\n- **Marker and lookup.** The canonical comment carries `<!-- acceptance-packet: v1 -->` on its first line (registered in `_shared/pr-run-comments.md`'s marker registry). A writer lists the work record's comments, keeps those that carry the marker and pass `comment-trust.js`, and edits the earliest by comment id; extra marker comments are reported, never edited or deleted. If the matched comment cannot be edited by the current identity, the run reports that visibly and posts nothing (never a second packet). The PR gets one idempotently appended body line `Acceptance packet: {comment url}`; with no PR (the `local-merge` model) there is no link and none is needed. Under `local-files` the packet lives in the record body between `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->` and is replaced in place between the delimiters.\n- **Facts and claims.** A fact is `{ id, kind, status, reason?, source }` with `kind` one of `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`; `status` one of `passed`, `failed`, `skipped`, `not-run`; ids are stable strings such as `check:unit-tests` or `story:login#negative-2`. A claim is `{ section, text, refs[] }` with `section` one of `what-changed`, `test-guide`, `tried-to-break`, `least-confident`, `risk-proofs`. Section-to-kind table (in the contract): what-changed cites `change`; test-guide cites `story` and `link`; tried-to-break cites `story` and `check`; least-confident cites `finding`; risk-proofs cites `flag` plus the proof fact. Sections 2 (Recording), 8 (Decisions) and 9 (Deploy status) render facts of kind `recording`, `decision` and `deploy` directly and are not narrated claims. `schemaVersion: 1` is one constant used by the facts file and the marker alike; later records add fact kinds only by extending the contract's table.\n- **Validation policy: visible drop.** `validatePacket` drops any claim whose `refs` is empty, names an absent fact, or names a fact incompatible with the claim, and the packet always states `N claims were dropped for missing evidence` (and lists them in the run-dir working copy). It never posts silently thinner. Compatibility: a claim asserting verification (tested, verified, works) may cite only `passed` facts; a claim citing a `failed` fact renders under Tried to break with the failure; one citing `skipped` or `not-run` moves to Couldn't test.\n- **The expected check set comes from outside the facts.** Gather derives the checks and stories expected for the work (the spec's Acceptance Criteria and verify expectations, the planned stories) independently of what ran; an expected check with no result fact renders under Couldn't test as `not run`, so a self-skipped check cannot be silent. Gather is `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic; a partial gather renders a stated `partial` note); narration is an LLM step in the wrap-up prose; wrap-up runs gather, narrate, validate, render, post in that order.\n- **Failure contract.** If the post or edit fails, the pending acceptance label is not applied and the failure is reported. The reader function `readPacket(comments)` in the same module applies the reader rules: an unknown `schemaVersion` reads as unreadable (stated, no second packet), duplicates resolve to the earliest trusted comment, an untrusted-author marker is ignored, and the run-dir copy is never consulted (a test proves a stale local copy is ignored).\n- **Links.** Test-guide links must be http(s) on the local base URL host or the `dev-base-url` host only; any other host is refused. A shared constant defines the credential-shaped key set, matched case-insensitively after normalization in query, fragment and userinfo: `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`. The Recording record reuses this one constant for its redactor. When the deploy section is not confirmed live, each Test-guide link carries `(link unverified: deploy not confirmed live)`.\n- **Facts-poor and infra items.** A section with nothing to say renders one line stating why (`not applicable: no UI surface`), never an empty heading. For `Surface: infra`/`backend` work the Test guide lists commands to run instead of links. For decomposed work the packet lives on the parent (the feature-acceptance record owns the gate); a sub-issue's wrap-up posts nothing and the existing parent-gate routing stands.\n- **Size.** The renderer caps the comment at 60,000 characters (GitHub's limit is 65,536) and truncates by omitting whole items with a stated `truncated: N items omitted` line.\n- **Section 1 is cited too.** `what-changed` claims cite `change` facts (changed files, commits), so every narrated section is validated.\n- **Old brief.** All five Routing call sites land in `verification-brief.md`, so replacing its template migrates them at once; the old section map (The ask to What changed; What shipped to What changed; Confirmed to Test guide and Tried to break; Observation plan to Test guide) is a table in the contract. Briefs already posted stay readable through `plugin/skills/demo/legacy-brief-compatibility.md` (kept until the final cleanup record). A work item with only a legacy brief comment gets a new packet comment; the legacy comment is left untouched, and \"exactly one\" applies to packet comments.\n\n## Non-Goals\n\n- Not posting the recording or redaction (separate record), not deploy-status refresh (dev-target record), not the control-mode \"Decisions left for you\" population (control-mode records) — this record defines the sections and renders them when data exists.\n- Not the `/accept` skill or the verdict handler.\n- Not Dispatch's display of the packet.\n- Not removing the legacy-brief reader (`demo/legacy-brief-compatibility.md`); the five call sites in `verification-brief.md`'s Routing table keep working and now land on the packet.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none intra-batch | — |\n\n## Current State\n\n- The Verification Brief: `plugin/skills/wrap-up/verification-brief.md` (about 31 KB). Its `## Routing` section lists five call sites (wrap-up Phase 4 acceptance-labeling, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate, dispatch close-out step 3, tidy's Open-parent-gate action). Its `## Verification Brief` template has sections The ask / What shipped / Confirmed / Observation plan. It already composes a **Try it block** for every record (`## Try it block`, backed by `plugin/skills/_shared/try-it.md`).\n- Parent-gate: `plugin/skills/wrap-up/verification-brief-parent-gate.md` (a decomposed sub-issue never carries its own pending label; its parent carries one gate). Feature-level acceptance for decomposed work is a separate record; here, keep the existing routing intact.\n- Engine: `plugin/bin/lib/wrap-up/engine-render.js` renders wrap-up output; `plugin/bin/lib/wrap-up/engine-verify.js` verifies it.\n- Pattern to follow: `/activity` splits gather (`gh` to `facts.json`) / narrate / render, and `render.js` drops every `refs[]` citation not present in the facts (warning forms: `dropped citation`, `ambiguous citation`, `unparseable citation`), refuses a schemaVersion mismatch, and neutralizes newlines and link brackets in free text so a citation-shaped string in prose cannot forge a heading or link.\n- Raw material: `/stories` negative stories, qa-agent step screenshots, review's low-confidence findings, `/walkthrough`'s GIF encoder.\n- A shared contract file for the packet does not exist yet: `plugin/skills/_shared/acceptance-packet.md` is new.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/acceptance-packet.md` (new): the packet contract — section list and order, the marker-block comment format and its find-by-marker/edit-in-place rule, the fact schema (what each of sections 3-7 may cite), the untrusted-content rules for free text, and which other units fill which sections.\n- [ ] A packet builder module (pure, under `plugin/bin/lib/wrap-up/`) with `validatePacket(facts, narrative)` and `renderPacket(facts, narrative)`: drops or fails any claim in sections 3-7 whose citation is absent from the gathered facts; renders a skipped check under **Couldn't test**; neutralizes newlines and link brackets in narrative text per `/activity`'s `inline()` approach.\n- [ ] Wrap-up posts exactly one packet comment per work item through the existing github write transport (`_shared/github-write-transport.md`), edits it in place on re-run, and links it from the PR; under `work-backend: local-files` it writes the packet into the record body section instead.\n- [ ] `verification-brief.md` and `_shared/try-it.md` reworked so the Try it block and observation plan feed the packet's Test guide and Tried-to-break sections; the old brief sections are mapped, not silently dropped (a mapping table in the packet contract).\n- [ ] `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic gather, partial-gather note) and `readPacket` (reader rules above) with the wrap-up prose that runs gather, narrate, validate, render, post in order; the PR-link line and the `local-files` delimiters from the contract decisions.\n- [ ] Tests: validation rejects an uncited claim; a skipped check lands in Couldn't test; re-render with an existing marker comment edits rather than posts; schema mismatch is refused.\n\n## Acceptance Criteria\n\n1. Given facts containing a story report with one failed and one skipped check, `renderPacket` outputs the skipped check under `Couldn't test` (with its reason) and the failure under `Tried to break`; nothing is omitted silently (a test counts input checks against rendered rows).\n2. A claim in the Test guide whose `refs` cites a fact id absent from the gathered facts is dropped by `validatePacket`, and the rendered packet states `1 claim was dropped for missing evidence`; a claim with no `refs` is dropped the same way; a \"verified\" claim citing a `failed` fact renders under Tried to break with the failure; one citing a `skipped` fact moves to Couldn't test. Each is pinned by a test.\n2a. An expected check (derived from the spec's Acceptance Criteria or planned stories) with no result fact at all renders under Couldn't test as `not run`.\n2b. `readPacket` returns the earliest trusted marker comment among duplicates, ignores an untrusted-author marker, reports `schemaVersion: 2` as unreadable, and never reads the run-dir copy.\n2c. When the post or edit fails (fake runner returns an error) the pending acceptance label is not applied and the failure is reported.\n2d. A packet that would exceed 60,000 characters is truncated by whole items with a `truncated: N items omitted` line.\n3. Wrap-up's second run on a work item that already has a packet comment edits that comment (same comment id) and the work item ends with exactly one comment carrying the marker (test against the fake runner).\n4. A narrative string containing `[x](https://evil.example)` or a forged `## Couldn't test` heading is rendered as inert prose (brackets escaped, newlines collapsed).\n5. The packet contract states, and a conformance test pins, that credentials appear only as vault entry names and that the link rules above hold: a link to a host other than the local base URL host or `dev-base-url` is refused; a link carrying any key from the shared credential-key constant in its query, fragment or userinfo is refused after case and percent-encoding normalization (tests for `TOKEN=`, `tok%65n=`, `#sig=`, `user:pass@`, `sessionid=`); a benign `/docs/token-guide` path is accepted. For a `Surface: infra` record the Test guide lists commands and renders no links; sections with nothing to say render a one-line reason.\n6. The five call sites in `verification-brief.md`'s Routing table still resolve and still apply the pending acceptance label; existing wrap-up tests pass unchanged apart from intended renames.\n7. `npm test` passes.\n\n## Release Note\n\nReplaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.\n\n## Technical Approach\n\nThree-stage gather / narrate / render. Gather is deterministic and writes a facts file in the run directory (working copy). The narration step is judgment and writes a narrative with `refs[]` per claim. The renderer is deterministic and trusts only the facts. The canonical copy is the posted comment, found by its marker and edited in place; the run-dir copy is never read afterward. The packet is the same artifact for control mode on or off — only which sections are populated differs.\n\n### Data / API Surface\n\n- Marker: a fenced marker block comment, versioned (`schemaVersion: 1`), following the repo's other marker-comment convention (`_shared/pr-run-comments.md`); author-trust-gated on read (`plugin/bin/lib/issues/comment-trust.js`).\n- Facts: `{ checks[], stories[], findings[], links[], decisions[], deploy }` with stable ids that `refs[]` cite.\n- Sections 2, 7, 8, 9 render a stated placeholder (`not recorded`, `no kept risk flags`, none, `target: local`) until their owning records populate them.\n\n### Key Files\n\n- `plugin/skills/_shared/acceptance-packet.md` — new packet contract\n- `plugin/skills/wrap-up/verification-brief.md` — migrate to the packet; keep Routing\n- `plugin/skills/_shared/try-it.md` — Try it block feeds the Test guide\n- `plugin/bin/lib/wrap-up/engine-render.js` — render integration\n- `plugin/bin/lib/wrap-up/packet-gather.js` — new gather, `readPacket`, `validatePacket`, `renderPacket` (builder's split into sibling modules)\n- `plugin/skills/_shared/pr-run-comments.md` — register the `acceptance-packet` marker\n- `plugin/bin/lib/activity/render.js` — reference pattern for citation validation (read, do not edit)\n- `plugin/bin/lib/issues/comment-trust.js` — trust gate for reading the marker comment\n- `tests/try-it-contract-conformance.test.js` — pins the Try it contract; update with the move\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — keep green\n\n## Gotchas\n\n- Replacing, not adding: two packets on one item is the failure mode; the old template is replaced in place in `verification-brief.md`, not kept beside the new one.\n- Do not read the run-dir copy after the run; `/accept` and Dispatch read GitHub (AC 2b proves the reader ignores a stale local copy).\n- The authenticated identity that posted the packet may differ on a re-run (cloud, Routine); AC 2c's failure path covers \"cannot edit\". Concurrent wrap-up runs on one record are prevented by the record claim; if one slips through, last write wins and the loser reports.\n- The gather step must never silently pass a failed gather: a partial gather renders a stated \"partial\" note, mirroring `/activity`'s Partial gather handling.\n- `tests/try-it-contract-conformance.test.js` and other prose-pinning tests fail when prose moves; run the whole suite (not only touched files) before merge.\n- The wrap-up skill text must stay within its size ceiling; put packet detail in the new `_shared` contract and cite it.\n- Parent-linked sub-issues keep today's routing (the parent carries the gate) until the feature-level-acceptance record changes it.\n\n**Related:** #4269\n\n\n<!-- work-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio -->\nwork-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Q1, what the parent gate posts: Reading A.** The parent gate keeps posting the legacy `## Verification Brief` until the feature-level acceptance record (#4617) changes it. Move the brief template verbatim into `plugin/skills/wrap-up/verification-brief-parent-gate.md`, so the parent path, `/tidy`'s opened-parent-gate check and `engine-verify.js`'s parent path stay unchanged in this record. `verification-brief.md` Step 4 still holds exactly one template (the packet), never two.\n- **Q2, credential screening scope: Reading B.** Apply the shared credential-key constant to `command` strings and Test-guide claim text as well as links (`key=`, `--key`, `Authorization:` and the other key shapes, matched case-insensitively). A matching entry is dropped from the packet and its omission noted in the packet, never rendered; the packet as a whole still posts. Add tests for a command and a claim-text match alongside AC5's link cases.\n",
-        "createdAt": "2026-10-30T11:46:06Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4611,
-        "state": "OPEN",
-        "title": "Acceptance packet: schema, canonical marker comment, new sections",
-        "updatedAt": "2026-11-01T09:25:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\nThe multi-spec artifact-overwrite completion check (`plugin/skills/flow/multispec-artifact-namespacing.md`, run before the Consolidated Review Console) calls `plugin/bin/check-artifact-overwrite.js`. It finds every `docs/journeys/` or `stories/` path that one commit in the run added and a later commit modified. A hunk with deletions passes only if one of three extension tests in `plugin/bin/lib/flow/artifact-overwrite-check.js` accepts it: same-spec self-edit, list reflow, or step-markup reformat. Anything else is reported as an overwrite (exit 1), which HARD-GATEs the run.\n\nThe same-spec self-edit test (`artifact-overwrite-check.js:310`, `const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs)`) attributes commits only through a `refs #N` trailer on the commit message (`extractRefs`, `:85`). Most of the pipeline's commit sites (stories, review fix waves, wrap-up) write no such trailer; only `plugin/skills/build/micro-plan.md:66` asks for `refs #{n}`. In a run where neither commit has a trailer, the test can never match. A spec's own review fix to a story or journey file it added earlier in the same run then trips the HARD-GATE as a false positive, and the run stops for a manual ruling. This is the most common legitimate edit of that kind.\n\nThe run already records which spec was running when. Every `spec-status` call appends `{ phase, status, at }` to `specs[].phases[]` in the multi-spec run's `manifest.yml` (`plugin/bin/lib/flow/manifest.js`'s `transitionSpec`, `spec.phases.push({ phase, status, at: nowIso })`), and `startedAt` is set on a spec's first `running` transition. `readManifest(runDir)` is exported from the same module. The check does not read the manifest today.\n\n## Deliverables\n\n- **Manifest-window attribution fallback.** `checkArtifactOverwrite` accepts an optional `manifest` (or `runDir`) input. A commit is attributed to spec ids in this order:\n  1. its own `refs #N` trailer, when present (unchanged);\n  2. otherwise, the single spec whose manifest window contains the commit's author date. A spec's window runs from its first recorded transition (`startedAt`, else its earliest `phases[].at`) up to the next spec's first recorded transition. The last spec's window is open-ended.\n  3. otherwise the commit is unattributed (an empty set, as today).\n\n  The same-spec self-edit test then compares these attributions for the deleting commit and every blamed commit. A commit whose author date falls inside no window, or inside more than one, stays unattributed. The fallback never guesses.\n- **CLI flag.** `plugin/bin/check-artifact-overwrite.js` gains an optional `--run <dir>` flag that reads `manifest.yml` from that directory and passes it through. Without the flag, or with no readable manifest there, behavior stays as it is today, refs-only. An unreadable or unparseable manifest named by `--run` is the walk's own failure (exit 3), never a silent fall back to refs-only.\n- **Distinct unattributable reason.** When a self-edit judgment fails because the deleting commit or a blamed commit has no attribution from either source, the `overwrites[]` entry's `reason` says so explicitly (\"unattributable — no refs trailer and no manifest window\"). It must not reuse the \"refs trailer does not match\" wording, so whoever makes the manual ruling can tell a missing attribution from a confirmed cross-spec deletion. The entry still fails closed: it stays in `overwrites[]`, and the exit code is still 1.\n- **Procedure update.** `plugin/skills/flow/multispec-artifact-namespacing.md`'s invocation passes `--run \"{parent}\"`, the multi-spec parent run directory that holds `manifest.yml`. Its test-1 description names both attribution sources and their order.\n- The module header comment's description of test 1 is updated to match.\n\n## Acceptance Criteria\n\n- [ ] Fixture: spec A adds `stories/x-A.yaml`, and a later commit inside spec A's manifest window changes one of its lines. Neither commit carries a `refs` trailer. With the manifest supplied, the result is `clean: true`.\n- [ ] Fixture: same history, but the modifying commit's author date falls inside spec B's window. The result is still an overwrite: one entry for that path and commit.\n- [ ] Fixture: the same untrailered self-edit with no manifest supplied still reports an overwrite. Its `reason` contains `unattributable`, not `refs trailer does not match`.\n- [ ] Fixture: a commit with a `refs #N` trailer is attributed by the trailer even when its author date falls in a different spec's manifest window (the trailer takes precedence).\n- [ ] Fixture: an author date that falls before every spec's first transition leaves the commit unattributed.\n- [ ] `check-artifact-overwrite.js --run <dir>` with no `manifest.yml` in `<dir>` exits 3, and stderr names the missing manifest.\n- [ ] Each new attribution test goes red when the manifest fallback is removed.\n- [ ] Every existing test in `tests/bin-lib/flow/artifact-overwrite-check.test.js` and `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` still passes unchanged.\n- [ ] `multispec-artifact-namespacing.md`'s command block includes `--run \"{parent}\"`, and `tests/multispec-artifact-namespacing-conformance.test.js` passes.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.\n\n## Technical Approach\n\nAttribution becomes a per-commit function that the existing `getRefs` cache wraps. It tries the trailer first, then the manifest window looked up by the commit's author date (`git log -1 --format=%aI {sha}`, fetched alongside `%B` in the same call so the walk does not add a git call per commit). `selfEdit` keeps its current shape over the attribution sets. Parse the manifest with `manifest.js`'s `parseManifestYaml`/`readManifest` rather than adding a second YAML reader. Window computation is a small pure function over `multispec.specs` (ordered by first transition) so it can be unit-tested without git.\n\nAlternatives the record offered, and why they lose:\n- **Namespace-suffix attribution** (`-{N}` in the filename): this names the file's owner, not the author of the deleting commit. Spec B editing spec A's `-A` file is exactly the overwrite the check exists to catch, so the suffix cannot separate the self-edit from the real overwrite.\n- **Writing `refs #{N}` trailers at every commit site**: the check's stated design (`multispec-artifact-namespacing.md`) is to verify the outcome from git history \"rather than trusting that every present-and-future write path\" follows a convention. A trailer convention spread across build, stories, review, and wrap-up commit sites, including subagent-authored commits, is that kind of trust. It is also incomplete for commits made before the convention lands.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — manifest-window attribution fallback, the unattributable reason string, and the header comment\n- `plugin/bin/check-artifact-overwrite.js` — `--run <dir>` flag, manifest read, and exit 3 on an unreadable manifest\n- `plugin/bin/lib/flow/manifest.js` — read only; reuse `readManifest`/`parseManifestYaml` (no change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — pass `--run \"{parent}\"` and describe the two attribution sources\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — untrailered self-edit, cross-window, trailer-precedence, and out-of-window fixtures\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — `--run` flag and missing-manifest exit 3\n- `tests/multispec-artifact-namespacing-conformance.test.js` — keep passing against the updated command block\n\n## Gotchas\n\n- Use the commit's **author** date, not the committer date. A rebase or cherry-pick rewrites the committer date to the time of the rewrite, which would move a commit out of its spec's window. The author date is preserved.\n- Fixture commits must pin `GIT_AUTHOR_DATE` (and `GIT_COMMITTER_DATE`) explicitly. Commits made seconds apart in a test otherwise all land in one window, and the cross-window fixture would pass for the wrong reason.\n- Manifest windows apply only to a shared-worktree (sequential) multi-spec run. Parallel-wave members build in their own worktrees, so their windows can overlap. The \"more than one window, unattributed\" rule is what keeps an overlap from being read as a self-edit.\n- `#4590` adds two more extension tests (step renumber, reference-preserving `Origin:` line) to the same module and the same procedure doc. It is a sibling change, not a dependency. Whichever lands second rebases its header-comment and doc edits onto the other's.\n\n**Related:** #4590, #3831, #3974, #4353, #4429\n\n## Original request\n\nflow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer\n\n**Summary:** The multi-spec artifact-overwrite completion check reports a spec's own review-fix edit to its own namespaced artifact as a cross-spec overwrite (a HARD-GATE) whenever the run's commits carry no `refs #N` trailer — which the pipeline's own commit sites never write.\n\n**Kind:** Defect\n\n**Affected component:** /claude-tweaks:flow — multi-spec artifact-overwrite completion check (`skills/flow/multispec-artifact-namespacing.md`, `bin/check-artifact-overwrite.js`, `bin/lib/flow/artifact-overwrite-check.js`)\n\n**Repro steps:**\n1. Run a two-spec `/flow` in one shared worktree (specs A then B).\n2. Spec A's `/stories` commit adds a namespaced story file, e.g. `stories/x-A.yaml`.\n3. Spec A's own review fix wave changes one line in that file (two locator strings updated to match a copy change made in the same commit).\n4. None of the run's commits (build, stories, review fix waves) carry a `refs #A` trailer.\n5. At end of run, `check-artifact-overwrite.js --base {EXPECTED_BASE} --path docs/journeys/ --path stories/` runs over the run's range.\n\n**Expected vs. actual:**\nExpected: the edit is recognised as a same-spec self-correction (both commits are spec A's; the manifest phase timestamps put both inside spec A's test/review window, spec B started hours later; the file carries spec A's `-A` namespace suffix), so the check passes.\nActual: exit 1 with one overwrite reported. The \"same-spec self-edit\" test requires the deleting commit and the blamed commit to share the same `refs #{N}` trailer, so it can never match in a run whose commit sites don't write that trailer. The procedure treats this as a HARD-GATE before the consolidated console, so the run stops for a manual ruling on a false positive — the most common legitimate edit shape (a spec correcting its own artifact during review).\n\nSuggested fixes (any of):\n1. When neither commit has a `refs #N` trailer, fall back to spec attribution from the run's `manifest.yml` phase windows (`specs[].phases[].at`), or from the artifact's own `-{N}` namespace suffix (a file namespaced to spec A, modified while spec A is the running spec, is a self-edit).\n2. Have the pipeline's commit sites (build, stories, review fix waves, wrap-up) write a `refs #{N}` trailer in multi-spec runs, so the existing test works.\n3. At minimum, report \"unattributable (no refs trailer)\" as its own verdict instead of an overwrite.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\nRelated (different false-positive shape in the same check): #4590.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-58618f68 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (AC7 scope): Reading B.** \"Each new attribution test goes red when the manifest fallback is removed\" covers only the fixtures whose expected verdict depends on the fallback (AC1, AC2, AC4, AC5). AC3 (no manifest) is proven by reverting its unattributable reason string instead; the pure `computeSpecWindows`/`attributeByWindow` unit tests are exempt.\n- **Q2 (mixed-execution runs): Reading B.** Window attribution turns off whenever the manifest names a `not-run` spec — the check falls back to today's refs-only behavior for that run, so it never produces a false clean. This also covers a default-mode run that stopped after a failure (it too keeps refs-only behavior).\n\nSecond plan-review round (2026-11-01, question issuecomment-6551069601):\n\n- **Q3 (window end): Reading A.** Keep the Deliverables rule as written: a spec's window ends at the next spec's first recorded transition (the last spec's window is open-ended). Window attribution is switched off for a `parallel` run, which falls back to today's refs-only check, per the Gotcha \"Manifest windows apply only to a shared-worktree (sequential) multi-spec run\". The procedure tells a parallel run apart by omitting `--run` for it (or an equivalent explicit signal); no max-based window end.\n- **Q4 (run whose last spec failed): Reading B.** Window attribution is also switched off when any spec's status is `failed`, not only when the manifest names a `not-run` spec. This keeps Q2's intent: a run stopped by a failure keeps today's refs-only behavior.\n",
-        "createdAt": "2026-10-30T09:13:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4593,
-        "state": "OPEN",
-        "title": "flow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer",
-        "updatedAt": "2026-11-01T09:21:08Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md` is about 48 KB. Its Step 5 instructions require the dispatching session to copy each fenced template verbatim and substitute `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}` (eight items, three resolved by CLIs) and `[Use: …]` by hand. One #3903 resume needed three such prompts of about 10 KB each (first call, second call, handoff continuation). Hand substitution let small drift in: context-pack items were condensed rather than copied, and `Selected at:` was written as free text. Nothing checks a dispatched prompt against the template.\n\n## Deliverables\n\n1. A `plugin/bin/` CLI (e.g. `dispatch-prompt.js --call first|second|continuation --run {run-dir} --issues N[,M] [--next-steps …] [--headless]`) that resolves the context pack (plugin root, policy values, profile, Selected-at), fills the template from `task-prompt.md`'s fenced blocks, and prints the finished prompt or writes it to a file.\n2. `task-prompt.md`/`SKILL.md` Step 5 point the dispatching session at the CLI; the fenced blocks stay the single source the CLI reads.\n3. A test that the rendered prompt contains every fixed sentence of its template and no unsubstituted `{…}` placeholder.\n\n## Acceptance Criteria\n\n- [ ] A dispatch firing builds each of `task-prompt.md`'s first, second and continuation prompts with one CLI call and no manual placeholder substitution. The express-lane prompt is out of scope (#4735).\n- [ ] A non-zero `dispatch-prompt.js` exit blocks the group: it takes `two-call-gate.md`'s terminal path, and the prompt is never filled by hand.\n- [ ] Editing a sentence in a `task-prompt.md` fenced block changes the CLI's output with no code change.\n- [ ] The test fails when a placeholder is left unsubstituted.\n\n## Decisions\n\nDecided 2026-10-31 on the plan-review questions (issuecomment-6521814313):\n\n1. **CLI failure:** reading A. A non-zero `dispatch-prompt.js` exit blocks the group through `two-call-gate.md`'s terminal path; there is no hand-substitution fallback, since that would reintroduce what AC1 removes.\n2. **Express-lane prompt:** reading B. AC1 covers `task-prompt.md`'s first, second and continuation prompts only; `express-prompt.md` is a follow-up (#4735), since `express-lane` resolves `false` in this repo.\n\n## Release Note\n\nNo user-visible change: dispatched build agents receive prompts generated from the template rather than hand-copied.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/task-prompt.md` — modify\n- `plugin/skills/dispatch/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Origin: session 2026-10-30, resumed #3903 build (PR #4541, run 2026-10-30T063836-record-3903)\n\nDefer-reason: tangential\n\n**Related:** #4588\n\n## Current State\n\n`plugin/skills/dispatch/task-prompt.md` is about 48 KB. Its Step 5 instructions require the dispatching session to copy each fenced template verbatim and substitute `{issue list}`, `{minted-run-dir}`, `{plugin-root}`, `{context-pack}` (eight items, three resolved by CLIs) and `[Use: …]` by hand. One #3903 resume needed three such prompts of about 10 KB each (first call, second call, handoff continuation). Hand substitution let small drift in: context-pack items were condensed rather than copied, and `Selected at:` was written as free text. Nothing checks a dispatched prompt against the template.\n\n## Deliverables\n\n1. A `plugin/bin/` CLI (e.g. `dispatch-prompt.js --call first|second|continuation --run {run-dir} --issues N[,M] [--next-steps …] [--headless]`) that resolves the context pack (plugin root, policy values, profile, Selected-at), fills the template from `task-prompt.md`'s fenced blocks, and prints the finished prompt or writes it to a file.\n2. `task-prompt.md`/`SKILL.md` Step 5 point the dispatching session at the CLI; the fenced blocks stay the single source the CLI reads.\n3. A test that the rendered prompt contains every fixed sentence of its template and no unsubstituted `{…}` placeholder.\n\n## Acceptance Criteria\n\n- [ ] A dispatch firing builds each of `task-prompt.md`'s first, second and continuation prompts with one CLI call and no manual placeholder substitution. The express-lane prompt is out of scope (#4735).\n- [ ] A non-zero `dispatch-prompt.js` exit blocks the group: it takes `two-call-gate.md`'s terminal path, and the prompt is never filled by hand.\n- [ ] Editing a sentence in a `task-prompt.md` fenced block changes the CLI's output with no code change.\n- [ ] The test fails when a placeholder is left unsubstituted.\n- [ ] A `Task()` prompt that differs from the CLI's rendered file, or is missing its marker, is denied before the agent starts.\n\n## Decisions\n\nDecided 2026-10-31 on the plan-review questions (issuecomment-6521814313):\n\n1. **CLI failure:** reading A. A non-zero `dispatch-prompt.js` exit blocks the group through `two-call-gate.md`'s terminal path; there is no hand-substitution fallback, since that would reintroduce what AC1 removes.\n2. **Express-lane prompt:** reading B. AC1 covers `task-prompt.md`'s first, second and continuation prompts only; `express-prompt.md` is a follow-up (#4735), since `express-lane` resolves `false` in this repo.\n\nDecided 2026-11-01 on the plan-review question (issuecomment-6555127850):\n\n3. **Prompt fidelity:** reading B. Each dispatched first, second and continuation `Task()` prompt must equal the file `dispatch-prompt.js` rendered, byte for byte. A PreToolUse hook on the `Agent` tool compares the prompt against the rendered file, or a hash the CLI writes, and denies a mismatch. It also denies a prompt from the bound dispatch session that names the group's run directory but lacks the CLI's marker. A denied call is resent from the file unchanged and is never edited by hand. Before relying on it, the plan verifies that PreToolUse fires for `Agent` calls with `tool_input.prompt`, and whether older Claude Code versions name the tool `Task`.\n\n## Release Note\n\nNo user-visible change: dispatched build agents receive prompts generated from the template rather than hand-copied.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/task-prompt.md` — modify\n- `plugin/skills/dispatch/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-30T08:37:07Z",
         "labels": [
           {
@@ -1927,7 +1664,7 @@
         "number": 4589,
         "state": "OPEN",
         "title": "Render dispatch Task prompts from a CLI instead of hand-substituting task-prompt.md",
-        "updatedAt": "2026-11-01T07:48:37Z",
+        "updatedAt": "2026-11-01T18:12:12Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -2347,102 +2084,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: backend\n\n## Current State\n\n`wrap-up-engine.js verify`'s `acceptance-labeling` check (`plugin/bin/lib/wrap-up/engine-verify.js`, registered around line 823) redirects each run record to its parent before checking `demo:pending`, per `verification-brief.md`'s Routing rule (a resolvable-parent sub-issue never carries its own `demo:pending`; its parent carries one gate for all of them). Both halves of that redirect only understand `work-links: native`:\n\n- `resolveParent(n, deps, cwd)` (around line 680) resolves the parent solely through `fetchNativeParent` (GraphQL `Issue.parent`, `plugin/bin/lib/issues/native-dependencies.js`). Under `work-links: body-text`, the sub-issue's parent is recorded only as a `Parent: #N` metadata line in the sub-issue's own body (`specify/spec-template.md`, `_shared/work-record.md`'s `Parent: #N` entry, written by `specify/record-creation-subissues.md`). No native link exists, so `fetchNativeParent` returns null. The sub-issue is then treated as a standalone leaf, and the check reports `#{n}: missing demo:pending label`, which is a false `fail`.\n- `enumerateSubIssues(parent, deps, cwd)` (around line 709) lists the parent's sub-issues only through the REST `issues/{parent}/sub_issues` endpoint. Under `body-text` that endpoint returns nothing, so once the parent lookup is fixed, every parent would hit the `no sub-issues enumerated` gather failure and render the whole check unknown.\n\nThe skill prose already defines the body-text behavior. `wrap-up/verification-brief-parent-gate.md`'s **Resolve the parent** reads the `Parent: #N` line under `body-text`. Its **Enumerate the parent's sub-issues** resolves `work-links` via `resolve-policy.js` and, under `body-text`, parses the parent's own task list with `parseSubIssues` (`plugin/bin/lib/issues/record-dependencies.js`, re-exported by `record.js`). The engine check is the code twin of that procedure, but it implements only the native branch. `work-links` defaults to `body-text` (`plugin/bin/lib/policy-schema.js`), so every project that never set the key hits this. This repo sets `work-links: native` in `.claude-tweaks/policy.yml`, which is why its own runs never surfaced it.\n\nNo code parser for the `Parent: #N` line exists today. `record-dependencies.js` parses `Blocked by #N` (`parseDependencies`) and parent task lists (`parseSubIssues`), but not the sub-issue-side `Parent:` line. Skills read that line by eye.\n\nDistinct from #3508 and #4093, which concern how a gated or resolved parent is judged once a parent *is* found. This record is about finding the parent at all under `body-text`.\n\n**Related:** #4617, #3508, #3813, #3963, #3975, #4108, #4362, #4492, #4494, #4501, #4505, #4591, #4609, #4610, #4611\n\n## Deliverables\n\n1. Add a pure `parseParent(body)` to `plugin/bin/lib/issues/record-dependencies.js`. It is a line-anchored `^Parent: #(\\d+)\\b` match (multiline, first match wins), returns the number or `null`, and mid-line mentions do not count. That matches the existing `DEP_RE`/`SUB_ISSUE_RE` conventions in the same file. Export it there and through `record.js`, like `parseSubIssues`.\n2. Make `resolveParent` in `engine-verify.js` branch on the resolved `work-links` value. Read it from the repo root's `.claude-tweaks/policy.yml` through `resolvePolicyKeys(['work-links'], { policyRaw })`, the same way `resolveRiskFloor` reads `risk-floor`, so the schema default (`body-text`) applies when the key is unset.\n   - `native`: unchanged (`fetchNativeParent`).\n   - `body-text`: fetch the sub-issue's body (`deps.gh(['issue', 'view', n, '--json', 'body'], cwd)`) and return `{ ok: true, parent: parseParent(body) }`. A failed or unparseable fetch returns `{ ok: false, error }`, so the check renders `unknown`, never `fail`.\n3. Make `enumerateSubIssues` branch the same way. Under `body-text`, fetch the parent's body, take the sub-issue numbers from `parseSubIssues`, and read each one's `state` and label names. The result is the same `{ number, state, labels }` shape `parentGateState` already consumes. An empty task list stays a gather failure, as it is today for an empty native enumeration.\n4. Resolve `work-links` once per check run, not once per record.\n5. Unit tests in `tests/bin-lib/wrap-up/engine-verify.test.js` cover the body-text path with an injected `deps.gh`/`deps.git` and a fixture policy. Tests in `tests/bin-lib/issues/record.test.js` cover `parseParent`.\n\n## Acceptance Criteria\n\n- [ ] `parseParent('Surface: backend\\nParent: #12\\n\\n## Current State')` returns `12`; a body with `see Parent: #12` mid-line, or no `Parent:` line, returns `null`; a `null`/empty body returns `null`.\n- [ ] Under `work-links: body-text`, with run record #20 whose body carries `Parent: #12`, and parent #12 whose body task list holds `- [x] #20` and `- [ ] #21`: `resolveParent` returns `{ ok: true, parent: 12 }` with no GraphQL `Issue.parent` call issued. `acceptance-labeling` targets #12, not #20, so it never reports `#20: missing demo:pending label`.\n- [ ] In the same fixture with #21 still open, `acceptance-labeling` reports the parent gate as not due (`parent gate #12 not due — 1 sibling sub-issue(s) open`) rather than a gather failure.\n- [ ] Under `work-links: body-text`, a run record with no `Parent:` line resolves `parent: null` and is checked as its own target, which is today's standalone-leaf behavior, unchanged.\n- [ ] Under `work-links: body-text`, a failed body fetch (injected `deps.gh` throw) renders `acceptance-labeling` `unknown`, never `fail`.\n- [ ] Under `work-links: native` (explicit in the fixture policy), the existing `resolveParent`/`enumerateSubIssues` tests pass unchanged and no body fetch is issued.\n- [ ] With no `.claude-tweaks/policy.yml` present, the check takes the `body-text` path, which is the schema default.\n- [ ] Each new body-text test goes red when the `work-links` branch in `engine-verify.js` is reverted to the native-only code.\n- [ ] `npm test` passes.\n- **Decision (plan review, 2026-10-31):** When a sub-issue's `Parent: #N` line and the parent's own task list disagree, the parent's task list wins. Sub-issues are enumerated from the parent side, as `plugin/skills/wrap-up/verification-brief-parent-gate.md` already states. A sub-issue that points at the parent without being listed in its task list is logged as a mismatch and is not added to the gate. (Plan-review question: Reading A.)\n- **Decision (plan review, 2026-10-31):** A record whose `Parent: #N` names a parent that does not list it in its task list has no resolvable parent. It takes the standalone path and needs its own `demo:pending`; the mismatch note is still logged. (Plan-review question on an unlisted sub-issue: Reading B.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nFix wrap-up's acceptance-labeling check falsely failing sub-issues in projects that link records with `Parent: #N` body lines instead of native sub-issue links.\n\n## Technical Approach\n\nMirror the prose procedure in `wrap-up/verification-brief-parent-gate.md` (**Resolve the parent** and **Enumerate the parent's sub-issues**) in code, branching on one `work-links` read.\n\n- Add `PARENT_RE = /^Parent: #(\\d+)\\b/m` beside `DEP_RE`/`SUB_ISSUE_RE` in `record-dependencies.js`, plus `parseParent(body)`. It takes the first match; the metadata block carries at most one `Parent:` line.\n- In `engine-verify.js`, add `resolveWorkLinks(repoRoot)` next to `resolveRiskFloor` (same `policy.yml` read and `resolvePolicyKeys` call). Call it once at the top of the `acceptance-labeling` handler and pass the value into `resolveParent` and `enumerateSubIssues` as an extra argument. Keep `resolveParent`'s exported signature backward-compatible: a missing argument means `native`, so existing direct callers and tests keep their behavior.\n- For the body-text enumeration, read each sub-issue's state and labels with one batched call rather than N `gh issue view` calls where practical: `gh issue list --state all --json number,state,labels` filtered to the parsed numbers, or per-number `gh issue view {n} --json state,labels`. Either way, upper-case `state` the way the native path does.\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-dependencies.js`: add `PARENT_RE` and `parseParent`, and export it\n- `plugin/bin/lib/issues/record.js`: re-export `parseParent` alongside `parseSubIssues`\n- `plugin/bin/lib/wrap-up/engine-verify.js`: `resolveWorkLinks`, plus the `work-links` branches in `resolveParent`, `enumerateSubIssues`, and the `acceptance-labeling` handler\n- `tests/bin-lib/wrap-up/engine-verify.test.js`: body-text fixtures for the parent redirect, the gate-not-due, no-parent, and fetch-failure cases\n- `tests/bin-lib/issues/record.test.js`: `parseParent` cases\n\n## Gotchas\n\n- The `Parent: #N` line is written only under `work-backend: github-issues` + `work-links: body-text`, and only when `/specify`'s Step 2.6 kept a parent (`_shared/work-record.md`). A collapsed decomposition produces parentless records legitimately, so a missing line must resolve `parent: null`, never an error.\n- `enumerateSubIssues` treats zero sub-issues as a gather failure on purpose (an empty answer must not read as \"every sub-issue closed\"). Keep that for the body-text path. A parent body with no task list is `unknown`, not a due gate.\n- Read `work-links` from the repo root's policy file (`repoRoot`), not the worktree cwd, the same as `resolveRiskFloor`. A worktree's copy of `policy.yml` can lag main.\n- This repo itself runs `work-links: native`, so a local dogfood run never exercises the new branch. The unit tests are the only proof, which is why the revert-to-red AC exists.\n\n## Original request\n\nwrap-up engine-verify: acceptance-labeling finds parents only through native sub-issue links, ignoring work-links: body-text Parent lines\n\n**Summary:** In `bin/lib/wrap-up/engine-verify.js`, `resolveParent` (used by the `acceptance-labeling` check) looks a record's parent up only through `fetchNativeParent` (GraphQL `Issue.parent`). In a project that links records with `work-links: body-text` (`Parent: #N` lines in the body), every sub-issue reads as parentless, so the check expects `demo:pending` on the sub-issue itself and reports `fail: missing demo:pending` instead of redirecting to the parent's gate.\n\n**Kind:** Defect\n\n**Affected component:** `bin/lib/wrap-up/engine-verify.js` (`resolveParent`, `acceptance-labeling` check)\n\n**Repro steps:**\n1. In a project with `work-links: body-text`, have records whose bodies carry `Parent: #P` and no native sub-issue link.\n2. Run a pr-first `/claude-tweaks:flow` over them through wrap-up, so `wrap-up-engine.js verify` runs.\n\n**Expected vs. actual:**\nExpected: the parent is resolved through the same body-text link reader the rest of the plugin uses under `work-links: body-text`, and the gate is checked on parent #P (`verification-brief.md`'s Routing: a resolvable-parent sub-issue never carries its own `demo:pending`).\nActual: `resolveParent` returns `parent: null` and the sub-issue is checked as a standalone leaf, so `acceptance-labeling` reports `missing demo:pending`.\n\nDistinct from #3508 and #4093, which are about gated or resolved parents once a parent *is* found.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-a26e3d19 -->\n\n\n",
-        "createdAt": "2026-10-29T10:21:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4551,
-        "state": "OPEN",
-        "title": "wrap-up engine-verify: acceptance-labeling finds parents only through native sub-issue links, ignoring work-links: body-text Parent lines",
-        "updatedAt": "2026-10-31T20:40:40Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
