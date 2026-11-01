@@ -81,7 +81,7 @@ above-floor recommendation still ends with `/claude-tweaks:demo {id}` even once 
 
 **What this does not cover.** Only decomposition parents. The sibling backstop — `acceptance-gap`,
 closed records with no disposition that are *not* decomposed sub-issues — is a scan, not an action: it has a
-`local-files` twin (`step-1-records.md`'s **Shape 8**), but that shape recommends
+`local-files` twin (`step-1-records.md`'s **Shape 8**; Shape 7 prints the same row for a hand-closed parent), but that shape recommends
 `/claude-tweaks:demo {id}` and mutates nothing, so no `## acceptance-gap` section belongs in this
 file or in `actions-github-issues.md`. Approving one of its rows executes no procedure here;
 the disposition itself is `/claude-tweaks:demo`'s, applied only after a human verdict.

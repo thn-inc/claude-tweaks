@@ -16,6 +16,7 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { run } = require('./lib/release-notes-publish.js');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives.js');
+const { ghOptions } = require('./lib/repo-resolve.js');
 
 const USAGE = 'usage: release-notes-publish.js [--root <dir>]\nexit 0 applied/no-op; 1 a gh/git call failed';
 
@@ -42,11 +43,11 @@ function defaultDeps(root) {
     // Remote-contacting calls (release list/view/edit) are bounded by the
     // shared, policy-resolved timeout — git log/add/commit/push are local-or-
     // push-only and stay unbounded, matching release-local.js's own posture.
-    gh: (args, input) => execFileSync('gh', args, {
+    gh: (args, input) => execFileSync('gh', args, ghOptions(args, {
       cwd: root, encoding: 'utf8', timeout: GH_TIMEOUT_MS,
       input, stdio: [input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       windowsHide: true,
-    }),
+    })),
     git: (args) => execFileSync('git', args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }),
     readFile: (p) => { try { return fs.readFileSync(abs(p), 'utf8'); } catch (e) { if (e.code === 'ENOENT') return null; throw e; } },
     writeFile: (p, text) => fs.writeFileSync(abs(p), text),

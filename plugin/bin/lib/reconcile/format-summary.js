@@ -1,6 +1,6 @@
 // bin/lib/reconcile/format-summary.js — compact, human-readable rendering of
 // reconcile()'s return object (index.js's `{ mirror, redTip, worktrees,
-// claims, runs, branches, remoteBranches, ledgerResidue, console, skipped }`), for
+// claims, postMerge, runs, branches, remoteBranches, ledgerResidue, console, skipped }`), for
 // `bin/hooks.js reconcile`'s new default output (#638). Pure presentation
 // layer — takes exactly the object reconcile() already returns; no changes
 // to reconcile()/its per-check modules, and no I/O of its own.
@@ -51,6 +51,10 @@
 const CATEGORIES = [
   { key: 'worktrees', unit: 'worktree', verb: 'reaped', takenActions: ['reaped'], skipActions: ['skipped'] },
   { key: 'claims', unit: 'claim', verb: 'released', takenActions: ['released'], skipActions: ['skipped'] },
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps run', takenActions: ['ran'], skipActions: ['skipped'], kindFilter: (e) => !e.step40Failed },
+  // post-merge.js flags an entry whose Step 4.0 itself failed (it still reads `action: 'ran'`, with a SKIP
+  // marker written and Step 4.0b never run): it is reported on its own line, never as a run that ran.
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge Step 4.0 failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.step40Failed === true },
   { key: 'runs', unit: 'run dir', verb: 'archived', takenActions: ['archived'], skipActions: ['skipped'] },
   { key: 'branches', unit: 'branch', verb: 'archived', takenActions: ['delete', 'tag-and-delete'], skipActions: ['skip'], kindFilter: (e) => e.kind !== 'tag' },
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },

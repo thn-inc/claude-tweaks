@@ -273,8 +273,11 @@ test("overlap counts a rename's old path", () => {
   f.pushUpstream();
   const r = invoke(f, MAIN);
   assert.equal(r.code, 0);
-  assert.ok(['merged', 'conflict'].includes(r.json.outcome), `outcome was ${r.json.outcome}`);
+  assert.equal(r.json.outcome, 'merged');
   assert.deepEqual(r.json.overlapFiles, ['a.txt']);
+  // Git's rename detection carried the upstream line-5 edit onto the renamed file.
+  assert.equal(fs.readFileSync(path.join(f.work, 'c.txt'), 'utf8'), 'l1\nl2\nl3\nl4\nO5\n');
+  assert.equal(fs.existsSync(path.join(f.work, 'a.txt')), false);
 });
 
 test('Filename too long is windows-longpath, not fetch-failed', () => {

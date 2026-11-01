@@ -39,7 +39,7 @@ exactly as it always has for any other unlabeled record, no code change needed f
 
 - You just finished ad hoc work in this same conversation — no `/capture`, no work record — and want a clean recap plus an explicit sign-off gate before moving on; `/demo`'s session-recall source (Step 1) picks this up automatically, no filing required.
 - `/claude-tweaks:help`'s dashboard told you a specific `#N` is awaiting sign-off (Stage 4.7 — fires on either driver) — including an autonomously `auto:merge`'d record already closed — and you want to walk through that one record now.
-- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files` — named a record that closed with no disposition at all: no brief, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 reconstructs one from the closing commit.
+- `/claude-tweaks:tidy`'s `acceptance-gap` rows — Step 4.8 under `work-backend: github-issues`, Step 1's Shape 8 under `local-files`; a hand-closed decomposition parent comes from `parent-gate` or Shape 7 — named a record that closed with no disposition at all: no brief, no label or `acceptance:` facet, and typically no session anywhere that remembers it. Step 1 reconstructs one from the closing commit.
 - You keep having to ask "how do I test this" days after a build finished — this skill surfaces the brief `/wrap-up` already wrote at build time, so you never re-derive it.
 - Some of what you're reviewing has no interactive surface at all (docs, config, a harness or skill file) — this skill still gives it a lightweight human look, just not a click-through.
 

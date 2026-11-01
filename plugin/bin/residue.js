@@ -9,6 +9,7 @@
 const { execFileSync } = require('node:child_process');
 const path = require('node:path');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { ghOptions } = require('./lib/repo-resolve');
 const { resolveScope } = require('./lib/residue/scope');
 const { hasTestScript } = require('./lib/residue/detect-test-script');
 const { probeWorktrees } = require('./lib/residue/probes/worktrees');
@@ -62,10 +63,13 @@ function runner(cwd) {
   // `git show HEAD:CHANGELOG.md` in probeRelease) is already a quarter of
   // that and growing; an overflow past the default silently fell into the
   // bare catch below and read as an ordinary degraded probe. `opts` can
-  // still override it per call through the same spread.
+  // still override it per call through the same spread. A `gh` argv also goes
+  // through ghOptions (#4505's GH_HOST seam); git calls get the object as is.
   return (argv, opts = {}) => {
     try {
-      return execFileSync(argv[0], argv.slice(1), { cwd, encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...opts, windowsHide: true }).trim();
+      const args = argv.slice(1);
+      const wrap = argv[0] === 'gh' ? ghOptions : (_args, o) => o;
+      return execFileSync(argv[0], args, wrap(args, { cwd, encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, stdio: ['ignore', 'pipe', 'ignore'], ...opts, windowsHide: true })).trim();
     } catch {
       return null;
     }

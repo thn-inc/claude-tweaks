@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges, findSection } = require('./record-payload');
+const { fencedLineRanges, findSection } = require('../markdown-blocks');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -68,7 +68,7 @@ function stripCodeSpans(text) {
   // and removes the open-ended shape as a defensive measure. A span whose
   // content exceeds the cap degrades to being left as literal text instead
   // of stripped — the same safe direction stripCodeSpans already takes for
-  // an unclosed fence (fencedLineRanges, record-payload.js) — never to a longer scan.
+  // an unclosed fence (fencedLineRanges, markdown-blocks.js) — never to a longer scan.
   return out.join('\n').replace(/(`+)([\s\S]{0,2000}?)\1/g, '');
 }
 

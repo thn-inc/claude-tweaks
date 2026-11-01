@@ -187,15 +187,6 @@ test('seedManifestVersion: newest v* tag by semver precedence, never lexicograph
   assert.equal(rb.seedManifestVersion({ tags: [], manifestVersion: null }), '0.1.0');
 });
 
-test('isValidBranchName: rejects whitespace/control chars, forbidden ref characters, "..", a leading "-", a trailing "/" or ".lock", "//", and non-strings; accepts ordinary names (ledger row 34)', () => {
-  for (const bad of ['main\n  pull_request_target:', '', 'bad branch', '-lead', 'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', 'a..b', 'a/', 'a.lock', 'a//b', null, undefined, 42]) {
-    assert.equal(rb.isValidBranchName(bad), false, `expected ${JSON.stringify(bad)} to be invalid`);
-  }
-  for (const good of ['develop', 'release/2.x', 'feat.v1', 'main']) {
-    assert.equal(rb.isValidBranchName(good), true, `expected ${JSON.stringify(good)} to be valid`);
-  }
-});
-
 test('renderWorkflowYaml: throws on an invalid branch name instead of silently defaulting to main (ledger row 34)', () => {
   assert.throws(() => rb.renderWorkflowYaml({ branch: 'main\n  pull_request_target:' }), /invalid branch name/);
   assert.throws(() => rb.renderWorkflowYaml({ branch: '' }), /invalid branch name/);

@@ -51,7 +51,7 @@ const { classifyRollup, failingNamesAt, applyBaseComparison } = require('./lib/p
 const { resolveIntegrationBranch, bareIntegrationName } = require('./lib/hooks/worktree-reap');
 const { resolveTarget, formatEntry, appendEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { hasPullRequestCi } = require('./lib/merge-verification');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS } = require('./lib/shared-primitives');
 
@@ -92,7 +92,7 @@ const realDeps = {
   ghAvailable: () => ghAvailable(),
   hasPullRequestCi: (root) => hasPullRequestCi(root),
   integrationBranch: (repoRoot) => bareIntegrationName(resolveIntegrationBranch(repoRoot)),
-  gh: (args) => execFileSync('gh', args, { ...QUIET, timeout: GH_TIMEOUT_MS, windowsHide: true }),
+  gh: (args) => execFileSync('gh', args, ghOptions(args, { ...QUIET, timeout: GH_TIMEOUT_MS, windowsHide: true })),
   git: (args) => execFileSync('git', args, { ...QUIET, timeout: GIT_TIMEOUT_MS, windowsHide: true }),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }).state,
   stdout: (s) => process.stdout.write(s),

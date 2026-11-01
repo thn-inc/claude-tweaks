@@ -29,7 +29,7 @@ SCANNED {HH:MM:SS} — Step 8 disposition: no staged review findings. Reversibil
 
 ### Review staging roster
 
-`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row.
+`Route` is one value from the closed set `confirmed`, `unconfirmed`, `contested`, `proposal`, `note`, `not staged by review`. The Routing table keys on that value, never on a prefix. `review-{n}` means `review-` followed by a number, so a `review-foo.md` matches no row. Every row's Example names at least one `staged/` file.
 
 | Prefix | Example | Staged by | Counted as | Route |
 |---|---|---|---|---|

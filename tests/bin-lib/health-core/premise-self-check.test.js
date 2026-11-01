@@ -129,6 +129,22 @@ test('AC3.1: defaultRunner spawns posixShell(platform) through the injected exec
   }
 });
 
+test('#4505: defaultRunner passes an explicit env to the spawn; without one the options carry no env key', () => {
+  const calls = [];
+  const exec = (...args) => { calls.push(args); };
+  const env = { PATH: '/p' };
+  assert.strictEqual(defaultRunner('echo hi', { cwd: '/r', timeoutMs: 7, platform: 'linux', exec, env }), 0);
+  assert.deepStrictEqual(calls, [['/bin/sh', ['-c', 'echo hi'], { cwd: '/r', stdio: 'ignore', timeout: 7, windowsHide: true, env }]]);
+  const prior = process.env.GH_HOST;
+  process.env.GH_HOST = 'leaked.example';
+  try {
+    assert.strictEqual(defaultRunner('[ -z "${GH_HOST+x}" ]', { cwd: os.tmpdir(), timeoutMs: 5000, env: { PATH: process.env.PATH } }), 0);
+  } finally {
+    if (prior === undefined) delete process.env.GH_HOST;
+    else process.env.GH_HOST = prior;
+  }
+});
+
 test('defaultRunner returns a thrown numeric status and re-throws a spawn error with no status (injected exec)', () => {
   const exitExec = () => { throw Object.assign(new Error('exit'), { status: 3 }); };
   assert.strictEqual(defaultRunner('cmd', { cwd: '/r', timeoutMs: 7, platform: 'linux', exec: exitExec }), 3);

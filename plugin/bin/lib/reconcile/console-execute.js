@@ -35,6 +35,7 @@ const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -144,7 +145,7 @@ async function ghJson(repoRoot, args) {
     ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
-      { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };

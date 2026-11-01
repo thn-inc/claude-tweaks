@@ -2,7 +2,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  fetchIssues, fetchNativeDependencies, buildRecords, buildOverlapGroups,
+  fetchIssues, fetchNativeDependencies, buildRecords, buildOverlapGroups, outOfRunBlockers,
 } = require('../../../plugin/bin/lib/preflight-records/preflight-records');
 
 const isGraphQL = (args) => args[0] === 'api' && args[1] === 'graphql';
@@ -773,4 +773,360 @@ test('--records-json with a --waves dependency cycle exits 2', () => {
   assert.equal(run(['720', '721', '--records-json', '/r.json', '--waves'], deps), 2);
   assert.equal(out.length, 0);
   assert.match(err.join(''), /dependency cycle/);
+});
+
+// --- CLI: --blocker-landing (#4553) -------------------------------------
+
+test('defaultRunner bounds its gh call (the compare fan-out and the batched GraphQL reads run through it) — source pin, an unbounded execFileSync hangs pre-flight', () => {
+  const src = require('node:fs').readFileSync(require.resolve('../../../plugin/bin/lib/preflight-records/preflight-records'), 'utf8');
+  const body = (src.match(/function defaultRunner\(args\) \{([\s\S]*?)\n\}/) || [])[1] || '';
+  assert.match(body, /execFileSync\('gh', args, (?:ghOptions\(args, )?\{[^}]*timeout: GH_CALL_TIMEOUT_MS[^}]*\}\)?\)/);
+  assert.match(src, /const GH_CALL_TIMEOUT_MS = \d{5,};/, 'a stated bound, wider than the 5s single-call default');
+});
+
+const isCompare = (args) => args[0] === 'api' && /\/compare\//.test(args[1]);
+const gqlQuery = (args) => (args.find((a) => typeof a === 'string' && a.startsWith('query=')) || '');
+
+const closedBlocker = (oid, { reason = 'COMPLETED', number = 90 } = {}) => ({
+  number: 0,
+  state: 'CLOSED',
+  stateReason: reason,
+  timelineItems: { nodes: [{ closer: { __typename: 'PullRequest', number, merged: true, baseRefName: 'dev', mergeCommit: { oid } } }] },
+  closedByPullRequestsReferences: { nodes: [] },
+});
+
+// Records 10 (no edges) and 11 (blocked by in-run #10 and out-of-run #5).
+function landingFixture({ repository, statuses = { eee555: 'behind\n' }, extra = {} } = {}) {
+  const calls = [];
+  const issues = {
+    10: issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }),
+    11: issue({ number: 11, title: 'Eleven', body: `Blocked by #10\nBlocked by #5\n\n${specBody(['b.js'])}` }),
+    ...extra,
+  };
+  const runner = (args) => {
+    calls.push(args);
+    const hit = Object.values(issues).find((i) => isIssueView(args, i.number));
+    if (hit) return JSON.stringify(hit);
+    if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) return JSON.stringify({ data: { repository } });
+    if (isCompare(args)) {
+      const sha = args[1].split('...').pop();
+      if (!(sha in statuses)) throw new Error(`unexpected compare ${sha}`);
+      return statuses[sha];
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  return { runner, calls };
+}
+
+test('AC4.1: without --blocker-landing the envelope is byte-identical and no extra call is made', () => {
+  const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') } });
+  const plain = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11'], plain.deps), 0);
+  const text = plain.out.join('');
+  assert.doesNotMatch(text, /blockerLanding/);
+  // Fully literal: nothing below is read back from the output under test.
+  const facets = () => ({
+    origin: null,
+    risk: null,
+    size: null,
+    ceremony: null,
+    solutionUnjustified: false,
+    breaking: false,
+    needsDefinition: false,
+    priority: null,
+    stage: 'backlog',
+    grants: { build: false, merge: false },
+    bot: { inProgress: false, blocked: false, parked: false },
+    acceptance: null,
+    isParentIssue: false,
+    notPlanned: false,
+    shapedHeadless: false,
+  });
+  const expected = {
+    records: {
+      10: {
+        title: 'Ten', facets: facets(), blockedBy: [], openBlocker: null, keyFiles: ['a.js'], fingerprint: null,
+      },
+      11: {
+        title: 'Eleven', facets: facets(), blockedBy: [10, 5], openBlocker: null, keyFiles: ['b.js'], fingerprint: null,
+      },
+    },
+    overlapGroups: [[10], [11]],
+    directOverlaps: [],
+    workLinks: 'body-text',
+  };
+  assert.equal(text, `${JSON.stringify(expected, null, 2)}\n`);
+  assert.equal(calls.filter(isGraphQL).length, 0);
+  assert.equal(calls.filter(isCompare).length, 0);
+});
+
+test('AC3.1, AC3.2: 10 11 --blocker-landing --integration-branch dev — landing for out-of-run #5 only, in-run #10 never appears', () => {
+  const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') } });
+  const plain = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11'], plain.deps), 0);
+  const plainEnv = JSON.parse(plain.out.join(''));
+  calls.length = 0;
+
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [{ blocker: 5, verdict: 'landed', commit: 'eee555', via: 'closer-pr' }]);
+  assert.deepEqual(env.records['10'].blockerLanding, []);
+  const queries = calls.filter(isGraphQL).map(gqlQuery);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /b5: issue\(number:5\)/);
+  assert.doesNotMatch(queries[0], /b10/);
+  const compares = calls.filter(isCompare);
+  assert.equal(compares.length, 1);
+  assert.match(compares[0][1], /compare\/dev\.\.\.eee555/);
+  // Only the blockerLanding key is added to each record; nothing else moves.
+  for (const n of ['10', '11']) {
+    const { blockerLanding, ...rest } = env.records[n];
+    assert.ok(Array.isArray(blockerLanding));
+    assert.deepEqual(rest, plainEnv.records[n]);
+  }
+  assert.deepEqual({ ...env, records: undefined }, { ...plainEnv, records: undefined });
+});
+
+test('--blocker-landing: --integration-branch defaults to main in the compare path', () => {
+  const { runner, calls } = landingFixture({ repository: { b5: closedBlocker('eee555') } });
+  const { deps } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing'], deps), 0);
+  assert.match(calls.find(isCompare)[1], /compare\/main\.\.\.eee555/);
+});
+
+test('--blocker-landing: a blocker shared by two records is queried once and reported on both, in blockedBy order', () => {
+  const { runner, calls } = landingFixture({
+    repository: { b5: closedBlocker('eee555'), b6: closedBlocker('fff666') },
+    statuses: { eee555: 'behind\n', fff666: 'diverged\n' },
+    extra: { 12: issue({ number: 12, title: 'Twelve', body: `Blocked by #6\nBlocked by #5\n\n${specBody(['c.js'])}` }) },
+  });
+  const { deps, out } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '12', '--blocker-landing'], deps), 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['12'].blockerLanding.map((r) => [r.blocker, r.verdict]), [[6, 'unlanded'], [5, 'landed']]);
+  assert.deepEqual(env.records['11'].blockerLanding.map((r) => [r.blocker, r.verdict]), [[5, 'landed']]);
+  const queries = calls.filter(isGraphQL).map(gqlQuery);
+  assert.equal(queries.length, 1);
+  assert.equal((queries[0].match(/b5: issue/g) || []).length, 1);
+});
+
+test('AC11.2: a native-mode record with no out-of-run blockers makes no blocker-landing query and no compare call', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 720)) return JSON.stringify(issue({ number: 720, title: 'A', body: specBody(['a.js']) }));
+    if (isGraphQL(args)) return JSON.stringify({ data: { repository: { i720: { number: 720, blockedBy: { nodes: [] } } } } });
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out } = cliDeps({ runner });
+  assert.equal(run(['720', '--blocker-landing', '--work-links', 'native', '--repo', 'acme/w'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['720'].blockerLanding, []);
+  const graphql = calls.filter(isGraphQL);
+  assert.equal(graphql.length, 1, 'only the native dependency call');
+  assert.ok(graphql.every((a) => !/CLOSED_EVENT/.test(gqlQuery(a))));
+  assert.equal(calls.filter(isCompare).length, 0);
+});
+
+test('AC9.1: --blocker-landing GraphQL failure exits 1 naming the failed query, prints no envelope', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 10)) return JSON.stringify(issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }));
+    if (isIssueView(args, 11)) return JSON.stringify(issue({ number: 11, title: 'Eleven', body: `Blocked by #5\n\n${specBody(['b.js'])}` }));
+    if (isGraphQL(args) && /CLOSED_EVENT/.test(gqlQuery(args))) throw new Error('HTTP 502: Bad Gateway');
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing'], deps), 1);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /preflight-records\.js: blocker landing query failed: .*502/);
+  assert.equal(calls.filter(isCompare).length, 0);
+});
+
+test('AC9.1: a blocker-query failure prints ONE stderr line even when the runner error spans many lines (the exec message embeds the whole query)', () => {
+  const longQuery = `query($owner:String!,$repo:String!){ ${'b5: issue(number:5){ number state } '.repeat(40)} }`;
+  const runner = (args) => {
+    if (isIssueView(args, 11)) return JSON.stringify(issue({ number: 11, title: 'Eleven', body: `Blocked by #5\n\n${specBody(['b.js'])}` }));
+    if (isGraphQL(args)) {
+      const e = new Error(`Command failed: gh api graphql -f query=${longQuery}\nline two\r\nline three`);
+      e.stderr = 'gh: Resource not accessible\nby integration (HTTP 403)\n';
+      e.stdout = '{\n  "data": null\n}\n';
+      throw e;
+    }
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['11', '--blocker-landing'], deps), 1);
+  assert.equal(out.length, 0);
+  const text = err.join('');
+  assert.match(text, /^preflight-records\.js: blocker landing query failed: [^\n]+\n$/, 'exactly one line');
+  assert.ok(text.length < 1000, `bounded, got ${text.length} chars`);
+  assert.match(text, /403/, 'the diagnostic tail (gh stderr) survives the truncation');
+  assert.match(text, /Command failed: gh api graphql/, 'the head survives too');
+});
+
+test('AC9.1: --blocker-landing with no resolvable repo and an out-of-run blocker exits 2 before any blocker call; with an empty blocker set it exits 0', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 10)) return JSON.stringify(issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }));
+    if (isIssueView(args, 11)) return JSON.stringify(issue({ number: 11, title: 'Eleven', body: `Blocked by #5\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const blocked = cliDeps({ runner, workLinks: 'body-text' });
+  blocked.deps.remoteUrl = () => { throw new Error("fatal: No such remote 'origin'"); };
+  assert.equal(run(['11', '--blocker-landing'], blocked.deps), 2);
+  assert.equal(blocked.out.length, 0);
+  assert.match(blocked.err.join(''), /could not resolve owner\/repo for --blocker-landing — pass --repo owner\/name/);
+  assert.deepEqual(calls.filter((a) => !isIssueView(a, 11)), [], 'no runner call past the issue fetch');
+
+  calls.length = 0;
+  const free = cliDeps({ runner, workLinks: 'body-text' });
+  free.deps.remoteUrl = () => { throw new Error("fatal: No such remote 'origin'"); };
+  assert.equal(run(['10', '--blocker-landing'], free.deps), 0);
+  assert.deepEqual(JSON.parse(free.out.join('')).records['10'].blockerLanding, []);
+  assert.deepEqual(calls.filter((a) => !isIssueView(a, 10)), []);
+});
+
+test('--blocker-landing: a Blocked by number that is no valid issue number exits 2 before any blocker call (a fixed input, so no retry would help)', () => {
+  const calls = [];
+  const runner = (args) => {
+    calls.push(args);
+    if (isIssueView(args, 11)) return JSON.stringify(issue({ number: 11, title: 'Eleven', body: `Blocked by #0\n\n${specBody(['b.js'])}` }));
+    throw new Error('unexpected ' + args.join(' '));
+  };
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['11', '--blocker-landing'], deps), 2);
+  assert.equal(out.length, 0);
+  assert.match(err.join(''), /preflight-records\.js: --blocker-landing: not a valid issue number: 0/);
+  assert.deepEqual(calls.filter((a) => !isIssueView(a, 11)), [], 'no GraphQL, no compare call');
+});
+
+test('--blocker-landing: a compare call that throws leaves the blocker undetermined/probe-failed, exits 0, and prints one stderr line carrying the cause', () => {
+  const { runner } = landingFixture({ repository: { b5: closedBlocker('eee555') }, statuses: {} });
+  const { deps, out, err } = cliDeps({ runner, workLinks: 'body-text' });
+  assert.equal(run(['10', '11', '--blocker-landing', '--integration-branch', 'dev'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['11'].blockerLanding,
+    [{ blocker: 5, verdict: 'undetermined', commit: 'eee555', via: 'probe-failed' }]);
+  const text = err.join('');
+  assert.match(text, /^preflight-records\.js: blocker landing compare failed for eee555: [^\n]*unexpected compare eee555[^\n]*\n$/, 'exactly one line, with the cause');
+});
+
+test('AC7.1: --blocker-landing under --records-json: every out-of-run blocker undetermined/records-json, one stderr line, no runner call, exit 0', () => {
+  let calls = 0;
+  const { deps, out, err } = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 10, title: 'Ten', body: specBody(['a.js']) }),
+        issue({ number: 11, title: 'Eleven', body: `Blocked by #10\nBlocked by #5\nBlocked by #4\n\n${specBody(['b.js'])}` }),
+      ]),
+    },
+  });
+  assert.equal(run(['10', '11', '--records-json', '/r.json', '--blocker-landing'], deps), 0);
+  assert.equal(calls, 0);
+  const env = JSON.parse(out.join(''));
+  assert.deepEqual(env.records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'undetermined', commit: null, via: 'records-json' },
+    { blocker: 4, verdict: 'undetermined', commit: null, via: 'records-json' },
+  ]);
+  assert.deepEqual(env.records['10'].blockerLanding, []);
+  assert.equal(err.join(''), 'preflight-records.js: --records-json makes no gh call — blocker landing undetermined for #4, #5 (pass --blocker-states-json to judge open blockers)\n');
+});
+
+test('AC7.1: --records-json with --blocker-landing and no out-of-run blocker prints no degrade line', () => {
+  const { deps, out, err } = cliDeps({
+    runner: noGh,
+    files: { '/r.json': JSON.stringify([issue({ number: 10, title: 'Ten', body: specBody(['a.js']) })]) },
+  });
+  assert.equal(run(['10', '--records-json', '/r.json', '--blocker-landing'], deps), 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['10'].blockerLanding, []);
+  assert.equal(err.join(''), '');
+});
+
+test('AC6.1 (gh-absent): --records-json --blocker-states-json — an open out-of-run blocker reads open, a closed COMPLETED one undetermined, a NOT_PLANNED one not-applicable; zero runner calls', () => {
+  let calls = 0;
+  const { deps, out, err } = cliDeps({
+    runner: () => { calls++; throw new Error('must not call gh'); },
+    files: {
+      '/r.json': JSON.stringify([
+        issue({ number: 11, title: 'Eleven', body: `Blocked by #5\nBlocked by #6\nBlocked by #7\n\n${specBody(['b.js'])}` }),
+      ]),
+      '/s.json': JSON.stringify({
+        5: { state: 'OPEN' },
+        6: { state: 'closed', state_reason: 'completed' },
+        7: { state: 'CLOSED', stateReason: 'NOT_PLANNED' },
+        99: { state: 'OPEN' },
+      }),
+    },
+  });
+  assert.equal(run(['11', '--records-json', '/r.json', '--blocker-landing', '--blocker-states-json', '/s.json'], deps), 0);
+  assert.equal(calls, 0);
+  assert.deepEqual(JSON.parse(out.join('')).records['11'].blockerLanding, [
+    { blocker: 5, verdict: 'open', commit: null, via: 'records-json' },
+    { blocker: 6, verdict: 'undetermined', commit: null, via: 'records-json' },
+    { blocker: 7, verdict: 'not-applicable', commit: null, via: 'state-reason' },
+  ]);
+  assert.equal(err.join(''), '', 'a supplied states file means no degrade line');
+});
+
+test('--blocker-states-json input problems exit 2 with no stdout and no runner call', () => {
+  const records = JSON.stringify([issue({ number: 11, title: 'Eleven', body: `Blocked by #5\nBlocked by #6\n\n${specBody(['b.js'])}` })]);
+  const cases = [
+    ['a union blocker missing from the file', { '/s.json': JSON.stringify({ 5: { state: 'OPEN' } }) }, /no usable state for #6/],
+    ['an entry with an unknown state', { '/s.json': JSON.stringify({ 5: { state: 'OPEN' }, 6: { state: 'merged' } }) }, /no usable state for #6/],
+    ['several unusable entries are all named', { '/s.json': '{}' }, /no usable state for #5, #6/],
+    ['non-JSON', { '/s.json': '{' }, /--blocker-states-json \/s\.json is not valid JSON/],
+    ['a JSON array', { '/s.json': '[]' }, /--blocker-states-json must be a JSON object/],
+    ['JSON null', { '/s.json': 'null' }, /--blocker-states-json must be a JSON object/],
+    ['an unreadable file', {}, /cannot read --blocker-states-json \/s\.json/],
+  ];
+  for (const [label, extraFiles, pattern] of cases) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files: { '/r.json': records, ...extraFiles } });
+    assert.equal(run(['11', '--records-json', '/r.json', '--blocker-landing', '--blocker-states-json', '/s.json'], deps), 2, label);
+    assert.equal(out.length, 0, label);
+    assert.match(err.join(''), pattern, label);
+  }
+});
+
+test('--blocker-states-json without both --records-json and --blocker-landing is a malformed invocation (exit 2, usage on stderr)', () => {
+  const files = { '/r.json': JSON.stringify([issue({ number: 11, title: 'Eleven', body: specBody(['b.js']) })]), '/s.json': '{}' };
+  for (const [label, argv] of [
+    ['neither', ['11', '--blocker-states-json', '/s.json']],
+    ['no --records-json', ['11', '--blocker-landing', '--blocker-states-json', '/s.json']],
+    ['no --blocker-landing', ['11', '--records-json', '/r.json', '--blocker-states-json', '/s.json']],
+    ['bare flag', ['11', '--records-json', '/r.json', '--blocker-landing', '--blocker-states-json']],
+    ['flag-looking value', ['11', '--records-json', '/r.json', '--blocker-landing', '--blocker-states-json', '--waves']],
+  ]) {
+    const { deps, out, err } = cliDeps({ runner: noGh, files });
+    assert.equal(run(argv, deps), 2, label);
+    assert.equal(out.length, 0, label);
+    assert.match(err.join(''), /usage:/, label);
+  }
+});
+
+test('--help usage names --blocker-landing and --blocker-states-json', () => {
+  const { deps, out } = cliDeps({ runner: noGh });
+  assert.equal(run(['--help'], deps), 0);
+  assert.match(out.join(''), /\[--blocker-landing\] \[--blocker-states-json <path>\]/);
+});
+
+// --- lib: outOfRunBlockers (#4553) ---------------------------------------
+
+test('outOfRunBlockers: drops in-run numbers, keeps blockedBy order, union deduped ascending', () => {
+  const records = {
+    10: { blockedBy: [] },
+    11: { blockedBy: [10, 9, 5, 12] },
+    12: { blockedBy: [5, 3, 11] },
+  };
+  const { byRecord, union } = outOfRunBlockers(records, [10, 11, 12]);
+  assert.deepEqual([...byRecord.entries()], [[10, []], [11, [9, 5]], [12, [5, 3]]]);
+  assert.deepEqual(union, [3, 5, 9]);
+});
+
+test('outOfRunBlockers: no out-of-run blockers → empty union', () => {
+  const { byRecord, union } = outOfRunBlockers({ 10: { blockedBy: [] }, 11: { blockedBy: [10] } }, [10, 11]);
+  assert.deepEqual(union, []);
+  assert.deepEqual([...byRecord.entries()], [[10, []], [11, []]]);
 });

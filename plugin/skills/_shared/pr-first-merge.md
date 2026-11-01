@@ -333,8 +333,8 @@ omit `--keep-open {keep-open}` when none. So the message's `Fixes` lines are the
 (`_shared/pr-checklist-refresh.md`'s pre-merge refresh), restated here because GitHub closes records
 from them only when the merge lands on the repo's default branch, and the lines travel with the
 commit when it is later promoted; on a non-default integration branch they close nothing, and, on
-a `merged` outcome, `pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself (an
-`armed` merge leaves them open — see Step 4.0, #4599).
+a `merged` outcome, `pr-first-merge-post-merge.md`'s Step 4.0 closes those records itself (after an
+`armed` merge, the reconciler's Step 4.0 does — #4599).
 `--squash` keeps one conventional commit per PR.
 
 When the caller supplies an expected head sha (today only `dispatch/close-out.md` after an update), append `--match-head-commit {expected-head}` to every `gh pr merge` command in this step, so a merge, or the arming of one, is accepted only against the head the caller verified; callers that supply none are unchanged.
