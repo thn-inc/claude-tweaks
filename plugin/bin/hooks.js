@@ -161,7 +161,8 @@ function usageText() {
 // table below. The unknown-flag guard in main() consults these sets for every
 // verb and fails closed: a verb with no entry refuses every flag, and a flagless
 // verb carries `[]` (reconcile-summary, reconcile-background). `--help`/`-h` are
-// never declared, so they fall out as "unknown" the same as a genuine typo.
+// never declared; main() intercepts both anywhere in the argument list (value
+// positions included) before the undeclared-flag scan.
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
 // unambiguousOnly is chosen per call site (resolveOpts), not by this table,
