@@ -12,6 +12,10 @@
 
 **Scope keywords:** `api user`, `get_me`, `has no login`, `current \`gh\` identity`
 
+Waived AC7.1: a full-suite run, not a test to write — Task 5 and /build Common Step 5's verification run it.
+Waived plugin/skills/_shared/github-pr-scan-acceptance.md: tidy's `parent-gate` scan is owned by #4801; this build never edits it.
+Waived plugin/bin/lib/reconcile/post-merge.js: read only — its `composeSummaryText` already renders a closed entry's `notes`; Task 3 runs its suite.
+
 ## Global Constraints
 
 - Degrade note text, exactly: `identity probe failed — close marker matched against trusted authors only`
@@ -92,7 +96,7 @@ git commit -m "Read a failed identity probe as no login — trusted-only dedupe 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/mcp-parent-gate-shape.test.js tests/parent-gate-cli.test.js`
-Expected: FAIL — `me: null` raises `FactsError` (CLI exit 3) and the throwing gh probe exits 3.
+Expected: FAIL after Step 1 — `me: null` raises `FactsError` (CLI exit 3) and the throwing gh probe exits 3.
 
 - [ ] **Step 3: Implement** the Interfaces item; header comment for `me` becomes `` `get_me`, or null when get_me failed (read as no identity) ``.
 
@@ -129,7 +133,7 @@ git commit -m "Accept a null get_me in parent-gate facts — no identity, truste
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/below-floor-parent-close.test.js`
-Expected: FAIL — before Task 1 the parent lands in `skipped` as `gh-failed`; after Task 1 alone, AC5.1 sees two `api user` calls.
+Expected: FAIL after Step 1 — before Task 1 the parent lands in `skipped` as `gh-failed`; after Task 1 alone, AC5.1 sees two `api user` calls.
 
 - [ ] **Step 3: Implement** the memoized `readLogin` and pass it to `gatherIdempotenceFacts`. Update the header comment to say a failed or blank identity read closes with trusted-only matching, notes the degrade, and is read once per call.
 
@@ -189,4 +193,4 @@ git commit -m "State the failed-identity-read rule in the parent gate and tidy's
 
 ### Task 5: Full suite
 
-- [ ] **Step 1:** Run `npm test > {scratch}/npm-test-4770.txt 2>&1; echo exit=$?` and read the tail. Expected: `exit=0` (AC7.1). A failure in `tests/closed-parent-acceptance-backstop.test.js` or anything citing `github-pr-scan-acceptance.md` is out of scope (#4801) and must be reported, not fixed here.
+- [ ] **Step 1:** Run `npm test > {scratch}/npm-test-4770.txt 2>&1; echo exit=$?` and read the tail. Expected: `exit=0` — AC7.1: `npm test` passes on the full suite. A failure in `tests/closed-parent-acceptance-backstop.test.js` or anything citing `github-pr-scan-acceptance.md` is out of scope (#4801) and must be reported, not fixed here.
