@@ -112,27 +112,26 @@ names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-workt
 --no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
 git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one line and grant one more window; stop when a whole window passes with
-no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no progress for
-one window` or `ceiling reached while progressing`) and every unchanged child. Children sharing a
-worktree progress together; a child whose prompt names no worktree counts as unchanged. A failed
-wait call ends its window, and the probe runs as at any bound; a failed probe counts as no change,
-never retried in another form. Read-only units keep the first-bound self-judge. A wait call that is
-blocked or fails is not a wait and never counts toward the bound; never retry it in another form (a
-longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the bound.
-The full rule is
-in `subagent-dispatch-core.md`'s Foreground Execution Discipline section. Give any agent you
-dispatch this same instruction, whether it is a nested Task/Agent call or a
-`superpowers:subagent-driven-development` or review-lens fan-out. **Mark every interim reply
-(#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a child
-outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
+child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
+passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
+progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
+sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
+failed wait call ends its window, and the probe runs as at any bound; a failed probe command counts
+as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
+another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
+silent at the bound. The full rule is in `subagent-dispatch-core.md`'s Foreground Execution
+Discipline section. Give any agent you dispatch this same instruction, whether it is a nested
+Task/Agent call or a `superpowers:subagent-driven-development` or review-lens fan-out. **Mark every
+interim reply (#2714):** if a turn ends anyway while a keep-alive wait is still in progress, with a
+child outstanding — the keep-alive rule's failure path — make that reply's last non-empty line
 `INTERIM_STATUS: {one-line progress note}`, never `STATUS: {WORD}`, which is reserved for your
 genuine final reply (an abandoned child is not outstanding; that reply is final and ends with
-`STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final
-reply missing its status line and logged as a false-positive `contract-violation`, unless your
-own async `Agent` launches are still pending in your transcript (#3015) — the marker stays
-required, since that exemption covers only pending launches. Forward this marker rule, with the
-rest of this item, to any nested dispatch that itself dispatches.
+`STATUS: {WORD}`). An unmarked interim reply is graded by the `SubagentStop` hook as a final reply
+missing its status line and logged as a false-positive `contract-violation`, unless your own async
+`Agent` launches are still pending in your transcript (#3015) — the marker stays required, since
+that exemption covers only pending launches. Forward this marker rule, with the rest of this item,
+to any nested dispatch that itself dispatches.
 
 OUTPUT FORMAT (required) -- reply with your /claude-tweaks:flow run's final rendered output
 (its Steps Complete note, or its failure card), unchanged, then one line:

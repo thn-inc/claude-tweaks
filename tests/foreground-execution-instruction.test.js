@@ -535,7 +535,7 @@ const PROGRESS_CHECK = [
   [/`git\s+-C\s+\{child-worktree\}\s+--no-optional-locks\s+diff\s+HEAD\s+\|\s+git\s+hash-object\s+--stdin`/, 'the probe hashes the diff against HEAD, so re-edits count as progress (AC9.1)'],
   [/against\s+the\s+previous\s+probe\s+\(taken\s+right\s+after\s+launching\s+the\s+wave,\s+then\s+at\s+each\s+bound/, 'each bound compares with the previous probe, the first taken right after the wave launches (AC1.1)'],
   [/lacking\s+one,\s+the\s+first\s+bound's\s+probe\s+sets\s+it\s+and\s+grants\s+a\s+window/, 'with no launch probe, the first bound sets the baseline and grants one window'],
-  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+line\s+and\s+grant\s+one\s+more\s+window/, 'per wave, a change in any child grants one more window (Decision: Reading B)'],
+  [/Per\s+wave,\s+while\s+any\s+child\s+shows\s+a\s+change,\s+log\s+one\s+wait\s+line\s+and\s+grant\s+one\s+more\s+60-wait\s+window/, 'per wave, a change in any child logs a wait line and grants one more 60-wait window (Decision: Reading B)'],
   [/stop\s+when\s+a\s+whole\s+window\s+passes\s+with\s+no\s+change/, 'BLOCKED only after a whole window with no change'],
   [/ceiling\s+of\s+3\s+windows\s+\(60\s+minutes\)\s+per\s+wave/, 'the 3-window (60-minute) ceiling'],
   [/\(`no\s+progress\s+for\s+one\s+window`\s+or\s+`ceiling\s+reached\s+while\s+progressing`\)/, 'the BLOCKED report names which of exactly two conditions fired — no third (AC8.2)'],
@@ -543,7 +543,7 @@ const PROGRESS_CHECK = [
   [/Children\s+sharing\s+a\s+worktree\s+progress\s+together/, 'children sharing one worktree count as progressing together (Decision: Reading B)'],
   [/a\s+child\s+whose\s+prompt\s+names\s+no\s+worktree\s+counts\s+as\s+unchanged/, 'a child with no named worktree counts as unchanged (spec Technical Approach)'],
   [/A\s+failed\s+wait\s+call\s+ends\s+its\s+window,\s+and\s+the\s+probe\s+runs\s+as\s+at\s+any\s+bound/, 'a failed wait call in an extension window expires that bound and the probe runs (AC8.1)'],
-  [/failed\s+probe\s+counts\s+as\s+no\s+change,\s+never\s+retried\s+in\s+another\s+form/, 'a failed probe counts as no change and is never retried in another form'],
+  [/failed\s+probe\s+command\s+counts\s+as\s+no\s+change,\s+never\s+retried\s+in\s+another\s+form/, 'a failed probe command counts as no change and is never retried in another form'],
   [/Read-only\s+units\s+keep\s+the\s+first-bound\s+self-judge/, 'a read-only unit is still self-judged at the first bound'],
 ];
 // The two standing rules the passage sits between must survive byte-unchanged in every copy.
@@ -578,13 +578,16 @@ test('AC3.1: each standing-rule assertion goes red when removed from any single 
   }
 });
 
-// The passage extends the write-capable stop, so it must follow that stop's last sentence in each copy.
+// The passage extends the write-capable stop, so it must follow that stop's last sentence in each
+// copy, directly: only the lead-in `Before that stop` (core adds `(#4557)`) may sit between them.
 const STOP_SENTENCE = 'naming that child and its unit.';
+const LEAD_IN = /^\s*Before that stop( \(#4557\))?,\s*$/;
 const misorderedCopies = (copies) => Object.entries(copies)
   .filter(([, text]) => {
     const stopAt = text.indexOf(STOP_SENTENCE);
     const passageAt = text.search(PROGRESS_CHECK[0][0]);
-    return stopAt === -1 || passageAt === -1 || stopAt > passageAt;
+    return stopAt === -1 || passageAt === -1 || stopAt > passageAt
+      || !LEAD_IN.test(text.slice(stopAt + STOP_SENTENCE.length, passageAt));
   })
   .map(([name]) => name);
 
@@ -603,5 +606,16 @@ test('AC1.3: a copy with the passage moved before the stop sentence goes red (di
     const doctored = text.slice(0, stopAt) + first + ' ' + text.slice(stopAt, passageAt) + text.slice(passageAt + first.length);
     assert.notEqual(doctored, text, `permutation anchor for ${name} not found`);
     assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], `moving the passage before the stop sentence in only ${name} must turn exactly that copy red`);
+  }
+});
+
+test('AC1.3: a copy with an unrelated sentence between the stop sentence and the passage goes red (discrimination proof)', () => {
+  const copies = primitiveCopies();
+  for (const name of Object.keys(copies)) {
+    const text = copies[name];
+    const stopEnd = text.indexOf(STOP_SENTENCE) + STOP_SENTENCE.length;
+    assert.ok(stopEnd >= STOP_SENTENCE.length, 'anchor text for the stop sentence not found in ' + name);
+    const doctored = text.slice(0, stopEnd) + ' Then redo the child in-session.' + text.slice(stopEnd);
+    assert.deepEqual(misorderedCopies({ ...copies, [name]: doctored }), [name], 'an unrelated sentence before the passage in only ' + name + ' must turn exactly that copy red');
   }
 });

@@ -56,15 +56,15 @@ names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-workt
 --no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
 git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one line and grant one more window; stop when a whole window passes with
-no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no progress for
-one window` or `ceiling reached while progressing`) and every unchanged child. Children sharing a
-worktree progress together; a child whose prompt names no worktree counts as unchanged. A failed
-wait call ends its window, and the probe runs as at any bound; a failed probe counts as no change,
-never retried in another form. Read-only units keep the first-bound self-judge. A wait call that is
-blocked or fails is not a wait and never counts toward the bound; never retry it in another form (a
-longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the bound.
-A reply that ends without a tool call ends the turn.
+child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
+passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
+progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
+sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
+failed wait call ends its window, and the probe runs as at any bound; a failed probe command counts
+as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
+another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
+silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
@@ -150,15 +150,15 @@ names, read-only: `git -C {child-worktree} rev-parse HEAD`, `git -C {child-workt
 --no-optional-locks status --porcelain` and `git -C {child-worktree} --no-optional-locks diff HEAD |
 git hash-object --stdin`, against the previous probe (taken right after launching the wave, then at
 each bound; lacking one, the first bound's probe sets it and grants a window). Per wave, while any
-child shows a change, log one line and grant one more window; stop when a whole window passes with
-no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no progress for
-one window` or `ceiling reached while progressing`) and every unchanged child. Children sharing a
-worktree progress together; a child whose prompt names no worktree counts as unchanged. A failed
-wait call ends its window, and the probe runs as at any bound; a failed probe counts as no change,
-never retried in another form. Read-only units keep the first-bound self-judge. A wait call that is
-blocked or fails is not a wait and never counts toward the bound; never retry it in another form (a
-longer, wrapped or backgrounded sleep): treat every child still outstanding as silent at the bound.
-A reply that ends without a tool call ends the turn.
+child shows a change, log one wait line and grant one more 60-wait window; stop when a whole window
+passes with no change, or at a ceiling of 3 windows (60 minutes) per wave, naming which fired (`no
+progress for one window` or `ceiling reached while progressing`) and every unchanged child. Children
+sharing a worktree progress together; a child whose prompt names no worktree counts as unchanged. A
+failed wait call ends its window, and the probe runs as at any bound; a failed probe command counts
+as no change, never retried in another form. Read-only units keep the first-bound self-judge. A wait
+call that is blocked or fails is not a wait and never counts toward the bound; never retry it in
+another form (a longer, wrapped or backgrounded sleep): treat every child still outstanding as
+silent at the bound. A reply that ends without a tool call ends the turn.
 
 {context-pack}
 
