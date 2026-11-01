@@ -471,7 +471,8 @@ test('AC7.2: a promotion on the old issue mid-rollover reaches the carried copy'
     const p3 = planOf(old2, fresh2);
     assert.deepStrictEqual(p3.markerEdits, []);
     assert.strictEqual(p3.verified, true);
-    assert.strictEqual(selectCarryOverEntries(fresh2).entries.length, 2);
+    const keep = rows.filter((_, i) => i !== idx).map((l) => stamped(l));
+    assert.deepStrictEqual(selectCarryOverEntries(fresh2).entries.map((e) => e.line), keep);
   }
 });
 
@@ -506,8 +507,9 @@ test('planCarryOver ignores an untrusted comment in the new container', () => {
 test('planCarryOver splits bodies at line boundaries under maxChars', () => {
   const tail = ` ${firstSeen('2026-01-01T00:00:00Z')}`;
   const sized = (c, total) => `- [t] ${c.repeat(total - 6 - tail.length)}${tail}`;
-  const lines = [sized('a', 90), sized('b', 90), sized('c', 90)];
-  assert.ok(lines.every((l) => l.length === 90));
+  // 80 chars each: two fit under 200 even with room kept for a marker edit on each.
+  const lines = [sized('a', 80), sized('b', 80), sized('c', 80)];
+  assert.ok(lines.every((l) => l.length === 80));
   const p = planOf([posted(lines.join('\n'))], [], { maxChars: 200 });
   assert.ok(p.bodies.every((b) => b.length <= 200));
   assert.deepStrictEqual(p.bodies.flatMap((b) => b.split('\n')), lines);
@@ -544,6 +546,43 @@ test('planCarryOver handles the shapes found on the live digest', () => {
   const again = planOf(old, postBodies(p));
   assert.strictEqual(again.verified, true);
   assert.strictEqual(again.pending.length, 0);
+});
+
+test('two live lines sharing a fingerprint: the dropped line\'s consolebackfill-item marker is tombstoned, and verified needs it', () => {
+  const base = findingLine(1);
+  const item = '<!-- consolebackfill-item: item2 -->';
+  const old = [posted(`${base}\n${base} ${item}`)];
+  const p = planOf(old);
+  assert.strictEqual(p.live, 1);
+  assert.strictEqual(p.tombstones, 1);
+  assert.deepStrictEqual(tombstoneLines(p.bodies), [item]);
+  const liveOnly = planOf(old, [posted(stamped(base))]);
+  assert.deepStrictEqual(liveOnly.tombstonesPending, [item]);
+  assert.strictEqual(liveOnly.verified, false);
+  assert.strictEqual(planOf(old, postBodies(p)).verified, true);
+});
+
+test('a mark followed by prose between later comments is not trailing, and a long run of comments stays linear', () => {
+  const misread = `${findingLine(1)} → #12 <!-- a --> text <!-- b -->`;
+  assert.deepStrictEqual(selectCarryOverEntries([posted(misread)]).entries.map((e) => e.line), [stamped(misread)]);
+  const prose = `${findingLine(2)} → #12 ${'<!-- a --> x '.repeat(40)}`;
+  assert.strictEqual(selectCarryOverEntries([posted(prose)]).entries.length, 1);
+  const marked = `${findingLine(3)} → #12 ${Array(40).fill('<!-- a -->').join(' ')}`;
+  assert.deepStrictEqual(selectCarryOverEntries([posted(marked)]).entries, []);
+});
+
+test('a marker edit on every line of a full body leaves it at or under maxChars', () => {
+  const rows = Array.from({ length: 9 }, (_, i) => findingLine(i));
+  const lineLength = stamped(rows[0]).length;
+  assert.ok(rows.every((r) => stamped(r).length === lineLength));
+  const maxChars = 5 * lineLength + 10; // five lines fit with no room to spare for marks
+  const old = [posted(rows.join('\n'))];
+  const fresh = postBodies(planOf(old, [], { maxChars }));
+  assert.ok(fresh.length >= 2);
+  const old2 = [{ ...old[0], body: rows.map((l) => `${l} → expired`).join('\n') }];
+  const p = planOf(old2, fresh, { maxChars });
+  assert.strictEqual(p.markerEdits.length, fresh.length);
+  for (const edit of p.markerEdits) assert.ok(edit.body.length <= maxChars, `${edit.body.length} > ${maxChars}`);
 });
 
 // --- classifyRolloverResume: replacement identity ---
@@ -614,4 +653,14 @@ test('classifyRolloverResume refuses a non-array candidate list and a non-object
   const refused = { name: 'CarryOverInputError' };
   for (const bad of [{}, 'x', null, undefined]) assert.throws(() => classifyRolloverResume(bad, OLD_ISSUE), refused, String(bad));
   for (const bad of [null, 'x', [], undefined, {}]) assert.throws(() => classifyRolloverResume([candidate(10)], bad), refused, JSON.stringify(bad));
+});
+
+test('classifyRolloverResume refuses a candidate with no author association and an old issue with no state', () => {
+  const refused = { name: 'CarryOverInputError' };
+  const { author_association: _dropped, ...noAssociation } = candidate(10);
+  assert.throws(() => classifyRolloverResume([noAssociation], OLD_ISSUE), refused);
+  assert.throws(() => classifyRolloverResume([candidate(10), 'x'], OLD_ISSUE), refused);
+  const { state: _state, ...noState } = OLD_ISSUE;
+  assert.throws(() => classifyRolloverResume([candidate(10)], noState), refused);
+  assert.throws(() => classifyRolloverResume([], { ...OLD_ISSUE, state: '' }), refused);
 });

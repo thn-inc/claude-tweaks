@@ -28,14 +28,17 @@ const DIGEST_REPLACEMENT_PREFIX = 'digest-rollover-of';
 
 const ENTRY_LINE = /^- \[[^\]]+\] /;
 // A mark is trailing only when nothing but HTML comments follows it: `→` inside a finding stays live.
-const TRAILING_MARK = /\s*(→ (?:expired|#?\d+))((?:\s*<!--.*?-->)*)\s*$/;
+const TRAILING_MARK = /\s*(→ (?:expired|#?\d+))((?:\s*<!--(?:(?!-->).)*-->)*)\s*$/;
 const RUN_ID_DATE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2})(\d{2})(\d{2})(?:-|$)/;
 // The markers a dedup or sweep reads. A fixed list: the container's comments also hold agent-claim markers.
 const DEDUP_MARKER = /<!-- (?:materiality-fingerprint|consolebackfill-item): \S+? -->/g;
 const FIRST_SEEN_MARKER = new RegExp(`<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: (\\S+?) -->`, 'g');
 const FIRST_SEEN_STRIP = new RegExp(`\\s*<!-- ${MATERIALITY_FIRST_SEEN_PREFIX}: \\S+? -->`, 'g');
-const ISO_DATE =/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const DEFAULT_MAX_CHARS = 60000;
+// Room each carried entry line keeps for a marker edit: a space plus `→ expired`, or `→ #` and up
+// to ten digits.
+const MARK_RESERVE = 12;
 const TOMBSTONE_HEADER = 'Fingerprint-only tombstones: promoted or expired findings kept for dedup (tidy/digest-sweep.md\'s Container rollover).';
 
 // A bare-string array element is the pre-#3766 contract shape (`.comments[].body`): it has no
@@ -260,8 +263,10 @@ function commentIdOf(comment) {
 }
 
 // Packs lines into bodies of at most maxChars, splitting only at line boundaries; a single line
-// over the cap gets a body of its own. header, when given, opens every body.
-function packBodies(lines, maxChars, header) {
+// over the cap gets a body of its own. header, when given, opens every body. reserve: characters
+// each line may still grow by (a marker edit appends a `→` mark to an entry line), counted against
+// the cap up front so a later edit cannot push a posted body past it.
+function packBodies(lines, maxChars, header, reserve = 0) {
   const bodies = [];
   let current = header ? [header] : [];
   let length = header ? header.length : 0;
@@ -274,7 +279,7 @@ function packBodies(lines, maxChars, header) {
   };
   for (const line of lines) {
     const added = (current.length > 0 ? 1 : 0) + line.length;
-    if (count > 0 && length + added > maxChars) flush();
+    if (count > 0 && length + added + reserve * (count + 1) > maxChars) flush();
     length += (current.length > 0 ? 1 : 0) + line.length;
     current.push(line);
     count += 1;
@@ -309,19 +314,22 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   const oldLines = oldSide.lines.map((l) => ({ ...l, d: describeLine(l.text) }));
   const live = liveEntriesOf(oldSide.lines);
   const liveKeys = new Set(live.map((e) => e.key));
-  const liveMarkers = new Set();
-  for (const { d } of oldLines) {
-    if (d.entry && !d.marked) for (const m of d.markers) liveMarkers.add(m);
-  }
+  // Markers on the lines that get carried live. A later live line sharing a key is not carried, so
+  // its other markers (a consolebackfill-item) are tombstoned below, not assumed held.
+  const liveMarkers = new Set(live.flatMap((e) => e.line.match(DEDUP_MARKER) || []));
 
   const tombstones = [];
   const taken = new Set();
   const marks = new Map();
+  const carriedKeys = new Set();
   let unfingerprintedMarked = 0;
   for (const { d } of oldLines) {
-    if (d.entry && !d.marked) continue;
-    if (d.entry && d.fingerprint === null) unfingerprintedMarked += 1;
-    if (d.entry && !liveKeys.has(d.key) && !marks.has(d.key)) marks.set(d.key, d.mark);
+    if (d.entry && !d.marked && !carriedKeys.has(d.key)) {
+      carriedKeys.add(d.key);
+      continue;
+    }
+    if (d.marked && d.fingerprint === null) unfingerprintedMarked += 1;
+    if (d.marked && !liveKeys.has(d.key) && !marks.has(d.key)) marks.set(d.key, d.mark);
     const rest = d.markers.filter((m) => !liveMarkers.has(m) && !taken.has(m));
     for (const m of rest) taken.add(m);
     if (rest.length > 0) tombstones.push(rest);
@@ -359,7 +367,7 @@ function planCarryOver(oldComments, newComments, { oldCommentCount, maxChars = D
   }
 
   const bodies = [
-    ...packBodies(pending, maxChars),
+    ...packBodies(pending, maxChars, undefined, MARK_RESERVE),
     ...packBodies(tombstonesPending, maxChars, TOMBSTONE_HEADER),
   ];
   const carried = live.length - pendingEntries.length;
@@ -400,9 +408,16 @@ function classifyRolloverResume(candidates, oldIssue) {
   if (!oldIssue || typeof oldIssue !== 'object' || Array.isArray(oldIssue) || !Number.isInteger(oldIssue.number)) {
     throw new CarryOverInputError('oldIssue: expected an issue object with an integer number');
   }
+  if (typeof oldIssue.state !== 'string' || oldIssue.state === '') {
+    throw new CarryOverInputError('oldIssue: no state — cannot tell an open issue from a closed one');
+  }
+  candidates.forEach((c, index) => {
+    if (!c || typeof c !== 'object' || Array.isArray(c)) throw new CarryOverInputError(`candidates[${index}]: not an issue object`);
+    if (commentAssociation(c) === null) throw new CarryOverInputError(`candidates[${index}]: no author association`);
+  });
   const marker = digestReplacementMarker(oldIssue.number);
   const matches = candidates
-    .filter((c) => c && typeof c === 'object' && Number.isInteger(c.number) && c.number !== oldIssue.number
+    .filter((c) => Number.isInteger(c.number) && c.number !== oldIssue.number
       && isTrustedComment(c) && typeof c.body === 'string'
       && c.body.split(/\r?\n/).some((l) => l.trim() === marker))
     .sort((a, b) => a.number - b.number);
