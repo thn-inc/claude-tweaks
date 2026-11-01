@@ -613,19 +613,19 @@ test('AC4.1 AC4.2 (#4640): --task-markers writes one stderr warning per finding 
     const plan = writePlan(repo, [
       '### Task 1: A', '**Review risk:** medium', '',
       '### Task 2: Say "hi"', '**Review risk:** high-ish', '',
-      '### Task 3: C', '**Role:** trivial',
+      '### Task 3: C', '**Role:** trivial (why)',
     ].join('\n'));
     const r = runTaskMarkers(plan);
     assert.strictEqual(r.exitCode, 0);
     assert.deepStrictEqual(JSON.parse(r.stdout).findings, [
       { taskIndex: 1, title: 'A', field: 'Review risk', value: 'medium' },
       { taskIndex: 2, title: 'Say "hi"', field: 'Review risk', value: 'high-ish' },
-      { taskIndex: 3, title: 'C', field: 'Role', value: 'trivial' },
+      { taskIndex: 3, title: 'C', field: 'Role', value: 'trivial (why)' },
     ]);
     assert.strictEqual(r.stderr, [
       'plan-audit.js: warning: task 1 "A" — unrecognized Review risk value "medium"; that field reads as unmarked',
       'plan-audit.js: warning: task 2 "Say "hi"" — unrecognized Review risk value "high-ish"; that field reads as unmarked',
-      'plan-audit.js: warning: task 3 "C" — unrecognized Role value "trivial"; that field reads as unmarked',
+      'plan-audit.js: warning: task 3 "C" — unrecognized Role value "trivial (why)"; that field reads as unmarked',
       '',
     ].join('\n'));
   } finally {
