@@ -264,16 +264,31 @@ function seedManifestVersion({ tags, manifestVersion } = {}) {
   return '0.1.0';
 }
 
+// JSON string syntax is a YAML double-quoted scalar, except that isValidBranchName's
+// [\s\x00-\x1f\x7f] lets the C1 range through and YAML 1.1 reads U+0085 as a line
+// break, so C1 characters are emitted as \uXXXX escapes.
+function yamlQuoted(value) {
+  return JSON.stringify(value).replace(/[\x80-\x9f]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
+
+// Quoting alone does not close this: Actions evaluates ${{ }} inside quoted scalars too.
+function containsActionsExpression(branch) {
+  return branch.includes('${{');
+}
+
 function renderWorkflowYaml({ branch } = {}) {
   if (!isValidBranchName(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)}`);
-  const b = branch;
+  if (containsActionsExpression(branch)) throw new Error(`invalid branch name: ${JSON.stringify(branch)} contains an Actions expression`);
+  const b = yamlQuoted(branch);
+  // on.push.branches entries are GitHub filter patterns, so '+' and a leading '!' must be escaped to match literally.
+  const filter = yamlQuoted(branch.replace(/\+/g, '\\+').replace(/^!/, '\\!'));
   return [
     'name: release-please',
     '',
     'on:',
     '  push:',
     '    branches:',
-    `      - ${b}`,
+    `      - ${filter}`,
     '',
     'permissions:',
     '  contents: write',
@@ -470,6 +485,6 @@ function assertSafeWriteTarget(root, rel, { pathImpl = path, fsImpl = fs } = {})
 module.exports = {
   RELEASE_STACK_TABLE, RELEASE_TYPE_VALUES, CONFLICT_MARKERS, CONFIG_FILE, MANIFEST_FILE, WORKFLOW_FILE,
   isBootstrapShaped, detectReleaseProcess, resolveReleaseType, readStackManifestVersion, seedManifestVersion,
-  renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
+  containsActionsExpression, renderWorkflowYaml, renderConfig, renderManifest, renderPolicyRows,
   defaultListTags, bootstrapRelease, writeBootstrapFiles, segmentsOf, assertSafeWriteTarget,
 };

@@ -45,6 +45,7 @@ files:
   - Under `github-issues` the parent stays open at this point; Step 4.0b closes it after the merge.
   - Under `local-files` the run closes the parent record in its own commit, so the closure reaches the integration branch no earlier than the merge.
   - Under `local-files` the same CLI call adds `--idempotence --backend local-files`. It reads the parent and sub-issue records from the record store (`bin/lib/issues/local-parent-gate-shape.js`) with no `gh` call, and any non-zero exit stops the entry instead of failing open.
+  - Under `work-links: body-text`, the CLI reads the sub-issue's `Parent: #P` line and #P's task list. A sub-issue that #P's non-empty task list does not list resolves no parent (`state: 'no-parent'`), so it is labeled as its own record and never counted in #P's gate; an empty or missing task list still resolves #P. Wrap-up's closure check applies the same rule (#4551).
   - Under `github-issues`, wrap-up's closure check agrees: the `acceptance-labeling` row of `wrap-up-engine.js verify` (`plugin/bin/lib/wrap-up/engine-verify.js`) reads `skip (parent #P below oversight floor — closes after the merge lands (Step 4.0b))`, never a fail for the parent's missing `demo:pending`.
 - **Red flags:** a `github-issues` parent closed by wrap-up Phase 4, the auto-merge short-circuit or dispatch's group gate, all of which run before the merge lands. A merge that never lands would then leave a closed parent over an open sub-issue.
 
@@ -113,5 +114,7 @@ The success state and the tidy step's checklist clause updated during build of #
 Updated by record #4599 (run `2026-10-31T135734-record-4599`): step 3 added. A merge no session saw land, such as an armed auto-merge, is closed by the reconciler's `post-merge` check, and tidy's backstop became step 4.
 
 Updated by record #4600 (run `2026-10-31T190944-record-4600`): step 5's `needsBackstop` line. The parent-gate sweep reports a hand-closed parent above the floor itself, and this journey's #4466 close marker keeps the parent it closed out of that row (`catch-a-hand-closed-parent-with-no-sign-off-4600.md`).
+
+Updated by record #4551 (run `2026-11-01T171342-record-4551`): under `work-links: body-text` the gate CLI reads `Parent:` through `parseParent` and resolves no parent for a sub-issue its parent's non-empty task list omits; step 1 notes it.
 
 Updated by record #4603 (run `2026-10-31T211744-record-4603`): the gate's gather and evaluate moved from prose snippets into `bin/parent-gate.js`, which the reconciler's `below-floor-parent-close.js` shares through `bin/lib/issues/parent-gate.js`. Steps 1 and 2 name the CLI call. The review's fix wave added the local-files call (`--backend local-files`, `local-parent-gate-shape.js`) and the fail-closed policy read, which steps 1-3 now note.
