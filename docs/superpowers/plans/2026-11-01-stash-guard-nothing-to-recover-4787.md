@@ -46,13 +46,14 @@ Scope keywords: restoreFailed
 ### Task 1: CLI reports the nothing-written case without a recover command
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/stash-guard.js` (header comment lines 15-26; `restoreRemoved` lines 233-271; `logItems` lines 286-292)
 - Test: `tests/stash-guard.test.js` (constant at line 266; probe A test at 268-290; probe B test at 292-309)
 
 **Interfaces:**
-- Produces: `restoreFailed[]` element `{sha: string, subject: string, error: string, command: string|null}` — `command` is `null` exactly when `error === 'same commit still at stash@{0}; nothing to recover'`.
+- Produces: `restoreFailed[]` element `{sha: string, subject: string, error: string, command: string|null}` — `command` is `null` exactly when `error === 'same commit still at stash@{0}; nothing to recover'`, which the CLI reports only when the post-store re-read shows the count did not rise **and** that re-read's `stash@{0}` sha equals the entry's sha. A store that exited 0 but whose re-read shows neither a higher count nor the sha at `stash@{0}` (a sibling session dropped a copy in between) keeps `command: storeCommand(subject, sha)` with error `git stash store exited 0 but the entry is not back on the stack`, and today's recover-with stderr block and FAILED clause (plan review, Common Step 1.6).
 - Stderr for a null command (one line): `stash-guard.js: restore failed for {sha}: same commit still at stash@{0}; nothing to recover\n`
 - FAILED line for a null command: `- FAILED {hms} — Stash guard: {who} removed stash entry {sha} {subject}; restore failed: same commit still at stash@{0}; nothing to recover. Reversibility: n/a (write did not land).`
 
@@ -87,14 +88,16 @@ In probe B (line 292), after the existing `NOTHING_TO_RECOVER` match, add `asser
 
 Leave `AC4.1: a forced restore failure…` (line 327) and the FAILED-line test near line 597 unchanged: they pin Review Focus 1.
 
+Add a test `'a store that exits 0 but leaves a different sha at stash@{0} keeps its recover command (sibling drop race)'`: stack `[newer, older]` (two `stashPush` calls), snapshot, `git stash drop stash@{1}` (removes `older`), then `compare(dir, baseline, ['--restore'], { git: noopStore() })` where `noopStore()` is a new helper beside `failingStore` that returns `''` for `stash store` without running git and delegates everything else to `realGit`. Assert: `code` 3; `restoreFailed.length` 1; `restoreFailed[0].sha === older.sha`; `restoreFailed[0].error === 'git stash store exited 0 but the entry is not back on the stack'`; `restoreFailed[0].command === storeCommand(older.subject, older.sha)`; `r.err` matches `restore failed for ${older.sha}; recover with:`. This test is the one input on which only the new `stash@{0}` sha check decides the outcome: deleting that check turns it red (it would report `nothing to recover` with a null command).
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test --test-name-pattern="probe" tests/stash-guard.test.js`
-Expected: FAIL — `failed.error` is still `same commit already at stash@{0} — git stash store wrote nothing` and `command` is still a `git stash store` string.
+Run: `node --test tests/stash-guard.test.js`
+Expected: FAIL — the AC1.1 and probe B tests (error is still `same commit already at stash@{0} — git stash store wrote nothing`, `command` still a string) and the sibling-drop race test (error is still the old wrote-nothing text).
 
 - [ ] **Step 3: Implement the null-command case in `plugin/bin/stash-guard.js`**
 
-- `restoreRemoved`: change `fail` to `fail(error, command)`; the git-error call passes `storeCommand(entry.subject, entry.sha)` and keeps today's stderr block (`restore failed for {sha}; recover with:\n{command}\n`); the `!wrote` call passes `'same commit still at stash@{0}; nothing to recover'` with `command` `null`, and writes the one-line stderr from the Interfaces block instead.
+- `restoreRemoved`: change `fail` to `fail(error, command)`; the git-error call passes `storeCommand(entry.subject, entry.sha)` and keeps today's stderr block (`restore failed for {sha}; recover with:\n{command}\n`); the `!wrote` branch keeps the stack the post-store re-read returned and splits on its `[0].sha`: equal to `entry.sha` → `'same commit still at stash@{0}; nothing to recover'` with `command` `null` and the one-line stderr from the Interfaces block; otherwise → `'git stash store exited 0 but the entry is not back on the stack'` with `storeCommand(entry.subject, entry.sha)` and the recover-with stderr block. A failed re-read still counts as restored (today's "trust the exit code" rule, unchanged).
 - `logItems`: the FAILED literal appends ` — recover with: ${f.command}` only when `f.command !== null`; both variants end `. Reversibility: n/a (write did not land).`
 - Header comment (lines 15-26): say `command` is null for the nothing-written case, and quote the new error text in place of the old one.
 
