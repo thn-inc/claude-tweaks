@@ -21,6 +21,7 @@ const fs = require('fs');
 const { execFileSync } = require('child_process');
 const { normalizeText, fingerprintFromBasis } = require('../health-core/fingerprint');
 const { findByMarker } = require('../issues/dedup-lookup');
+const { ghOptions } = require('../repo-resolve');
 
 // Node's execFileSync default maxBuffer (1MB) overflows on findDuplicate's
 // unscoped `--state all` full-body list against a repo with 1,500+ issues
@@ -29,7 +30,7 @@ const { findByMarker } = require('../issues/dedup-lookup');
 const GH_MAX_BUFFER = 64 * 1024 * 1024;
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER, windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: GH_MAX_BUFFER, windowsHide: true }));
 }
 
 // Same shape as bin/lib/issues/link.js's errorText — a runner may throw a

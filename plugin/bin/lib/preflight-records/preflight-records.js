@@ -20,10 +20,10 @@ const {
 } = require('../issues/record');
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
-const { repoSlug } = require('../repo-resolve');
+const { repoSlug, ghOptions } = require('../repo-resolve');
 
 function defaultRunner(args) {
-  return execFileSync('gh', args, { encoding: 'utf8', windowsHide: true });
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }));
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a
