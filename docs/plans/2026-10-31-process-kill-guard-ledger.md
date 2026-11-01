@@ -18,3 +18,4 @@
 | 14 | build | SDD ruling — word-bounded kill pre-check is a non-finding: ratify or reverse at the Review Console (staged/sdd-ruling-7.md) | open | — |
 | 15 | build | SDD ruling — final fix wave composition (positional PowerShell recorded, not matched): ratify or reverse at the Review Console (staged/sdd-ruling-8.md) | open | — |
 | 16 | build | SDD ruling — order-aware ps\|grep arming with ps -p exempt (residual override): ratify or reverse at the Review Console (staged/sdd-ruling-9.md) | open | — |
+| 17 | build/skill | `.claude/skills/shell-scanner-bash-differential` extends: the `processKill` family is the first guard-word family the prefilter matches case-insensitively (`CASE_INSENSITIVE_WORDS_BY_EVENT`), a wrinkle the skill's guard-parser notes do not yet describe | observation | — |
