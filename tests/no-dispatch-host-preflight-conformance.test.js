@@ -212,3 +212,38 @@ test('AC1.3: no build hand-off line skips Common Step 1.5 by proceeding straight
   const doctored = `${readText(BUILD_SKILL)}\nProceed to **Common Step 2**.`;
   assert.deepEqual(offenders(doctored), ['Proceed to **Common Step 2**.'], 'the check must report a line that skips Common Step 1.5');
 });
+
+// --- Cwd-pinned pointer in build/worktree-setup.md (Task 3) ---
+
+const WORKTREE_SETUP = path.join(SKILLS, 'build', 'worktree-setup.md');
+const POINTER_PREFIX = '**Cwd-pinned session (#4555).**';
+const pointerOf = (text) => lineStartingWith(text, POINTER_PREFIX);
+
+const POINTER_FACTS = [
+  [/`dispatch\/sequential-execution\.md`'s "When the dispatching session itself is cwd-pinned \(#447\)" section/, 'AC7.1: cites the #447 section'],
+  [/that mechanism is not restated here/, 'AC7.1: pointer, not a copy'],
+  [/is not a no-dispatch host \(`execution-mode-policy\.md`'s No-dispatch host section\)/, 'a pinned session with Agent is not stopped'],
+];
+const pointerMissing = missingFactsOf(POINTER_FACTS);
+
+test('AC7.1: build/worktree-setup.md points a cwd-pinned session at dispatch\'s #447 section (#4555)', () => {
+  const para = pointerOf(readText(WORKTREE_SETUP));
+  assert.ok(para, `build/worktree-setup.md has no "${POINTER_PREFIX}" paragraph`);
+  assert.deepEqual(pointerMissing(para), [], 'the cwd-pinned pointer must state every fact (#4555)');
+});
+
+test('AC8.2: each cwd-pinned pointer fact can go red', () => {
+  const para = pointerOf(readText(WORKTREE_SETUP));
+  assert.ok(para, `build/worktree-setup.md has no "${POINTER_PREFIX}" paragraph`);
+  assertEachPatternGoesRed(para, POINTER_FACTS, pointerMissing);
+});
+
+test('AC7.1: build/worktree-setup.md carries no second copy of the #447 mechanism', () => {
+  const COPIES = ['`cd {worktree-path} &&`', 'explicit `cd`'];
+  const offenders = (text) => COPIES.filter((copy) => text.includes(copy));
+  assert.deepEqual(offenders(readText(WORKTREE_SETUP)), [], 'worktree-setup.md must point at the #447 section, not restate its cd-prefix mechanism');
+
+  // Control: appending the mechanism to a copy must be reported.
+  const doctored = `${readText(WORKTREE_SETUP)}\nPrefix each call with \`cd {worktree-path} &&\`.`;
+  assert.deepEqual(offenders(doctored), ['`cd {worktree-path} &&`'], 'the check must report a restated cd-prefix mechanism');
+});
