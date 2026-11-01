@@ -480,8 +480,9 @@ test('same lens+path:line, different claims → two ids, two lines needed (AC7.1
   const b = { ...RAW[0], claim: 'never closes the fd' };
   assert.notEqual(findingId(a), findingId(b));
   writeFindings(dir, buildFindingsArtifact([a, b]));
-  // The #3772 matcher (console/resolve.js findingKey) keys on lens + first
-  // path:line, which these two share — coverage keys on the id instead.
+  // The console/resolve.js matcher keys on lens + path:line (a verdict's whole
+  // path, a STAGED line's longest named candidate, #4632), which these two
+  // share — coverage keys on the id instead.
   fs.writeFileSync(path.join(dir, 'decisions.md'), `${verdictFor(a)}\n`);
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(b)]);
   fs.appendFileSync(path.join(dir, 'decisions.md'), `${verdictFor(b)}\n`);
@@ -742,6 +743,18 @@ test('coverage counts only a verdict-shaped line, never the marker quoted elsewh
   assert.deepEqual(checkTiebreakCoverage(dir).missing, [b.id]);
 });
 
+test('AC3.2: coverage does not count a confirmed line with text after Confirmed., as the console does not (#4632)', (t) => {
+  const dir = tmpDir(t);
+  writeFindings(dir, buildFindingsArtifact([FINDING]));
+  const r = resolve(FINDING, reply());
+  assert.equal(r.outcome, 'confirmed');
+  const line = formatEntry({ status: r.logStatus, now: NOW, step: r.logStep, text: r.logText, reversibility: 'high' });
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line.replace(' Reversibility:', ' Then more. Reversibility:')}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, [findingId(FINDING)]);
+  fs.writeFileSync(path.join(dir, 'decisions.md'), `${line}\n`);
+  assert.deepEqual(checkTiebreakCoverage(dir).missing, []);
+});
+
 test("every resolver outcome's written line counts as coverage", (t) => {
   const outcomes = [
     resolve(FINDING, reply()),
@@ -808,6 +821,36 @@ test('a path:line token wrapped in one pair of backticks parses like the bare to
   for (const ev of ['`plugin/bin/foo.js`:20 `const x = readSync(fd);`', '`plugin/bin/foo.js:20` `const x = readSync(fd);`']) {
     assert.equal(resolve(FINDING, reply({ evidence: ev })).outcome, 'confirmed', ev);
   }
+});
+
+test('AC2.1: evidence at a space-holding finding path resolves drop and confirmed (#4632)', () => {
+  const f = { ...RAW[0], path: 'a dir/x.ts', line: 3 };
+  for (const [verdict, outcome] of [['refuted', 'drop'], ['confirmed', 'confirmed']]) {
+    for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+      const r = resolveTiebreak(f, `Verdict: ${verdict}\nEvidence: ${ev}\nSeverity: medium\nSTATUS: DONE`, { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+      assert.strictEqual(r.outcome, outcome, `${verdict} ${ev}`);
+    }
+  }
+});
+test('PRC1: parseTiebreakReply with findingPath returns the finding path as the evidence path (#4632)', () => {
+  for (const ev of ['a dir/x.ts:3 `quote text here`', '`a dir/x.ts`:3 `quote text here`', '`a dir/x.ts:3` `quote text here`']) {
+    assert.deepEqual(parseTiebreakReply(`Verdict: confirmed\nEvidence: ${ev}\nSTATUS: DONE`, { findingPath: 'a dir/x.ts' }).evidence, { path: 'a dir/x.ts', line: 3, quote: 'quote text here' }, ev);
+  }
+});
+test('PRC1: parseTiebreakReply treats null options like no options (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE', null).evidence, null);
+  assert.deepEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a.js:3 x\nSTATUS: DONE', null).evidence, { path: 'a.js', line: 3, quote: 'x' });
+});
+test('PRC1: resolveTiebreak of a non-object finding still throws the findingId error (#4632)', () => {
+  assert.throws(() => resolveTiebreak(null, 'Verdict: confirmed\nSTATUS: DONE', { now: NOW }), /findingId: finding must be an object/);
+});
+test('PRC1: a space-holding evidence path for a different finding path still fails (#4632)', () => {
+  const f = { ...RAW[0], path: 'b dir/x.ts', line: 3 };
+  const r = resolveTiebreak(f, 'Verdict: refuted\nEvidence: a dir/x.ts:3 `quote text here`\nSeverity: medium\nSTATUS: DONE', { readFile: () => 'line1\nline2\nquote text here\n', now: NOW });
+  assert.strictEqual(r.outcome, 'console');
+});
+test('PRC1: parseTiebreakReply without findingPath keeps today\'s evidence parse (#4632)', () => {
+  assert.strictEqual(parseTiebreakReply('Verdict: confirmed\nEvidence: a dir/x.ts:3 x\nSTATUS: DONE').evidence, null);
 });
 
 test('Recommendation reasons split on an en dash and a comma like the other separators', () => {

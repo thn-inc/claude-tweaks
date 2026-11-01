@@ -21,7 +21,9 @@
 //   Verdict: confirmed | refuted | cant-tell        value lowercased
 //   Evidence: {path}:{line} {quote}                 the path:line token may sit in
 //       one backtick pair (`{path}`:{line} or `{path}:{line}`), which is
-//       stripped. quote = everything after the
+//       stripped. With a findingPath option (resolveTiebreak passes the finding's
+//       path), that exact path, even one holding whitespace, is also read as the
+//       literal prefix of the same three spellings. quote = everything after the
 //       first whitespace following path:line; one wrapping pair of double
 //       quotes, or a Markdown code span (any equal backtick run, padding
 //       spaces dropped), is stripped. An empty or whitespace-only quote, a line
@@ -93,9 +95,26 @@ function stripWrapper(s) {
   return s;
 }
 
-function parseEvidence(value) {
-  const w = WRAPPED_TOKEN_RE.exec(value);
-  const m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+// The finding's own path, when it holds whitespace, cannot be read by
+// EVIDENCE_RE's \S+ path; so the three path:line spellings are matched as a
+// literal prefix (exact string comparison, no regex built from the path) and the
+// tail is read by the same line/quote rule. Null when no spelling matches.
+const LINE_TAIL_RE = /^(\d+)(?:\s+([\s\S]*))?$/;
+function findingPathTail(value, findingPath) {
+  if (value.startsWith(`${findingPath}:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 1));
+  if (value.startsWith(`\`${findingPath}\`:`)) return LINE_TAIL_RE.exec(value.slice(findingPath.length + 3));
+  if (value.startsWith(`\`${findingPath}:`)) return /^(\d+)`(?:\s+([\s\S]*))?$/.exec(value.slice(findingPath.length + 2));
+  return null;
+}
+
+function parseEvidence(value, findingPath) {
+  const known = typeof findingPath === 'string' && findingPath !== '' ? findingPathTail(value, findingPath) : null;
+  let m;
+  if (known) m = [null, findingPath, known[1], known[2]];
+  else {
+    const w = WRAPPED_TOKEN_RE.exec(value);
+    m = EVIDENCE_RE.exec(w ? (w[3] || w[1] + w[2]) + value.slice(w[0].length) : value);
+  }
   if (!m) return null;
   const line = Number(m[2]);
   const quote = stripWrapper((m[3] || '').trim());
@@ -113,7 +132,8 @@ function parseRecommendation(value) {
   return { recommendation: m[1].toLowerCase(), recommendationReason: sep[1].trim() || null };
 }
 
-function parseTiebreakReply(text) {
+function parseTiebreakReply(text, options) {
+  const { findingPath } = options || {};
   if (typeof text !== 'string') return unparsed();
   const lines = text.split(/\r?\n/).map((l) => l.trim()).filter((l) => l !== '');
   if (lines.length === 0) return unparsed();
@@ -145,7 +165,7 @@ function parseTiebreakReply(text) {
   return {
     parse: 'ok',
     verdict: verdicts[0],
-    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence),
+    evidence: fields.evidence == null ? null : parseEvidence(fields.evidence, findingPath),
     severity: SEVERITIES.includes(severity) ? severity : null,
     recommendation: rec.recommendation,
     recommendationReason: rec.recommendationReason,
@@ -259,8 +279,8 @@ function neutralize(text) {
 }
 
 function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
-  const parsed = parseTiebreakReply(replyText);
   const id = findingId(finding);
+  const parsed = parseTiebreakReply(replyText, { findingPath: finding.path });
   const t = stamp(now);
   const line = firstLine(finding.line);
   const shownLine = line !== null ? line : String(finding.line ?? 'unknown');
@@ -322,9 +342,10 @@ function resolveTiebreak(finding, replyText, { readFile, now } = {}) {
 // each listed id" — matched on the verdict line's own shape (verdictLineRe:
 // the `Tiebreak tiebreak:{id}:` step, or the confirmed line's `confirmed by
 // tiebreak:{id}. Confirmed.`), never on the marker anywhere in a line, so a
-// marker quoted inside another line's text never counts. The #3772 matcher in
-// console/resolve.js (findingKey: lens + first path:line) is unchanged and
-// coarser than the id — two findings that differ only in claim share a key but
+// marker quoted inside another line's text never counts. The matcher in
+// console/resolve.js keys on lens + path:line — a verdict's whole path, a
+// STAGED line's longest candidate path a verdict names (#4632) — and is
+// coarser than the id: two findings that differ only in claim share a key but
 // need two verdict lines here.
 //
 // A present-but-bad artifact is never absent and never valid: readFindingsArtifact
@@ -385,11 +406,18 @@ function readFindingsArtifact(dir) {
   return wellFormed ? { present: true, valid: true, findings: parsed } : invalid;
 }
 
+// The resolver-written tail every verdict line ends on. console/resolve.js
+// anchors its verdict regexes on this same constant, so the archive coverage
+// gate and the console agree on what counts as a verdict line (#4632).
+const VERDICT_LINE_END = '(?: Mode: inline\\.)?(?: Reversibility: \\S+\\.)?\\s*$';
+
 // The decisions.md line log-decision.js writes for a resolveTiebreak verdict
 // (`- {AUTO|STAGED} {HH:MM:SS} — {step}: {text}`). `id` is 12-hex validated,
-// so it needs no escaping.
+// so it needs no escaping. The confirmed line is anchored on VERDICT_LINE_END,
+// as console/resolve.js's TIEBREAK_CONFIRMED_RE is, so text after `Confirmed.`
+// is not a verdict to either (#4632).
 function verdictLineRe(id) {
-  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.)`);
+  return new RegExp(`^- (?:AUTO|STAGED) \\d{2}:\\d{2}:\\d{2} — (?:Tiebreak tiebreak:${id}:|Reproduction: .* confirmed by tiebreak:${id}\\. Confirmed\\.${VERDICT_LINE_END})`);
 }
 
 function checkTiebreakCoverage(dir) {
@@ -422,4 +450,5 @@ function checkRunTiebreakCoverage(runDir, specDirs) {
 module.exports = {
   findingId, parseTiebreakReply, resolveTiebreak, VERDICTS, SEVERITIES,
   FINDINGS_ARTIFACT, buildFindingsArtifact, readFindingsArtifact, checkTiebreakCoverage, checkRunTiebreakCoverage,
+  VERDICT_LINE_END,
 };

@@ -3,6 +3,7 @@ files:
   - plugin/bin/lib/console/resolve.js
   - plugin/bin/lib/console/finding-path.js
   - plugin/bin/lib/log-decision/aggregate-reproduction.js
+  - plugin/bin/lib/tiebreak.js
   - plugin/bin/lib/console/finding-filing.js
   - plugin/bin/lib/console/backfill.js
   - plugin/bin/lib/console/backfill-dispose.js
@@ -45,9 +46,11 @@ files:
   - A finding a converged-positive cross-lens debate confirmed is gone; the partner in a tiebroken contested pair takes the pair's outcome, and an inherited can't-tell partner is dismissed as covered by the carrier file.
   - The staged review file a finding's STAGED line names (`staged/review-contested-{N}.md`, for example) takes that verdict's outcome instead of lingering.
   - A row with no recommendation at all is the legacy shape: it stays undecided.
-  - A verdict settles a reproduction line by its lens and full `path:line`. One line naming several findings (`lens "3a" 10 findings not reproduced (A: journey:89 …)`) cannot be settled that way, so `bin/log-decision.js` refuses to write it and the reviewer logs one line per finding instead. The two-finding coincidence line keys both of its findings, whatever the lens's case or word count (`lens "3f Test quality" findings …`).
+  - A verdict settles a reproduction line by its lens and full `path:line`. One line naming several findings (`lens "3a" 10 findings not reproduced (A: journey:89 …)`) cannot be settled that way, so `bin/log-decision.js` refuses to write it and the reviewer logs one line per finding instead. The two-finding coincidence line keys both of its findings, whatever the lens's case or word count (`lens "3f Test quality" findings …`) and even at a path holding a space.
+  - A finding at a path holding a space (`a dir/x.ts:3`) is settled by a tiebreak verdict at its whole path; that verdict leaves a sibling at `b dir/x.ts:3` on its row. Two settlers still read only the plain suffix (`dir/x.ts:3`), as before #4632: a reproduction `Confirmed.` elevation line, which settles both siblings, and a tiebreak verdict at plain `dir/x.ts:3`, which settles a space-path sibling that has no verdict of its own. The tiebreak (`plugin/bin/lib/tiebreak.js`) reads evidence at such a path, so the finding can be confirmed or refuted like any other.
 - **Red flags:**
   - a confirmed finding still shows as Low-confidence
+  - a tiebreak verdict on `a dir/x.ts:3` also removes the `b dir/x.ts:3` row
   - one finding appears as two rows
   - a row shows no recommendation although decisions.md carries one
   - a run written after #4581 holds a keep-staged reproduction line that names several findings
@@ -142,6 +145,7 @@ files:
 - Updated during the build of #4563: step 1's "Should understand" list gained the two new ways a finding leaves the console, a confirmed cross-lens debate and a settled contested pair's partner.
 - Updated during the build of #4582: a finding at a path holding `@`, `+`, `~`, `%`, `$`, `[id]` or `(group)` now settles by its whole path. Before this, `app/[id]/page.tsx:9` and `blog/[id]/page.tsx:9` shared a truncated key, so a verdict on one settled the other.
 - Updated during the build of #4583: a contested pair's verdict now settles a partner re-staged after its own earlier verdict. A can't-tell verdict that re-stage outdated files nothing once the pair's verdict replaces it.
+- Updated during the build of #4632: a finding at a path holding a space now settles only on its own verdict (step 1). Before this, `a dir/x.ts:3` and `b dir/x.ts:3` keyed from the last space, so one verdict settled both. The tiebreak also reads evidence at such a path, so the finding can be confirmed or dropped rather than always landing as can't-tell.
 - Updated during the build of #4631: the console backfill (`bin/console-backfill.js`) now records a split finding's whole path under the same widened class, while keeping each item's id on its old location key so a re-run never files a second record (step 6).
 - Updated during the build of #4581: `log-decision.js` refuses an aggregate reproduction line, the improvised shape that left keep-staged residue with shortened locations, and the coincidence line now keys a multi-word quoted lens and matches in any case (step 1).
 - Related journeys:

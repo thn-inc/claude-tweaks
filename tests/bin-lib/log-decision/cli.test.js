@@ -489,6 +489,16 @@ test('#4581: a per-finding line followed by a 200k-character path-shaped token i
   assert.ok(elapsed < 2000, `took ${elapsed} ms`);
 });
 test('#4581: accept — capitalised coincidence line the reader keys', () => acceptsLine(['--text', 'Reproduction: Lens "3a" Findings plugin/a.js:1 / plugin/a.js:2 Share a location but not substance; both staged unconfirmed']));
+test('#4581: accept — coincidence line at paths holding a space, which the reader keys whole (#4632)', () => acceptsLine(['--text', 'Reproduction: lens "3a" findings a dir/x.ts:3 / b dir/x.ts:3 share a location but not substance; both staged unconfirmed']));
+test('#4581: refuse — coincidence line whose second location FINDING_PATH cannot read, which the reader leaves open', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a dir/x.ts:3 / b dir/x:3 share a location but not substance; both staged unconfirmed']));
+test('#4581: refuse — coincidence-shaped line whose first location lists two findings', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1, a/b.js:2 / a/b.js:3 share a location but not substance; all staged unconfirmed']));
+test('#4581: refuse — coincidence-shaped line naming three locations', () => refusesAggregate(['--text', 'Reproduction: lens "3a" findings a/b.js:1 / a/b.js:2 / a/b.js:3 share a location but not substance; all staged unconfirmed']));
+test('#4581: a coincidence-shaped line with 25k ` / ` splits is judged in linear time', () => {
+  const started = Date.now();
+  refusesAggregate(['--text', `Reproduction: lens "3a" findings ${'a b:1 / '.repeat(25000)}`]);
+  const elapsed = Date.now() - started;
+  assert.ok(elapsed < 2000, `took ${elapsed} ms`);
+});
 test('#4581: accepts an AUTO aggregate reproduction line (out of scope)', () => acceptsLine(['--text', 'Reproduction: lens "3a" 2 findings reproduced. Confirmed'], 'AUTO'));
 test('#4581: accepts a non-reproduction STAGED line naming several locations', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'findings a/b.js:1 and c/d.js:2 staged to staged/review-1.patch']));
 test('#4581: accept — step text before the marker is not checked', () => acceptsLine(['--step', 'Step 3 lens 3a findings', '--text', 'Reproduction: lens "3a" finding a/b.js:1 not reproduced']));
