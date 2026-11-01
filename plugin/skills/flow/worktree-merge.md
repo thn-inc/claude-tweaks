@@ -45,7 +45,7 @@ The working-directory hook (E1) checks `git commit` against the newest non-termi
 
 If the project also has `worktree-always: true` set (`.claude-tweaks/policy.yml`), a second, run-independent gate (`checkWorktreeRequired` in `pre-tool-use.js`) still applies, and `close-run` does nothing for it — it never reads run state, only whether the target is already inside a linked worktree. For exactly what that gate intercepts, read the `worktree-always` coverage block in `_shared/policy-schema-coverage.md`; it is the canonical list and this file deliberately does not restate it.
 
-Two consequences for the sequence below, both stated in `_shared/local-merge-sequence.md`: **`git merge` is not gated**, so the merge runs from the main checkout normally; **`git push` is**, so it runs from inside a linked worktree as its own Bash call. The gate also bites on a merge **conflict**: resolving one means editing files in the main checkout and then committing there, both denied since the main checkout is never a linked worktree. See the conflict branch of the Merge Procedure below and `_shared/git-discipline.md`.
+What that gate means for the merge, the push and the commits in the sequence below is `_shared/local-merge-sequence.md`'s to state ("Why the order is load-bearing"); this file does not restate that either. The one consequence it routes on itself is a merge **conflict**: under `worktree-always`, a conflict cannot be resolved in the main checkout — see the conflict branch of the Merge Procedure below and `_shared/git-discipline.md`.
 
 **Shell state does not survive between separate Bash calls** — read every value first and substitute it literally into the next call.
 
