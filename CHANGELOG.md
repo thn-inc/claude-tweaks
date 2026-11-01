@@ -53,6 +53,18 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.160.1](https://github.com/thn-inc/claude-tweaks/compare/v6.160.0...v6.160.1) (2026-11-01)
+
+
+### Bug Fixes
+
+* Reject a malformed --run-id in pr-resume-line.js before… ([#4782](https://github.com/thn-inc/claude-tweaks/issues/4782)) ([b0d7f64](https://github.com/thn-inc/claude-tweaks/commit/b0d7f6406bab568e1780d5c260a5c772a3b35796))
+* Release workflow renderer interpolates the branch… ([#4714](https://github.com/thn-inc/claude-tweaks/issues/4714)) ([2a25ffc](https://github.com/thn-inc/claude-tweaks/commit/2a25ffc34419d393ef2837e5a633b74e00595923))
+* Tolerate a failed identity probe when closing a… ([#4770](https://github.com/thn-inc/claude-tweaks/issues/4770)) ([5135595](https://github.com/thn-inc/claude-tweaks/commit/51355951f02a649808435bb170ab9507cba20a88))
+* Two findings at paths holding a space can share a… ([#4632](https://github.com/thn-inc/claude-tweaks/issues/4632)) ([3b03a31](https://github.com/thn-inc/claude-tweaks/commit/3b03a3177f0a461c99c89c53608d9688cbcd2c25))
+* Windows regression: 1 test file(s) newly failing after… ([#4738](https://github.com/thn-inc/claude-tweaks/issues/4738)) ([29232fd](https://github.com/thn-inc/claude-tweaks/commit/29232fde5656a834d4da423e33193d7d0e085a62))
+* wrap-up engine-verify: acceptance-labeling finds parents… ([#4551](https://github.com/thn-inc/claude-tweaks/issues/4551)) ([acc97e1](https://github.com/thn-inc/claude-tweaks/commit/acc97e1517ec09815c55a4aff06e8aeb3953929a))
+
 ## [6.160.0](https://github.com/thn-inc/claude-tweaks/compare/v6.159.0...v6.160.0) (2026-11-01)
 
 
