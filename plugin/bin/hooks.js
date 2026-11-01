@@ -160,7 +160,7 @@ function usageText() {
 // #1012, #4777: declared-flag sets, one per VERBS verb — exactly the keys of the
 // table below. The unknown-flag guard in main() consults these sets for every
 // verb and fails closed: a verb with no entry refuses every flag, and a flagless
-// verb carries `[]` (reconcile-summary, reconcile-background). `--help`/`-h` are
+// verb carries `[]`. `--help`/`-h` are
 // never declared; main() intercepts both anywhere in the argument list (value
 // positions included) before the undeclared-flag scan.
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
@@ -201,6 +201,8 @@ const KNOWN_FLAGS = {
 // Declared flags that consume the following token as a value — the
 // unknown-flag scan below must skip that token rather than risk misreading
 // it as a flag itself (an argument value could itself start with "--").
+// One set for every verb: a flag name here takes a value on every verb that
+// declares it, so it must never be a boolean flag on another verb.
 const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
@@ -1935,7 +1937,10 @@ async function main(argv) {
   // #1012, #4777: ANY undeclared --* argument (--help included — it is never
   // declared) intercepts here, before resolveRunArg or any lib call ever runs,
   // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
-  // closed and refuses every flag.
+  // closed and refuses every flag. The refusal keeps the #1012/#1143 shape —
+  // usage on stdout, exit 0 (tests/hooks-help-guard.test.js pins it) — even for
+  // resolve-run-dir, whose callers capture stdout as a path: such a caller gets
+  // the usage line, not an empty value.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it. --help is checked in every position too: the scan
@@ -2036,4 +2041,4 @@ if (require.main === module) {
 // VERBS and its derived USAGE exported so tests/hooks-help-guard.test.js's
 // table-driven suite iterates the SAME verb table this dispatcher's --help/-h
 // guard and dispatch use, rather than a second, driftable copy of it.
-module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VERBS };
+module.exports = { main, BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS, KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS };

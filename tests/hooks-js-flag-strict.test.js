@@ -13,14 +13,15 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { KNOWN_FLAGS, USAGE, VERBS } = require('../plugin/bin/hooks.js');
+const { KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS } = require('../plugin/bin/hooks.js');
 const { readText } = require('./helpers/read-skill');
+const { fixtureGit } = require('./helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const STATUS = path.join('.claude-tweaks', 'reconcile-background-status.json');
 
 function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
+  return fixtureGit(args, { cwd, encoding: 'utf8' });
 }
 
 // Every temp dir a fixture creates (repos, bare origins, linked-worktree
@@ -125,6 +126,21 @@ function assertNoRunDirMinted(root) {
 test('#4777 AC3.1: KNOWN_FLAGS declares every VERBS verb, and nothing else', () => {
   assert.deepStrictEqual(Object.keys(KNOWN_FLAGS).sort(), Object.keys(VERBS).sort());
   assert.ok(readText(HOOKS).includes('\n  reconcile: ['));
+});
+
+test('#4777: every flag a usage line names is declared, and VALUE_FLAGS matches the usage lines', () => {
+  const valueFlags = new Set();
+  for (const [verb, usage] of Object.entries(USAGE)) {
+    for (const [, flag, value] of usage.matchAll(/(--[a-z][a-z-]*)(\s+<[^>]+>)?/g)) {
+      assert.ok(KNOWN_FLAGS[verb].includes(flag), `${verb}: usage names ${flag} but KNOWN_FLAGS does not declare it`);
+      assert.equal(VALUE_FLAGS.has(flag), Boolean(value), `${verb}: ${flag} ${value ? 'takes a value but is not' : 'is boolean but is'} in VALUE_FLAGS`);
+      if (value) valueFlags.add(flag);
+    }
+  }
+  for (const flag of VALUE_FLAGS) {
+    assert.ok(Object.values(KNOWN_FLAGS).some((flags) => flags.includes(flag)), `VALUE_FLAGS member ${flag} is declared by no verb`);
+  }
+  assert.ok(valueFlags.size > 0, 'the usage lines were parsed');
 });
 
 test('#4777: every VERBS verb refuses an undeclared flag with its usage line', () => {
@@ -278,12 +294,14 @@ test('#4777: resolve-run-dir --create with no typo mints a run dir (positive con
   assert.ok(fs.statSync(minted).isDirectory(), 'a real --create run mints the run dir');
 });
 
-test('#4777: --help in a value position still prints usage and runs nothing', () => {
+test('#4777: --help or -h in a value position still prints usage and runs nothing', () => {
   const root = freshRepo();
-  const mint = runHook(['resolve-run-dir', '--spec-slug', '--help', '--create'], { cwd: root });
-  assert.equal(mint.code, 0);
-  assert.equal(mint.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`);
-  assertNoRunDirMinted(root);
+  for (const help of ['--help', '-h']) {
+    const mint = runHook(['resolve-run-dir', '--spec-slug', help, '--create'], { cwd: root });
+    assert.equal(mint.code, 0, help);
+    assert.equal(mint.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, help);
+    assertNoRunDirMinted(root);
+  }
   const sibling = runHook(['check-sibling-sessions', '--record', '--help'], { cwd: root });
   assert.equal(sibling.code, 0);
   assert.equal(sibling.stdout, `claude-tweaks: usage: ${USAGE['check-sibling-sessions']}\n`);

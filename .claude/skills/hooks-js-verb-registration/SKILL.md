@@ -13,7 +13,7 @@ A verb is not shipped until every row lands in the same change.
 
 | # | Site | What to add |
 |---|---|---|
-| 1 | `VERBS` table in `plugin/bin/hooks.js` | One entry, `'{verb}': { usage: '{verb} --run <dir> [...]', run: run{Verb} }`. `USAGE` (derived from it), the `--help`/`-h` intercept, dispatch and the unknown-verb usage listing all read this table, so one entry registers the verb's usage line and dispatch. Rows 2, 3 and 8 are still required in the same change: a verb cannot dispatch without a usage line or get dispatched without the guard, and a verb without its `KNOWN_FLAGS` entry refuses every flag. |
+| 1 | `VERBS` table in `plugin/bin/hooks.js` | One entry, `'{verb}': { usage: '{verb} --run <dir> [...]', run: run{Verb} }`. `USAGE` (derived from it), the `--help`/`-h` intercept, dispatch and the unknown-verb usage listing all read this table, so one entry registers the verb's usage line and dispatch. Rows 2 and 3 are still required in the same change: a verb cannot dispatch without a usage line or get dispatched without the guard, and a verb without its `KNOWN_FLAGS` entry refuses every flag. |
 | 2 | `KNOWN_FLAGS` in `plugin/bin/hooks.js` | Every `VERBS` verb gets an entry: its declared flags, or `[]` when it takes none. The registration test in `tests/hooks-js-flag-strict.test.js` fails otherwise. |
 | 3 | The verb's handler, `async function run{Verb}(argv)` | Returns the verb's exit code; `main()` calls it through the table entry's `run`. Resolve `--run` through `resolveRunArg`; decide mandatory vs implicit (below). |
 | 4 | `tests/hooks-help-guard.test.js` | Add the verb to the `runAccepting` list (any verb that accepts `--run`). |
