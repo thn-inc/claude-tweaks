@@ -5,7 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { run, USAGE } = require('../plugin/bin/parent-gate');
-const { VERDICT_FIELDS, CLOSE_HEADING } = require('../plugin/bin/lib/issues/parent-gate');
+const { VERDICT_FIELDS, CLOSE_HEADING, IDENTITY_PROBE_FAILED_NOTE } = require('../plugin/bin/lib/issues/parent-gate');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../plugin/bin/lib/issues/record');
 const {
   createRecord, closeRecord, readRecord, writeRecord, queryRecords,
@@ -606,7 +606,7 @@ test('an open below-floor parent without comments or me is exit 1 under --idempo
   assert.match(meless.stderr, /facts file me: /);
 });
 
-test('--idempotence guards parentComments and me only where the verdict reads them', (t) => {
+test('--idempotence guards parentComments and requires me only where the verdict reads them', (t) => {
   const errored = { parentComments: { message: 'Not Found' }, me: { message: 'Bad credentials' } };
   const argv = (file) => ['--parent', '10', '--idempotence', '--facts-json', file];
   // An incomplete parent never reaches the idempotence check: the gh verdict, exit 0.
@@ -631,9 +631,26 @@ test('--idempotence guards parentComments and me only where the verdict reads th
   assert.equal(due.code, 3);
   assert.equal(due.stdout, '');
   assert.match(due.stderr, /^parent-gate\.js: facts file parentComments: /);
+  // A present me without a login is no identity, not a fact error (AC1.3).
   const noLogin = go(argv(writeFacts(t, { ...worldAsMcp({}, null), me: { message: 'Bad credentials' } })), {}, NO_GH);
-  assert.equal(noLogin.code, 3);
-  assert.match(noLogin.stderr, /^parent-gate\.js: facts file me: /);
+  assert.equal(noLogin.code, 0, noLogin.stderr);
+  assert.equal(noLogin.verdict.idempotence, 'comment-and-close');
+});
+
+test('#4770 AC1.3 (gh path): --idempotence with a failing gh login read exits 0 with the degrade note', () => {
+  const r = go(['--parent', '10', '--idempotence'], { throwWhen: (k) => k.startsWith('api user') });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.state, 'due');
+  assert.equal(r.verdict.idempotence, 'comment-and-close');
+  assert.ok(r.verdict.skipped.includes(IDENTITY_PROBE_FAILED_NOTE), JSON.stringify(r.verdict.skipped));
+});
+
+test('#4770 AC1.3 (facts-json me: null): --idempotence with me: null exits 0 with the degrade note', (t) => {
+  const facts = { ...worldAsMcp({}, null), me: null };
+  const r = go(['--parent', '10', '--idempotence', '--facts-json', writeFacts(t, facts)], {}, NO_GH);
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.verdict.idempotence, 'comment-and-close');
+  assert.ok(r.verdict.skipped.includes(IDENTITY_PROBE_FAILED_NOTE), JSON.stringify(r.verdict.skipped));
 });
 
 test('without --idempotence the facts file needs no comments or me', (t) => {

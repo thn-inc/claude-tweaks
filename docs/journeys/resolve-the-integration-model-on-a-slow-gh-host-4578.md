@@ -39,12 +39,12 @@ files:
 - **Should understand:** A clean `local-merge` detection is still pinned as before; only a degraded one is held back. Later reads detect again, so a host that recovers mid-run gets the right answer.
 - **Red flags:** `config.yml` holding `integration-model: local-merge` after a stderr degrade line.
 
-### 4. Hooks and gates stay bounded and do not cache the guess — `pre-tool-use.js`, `precondition.js`, `phase-exit.js`
+### 4. Hooks and gates stay bounded and never persist the guess — `pre-tool-use.js`, `precondition.js`, `phase-exit.js`
 - **URL:** —
 - **Action:** The PreToolUse PR-stamp gate's fallback detection passes `HOOK_FORGE_PROBE_TIMEOUT_MS` (5000 ms per attempt). That gives a worst case of 15 s with the retry and the git probe, whatever `gh-timeout-ms` says. A degraded result never caches `prExempt`. SessionStart's reconcile gets the same bound. `/claude-tweaks:test` Step 0's `check-pr-bookkeeping.js` returns `degraded-detection` (logged as a `SKIP`), never `not-pr-first`. `phase-exit.js` treats a degraded read as unresolved.
 - **Should feel:** The session never hangs on a hook for a minute, and no gate passes silently on a guess.
-- **Should understand:** While `gh` stays hung, every covered tool call in an unpinned degraded run detects again, at up to 15 s each. That cost is a known, undecided follow-up (#4830): whether a run should remember a degraded detection for a while (a degrade memo with a TTL) instead of re-probing on every call.
-- **Red flags:** A hook call that waits on the full `gh-timeout-ms`. A `prExempt` stamp written after a degrade. The `/test` gate reporting `not-pr-first` on a degraded read.
+- **Should understand:** While `gh` stays hung, an unpinned degraded run probes at most about once per `FORGE_DEGRADE_MEMO_TTL_MS` (60 s) per run. Covered calls inside that window skip the probe and allow the call without a `prExempt` stamp. The first covered call after the window detects again, so a recovered `gh` is usually noticed within one window. Two hook processes that start with no fresh memo can both probe, and a late degraded writer can re-arm a cleared memo, so recovery can take up to one more window.
+- **Red flags:** A hook call that waits on the full `gh-timeout-ms`. A `prExempt` stamp written after a degrade. The `/test` gate reporting `not-pr-first` on a degraded read. A `prExempt` written by an unpinned run while its `forgeDegradedAt` is still fresh, except through the concurrent-probe race (harmless, because `prExempt` short-circuits before the memo is read). (A stale `forgeDegradedAt` beside `prExempt` after the user pins `integration-model` mid-run is legitimate: a pinned run never reads or clears the memo.)
 
 ### 5. Fix it for good
 - **URL:** `.claude-tweaks/policy.yml`
@@ -56,4 +56,5 @@ files:
 ## Origin
 - Created during build of #4578 (policy-schema detectIntegrationModel: ignores gh-timeout-ms and silently falls back to local-merge)
 - Steps 1-4 built in this session; step 5 is the existing pin/timeout override, now named in the degrade line
+- Step 4 extended during build of #4830 (run-scoped forge degrade memo): a hung `gh` now costs the PR-stamp gate one probe per `FORGE_DEGRADE_MEMO_TTL_MS` window instead of one per covered call
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same slow host's draft-PR path), `resolve-a-policy-key.md`
