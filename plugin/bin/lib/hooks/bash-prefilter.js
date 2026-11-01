@@ -130,8 +130,8 @@ function caseInsensitiveWordsFor(event) {
 
 function shouldRunFull(event, input) {
   const covered = wordsFor(event);
-  const folded = caseInsensitiveWordsFor(event);
   if (!covered) return true;
+  const folded = caseInsensitiveWordsFor(event);
   if (!input || typeof input !== 'object' || input.tool_name !== 'Bash') return true;
   const typed = input.tool_input && input.tool_input.command;
   if (typeof typed !== 'string') return true;

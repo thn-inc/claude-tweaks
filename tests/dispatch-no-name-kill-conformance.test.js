@@ -23,17 +23,20 @@ const BUILD_DISPATCH = read('plugin', 'skills', 'build', 'dispatch.md');
 const STASH_LABEL = '**Never run `git stash` in any form.**';
 const NAME_KILL_LABEL = '**Never kill a process by image or name.**';
 
+function paragraphsOf(text) {
+  return text.split(/\r?\n\r?\n/).map(flat);
+}
+
 // The paragraph after the no-stash one must be the no-name-kill one.
 function nameKillFollowsStash(text) {
-  const paragraphs = text.split(/\r?\n\r?\n/).map(flat);
+  const paragraphs = paragraphsOf(text);
   const i = paragraphs.findIndex((p) => p.startsWith(STASH_LABEL));
   if (i === -1 || i + 1 >= paragraphs.length) return false;
   return paragraphs[i + 1].startsWith(NAME_KILL_LABEL);
 }
 
 function nameKillParagraph(text) {
-  const paragraphs = text.split(/\r?\n\r?\n/).map(flat);
-  return paragraphs.find((p) => p.startsWith(NAME_KILL_LABEL)) || '';
+  return paragraphsOf(text).find((p) => p.startsWith(NAME_KILL_LABEL)) || '';
 }
 
 // subagent-dispatch-core.md before #4548: the no-stash paragraph (line 45) verbatim, followed directly by
