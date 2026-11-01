@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T20:00:38.377Z",
+  "computedAt": "2026-11-01T20:23:56.626Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -85,7 +85,7 @@
       },
       {
         "number": 4812,
-        "updatedAt": "2026-11-01T19:22:15Z",
+        "updatedAt": "2026-11-01T20:21:58Z",
         "state": "OPEN"
       },
       {
@@ -115,7 +115,7 @@
       },
       {
         "number": 4805,
-        "updatedAt": "2026-11-01T18:30:52Z",
+        "updatedAt": "2026-11-01T20:15:49Z",
         "state": "OPEN"
       },
       {
@@ -180,7 +180,7 @@
       },
       {
         "number": 4787,
-        "updatedAt": "2026-11-01T19:21:29Z",
+        "updatedAt": "2026-11-01T20:15:11Z",
         "state": "OPEN"
       },
       {
@@ -200,7 +200,7 @@
       },
       {
         "number": 4782,
-        "updatedAt": "2026-11-01T18:29:40Z",
+        "updatedAt": "2026-11-01T20:02:05Z",
         "state": "OPEN"
       },
       {
@@ -210,7 +210,7 @@
       },
       {
         "number": 4756,
-        "updatedAt": "2026-11-01T19:58:50Z",
+        "updatedAt": "2026-11-01T20:22:47Z",
         "state": "OPEN"
       },
       {
@@ -2544,84 +2544,6 @@
     ],
     [
       {
-        "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: tangential\n\n## Current State\n\n#4603 added `plugin/bin/parent-gate.js` and its shared core `plugin/bin/lib/issues/parent-gate.js` (paginated enumeration with `stateReason`, the self-inclusion rule, the oversight floor, cross-repo closing-reference filtering, reopen handling), and moved `plugin/skills/wrap-up/verification-brief-parent-gate.md` onto it. Two evaluators still compute the gate their own way:\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` (around lines 705-735 and 900-915) enumerates `sub_issues` with its own `gh api --paginate` call, reading no `stateReason`, and calls `parentGateState` directly. Its verdict can diverge from the CLI's on not-planned sub-issues and the oversight floor.\n- `plugin/skills/demo/entry-paths.md` (around lines 254-262) composes its own sub-issue enumeration in prose instead of calling `bin/parent-gate.js`.\n\nLedger rows 28 and 29 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] `engine-verify.js` evaluates the parent gate through `lib/issues/parent-gate.js` (or `bin/parent-gate.js`), with no `sub_issues` call of its own.\n- [ ] `demo/entry-paths.md` calls `bin/parent-gate.js` for enumeration instead of composing the `gh api` call.\n\n## Acceptance Criteria\n\n- [ ] `grep -n \"sub_issues\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- [ ] `grep -F \"issues/\\$PARENT_NUM/sub_issues\" plugin/skills/demo/entry-paths.md` returns nothing.\n- [ ] A unit test shows engine-verify's verdict for a parent whose sub-issues are all closed not-planned matches `bin/parent-gate.js`'s verdict for the same input.\n\n## Release Note\n\nThe wrap-up check and the demo flow now judge a decomposed feature's parent with the same tested code the close procedure uses, so all three agree on edge cases such as cancelled sub-issues.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — route the parent gate through the shared core\n- `plugin/skills/demo/entry-paths.md` — call bin/parent-gate.js for enumeration\n- `plugin/bin/lib/issues/parent-gate.js` — reuse\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:34:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4805,
-        "state": "OPEN",
-        "title": "Move the remaining parent-gate evaluators onto the shared parent-gate core",
-        "updatedAt": "2026-11-01T18:30:52Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/skills/tidy/SKILL.md` (line 130, the Prune-plan Execution column) tells the agent to re-run a bare `bin/plan-retention.js`, while `plugin/skills/tidy/scan-procedures.md:53` and `docs/skill-authoring.md:146` use `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`. A consumer project root has no `bin/`, so the step fails there when taken literally. Found by the v6.159.0 release-gate review (lens 3a, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Replace the bare path with `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`.\n\n## Acceptance Criteria\n\n`grep -n \"bin/plan-retention.js\" plugin/skills/tidy/SKILL.md` shows only the `${CLAUDE_PLUGIN_ROOT}` form.\n\n`npm test` passes.\n\n## Release Note\n\nTidy's plan-pruning re-check now runs correctly in projects that use the plugin.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/SKILL.md` — modify\n\n_Filed by `release` via specShapedBody._",
         "createdAt": "2026-11-01T07:33:43Z",
         "labels": [
@@ -3654,84 +3576,6 @@
     ],
     [
       {
-        "body": "Verified-as-of: 339a67da5171232f778858511dcc5d75b14b9519\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nmedium Architecture — The new CLI accepts an untrusted --run-id (sourced from a claim blob anyone with registry-branch push access can write) and checks only that it is non-empty (line 62), then passes it straight to resumeVerdict (line 71) — the run-id is the trust anchor the Resume check verifies against, yet its shape check lives only in two prose call sites, while the sibling caller stale-claim-pr.js --resume gets it in code via staleClaimRunId and RUN_ID_SHAPE is already exported from lib/issues/claim-store.js. No test covers a malformed --run-id.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-12.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\npr-resume-line.js rejects a --run-id that does not match RUN_ID_SHAPE (non-zero exit, named reason) before calling resumeVerdict, and a CLI test pins the malformed-run-id case.\n\n## Acceptance Criteria\n\n- [ ] `plugin/bin/pr-resume-line.js` exits non-zero with a named reason when `--run-id` does not match `RUN_ID_SHAPE` from `plugin/bin/lib/issues/claim-store.js`.\n- [ ] `tests/pr-resume-line-cli.test.js` pins the malformed-run-id case.\n- [ ] `npm test` passes.\n\n## Release Note\n\npr-resume-line.js now rejects a malformed --run-id instead of passing it to the Resume check.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/pr-resume-line.js` — modify\n- `tests/pr-resume-line-cli.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-10-31T22:09:37Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4782,
-        "state": "OPEN",
-        "title": "Reject a malformed --run-id in pr-resume-line.js before it reaches resumeVerdict",
-        "updatedAt": "2026-11-01T18:29:40Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Verified-as-of: 0baad513dff29666441ffe59028a441671179767\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nlow Architecture — Layering: the lib check drives the closing-links.js CLI entry point in-process and re-derives structured data from its stdout (parseEnvelope, lines 209-216, parses the last line); the unreadable-envelope state and its share of step40Failed exist only because of that text round trip, and the envelope keys the lib reads are an implicit contract held only by the CLI header comment.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-7.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\nclosing-links exports a core function returning the post-merge envelope object, the CLI is a thin printer over it, and post-merge.js consumes the object directly.\n\n## Acceptance Criteria\n\n- [ ] `plugin/bin/lib/flow/closing-links.js` (or `plugin/bin/closing-links.js`) exports a core function returning the post-merge envelope; the CLI prints that object unchanged.\n- [ ] `plugin/bin/lib/reconcile/post-merge.js` calls the core function and no longer parses stdout (`parseEnvelope` and the unreadable-envelope state are gone).\n- [ ] `npm test` passes, including `tests/bin-lib/flow/closing-links-cli.test.js`.\n\n## Release Note\n\nInternal: post-merge reads closing-links results directly, removing its unreadable-envelope failure mode.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/closing-links.js` — modify\n- `plugin/bin/lib/flow/closing-links.js` — modify\n\n_Filed by `release` via specShapedBody._",
         "createdAt": "2026-10-31T22:09:34Z",
         "labels": [
@@ -3804,7 +3648,7 @@
     ],
     [
       {
-        "body": "Blocked by #4495\n\nOrigin: #4495 review (sdd-ruling-1, PR #4723)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`claim-targets.js` bootstraps a missing `claims-registry` branch once per run (#4495, PR #4723). In `handleBranchMissing` (`plugin/bin/lib/claim-targets/claim-targets.js`), a bootstrap result that is `!ok && transient` (a secondary rate limit) takes the transient exit 4 path (`claims-branch-bootstrap-rate-limited`); every other `!ok` result exits 6 (\"branch missing on origin and could not be created\").\n\n`classifyGhApiError` (`plugin/bin/lib/issues/claim-store.js`) recognises ENOENT, the secondary rate limit, 404, 422 and 409; everything else, a permission 403 or 401 included, becomes `failure: 'network-failure'`. So `ensureClaimsBranch` cannot tell a transport failure (network blip, timeout, 5xx) from a permission refusal, and a plain network blip during the bootstrap exits 6: the record is stopped as if the branch were permanently uncreatable.\n\n#4495's review flagged this (5 lenses, tiebreak-confirmed, medium). The unattended Review Console ratified exit 6 as-is (sdd-ruling-1, run `2026-10-31T133106-record-4495`), because changing it needs the classifier split below.\n\n## Deliverables\n\n1. `classifyGhApiError` classifies a permission failure (HTTP 401, and HTTP 403 that is neither a secondary rate limit nor primary rate-limit exhaustion) as its own refusal outcome, distinct from `network-failure`. Every existing caller of `classifyGhApiError` / `defaultGhApi` keeps its current exit behaviour for a 403/401, or is updated deliberately with the change named in the PR.\n2. `ensureClaimsBranch` reports a transport-class failure (`network-failure` after the split) as `transient`, so `handleBranchMissing` routes it to exit 4 with its own error name (for example `claims-branch-bootstrap-network-failure`), under `--keep-going` a skip, like the rate-limited case.\n3. Exit 6 stays for genuine refusals only. The HTTP refusals: permission 401/403, a ruleset 422 whose branch re-read succeeds and shows no branch, a 422 whose branch re-read fails with a permission refusal (401/403) or `gh-absent`, and 404. The non-HTTP bootstrap refusals (`gh-absent`, a repository that reports no default branch, a default branch that reports no tip sha) also keep exit 6, unchanged from today. (Plan-review round 2, decision 2, Reading B.)\n4. The exit-code prose that names exit 6 (`plugin/bin/claim-targets.js` usage, `plugin/skills/flow/claim-targets.md`, `plugin/skills/dispatch/settle-and-merge.md`, `plugin/skills/_shared/issue-claims.md`, `docs/plugin-structure.md`) states that a network failure during bootstrap is transient (exit 4), not exit 6.\n5. A primary rate-limit 403 or 429 (`API rate limit exceeded`, or `X-RateLimit-Remaining: 0`) stays transient, as `plugin/skills/_shared/github-rate-limit.md` already classifies it, either as `network-failure` or as its own rate-limit outcome. During the bootstrap it exits 4, never 6. (Plan-review decision 2, Reading B.)\n6. A bootstrap `POST git/refs` that answers 422 and whose follow-up branch re-read fails with a transport-class failure (`network-failure`, or a primary or secondary rate limit) is transient: it exits 4 with `claims-branch-bootstrap-network-failure` (or the rate-limited name when the re-read hit a rate limit), not 6. A re-read that fails with a permission refusal (401/403) or `gh-absent` stays a refusal (exit 6). This needs the re-read's failure kind, so the bootstrap can no longer decide from `claimsBranchExists`'s bare `null`. The existing claim-store test \"POST git/refs 422 with an unreadable branches endpoint is a refusal\" is rewritten to pin the transient outcome for a network-failure re-read. (Plan-review decision 1, Reading B; narrowed by round 2, decision 1, Reading B.)\n7. Under `--keep-going` with two or more targets, a transient bootstrap failure on one target does not leave later targets reporting `claims-branch-missing`, which means a bootstrap that reported success. Each later target that finds the branch missing is skipped with the same transient error name the failed bootstrap produced (a `--keep-going` transient skip, like the rate-limited case today). (Plan-review round 2, reviewer note, added by the human.)\n\n## Acceptance Criteria\n\n- [ ] A unit test feeds `classifyGhApiError` an HTTP 403 (not a secondary rate limit) and an HTTP 401 and gets the new refusal outcome, not `network-failure`; it fails against the current classifier.\n- [ ] A `claim-targets` test with a bootstrap whose create call fails with a transport error (no HTTP status) exits 4 with the new error name, and under `--keep-going` skips that target; it exits 6 against the current code.\n- [ ] A `claim-targets` test with a bootstrap refused by a permission 403 still exits 6 and prints the one-line reason.\n- [ ] The secondary-rate-limit bootstrap case still exits 4 (`claims-branch-bootstrap-rate-limited`).\n- [ ] No remaining exit-code prose says a network failure during bootstrap exits 6.\n- [ ] A `classifyGhApiError` test with a primary rate-limit 403 (`API rate limit exceeded`, no `Retry-After`) gets a transient outcome, not the new refusal outcome.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a network-failure branch re-read gets a transient result, and a `claim-targets` test with that bootstrap exits 4 with `claims-branch-bootstrap-network-failure`.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a permission 403 branch re-read gets a refusal, and a `claim-targets` test with that bootstrap exits 6.\n- [ ] The `gh-absent`, no-default-branch and no-tip-sha bootstrap refusals still exit 6.\n- [ ] A two-target `claim-targets --keep-going` test whose first bootstrap fails with a transport error skips both targets with `claims-branch-bootstrap-network-failure`, never `claims-branch-missing`.\n\n## Release Note\n\nA network blip while the plugin creates the claims branch is now retried on a later run instead of stopping the record as if the branch could never be created.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/claim-store.js` — split a permission refusal out of network-failure in classifyGhApiError; transient bootstrap result\n- `plugin/bin/lib/claim-targets/claim-targets.js` — route a transport-class bootstrap failure to exit 4\n- `tests/bin-lib/issues/claim-store.test.js` — classifier and bootstrap cases\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — exit 4 vs exit 6 bootstrap cases\n- `plugin/skills/flow/claim-targets.md` — exit-code prose\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Blocked by #4495\n\nOrigin: #4495 review (sdd-ruling-1, PR #4723)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`claim-targets.js` bootstraps a missing `claims-registry` branch once per run (#4495, PR #4723). In `handleBranchMissing` (`plugin/bin/lib/claim-targets/claim-targets.js`), a bootstrap result that is `!ok && transient` (a secondary rate limit) takes the transient exit 4 path (`claims-branch-bootstrap-rate-limited`); every other `!ok` result exits 6 (\"branch missing on origin and could not be created\").\n\n`classifyGhApiError` (`plugin/bin/lib/issues/claim-store.js`) recognises ENOENT, the secondary rate limit, 404, 422 and 409; everything else, a permission 403 or 401 included, becomes `failure: 'network-failure'`. So `ensureClaimsBranch` cannot tell a transport failure (network blip, timeout, 5xx) from a permission refusal, and a plain network blip during the bootstrap exits 6: the record is stopped as if the branch were permanently uncreatable.\n\n#4495's review flagged this (5 lenses, tiebreak-confirmed, medium). The unattended Review Console ratified exit 6 as-is (sdd-ruling-1, run `2026-10-31T133106-record-4495`), because changing it needs the classifier split below.\n\n## Deliverables\n\n1. `classifyGhApiError` classifies a permission failure (HTTP 401, and HTTP 403 that is neither a secondary rate limit nor primary rate-limit exhaustion) as its own refusal outcome, distinct from `network-failure`. Every existing caller of `classifyGhApiError` / `defaultGhApi` keeps its current exit behaviour for a 403/401, or is updated deliberately with the change named in the PR.\n2. `ensureClaimsBranch` reports a transport-class failure (`network-failure` after the split) as `transient`, so `handleBranchMissing` routes it to exit 4 with its own error name (for example `claims-branch-bootstrap-network-failure`), under `--keep-going` a skip, like the rate-limited case.\n3. Every bootstrap failure is classified by one rule, stated in `classifyGhApiError`'s outcomes (after Deliverable 1's split) rather than as a list of HTTP statuses. The rule applies to every call the bootstrap makes: the default-branch read, the tip-sha read, the `POST git/refs` create, and the follow-up branch re-read. (Plan-review round 3: one rule replaces the case lists.)\n   - **Transient (exit 4; a `--keep-going` skip):** `network-failure` and `secondary-rate-limit`. `network-failure` covers everything the classifier does not recognise: a transport error, a timeout, a 5xx, a primary rate limit (Deliverable 5), and any HTTP status it has no pattern for (a 400, say). Treating an unrecognised 4xx as transient is accepted; this record does not add patterns for more statuses.\n   - **Refusal (exit 6):** the new permission outcome (401/403, Deliverable 1); `gh-absent`; every answer the classifier returns with a status and `failure: null` (404, 409 for example an empty repository, 422), except the lost-race 422 below; and the non-HTTP refusals unchanged from today (a repository that reports no default branch, a default branch that reports no tip sha).\n   - **Lost-race 422:** a `POST git/refs` 422 whose follow-up re-read shows the branch exists is success, as today. A 422 whose re-read succeeds and shows no branch is a refusal (a ruleset). A 422 whose re-read fails takes the re-read failure's own class under this rule (Deliverable 6).\n   - **Error names:** a `secondary-rate-limit` reports `claims-branch-bootstrap-rate-limited`; a `network-failure` reports `claims-branch-bootstrap-network-failure`, primary rate limit included. (Round 3, decision 1, Reading B.)\n4. The exit-code prose that names exit 6 (`plugin/bin/claim-targets.js` usage, `plugin/skills/flow/claim-targets.md`, `plugin/skills/dispatch/settle-and-merge.md`, `plugin/skills/_shared/issue-claims.md`, `docs/plugin-structure.md`) states that a network failure during bootstrap is transient (exit 4), not exit 6.\n5. A primary rate-limit 403 or 429 (`API rate limit exceeded`, or `X-RateLimit-Remaining: 0`) is classified `network-failure`, never the new permission outcome, as `plugin/skills/_shared/github-rate-limit.md` already treats it as transient. During the bootstrap it exits 4 with `claims-branch-bootstrap-network-failure`, never 6. (Plan-review decision 2, Reading B; error name pinned by round 3, decision 1, Reading B.)\n6. Deliverable 3's rule applied to the 422 re-read: the bootstrap needs the re-read's failure kind, so it can no longer decide from `claimsBranchExists`'s bare `null`. A re-read that fails with `network-failure` exits 4 with `claims-branch-bootstrap-network-failure`; with `secondary-rate-limit`, exit 4 with `claims-branch-bootstrap-rate-limited`; with the permission outcome or `gh-absent`, exit 6. The existing claim-store test \"POST git/refs 422 with an unreadable branches endpoint is a refusal\" is rewritten to pin the transient outcome for a network-failure re-read. (Plan-review decision 1, Reading B; narrowed by round 2, decision 1, Reading B.)\n7. Under `--keep-going` with two or more targets, a transient bootstrap failure on one target does not leave later targets reporting `claims-branch-missing`, which means a bootstrap that reported success. Each later target that finds the branch missing is skipped with the same transient error name the failed bootstrap produced (a `--keep-going` transient skip, like the rate-limited case today). (Plan-review round 2, reviewer note, added by the human.)\n\n## Acceptance Criteria\n\n- [ ] A unit test feeds `classifyGhApiError` an HTTP 403 (not a secondary rate limit) and an HTTP 401 and gets the new refusal outcome, not `network-failure`; it fails against the current classifier.\n- [ ] A `claim-targets` test with a bootstrap whose create call fails with a transport error (no HTTP status) exits 4 with the new error name, and under `--keep-going` skips that target; it exits 6 against the current code.\n- [ ] A `claim-targets` test with a bootstrap refused by a permission 403 still exits 6 and prints the one-line reason.\n- [ ] The secondary-rate-limit bootstrap case still exits 4 (`claims-branch-bootstrap-rate-limited`).\n- [ ] No remaining exit-code prose says a network failure during bootstrap exits 6.\n- [ ] A `classifyGhApiError` test with a primary rate-limit 403 (`API rate limit exceeded`, no `Retry-After`) gets a transient outcome, not the new refusal outcome.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a network-failure branch re-read gets a transient result, and a `claim-targets` test with that bootstrap exits 4 with `claims-branch-bootstrap-network-failure`.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a permission 403 branch re-read gets a refusal, and a `claim-targets` test with that bootstrap exits 6.\n- [ ] The `gh-absent`, no-default-branch and no-tip-sha bootstrap refusals still exit 6.\n- [ ] A two-target `claim-targets --keep-going` test whose first bootstrap fails with a transport error skips both targets with `claims-branch-bootstrap-network-failure`, never `claims-branch-missing`.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a primary-rate-limit branch re-read gets a transient result reported as `claims-branch-bootstrap-network-failure`.\n- [ ] A `claim-targets` test with a bootstrap whose `POST git/refs` answers 409 exits 6.\n\n## Release Note\n\nA network blip while the plugin creates the claims branch is now retried on a later run instead of stopping the record as if the branch could never be created.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/claim-store.js` — split a permission refusal out of network-failure in classifyGhApiError; transient bootstrap result\n- `plugin/bin/lib/claim-targets/claim-targets.js` — route a transport-class bootstrap failure to exit 4\n- `tests/bin-lib/issues/claim-store.test.js` — classifier and bootstrap cases\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — exit 4 vs exit 6 bootstrap cases\n- `plugin/skills/flow/claim-targets.md` — exit-code prose\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-10-31T16:00:56Z",
         "labels": [
           {
@@ -3853,7 +3697,7 @@
         "number": 4756,
         "state": "OPEN",
         "title": "claim-targets: a network blip while bootstrapping the claims branch exits 6 instead of the transient exit 4",
-        "updatedAt": "2026-11-01T19:58:50Z",
+        "updatedAt": "2026-11-01T20:22:47Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
