@@ -23,3 +23,5 @@
 | 19 | wrap-up | Surprise: gate-test fixtures had no origin remote, so forge detection never reached gh until one was added | accepted | Don't capture — the AC1 test asserts the gh call count, so a missing origin fails loudly |
 | 20 | wrap-up | Approach: plan-audit Check C flagged new-test tasks before their tests existed | accepted | Don't capture — already recorded in the plan-authoring-pitfalls memory |
 | 21 | wrap-up | Tradeoff: no compare-and-set on the memo (bounded concurrent-probe and re-arm race) | accepted | Don't capture — one-off decision, documented in the TTL comment and the #4578 journey step 4 |
+| 22 | wrap-up | pr — PR #4843 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | CI green at cdf753e70 (test, label-fix-branch); merge state CLEAN |
+| 23 | wrap-up | unknown — residue suite probe skipped via --no-suite (fact pack never re-runs the suite) | observation | Suite state comes from the verify stamp: build verify passed at 7ddd13988 (12000/12000 tests, 79/79 journeys); the review re-verify after e7a088ee0/cdf753e70 was reported by the continuation agent, and PR CI passed at cdf753e70 |
