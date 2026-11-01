@@ -4,7 +4,7 @@
 
 **Goal:** The gh host seam (`plugin/bin/lib/repo-resolve.js`) injects `GH_HOST` for a non-github.com origin only on a positive GitHub signal, so an exported enterprise token is never sent to a non-GitHub host.
 
-**Architecture:** `resolveGhSpec` admits a host only when it ends in `.ghe.com` or is a key of gh's `hosts.yml`. The enterprise-token clause is dropped. Its two guards, `isSshRemote` and the `NON_GITHUB_FORGES` denylist, have no other caller, so they are deleted with it. That removes the bypass spellings (`gitlab.com.`, `git+ssh://`, `ssh+git://`) because nothing admits on the token any more. A new `normalizeHost` lower-cases and strips trailing dots from both the origin host and each `hosts.yml` key before comparison. The explicit opt-in is the existing one: an exported `GH_HOST`, which `ghOptions` and `explicitRepoGhHost` already leave untouched (pinned by the existing "AC4.1" and "explicitRepoGhHost AC4" tests). No new policy key is added.
+**Architecture:** `resolveGhSpec` admits a host only when it ends in `.ghe.com` or is a key of gh's `hosts.yml`. The enterprise-token clause is dropped. Its two guards, `isSshRemote` and the `NON_GITHUB_FORGES` denylist, have no other caller, so they are deleted with it. That removes the bypass spellings (`gitlab.com.`, `git+ssh://`, `ssh+git://`) because nothing admits on the token any more. A new `normalizeHost` lower-cases and strips trailing dots from both the origin host and each `hosts.yml` key before comparison. The explicit opt-in is the existing one, decided by the user at plan review: an exported `GH_HOST`, which `ghOptions` and `explicitRepoGhHost` already leave untouched (pinned by the existing "AC4.1" and "explicitRepoGhHost AC4" tests), or `gh auth login --hostname {host}`, which writes the `hosts.yml` key. No new policy key is added, and no new stderr line.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
@@ -14,7 +14,8 @@
 
 - AC1.1: With only `GH_ENTERPRISE_TOKEN` set and origin `https://git.corp.invalid/o/r.git`, `ghOptions` injects no `GH_HOST` — Task 1's forge-test URL loop.
 - AC2.1: A `hosts.yml` GHE host and a `*.ghe.com` origin still get `GH_HOST` injected — the existing AC1.1-seam and AC5.2 hosts.yml tests, unchanged, plus the normalization test.
-- AC3.1: `https://gitlab.com./o/r.git`, `git+ssh://alias/o/r` and `ssh+git://alias/o/r` inject no `GH_HOST` — Task 1's bypass-spellings test.
+- AC3.1: `https://gitlab.com./o/r.git`, `git+ssh://alias/o/r` and `ssh+git://alias/o/r` inject no `GH_HOST` — Task 1's bypass-spellings test. AC3 holds when the token is the only signal; a `hosts.yml` key for the host is a positive signal and still admits it (spec Plan Review Clarifications; Review Focus 5).
+- The seam stays silent on an unknown host: no new stderr line (decided at plan review).
 - AC4.1: `npm test` passes — Common Step 5's verification run.
 - An injected `GH_HOST` value is the normalized host: lower-case, no trailing dot.
 
@@ -99,7 +100,7 @@ Expected: FAIL. The token-alone assertions return an injected copy, not `o`. The
 - Add `normalizeHost(host)`: `String(host).toLowerCase().replace(/\.+$/, '')`.
 - In `resolveGhSpec`, set `host = parsed && normalizeHost(parsed.host)`. Then `known = host.endsWith('.ghe.com') || ghConfigHosts(deps).has(host)`. Drop the token clause and the now-unused `env` local.
 - In `ghConfigHosts`, map each key through `normalizeHost` instead of `.toLowerCase()`.
-- Delete `isSshRemote`, `NON_GITHUB_FORGES` and `isNonGithubForge`, with their comments.
+- Delete `isSshRemote`, `NON_GITHUB_FORGES` and `isNonGithubForge`, with their comments. This discharges Deliverable 2's SSH clause: the only guard that read SSH-ness is gone, so no spelling can sidestep it. The bypass-spellings test is the proof (AC3.1).
 - Update the header comment (lines 3-7) so the known-host list reads `*.ghe.com or a gh hosts.yml key`. Add one sentence: an enterprise token alone admits nothing, because gh sends it to whatever `GH_HOST` names (#4854).
 
 - [ ] **Step 4: Run tests to verify they pass (AC1.1, AC2.1, AC3.1; AC4.1's full `npm test` runs centrally at build Common Step 5)**
