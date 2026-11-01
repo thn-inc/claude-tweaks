@@ -559,6 +559,11 @@ test('shape 5: a closedByPullRequestsReferences that is present, non-null and no
     const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: answer(refs) } });
     assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(closedByPullRequestsReferences is not an array/), JSON.stringify(refs));
   }
+  // An element that is not a { number } reference fails too, never silently dropped.
+  for (const refs of [[null], [5], [{}], [{ number: '5' }], [{ number: 0 }], [{ number: 5 }, { state: 'MERGED' }]]) {
+    const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: answer(refs) } });
+    assert.throws(() => gatherGateFacts({ subIssue: 11, ...NATIVE, caller }), ghFailure(/^gh issue view 12: unexpected output \(closedByPullRequestsReferences holds an element that is not a \{ number \} reference/), JSON.stringify(refs));
+  }
   // Absent or null is no closing PR, never a failure.
   for (const text of [answer(null), JSON.stringify({ state: 'CLOSED', stateReason: 'COMPLETED', title: 'T', labels: [] })]) {
     const { caller } = makeGh({ parentOf: { 11: 10 }, subs: { 10: [11, 12] }, garbled: { 12: text } });

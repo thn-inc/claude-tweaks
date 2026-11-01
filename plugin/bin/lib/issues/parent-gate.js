@@ -197,13 +197,18 @@ function gatherGateFacts({
       throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
     }
     const refs = rawRefs || [];
+    // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
+    // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
+    if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
+      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
+    }
     return {
       number: num,
       title: String(live.title || '').trim(),
       state: String(live.state || '').toUpperCase(),
       stateReason: String(live.stateReason || '').toUpperCase(),
       labels: normalizeLabelNames(live.labels),
-      closedBy: refs.map((ref) => ref && ref.number).filter(Number.isInteger),
+      closedBy: refs.map((ref) => ref.number),
     };
   });
   const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));

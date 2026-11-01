@@ -39,9 +39,9 @@
 // origin's host: off github.com that `--repo` is `host/owner/repo` and the
 // gate's `gh api` reads carry `--hostname host`; absent or github.com, every
 // argv is the bare `owner/repo` one. A failing call skips that one parent
-// (named in `skipped`, reason `gh-failed`) and the next closing record is still processed; a `riskFloor` outside the
-// policy schema's risk-floor enum skips the whole step (`invalid-risk-floor`,
-// no gh call). Never throws.
+// (named in `skipped`, reason `gh-failed`) and the next closing record is still
+// processed; a `riskFloor` outside the policy schema's risk-floor enum skips the
+// whole step (`invalid-risk-floor`, no gh call). Never throws.
 'use strict';
 
 const {
