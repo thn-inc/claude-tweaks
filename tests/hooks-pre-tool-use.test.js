@@ -1370,6 +1370,20 @@ test('resolveRunPinnedIntegrationModel: a pinned model returns before detection 
   }
 });
 
+test('FORGE_DEGRADE_MEMO_TTL_MS is 60 s (#4830)', () => {
+  const { FORGE_DEGRADE_MEMO_TTL_MS } = require('../plugin/bin/lib/policy-schema');
+  assert.strictEqual(FORGE_DEGRADE_MEMO_TTL_MS, 60000);
+});
+
+test('isFreshForgeDegradeMemo: fresh only for a finite past timestamp younger than the TTL (#4830)', () => {
+  const f = pre.isFreshForgeDegradeMemo;
+  assert.strictEqual(f(1000, 1000, 60000), true);        // age 0
+  assert.strictEqual(f(1000, 60999, 60000), true);       // age TTL-1
+  assert.strictEqual(f(1000, 61000, 60000), false);      // age === TTL -> expired
+  assert.strictEqual(f(5000, 1000, 60000), false);       // future
+  for (const bad of [undefined, null, '1000', NaN, Infinity, {}]) assert.strictEqual(f(bad, 1000, 60000), false);
+});
+
 // #1967: git-stash worktree-hazard warn — the stash stack is repository-wide,
 // shared by every linked worktree of the same main checkout, so a bare
 // `git stash`/`git stash pop` from a linked worktree can push onto or pop a

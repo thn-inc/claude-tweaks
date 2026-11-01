@@ -1628,6 +1628,15 @@ function hasNoUpstreamYet(dir) {
   return upstream !== `origin/${branch}`;
 }
 
+// Freshness of a run-scoped forge degrade memo (#4830): `at` is the epoch-ms stamp
+// the memo was written at, `now` the current epoch ms, `ttlMs` the window
+// (FORGE_DEGRADE_MEMO_TTL_MS at the call site). Fresh only for a finite stamp no
+// later than `now` and strictly younger than the TTL; absent, non-numeric, NaN,
+// Infinity, or a future stamp (a clock step) is stale.
+function isFreshForgeDegradeMemo(at, now, ttlMs) {
+  return Number.isFinite(at) && 0 <= now - at && now - at < ttlMs;
+}
+
 // The PRODUCTION integration-model read for the PR-stamp branch below.
 // `_shared/integration-model.md`'s contract (and its "Re-detecting mid-run
 // instead of reading the run's pin" anti-pattern) is that a run resolves the
@@ -2519,4 +2528,7 @@ module.exports = {
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
   resolveRunPinnedIntegrationModel,
+  // Exported for the run-scoped forge degrade memo (#4830) — the freshness rule
+  // its PR-stamp gate reads, pure over (stamp, now, ttlMs).
+  isFreshForgeDegradeMemo,
 };
