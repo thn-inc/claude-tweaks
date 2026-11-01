@@ -28,6 +28,13 @@ function assertEachPatternGoesRed(text, patterns, missingOf) {
 
 const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
+// The live line of `file` starting with `prefix`. Asserts it exists.
+function requireLine(file, prefix) {
+  const line = lineStartingWith(readText(file), prefix);
+  assert.ok(line, `${path.basename(file)} has no line starting "${prefix}"`);
+  return line;
+}
+
 // The text from `heading` to the next `## ` heading (or EOF). Asserts the heading exists.
 function sectionOf(text, heading) {
   const start = text.indexOf(heading);
@@ -37,6 +44,7 @@ function sectionOf(text, heading) {
 }
 
 const POLICY_HEADING = '## No-dispatch host (#4555)';
+const policySection = () => sectionOf(readText(POLICY), POLICY_HEADING);
 
 const POLICY_FACTS = [
   [/`_shared\/subagent-dispatch-core\.md`'s probe, "`ToolSearch` finds none, deferred or otherwise"/, 'AC5.1: cites the canonical no-Agent probe'],
@@ -71,13 +79,11 @@ const POLICY_FACTS = [
 const policyMissing = missingFactsOf(POLICY_FACTS);
 
 test('AC5.1 AC1.2 AC1.3 AC2.1 AC2.2 AC3.1 AC3.2 AC4.1 AC4.2 AC9.1 AC9.2 AC9.3 AC10.1 AC10.2 AC10.3 AC11.1 AC11.2 AC12.1: execution-mode-policy.md states the no-dispatch-host stop (#4555)', () => {
-  const section = sectionOf(readText(POLICY), POLICY_HEADING);
-  assert.deepEqual(policyMissing(section), [], 'the No-dispatch host section must state every fact of the stop (#4555)');
+  assert.deepEqual(policyMissing(policySection()), [], 'the No-dispatch host section must state every fact of the stop (#4555)');
 });
 
 test('AC8.2: each policy fact can go red', () => {
-  const section = sectionOf(readText(POLICY), POLICY_HEADING);
-  assertEachPatternGoesRed(section, POLICY_FACTS, policyMissing);
+  assertEachPatternGoesRed(policySection(), POLICY_FACTS, policyMissing);
 });
 
 // Item 1's dispatch-route sentence (not item 4's, whose parenthetical adds ", headless or not").
@@ -90,7 +96,7 @@ function dispatchRouteSentence(section) {
 }
 
 test('AC9.2: the dispatch route never names the prefixed flow invocation', () => {
-  const section = sectionOf(readText(POLICY), POLICY_HEADING);
+  const section = policySection();
   const sentence = dispatchRouteSentence(section);
   assert.ok(!sentence.includes('PIPELINE_RUN_DIR'), 'the dispatch route must name /claude-tweaks:dispatch #{n}, never a PIPELINE_RUN_DIR-prefixed flow invocation');
 
@@ -108,7 +114,6 @@ const BUILD_SKILL = path.join(SKILLS, 'build', 'SKILL.md');
 const FLOW_ITEM_PREFIX = '- 2.4 — Dispatch-capability preflight (#4555).';
 const BUILD_PARA_PREFIX = '**Dispatch-capability preflight (#4555), first, whatever this step\'s skip gate decides:**';
 
-const flowItemOf = (text) => lineStartingWith(text, FLOW_ITEM_PREFIX);
 const buildParaOf = (text) => lineStartingWith(text, BUILD_PARA_PREFIX);
 
 const FLOW_FACTS = [
@@ -130,27 +135,19 @@ const flowMissing = missingFactsOf(FLOW_FACTS);
 const buildMissing = missingFactsOf(BUILD_FACTS);
 
 test('AC1.1 AC1.2 AC2.1 AC2.2 AC10.1 AC10.2: flow Step 2.4 runs the dispatch-capability preflight (#4555)', () => {
-  const item = flowItemOf(readText(FLOW_SKILL));
-  assert.ok(item, `flow SKILL.md has no "${FLOW_ITEM_PREFIX}" line`);
-  assert.deepEqual(flowMissing(item), [], 'flow Step 2.4 must state every fact of the preflight (#4555)');
+  assert.deepEqual(flowMissing(requireLine(FLOW_SKILL, FLOW_ITEM_PREFIX)), [], 'flow Step 2.4 must state every fact of the preflight (#4555)');
 });
 
 test('AC8.2: each flow Step 2.4 fact can go red', () => {
-  const item = flowItemOf(readText(FLOW_SKILL));
-  assert.ok(item, `flow SKILL.md has no "${FLOW_ITEM_PREFIX}" line`);
-  assertEachPatternGoesRed(item, FLOW_FACTS, flowMissing);
+  assertEachPatternGoesRed(requireLine(FLOW_SKILL, FLOW_ITEM_PREFIX), FLOW_FACTS, flowMissing);
 });
 
 test('AC1.1 AC1.3 AC2.1 AC2.2: build Common Step 1.5 runs the dispatch-capability preflight (#4555)', () => {
-  const para = buildParaOf(readText(BUILD_SKILL));
-  assert.ok(para, `build SKILL.md has no "${BUILD_PARA_PREFIX}" paragraph`);
-  assert.deepEqual(buildMissing(para), [], 'build Common Step 1.5 must state every fact of the preflight (#4555)');
+  assert.deepEqual(buildMissing(requireLine(BUILD_SKILL, BUILD_PARA_PREFIX)), [], 'build Common Step 1.5 must state every fact of the preflight (#4555)');
 });
 
 test('AC8.2: each build Common Step 1.5 fact can go red', () => {
-  const para = buildParaOf(readText(BUILD_SKILL));
-  assert.ok(para, `build SKILL.md has no "${BUILD_PARA_PREFIX}" paragraph`);
-  assertEachPatternGoesRed(para, BUILD_FACTS, buildMissing);
+  assertEachPatternGoesRed(requireLine(BUILD_SKILL, BUILD_PARA_PREFIX), BUILD_FACTS, buildMissing);
 });
 
 test('AC1.2: flow 2.4 precedes 2.8 (claim)', () => {
@@ -219,7 +216,6 @@ test('AC1.3: no build hand-off line skips Common Step 1.5 by proceeding straight
 
 const WORKTREE_SETUP = path.join(SKILLS, 'build', 'worktree-setup.md');
 const POINTER_PREFIX = '**Cwd-pinned session (#4555).**';
-const pointerOf = (text) => lineStartingWith(text, POINTER_PREFIX);
 
 const POINTER_FACTS = [
   [/`dispatch\/sequential-execution\.md`'s "When the dispatching session itself is cwd-pinned \(#447\)" section/, 'AC7.1: cites the #447 section'],
@@ -229,15 +225,11 @@ const POINTER_FACTS = [
 const pointerMissing = missingFactsOf(POINTER_FACTS);
 
 test('AC7.1: build/worktree-setup.md points a cwd-pinned session at dispatch\'s #447 section (#4555)', () => {
-  const para = pointerOf(readText(WORKTREE_SETUP));
-  assert.ok(para, `build/worktree-setup.md has no "${POINTER_PREFIX}" paragraph`);
-  assert.deepEqual(pointerMissing(para), [], 'the cwd-pinned pointer must state every fact (#4555)');
+  assert.deepEqual(pointerMissing(requireLine(WORKTREE_SETUP, POINTER_PREFIX)), [], 'the cwd-pinned pointer must state every fact (#4555)');
 });
 
 test('AC8.2: each cwd-pinned pointer fact can go red', () => {
-  const para = pointerOf(readText(WORKTREE_SETUP));
-  assert.ok(para, `build/worktree-setup.md has no "${POINTER_PREFIX}" paragraph`);
-  assertEachPatternGoesRed(para, POINTER_FACTS, pointerMissing);
+  assertEachPatternGoesRed(requireLine(WORKTREE_SETUP, POINTER_PREFIX), POINTER_FACTS, pointerMissing);
 });
 
 test('AC7.1: build/worktree-setup.md carries no second copy of the #447 mechanism', () => {
@@ -290,22 +282,16 @@ const MERGE_FLOOR_FACTS = [
 const mergeFloorMissing = missingFactsOf(MERGE_FLOOR_FACTS);
 
 test('AC10.3: merge-check renders needs-human for an Independence: degraded review (#4555)', () => {
-  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
-  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
-  assert.deepEqual(mergeFloorMissing(bullet), [], 'the Independence floor bullet must state every fact (#4555)');
+  assert.deepEqual(mergeFloorMissing(requireLine(MERGE_CHECK, MERGE_FLOOR_PREFIX)), [], 'the Independence floor bullet must state every fact (#4555)');
 });
 
 test('AC8.2: each merge-check Independence-floor fact can go red', () => {
-  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
-  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
-  assertEachPatternGoesRed(bullet, MERGE_FLOOR_FACTS, mergeFloorMissing);
+  assertEachPatternGoesRed(requireLine(MERGE_CHECK, MERGE_FLOOR_PREFIX), MERGE_FLOOR_FACTS, mergeFloorMissing);
 });
 
 test('AC10.3: the SKIP text merge-check reads is the text review writes', () => {
-  const reviewLine = lineStartingWith(readText(REVIEW_STEP3), REVIEW_SKIP_PREFIX);
-  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
-  assert.ok(reviewLine, `step3-lens-dispatch.md has no "${REVIEW_SKIP_PREFIX}" line`);
-  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
+  const reviewLine = requireLine(REVIEW_STEP3, REVIEW_SKIP_PREFIX);
+  const bullet = requireLine(MERGE_CHECK, MERGE_FLOOR_PREFIX);
   const textIn = (line) => (line.match(SKIP_TEXT) || [null])[0];
   assert.ok(textIn(reviewLine), 'review line carries no SKIP text');
   assert.equal(textIn(bullet), textIn(reviewLine), 'merge-check must quote the exact SKIP text review writes');
@@ -349,7 +335,6 @@ test('merge-check Anti-Patterns names the Independence floor', () => {
 const SETTLE = path.join(SKILLS, 'dispatch', 'settle-and-merge.md');
 const SETTLE_PREFIX = '**No-dispatch-host special case (#4555).**';
 const SETTLE_STEP1 = '1. The CLI in step 2 performs the ownership read itself';
-const settleParaOf = (text) => lineStartingWith(text, SETTLE_PREFIX);
 
 const SETTLE_FACTS = [
   [/`ISSUE #\{n\}: failed:no-dispatch-host`/, 'D4: Settle recognizes the stop by its gate line'],
@@ -363,15 +348,11 @@ const SETTLE_FACTS = [
 const settleMissing = missingFactsOf(SETTLE_FACTS);
 
 test('AC12.1 AC12.2: Settle settles a no-dispatch-host stop as a pre-flight stop (#4555)', () => {
-  const paragraph = settleParaOf(readText(SETTLE));
-  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
-  assert.deepEqual(settleMissing(paragraph), [], 'the Settle special case must state every fact (#4555)');
+  assert.deepEqual(settleMissing(requireLine(SETTLE, SETTLE_PREFIX)), [], 'the Settle special case must state every fact (#4555)');
 });
 
 test('AC8.2: each Settle no-dispatch-host fact can go red', () => {
-  const paragraph = settleParaOf(readText(SETTLE));
-  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
-  assertEachPatternGoesRed(paragraph, SETTLE_FACTS, settleMissing);
+  assertEachPatternGoesRed(requireLine(SETTLE, SETTLE_PREFIX), SETTLE_FACTS, settleMissing);
 });
 
 test('AC12.1: the special case sits before Settle step 1', () => {
@@ -385,8 +366,7 @@ test('AC12.1: the special case sits before Settle step 1', () => {
 
   // Control: a copy with the paragraph removed and re-inserted after the END of step 1's full line
   // must fail the same check.
-  const paragraph = settleParaOf(text);
-  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  const paragraph = requireLine(SETTLE, SETTLE_PREFIX);
   const without = text.replace(`${paragraph}\n\n`, '');
   const step1End = without.indexOf('\n', without.indexOf(SETTLE_STEP1));
   assert.notEqual(step1End, -1, 'step 1 line end not found — control cannot discriminate');
@@ -397,11 +377,9 @@ test('AC12.1: the special case sits before Settle step 1', () => {
 
 test('AC12.1: Settle and the policy section name the same gate', () => {
   const GATE = 'failed:no-dispatch-host';
-  const policySection = sectionOf(readText(POLICY), POLICY_HEADING);
-  const paragraph = settleParaOf(readText(SETTLE));
-  assert.ok(paragraph, `settle-and-merge.md has no "${SETTLE_PREFIX}" paragraph`);
+  const paragraph = requireLine(SETTLE, SETTLE_PREFIX);
   const namesGate = (t) => t.includes(GATE);
-  assert.ok(namesGate(policySection), 'the policy section must name the gate token');
+  assert.ok(namesGate(policySection()), 'the policy section must name the gate token');
   assert.ok(namesGate(paragraph), 'the Settle paragraph must name the same gate token');
 
   // Control: a drifted Settle paragraph must fail the same check.
@@ -414,7 +392,6 @@ test('AC12.1: Settle and the policy section name the same gate', () => {
 
 const REPORTING = path.join(SKILLS, 'dispatch', 'reporting.md');
 const RELAY_PREFIX = '**No-dispatch-host stops are relayed (#4555).**';
-const relayParaOf = (text) => lineStartingWith(text, RELAY_PREFIX);
 
 const RELAY_FACTS = [
   [/When a group's first call reports `ISSUE #\{n\}: failed:no-dispatch-host`/, 'F2: keyed on the gate line'],
@@ -425,15 +402,11 @@ const RELAY_FACTS = [
 const relayMissing = missingFactsOf(RELAY_FACTS);
 
 test('F2: dispatch reporting.md relays a no-dispatch-host stop to the human (#4555)', () => {
-  const para = relayParaOf(readText(REPORTING));
-  assert.ok(para, `reporting.md has no "${RELAY_PREFIX}" paragraph`);
-  assert.deepEqual(relayMissing(para), [], 'the relay paragraph must state every fact (#4555)');
+  assert.deepEqual(relayMissing(requireLine(REPORTING, RELAY_PREFIX)), [], 'the relay paragraph must state every fact (#4555)');
 });
 
 test('F2: each reporting.md relay fact can go red', () => {
-  const para = relayParaOf(readText(REPORTING));
-  assert.ok(para, `reporting.md has no "${RELAY_PREFIX}" paragraph`);
-  assertEachPatternGoesRed(para, RELAY_FACTS, relayMissing);
+  assertEachPatternGoesRed(requireLine(REPORTING, RELAY_PREFIX), RELAY_FACTS, relayMissing);
 });
 
 test('F2: the relay paragraph sits directly after the plan-review relay paragraph', () => {
