@@ -1320,11 +1320,17 @@ test('classifyEntry: every verdict — clean, failed (a failure word, step40Fail
   const ran = (over) => ({ runDir: '/r', pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1, parentFailures: [], ...over });
   assert.deepEqual(classifyEntry(ran()), { verdict: 'clean', next: 'none' });
   assert.deepEqual(classifyEntry(ran({ parentFailures: undefined })), { verdict: 'clean', next: 'none' }, 'no Step 4.0b ran');
-  assert.deepEqual(classifyEntry(ran({ closingLinks: 'close-pending' })), { verdict: 'failed', next: 'none' });
-  assert.deepEqual(classifyEntry(ran({ closingLinks: 'some-future-word' })), { verdict: 'failed', next: 'none' }, 'deny direction');
-  assert.deepEqual(classifyEntry(ran({ closingLinks: 'exit 2', step40Failed: true })), { verdict: 'failed', next: 'none' });
-  assert.deepEqual(classifyEntry(ran({ closingLinks: 'nothing-closed', step40Failed: true })), { verdict: 'failed', next: 'none' }, 'step40Failed beats a clean word');
-  assert.deepEqual(classifyEntry(ran({ parentFailures: [{ parent: 9, reason: 'gh-failed' }] })), { verdict: 'failed', next: 'none' });
+  // A failed `ran` entry names the steps that failed: 4.0 alone, 4.0b alone, or both.
+  const step40 = { verdict: 'failed', next: 'none', failedSteps: ['4.0'] };
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'close-pending' })), step40);
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'some-future-word' })), step40, 'deny direction');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'exit 2', step40Failed: true })), step40);
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'nothing-closed', step40Failed: true })), step40, 'step40Failed beats a clean word');
+  const gateFailure = [{ parent: 9, reason: 'gh-failed' }];
+  assert.deepEqual(classifyEntry(ran({ parentFailures: gateFailure })), { verdict: 'failed', next: 'none', failedSteps: ['4.0b'] }, 'a clean Step 4.0 is not reported failed');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'reopen-failed', parentFailures: gateFailure })), { verdict: 'failed', next: 'none', failedSteps: ['4.0', '4.0b'] });
+  assert.ok(!('failedSteps' in classifyEntry(ran())), 'a clean entry carries no failedSteps');
+  assert.ok(!('failedSteps' in classifyEntry({ action: 'skipped', reason: 'error' })), 'a skipped entry carries no failedSteps');
   const skip = (reason) => ({ runDir: '/r', pr: 11, action: 'skipped', reason });
   assert.deepEqual(classifyEntry(skip('already-done')), { verdict: 'already-done', next: 'none' });
   assert.deepEqual(classifyEntry(skip('already-done'), { archived: true }), { verdict: 'already-done', next: 'none' });
@@ -1376,7 +1382,8 @@ test('postMergeOne closes every entry with verdict and next; postMerge entries c
   const failedParent = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090001-spec-2'), {
     prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 9, reason: 'gh-failed' }] }),
   }));
-  assert.deepEqual([failedParent.verdict, failedParent.next], ['failed', 'none']);
+  assert.deepEqual([failedParent.verdict, failedParent.next, failedParent.failedSteps], ['failed', 'none', ['4.0b']]);
+  assert.ok(!('failedSteps' in clean));
   const transient = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090002-spec-3'), {
     prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents(),
   }));
@@ -1392,7 +1399,14 @@ test('postMergeOne closes every entry with verdict and next; postMerge entries c
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
   assert.equal(loop.entries.length, 1);
-  assert.ok(!('verdict' in loop.entries[0]) && !('next' in loop.entries[0]));
+  assert.ok(!('verdict' in loop.entries[0]) && !('next' in loop.entries[0]) && !('failedSteps' in loop.entries[0]));
+  // The loop's own Step 4.0b failure carries no failedSteps either.
+  const parentLoop = mainCheckout();
+  addRun(parentLoop, '2026-10-30T090000-spec-1');
+  const loopFailed = await run(parentLoop, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 9, reason: 'gh-failed' }] }),
+  });
+  assert.ok(!('failedSteps' in loopFailed.entries[0]));
 });
 
 test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, never a garbled #{n}', async () => {

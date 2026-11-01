@@ -14,7 +14,7 @@
 // Prints exactly one JSON line, `postMergeOne`'s entry:
 //   {runDir, pr, action: ran | skipped, reason?, detail?, closingLinks?,
 //    parentsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?,
-//    verdict, next}
+//    verdict, next, failedSteps?}
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
 //   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
 //   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
@@ -42,6 +42,9 @@
 // and `next` rerun (a marker-less skip a re-run retries; post-merge.js's
 // RERUN_REASONS) | rerun-where-gh (gh-absent) | rerun-after-stale-claim (an archived run's in-flight) | none
 // (every other entry, each `ran` failure included: its marker is written).
+// A `failed` `ran` entry adds `failedSteps` (['4.0'] | ['4.0b'] | ['4.0', '4.0b']):
+// 4.0 when step40Failed is set or its word is not clean, 4.0b when parentFailures
+// is non-empty, so the caller reports only the step that failed.
 //
 // Status is data: exit 0 whenever an entry was printed, whatever its action or reason.
 // 2 malformed invocation (unknown flag, missing --run, --run without a value).
@@ -59,11 +62,12 @@ const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
 const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  runs the post-merge closes (Step 4.0 closing-links, Step 4.0b below-floor parent close) once for the one named run dir, archived included\n'
-  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?, verdict, next}; action:\n'
+  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?, verdict, next, failedSteps?}; action:\n'
   + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 printed a readable envelope;\n'
   + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close)\n'
   + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim); any other reason is a failure to report\n'
   + '  route on verdict (clean | failed | already-done | in-flight) and next (rerun | rerun-where-gh | rerun-after-stale-claim | none), never on the words above\n'
+  + '  failedSteps on a failed ran entry: the steps that failed, 4.0 and/or 4.0b; report only those\n'
   + '  exit 0 an entry was printed (every action and reason is data)\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n';

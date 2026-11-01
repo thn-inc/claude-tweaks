@@ -429,17 +429,21 @@ function archivedRetryHint(runDir) {
   return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
 }
 
-// Pure: a single-run entry -> { verdict, next }. `verdict`: `clean` (a `ran` entry whose Step 4.0 word is
-// clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or `failed`
-// (every other entry). `next`: `rerun` (a marker-less skip a re-run retries), `rerun-where-gh`,
+// Pure: a single-run entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran` entry whose Step
+// 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or
+// `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
+// `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
+// so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries), `rerun-where-gh`,
 // `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another merge-mode
 // invocation, so a re-run past CLAIM_STALE_MS recovers a dead one), or `none` — a `ran` entry's marker is
 // already written, and every other skip fails the same way again.
 function classifyEntry(entry, { archived = false } = {}) {
   if (entry.action === 'ran') {
+    const step40Failed = entry.step40Failed === true || !CLEAN_CLOSING_LINKS.has(entry.closingLinks);
     const parentFailed = Array.isArray(entry.parentFailures) && entry.parentFailures.length > 0;
-    const clean = CLEAN_CLOSING_LINKS.has(entry.closingLinks) && entry.step40Failed !== true && !parentFailed;
-    return { verdict: clean ? 'clean' : 'failed', next: 'none' };
+    if (!step40Failed && !parentFailed) return { verdict: 'clean', next: 'none' };
+    const failedSteps = [...(step40Failed ? ['4.0'] : []), ...(parentFailed ? ['4.0b'] : [])];
+    return { verdict: 'failed', next: 'none', failedSteps };
   }
   if (entry.reason === 'already-done') return { verdict: 'already-done', next: 'none' };
   if (entry.reason === 'in-flight') return { verdict: 'in-flight', next: archived ? 'rerun-after-stale-claim' : 'none' };

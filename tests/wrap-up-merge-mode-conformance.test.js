@@ -83,11 +83,14 @@ const MERGE_MODE_FACTS = {
   'already-in-flight': /`verdict` `in-flight` — another process holds the run's claim and is running them now: report `in-flight`, never `ran`/,
   'already-in-flight-live': /With `next` `none`, a live run, that is the whole line/,
   'already-in-flight-archived': /`next` `rerun-after-stale-claim` marks an archived run \(the adopted path is under `archive\/`\), whose holder is another merge-mode invocation, because the reconciler never walks `archive\/`: the line also names `\/claude-tweaks:wrap-up #\{n\} merge` again once the claim is past its 10-minute stale window \(`CLAIM_STALE_MS`\), in case that holder died/,
-  'already-failed-ran': /`verdict` `failed` on a `ran` entry: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
-  'already-parent-failures': /then one `cleanup: post-merge closes failed — Step 4\.0b \{reason\} on #\{parent\}` line per `parentFailures` element/,
+  'already-failed-steps': /`verdict` `failed` on a `ran` entry reports only the steps its `failedSteps` names/,
+  'already-failed-ran': /When `failedSteps` includes `4\.0`: one `cleanup: post-merge closes failed — \{closingLinks\}` line naming every record in its `records` lists/,
+  'already-parent-failures': /When `failedSteps` includes `4\.0b`: one `cleanup: post-merge closes failed — Step 4\.0b \{reason\} on #\{parent\}` line per `parentFailures` element/,
   'already-pending-close': /Merge mode skips the re-run half of that `pendingClose` action, because the re-run would print `already-done` here, so its `pendingClose` records go straight to the hand check: reopen one by hand if it closed/,
   'already-log-failed': /Any line reporting a `ran` entry that carries `logFailed`, clean or a failure, also notes that Step 4\.0 could not append a `decisions\.md` line/,
-  'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: the line names no `\/claude-tweaks:wrap-up` re-run and cites `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open, for a failed Step 4\.0b close, and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
+  'already-step40-citations': /citing `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
+  'already-step40b-citation': /names no target\), citing the same `parent-gate` backstop/,
+  'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: no line names a `\/claude-tweaks:wrap-up` re-run/,
   'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line/,
   'already-exit-nonzero': /Any CLI exit other than 0 leaves no line to route on, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
   'already-unparseable': /an exit 0 whose stdout is empty or will not parse as JSON reads `cleanup: post-merge closes failed — unparseable output`/,
@@ -169,18 +172,23 @@ test('the Already merged section routes on exactly the verdict and next values c
   const entries = [
     { action: 'ran', closingLinks: [...CLEAN_CLOSING_LINKS][0] },
     { action: 'ran', closingLinks: 'close-failed' },
+    { action: 'ran', closingLinks: [...CLEAN_CLOSING_LINKS][0], parentFailures: [{ parent: 9, reason: 'gh-failed' }] },
     ...['already-done', 'in-flight', 'no-remote', ...RERUN_REASONS, ...RERUN_WHERE_GH_REASONS].map((reason) => ({ action: 'skipped', reason })),
   ];
   const verdicts = new Set();
   const nexts = new Set();
+  const steps = new Set();
   for (const archived of [false, true]) {
     for (const e of entries) {
-      const { verdict, next } = classifyEntry(e, { archived });
+      const { verdict, next, failedSteps = [] } = classifyEntry(e, { archived });
       verdicts.add(verdict);
       nexts.add(next);
+      for (const s of failedSteps) steps.add(s);
     }
   }
   const section = alreadyMergedSection();
+  // Each failedSteps value gates its own report lines, and the prose names no other value.
+  assert.deepEqual([...section.matchAll(/`failedSteps` includes `([^`]+)`/g)].map((m) => m[1]).sort(), [...steps].sort());
   assert.deepEqual([...section.matchAll(/`verdict` `([a-z-]+)`/g)].map((m) => m[1]).filter((v, i, a) => a.indexOf(v) === i).sort(), [...verdicts].sort());
   for (const next of nexts) assert.ok(section.includes(`\`${next}\``), `the section names next \`${next}\``);
 });
@@ -231,13 +239,14 @@ test('the journey, skill-graph and CLI docs describe the Already merged route, n
     assert.ok(!/when `gh pr merge` finds the PR already/.test(text), `${file.join('/')}: wrong trigger`);
     assert.ok(!text.includes('when Step 4.0 did not finish cleanly'), `${file.join('/')}: inverted records claim`);
     assert.match(text, /`gh pr view --json state` finds the PR `?MERGED/, `${file.join('/')}: the Preconditions trigger`);
+    assert.match(text, /failedSteps/, `${file.join('/')}: documents failedSteps`);
   }
   for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
     const text = flat(read(...file));
     assert.match(text, /parentFailures/, `${file.join('/')}: names parentFailures`);
     assert.match(text, /logFailed/, `${file.join('/')}: names logFailed`);
     assert.match(text, /merged-at-unreadable/, `${file.join('/')}: names merged-at-unreadable`);
-    assert.match(text, /verdict, next\}/, `${file.join('/')}: the entry shape carries verdict and next`);
+    assert.match(text, /verdict, next, failedSteps\?\}/, `${file.join('/')}: the entry shape carries verdict, next and failedSteps`);
     assert.match(text, /classifyEntry/, `${file.join('/')}: names the classifier that derives them`);
   }
 });

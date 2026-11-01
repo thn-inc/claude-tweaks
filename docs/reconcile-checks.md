@@ -740,7 +740,8 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   and the reconciler from running the steps twice: whichever starts second reads `already-done` or
   `in-flight`. Its entries carry Step 4.0's record lists (`records`) and `logFailed`, Step 4.0b's
   failed closes (`parentFailures`), and the `verdict` and `next` that `classifyEntry` derives for
-  merge mode to route on, which `postMerge` entries never do.
+  merge mode to route on — plus, on a `failed` `ran` entry, `failedSteps` (`4.0` and/or `4.0b`), so
+  merge mode reports only the step that failed — which `postMerge` entries never do.
 
 ## Timing contract (#4032)
 

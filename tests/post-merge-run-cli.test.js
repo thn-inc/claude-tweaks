@@ -83,6 +83,7 @@ test('--help prints usage and exits 0', async () => {
   assert.match(r.out, /already-done/);
   assert.match(r.out, /in-flight/);
   assert.match(r.out, /step40Failed/);
+  assert.match(r.out, /failedSteps on a failed ran entry: the steps that failed, 4\.0 and\/or 4\.0b; report only those/);
   assert.match(r.out, /route on verdict \(clean \| failed \| already-done \| in-flight\) and next \(rerun \| rerun-where-gh \| rerun-after-stale-claim \| none\)/);
 });
 
@@ -156,7 +157,7 @@ test('a non-clean Step 4.0 prints closingLinks and the record lists', async () =
   assert.equal(r.code, 0, r.err);
   const entry = JSON.parse(r.out);
   assert.equal(entry.closingLinks, 'reopen-failed');
-  assert.deepEqual([entry.verdict, entry.next], ['failed', 'none']);
+  assert.deepEqual([entry.verdict, entry.next, entry.failedSteps], ['failed', 'none', ['4.0']]);
   assert.deepEqual(entry.records.failed, [105]);
 });
 
