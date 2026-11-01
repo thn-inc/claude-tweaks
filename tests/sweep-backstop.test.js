@@ -259,9 +259,23 @@ test('item 10 points [unsettled] resume commands at the sibling resume file, wit
   assert.match(ITEM10, /before reporting its resume command, whether or not a PR exists/);
 });
 
-test("tidy's Step 4.8 repo-wide paragraph inlines the resume file as-is, so the scan agent receives the moved procedure (#4804)", () => {
+test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan agent's prompt carries the moved procedure (#4804)", () => {
   assert.ok(STEP48_REPO_WIDE, "scan-procedures.md's Step 4.8 repo-wide paragraph must be found");
-  assert.match(STEP48_REPO_WIDE, /`github-pr-scan-acceptance\.md` and `github-pr-scan-unsettled-resume\.md` are read as-is/);
+  const enumeration = STEP48_REPO_WIDE.match(/The dispatcher inlines [^\n]*?into this agent's prompt/);
+  assert.ok(enumeration, "the Step 4.8 dispatcher's inlining enumeration must be found");
+  assert.ok(enumeration[0].includes('`github-pr-scan-unsettled-resume.md`'), 'the inlining enumeration must name github-pr-scan-unsettled-resume.md');
+});
+
+// #4804 review (M1): the moved procedure must not drift back into item 10. Whitespace is collapsed
+// before each check, so a line-wrapped copy of a literal still matches and goes red. The RESUME
+// control proves each literal is spelled that way in the file it moved to, so the absence check
+// cannot pass vacuously on a misspelled literal.
+const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
+test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4804)', () => {
+  for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape']) {
+    assert.ok(collapseWhitespace(RESUME).includes(literal), `control: "${literal}" must be in the resume file`);
+    assert.ok(!collapseWhitespace(ITEM10).includes(literal), `item 10 must not carry the moved literal "${literal}"`);
+  }
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {
