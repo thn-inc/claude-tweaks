@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793532887486
+    "lastAuditedMs": 1793556302919
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -213,7 +213,7 @@
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793483957028
+    "lastAuditedMs": 1793556300957
   },
   "skill:verify-scope-rule-kind": {
     "lastAuditedSha": null,
