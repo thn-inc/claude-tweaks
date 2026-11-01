@@ -31,6 +31,7 @@ Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout,
 3. **What does refusal exit with?** Sibling `check-*` verbs print a line and exit 0; a verb whose caller treats a non-zero exit as a stop exits 1. The latter is a documented exception (site 5), not a default.
 4. **Flush before returning.** `await new Promise((resolve) => process.stdout.write(line, resolve))`, never a bare write followed by an exit code that lets the process end early.
 5. **Flag-strict is the default (#4777).** Every `VERBS` verb refuses an undeclared flag with its usage line, and a verb with no `KNOWN_FLAGS` entry refuses every flag, so a new verb owes its declared flags, not a strictness decision. `archive-run` archived and committed on `--dry-run` until #4773. Where a verb's flags change, check that every call site passes only the flags you declare (`git grep -n 'hooks.js" {verb}'`), then land a spawn test that runs an undeclared flag in both argument orders and asserts the usage stdout, exit 0, and that nothing moved or committed (`tests/archive-run-verb.test.js`).
+6. **The flag refusal is the dispatcher's, not the verb's.** An undeclared flag, `--help` or `-h` prints `claude-tweaks: usage: {usage}` on stdout and exits 0 before the handler runs, whatever decisions 2 and 3 chose. A caller that captures stdout as a value (`resolve-run-dir`'s path) or stops only on exit 1 (`check-pass-reentry`) does not see it as a failure, so decision 5's call-site check matters most for those verbs.
 
 ## Adding a flag to an existing verb
 
