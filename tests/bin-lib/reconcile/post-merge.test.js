@@ -1158,6 +1158,30 @@ test('postMergeOne surfaces Step 4.0\'s record lists; postMerge entries never ca
   assert.ok(!('records' in loop.entries[0]));
 });
 
+test('postMergeOne maps a non-empty closeFailed (non-default base) and unchecked (base unread, past the retry bound) into records', async () => {
+  const root = mainCheckout();
+  // A non-default base: Step 4.0 closes the Fixes records itself, and one close failed.
+  const nonDefault = addRun(root, '2026-10-30T090000-spec-1');
+  const closeFailedEnvelope = {
+    action: 'close-failed', closingSet: [101], failed: [], pendingClose: [], reopened: [],
+    nonDefaultBase: true, closed: [101], closeFailed: [{ issue: 107, error: 'HTTP 502' }, { issue: 108, error: 'x', stage: 'read' }],
+  };
+  const a = await postMergeOne(oneArgs(root, nonDefault, { prs: { 11: merged() }, links: fakeClosingLinks(closeFailedEnvelope), close: fakeCloseParents() }));
+  assert.equal(a.action, 'ran');
+  assert.deepEqual(a.records, { failed: [], closeFailed: [107, 108], pendingClose: [], unchecked: [] });
+
+  // An unread base: the bound's last attempt writes the marker, and the entry names the unchecked records.
+  const unread = addRun(root, '2026-10-30T090001-spec-2');
+  const links = fakeClosingLinks(BASE_UNCHECKED);
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    assert.equal((await postMergeOne(oneArgs(root, unread, { prs: { 11: merged() }, links, close: fakeCloseParents() }))).reason, 'transient-failure');
+  }
+  const b = await postMergeOne(oneArgs(root, unread, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
+  assert.equal(b.action, 'ran');
+  assert.equal(b.step40Failed, true);
+  assert.deepEqual(b.records, { failed: [], closeFailed: [], pendingClose: [], unchecked: [101, 102] });
+});
+
 test('postMergeOne names the merge re-run in an archived run\'s retry line, the reconcile pass in a live one\'s', async () => {
   const root = mainCheckout();
   const archived = addArchivedRun(root, '2026-01-01T000000-spec-9', { config: 'mode: auto\nspec: 9\n' });
