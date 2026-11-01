@@ -37,9 +37,10 @@
 //                fetched, written unreshaped (bin/lib/issues/mcp-parent-gate-shape.js's
 //                FACTS_KEYS), normalized in Node and then evaluated by the same functions
 //                the gh path runs. This path makes zero gh calls and never probes for gh.
-//                `parentComments` and `me` are required and guarded only under --idempotence,
-//                and only for an open, non-reopened parent that is due below the floor (where
-//                the gh path makes its two reads); any other verdict never looks at them. The
+//                `parentComments` (required and guarded) and `me` (required only; a login-less one
+//                reads as no identity) are read only under --idempotence, and only for an open,
+//                non-reopened parent that is due below the floor (where the gh path makes its
+//                two reads); any other verdict never looks at them. The
 //                origin remote (a git read) supplies owner/repo only when a --closing token is
 //                qualified; otherwise no remote is read. Refused with --backend local-files.
 //
