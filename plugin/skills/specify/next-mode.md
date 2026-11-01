@@ -184,7 +184,7 @@ Resolve this fence's session-scoped temp paths first (`_shared/session-tmp-root.
 ```bash
 RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-raw.json)"
 CANDIDATES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-candidates.json)"
-gh issue list --state open --json number,title,labels,createdAt --limit 500 > "$RAW"
+gh issue list --state open --json number,title,labels,createdAt,body --limit 500 > "$RAW"
 RAW_COUNT=$(node -e "console.log(require('$RAW').length)")
 if [ "$RAW_COUNT" -ge 500 ]; then
   echo "Warning: the open-issue pull for a bare /claude-tweaks:specify drain (or its deprecated next alias) returned exactly the --limit cap (500) — this repo may have more open records than fetched. gh issue list returns newest-first, so any records beyond the cap are the OLDEST ones, exactly what bare drain's own oldest-first tie-break exists to surface first. Consider raising the cap, or filing this as a signal to re-triage the backlog down." >&2
@@ -192,12 +192,39 @@ fi
 node -e "
   const records = require('$RAW');
   const EXCLUDE = new Set(['ready', 'parked', 'parent-issue', 'bot:in-progress', 'digest']);
+  const MARKER = /^<!-- digest-rollover-of: (\d+) -->\s*$/m;
+  const namedBy = new Map();
+  for (const r of records) {
+    const hit = MARKER.exec(r.body || '');
+    if (hit) namedBy.set(Number(hit[1]), [...(namedBy.get(Number(hit[1])) || []), r.number]);
+  }
   const eligible = records.filter((r) =>
     !r.labels.some((l) => EXCLUDE.has(l.name) || l.name.startsWith('needs:'))
-  );
+  ).map(({ body, ...r }) => {
+    const hit = MARKER.exec(body || '');
+    return {
+      ...r,
+      ...(hit && { digestRolloverOf: Number(hit[1]), digestRolloverPeers: namedBy.get(Number(hit[1])).sort((a, b) => a - b) }),
+      ...(namedBy.has(r.number) && { digestRolloverNamedBy: namedBy.get(r.number).sort((a, b) => a - b) }),
+    };
+  });
   console.log(JSON.stringify(eligible));
 " > "$CANDIDATES"
 ```
+
+A candidate carrying `digestRolloverOf: {old}` may be a digest rollover's unfinished replacement, not yet labeled; its `digestRolloverPeers` holds every issue naming that `{old}`, itself included. One carrying `digestRolloverNamedBy: [{replacement}, …]` may be the old issue itself, which loses its `digest` label before the rollover closes it; the array holds every issue whose body names it. Neither flag proves anything, since anyone can write the line, so before shaping a flagged candidate run the `classifyRolloverResume` verdict on each of its pairs: every issue naming `{old}` goes to one call, so the trust check picks among them and no unverified body picks first. For `digestRolloverOf`, `{old}` is the flag's value and the candidates are `digestRolloverPeers`. For `digestRolloverNamedBy`, `{old}` is the candidate and every listed issue is a candidate, in one call:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}
+```
+
+Exit 2 means `gh` is absent: read `{old}` and each candidate with `issue_read` get mode, Write `{old}` as one object and the candidates as one flat JSON array to the paths `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json` and `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand.json` print, and run this instead:
+
+```bash
+node "${CLAUDE_PLUGIN_ROOT}/bin/digest-rollover.js" verdict --old-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-old.json)" --candidates-json "$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value specify-next-rollover-cand.json)"
+```
+
+Both flagged shapes take the same verdict: `resume` or `stalled` drops the candidate from the drain when it is `{old}`, the printed `replacement` or a printed `extras` issue, and a printed `extras` issue is dropped whatever the verdict, `finished` included. An untrusted issue is in neither list, so it stays an ordinary record. A candidate is dropped when ANY of its pairs drops it: a second-generation container carries both flags, its two pairs can disagree, and the pair read last never releases it. When none does, it is an ordinary record. A non-zero exit other than 2 is an unreadable pair, not a verdict: skip the candidate for this drain and name the pair in the report.
 
 No further claim-state filtering runs here — the `bot:in-progress`
 exclusion above is a cheap label pre-filter only, same posture as
