@@ -1,6 +1,8 @@
 ---
 files:
   - plugin/bin/lib/console/resolve.js
+  - plugin/bin/lib/console/finding-path.js
+  - plugin/bin/lib/log-decision/aggregate-reproduction.js
   - plugin/bin/lib/console/finding-filing.js
   - plugin/bin/lib/console/backfill.js
   - plugin/bin/lib/console/backfill-dispose.js
@@ -43,10 +45,13 @@ files:
   - A finding a converged-positive cross-lens debate confirmed is gone; the partner in a tiebroken contested pair takes the pair's outcome, and an inherited can't-tell partner is dismissed as covered by the carrier file.
   - The staged review file a finding's STAGED line names (`staged/review-contested-{N}.md`, for example) takes that verdict's outcome instead of lingering.
   - A row with no recommendation at all is the legacy shape: it stays undecided.
+  - A verdict settles a reproduction line by its lens and full `path:line`. One line naming several findings (`lens "3a" 10 findings not reproduced (A: journey:89 …)`) cannot be settled that way, so `bin/log-decision.js` refuses to write it and the reviewer logs one line per finding instead. The two-finding coincidence line keys both of its findings, whatever the lens's case or word count (`lens "3f Test quality" findings …`).
 - **Red flags:**
   - a confirmed finding still shows as Low-confidence
   - one finding appears as two rows
   - a row shows no recommendation although decisions.md carries one
+  - a run written after #4581 holds a keep-staged reproduction line that names several findings
+  - a coincidence line stays keep-staged although both of its findings have verdict lines
 
 ### 2. Read the Dropped-by-tiebreak block
 - **URL:** `#### Dropped by tiebreak (read-only — no decision)`, after the Merge line.
@@ -138,6 +143,7 @@ files:
 - Updated during the build of #4582: a finding at a path holding `@`, `+`, `~`, `%`, `$`, `[id]` or `(group)` now settles by its whole path. Before this, `app/[id]/page.tsx:9` and `blog/[id]/page.tsx:9` shared a truncated key, so a verdict on one settled the other.
 - Updated during the build of #4583: a contested pair's verdict now settles a partner re-staged after its own earlier verdict. A can't-tell verdict that re-stage outdated files nothing once the pair's verdict replaces it.
 - Updated during the build of #4631: the console backfill (`bin/console-backfill.js`) now records a split finding's whole path under the same widened class, while keeping each item's id on its old location key so a re-run never files a second record (step 6).
+- Updated during the build of #4581: `log-decision.js` refuses an aggregate reproduction line, the improvised shape that left keep-staged residue with shortened locations, and the coincidence line now keys a multi-word quoted lens and matches in any case (step 1).
 - Related journeys:
   - `get-a-verdict-on-every-unverified-review-finding-3947.md`: how each finding gets the verdict this console acts on.
   - `clear-an-archive-refusal-for-an-untiebroken-finding-3945.md`: the archive refusal for a finding with no verdict line at all.
