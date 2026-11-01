@@ -309,11 +309,11 @@ test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-ru
 
   const reworded = liveDoc.replace('phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.', 'phase-checklist updates will exit 4. Reversibility: n/a.');
   assert.notEqual(reworded, liveDoc);
-  assert.throws(() => assertRebindTwins(reworded, emitted), { message: /^rebind log lines drift between pr-early-open\.js and pr-early-run-lifecycle\.md\n/ });
+  assert.throws(() => assertRebindTwins(reworded, emitted), { message: /^rebind log lines drift between pr-early-open\.js and pr-early-run-lifecycle\.md(?:\n|$)/ });
 
   const dropped = liveDoc.replace('`AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`', '');
   assert.notEqual(dropped, liveDoc);
-  assert.throws(() => assertRebindTwins(dropped, emitted), { message: /^expected 4 rebind templates in pr-early-run-lifecycle\.md\n/ });
+  assert.throws(() => assertRebindTwins(dropped, emitted), { message: /^expected 4 rebind templates in pr-early-run-lifecycle\.md(?:\n|$)/ });
 });
 
 test('a rejected reopen falls through to creation with its own Step 1 line', async () => {
