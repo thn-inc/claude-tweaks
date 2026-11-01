@@ -27,7 +27,8 @@ const LENS_FINDING_RE = new RegExp(String.raw`\b${LENS}\s+(?:[\w-]+\s+)?finding\
 // writes it (`{step}: {text}`), so a marker split between --step and --text is still seen.
 function aggregateReproductionProblem({ status, step, text }) {
   if (status !== 'STAGED') return null;
-  const entry = step ? `${step}: ${String(text).trim()}` : String(text).trim();
+  const body = String(text).trim();
+  const entry = step ? `${step}: ${body}` : body;
   // A quoted marker (`see "Reproduction: 3 findings" above`) is another line citing one, not a marker.
   const at = entry.search(/(?<!["'`])\breproduction:\s/i);
   if (at < 0) return null;
