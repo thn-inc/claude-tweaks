@@ -1150,6 +1150,7 @@ test('claimsBranchExists: 404 → false, any failure → null, a name → true',
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: null, status: 404 }), 'acme/w'), false);
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'network-failure', status: null }), 'acme/w'), null);
   assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'gh-absent', status: null }), 'acme/w'), null);
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'permission-denied', status: 403 }), 'acme/w'), null);
   assert.equal(claimsBranchExists((args) => { assert.deepEqual(args, BRANCHES_ARGS); return { stdout: 'claims-registry\n', failure: null, status: null }; }, 'acme/w'), true);
 });
 
@@ -1196,13 +1197,51 @@ test('ensureClaimsBranch: POST git/refs 422 from a ruleset while the branch is s
   assert.match(r.reason, /Cannot create ref/);
 });
 
-test('ensureClaimsBranch: POST git/refs 422 with an unreadable branches endpoint is a refusal, never a guessed lost race', () => {
-  const ghApi = bootstrapGhApi([], {
-    post: { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' },
-    branches: { stdout: null, failure: 'network-failure', status: null },
-  });
-  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+const POST_422 = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
+const reread422 = (branches) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post: POST_422, branches }) }, 'acme/w');
+
+test('AC7.1: POST git/refs 422 + a network-failure branch re-read is transient, POST reason kept', () => {
+  const r = reread422({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' });
   assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.match(r.reason, /Reference already exists/);
+  assert.match(r.reason, /ETIMEDOUT/);
+});
+
+test('AC8.1: POST git/refs 422 + a permission-403 branch re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('AC11.1: POST git/refs 422 + a primary-rate-limit branch re-read is transient network-failure', () => {
+  const e = new Error('gh: API rate limit exceeded for user ID 1. (HTTP 403)');
+  const r = reread422({ stdout: null, ...classifyGhApiError(e), error: e.message });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a secondary-rate-limit re-read is transient secondary-rate-limit', () => {
+  const r = reread422({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'secondary-rate-limit');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a gh-absent re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'gh-absent', status: null, error: 'spawn gh ENOENT' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 409 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 409, error: 'HTTP 409: Conflict' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
   assert.match(r.reason, /Reference already exists/);
 });
 
@@ -1222,19 +1261,36 @@ test('ensureClaimsBranch: a POST result with no error text falls back to the fai
   assert.match(noText({ stdout: null, failure: null, status: 409 }).reason, /HTTP 409/);
 });
 
-test('ensureClaimsBranch: an unresolvable default branch is a refusal, no POST', () => {
+test('ensureClaimsBranch: a network-failure default-branch read is transient, no POST', () => {
   const calls = [];
   const ghApi = (args) => { calls.push(args); return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 502: Bad Gateway' }; };
   const r = ensureClaimsBranch({ ghApi }, 'acme/w');
   assert.equal(r.ok, false);
   assert.match(r.reason, /HTTP 502/);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
   assert.equal(calls.length, 1);
+});
+
+test('ensureClaimsBranch: a network-failure tip-sha read is transient, no POST', () => {
+  const calls = [];
+  const ghApi = (args) => {
+    calls.push(args);
+    if (sameArgs(args, DEFAULT_BRANCH_ARGS)) return { stdout: 'main\n', failure: null, status: null };
+    if (sameArgs(args, MAIN_TIP_ARGS)) return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 503' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.equal(calls.some((a) => sameArgs(a, POST_REFS_ARGS)), false);
 });
 
 test('ensureClaimsBranch: both legs refused → ok:false with both reasons verbatim', () => {
   const gitRunner = (args) => { if (args[0] === 'push') throw gitError('remote: Permission to acme/w.git denied'); return args[0] === 'rev-parse' ? 'abc\n' : ''; };
   const ghApi = bootstrapGhApi([], {
-    post: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    post: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const r = ensureClaimsBranch({ ghApi, gitRunner }, 'acme/w');
   assert.equal(r.ok, false);
@@ -1244,15 +1300,14 @@ test('ensureClaimsBranch: both legs refused → ok:false with both reasons verba
   assert.equal('transient' in r, false, 'a non-rate-limit refusal carries no transient key');
 });
 
-test('ensureClaimsBranch: a secondary-rate-limit POST is transient (reason verbatim); a 403 network-failure POST is not', () => {
-  const rateLimited = ensureClaimsBranch({
-    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' } }),
-  }, 'acme/w');
-  assert.deepEqual(rateLimited, { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true });
-  const refused = ensureClaimsBranch({
-    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'network-failure', status: 403, error: 'HTTP 403: Forbidden' } }),
-  }, 'acme/w');
-  assert.deepEqual(refused, { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
+test('AC2.1/AC4.1: POST classified secondary-rate-limit / network-failure is transient with its kind; permission-denied is a refusal', () => {
+  const run = (post) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post }) }, 'acme/w');
+  assert.deepEqual(run({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' }),
+    { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true, failure: 'secondary-rate-limit' });
+  assert.deepEqual(run({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' }),
+    { ok: false, reason: 'contents-api: connect ETIMEDOUT', transient: true, failure: 'network-failure' });
+  assert.deepEqual(run({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Forbidden' }),
+    { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
 });
 
 // (#4495) A git-CAS rejection whose verification read finds the claims-registry

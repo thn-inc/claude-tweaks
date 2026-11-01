@@ -2271,10 +2271,10 @@ test('(bm3) two first claims (different records) against one branchless remote: 
 const REFUSED_SUFFIX = '— create it from the default branch\n';
 const REFUSAL_PREFIX = 'claim-targets: claims-registry branch missing on origin and could not be created:';
 
-test('(bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
+test('AC3.1: (bm4) bootstrap refused on both legs: exit 6, stderr names the missing branch and the remedy, stdout branchMissing.reason is verbatim, never exit 3', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2298,7 +2298,7 @@ test('(bm4c) a refusal reason carrying line breaks, control characters and a ver
   const remote = makeBranchlessRemote();
   const hostile = `remote: denied\n\u001b[31mFORGED claim-targets: exit 0\u001b[0m\r\n${'x'.repeat(2000)}`;
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: hostile },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: hostile },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2335,7 +2335,7 @@ test('(bm4b) ruleset refusal: git push "[remote rejected] ... (push declined due
 test('(bm5) --keep-going with a refused bootstrap still exits 6', () => {
   const remote = makeBranchlessRemote();
   const { ghApi } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
@@ -2368,7 +2368,7 @@ const POST_OK = { stdout: '{}', failure: null, status: null };
 
 test('(bm7) write site, contents-API only (no gitRunner): bootstrap refused -> exit 6, reason verbatim, no git leg named', () => {
   const { ghApi, state } = makeBranchlessGhApi({
-    postResponse: { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 403: Resource not accessible by integration' },
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
   });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
