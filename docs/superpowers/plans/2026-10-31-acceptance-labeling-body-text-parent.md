@@ -24,6 +24,7 @@
 - Governing skill `gh-api-module-pattern` (quoted): "The module takes `runner(args)`, invoked as if `gh ${args.join(' ')}`, returning stdout; a throw is a failed call. … always an argv array, never a shell string (no injection surface, no quoting bugs)." All new gh calls go through `deps.gh(argvArray, cwd)`.
 - **Plan-review Decisions (record AC10 Reading A + AC11 Reading B, 2026-10-31):** when a run record's `Parent: #N` line and parent #N's own task list disagree, the parent's task list wins. Sub-issues are enumerated from the parent side only. A run record whose `Parent: #N` points at a parent whose task list does not list it has **no resolvable parent**: it is not added to #N's gate input (never forced `CLOSED` into `parentSubIssues`), it takes the standalone path as its own target (so it needs its own `demo:pending`, and a missing one is reported `#{n}: missing demo:pending label`), and the mismatch is still logged in the row's detail — `#{n}: Parent: #{N} line not in #{N}'s task list — mismatch, not counted in #{N}'s gate; checked as its own target`. The mismatch check is body-text only (native resolves both sides from one relationship) and the note is appended to the detail on every return path after the gather (fail, skip, pass), never replacing the row's verdict.
 - **Closing rule (record AC12):** the three decisions settle the spec; any further edge case in these areas is implementer judgment recorded in this plan. Implementer-judgment rulings this plan records: (a) a second run record that names the same parent is membership-checked on its own, so enumeration is cached per parent instead of being skipped by the target dedup; (b) when the parent's enumeration itself fails, that is a gather failure (`unknown`), never a fallback to the standalone path; (c) an unlisted record's mismatch makes it its own target even when another run record routes the parent into the gate, and the parent's gate is evaluated from its task list alone.
+- Reading B holds on both sides of the gate: the checker (Task 2) and the labeler (`parent-gate.js`'s `gatherGateFacts` and `mcp-parent-gate-shape.js`'s `normalizeMcpFacts`, Task 3) both resolve an unlisted body-text record to no parent, so the record the labeler gives its own `demo:pending` is the record the checker checks as its own target.
 - `parseParent` is the plugin's one code reader of the `Parent: #N` line (Task 3 moves `parent-gate.js` and `mcp-parent-gate-shape.js` onto it). Its `\b` after the digits is stricter than the old `PARENT_LINE_RE` only for a line such as `Parent: #12abc`, which no writer produces.
 - Real `gh` shapes (probed 2026-10-31 on #4551): `gh issue view N --json body` → `{"body":"..."}`; `gh issue view N --json state,labels` → `{"labels":[{"color":…,"description":…,"id":…,"name":"bug"}],"state":"OPEN"}`. Fixtures use these shapes.
 
@@ -55,7 +56,7 @@
 | AC11.1, AC11.2, AC11.3, AC11.4 (Decision, Reading B) | Task 2 `AC10.1/AC11.1: body-text Parent line absent from the parent task list is a logged mismatch, not a gate member, checked as its own target` + `AC11.2: a lone unlisted record with demo:pending and a confirmed brief passes with the mismatch note` |
 | AC12.1, AC12.2, AC12.3 (Decision, closing rule) | Global Constraints' "Closing rule" bullet records the implementer-judgment rulings (a)-(c); Task 2 `body-text parent shared by two run records is enumerated once` pins ruling (a) |
 
-Waived wrap-up/verification-brief-parent-gate.md: read only — its body-text prose already describes the behavior this plan mechanizes; no wording changes.
+`wrap-up/verification-brief-parent-gate.md` gains one Reading B sentence in **Resolve the parent** (Task 3).
 Waived _shared/work-record.md: read only — the `Parent: #N` entry is the format source; unchanged.
 
 ---
@@ -159,14 +160,18 @@ Tests that pass no `repoRoot` read `process.cwd()`'s real policy (`work-links: n
 ```js
 // #4551: work-links body-text fixture. bodies: { [n]: body string | null };
 // states: { [n]: { state, labels: string[] } } in gh's real shape.
-function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentComments = [], policyRaw = 'work-links: body-text\n', bodyThrows = false }) {
+function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentComments = [], targetLabels = {}, policyRaw = 'work-links: body-text\n', bodyThrows = false }) {
   // runDir + repoRoot (writePolicy when policyRaw !== null); writeSpecFile per record;
   // fakeGh records calls and answers:
   //   ['--version'] -> 'gh version 2.0.0'
-  //   isGraphqlCall -> parentGraphqlResponse(n, null)   (must not be reached on body-text)
+  //   isGraphqlCall -> THROW 'graphql must not be reached on body-text'
+  //     (so a reverted native-only resolveParent renders unknown and every body-text test goes red — AC8)
   //   issue view N --json body -> bodyThrows ? throw : JSON.stringify({ body: bodies[N] ?? '' })
-  //   issue view N --json state,labels -> JSON.stringify({ state, labels: labels.map((name) => ({ name })) })
-  //   labels,comments -> JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: parentComments })
+  //   issue view N --json state,labels -> states[N] ? JSON.stringify({ state, labels: labels.map((name) => ({ name })) }) : throw
+  //   issue view N --json labels,comments -> targetLabels[N]
+  //     ? JSON.stringify({ labels: targetLabels[N].labels.map((name) => ({ name })), comments: targetLabels[N].comments || [] })
+  //     : JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: parentComments })
+  // deps.git answers `remote get-url origin` with 'https://github.com/org/repo.git' (only the native path reads it)
   // returns { row, calls, deps, repoRoot }
 }
 ```
@@ -188,10 +193,12 @@ test('body-text enumerateSubIssues upper-cases state and reduces labels to names
 });
 test('AC4.1: body-text record with no Parent line is checked as its own target', () => {
   // bodies: { 20: 'Surface: backend\n' }; resolveParent -> { ok: true, parent: null };
-  // row.result === 'fail', detail matches /#20: missing demo:pending label/; the labels,comments call targets '20'
+  // row.result === 'fail', detail matches /#20: missing demo:pending label/; the labels,comments call targets '20';
+  // at least one 'issue view 20 --json body' call and zero isGraphqlCall calls (AC8: native-only code cannot pass this)
 });
 test('body-text record whose body is null resolves parent null', () => {
-  // bodies: { 20: null } -> resolveParent(20, …, 'body-text') deepStrictEqual { ok: true, parent: null }
+  // bodies: { 20: null } -> resolveParent(20, …, 'body-text') deepStrictEqual { ok: true, parent: null };
+  // at least one '--json body' call and zero isGraphqlCall calls
 });
 test('AC5.1: body-text body fetch throw renders unknown, never fail', () => {
   // bodyThrows: true -> row.result === 'unknown', detail matches /#20: gh issue view \(body\) failed/
@@ -226,7 +233,8 @@ test('AC10.1/AC11.1: body-text Parent line absent from the parent task list is a
   //    with detail matching /#22: missing demo:pending label/ (Reading B)
 });
 test('AC11.2: a lone unlisted record with demo:pending and a confirmed brief passes with the mismatch note', () => {
-  // records: [22]; bodies: { 22: 'Parent: #12\n', 12: '- [ ] #20\n' }; #22 labels ['demo:pending'] + trusted confirmed brief
+  // records: [22]; bodies: { 22: 'Parent: #12\n', 12: '- [ ] #20\n' }; states: { 20: { state: 'OPEN', labels: [] } };
+  // targetLabels: { 22: { labels: ['demo:pending'], comments: [trusted confirmed brief] } }
   // -> row.result === 'pass'; detail matches the mismatch note; no 'issue view 12 --json labels,comments' call (12 is never a target)
 });
 ```
@@ -262,34 +270,44 @@ The full `npm test` (AC9.1) runs centrally in the pipeline's `/claude-tweaks:tes
 
 ---
 
-### Task 3: One `Parent:` parser — move `parent-gate.js` and `mcp-parent-gate-shape.js` onto `parseParent`
+### Task 3: The labeling side agrees — `parent-gate.js` and `mcp-parent-gate-shape.js` read `parseParent` and apply Reading B
 
 **Role:** integration
+**Review risk:** high
+
+Why (plan review, cross-task contract): Task 2 makes the *checker* treat an unlisted record as standalone (Reading B). The *labeler* — wrap-up's Parent-Gate CLI (`bin/parent-gate.js --sub-issue`, built on `gatherGateFacts`) and its MCP twin (`normalizeMcpFacts`) — would still route that record to its `Parent:` parent, so it would never get its own `demo:pending` and the checker would report the very false `missing demo:pending` this record removes. Both sides must apply the same rule.
 
 **Files:**
-- Modify: `plugin/bin/lib/issues/parent-gate.js` (import `parseParent` beside `parseSubIssues` from `./record`; body-text `resolveParent` returns `parseParent(String(caller.call([...])))`; delete the `PARENT_LINE_RE` constant and its `module.exports` entry; header comment shape 1 names `parseParent`)
-- Modify: `plugin/bin/lib/issues/mcp-parent-gate-shape.js` (import `parseParent` from `./record`; drop `PARENT_LINE_RE` from the `./parent-gate` import; body-text `resolveParent` returns `parseParent(entry.body)`)
-- Test: `tests/bin-lib/issues/parent-gate.test.js`, `tests/bin-lib/issues/mcp-parent-gate-shape.test.js`, `tests/bin-lib/issues/below-floor-parent-close.test.js` (run only; their `Parent: #10` fixtures already pin the body-text resolution)
+- Modify: `plugin/bin/lib/issues/parent-gate.js` — import `parseParent` beside `parseSubIssues` from `./record`; body-text `resolveParent` returns `parseParent(String(caller.call([...])))`; delete the `PARENT_LINE_RE` constant and its `module.exports` entry; header comment shape 1 names `parseParent`. In `gatherGateFacts`, when the parent was resolved from `subIssue` (not given as `parent`) under `workLinks === 'body-text'` and the enumerated list does not contain `subIssue`, return the no-parent facts `{ parent: null, parentLabels: [], subIssues: [] }` before any shape-5/6 read (Reading B: no resolvable parent).
+- Modify: `plugin/bin/lib/issues/mcp-parent-gate-shape.js` — import `parseParent` from `./record`; drop `PARENT_LINE_RE` from the `./parent-gate` import; body-text `resolveParent` returns `parseParent(entry.body)`. In `normalizeMcpFacts`, the same rule right after `enumerate(...)`: resolved from `subIssue` under body-text and `subIssue` not in the list → `{ gate: { parent: null, parentLabels: [], subIssues: [] }, idempotence: null }`.
+- Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md` — one sentence in **Resolve the parent** after the CLI paragraph: under `work-links: body-text`, a `Parent: #N` line whose parent's task list does not list the record resolves no parent (`state: 'no-parent'`) — the parent's task list wins, so the record takes the standalone path below. (File is 41,916 bytes against the 52,500-byte rail; a sentence stays well under the 90% flag.)
+- Test: `tests/bin-lib/issues/parent-gate.test.js` — add `gatherGateFacts body-text: a Parent line the parent's task list omits resolves no parent (Reading B)`: bodies `{ 11: 'Parent: #10\n', 10: '- [ ] #12\n' }` → `{ parent: null, parentLabels: [], subIssues: [] }`, and no `issue view 12 …state,stateReason,labels…` or `issue view 10 --json labels` call; plus the native control (native resolution with a sub-issue list omitting the sub-issue keeps today's behavior — the parent).
+- Test: `tests/bin-lib/issues/mcp-parent-gate-shape.test.js` — add the MCP twin: `subIssueGet` body `Parent: #10`, `parentGet` body `- [ ] #12` → gate `parent: null`, `idempotence: null`.
+- Test: `tests/bin-lib/issues/below-floor-parent-close.test.js` (run only; its `Parent: #10` fixtures list the sub-issue, so they still resolve)
 
 **Interfaces:**
 - Consumes: `parseParent(body) -> number|null` (Task 1).
-- Produces: no new export; `PARENT_LINE_RE` leaves `parent-gate.js`'s exports (no other consumer: `grep -rn PARENT_LINE_RE plugin tests` names only these two files).
+- Produces: no new export; `PARENT_LINE_RE` leaves `parent-gate.js`'s exports (no other consumer: `grep -rn PARENT_LINE_RE plugin tests` names only these two files). `gatherGateFacts` / `normalizeMcpFacts` keep their return shapes; only the body-text sub-issue-side unlisted case changes, to the existing no-parent shape.
 
-- [ ] **Step 1: Confirm the consumer set**
+- [ ] **Step 1: Write the failing tests** (the two Reading B tests above)
 
-Run: `grep -rn "PARENT_LINE_RE" plugin tests`
-Expected: hits only in `plugin/bin/lib/issues/parent-gate.js` and `plugin/bin/lib/issues/mcp-parent-gate-shape.js`.
+- [ ] **Step 2: Run them to verify they fail**
 
-- [ ] **Step 2: Swap both reads onto `parseParent` and delete `PARENT_LINE_RE`**
+Run: `node -e "const {gatherGateFacts,ghCaller}=require('./plugin/bin/lib/issues/parent-gate');const gh=(a)=>{if(a.includes('body'))return a[2]==='11'?'Parent: #10\n':'- [ ] #12\n';throw new Error('unexpected '+a.join(' '))};const f=gatherGateFacts({subIssue:11,owner:'o',repo:'r',workLinks:'body-text',caller:ghCaller(gh)});if(f.parent!==null)process.exit(1)"`
+Expected: FAIL — today `gatherGateFacts` resolves parent `10` and goes on to read #12's state (the fake throws). Then `node --test --test-name-pattern="Reading B" tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/mcp-parent-gate-shape.test.js` shows the two new tests failing.
 
-- [ ] **Step 3: Run the three suites**
+- [ ] **Step 3: Confirm the consumer set, swap both reads onto `parseParent`, delete `PARENT_LINE_RE`, add the membership rule, add the prose sentence**
+
+Run first: `grep -rn "PARENT_LINE_RE" plugin tests` — expected hits only in the two modules.
+
+- [ ] **Step 4: Run the three suites**
 
 Run: `node --test tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/mcp-parent-gate-shape.test.js tests/bin-lib/issues/below-floor-parent-close.test.js`
 Expected: PASS, 0 failures; and `grep -rn "PARENT_LINE_RE" plugin tests` prints nothing.
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/parent-gate.js plugin/bin/lib/issues/mcp-parent-gate-shape.js
-git commit -m "Read Parent lines through parseParent in the parent gate — refs #4551"
+git add plugin/bin/lib/issues/parent-gate.js plugin/bin/lib/issues/mcp-parent-gate-shape.js plugin/skills/wrap-up/verification-brief-parent-gate.md tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/mcp-parent-gate-shape.test.js
+git commit -m "Apply the parent's task list in the parent gate's body-text resolution — refs #4551"
 ```
