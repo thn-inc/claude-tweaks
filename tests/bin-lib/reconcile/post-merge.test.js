@@ -1249,12 +1249,13 @@ test('postMergeOne returns no-pr and not-merged', async () => {
 test('postMergeOne reports setup failures with pr null', async () => {
   const dir = '/nonexistent/run';
   const base = { runDir: dir, now, deps: {} };
+  // postMergeOne resolves runDir against cwd, which drive-prefixes a POSIX-absolute path on win32.
   const wrongBackend = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local\n' });
-  assert.deepEqual(await postMergeOne({ ...base, cwd: wrongBackend, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'not-github-issues', verdict: 'failed', next: 'none' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: wrongBackend, prStates: fakePrStates({}) }), { runDir: path.resolve(wrongBackend, dir), pr: null, action: 'skipped', reason: 'not-github-issues', verdict: 'failed', next: 'none' });
   const noRemote = mainCheckout({ origin: false });
-  assert.deepEqual(await postMergeOne({ ...base, cwd: noRemote, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-remote', verdict: 'failed', next: 'none' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: noRemote, prStates: fakePrStates({}) }), { runDir: path.resolve(noRemote, dir), pr: null, action: 'skipped', reason: 'no-remote', verdict: 'failed', next: 'none' });
   const ok = mainCheckout();
-  assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: path.resolve(ok, dir), pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
 });
 
 test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate policy skip is not one; postMerge entries carry none', async () => {
