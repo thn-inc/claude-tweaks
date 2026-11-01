@@ -100,6 +100,17 @@ const TRANSIENT_PR_FAILURE = 'network-failure';
 // `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
 // failure, so a new skip surfaces loudly rather than reading as a clean close.
 const DELIBERATE_PARENT_SKIPS = new Set(DELIBERATE_SKIP_REASONS);
+// The single-run path's routing (postMergeOne's `verdict` and `next`, which wrap-up/merge-mode.md reads):
+// classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
+// DELIBERATE_PARENT_SKIPS: a Step 4.0 action word not in CLEAN_CLOSING_LINKS — a failure word, the `exit {n}` /
+// `an unreadable envelope` stand-ins, a word closing-links.js adds later — is a `failed` run, and a skip reason
+// not named below gets `next: none`.
+// closing-links.js's post-merge action words a clean run carries.
+const CLEAN_CLOSING_LINKS = new Set(['nothing-closed', 'closed', 'reopened', 'no-fixes-span', 'not-merged', 'no-pr']);
+// Marker-less skips a re-run retries: no marker is written yet, so the closes run again.
+const RERUN_REASONS = new Set(['transient-failure', 'network-failure', 'claim-failed', 'marker-write-failed', 'error']);
+// A skip a re-run retries only from an environment that can run the closes.
+const RERUN_WHERE_GH_REASONS = new Set(['gh-absent']);
 
 // The merging session's Step 4.0b writes its own marker under this location
 // (`spec #N — pr-first-merge Step 4.0b`, or `… (skipped)`); this check writes MARKER_STEP.
@@ -418,22 +429,43 @@ function archivedRetryHint(runDir) {
   return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
 }
 
+// Pure: a single-run entry -> { verdict, next }. `verdict`: `clean` (a `ran` entry whose Step 4.0 word is
+// clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or `failed`
+// (every other entry). `next`: `rerun` (a marker-less skip a re-run retries), `rerun-where-gh`,
+// `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another merge-mode
+// invocation, so a re-run past CLAIM_STALE_MS recovers a dead one), or `none` — a `ran` entry's marker is
+// already written, and every other skip fails the same way again.
+function classifyEntry(entry, { archived = false } = {}) {
+  if (entry.action === 'ran') {
+    const parentFailed = Array.isArray(entry.parentFailures) && entry.parentFailures.length > 0;
+    const clean = CLEAN_CLOSING_LINKS.has(entry.closingLinks) && entry.step40Failed !== true && !parentFailed;
+    return { verdict: clean ? 'clean' : 'failed', next: 'none' };
+  }
+  if (entry.reason === 'already-done') return { verdict: 'already-done', next: 'none' };
+  if (entry.reason === 'in-flight') return { verdict: 'in-flight', next: archived ? 'rerun-after-stale-claim' : 'none' };
+  if (RERUN_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun' };
+  if (RERUN_WHERE_GH_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun-where-gh' };
+  return { verdict: 'failed', next: 'none' };
+}
+
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
 // { runDir, pr, action, reason?, detail?, closingLinks?, parentsClosed?, attempt?, step40Failed?, records?,
-//   logFailed?, parentFailures? }.
+//   logFailed?, parentFailures?, verdict, next } (classifyEntry's two fields close every entry).
 async function postMergeOne({
   runDir: givenRunDir, cwd, prStates, now = Date.now, deps = {},
 } = {}) {
   // One absolute path for every read, the claim file and closing-links' `--run`, whatever the process cwd is.
   const runDir = path.resolve(cwd || process.cwd(), givenRunDir);
+  const classified = (entry, archived = false) => ({ ...entry, ...classifyEntry(entry, { archived }) });
   const ctx = setupContext({ cwd, deps });
-  if (ctx.failure) return { runDir, pr: null, action: 'skipped', reason: ctx.failure };
-  if (!prStates || typeof prStates.byNumberAsync !== 'function') return { runDir, pr: null, action: 'skipped', reason: 'no-pr-states' };
-  const retryHint = isArchivedRunDir(runDir, ctx.root) ? archivedRetryHint(runDir) : RECONCILE_RETRY_HINT;
+  if (ctx.failure) return classified({ runDir, pr: null, action: 'skipped', reason: ctx.failure });
+  if (!prStates || typeof prStates.byNumberAsync !== 'function') return classified({ runDir, pr: null, action: 'skipped', reason: 'no-pr-states' });
+  const archived = isArchivedRunDir(runDir, ctx.root);
+  const retryHint = archived ? archivedRetryHint(runDir) : RECONCILE_RETRY_HINT;
   const { entry } = await processCandidate({
     dir: runDir, state: readRunState(runDir), ctx, prStates, dryRun: false, now, deps, single: true, retryHint, includeRecords: true,
   });
-  return entry;
+  return classified(entry, archived);
 }
 
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
@@ -563,6 +595,6 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText, boundDetail,
-  MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, composeSkipText, composeSummaryText, boundDetail,
+  CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };

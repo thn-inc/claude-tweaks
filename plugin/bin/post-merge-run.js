@@ -13,7 +13,8 @@
 //
 // Prints exactly one JSON line, `postMergeOne`'s entry:
 //   {runDir, pr, action: ran | skipped, reason?, detail?, closingLinks?,
-//    parentsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?}
+//    parentsClosed?, attempt?, step40Failed?, records?, logFailed?, parentFailures?,
+//    verdict, next}
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
 //   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
 //   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
@@ -34,6 +35,13 @@
 //   no-pr-state, pr-not-found, invalid-arguments -- the last three are the PR-state
 //   resolver's own answer passed through -- and this CLI's own gh-absent -- `pr: null`,
 //   no lookup made) is a failure to report.
+// Every entry, this CLI's own included, closes with two routing fields that
+// post-merge.js's classifyEntry derives (the caller routes on them, never on the
+// words above): `verdict` clean (a `ran` entry with a clean Step 4.0 word, no
+// step40Failed and no parentFailures element) | failed | already-done | in-flight,
+// and `next` rerun (a marker-less skip a re-run retries; post-merge.js's
+// RERUN_REASONS) | rerun-where-gh (gh-absent) | rerun-after-stale-claim (an archived run's in-flight) | none
+// (every other entry, each `ran` failure included: its marker is written).
 //
 // Status is data: exit 0 whenever an entry was printed, whatever its action or reason.
 // 2 malformed invocation (unknown flag, missing --run, --run without a value).
@@ -45,16 +53,17 @@
 const path = require('path');
 const { resolveTarget } = require('./lib/log-decision/append');
 const { ghAvailable } = require('./lib/repo-resolve');
-const { postMergeOne, boundDetail } = require('./lib/reconcile/post-merge');
+const { postMergeOne, classifyEntry, boundDetail } = require('./lib/reconcile/post-merge');
 const { resolvePrStateByNumberAsync } = require('./lib/reconcile/pr-state');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 
 const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  runs the post-merge closes (Step 4.0 closing-links, Step 4.0b below-floor parent close) once for the one named run dir, archived included\n'
-  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?}; action:\n'
+  + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?, verdict, next}; action:\n'
   + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 printed a readable envelope;\n'
   + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close)\n'
   + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim); any other reason is a failure to report\n'
+  + '  route on verdict (clean | failed | already-done | in-flight) and next (rerun | rerun-where-gh | rerun-after-stale-claim | none), never on the words above\n'
   + '  exit 0 an entry was printed (every action and reason is data)\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n';
@@ -89,6 +98,8 @@ async function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const usageError = (message) => { deps.stderr(`post-merge-run.js: ${message}\n${USAGE}`); return 2; };
   const print = (body) => { deps.stdout(`${JSON.stringify(body)}\n`); return 0; };
+  // The CLI's own entries carry postMergeOne's routing fields too, classified by the same code.
+  const printOwn = (body) => print({ ...body, ...classifyEntry(body) });
 
   // 1. Parse / validate. --help answers before any probe.
   const o = parseArgs(argv);
@@ -117,7 +128,7 @@ async function run(argv, overrides = {}) {
   // 3. No gh: status as data, never a failure, and no lookup.
   let hasGh = false;
   try { hasGh = !!deps.ghAvailable(); } catch { hasGh = false; }
-  if (!hasGh) return print({ runDir, pr: null, action: 'skipped', reason: 'gh-absent' });
+  if (!hasGh) return printOwn({ runDir, pr: null, action: 'skipped', reason: 'gh-absent' });
 
   // 4. One guarded pass over the one dir.
   try {
@@ -131,7 +142,7 @@ async function run(argv, overrides = {}) {
     });
     return print(entry);
   } catch (e) {
-    return print({
+    return printOwn({
       runDir, pr: null, action: 'skipped', reason: 'error', detail: boundDetail(String((e && e.message) || e)),
     });
   }

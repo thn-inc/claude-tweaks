@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  postMerge, postMergeOne, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
@@ -1096,7 +1096,7 @@ test('AC5.1: postMergeOne returns already-done when the marker is present', asyn
   const dir = addRun(root, '2026-10-30T090000-spec-1', { decisions: `${marker}\n` });
   const links = fakeClosingLinks(ENVELOPE);
   const entry = await postMergeOne(oneArgs(root, dir, { prs: { 11: merged() }, links, close: fakeCloseParents() }));
-  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done' });
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done', verdict: 'already-done', next: 'none' });
   assert.equal(links.calls.length, 0);
 });
 
@@ -1120,7 +1120,7 @@ test('postMergeOne re-reads the marker under the claim: one written after the fi
   const entry = await postMergeOne(oneArgs(root, dir, {
     prs: { 11: merged() }, links, close: fakeCloseParents(), extra: { beforeClaim: (d) => fs.writeFileSync(path.join(d, 'decisions.md'), `${marker}\n`) },
   }));
-  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done' });
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'already-done', verdict: 'already-done', next: 'none' });
   assert.equal(links.calls.length, 0);
   assert.ok(!fs.existsSync(lockOf(dir)), 'the claim is released');
 });
@@ -1154,7 +1154,7 @@ test('postMergeOne fails closed on an unreadable mergedAt: merged-at-unreadable,
     const entry = await postMergeOne(oneArgs(root, dir, {
       prs: { 11: prState }, links, close: fakeCloseParents(), takeClaimFn: () => { claims += 1; return { ok: true }; },
     }));
-    assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'merged-at-unreadable' }, String(mergedAt));
+    assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'merged-at-unreadable', verdict: 'failed', next: 'none' }, String(mergedAt));
     assert.equal(claims, 0, 'no claim taken');
     assert.equal(links.calls.length, 0);
     assert.equal(decisionsOf(dir), '');
@@ -1230,7 +1230,7 @@ test('postMergeOne returns in-flight when the claim is held', async () => {
   const entry = await postMergeOne(oneArgs(root, dir, {
     prs: { 11: merged() }, links, close: fakeCloseParents(), takeClaimFn: () => ({ ok: false, reason: 'in-flight' }),
   }));
-  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight' });
+  assert.deepEqual(entry, { runDir: dir, pr: 11, action: 'skipped', reason: 'in-flight', verdict: 'in-flight', next: 'none' });
   assert.equal(links.calls.length, 0);
 });
 
@@ -1240,9 +1240,9 @@ test('postMergeOne returns no-pr and not-merged', async () => {
   const open = addRun(root, '2026-10-30T090001-spec-2', { pr: 12 });
   const links = fakeClosingLinks(ENVELOPE);
   const a = await postMergeOne(oneArgs(root, noPr, { prs: {}, links, close: fakeCloseParents() }));
-  assert.deepEqual(a, { runDir: noPr, pr: null, action: 'skipped', reason: 'no-pr' });
+  assert.deepEqual(a, { runDir: noPr, pr: null, action: 'skipped', reason: 'no-pr', verdict: 'failed', next: 'none' });
   const b = await postMergeOne(oneArgs(root, open, { prs: { 12: { number: 12, state: 'OPEN' } }, links, close: fakeCloseParents() }));
-  assert.deepEqual(b, { runDir: open, pr: 12, action: 'skipped', reason: 'not-merged', detail: 'OPEN' });
+  assert.deepEqual(b, { runDir: open, pr: 12, action: 'skipped', reason: 'not-merged', detail: 'OPEN', verdict: 'failed', next: 'none' });
   assert.equal(links.calls.length, 0);
 });
 
@@ -1250,11 +1250,11 @@ test('postMergeOne reports setup failures with pr null', async () => {
   const dir = '/nonexistent/run';
   const base = { runDir: dir, now, deps: {} };
   const wrongBackend = mainCheckout({ claudeMd: '## Work records\n\nwork-backend: local\n' });
-  assert.deepEqual(await postMergeOne({ ...base, cwd: wrongBackend, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'not-github-issues' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: wrongBackend, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'not-github-issues', verdict: 'failed', next: 'none' });
   const noRemote = mainCheckout({ origin: false });
-  assert.deepEqual(await postMergeOne({ ...base, cwd: noRemote, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-remote' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: noRemote, prStates: fakePrStates({}) }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-remote', verdict: 'failed', next: 'none' });
   const ok = mainCheckout();
-  assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr-states' });
+  assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: dir, pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
 });
 
 test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate policy skip is not one; postMerge entries carry none', async () => {
@@ -1313,6 +1313,86 @@ test('I1: every reason below-floor-parent-close.js exports as deliberate leaves 
     assert.equal(entry.action, 'ran', reason);
     assert.deepEqual(entry.parentFailures, [], reason);
   }
+});
+
+// A8 ([IL-168]): postMergeOne classifies its own outcome; merge-mode.md routes on `verdict` and `next`.
+test('classifyEntry: every verdict — clean, failed (a failure word, step40Failed, a parentFailures element), already-done, in-flight', () => {
+  const ran = (over) => ({ runDir: '/r', pr: 11, action: 'ran', closingLinks: 'closed', parentsClosed: 1, parentFailures: [], ...over });
+  assert.deepEqual(classifyEntry(ran()), { verdict: 'clean', next: 'none' });
+  assert.deepEqual(classifyEntry(ran({ parentFailures: undefined })), { verdict: 'clean', next: 'none' }, 'no Step 4.0b ran');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'close-pending' })), { verdict: 'failed', next: 'none' });
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'some-future-word' })), { verdict: 'failed', next: 'none' }, 'deny direction');
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'exit 2', step40Failed: true })), { verdict: 'failed', next: 'none' });
+  assert.deepEqual(classifyEntry(ran({ closingLinks: 'nothing-closed', step40Failed: true })), { verdict: 'failed', next: 'none' }, 'step40Failed beats a clean word');
+  assert.deepEqual(classifyEntry(ran({ parentFailures: [{ parent: 9, reason: 'gh-failed' }] })), { verdict: 'failed', next: 'none' });
+  const skip = (reason) => ({ runDir: '/r', pr: 11, action: 'skipped', reason });
+  assert.deepEqual(classifyEntry(skip('already-done')), { verdict: 'already-done', next: 'none' });
+  assert.deepEqual(classifyEntry(skip('already-done'), { archived: true }), { verdict: 'already-done', next: 'none' });
+  assert.deepEqual(classifyEntry(skip('in-flight')), { verdict: 'in-flight', next: 'none' });
+});
+
+test('classifyEntry: every next — rerun, rerun-where-gh, rerun-after-stale-claim, none', () => {
+  const skip = (reason) => ({ runDir: '/r', pr: 11, action: 'skipped', reason });
+  for (const reason of ['transient-failure', 'network-failure', 'claim-failed', 'marker-write-failed', 'error']) {
+    assert.deepEqual(classifyEntry(skip(reason)), { verdict: 'failed', next: 'rerun' }, reason);
+  }
+  assert.deepEqual(classifyEntry(skip('gh-absent')), { verdict: 'failed', next: 'rerun-where-gh' });
+  assert.deepEqual(classifyEntry(skip('in-flight'), { archived: true }), { verdict: 'in-flight', next: 'rerun-after-stale-claim' });
+  for (const reason of ['not-github-issues', 'no-remote', 'no-pr', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'not-merged', 'some-future-reason']) {
+    assert.deepEqual(classifyEntry(skip(reason)), { verdict: 'failed', next: 'none' }, reason);
+  }
+});
+
+// Producer coverage: every action word closing-links.js can print, read from its source, has a decided
+// verdict here. A word added there fails this test until it is classified (deny direction: `failed`).
+test('classifyEntry classifies every action word closing-links.js emits', () => {
+  const { stripComments, stripperVerdict } = require('../../helpers/strip-comments');
+  const raw = fs.readFileSync(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'closing-links.js'), 'utf8');
+  const src = stripComments(raw);
+  assert.equal(stripperVerdict(raw, src), 'ok');
+  const words = new Set();
+  for (const m of src.matchAll(/\baction(?::|\s*=)\s*'([a-z-]+)'/g)) words.add(m[1]);
+  for (const m of src.matchAll(/\baction:\s*[\w.]+\s*\?\s*'([a-z-]+)'\s*:\s*'([a-z-]+)'/g)) { words.add(m[1]); words.add(m[2]); }
+  // Post-merge mode's words, then pre-merge mode's (never on this path; denied like any unknown word).
+  const EXPECTED = {
+    'nothing-closed': 'clean', closed: 'clean', reopened: 'clean', 'no-fixes-span': 'clean', 'not-merged': 'clean', 'no-pr': 'clean',
+    'reopen-failed': 'failed', 'close-failed': 'failed', 'base-unchecked': 'failed', 'close-pending': 'failed', 'gh-absent': 'failed',
+    clean: 'failed', unlinked: 'failed', 'still-linked': 'failed',
+  };
+  assert.ok(words.size >= 14, `the scan found every producer site (${[...words].join(', ')})`);
+  assert.deepEqual([...words].sort(), Object.keys(EXPECTED).sort());
+  for (const [word, verdict] of Object.entries(EXPECTED)) {
+    assert.equal(classifyEntry({ action: 'ran', closingLinks: word, parentsClosed: 0 }).verdict, verdict, word);
+  }
+});
+
+test('postMergeOne closes every entry with verdict and next; postMerge entries carry neither', async () => {
+  const root = mainCheckout();
+  const clean = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090000-spec-1'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(),
+  }));
+  assert.equal(clean.verdict, 'clean');
+  assert.equal(clean.next, 'none');
+  const failedParent = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090001-spec-2'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped: [{ parent: 9, reason: 'gh-failed' }] }),
+  }));
+  assert.deepEqual([failedParent.verdict, failedParent.next], ['failed', 'none']);
+  const transient = await postMergeOne(oneArgs(root, addRun(root, '2026-10-30T090002-spec-3'), {
+    prs: { 11: merged() }, links: fakeClosingLinks(null, 5), close: fakeCloseParents(),
+  }));
+  assert.deepEqual([transient.reason, transient.verdict, transient.next], ['transient-failure', 'failed', 'rerun']);
+  // An archived run's held claim: the stale-window re-run.
+  const archived = addArchivedRun(root, '2026-01-01T000000-spec-9');
+  const held = await postMergeOne(oneArgs(root, archived, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents(), takeClaimFn: () => ({ ok: false, reason: 'in-flight' }),
+  }));
+  assert.deepEqual([held.verdict, held.next], ['in-flight', 'rerun-after-stale-claim']);
+
+  const other = mainCheckout();
+  addRun(other, '2026-10-30T090000-spec-1');
+  const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.equal(loop.entries.length, 1);
+  assert.ok(!('verdict' in loop.entries[0]) && !('next' in loop.entries[0]));
 });
 
 test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, never a garbled #{n}', async () => {

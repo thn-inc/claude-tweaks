@@ -83,6 +83,7 @@ test('--help prints usage and exits 0', async () => {
   assert.match(r.out, /already-done/);
   assert.match(r.out, /in-flight/);
   assert.match(r.out, /step40Failed/);
+  assert.match(r.out, /route on verdict \(clean \| failed \| already-done \| in-flight\) and next \(rerun \| rerun-where-gh \| rerun-after-stale-claim \| none\)/);
 });
 
 test('no --run exits 2', async () => {
@@ -155,6 +156,7 @@ test('a non-clean Step 4.0 prints closingLinks and the record lists', async () =
   assert.equal(r.code, 0, r.err);
   const entry = JSON.parse(r.out);
   assert.equal(entry.closingLinks, 'reopen-failed');
+  assert.deepEqual([entry.verdict, entry.next], ['failed', 'none']);
   assert.deepEqual(entry.records.failed, [105]);
 });
 
@@ -166,7 +168,7 @@ test('gh absent prints a gh-absent skip and makes no lookup', async () => {
     prStates: { byNumberAsync: async () => { throw new Error('lookup made with gh absent'); } },
   });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent' });
+  assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent', verdict: 'failed', next: 'rerun-where-gh' });
 });
 
 test('a throwing ghAvailable reads as gh absent: a gh-absent skip, exit 0, no lookup', async () => {
@@ -177,7 +179,7 @@ test('a throwing ghAvailable reads as gh absent: a gh-absent skip, exit 0, no lo
     prStates: { byNumberAsync: async () => { throw new Error('lookup made with gh absent'); } },
   });
   assert.equal(r.code, 0, r.err);
-  assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent' });
+  assert.deepEqual(JSON.parse(r.out), { runDir: dir, pr: null, action: 'skipped', reason: 'gh-absent', verdict: 'failed', next: 'rerun-where-gh' });
 });
 
 test('a postMergeOne that throws prints an error entry and exits 0', async () => {
@@ -195,6 +197,7 @@ test('a postMergeOne that throws prints an error entry and exits 0', async () =>
   assert.equal(entry.pr, null);
   assert.equal(entry.runDir, dir);
   assert.match(entry.detail, /seam exploded/);
+  assert.deepEqual([entry.verdict, entry.next], ['failed', 'rerun'], 'the CLI classifies its own entry');
 });
 
 test('an error entry\'s detail is bounded like post-merge.js\'s skip details: ERR_TEXT_MAX chars plus the … marker', async () => {

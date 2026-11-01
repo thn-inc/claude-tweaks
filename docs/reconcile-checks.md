@@ -735,10 +735,12 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   one named dir, an `archive/{run-id}` dir included, and `bin/post-merge-run.js --run <dir>` runs it.
   `wrap-up/merge-mode.md`'s Already merged section calls it when its Preconditions' `gh pr view
   --json state` finds the PR `MERGED`, and routes on the printed entry. Inside `MERGE_GRACE_MS` it runs under
-  the claim with the in-session parameters instead of deferring. The marker and the claim keep it
+  the claim with the in-session parameters instead of deferring; an unreadable `mergedAt` skips
+  `merged-at-unreadable` with no claim, where the pass defers it as `merge-grace`. The marker and the claim keep it
   and the reconciler from running the steps twice: whichever starts second reads `already-done` or
-  `in-flight`. Its entries carry Step 4.0's record lists (`records`) and `logFailed`, and Step 4.0b's
-  failed closes (`parentFailures`), which `postMerge` entries never do.
+  `in-flight`. Its entries carry Step 4.0's record lists (`records`) and `logFailed`, Step 4.0b's
+  failed closes (`parentFailures`), and the `verdict` and `next` that `classifyEntry` derives for
+  merge mode to route on, which `postMerge` entries never do.
 
 ## Timing contract (#4032)
 
