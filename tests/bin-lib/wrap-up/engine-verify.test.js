@@ -2062,6 +2062,7 @@ test('AC2.1/AC2.2: body-text resolveParent reads the Parent line and targets the
   assert.deepStrictEqual(resolveParent(20, deps, repoRoot, 'body-text'), { ok: true, parent: 12 });
   assert.strictEqual(calls.filter(isGraphqlCall).length, 0, 'body-text must issue no GraphQL Issue.parent call');
   assert.doesNotMatch(row.detail, /#20: missing demo:pending label/);
+  assert.ok(!calls.some((a) => isIssueViewCall(a, 20, 'labels,comments')), 'the run record #20 is never checked as a target; its parent #12 is');
 });
 
 test('AC3.1: body-text parent gate not due with one sibling open', () => {
@@ -2125,7 +2126,7 @@ test('body-text sub-issue state fetch failure renders unknown', () => {
     states: { 20: { state: 'OPEN', labels: [] } },
   });
   assert.strictEqual(row.result, 'unknown', row.detail);
-  assert.match(row.detail, /#21/);
+  assert.match(row.detail, /#20: gh issue view \(state,labels\) failed for sub-issue #21 of parent #12 \(gh: no state for #21\)/);
 });
 
 test('body-text sub-issue with a non-string state is a gather failure', () => {
@@ -2213,6 +2214,70 @@ test('body-text mismatch note rides a fail row alongside a not-due parent-gate s
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.match(row.detail, /parent gate #12 not due/);
   assert.match(row.detail, /#22: Parent: #12 line not in #12's task list/);
+});
+
+// Item 3 (fix round): the target's `parent` flag must not depend on record
+// order. Run records resolve in ascending order, so the two orderings of "a
+// run record is also another run record's parent" are two fixtures: the parent
+// sorts first (12 < 20: it is seen standalone before its child names it) or
+// last (20 < 30: the child names it first). Both must gate the parent: #21 is
+// still open, so the gate is not due, rather than #12/#30 being checked
+// standalone and failing `missing demo:pending`.
+const BODY_TEXT_ORDER_STATES = { 20: { state: 'OPEN', labels: ['risk:high'] }, 21: { state: 'OPEN', labels: ['risk:high'] } };
+test('body-text: a run record that is also its sibling-run-record\'s parent is gated, parent sorted first', () => {
+  const { row, calls } = bodyTextRow({
+    records: [12, 20],
+    bodies: { 12: '- [x] #20\n- [ ] #21\n', 20: 'Parent: #12\n' },
+    states: BODY_TEXT_ORDER_STATES,
+  });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent gate #12 not due — 1 sibling sub-issue\(s\) open/);
+  assert.doesNotMatch(row.detail, /missing demo:pending/);
+  assert.strictEqual(bodyCalls(calls, 12).length, 2, 'once as #12\'s own record body, once as the parent task list; #12 is not re-enumerated');
+});
+test('body-text: a run record that is also its sibling-run-record\'s parent is gated, parent sorted last', () => {
+  const { row } = bodyTextRow({
+    records: [20, 30],
+    bodies: { 20: 'Parent: #30\n', 30: '- [x] #20\n- [ ] #21\n' },
+    states: BODY_TEXT_ORDER_STATES,
+  });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent gate #30 not due — 1 sibling sub-issue\(s\) open/);
+  assert.doesNotMatch(row.detail, /missing demo:pending/);
+});
+
+// Item 2 (fix round), characterization: under `native` the dedupe still runs
+// before the enumeration. A run record (#898) that is also another run
+// record's (#900) native parent is checked standalone, exactly as before this
+// record: no sub_issues call is issued for it, so a failure there cannot turn
+// the row `unknown`. (The parent-first order is native-only order-dependent --
+// upgrading #898 to a gated parent would need the very sub_issues call this
+// pins as absent; the native path is left byte-for-byte as it was.)
+test('native: records [898, 900] with 900 under run record 898 check 898 standalone and issue no sub_issues call', () => {
+  const runDir = makeTmpDir('verify-acceptance-native-parentfirst-');
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  writeSpecFile(runDir, '898', 898);
+  writeSpecFile(runDir, '900', 900);
+  const calls = [];
+  const fakeGh = (args) => {
+    calls.push(args);
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) {
+      const n = parentQueryNumber(args);
+      return parentGraphqlResponse(n, n === 900 ? 898 : null);
+    }
+    if (isSubIssuesCall(args)) throw new Error('sub_issues must not be reached for a standalone-seen parent');
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments: [TRUSTED_BRIEF] });
+    return '';
+  };
+  const git = fakeOriginGit((args) => (args[0] === 'log' ? 'Fixes #898\nFixes #900\n' : ''));
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git, gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.strictEqual(calls.filter(isSubIssuesCall).length, 0, 'no sub_issues call');
+  assert.strictEqual(calls.filter((a) => a.includes('labels,comments') && a[2] === '898').length, 1, '#898 checked once, standalone');
+  assert.strictEqual(calls.filter((a) => a.includes('labels,comments') && a[2] === '900').length, 0, '#900 is deduped into target #898');
 });
 
 test('acceptance-labeling renders unknown when a sub-issue line carries no string state', () => {

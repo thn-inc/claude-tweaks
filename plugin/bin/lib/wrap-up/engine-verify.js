@@ -788,26 +788,28 @@ function enumerateBodyTextSubIssues(parent, deps, cwd) {
   return { ok: true, subIssues };
 }
 
+// The repo root's own policy.yml text, or null when the file is missing -- the
+// null makes resolvePolicyKeys fall back to the schema default. Read from the
+// repo root, never the worktree cwd (a worktree's copy can lag main).
+function readRepoPolicyRaw(repoRoot) {
+  try {
+    return fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
+  } catch {
+    return null;
+  }
+}
+
 // #3222: the risk-floor policy key, from the repo root's own policy.yml (a
 // missing file, or a set-but-invalid value, falls back to the schema default).
 function resolveRiskFloor(repoRoot) {
-  let policyRaw = null;
-  try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
-  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
-  return resolvePolicyKeys(['risk-floor'], { policyRaw })['risk-floor'].value;
+  return resolvePolicyKeys(['risk-floor'], { policyRaw: readRepoPolicyRaw(repoRoot) })['risk-floor'].value;
 }
 
 // #4551: the work-links policy key (`native` | `body-text`), read the same way
-// and from the same place as resolveRiskFloor -- the repo root's own
-// policy.yml, never the worktree cwd (a worktree's copy can lag main). A
-// missing file falls back to the schema default, `body-text`.
+// as resolveRiskFloor. A missing file falls back to the schema default,
+// `body-text`.
 function resolveWorkLinks(repoRoot) {
-  let policyRaw = null;
-  try {
-    policyRaw = fs.readFileSync(path.join(repoRoot, '.claude-tweaks', 'policy.yml'), 'utf8');
-  } catch { /* no policy.yml -- resolvePolicyKeys' schema default applies */ }
-  return resolvePolicyKeys(['work-links'], { policyRaw })['work-links'].value;
+  return resolvePolicyKeys(['work-links'], { policyRaw: readRepoPolicyRaw(repoRoot) })['work-links'].value;
 }
 
 // `verify`'s --run-dir may be the parent pipeline run directory, or (in a
@@ -946,6 +948,11 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     let isParent = false;
     if (resolved.parent) {
       const p = resolved.parent;
+      // Native: dedupe BEFORE enumerating, as before #4551 -- a parent already
+      // seen (even as a standalone run record) issues no sub_issues call and
+      // cannot add a gather failure. Body-text must enumerate first: its
+      // membership check decides whether the record counts toward `p` at all.
+      if (workLinks !== 'body-text' && seenTargets.has(p)) continue;
       const cached = enumerations.has(p);
       if (!cached) enumerations.set(p, enumerateSubIssues(p, deps, cwd, workLinks));
       const enumerated = enumerations.get(p);
@@ -963,7 +970,14 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         parentSubIssues.set(p, enumerated.subIssues.map((s) => ({ ...s, state: closing.has(s.number) ? 'CLOSED' : s.state })));
       }
     }
-    if (seenTargets.has(target)) continue;
+    if (seenTargets.has(target)) {
+      // Order-independence (body-text): a run record seen earlier as a
+      // standalone target is a parent after all once a later record's task-list
+      // membership gates it. Its gate input is already set above. (Native never
+      // reaches here with isParent: a seen parent `continue`d before enumerating.)
+      if (isParent) targets.find((t) => t.target === target).parent = true;
+      continue;
+    }
     seenTargets.add(target);
     targets.push({ target, parent: isParent });
   }
