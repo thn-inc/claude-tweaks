@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-01T19:13:52.218Z",
+  "computedAt": "2026-11-01T19:17:45.896Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -210,7 +210,7 @@
       },
       {
         "number": 4756,
-        "updatedAt": "2026-10-31T21:11:35Z",
+        "updatedAt": "2026-11-01T19:15:50Z",
         "state": "OPEN"
       },
       {
@@ -310,7 +310,7 @@
       },
       {
         "number": 4593,
-        "updatedAt": "2026-11-01T19:04:03Z",
+        "updatedAt": "2026-11-01T19:16:33Z",
         "state": "OPEN"
       },
       {
@@ -375,7 +375,7 @@
       },
       {
         "number": 4548,
-        "updatedAt": "2026-10-31T20:40:37Z",
+        "updatedAt": "2026-11-01T19:15:33Z",
         "state": "OPEN"
       },
       {
@@ -1057,11 +1057,6 @@
         "number": 3508,
         "updatedAt": "2026-11-01T16:38:16Z",
         "state": "OPEN"
-      },
-      {
-        "number": 4495,
-        "updatedAt": "2026-10-31T21:23:00Z",
-        "state": "CLOSED"
       }
     ]
   },
@@ -4110,84 +4105,6 @@
     ],
     [
       {
-        "body": "Blocked by #4495\n\nOrigin: #4495 review (sdd-ruling-1, PR #4723)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`claim-targets.js` bootstraps a missing `claims-registry` branch once per run (#4495, PR #4723). In `handleBranchMissing` (`plugin/bin/lib/claim-targets/claim-targets.js`), a bootstrap result that is `!ok && transient` (a secondary rate limit) takes the transient exit 4 path (`claims-branch-bootstrap-rate-limited`); every other `!ok` result exits 6 (\"branch missing on origin and could not be created\").\n\n`classifyGhApiError` (`plugin/bin/lib/issues/claim-store.js`) recognises ENOENT, the secondary rate limit, 404, 422 and 409; everything else, a permission 403 or 401 included, becomes `failure: 'network-failure'`. So `ensureClaimsBranch` cannot tell a transport failure (network blip, timeout, 5xx) from a permission refusal, and a plain network blip during the bootstrap exits 6: the record is stopped as if the branch were permanently uncreatable.\n\n#4495's review flagged this (5 lenses, tiebreak-confirmed, medium). The unattended Review Console ratified exit 6 as-is (sdd-ruling-1, run `2026-10-31T133106-record-4495`), because changing it needs the classifier split below.\n\n## Deliverables\n\n1. `classifyGhApiError` classifies a permission failure (HTTP 401, and HTTP 403 that is neither a secondary rate limit nor primary rate-limit exhaustion) as its own refusal outcome, distinct from `network-failure`. Every existing caller of `classifyGhApiError` / `defaultGhApi` keeps its current exit behaviour for a 403/401, or is updated deliberately with the change named in the PR.\n2. `ensureClaimsBranch` reports a transport-class failure (`network-failure` after the split) as `transient`, so `handleBranchMissing` routes it to exit 4 with its own error name (for example `claims-branch-bootstrap-network-failure`), under `--keep-going` a skip, like the rate-limited case.\n3. Exit 6 stays for genuine refusals only: permission 401/403, a ruleset 422 whose branch re-read succeeds and shows no branch, and 404.\n4. The exit-code prose that names exit 6 (`plugin/bin/claim-targets.js` usage, `plugin/skills/flow/claim-targets.md`, `plugin/skills/dispatch/settle-and-merge.md`, `plugin/skills/_shared/issue-claims.md`, `docs/plugin-structure.md`) states that a network failure during bootstrap is transient (exit 4), not exit 6.\n5. A primary rate-limit 403 or 429 (`API rate limit exceeded`, or `X-RateLimit-Remaining: 0`) stays transient, as `plugin/skills/_shared/github-rate-limit.md` already classifies it, either as `network-failure` or as its own rate-limit outcome. During the bootstrap it exits 4, never 6. (Plan-review decision 2, Reading B.)\n6. A bootstrap `POST git/refs` that answers 422 and whose follow-up `claimsBranchExists` re-read fails (returns `null` on a network failure) is transient: it exits 4 with `claims-branch-bootstrap-network-failure`, not 6. The existing claim-store test \"POST git/refs 422 with an unreadable branches endpoint is a refusal\" is rewritten to pin the transient outcome. (Plan-review decision 1, Reading B.)\n\n## Acceptance Criteria\n\n- [ ] A unit test feeds `classifyGhApiError` an HTTP 403 (not a secondary rate limit) and an HTTP 401 and gets the new refusal outcome, not `network-failure`; it fails against the current classifier.\n- [ ] A `claim-targets` test with a bootstrap whose create call fails with a transport error (no HTTP status) exits 4 with the new error name, and under `--keep-going` skips that target; it exits 6 against the current code.\n- [ ] A `claim-targets` test with a bootstrap refused by a permission 403 still exits 6 and prints the one-line reason.\n- [ ] The secondary-rate-limit bootstrap case still exits 4 (`claims-branch-bootstrap-rate-limited`).\n- [ ] No remaining exit-code prose says a network failure during bootstrap exits 6.\n- [ ] A `classifyGhApiError` test with a primary rate-limit 403 (`API rate limit exceeded`, no `Retry-After`) gets a transient outcome, not the new refusal outcome.\n- [ ] A claim-store test with `POST git/refs` → 422 followed by a failed (`null`) branch re-read gets a transient result, and a `claim-targets` test with that bootstrap exits 4 with `claims-branch-bootstrap-network-failure`.\n\n## Release Note\n\nA network blip while the plugin creates the claims branch is now retried on a later run instead of stopping the record as if the branch could never be created.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/claim-store.js` — split a permission refusal out of network-failure in classifyGhApiError; transient bootstrap result\n- `plugin/bin/lib/claim-targets/claim-targets.js` — route a transport-class bootstrap failure to exit 4\n- `tests/bin-lib/issues/claim-store.test.js` — classifier and bootstrap cases\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — exit 4 vs exit 6 bootstrap cases\n- `plugin/skills/flow/claim-targets.md` — exit-code prose\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-31T16:00:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4756,
-        "state": "OPEN",
-        "title": "claim-targets: a network blip while bootstrapping the claims branch exits 6 instead of the transient exit 4",
-        "updatedAt": "2026-10-31T21:11:35Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: reflect full from #4602\n\nDefer-reason: tangential\n\n## Current State\n\nA review tiebreak agent on #4602 (run `2026-10-31T075610-record-4602`) was refused when it ran `git -C \".../review-ctx/agent-scratch/tb-2/src\" init -q -b main` to build a git fixture at its sanctioned `SCRATCH:` path. The run recorded a `gate-denial` event for that path (`friction-events.js`, ts 2026-10-31T09:06:10Z), immediately after a `wd-guard-refusal` for the same command at 09:06:09Z.\n\n`plugin/skills/review/step3-tiebreak.md`, `step3-debate-and-refutation.md` and `step3-lens-dispatch.md` give every dispatched review agent a `SCRATCH: {ctx-dir}/agent-scratch/{agent-id}` path under the run directory, which is anchored to the main checkout, and tell it to create probe fixtures there with plain `mkdir`/`printf`/`node -e` calls. None of them mentions that a fixture needing a git repository cannot be created at that path from a `worktree-always` session: the gate refuses `git init` there.\n\nIntegration-branch probe (#3987): `git fetch origin main`, then `git grep -n -F -e \"agent-scratch\" origin/main -- plugin/bin` and `git grep -n -i -F -e \"git init\" origin/main -- plugin/skills/review` both matched nothing (exit 1), so main carries neither a gate exemption for the scratch path nor skill text for git fixtures.\n\n## Deliverables\n\nAdd one clause to the `SCRATCH:` instruction in each of `step3-tiebreak.md`, `step3-debate-and-refutation.md` (both its dispatch templates) and `step3-lens-dispatch.md`: a probe that needs a git repository creates it under the session scratchpad directory (`_shared/session-tmp-root.md`) instead of `{ctx-dir}/agent-scratch/`, because `git init` at the run-dir path is refused from a worktree session.\n\nKeep the three copies word-identical so one test pin covers all of them.\n\n## Acceptance Criteria\n\nEach of the three files names the git-fixture exception inside its `SCRATCH:` instruction: `grep -c -F \"git init\" plugin/skills/review/step3-tiebreak.md plugin/skills/review/step3-debate-and-refutation.md plugin/skills/review/step3-lens-dispatch.md` prints a count of at least 1 for every file.\n\nA conformance test pins the clause in all three files and goes red when it is removed from any one of them.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-tiebreak.md` — add the git-fixture clause to the SCRATCH line\n- `plugin/skills/review/step3-debate-and-refutation.md` — add the git-fixture clause to both SCRATCH lines\n- `plugin/skills/review/step3-lens-dispatch.md` — add the git-fixture clause to the SCRATCH line\n\n_Filed by `reflect` via specShapedBody._\n",
         "createdAt": "2026-10-31T09:32:51Z",
         "labels": [
@@ -4842,96 +4759,6 @@
     ],
     [
       {
-        "body": "Surface: backend\n\n## Current State\n\nThe multi-spec artifact-overwrite completion check (`plugin/skills/flow/multispec-artifact-namespacing.md`, run before the Consolidated Review Console) calls `plugin/bin/check-artifact-overwrite.js`. It finds every `docs/journeys/` or `stories/` path that one commit in the run added and a later commit modified. A hunk with deletions passes only if one of three extension tests in `plugin/bin/lib/flow/artifact-overwrite-check.js` accepts it: same-spec self-edit, list reflow, or step-markup reformat. Anything else is reported as an overwrite (exit 1), which HARD-GATEs the run.\n\nThe same-spec self-edit test (`artifact-overwrite-check.js:310`, `const selfEdit = commitRefs.size > 0 && setsIntersect(commitRefs, blamedRefs)`) attributes commits only through a `refs #N` trailer on the commit message (`extractRefs`, `:85`). Most of the pipeline's commit sites (stories, review fix waves, wrap-up) write no such trailer; only `plugin/skills/build/micro-plan.md:66` asks for `refs #{n}`. In a run where neither commit has a trailer, the test can never match. A spec's own review fix to a story or journey file it added earlier in the same run then trips the HARD-GATE as a false positive, and the run stops for a manual ruling. This is the most common legitimate edit of that kind.\n\nThe run already records which spec was running when. Every `spec-status` call appends `{ phase, status, at }` to `specs[].phases[]` in the multi-spec run's `manifest.yml` (`plugin/bin/lib/flow/manifest.js`'s `transitionSpec`, `spec.phases.push({ phase, status, at: nowIso })`), and `startedAt` is set on a spec's first `running` transition. `readManifest(runDir)` is exported from the same module. The check does not read the manifest today.\n\n## Deliverables\n\n- **Manifest-window attribution fallback.** `checkArtifactOverwrite` accepts an optional `manifest` (or `runDir`) input. A commit is attributed to spec ids in this order:\n  1. its own `refs #N` trailer, when present (unchanged);\n  2. otherwise, the single spec whose manifest window contains the commit's author date. A spec's window runs from its first recorded transition (`startedAt`, else its earliest `phases[].at`) up to the next spec's first recorded transition. The last spec's window is open-ended.\n  3. otherwise the commit is unattributed (an empty set, as today).\n\n  The same-spec self-edit test then compares these attributions for the deleting commit and every blamed commit. A commit whose author date falls inside no window, or inside more than one, stays unattributed. The fallback never guesses.\n- **CLI flag.** `plugin/bin/check-artifact-overwrite.js` gains an optional `--run <dir>` flag that reads `manifest.yml` from that directory and passes it through. Without the flag, behavior stays as it is today, refs-only. With `--run` and no readable or parseable manifest (a missing, unreadable or unparseable `manifest.yml`, or one that parses but lists no specs or has a spec whose first transition is not a valid date — see Q5), the walk fails with exit 3, never a silent fall back to refs-only.\n- **Distinct unattributable reason.** When a self-edit judgment fails because the deleting commit or a blamed commit has no attribution from either source, the `overwrites[]` entry's `reason` says so explicitly (\"unattributable — no refs trailer and no manifest window\"). It must not reuse the \"refs trailer does not match\" wording, so whoever makes the manual ruling can tell a missing attribution from a confirmed cross-spec deletion. The entry still fails closed: it stays in `overwrites[]`, and the exit code is still 1.\n- **Procedure update.** `plugin/skills/flow/multispec-artifact-namespacing.md`'s invocation passes `--run \"{parent}\"`, the multi-spec parent run directory that holds `manifest.yml`. Its test-1 description names both attribution sources and their order.\n- The module header comment's description of test 1 is updated to match.\n\n## Acceptance Criteria\n\n- [ ] Fixture: spec A adds `stories/x-A.yaml`, and a later commit inside spec A's manifest window changes one of its lines. Neither commit carries a `refs` trailer. With the manifest supplied, the result is `clean: true`.\n- [ ] Fixture: same history, but the modifying commit's author date falls inside spec B's window. The result is still an overwrite: one entry for that path and commit.\n- [ ] Fixture: the same untrailered self-edit with no manifest supplied still reports an overwrite. Its `reason` contains `unattributable`, not `refs trailer does not match`.\n- [ ] Fixture: a commit with a `refs #N` trailer is attributed by the trailer even when its author date falls in a different spec's manifest window (the trailer takes precedence).\n- [ ] Fixture: an author date that falls before every spec's first transition leaves the commit unattributed.\n- [ ] `check-artifact-overwrite.js --run <dir>` with no `manifest.yml` in `<dir>` exits 3, and stderr names the missing manifest.\n- [ ] Each new attribution test goes red when the manifest fallback is removed.\n- [ ] Every existing test in `tests/bin-lib/flow/artifact-overwrite-check.test.js` and `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` still passes unchanged.\n- [ ] `multispec-artifact-namespacing.md`'s command block includes `--run \"{parent}\"`, and `tests/multispec-artifact-namespacing-conformance.test.js` passes.\n\n## Release Note\n\nA multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.\n\n## Technical Approach\n\nAttribution becomes a per-commit function that the existing `getRefs` cache wraps. It tries the trailer first, then the manifest window looked up by the commit's author date (`git log -1 --format=%aI {sha}`, fetched alongside `%B` in the same call so the walk does not add a git call per commit). `selfEdit` keeps its current shape over the attribution sets. Parse the manifest with `manifest.js`'s `parseManifestYaml`/`readManifest` rather than adding a second YAML reader. Window computation is a small pure function over `multispec.specs` (ordered by first transition) so it can be unit-tested without git.\n\nAlternatives the record offered, and why they lose:\n- **Namespace-suffix attribution** (`-{N}` in the filename): this names the file's owner, not the author of the deleting commit. Spec B editing spec A's `-A` file is exactly the overwrite the check exists to catch, so the suffix cannot separate the self-edit from the real overwrite.\n- **Writing `refs #{N}` trailers at every commit site**: the check's stated design (`multispec-artifact-namespacing.md`) is to verify the outcome from git history \"rather than trusting that every present-and-future write path\" follows a convention. A trailer convention spread across build, stories, review, and wrap-up commit sites, including subagent-authored commits, is that kind of trust. It is also incomplete for commits made before the convention lands.\n\n### Key Files\n\n- `plugin/bin/lib/flow/artifact-overwrite-check.js` — manifest-window attribution fallback, the unattributable reason string, and the header comment\n- `plugin/bin/check-artifact-overwrite.js` — `--run <dir>` flag, manifest read, and exit 3 on an unreadable manifest\n- `plugin/bin/lib/flow/manifest.js` — read only; reuse `readManifest`/`parseManifestYaml` (no change expected)\n- `plugin/skills/flow/multispec-artifact-namespacing.md` — pass `--run \"{parent}\"` and describe the two attribution sources\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — untrailered self-edit, cross-window, trailer-precedence, and out-of-window fixtures\n- `tests/bin-lib/flow/check-artifact-overwrite-cli.test.js` — `--run` flag and missing-manifest exit 3\n- `tests/multispec-artifact-namespacing-conformance.test.js` — keep passing against the updated command block\n\n## Gotchas\n\n- Use the commit's **author** date, not the committer date. A rebase or cherry-pick rewrites the committer date to the time of the rewrite, which would move a commit out of its spec's window. The author date is preserved.\n- Fixture commits must pin `GIT_AUTHOR_DATE` (and `GIT_COMMITTER_DATE`) explicitly. Commits made seconds apart in a test otherwise all land in one window, and the cross-window fixture would pass for the wrong reason.\n- Manifest windows apply only to a shared-worktree (sequential) multi-spec run. Parallel-wave members build in their own worktrees, so their windows can overlap. The \"more than one window, unattributed\" rule is what keeps an overlap from being read as a self-edit.\n- `#4590` adds two more extension tests (step renumber, reference-preserving `Origin:` line) to the same module and the same procedure doc. It is a sibling change, not a dependency. Whichever lands second rebases its header-comment and doc edits onto the other's.\n\n**Related:** #4590, #3831, #3974, #4353, #4429\n\n## Original request\n\nflow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer\n\n**Summary:** The multi-spec artifact-overwrite completion check reports a spec's own review-fix edit to its own namespaced artifact as a cross-spec overwrite (a HARD-GATE) whenever the run's commits carry no `refs #N` trailer — which the pipeline's own commit sites never write.\n\n**Kind:** Defect\n\n**Affected component:** /claude-tweaks:flow — multi-spec artifact-overwrite completion check (`skills/flow/multispec-artifact-namespacing.md`, `bin/check-artifact-overwrite.js`, `bin/lib/flow/artifact-overwrite-check.js`)\n\n**Repro steps:**\n1. Run a two-spec `/flow` in one shared worktree (specs A then B).\n2. Spec A's `/stories` commit adds a namespaced story file, e.g. `stories/x-A.yaml`.\n3. Spec A's own review fix wave changes one line in that file (two locator strings updated to match a copy change made in the same commit).\n4. None of the run's commits (build, stories, review fix waves) carry a `refs #A` trailer.\n5. At end of run, `check-artifact-overwrite.js --base {EXPECTED_BASE} --path docs/journeys/ --path stories/` runs over the run's range.\n\n**Expected vs. actual:**\nExpected: the edit is recognised as a same-spec self-correction (both commits are spec A's; the manifest phase timestamps put both inside spec A's test/review window, spec B started hours later; the file carries spec A's `-A` namespace suffix), so the check passes.\nActual: exit 1 with one overwrite reported. The \"same-spec self-edit\" test requires the deleting commit and the blamed commit to share the same `refs #{N}` trailer, so it can never match in a run whose commit sites don't write that trailer. The procedure treats this as a HARD-GATE before the consolidated console, so the run stops for a manual ruling on a false positive — the most common legitimate edit shape (a spec correcting its own artifact during review).\n\nSuggested fixes (any of):\n1. When neither commit has a `refs #N` trailer, fall back to spec attribution from the run's `manifest.yml` phase windows (`specs[].phases[].at`), or from the artifact's own `-{N}` namespace suffix (a file namespaced to spec A, modified while spec A is the running spec, is a self-edit).\n2. Have the pipeline's commit sites (build, stories, review fix waves, wrap-up) write a `refs #{N}` trailer in multi-spec runs, so the existing test works.\n3. At minimum, report \"unattributable (no refs trailer)\" as its own verdict instead of an overwrite.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\nRelated (different false-positive shape in the same check): #4590.\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-58618f68 -->\n\n## Plan Review Clarifications\n\nAnswered by the maintainer, 2026-10-31, in response to the plan-review question on this record:\n\n- **Q1 (AC7 scope): Reading B.** \"Each new attribution test goes red when the manifest fallback is removed\" covers only the fixtures whose expected verdict depends on the fallback (AC1, AC2, AC4, AC5). AC3 (no manifest) is proven by reverting its unattributable reason string instead; the pure `computeSpecWindows`/`attributeByWindow` unit tests are exempt.\n- **Q2 (mixed-execution runs): Reading B.** Window attribution turns off whenever the manifest names a `not-run` spec — the check falls back to today's refs-only behavior for that run, so it never produces a false clean. This also covers a default-mode run that stopped after a failure (it too keeps refs-only behavior).\n\nSecond plan-review round (2026-11-01, question issuecomment-6551069601):\n\n- **Q3 (window end): Reading A.** Keep the Deliverables rule as written: a spec's window ends at the next spec's first recorded transition (the last spec's window is open-ended). Window attribution is switched off for a `parallel` run, which falls back to today's refs-only check, per the Gotcha \"Manifest windows apply only to a shared-worktree (sequential) multi-spec run\". The procedure tells a parallel run apart by omitting `--run` for it (or an equivalent explicit signal); no max-based window end.\n- **Q4 (run whose last spec failed): Reading B.** Window attribution is also switched off when any spec's status is `failed`, not only when the manifest names a `not-run` spec. This keeps Q2's intent: a run stopped by a failure keeps today's refs-only behavior.\n\nThird plan-review round (2026-11-01, question issuecomment-6562062652):\n\n- **Q5 (manifest that parses but is unusable): Reading B.** A `manifest.yml` that `parseManifestYaml` accepts but that lists no specs, or where a spec has an unparseable first transition (`startedAt`, or `phases[].at` when `startedAt` is absent), is the walk's own failure: exit 3, with stderr naming the field. A spec that is simply `pending` with no recorded transitions still only turns window attribution off (refs-only).\n- **Q6 (a `parallel` run reached without the `parallel` token): Reading B.** Also derive the parallel signal from the manifest: window attribution turns off (refs-only) when spec transitions interleave, meaning any spec has a `phases[].at` at or after a later-starting spec's first transition. A sequential run never interleaves. The procedure still omits `--run` for a known `parallel` run.\n- **Q7 (catch-up-merged upstream commits): Reading A.** #4593 stays as specified. First-parent filtering is filed as its own record, #4845.\n- **CLI Deliverable wording:** corrected in `## Deliverables` per AC6. Without `--run`, behavior stays refs-only. With `--run` and no readable or parseable manifest, the run exits 3.\n",
-        "createdAt": "2026-10-30T09:13:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4593,
-        "state": "OPEN",
-        "title": "flow artifact-overwrite check: flags a spec's own review fix as an overwrite when commits carry no refs #N trailer",
-        "updatedAt": "2026-11-01T19:04:03Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Defer-reason: tangential\n\n**Related:** #4502\n\n## Current State\n\n`plugin/bin/lib/issues/provenance.js`'s `resolveProvenance` gives a record with no `by:*` label the side-effect class named by its body's `Origin:` line. `plugin/bin/lib/issues/trust.js` counts a record whose `Origin:` line ends `from #N` as a corrective follow-up against #N's class. Neither checks who wrote the issue. `by:*` labels need triage access, but anyone who can open an issue in a public repo can write an `Origin:` line.\n\nSo in a public consumer repo, an outsider can file an issue whose body starts `Origin: demo changes-requested from #7`. It then counts as a corrective follow-up against #7's trust class, which can flip that class from `clean` to `mixed` and withhold autonomy grants (`autonomy.js`'s `permittedGrants`). It can also add samples to any side-effect class. The direction is mostly toward less autonomy, but class membership becomes forgeable. Found during #4502's brainstorm on 2026-10-30.\n\nIn this repo, every one of the 2,847 records was authored by the owner or by an installed app. So there is no observed case, and the exposure is in other public repos that use the plugin.\n\n## Deliverables\n\n1. Decide the rule for issues whose author has no trusted association (`OWNER`, `MEMBER` or `COLLABORATOR`, as `comment-trust.js` defines them) and is not an installed app. Either their `Origin:` line is ignored (the record resolves `human:human`), or they are excluded from trust rows entirely. State which in the PR and why.\n2. Fetch the author association wherever trust rows are built (the session-scoped record snapshot, `_shared/record-queue-fetch.md`), and pass it to `resolveProvenance` and `trustRows`.\n3. Tests for an outsider-authored record with a forged `Origin:` line.\n\n## Acceptance Criteria\n\n- An issue whose author association is `NONE` or `CONTRIBUTOR`, with `Origin: demo changes-requested from #7`, adds no follow-up to #7's class and joins no side-effect class.\n- The same body from an `OWNER`, `MEMBER` or `COLLABORATOR` author, or from an installed app, is unchanged.\n- A record fetched without an author association keeps today's behaviour, documented in the PR as the fail-open direction with its reason.\n- `npm test` passes.\n\n## Release Note\n\nTrust tracking now ignores provenance lines written by people outside the repository.\n\n### Key Files\n\n- `plugin/bin/lib/issues/provenance.js` (modify)\n- `plugin/bin/lib/issues/trust.js` (modify)\n- `plugin/bin/lib/issues/comment-trust.js` (read: the trusted-association set to reuse)\n- `plugin/bin/lib/issues/record-snapshot.js` (modify: carry the author association)\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-30T07:49:28Z",
         "labels": [
@@ -5323,96 +5150,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Current State\n\nDispatched agents share more than a worktree. They share the machine's process table with every sibling session. The plugin already guards one shared resource. `_shared/subagent-dispatch-core.md` (the \"Never run `git stash` in any form\" paragraph) states the rule, and it is forwarded verbatim into `build/dispatch.md`'s SDD implementer instruction, both Task() calls in `dispatch/task-prompt.md`, `dispatch/express-prompt.md`, and `flow/multispec-parallel-waves.md`'s wave-member prompt. It is also backed by a warn-tier hook (`pre-tool-use.js`'s `checkGitStashWarn`, documented in `docs/hooks.md`) and pinned by `tests/dispatch-no-stash-conformance.test.js`.\n\nNo equivalent rule exists for processes. A grep of `plugin/skills` for `taskkill`, `pkill`, and `killall` finds no prohibition anywhere. In one observed incident, an implementer on a plan with a runtime-verification task accidentally started a background build. It stopped the build with `taskkill /F /IM node.exe`, which killed every node process on the machine. That included dev servers and tooling of several concurrent Claude sessions in sibling worktrees of the same repo. The implementer surfaced it only afterwards as a concern. Runtime checks that start servers (`/claude-tweaks:visual-review`, `/claude-tweaks:stories`, Task-0-style verification tasks) are routine, so agents will keep needing to stop processes they started.\n\nThe plugin's own ephemeral-server teardowns are already PID- or port-scoped rather than image-name kills. Three of them still over-match, though:\n\n- `_shared/dev-url-detection.md`'s Standalone cleanup bullet (POSIX branch) runs `lsof -ti tcp:{port} | xargs kill`.\n- `journey-health/deep-tier.md` step 4 (\"Clean up\") runs the same command.\n- `wrap-up/cleanup-procedures-execution.md` Section D names that same command as its no-lease stale-PID fallback.\n\n`lsof -i tcp:{port}` matches every process holding a TCP socket whose local *or remote* port is `{port}`. That includes clients connected to the dev server, such as the Playwright browser driving the check or another session's browser tab. The same file's own worktree-awareness probe (`dev-url-detection.md`, the no-lease branch) already scopes its lookup correctly with `lsof -nP -iTCP:{PORT} -sTCP:LISTEN -t`. The win32 branches already use `taskkill /PID {pid} /T /F` against a recorded PID, which is correct.\n\n## Deliverables\n\n1. **Canonical rule.** In `plugin/skills/_shared/subagent-dispatch-core.md`, directly after the no-`git stash` paragraph, add a paragraph forbidding image- or name-based process kills: `taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`. State why: the process table is shared machine-wide with sibling sessions and worktrees. Name the sanctioned alternative: kill only a PID you captured when you started the process, or the PID of the listener on a port you own (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t` on POSIX; `taskkill /PID {pid} /T /F` on win32). If neither PID can be identified, leave the process running and report it rather than reaching for a broader kill.\n2. **Forwarded into every dispatch prompt that forwards the no-stash rule.** Agents only see their prompt, so add a short sentence beside each existing no-stash instruction:\n   - `plugin/skills/build/dispatch.md`'s SDD per-task implementer instruction. Cite the core file, as the no-stash forwarding does.\n   - Both Task() calls in `plugin/skills/dispatch/task-prompt.md`, inlined.\n   - `plugin/skills/dispatch/express-prompt.md`, inlined.\n   - `plugin/skills/flow/multispec-parallel-waves.md`'s wave-member prompt, inlined.\n3. **Listener-scoped teardowns.** Replace `lsof -ti tcp:{port} | xargs kill` with a listener-only form (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t | xargs kill`, or the recorded PID where one exists) at three sites: `plugin/skills/_shared/dev-url-detection.md`'s Standalone cleanup bullet, `plugin/skills/journey-health/deep-tier.md` step 4, and `plugin/skills/wrap-up/cleanup-procedures-execution.md` Section D's no-lease fallback mention.\n4. **Warn-tier hook gate.** Add `checkProcessKillWarn` to `plugin/bin/lib/hooks/pre-tool-use.js`, mirroring `checkGitStashWarn`'s posture: a warn-only `systemMessage`, never a deny. It fires on a Bash segment invoking `pkill`, `killall`, `taskkill` with an `/IM` argument (case-insensitive, any `/IM` position), or `Stop-Process`/`kill` with `-Name`/`-ProcessName`. The message names the shared-process-table hazard and the PID-scoped alternative. It is run-independent and location-independent, unlike the stash gate's linked-worktree condition, because the hazard is machine-wide. Add the trigger words to `plugin/bin/lib/hooks/bash-prefilter.js`'s `PRE_TOOL_USE_WORDS` so the prefilter does not skip these commands before the gate loads. Document the gate in `docs/hooks.md` beside the git-stash gate bullet.\n5. **Tests.** Add a prose conformance test alongside `tests/dispatch-no-stash-conformance.test.js`, using the same per-call region split, pinning the new rule in every Deliverable 2 site and the canonical file. Add a test that no `plugin/skills/**/*.md` file contains the unscoped `lsof -ti tcp:` kill form. Add `tests/hooks-pre-tool-use.test.js` cases for the gate's positive shapes, its negatives (`kill {pid}`, `taskkill /PID 123 /T /F`, `lsof … -sTCP:LISTEN`), and a prefilter case proving a bare `pkill node` reaches the handler.\n\n## Acceptance Criteria\n\n- `_shared/subagent-dispatch-core.md` carries a paragraph, adjacent to the no-`git stash` paragraph, that forbids `taskkill /IM`, `pkill`, `killall`, and `Stop-Process -Name`, and names the PID-scoped alternative.\n- `build/dispatch.md`, both Task() call regions of `dispatch/task-prompt.md`, `dispatch/express-prompt.md`, and `flow/multispec-parallel-waves.md` each carry the process-kill prohibition next to their no-stash instruction. A conformance test fails if any one of them drops it. To prove this, delete the sentence from one site and watch the test go red.\n- `grep -rn \"lsof -ti tcp:\" plugin/skills` returns no match. All three teardown sites use a `-sTCP:LISTEN` listener-scoped form or a recorded PID, and a test pins that.\n- `pre-tool-use.js` emits a warn `systemMessage`, with no `permissionDecision` deny, for `pkill node`, `killall node`, `taskkill /F /IM node.exe`, `taskkill /im node.exe /f`, and `Stop-Process -Name node`. It emits nothing for `kill 12345`, `taskkill /PID 12345 /T /F`, or `kill -- -12345`. Each case is a test in `tests/hooks-pre-tool-use.test.js`.\n- `bash-prefilter.js` routes a command containing `pkill`, `killall`, or `taskkill` to the full PreToolUse handler, pinned by a test.\n- `docs/hooks.md` lists the new gate with its tier and trigger shapes.\n- `npm test` passes.\n- **Decision (plan review, 2026-10-31):** The gate also warns on the other name-kill spellings: `pgrep`-fed kills (`kill $(pgrep node)`, `pgrep -f x | xargs kill`), `taskkill /FI \"IMAGENAME eq node.exe\"`, and `Get-Process node | Stop-Process`. Each form has a test. (Plan-review Q1: Reading B.)\n- **Decision (plan review, 2026-10-31):** The command names of these kill forms match case-insensitively (`TASKKILL`, `Stop-process`), since `taskkill` and PowerShell cmdlets are case-insensitive on Windows. The hook's pre-check is case-insensitive for these words only, with a `TASKKILL /IM node.exe` test. (Q2: Reading B.)\n- **Decision (plan review, 2026-10-31):** The hook also scans the quoted command argument of `powershell -Command`/`-c`, `pwsh -Command`/`-c`, `cmd /c`, `sh -c` and `bash -c` with the same name-kill matcher, with a test per wrapper. (Plan-review question on kills wrapped in a command string.)\n- **Decision (plan review, 2026-10-31):** Any `taskkill /FI` filter other than a PID filter warns, not only `IMAGENAME`. (Plan-review question on other `taskkill /FI` filters.)\n- **Decision (plan review, 2026-10-31):** Closing rule: the decisions above settle this record's spec. Any further edge case the plan reviewer finds in these areas is the implementer's judgment, not a needs-human gap: the plan records the chosen behaviour, and the review step checks it. Plan review stops the build only for a gap that contradicts an Acceptance Criterion or a decision above.\n\n## Release Note\n\nStop dispatched agents from killing processes by name, which could take down other sessions' dev servers, and scope dev-server teardown to the server's own listening process.\n\n## Technical Approach\n\nFollow the no-stash rule's existing three-layer shape (prose rule, forwarded prompt text, warn hook) rather than inventing a new mechanism. The canonical paragraph lives in `subagent-dispatch-core.md`. `build/dispatch.md` cites it, as its no-stash forwarding already does. The three literal prompt templates inline a short sentence, because dispatched agents never see sibling files.\n\nThe hook gate reuses the segment walk `checkGitStashWarn` already gets from the shared `resolvedGitSegments` pass, or the equivalent per-segment token list, and appends to the same `warnings` array. It must never throw. It obeys the never-break-a-session invariant in `docs/hooks.md`: a parse failure means no warning, never a deny.\n\nThe teardown edits are one-token-class changes at each site. Add `-nP -iTCP:{port} -sTCP:LISTEN` so only the listening server process matches. Where the site already holds a recorded PID, prefer that.\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — new canonical no-image-kill paragraph beside the no-stash rule\n- `plugin/skills/build/dispatch.md` — forward the rule in the SDD implementer instruction\n- `plugin/skills/dispatch/task-prompt.md` — inline the rule in both Task() calls\n- `plugin/skills/dispatch/express-prompt.md` — inline the rule\n- `plugin/skills/flow/multispec-parallel-waves.md` — inline the rule in the wave-member prompt\n- `plugin/skills/_shared/dev-url-detection.md` — listener-scoped Standalone teardown\n- `plugin/skills/journey-health/deep-tier.md` — listener-scoped cleanup step\n- `plugin/skills/wrap-up/cleanup-procedures-execution.md` — Section D no-lease fallback wording\n- `plugin/bin/lib/hooks/pre-tool-use.js` — new `checkProcessKillWarn` warn gate\n- `plugin/bin/lib/hooks/bash-prefilter.js` — add `pkill`/`killall`/`taskkill`/`Stop-Process` to `PRE_TOOL_USE_WORDS`\n- `docs/hooks.md` — document the new warn gate\n- `tests/dispatch-no-stash-conformance.test.js` — sibling pattern for the new conformance test (new file beside it, or extended in place)\n- `tests/hooks-pre-tool-use.test.js` — gate positive/negative cases\n- `tests/hooks-bash-prefilter.test.js` — prefilter routing case\n\n## Gotchas\n\n- **Prefilter skip.** Without the `PRE_TOOL_USE_WORDS` addition, `bin/hooks.js` exits before `pre-tool-use.js` ever loads for a plain `pkill node`. The gate would then be dead code that unit tests calling the gate function directly still pass. Test through the prefilter too.\n- **`taskkill` flag case.** Windows flags are case-insensitive and position-free (`/im`, `/IM`, after `/F` or before it). Match `/IM` as a token, case-insensitively.\n- **Keep `kill -- -{pid}` working.** The POSIX process-group kill in Section D is PID-scoped (negative PID = the group *this pipeline* started) and must not warn.\n- **Byte-pinned prose.** `tests/dispatch-no-stash-conformance.test.js` and the region-split anchors (`## First call` / `## Second call` / \"None of Templates A/B/C\") read `task-prompt.md` directly. Insert the new sentence without moving those anchors, and run the full suite, since other conformance tests pin this prose.\n- **Related #4559** (Fast-tier implementer ignored the no-stash rule). It is evidence that prose alone is not always obeyed by the cheapest tier, which is why this record pairs the prose with a hook warning rather than relying on the prompt text.\n- **Scope note.** The record asked to apply the rule \"wherever the plugin's own procedures start ephemeral servers.\" On inspection those teardowns were already PID- or port-scoped. The residual defect is the client-matching `lsof -ti tcp:{port}` form, so Deliverable 3 narrows to that rather than rewriting the teardown procedures.\n\n**Related:** #4559, #3731, #3758, #3822, #3875, #4242, #4243, #4575, #3974, #4030, #4217, #4259, #4318, #4365, #4451, #4572, #4573, #4574, #4576, #4589\n\n## Original request\n\nbuild: dispatch rules forbid git stash but not image-name process kills — a subagent killed every node process on the machine\n\n**Summary:** `/claude-tweaks:build`'s dispatch instruction protects shared cross-session state by forbidding `git stash`, but has no matching rule for processes. An implementer that stopped a stray build with `taskkill /F /IM node.exe` killed every node process on the machine, including other concurrent sessions' dev servers.\n\n**Kind:** Gap\n\n**Affected component:** build (`skills/build/dispatch.md`, the SDD invocation's forbidden-operation rules)\n\n**Use case:** A record's plan included a runtime verification task: build and start the app, then run Playwright against it. The implementer accidentally started a background build and stopped it with an image-name kill (`taskkill /F /IM node.exe`). On that machine, several Claude sessions were active in sibling worktrees of the same repo, and the kill took their node processes down too. The implementer reported it afterwards as a concern.\n\nThe plugin already reasons this way about git. The no-stash rule says \"the stash stack is shared repo-wide across every worktree, so it can pop or clobber a sibling worktree's in-flight work\". Processes are the same kind of shared resource. `/claude-tweaks:visual-review` and Task-0-style runtime checks start servers routinely, so subagents will keep needing to stop them.\n\n**Proposed:** Next to the forwarded no-`git stash` rule in `dispatch.md`, add: \"never kill processes by image or name (`taskkill /IM`, `pkill node`, `killall`); find the PID of the process you started (by port or by the PID you captured at start) and kill only that PID\". Apply the same rule wherever the plugin's own procedures start ephemeral servers (e.g. the `dev-url-detection.md` ephemeral dev server teardown).\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-f9480c21 -->\n\n**Related:** #4559\n\n\n",
-        "createdAt": "2026-10-29T07:25:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4548,
-        "state": "OPEN",
-        "title": "build: dispatch rules forbid git stash but not image-name process kills — a subagent killed every node process on the machine",
-        "updatedAt": "2026-10-31T20:40:37Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
