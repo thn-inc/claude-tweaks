@@ -35,7 +35,7 @@
 const { execFileSync } = require('child_process');
 const { fetchNativeSubIssues } = require('./lib/issues/native-dependencies');
 const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, remoteUrl, ghOptions } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
 
@@ -68,7 +68,7 @@ const realDeps = {
   remoteUrl,
   // 30s bound: a 50-alias GraphQL batch outweighs the 5s single-call convention
   // (gh-api-module-pattern's "bound every remote-contacting call" rule).
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: 30000, windowsHide: true }),
+  runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: 30000, windowsHide: true })),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
