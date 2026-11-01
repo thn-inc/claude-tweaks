@@ -31,14 +31,15 @@ files:
 
 ### 2. Stop instead of improvising — same agent
 - **URL:** `build/execution-mode-policy.md`'s `## No-dispatch host (#4555)` section
-- **Action:** report `BLOCKED — this host has no Agent/Task tool, so the \`subagent\` execution strategy cannot run.`, then `Resume from a top-level session:`, then the resume command on its own line. Under `/claude-tweaks:dispatch` that command is `/claude-tweaks:dispatch #{n}`; otherwise it repeats the invocation received, `PIPELINE_RUN_DIR="…"` prefix kept. A standalone `/claude-tweaks:build` not locked to `subagent-only` adds the human-only alternative `/claude-tweaks:build {received target} batched`.
+- **Action:** report `BLOCKED — this host has no Agent/Task tool, so the \`subagent\` execution strategy cannot run.`, then `Resume from a top-level session:`, then the resume command on its own line. Under `/claude-tweaks:dispatch` that command is `/claude-tweaks:dispatch #{n}`; otherwise it repeats the invocation received, `PIPELINE_RUN_DIR="…"` prefix kept. The command renders only when each part fits its grammar (`{n}` digits, the received target a `#{n}` or a plain repo-relative path, the step-list tokens, the quoted run directory); a part that does not fit, such as a target holding a quote, `$`, backtick, newline or space, is replaced by "re-run your original invocation". A standalone `/claude-tweaks:build` not locked to `subagent-only` adds the human-only alternative `/claude-tweaks:build {received target} batched`.
 - **Should feel:** a clean, honest stop with the next move already written out, not a silent degrade.
 - **Should understand:** implementing the plan's tasks in-session is the unlicensed path #491 forbids; `batched` is offered to a human and never chosen for them. The `SKIP` line (`condition: no Agent/Task tool in this host → fallback: run stopped before build; resume from a top-level session`) goes into `decisions.md` only when the run dir already has `config.yml` at flow Step 2.4; otherwise it is in the stop report only, so the resume still adopts the dir as a fresh mint.
 - **Red flags:**
   - any plan task implemented inline "to make progress";
   - a switch to `batched` the human did not type;
   - a dispatch resume command that carries the `PIPELINE_RUN_DIR` prefix of a run that is about to be torn down;
-  - the stop tearing down the claim, worktree or draft PR on a resume.
+  - a received target pasted into the resume command when it holds a quote, `$`, backtick, newline or space;
+  - the stop tearing down the claim, worktree or draft PR on a resume, or the worktree, materialize commit and draft PR a standalone worktree-mode build created before the probe.
 
 ### 3. Settle and relay the stop — the `/claude-tweaks:dispatch` session
 - **URL:** `dispatch/settle-and-merge.md`'s No-dispatch-host special case, then `dispatch/reporting.md`'s "No-dispatch-host stops are relayed (#4555)" paragraph
@@ -65,12 +66,13 @@ files:
 
 ### 6. Route the merge to a human — `merge-check`
 - **URL:** `assess-agent-autonomy/merge-check.md`'s "An `Independence: degraded` review is a hard floor (#4555)" bullet
-- **Action:** when `$PIPELINE_RUN_DIR/decisions.md` (or the one beside `--pack`, or a bundle member's `spec-{n}/decisions.md`) carries review's run-level `SKIP` line, or the summary rendered the **Independence: degraded** line, render `needs-human`.
+- **Action:** when `$PIPELINE_RUN_DIR/decisions.md` (or the one beside `--pack`, or a bundle member's `spec-{n}/decisions.md`) carries review's run-level `SKIP` line, or the summary rendered the **Independence: degraded** line, render `needs-human`. A `decisions.md` that should exist but is absent or unreadable while a run directory resolves cannot rule the floor out, so it renders `needs-human` too; with no run directory to read, the summary line alone decides.
 - **Should feel:** a hard floor, weighed against nothing else.
 - **Should understand:** every auto-merge path requires a `merge-check` `auto-merge` verdict, so this one floor keeps a degraded review out of every unattended merge.
-- **Red flags:** an `auto-merge` verdict, or a console default-merge, on a run whose review is marked `Independence: degraded`.
+- **Red flags:** an `auto-merge` verdict, or a console default-merge, on a run whose review is marked `Independence: degraded`, or on a run whose `decisions.md` could not be read.
 
 ## Origin
 - Created during build of #4555 (dispatch-capability preflight: flow Step 2.4, build Common Step 1.5, the policy section, review's run-level caveat, the merge-check floor, Settle's special case and reporting relay).
+- Updated at wrap-up of #4555: Step 2 names the resume command's grammar gate and the standalone worktree build's kept state, and Step 6 names the floor's fail-closed read of an absent or unreadable `decisions.md` — both from the review's fix wave.
 - Steps 1-6 built in this session; pinned by `tests/no-dispatch-host-preflight-conformance.test.js` and `tests/review-dispatched-reviewer-degrade-conformance.test.js`.
 - Related records: #491 (the execution-strategy ruling this stop enforces), #447 (cwd-pinned dispatch, `build/worktree-setup.md`'s Cwd-pinned session pointer), #3817 (per-lens single-read degrade), #3377 (the plan-review relay the reporting paragraph is modelled on).
