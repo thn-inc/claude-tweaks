@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
-const { runPhaseExit, realDeps, policyReadTimeoutMs } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
+const { runPhaseExit, realDeps, policyReadTimeoutMs, policyEntryValue } = require('../../../plugin/bin/lib/phase-exit/phase-exit');
 const { GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS } = require('../../../plugin/bin/lib/policy-schema');
 const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../../helpers/strip-comments');
 const { readText } = require('../../helpers/read-skill');
@@ -779,6 +779,17 @@ test('realDeps.resolvePolicy: a pinned run returns the pin with no gh call, and 
   } finally {
     gh.restore();
   }
+});
+
+test('policyEntryValue: JSON with no entry for the key throws instead of reading as an empty value', () => {
+  assert.throws(() => policyEntryValue(JSON.stringify({ 'integration-branch': { value: 'main' } }), 'integration-model'),
+    /resolve-policy\.js printed no entry for integration-model/);
+});
+
+test('policyEntryValue: a null or error entry reads as empty, a valued entry as its string', () => {
+  assert.equal(policyEntryValue(JSON.stringify({ k: { value: null } }), 'k'), '');
+  assert.equal(policyEntryValue(JSON.stringify({ k: { value: 'x', error: 'bad' } }), 'k'), '');
+  assert.equal(policyEntryValue(JSON.stringify({ k: { value: 3 } }), 'k'), '3');
 });
 
 test('realDeps.resolvePolicy: a run-pinned integration-branch returns its string value', () => {

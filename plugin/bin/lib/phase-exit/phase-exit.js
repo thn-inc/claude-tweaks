@@ -86,6 +86,16 @@ function policyReadTimeoutMs(key, cwd) {
   return GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS * resolveForgeProbeTimeoutMs(root) + GIT_TIMEOUT_MS;
 }
 
+// resolve-policy.js's JSON output -> what --values would print for `key`: the entry's value, or ''
+// for a null/error entry. A missing entry or a degraded forge detection throws, which runPhaseExit's
+// unresolved branch logs (record #4578 plan review).
+function policyEntryValue(out, key) {
+  const entry = JSON.parse(out)[key];
+  if (!entry) throw new Error(`resolve-policy.js printed no entry for ${key}`);
+  if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
+  return entry.error === undefined && entry.value != null ? String(entry.value) : '';
+}
+
 const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
@@ -101,16 +111,13 @@ const realDeps = {
   // JSON mode (not --values) so a degraded forge detection is visible: a Q10-unpinned run re-detects
   // `integration-model` here, so that read must outlast the ladder (remote probe + two gh attempts,
   // plus the old bound as margin) and must not route a degraded `local-merge` -- a degraded entry
-  // throws, which runPhaseExit's unresolved branch logs (record #4578 plan review). The return is
-  // what --values printed: the entry's value, '' for a null/error entry.
+  // throws, which runPhaseExit's unresolved branch logs (record #4578 plan review). policyEntryValue
+  // reads the entry.
   resolvePolicy: (runDir, key, cwd) => {
     const out = execFileSync(process.execPath, [RESOLVE_POLICY_JS, '--run', runDir, key], {
       cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: policyReadTimeoutMs(key, cwd), windowsHide: true,
     });
-    const entry = JSON.parse(out)[key];
-    if (!entry) throw new Error(`resolve-policy.js printed no entry for ${key}`);
-    if (typeof entry.degraded === 'string') throw new Error(`forge detection degraded (${entry.degraded})`);
-    return entry.error === undefined && entry.value != null ? String(entry.value) : '';
+    return policyEntryValue(out, key);
   },
   hooks: (args, cwd) => execFileSync(process.execPath, [HOOKS_JS, ...args], {
     cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GIT_TIMEOUT_MS, windowsHide: true,
@@ -462,4 +469,4 @@ function backfillPr({ deps, runDir, wt, branch, step, log, result, details }) {
   }
 }
 
-module.exports = { runPhaseExit, realDeps, policyReadTimeoutMs, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
+module.exports = { runPhaseExit, realDeps, policyReadTimeoutMs, policyEntryValue, checklistFlags, parsePorcelainZ, isArchivedRun, InvalidWorktreeError, PHASE_SECTIONS };
