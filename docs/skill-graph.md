@@ -513,6 +513,7 @@ is `plugin/skills/_shared/integration-branch.md`. Paths outside the payload (`do
 
 | Target | Relationship |
 |---|---|
+| `/assess-agent-autonomy` | Since #4555, `merge-check.md`'s Independence floor reads Step 3's run-level no-`Agent` `SKIP` line (`step3-lens-dispatch.md`) and renders `needs-human`, so a review whose lenses and tiebreaks were all self-judged never auto-merges — every auto-merge path (`wrap-up/auto-merge-short-circuit.md`, `dispatch/settle-and-merge.md`) requires that verdict. |
 | `/browse` | Used by visual, journey, and discover modes for browser interaction. |
 | `/capture` | `/review` routes new ideas discovered during review through `/capture`, which files a fresh backlog work record. |
 | `/design-wrapper` | Step 6.5's Design Quality section renders `craft-critic` code findings in the table (`Source: critic:{provider}`) and `decisions` findings under a Decisions sub-heading with their `Remedy:` line; standalone runs render, in-run runs stage. |

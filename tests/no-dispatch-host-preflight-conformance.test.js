@@ -269,3 +269,63 @@ test('AC7.1: the headings the cwd-pinned pointer cites exist', () => {
     assert.ok(!hasHeading(renamed, heading), `a renamed heading in ${path.basename(file)} must fail the check`);
   }
 });
+
+// --- merge-check's Independence: degraded floor (Task 5) ---
+
+const MERGE_CHECK = path.join(SKILLS, 'assess-agent-autonomy', 'merge-check.md');
+const REVIEW_STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
+const MERGE_FLOOR_PREFIX = '- **An `Independence: degraded` review is a hard floor (#4555)**';
+const REVIEW_SKIP_PREFIX = '> **No `Agent` tool in this host (run-level, #4555).**';
+const SKIP_TEXT = /condition: no Agent tool in this host → fallback: [^"`]+/;
+
+const MERGE_FLOOR_FACTS = [
+  [/if `\$PIPELINE_RUN_DIR\/decisions\.md` — or, when `--pack` was passed, the `decisions\.md` beside that pack — carries `\/claude-tweaks:review`'s run-level no-`Agent` `SKIP` line/, 'AC10.3: keys on review\'s run-level SKIP line, in a named file'],
+  [/`condition: no Agent tool in this host → fallback: every lens and tiebreak judged by the reviewer itself`/, 'AC10.3: quotes the exact SKIP text'],
+  [/or its review summary rendered the \*\*Independence: degraded\*\* line \(with no run directory to read, that summary line alone decides\), render `needs-human`/, 'AC10.3: renders needs-human; no run dir → summary line decides'],
+  [/so its merge routes to a human\. Do not weigh anything else\./, 'AC10.3: merge decision routes to a human, hard floor'],
+];
+const mergeFloorMissing = missingFactsOf(MERGE_FLOOR_FACTS);
+
+test('AC10.3: merge-check renders needs-human for an Independence: degraded review (#4555)', () => {
+  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
+  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
+  assert.deepEqual(mergeFloorMissing(bullet), [], 'the Independence floor bullet must state every fact (#4555)');
+});
+
+test('AC8.2: each merge-check Independence-floor fact can go red', () => {
+  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
+  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
+  assertEachPatternGoesRed(bullet, MERGE_FLOOR_FACTS, mergeFloorMissing);
+});
+
+test('AC10.3: the SKIP text merge-check reads is the text review writes', () => {
+  const reviewLine = lineStartingWith(readText(REVIEW_STEP3), REVIEW_SKIP_PREFIX);
+  const bullet = lineStartingWith(readText(MERGE_CHECK), MERGE_FLOOR_PREFIX);
+  assert.ok(reviewLine, `step3-lens-dispatch.md has no "${REVIEW_SKIP_PREFIX}" line`);
+  assert.ok(bullet, `merge-check.md has no "${MERGE_FLOOR_PREFIX}" bullet`);
+  const textIn = (line) => (line.match(SKIP_TEXT) || [null])[0];
+  assert.ok(textIn(reviewLine), 'review line carries no SKIP text');
+  assert.equal(textIn(bullet), textIn(reviewLine), 'merge-check must quote the exact SKIP text review writes');
+
+  // Control: a drifted review line must fail the same comparison.
+  const drifted = reviewLine.replace('reviewer itself', 'reviewer');
+  assert.notEqual(drifted, reviewLine, 'drift anchor not found — control cannot discriminate');
+  assert.notEqual(textIn(bullet), textIn(drifted), 'a drifted review SKIP text must fail the equality check');
+});
+
+test('the Calibration closing sentence lists the Independence floor', () => {
+  const NEW_SENTENCE = /Every floor stated above still applies on its own terms: a\s+sensitive-path hit renders `needs-human` with nothing else weighed, and so do any review finding\s+at Medium or above and an `Independence: degraded` review\./;
+  const text = readText(MERGE_CHECK);
+  assert.match(text, NEW_SENTENCE);
+  assert.ok(!text.includes('Both floors stated above'), 'the "Both floors" wording must be gone');
+
+  // Control: the pre-change sentence must fail the same assertion.
+  const OLD_SENTENCE = 'Both floors stated above still apply on their own terms: a\nsensitive-path hit renders `needs-human` with nothing else weighed, and so does any review finding\nat Medium or above.';
+  assert.ok(!NEW_SENTENCE.test(OLD_SENTENCE), 'the pre-change sentence must not satisfy the new pin');
+});
+
+test('merge-check Anti-Patterns names the Independence floor', () => {
+  const PREFIX = '| Rendering `auto-merge` after a review marked `Independence: degraded` |';
+  assert.ok(lineStartingWith(readText(MERGE_CHECK), PREFIX), `merge-check.md Anti-Patterns has no row starting ${PREFIX}`);
+  assert.equal(lineStartingWith('| Some other row |', PREFIX), '', 'control: an unrelated row must not match');
+});
