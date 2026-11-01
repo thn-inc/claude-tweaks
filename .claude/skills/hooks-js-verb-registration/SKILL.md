@@ -41,7 +41,7 @@ A new flag on a shipped verb lands in a subset of the verb's sites, and whether 
 | 1 | The verb's `usage` string in `VERBS` | Always: append `[--{flag}]` or `[--{flag} <value>]`. |
 | 2 | The handler's option parse | Always: `args.includes('--{flag}')` for a boolean, `flagVal(args, '--{flag}')` for a value, passed through to the lib call. |
 | 3 | `KNOWN_FLAGS` | Always: append the flag to the verb's entry. Without it the unknown-flag guard refuses the new flag. |
-| 4 | `VALUE_FLAGS` | For a value-taking flag, so the unknown-flag scan skips the value token. |
+| 4 | `VALUE_FLAGS` | For a value-taking flag, so the unknown-flag scan skips the value token. The set is shared by all verbs: a flag that takes a value on one verb and is boolean on another swallows the next token on the boolean verb. |
 | 5 | The doc that owns the verb's call | Always: the usage line plus one bullet on the flag's semantics, in the `_shared/*.md` file skill steps cite for the verb (`_shared/pipeline-run-dir.md` for `resolve-run-dir`, `_shared/console-execution.md` for `resolve-console`). A skill that calls the flag cites that bullet rather than restating it; #4677's review replaced `wrap-up/merge-mode.md`'s restated copy with a citation. |
 | 6 | Tests | A CLI spawn test that the flag reaches the handler, whose negative half runs the same args without the flag and asserts the old reason, not just the exit code (`tests/hooks-resolve-run-dir-cli.test.js`); and a pin on the home doc's usage line. |
 

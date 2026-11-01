@@ -268,9 +268,28 @@ test('#4777: resolve-run-dir --create with no typo mints a run dir (positive con
   const root = freshRepo();
   const result = runHook(['resolve-run-dir', '--spec-slug', 'x', '--create'], { cwd: root });
   assert.equal(result.code, 0);
-  const minted = result.stdout.trim();
+  const minted = fs.realpathSync(result.stdout.trim());
   assert.ok(minted.startsWith(path.join(root, '.claude-tweaks', 'pipelines') + path.sep), `minted run dir is under pipelines: ${minted}`);
   assert.ok(fs.statSync(minted).isDirectory(), 'a real --create run mints the run dir');
+});
+
+test('#4777: --help in a value position still prints usage and runs nothing', () => {
+  const root = freshRepo();
+  const pipelines = path.join(root, '.claude-tweaks', 'pipelines');
+  const mint = runHook(['resolve-run-dir', '--spec-slug', '--help', '--create'], { cwd: root });
+  assert.equal(mint.code, 0);
+  assert.equal(mint.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`);
+  assert.ok(!fs.existsSync(pipelines) || fs.readdirSync(pipelines).length === 0, 'no run dir was minted');
+  const sibling = runHook(['check-sibling-sessions', '--record', '--help'], { cwd: root });
+  assert.equal(sibling.code, 0);
+  assert.equal(sibling.stdout, `claude-tweaks: usage: ${USAGE['check-sibling-sessions']}\n`);
+});
+
+test('#4777: check-sibling-sessions --record <id> does not print the usage line (declared-flag control)', () => {
+  // Goes red when --record is removed from the verb's KNOWN_FLAGS entry.
+  const result = runHook(['check-sibling-sessions', '--record', 'x'], { cwd: freshRepo() });
+  assert.equal(result.code, 0);
+  assert.doesNotMatch(result.stdout, /claude-tweaks: usage:/);
 });
 
 test('#4777: hooks.js comments no longer describe a lenient verb set', () => {

@@ -204,8 +204,9 @@ const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase'
 
 // First `--*`-shaped token in `args` that isn't declared for this verb, or
 // null when every `--*` token is declared (or there are none). Scans the
-// FULL argument list, not just a fixed position, matching #1143's own
-// "anywhere in the argument list" guarantee for --help.
+// FULL argument list, not just a fixed position. A token consumed as a value
+// is skipped, so main() checks --help and -h over every position separately
+// (#1143's "anywhere in the argument list" guarantee).
 function firstUnknownFlag(knownFlags, args) {
   const known = new Set(knownFlags);
   for (let i = 0; i < args.length; i += 1) {
@@ -1936,11 +1937,11 @@ async function main(argv) {
   // closed and refuses every flag.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
-    // scan never sees it as a token to classify — checked separately here,
-    // same as --help itself (also never declared for any of these
-    // verbs, so it always falls out as "unknown" via the scan below too).
+    // scan never sees it. --help is checked in every position too: the scan
+    // skips the token after a VALUE_FLAGS member, so a --help sitting in a
+    // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
-    if (argsAfterCmd.includes('-h') || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
+    if (argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help') || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
     }
