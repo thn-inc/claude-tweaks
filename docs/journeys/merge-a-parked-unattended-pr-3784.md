@@ -66,9 +66,14 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - **Should understand:**
   - **Failed preconditions.** Each one is named, and none of them runs a merge step first. A `CLOSED` PR stops with no cleanup.
   - **Already merged.** The outcome is `merged`, led by an `already merged {mergedAt} by {mergedBy}` line. A post-merge close that failed gets its own `cleanup:` line, never `ran`.
+  - **In flight.** If another process holds the run's post-merge claim, the line reads `in-flight`, never `ran`. For an archived run that holder can only be another merge-mode invocation, so the line also names `/claude-tweaks:wrap-up #{n} merge` again once the claim is past its 10-minute stale window.
+  - **Which step failed.** The CLI's `verdict` and `failedSteps` pick the lines. A Step 4.0 failure names the records it left unsettled, a Step 4.0b failure names each parent it could not close, and a step that ran clean is never reported failed. A CLI crash, or output that will not parse, still reports `cleanup: post-merge closes failed` and names the re-run.
+  - **No retry after a recorded failure.** Once the closes ran, their marker is written, so a re-run reports `already done` and retries nothing. That failure line names `/claude-tweaks:tidy`'s `parent-gate` backstop instead of a re-run.
 - **Red flags:**
   - A merge or acceptance-label step on a closed or merged PR.
   - An already-merged PR that stops with no cleanup, or reports a failed post-merge close as `ran`.
+  - An `in-flight` result reported as `ran`.
+  - A CLI crash or unparseable output reported as anything but a `cleanup:` failure line naming the re-run.
 
 ### 4. Merge through the shared procedure
 - **URL:** `_shared/pr-first-merge.md` Steps 1-3 (acceptance labeling, curation guard, mark ready, the merge-verification gate, the merge), read through the composed `merge` bundle
@@ -118,3 +123,4 @@ When it cannot merge, the outcome is `pending-review` with the PR ready and a st
 - Updated during build of #3865: Step 2's run adoption now matches the record's spec slug as a whole name segment, not a substring, so a record never adopts a run belonging to another record whose number starts with the same digits.
 - Updated during build of #4677. Step 2 now falls back to `resolve-run-dir --archived` for a parked run that wrap-up already closed and archived. On #4437's run (PR #4662), the summary's recommended `/claude-tweaks:wrap-up #4437 merge` stopped at resolution, and the run dir had to be bound by hand. The build's review then made the fallback refuse when a newer run of the same record is still open.
 - Updated during build of #4692. Step 3 now finishes a PR that something else already merged: merge mode's `## Already merged` section runs the post-merge closes through `bin/post-merge-run.js`, then the teardown. Before this, such a PR stopped the command with no cleanup.
+- Updated during wrap-up of #4692, after its review's fix wave. Step 3 now covers the `in-flight` result, a failure line per failed step, a CLI crash or unparseable output, and why a failure in closes that already ran is not retried.
