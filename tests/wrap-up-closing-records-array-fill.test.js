@@ -157,7 +157,7 @@ for (const shell of SHELLS) {
   }
 }
 
-const NON_ARRAY_PACKS = { string: { inputs: { closingRecords: '101' } }, object: { inputs: { closingRecords: { 0: 101 } } }, null: { inputs: { closingRecords: null } }, absent: { inputs: {} } };
+const NON_ARRAY_PACKS = { string: { inputs: { closingRecords: '909' } }, object: { inputs: { closingRecords: { 0: 909 } } }, null: { inputs: { closingRecords: null } }, absent: { inputs: {} } };
 
 for (const shell of SHELLS) {
   const skip = skipFor(shell);
