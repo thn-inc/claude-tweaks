@@ -67,6 +67,7 @@ files:
 - Updated during build of #4659 (Resume-line read through the shared parser): Step 2 now says item 10's `[unsettled]` resume line comes from `bin/pr-resume-line.js`, checked against the claim blob's run id, and falls back to the reconstructed `reconcile` command. `plugin/bin/pr-resume-line.js` added to `files:`
 - Updated during build of #4673: a stale claim whose dispatched run (`record-{n}`) has its run dir absent or archived resumes through `/claude-tweaks:dispatch resume #{n}` (`stale-claim-pr.js --issue`).
 - Updated during wrap-up of #4849: Step 2 names the `bin/dispatch-resume.js` verdict on a stale-claim Release row and on a dispatch-form Resume row. `plugin/skills/tidy/issue-claims-backstops.md` and `plugin/bin/dispatch-resume.js` added to `files:`
+- Updated during build of #4932 (hooks.js VERBS exception exit): Step 2's applied Archive now names the exception exit, where `archive-run` prints no report, exits 1 and writes `claude-tweaks: archive-run: {message}` on stderr, reported as FAILED with that line
 
 ## Example render
 
