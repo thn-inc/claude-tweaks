@@ -593,8 +593,10 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   `MERGED` on GitHub. It is not limited to armed merges: whatever merged the PR, an unmarked merged
   run gets the steps once. Only `github-issues` projects take part (`work-backend: github-issues`);
   any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
-  checkout without an `origin` slug fails as `no-remote`, and a caller that passes no PR-state
-  resolver fails as `no-pr-states` (a programming error, handled like the other two).
+  checkout without an `origin` slug fails as `no-remote`, an `origin` on a host that is not a known
+  GitHub host fails as `unknown-host` (#4933; no gh call is made, and the failure carries a `detail`
+  holding the refusal text, which names the `GH_HOST=<host>` opt-in), and a caller that passes no
+  PR-state resolver fails as `no-pr-states` (a programming error, handled like the others).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
   location `reconcile post-merge` (this check's own summary entry) or one ending in `pr-first-merge
   Step 4.0b` (the merging session's own marker, `(skipped)` form included, and the per-parent
@@ -704,9 +706,12 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   schema default (`high`) is looser than a configured `medium` or `low` floor and would close a
   parent below the floor with no sign-off; Step 4.0 still runs and the marker is still written, so
   the run is not retried and tidy's backstop is the recovery. The origin remote's host is kept
-  (`git-exec.js`'s `repoSpecOf`), so on a GitHub Enterprise origin the gate's reads and the two
-  writes name `host/owner/repo` (`--hostname` on the `gh api` reads); a remote `parseRepo` cannot
-  read (an `ssh://` URL) keeps the bare slug it always resolved to.
+  (`git-exec.js`'s `repoSpecOf`, which runs `repo-resolve.js`'s `gateOriginRepo`), so on a known
+  GitHub Enterprise origin (`*.ghe.com`, a gh `hosts.yml` key, or the exported `GH_HOST`) the gate's
+  reads and the two writes name `host/owner/repo` (`--hostname` on the `gh api` reads); an origin on
+  any other host returns `{ refusal }` and the check fails `unknown-host` before any gh call
+  (`teardown-run.js`'s remote-ref step skips with the same refusal text). A remote the gate cannot
+  read (an `ssh://` URL) keeps the bare slug it always resolved to (#4857).
 - **Accepted residual risk: tidy-approval race.** A human approving a tidy `parent-gate` row for the
   same parent in the seconds while a post-merge pass is mid-close can post a second `## Closed below
   the oversight floor` comment, because the two writers share no lock beyond Step 4.0b's own
