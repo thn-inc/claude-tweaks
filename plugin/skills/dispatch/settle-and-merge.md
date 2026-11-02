@@ -62,7 +62,8 @@ dedup separately — and that stop's own card text as the diagnostic body. This 
 branch that runs *before* any release/classification logic, since there is nothing to release or
 classify — it is a pre-flight stop, not a build/test failure. When `DISPATCH_HEADLESS` is unset (a
 human-present dispatch form), skip this — the stop message the Task call already produced is
-sufficient; nobody headless needs a durable trace of it. For the
+sufficient (on the claim-permission-denied stop that is the rendered card, which carries the
+operation and reason; the first call's report lines do not); nobody headless needs a durable trace of it. For the
 claims-branch-missing stop, skip steps 3-7 below: no `failure-check` classification, no attempt
 counted against `dispatch-retry-ceiling`, and no failure comment — a repository whose claims branch
 cannot be created would otherwise exhaust the ceiling on a record that was never at fault.

@@ -365,6 +365,7 @@ test('AC6.1: settle-and-merge.md treats the claim permission denied stop as a pr
   assert.match(section, /failed:claim-permission-denied/);
   assert.match(section, /since the four are different stop shapes/);
   assert.match(section, /the claim-permission-denied stop is the exception/);
+  assert.match(section.replace(/\s+/g, ' '), /that is the rendered card, which carries the operation and reason; the first call's report lines do not\)/);
   // The exit-6 sentence earlier in the section already carries "dispatch-retry-ceiling" and
   // "no failure comment", so this stop's own sentence is sliced out before asserting on it.
   const stopStart = section.indexOf('For the claim-permission-denied stop');
@@ -392,7 +393,7 @@ test('flow/claim-targets.md states the MCP claim path is not this stop (#4899)',
   const bullet = content.slice(start, content.indexOf('\n- **2**', start));
   assert.match(bullet, /gh-absent[^\n]*this stop/);
   assert.match(bullet, /MCP[^\n]*transient/);
-  assert.match(bullet, /OUTCOME: build-test-blocked/);
+  assert.match(bullet.replace(/\s+/g, ' '), /OUTCOME: build-test-blocked` \(`OUTCOME: blocked` on a second call\)/);
   assert.match(bullet, /ISSUE #\{n\}: failed:claim-permission-denied/);
   assert.match(bullet, /STATUS: BLOCKED/);
   assert.match(bullet, /`\{target\}` is `permissionDenied\.issue`/);
@@ -409,7 +410,9 @@ test('a dispatched first call learns the exact gate value, and teardown skips th
   assert.match(gate, /none after a Claim permission stop/);
   const sectionE = read('plugin/skills/wrap-up/cleanup-procedures-execution.md');
   assert.match(sectionE, /Skip this whole section when the invocation names `claim-permission-denied: skip the claim release`/);
-  assert.match(sectionE, /The skip is noted in the wrap-up summary/);
+  const skipLog = sectionE.replace(/\s+/g, ' ');
+  assert.match(skipLog, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status SKIP --section "\/wrap-up" --step "Section E" --text "condition: claim-permission-denied named by the cleanup-only call → fallback: claim release skipped" --reversibility n\/a/);
+  assert.match(skipLog, /production step failed, or this section was skipped\)/);
   // The receiver: wrap-up's flags.md declares the phrase, so it is not read as a record reference.
   const flags = read('plugin/skills/wrap-up/flags.md');
   assert.match(flags, /`\(claim-permission-denied: skip the claim release\)`[^\n]*stripped before input classification[^\n]*never read as a record reference/);
@@ -447,7 +450,10 @@ test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays
     assert.match(content, /claim-permission-denied/, `${file} must name the stop`);
     assert.match(content, /ends the firing/, `${file} must say the stop ends the firing`);
   }
-  assert.match(read('plugin/skills/dispatch/reporting.md'), /claim-permission-denied/);
+  const relayed = read('plugin/skills/dispatch/reporting.md');
+  assert.match(relayed, /claim-permission-denied/);
+  assert.match(relayed, /its report block names the record and the stop, says the firing stopped/);
+  assert.doesNotMatch(relayed, /names the record and the refusal/);
 });
 
 test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {
@@ -463,16 +469,21 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
     path.join(REPO_ROOT, 'docs/journeys/act-on-a-contested-claim.md'),
   ];
   assert.ok(files.length > 50, 'the sweep should cover the plugin tree');
+  // Whitespace is collapsed first so a sentence wrapped across lines is seen whole; `refus` covers
+  // refused/refuses/refusal, and the exit code may be backticked. The first branch's gap cannot cross
+  // "rate-limited": exit 7's own bullet says a rate-limited 403 is exit 4, which is correct.
+  const exit4 = '\\bexits? `?4\\b';
+  const sweep = new RegExp(
+    `(claim read( or write)?|claim write|401/403)(?:(?!rate-limited)[^.]){0,80}${exit4}`
+    + `|${exit4}[^.]{0,80}((refus|401/403)[^.]{0,80}claim|claim (read|write)[^.]{0,80}(refus|401|403))`,
+    'gi',
+  );
   const offenders = [];
   for (const file of files) {
-    readText(file).split('\n').forEach((line, i) => {
-      if (
-        /(claim read( or write)?|claim write|401\/403)[^.\n]{0,80}\bexits? 4\b/i.test(line)
-        || /\bexits? 4\b[^.\n]{0,80}((refused|401\/403)[^.\n]{0,80}claim|claim (read|write)[^.\n]{0,80}(refus|401|403))/i.test(line)
-      ) {
-        offenders.push(`${path.relative(REPO_ROOT, file)}:${i + 1}`);
-      }
-    });
+    const text = readText(file).replace(/\s+/g, ' ');
+    for (const match of text.matchAll(sweep)) {
+      offenders.push(`${path.relative(REPO_ROOT, file)}: ${match[0]}`);
+    }
   }
   assert.deepStrictEqual(offenders, []);
   assert.match(read('docs/plugin-structure.md'), /7 GitHub refused a claim read or write/);

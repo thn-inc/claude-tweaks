@@ -2777,20 +2777,23 @@ test('reason falls back to permission-denied when the store carries no error tex
 });
 
 // The store's real `error` is the failed command's message plus its stderr
-// (defaultGhApi): a `Command failed: gh api ... -f content=<base64 claim>` line,
-// then gh's own text, repeated. The reason keeps only GitHub's text.
+// (defaultGhApi's ghErrorText joins message, stderr and stdout with a space): a
+// `Command failed: gh api ... -f content=<base64 claim>` line, then gh's own
+// stderr, repeated with a leading space, then the stdout JSON body. The reason
+// keeps GitHub's text once.
 const COMMAND_LINE = 'Command failed: gh api --method PUT repos/a/b/contents/claims/issue-720.json -f content=ewogICJydW5JZCI6';
 const GH_REFUSAL = 'gh: Resource not accessible by personal access token (HTTP 403)';
+const GH_BODY = '{"message":"Resource not accessible by personal access token","status":"403"}';
 
 test('real-shape refusal: the Command failed line and the repeated stderr line are dropped from reason and stderr', () => {
-  const error = `${COMMAND_LINE}\n${GH_REFUSAL}\n${GH_REFUSAL}\n`;
+  const error = `${COMMAND_LINE}\n${GH_REFUSAL}\n ${GH_REFUSAL}\n ${GH_BODY}\n`;
   const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [{ ...PERM_403, error }] } });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
 
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
-  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: GH_REFUSAL });
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: `${GH_REFUSAL} ${GH_BODY}` });
   for (const text of [JSON.stringify(body), io.err.join('')]) {
     assert.doesNotMatch(text, /Command failed/);
     assert.doesNotMatch(text, /ewogICJydW5JZCI6/);

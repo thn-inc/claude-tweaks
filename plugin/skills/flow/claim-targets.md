@@ -366,7 +366,7 @@ stays best-effort and the claim read stays the authoritative hold check:
 
   `{target}` is `permissionDenied.issue`; `{operation}` and `{reason}` are the same-named fields.
   No `AskUserQuestion` — nothing to choose between. A dispatched run (`dispatched: true`) also
-  reports `OUTCOME: build-test-blocked`, `ISSUE #{n}: failed:claim-permission-denied` and
+  reports `OUTCOME: build-test-blocked` (`OUTCOME: blocked` on a second call), `ISSUE #{n}: failed:claim-permission-denied` and
   `STATUS: BLOCKED`, which stops the dispatching firing (`dispatch/SKILL.md`'s Claim permission stop). This is the `gh` transport only:
   the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
