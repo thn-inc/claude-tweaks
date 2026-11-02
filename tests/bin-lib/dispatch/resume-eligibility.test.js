@@ -8,7 +8,7 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('../../helpers/read-skill');
 const {
   REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail,
+  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, worktreePathForHead, isObject, nonEmptyString,
 } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 
@@ -875,4 +875,17 @@ test('resumeContext: no pipeline entries -> null lastPhase and no defects; non-s
   assert.deepStrictEqual(resumeContext('## /build\n'), empty);
   assert.deepStrictEqual(resumeContext(null), empty);
   assert.deepStrictEqual(resumeContext(undefined), empty);
+});
+
+test('#4815 AC1.1: worktreePathForHead and the shared primitives have one home', () => {
+  assert.equal(worktreePathForHead('/m', HEAD), path.join('/m', '.claude', 'worktrees', 'dispatch-record-4589'));
+  assert.equal(worktreePathForHead('/m', 'fix/thing'), path.join('/m', '.claude', 'worktrees', 'fix', 'thing'));
+  assert.equal(worktreePathForHead('/m', 'a$(x)'), null);
+  assert.equal(nonEmptyString('x'), 'x');
+  assert.equal(nonEmptyString(''), null);
+  assert.equal(nonEmptyString(3), null);
+  assert.equal(isObject({}), true);
+  assert.equal(isObject([]), false);
+  assert.equal(isObject(null), false);
+  assert.equal(isObject('s'), false);
 });

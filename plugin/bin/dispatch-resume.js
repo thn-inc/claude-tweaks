@@ -73,7 +73,8 @@ const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe')
 const { resolveTarget } = require('./lib/stage-item/write');
 const { lstatType } = require('./lib/path-guard');
 const {
-  selectResumePr, resumeEligibility, resumeContext, worktreeNameForHead, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
+  selectResumePr, resumeEligibility, resumeContext, worktreePathForHead, isObject, nonEmptyString, refusalDetail, closeOutCannotResolve,
+  ownMarkerRunId,
 } = require('./lib/dispatch/resume-eligibility');
 
 const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
@@ -197,8 +198,6 @@ function parseJson(label, text) {
   return read(label, () => JSON.parse(text));
 }
 
-const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
-const nonEmptyString = (v) => (typeof v === 'string' && v !== '' ? v : null);
 const normalizePath = (p) => safeReal(p) || path.resolve(p);
 
 // ---- gathering ----
@@ -564,7 +563,7 @@ function runVerdict(ctx) {
   });
   if (!selected.ok) return refusal(ctx, prs, selected, prior);
   const { pr } = selected;
-  ctx.worktreePath = path.join(ctx.mainRoot, '.claude', 'worktrees', ...worktreeNameForHead(pr.headRefName).split('/'));
+  ctx.worktreePath = worktreePathForHead(ctx.mainRoot, pr.headRefName);
 
   const record = readRecord(ctx);
   const openBlockers = readOpenBlockers(ctx, record.body);

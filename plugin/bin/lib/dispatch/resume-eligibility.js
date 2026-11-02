@@ -16,6 +16,7 @@ const path = require('path');
 const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
+const { HARNESS_WORKTREE_DIR } = require('../hooks/worktree-reap');
 
 // The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
 // bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
@@ -53,6 +54,8 @@ function nonEmptyString(v) {
   return typeof v === 'string' && v !== '' ? v : null;
 }
 
+const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);
+
 // The run id a claim blob names: `sweptFrom` for a `swept:` tombstone (its `runId` is the sweeping
 // /tidy run's), `runId` otherwise. null when that field is not a non-empty string.
 function claimRunId(parsedBlob) {
@@ -77,6 +80,12 @@ function worktreeNameForHead(head) {
   const rest = head.startsWith('worktree-') ? head.slice('worktree-'.length) : head;
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(rest)) return null;
   return rest.split('/').every((seg) => seg !== '' && !seg.startsWith('.')) ? rest : null;
+}
+
+// The native fs path of the worktree a head's build lives in, or null when worktreeNameForHead is.
+function worktreePathForHead(mainRoot, head) {
+  const name = worktreeNameForHead(head);
+  return name === null ? null : path.join(mainRoot, HARNESS_WORKTREE_DIR, ...name.split('/'));
 }
 
 // Does the PR's run marker name this record? The slug check, exactly: `record-{issue}`.
@@ -200,7 +209,7 @@ function closeRedispatchRemedy({
   const closePr = `close PR #${prNumber} (gh pr close ${prNumber})`;
   const redispatch = redispatchStep(issue, forks);
   if (name === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
-  const worktree = path.join(mainRoot, '.claude', 'worktrees', ...name.split('/'));
+  const worktree = worktreePathForHead(mainRoot, headRefName);
   return `${closePr}, unlock and remove its worktree if one exists (git worktree unlock "${worktree}"; git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
 
@@ -241,7 +250,7 @@ function parseClaim(content) {
   if (typeof content !== 'string') return null;
   try {
     const parsed = JSON.parse(content);
-    return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    return isObject(parsed) ? parsed : null;
   } catch {
     return null;
   }
@@ -433,5 +442,6 @@ function resumeContext(decisionsText) {
 
 module.exports = {
   REFUSAL_REASONS, RUN_ID_PREFIX_LENGTH, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
+  worktreeNameForHead, worktreePathForHead, isObject, nonEmptyString, closeRedispatchRemedy, refusalDetail, closeOutCannotResolve,
+  ownMarkerRunId,
 };
