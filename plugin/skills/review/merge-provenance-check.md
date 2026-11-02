@@ -4,7 +4,7 @@ Read from `code-mode-steps.md`'s Step 2 only when the detect command there repor
 
 Before analyzing the diff, check whether the integration branch was merged into this branch mid-history — content that arrived via such a merge should not be misattributed as work this branch introduced. This was caught concretely during the #45 native-review prototype: a CHANGELOG entry that actually rode into the branch via a merge from `main` was flagged as if it were part of this branch's own work, and was only correctly attributed by manually tracing merge-commit parentage.
 
-Resolve `{integration-branch}` per `_shared/integration-branch.md`. When `{branch}` is that branch or `origin/{integration-branch}`, nothing is excluded: skip the rest of this check. Otherwise run `git fetch origin {integration-branch}` (a failed fetch is not fatal; the commands read the last-fetched ref), then run this as its own call. What it prints is `{fork}`, pasted literally into the next block:
+Resolve `{integration-branch}` per `_shared/integration-branch.md`. When `{branch}` is that branch, `origin/{integration-branch}`, or `HEAD` with that branch checked out, nothing is excluded: skip the rest of this check. Otherwise run `git fetch origin {integration-branch}` (a failed fetch is not fatal; the commands read the last-fetched ref), then run this as its own call. What it prints is `{fork}`, pasted literally into the next block:
 
 ```bash
 git merge-base {branch} origin/{integration-branch}

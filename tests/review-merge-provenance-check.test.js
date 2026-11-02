@@ -39,7 +39,8 @@ function fences(text) {
 
 function run(shell, dir, line) {
   const args = shell === 'zsh' ? ['-f', '-c', line] : ['--noprofile', '--norc', '-c', line];
-  const r = spawnSync(shell, args, { cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS });
+  // LC_ALL=C keeps git's messages stable for the `fatal:` and `Not a valid object name` checks.
+  const r = spawnSync(shell, args, { cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, LC_ALL: 'C' } });
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
@@ -57,7 +58,8 @@ const files = (stdout) => [...new Set(stdout.split('\n').map((l) => l.trim()).fi
 function excludedBy(shell, dir, base, branch, { lineExit = true, branchExit = true, integration = 'main' } = {}) {
   const [fence1, fence2] = fences(CHECK);
   const vars = { base, branch, 'integration-branch': integration };
-  if (branchExit && (branch === integration || branch === `origin/${integration}`)) {
+  const checkedOut = branch === 'HEAD' ? run(shell, dir, 'git symbolic-ref --short HEAD').stdout.trim() : null;
+  if (branchExit && (branch === integration || branch === `origin/${integration}` || checkedOut === integration)) {
     // the doc skips the rest of the check; `full` is computed only so the caller can see what stays in scope
     const onlyFull = run(shell, dir, fill(fence2[2], { ...vars, fork: '' }));
     assert.equal(onlyFull.status, 0, 'fence 2 line 3 (full diff) must exit 0');
@@ -70,7 +72,9 @@ function excludedBy(shell, dir, base, branch, { lineExit = true, branchExit = tr
     const noFork = forkRun.status === 1
       || (forkRun.status === 128 && forkRun.stderr.includes('Not a valid object name'));
     assert.ok(noFork, `merge-base printed nothing with status ${forkRun.status}: could not run, not "no fork point"`);
-    return { full: [], excluded: [] };
+    // the raw diff scope stands; a range with no merge base at all has no triple-dot diff, so `full` is empty there
+    const raw = run(shell, dir, fill(fence2[2], { ...vars, fork: '' }));
+    return { full: raw.status === 0 ? files(raw.stdout) : [], excluded: [] };
   }
   const withFork = { ...vars, fork };
   const lineRun = run(shell, dir, fill(fence2[0], withFork)); // grep -Fx exits 1 when the fork is off this branch's line
@@ -139,10 +143,11 @@ function assertProse(stepsText, checkText) {
   const flat = flatten(checkText);
   assert.match(flat, /A `base:\{ref\}` scope never reads this file/, 'check file: base scope exit');
   assert.match(flat, /\*\*Excluded files\*\* are those in the full diff and absent from the branch-side list/, 'check file: exclusion rule');
-  assert.match(flat, /When `\{branch\}` is that branch or `origin\/\{integration-branch\}`, nothing is excluded/, 'check file: branch-is-integration exit');
+  assert.match(flat, /When `\{branch\}` is that branch, `origin\/\{integration-branch\}`, or `HEAD` with that branch checked out, nothing is excluded/, 'check file: branch-is-integration exit');
   assert.match(flat, /When the `git rev-list` line prints `\{fork\}`[^.]*first-parent line[^.]*nothing is excluded/, 'check file: first-parent-line exit');
   assert.match(flat, /An error on that line excludes nothing/, 'check file: guard error exit');
   assert.match(flat, /When `git merge-base` prints nothing[^.]*nothing is excluded/, 'check file: no-fork exit');
+  assert.match(flat, /or `origin\/\{integration-branch\}` does not resolve/, 'check file: origin-form no-fork exit');
   assert.match(flat, /arrived via merge from \{integration-branch\}, not this branch's own work/, 'check file: report wording');
   // The retired own-work rule and its report wording stay gone (the new fence legitimately
   // uses `--first-parent` alone, so only the old pairing is banned).
@@ -161,7 +166,8 @@ test('AC1.1: a clause removed from the prose goes red with its own message', () 
     { target: 'check', from: 'A `base:{ref}` scope never reads this file', to: 'A `base:{ref}` scope may read this file', message: /check file: base scope exit/ },
     { target: 'check', from: 'and absent from the branch-side list', to: 'and nothing more', message: /check file: exclusion rule/ },
     { target: 'check', from: 'rather than having merged it, so nothing is excluded', to: 'rather than having merged it, so exclusion proceeds', message: /check file: first-parent-line exit/ },
-    { target: 'check', from: 'is that branch or `origin/{integration-branch}`, nothing is excluded', to: 'is that branch or `origin/{integration-branch}`, exclusion proceeds', message: /check file: branch-is-integration exit/ },
+    { target: 'check', from: 'or `HEAD` with that branch checked out, nothing is excluded', to: 'or `HEAD` with that branch checked out, exclusion proceeds', message: /check file: branch-is-integration exit/ },
+    { target: 'check', from: 'or `origin/{integration-branch}` does not resolve', to: 'or `{integration-branch}` does not resolve', message: /check file: origin-form no-fork exit/ },
     { target: 'check', from: 'An error on that line excludes nothing either.', to: 'An error on that line is ignored.', message: /check file: guard error exit/ },
     { target: 'check', from: 'there is no fork point, nothing is excluded, and the raw', to: 'there is no fork point, exclusion proceeds, and the raw', message: /check file: no-fork exit/ },
     { target: 'check', from: "arrived via merge from {integration-branch}, not this branch's own work", to: "arrived via merge from {base}, not this branch's own work", message: /check file: report wording/ },
@@ -397,7 +403,30 @@ test('AC1.1: fixture M, no origin ref at all, excludes nothing', async (t) => {
   const start = g('rev-parse', 'HEAD').trim();
   g('checkout', '-q', '-b', 'feat');
   commitFile('feat-file');
+  g('checkout', '-q', 'main');
+  commitFile('main-file');
+  g('checkout', '-q', 'feat');
+  g('merge', '-q', 'main', '--no-edit'); // a local-ref fallback would find main here and exclude main-file
   await forShells(t, (shell) => {
-    assert.deepEqual(excludedBy(shell, dir, start, 'feat').excluded, []);
+    assert.deepEqual(excludedBy(shell, dir, start, 'feat'), { full: ['feat-file', 'main-file'], excluded: [] });
+  });
+});
+
+test('AC1.1: fixture N, HEAD on a pull-merged integration branch, excludes nothing', async (t) => {
+  const { dir, g, commitFile } = fixture();
+  const start = g('rev-parse', 'HEAD').trim();
+  commitFile('teammate-base');
+  g('checkout', '-q', '-b', 'tmp');
+  commitFile('teammate-file');
+  g('update-ref', 'refs/remotes/origin/main', 'tmp');
+  g('checkout', '-q', 'main');
+  commitFile('own-local');
+  g('merge', '-q', 'origin/main', '--no-edit');
+  await forShells(t, (shell) => {
+    assert.deepEqual(excludedBy(shell, dir, start, 'HEAD'),
+      { full: ['own-local', 'teammate-base', 'teammate-file'], excluded: [] });
+    // without the branch exit the fork is the merge's second parent: the review's reproduction, frozen
+    assert.deepEqual(excludedBy(shell, dir, start, 'HEAD', { branchExit: false }).excluded,
+      ['teammate-base', 'teammate-file']);
   });
 });
