@@ -54,8 +54,8 @@ const MERGE_MODE_FACTS = {
   'needs-record': /`merge` with no record reference stops/,
   'rejects-dry-run': /`merge` with `--dry-run` is rejected: report both tokens and run neither/,
   'rejects-resume': /`merge` with `resume` is rejected: report both tokens and run neither/,
-  'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --spec-slug "spec-\{n\}"/,
-  'archived-fallback': /resolve-run-dir --archived --spec-slug "spec-\{n\}"/,
+  'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --archived --spec-slug "spec-\{n\}"/,
+  'live-first': /runs the live resolution first and adopts a closed run only when it resolves nothing/,
   'worktree-at-close': /falls back to `worktreeAtClose` when `worktree` is null/,
   'no-create': /with no `--create`/,
   'unresolved-stops': /When nothing resolves, merge mode stops and names the record/,
@@ -197,6 +197,11 @@ test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules reje
   const text = flat(read('plugin', 'skills', 'wrap-up', 'merge-mode.md'));
   assert.strictEqual((text.match(/cleanup-only/g) || []).length, 1);
   assert.ok(text.includes('`merge` with `cleanup-only` is rejected'), 'the one match is the Token rules rejection');
+});
+
+test('AC1.1: merge-mode.md makes one resolve-run-dir call (#4814)', () => {
+  const text = read('plugin', 'skills', 'wrap-up', 'merge-mode.md');
+  assert.strictEqual((text.match(/resolve-run-dir/g) || []).length, 1);
 });
 
 // Step 4.0 of the shared post-merge doc names merge mode's in-session caller (#4692).

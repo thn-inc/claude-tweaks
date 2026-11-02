@@ -44,6 +44,7 @@ const MIGRATED_FILES = [
   // #923's remaining skills/** sweep:
   '_shared/github-pr-scan-acceptance.md',
   '_shared/github-pr-scan.md',
+  '_shared/github-pr-scan-unsettled-resume.md', // #4804: item 10's split; resolves its per-run path via session-tmp-resolve.js
   '_shared/harness-health-analysis.md',
   '_shared/label-bootstrap.md',
   'capture/SKILL.md',

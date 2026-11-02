@@ -414,6 +414,6 @@ Read `next-actions.md` in this skill's directory for the signal-resolution table
 | Skipping journey discovery for user-facing features | `/review` tests against journeys — without them visual QA has no anchor |
 | Writing journey "should feel" without using the app | Codebase-only skeletons have a weaker "should feel" — mark them as skeletons |
 | Auto-copying local MCP server configs (`~/.claude.json`) into the committed `.mcp.json` | They can carry credentials — committing leaks secrets. Step 14's MCP-parity check is report-only; the user adds any that matter, manually. |
-| Hand-editing `scripts/claude-cloud-setup.sh` | Regenerated on every `/init` run from `.claude/settings.json` — edits are silently overwritten. Customize via `enabledPlugins`/`extraKnownMarketplaces`, then re-run. |
+| Hand-editing `scripts/claude-cloud-setup.sh` | Regenerated on every `/init` run from `.claude/settings.json` (and `declare-claude-tweaks`) — edits are silently overwritten. Customize via `enabledPlugins`/`extraKnownMarketplaces`, then re-run. |
 | Assuming `/init` can set the cloud environment's Setup-script field | No API or CLI sets it remotely (`RemoteTrigger`'s schema covers only `/v1/code/triggers`) — always a manual one-time paste per environment in the claude.ai/code settings UI |
 | Assuming Step 9 can authenticate `gh` non-interactively | `gh auth login --web` is device-flow — it always requires the user's own browser; no headless path exists |

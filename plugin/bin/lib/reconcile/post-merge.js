@@ -102,8 +102,9 @@ const TRANSIENT_PR_FAILURE = 'network-failure';
 // `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
 // failure, so a new skip surfaces loudly rather than reading as a clean close.
 const DELIBERATE_PARENT_SKIPS = new Set(DELIBERATE_SKIP_REASONS);
-// The single-run path's routing (postMergeOne's `verdict` and `next`, which wrap-up/merge-mode.md reads):
-// classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
+// The routing of a `postMerge` or `postMergeOne` entry (postMergeOne's `verdict` and `next`, which
+// wrap-up/merge-mode.md reads; the verdict hooks.js's background summary and format-summary.js read off a loop
+// entry): classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
 // DELIBERATE_PARENT_SKIPS: a Step 4.0 action word not in CLEAN_CLOSING_LINKS — a failure word, the `exit {n}` /
 // `an unreadable envelope` stand-ins, a word closing-links.js adds later — is a `failed` run, and a skip reason
 // not named below gets `next: none`.
@@ -433,9 +434,9 @@ function archivedRetryHint(runDir) {
   return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
 }
 
-// Pure: a single-run entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran` entry whose Step
-// 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or
-// `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
+// Pure: a `postMerge` or `postMergeOne` entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran`
+// entry whose Step 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`,
+// `in-flight`, or `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
 // so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
 // `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
@@ -454,6 +455,26 @@ function classifyEntry(entry, { archived = false } = {}) {
   if (RERUN_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun' };
   if (RERUN_WHERE_GH_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun-where-gh' };
   return { verdict: 'failed', next: 'none' };
+}
+
+// The one rule for "this `ran` entry failed", shared by the background summary, the CLI's failed row and
+// failedRecordNumbers so a count and its record list cannot disagree. A `skipped` entry is never a failed run
+// here: classifyEntry reads every `skipped` entry as failed, `transient-failure` included.
+function isFailedRun(entry) {
+  return entry.action === 'ran' && classifyEntry(entry).verdict === 'failed';
+}
+
+// Pure: postMerge entries -> the sorted, unique issue numbers across the four `records` lists (Step 4.0's
+// `failed`, `closeFailed`, `pendingClose`, `unchecked`) of the failed runs (isFailedRun). A missing `records`,
+// or a list that is not an array, contributes nothing.
+function failedRecordNumbers(entries) {
+  const numbersOf = (e) => {
+    const records = e.records || {};
+    return [records.failed, records.closeFailed, records.pendingClose, records.unchecked].flatMap((list) => (Array.isArray(list) ? list : []));
+  };
+  return [...new Set((entries || [])
+    .filter(isFailedRun)
+    .flatMap(numbersOf))].sort((a, b) => a - b);
 }
 
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
@@ -483,7 +504,8 @@ async function postMergeOne({
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
 // of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed`, and Step 4.0b's
-// `parentFailures`, to a `ran` entry (postMergeOne only).
+// `parentFailures`, to a `ran` entry (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
+// carries the record lists and `logFailed` too (#4897); a clean one keeps its short shape.
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
@@ -501,8 +523,12 @@ function processRun({
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
   // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
-  // append), for a caller that surfaces them; omitted with no envelope.
-  const recordsOf = (env) => (includeRecords && env ? {
+  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`: any parsed
+  // envelope, a JSON object with no `action` included, which gets empty lists) or when the envelope's word is
+  // not clean, so the background summary can name the records a failed close left (#4897); omitted with no
+  // envelope (a non-zero exit or unparseable output).
+  const wantsRecords = (env) => includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action));
+  const recordsOf = (env) => (env && wantsRecords(env) ? {
     records: {
       failed: issuesOf(env.failed),
       closeFailed: issuesOf(env.closeFailed),
@@ -607,7 +633,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
   composeSkipText, composeSummaryText, boundDetail,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
