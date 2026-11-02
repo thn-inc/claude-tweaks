@@ -665,6 +665,12 @@ test('closeRedispatchRemedy prints no command for a head that is unsafe to paste
   assert.match(s, /close PR #70 \(gh pr close 70\)/);
   assert.match(s, /then run \/claude-tweaks:dispatch #7$/);
 });
+test('#4815: closeRedispatchRemedy takes the by-hand wording for a worktree- head that is unsafe to compose', () => {
+  const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-a$(x)', mainRoot: '/repo' });
+  assert.ok(s.includes('remove any worktree holding its branch and delete the local and remote branch by hand'), s);
+  assert.ok(!s.includes('git branch -D'), s);
+  assert.ok(!s.includes('"null"'), s);
+});
 test('closeRedispatchRemedy prints no branch-delete command for a bare head, only for a worktree- head', () => {
   for (const head of ['develop', 'release/2.0', 'fix/thing']) {
     const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: head, mainRoot: '/repo' });
