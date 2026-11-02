@@ -53,12 +53,15 @@ function cliJson(policy, ...keys) {
 // In-process twin of cliJson. The JSON round-trip mirrors the CLI's
 // JSON.stringify(result): it drops an `undefined` value, which the release-hook
 // test's `{ source: 'policy' }` expectation relies on. Use it for single-name
-// keys other than integration-model, merge-verification and model-profiles,
-// which the CLI derives or special-cases after resolvePolicyKeys, so tests of
-// those keys must use cliJson().
+// keys other than CLI_SPECIAL_KEYS, which the CLI derives or special-cases after
+// resolvePolicyKeys, so tests of those keys must use cliJson(). The parity test
+// below runs every other schema key through both paths, so a key the CLI starts
+// special-casing turns it red instead of drifting silently.
+const CLI_SPECIAL_KEYS = ['integration-model', 'merge-verification', 'model-profiles'];
 function json(policy, ...keys) {
+  if (keys.length === 0) throw new Error('json() needs at least one key, as the CLI does: use cliJson() to exercise the usage error');
   for (const key of keys) {
-    if (['integration-model', 'merge-verification', 'model-profiles'].includes(key) || key.includes(',')) {
+    if (CLI_SPECIAL_KEYS.includes(key) || key.includes(',')) {
       throw new Error(`json() cannot resolve ${key}: use cliJson() — the CLI derives or special-cases it after resolvePolicyKeys`);
     }
   }
@@ -79,10 +82,24 @@ test('the in-process json() helper matches the CLI JSON output', () => {
   }
 });
 
-test('json() refuses keys the CLI derives or special-cases, and comma-joined keys', () => {
-  for (const k of ['integration-model', 'merge-verification', 'model-profiles', 'control-mode,autonomy']) {
+test('the in-process json() helper matches the CLI for every other schema key', () => {
+  const res = spawnSync(process.execPath, [CLI, '--all'], { cwd: makeRepo(undefined), encoding: 'utf8' });
+  assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
+  const viaCli = JSON.parse(res.stdout);
+  const keys = POLICY_KEYS.map((row) => row.key).filter((key) => !CLI_SPECIAL_KEYS.includes(key));
+  const inProcess = json(undefined, ...keys);
+  for (const key of keys) {
+    // --all decorates each entry with its schema metadata; json() returns the bare entry.
+    const { summary, category, tier, type, default: dflt, ...entry } = viaCli[key];
+    assert.deepStrictEqual(inProcess[key], entry, key);
+  }
+});
+
+test('json() refuses keys the CLI derives or special-cases, comma-joined keys, and an empty key list', () => {
+  for (const k of [...CLI_SPECIAL_KEYS, 'control-mode,autonomy']) {
     assert.throws(() => json(undefined, k), /use cliJson\(\)/);
   }
+  assert.throws(() => json(undefined), /use cliJson\(\)/);
 });
 
 test('AC1.1: with no keys set, control-mode, acceptance-target and deploy-reach print their defaults', () => {
