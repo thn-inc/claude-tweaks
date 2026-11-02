@@ -938,7 +938,7 @@ function brokenSpanLines(text) {
   for (const line of text.split('\n')) {
     if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
     if (fenced) continue;
-    if ((line.match(/`/g) || []).length % 2 === 1 || /\bgh$/.test(line)) bad.push(line);
+    if ((line.match(/`/g) || []).length % 2 === 1 || /\bgh\s*$/.test(line)) bad.push(line);
   }
   return bad;
 }
@@ -980,8 +980,8 @@ test('#4809: Step 4.0b reads only bare same-repo Fixes lines after a no-PR local
 });
 
 test('#4809: brokenSpanLines reports a wrapped span and a line-ending gh, and ignores fenced blocks', () => {
-  const bad = ['ok `a` line', 'opens `a span', 'closes it` here', 'then run gh', '```', 'odd ` inside a fence', '```', 'after `fence', 'clean'].join('\n');
-  assert.deepEqual(brokenSpanLines(bad), ['opens `a span', 'closes it` here', 'then run gh', 'after `fence']);
+  const bad = ['ok `a` line', 'opens `a span', 'closes it` here', 'then run gh', 'then run gh ', '```', 'odd ` inside a fence', '```', 'after `fence', 'clean'].join('\n');
+  assert.deepEqual(brokenSpanLines(bad), ['opens `a span', 'closes it` here', 'then run gh', 'then run gh ', 'after `fence']);
   assert.deepEqual(brokenSpanLines('all `fine` here\n```\n`\n```'), []);
 });
 

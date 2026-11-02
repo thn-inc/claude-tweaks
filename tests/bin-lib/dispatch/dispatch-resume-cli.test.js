@@ -1407,7 +1407,7 @@ test('the real listRunDirsWithState dep: a missing pipelines dir lists nothing, 
     assert.deepStrictEqual(realDeps.listRunDirsWithState(dir), []);
     fs.mkdirSync(path.join(dir, '.claude-tweaks'));
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'pipelines'), 'not a directory');
-    assert.throws(() => realDeps.listRunDirsWithState(dir));
+    assert.throws(() => realDeps.listRunDirsWithState(dir), { code: 'ENOTDIR' });
     // no cwd: starts from process.cwd() like iterRunDirsWithState, never a TypeError from path.join(undefined)
     assert.ok(Array.isArray(realDeps.listRunDirsWithState()));
   } finally {
@@ -1419,10 +1419,12 @@ test('verdict mode: the real run-dir listing on an unlistable pipelines dir -> e
   const dir = unlistableRoot();
   try {
     const env = makeEnv();
-    env.deps.listRunDirsWithState = (_cwd, opts) => realDeps.listRunDirsWithState(dir, opts);
+    const roots = [];
+    env.deps.listRunDirsWithState = (cwd, opts) => { roots.push(cwd); return realDeps.listRunDirsWithState(dir, opts); };
     const r = exec(env);
     assert.equal(r.code, 4);
     assert.match(r.err, /run dir listing/);
+    assert.deepStrictEqual(roots, [MAIN], 'the call site anchors the listing at the main checkout');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
@@ -1438,10 +1440,12 @@ test('--bound-run: the real sibling-session check on an unlistable pipelines dir
       `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, '',
     ].join('\n');
     env.cfg.sibling = (ref, opts) => findConflictingSession(ref, { ...opts, run: () => porcelain });
-    env.deps.listRunDirsWithState = (_cwd, opts) => realDeps.listRunDirsWithState(dir, opts);
+    const roots = [];
+    env.deps.listRunDirsWithState = (cwd, opts) => { roots.push(cwd); return realDeps.listRunDirsWithState(dir, opts); };
     const r = exec(env, BOUND);
     assert.equal(r.code, 4);
     assert.match(r.err, /sibling-session check/);
+    assert.ok(roots.length > 0 && roots.every((root) => root === MAIN), 'the sibling check anchors the listing at the main checkout');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

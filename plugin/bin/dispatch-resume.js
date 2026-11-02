@@ -31,12 +31,14 @@
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
 //      `git status`, branch reads, run-dir listing) or the pipelines dir is unlistable; no failed
-//      read is taken as clean, with two
+//      read is taken as clean, with three
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
-//      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
+//      null when `git worktree list` cannot be read, so `siblingLive` is then false), the
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
 //      unreadable policy.yml resolves the `body-text` default and skips the native-blocker gate,
-//      exactly as resolve-policy.js (and so Step 2's queue) reads it
+//      exactly as resolve-policy.js (and so Step 2's queue) reads it — and a listed run dir whose
+//      run-state.json is unreadable or corrupt (the shared listing reads it as `state: null`),
+//      which boundRunConflict skips instead of refusing
 // Order: list the PRs, then selectResumePr — a refusal there prints and exits 3 before any run-dir,
 // sibling, claim or worktree read (the prior run id comes from the chosen PR's marker). The only git
 // call against the stalled worktree is the --no-optional-locks `status`.
