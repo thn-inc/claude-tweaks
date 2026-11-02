@@ -39,9 +39,11 @@ Cwd `/r`, `M`/`N` unset unless assigned, `d` and `a` stub commands. All of these
 | Command | Shells write | Base | With the helper |
 |---|---|---|---|
 | `echo $M\ >x`, `echo ${M}\ >x`, ``echo `d`\ >x``, `echo $M\ bar>x`, `M=a; echo $M\ >x`, `echo $1\ >x`, `echo $M\<TAB>>x`, `echo $M\ $N\ >x`, `echo ${M}a\ b>x`, `echo ${M:-${N}}\ >x`, `echo a$M\ >x`, `echo "q"$M\ >x`, `echo $M\ "q">x`, `echo $M\ 'q'>x`, `echo $M\ >>x`, `echo $M\ >\|x`, `echo $M\ &>x`, `A=$M\ >x`, `cd $M\ >x`, `echo $(d $M\ >x)` | x | `[]` | x |
-| `echo $\{M\ >x`, ``echo \`$M\ >x``, `echo \($M\ >x`, `echo $M\ \$N>x`, `echo $M\ "$N">x`, `echo $M\ \(a>x` (an escaped or quoted `{`, backtick, `(` or `$` is text) | x | `[]` | x |
-| `echo ${M\ >x}`, `echo ${M:-${N}\ >x}`, `echo a(b)\ >x`, `echo $M\ (a)>x`, ``echo `d\ >x``, `echo $M\ "a>x`, `echo "a\ >x`, `echo $M\>x`, `echo $(($M\ >1))`, `[[ $M\ >x ]]`, `(( $M\ >1 ))`, `echo $M\ >&2`, `echo $M\ >/dev/null` | none | `[]` | `[]` |
+| `echo $\{M\ >x`, ``echo \`$M\ >x``, `echo \($M\ >x`, `echo $M\ \$N>x`, `echo $M\ "$N">x`, `echo $M\ \(a>x`, `echo $\[$M\ >x` (an escaped or quoted `{`, `[`, backtick, `(` or `$` is text) | x | `[]` | x |
+| `echo ${M\ >x}`, `echo ${M:-${N}\ >x}`, `echo a(b)\ >x`, `echo $M\ (a)>x`, ``echo `d\ >x``, `echo $M\ "a>x`, `echo "a\ >x`, `echo $M\>x`, `echo $(($M\ >1))`, `echo $[1\ >x]`, `echo $[$M\ >x]`, `[[ $M\ >x ]]`, `(( $M\ >1 ))`, `echo $M\ >&2`, `echo $M\ >/dev/null` | none | `[]` | `[]` |
 | Known misses, fail-open, unchanged: `echo $M>x`, `echo $M\ $N>x`, `echo ${M}\ ${N}>x`, ``echo $M\ `d`>x``, `echo $M\a>x` (#4328 owns a bare `$` part); `echo "$(a $M\ >x)"` (nested, as `"$(a>x)"` is at base); `echo $(d)\ >x`, `echo $((1))\ >x`, ``echo `d e`\ >x``, ``echo `$M\ >x`` (see Review Focus) | x | `[]` | `[]` |
+| Known misses, a `$VAR` target behind a second `$` or a backtick, which `substituteVars` skips: `WT=y; echo $M\ >$WT/x`, ``WT=y; echo `d`\ >$WT/x`` (`WT=y; echo foo>$WT/x` is the resolved one-`$` form) | y/x | `[]` | `[]` |
+| Named false denies, matching what base already does for the plain word (`echo ${M:-a foo>x}` gives `/r/x}`, `echo $(( a b>1 ))` gives `/r/1`): `echo ${M:-a $N\ >x}`, `echo $(( $M\ >1 ))` | none | `[]` | `/r/x}`, `/r/1` |
 
 Classes 1 and 2, same three shells: `mkdir a\ b` makes `/r/a b`; `mkdir -p {root}/a\ b/c` makes `{root}/a b/c`; `cp a my\ file.js` writes `/r/my file.js`; `cd {root}/a\ b && touch f` writes `{root}/a b/f`; `echo x >{root}/ma\<newline>in/x` writes `{root}/main/x`; `mkdir -p \<newline>{root}/abs/dir` makes `{root}/abs/dir`. AC2: `echo "a\" b>c "` none; `echo foo>x` x; `echo foo\\>x` x; `echo foo\>x` none; `echo a\"b>c` c; `echo "hi">x` x; `(ls)>out` out; `cd \'wt\' && touch f` writes `/r/'wt'/f`; `echo x > \'/abs/f\'` writes `/r/'/abs/f'`.
 
@@ -52,6 +54,7 @@ Classes 1 and 2, same three shells: `mkdir a\ b` makes `/r/a b`; `mkdir -p {root
 - A `$NAME` after the last escaped blank (`echo $M\ $N>x`): stays `[]` as `$N>x` does (Q4, #4328). Pinned in Task 2.
 - A `>` inside `"$( … )"` (`echo "$(a $M\ >x)"`): `isNested`, unchanged, must still reject it. Pinned in Task 2.
 - A closed `$( )`, an arithmetic `$(( ))` or a backtick holding a blank before the escaped blank (`echo $(d)\ >x`, ``echo `d e`\ >x``): bash writes x and the scanner stays `[]`. Neither the record nor #4328 names them, so they are pinned as known misses in Task 2 and handed back in Task 2's report for a follow-up record.
+- A `$[ ]` arithmetic word (`echo $[1\ >x]`, `echo $[$M\ >x]`): the `$` rule kept it `[]` at base and the helper relaxes that rule, so the helper rejects a bare `$[` before the blank. Pinned in Task 2. An expansion the single token cannot see opening (`echo ${M:-a $N\ >x}`, `echo $(( $M\ >1 ))`) reads as a false deny, the same fail-closed read base gives the plain word, and is pinned as named.
 
 ---
 
@@ -73,15 +76,19 @@ Classes 1 and 2, same three shells: `mkdir a\ b` makes `/r/a b`; `mkdir -p {root
 // #4294 classes 1 and 2 are bash word values since #4281, so these are characterization pins of
 // #4281's tokenize, shown red against a scratch mutant of its unescaping lines. bash 3.2, bash 5 and
 // zsh write each target.
-test('AC1.1 #4294: an escaped blank or a line continuation in a path word resolves bash\'s target (characterization of #4281)', () => {
-  const at = (action, f) => [{ action, file: path.resolve(f) }];
-  assert.deepStrictEqual(mkdirTargets('mkdir a\\ b', '/r'), at('mkdir', '/r/a b'));
-  assert.deepStrictEqual(mkdirTargets('mkdir -p /r/a\\ b/c', '/r'), at('mkdir', '/r/a b/c'));
-  assert.deepStrictEqual(fileWriteTargets('cp a my\\ file.js', '/r'), at('copy', '/r/my file.js'));
-  assert.deepStrictEqual(gitTargets('cd /r/a\\ b && git commit -m x', '/r'), [{ action: 'commit', dir: path.resolve('/r/a b') }]);
-  assert.deepStrictEqual(fileWriteTargets('echo x >/ma\\\nin/x', '/r'), at('write', '/main/x'));
-  assert.deepStrictEqual(mkdirTargets('mkdir -p \\\n/abs/dir', '/r'), at('mkdir', '/abs/dir'));
-});
+const at4294 = (action, f) => [{ action, file: path.resolve(f) }];
+for (const [command, actual, expected] of [
+  ['mkdir a\\ b', mkdirTargets, at4294('mkdir', '/r/a b')],
+  ['mkdir -p /r/a\\ b/c', mkdirTargets, at4294('mkdir', '/r/a b/c')],
+  ['cp a my\\ file.js', fileWriteTargets, at4294('copy', '/r/my file.js')],
+  ['cd /r/a\\ b && git commit -m x', gitTargets, [{ action: 'commit', dir: path.resolve('/r/a b') }]],
+  ['echo x >/ma\\\nin/x', fileWriteTargets, at4294('write', '/main/x')],
+  ['mkdir -p \\\n/abs/dir', mkdirTargets, at4294('mkdir', '/abs/dir')],
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves bash's target (characterization of #4281)`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
 
 // #4294 AC2, #4212's carried-over expectations as amended at plan review (Q1): an escaped quote is a
 // literal path character, so bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c;
@@ -131,13 +138,13 @@ test('AC1.1 #4294: tokenize unescapes a blank and deletes a line continuation, w
 - [ ] **Step 3: Run them; they pass at base, as characterization**
 
 Run: `node --test --test-name-pattern="#4294" tests/hooks-gate-coverage.test.js tests/hooks-git-command.test.js`
-Expected: PASS, 4 tests.
+Expected: PASS, 9 tests.
 
 - [ ] **Step 4: Prove the class 1/2 pins discriminate (Q3; scratch mutant, never committed)**
 
-Using a scratch checkout the controller names (`git worktree add --detach {scratch} dc02e270013c9ce0bb5d7ac4bdb78272822dcaa1`, its own Bash call), copy the two test files over its copies, then mutate that copy's `plugin/bin/lib/hooks/git-command.js` `tokenize`, one mutant at a time, running Step 3's command there and restoring after each:
-1. Delete `if (c === '\\' && next === '\n') { j += 1; continue; }`. Expected: FAIL on the `AC1.1` tests' continuation rows.
-2. Change `(isBare || '$`"\\'.includes(next))` to `('$`"\\'.includes(next))`. Expected: FAIL on the `AC1.1` tests' escaped-blank rows.
+In the scratch checkout `{scratch}` the controller created and names in your brief (detached at `dc02e270013c9ce0bb5d7ac4bdb78272822dcaa1`; it removes it after Task 2), copy the two test files over its copies, then mutate that copy's `plugin/bin/lib/hooks/git-command.js` `tokenize`, one mutant at a time, running Step 3's command there and restoring after each:
+1. Delete `if (c === '\\' && next === '\n') { j += 1; continue; }`. Expected: FAIL on both continuation rows (`echo x >/ma\<newline>in/x`, `mkdir -p \<newline>/abs/dir`) and the mask test.
+2. Change `(isBare || '$`"\\'.includes(next))` to `('$`"\\'.includes(next))`. Expected: FAIL on all four escaped-blank rows and the mask test.
 
 Each run's raw output goes to `$PIPELINE_RUN_DIR/evidence/4294-tokenize-mutants.txt` (absolute path, `mkdir -p` first, plain Bash redirect). Quote the two summaries in your report: Q3 requires them in the build report. Confirm `git status --porcelain` in this worktree lists no change from the mutants.
 
@@ -162,6 +169,7 @@ git commit -m "Pin the escaped-blank, continuation and carry-over redirect cases
 
 **Interfaces:**
 - Consumes: `gluedRedirectOpEnd(raw, kinds, nest)`: `raw` the pre-substitution token, `kinds` its `spanKinds` string (`b`/`e`/`s`/`d`/`x`), `k` the index of the first bare `>`.
+- Consumes: `{scratch}`, the same scratch checkout, named in your brief.
 - Produces: `escapedBlankPrefixOk(raw: string, kinds: string, k: number): boolean`, module-private, not exported.
 
 - [ ] **Step 1: Write the failing tests in `tests/hooks-gate-coverage.test.js`**
@@ -169,25 +177,25 @@ git commit -m "Pin the escaped-blank, continuation and carry-over redirect cases
 ```js
 // #4294 class 3: an escaped blank ends a `$NAME`, `${ … }` or backtick word part, so a glued `>` after
 // it is a redirect. bash 3.2, bash 5 and zsh write x for each.
-test('AC1.1 #4294: a glued redirect after closed expansions and an escaped blank resolves its target', () => {
-  for (const command of [
-    'echo $M\\ >x', 'echo ${M}\\ >x', 'echo `d`\\ >x', 'echo $M\\ bar>x', 'M=a; echo $M\\ >x', 'echo $1\\ >x',
-    'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
-    'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
-    'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
-    // An escaped or quoted `{`, backtick, `(` or `$` is text, so it opens nothing.
-    'echo $\\{M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
-  ]) {
-    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }], JSON.stringify(command));
-  }
-});
+for (const command of [
+  'echo $M\\ >x', 'echo ${M}\\ >x', 'echo `d`\\ >x', 'echo $M\\ bar>x', 'M=a; echo $M\\ >x', 'echo $1\\ >x',
+  'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
+  'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
+  'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
+  // An escaped or quoted `{`, `[`, backtick, `(` or `$` is text, so it opens nothing.
+  'echo $\\{M\\ >x', 'echo $\\[$M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves its glued redirect after closed expansions and an escaped blank`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  });
+}
 
 // bash 3.2, bash 5 and zsh write nothing for each: a bad substitution, a syntax error, an unterminated
 // backtick or quote, an escaped `>`, a comparison, an fd dup or a sink.
 test('AC1.1 #4294: an escaped blank inside an open expansion or before a non-operator `>` resolves no target', () => {
   for (const command of [
     'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
-    'echo $M\\>x', 'echo $(($M\\ >1))', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
+    'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
   }
@@ -196,14 +204,24 @@ test('AC1.1 #4294: an escaped blank inside an open expansion or before a non-ope
 // Known misses: bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x`
 // is the documented gap (plan review Q4); a bare `$`, backtick or non-blank escape after the last escaped
 // blank is the same shape, owned by #4328. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic
-// `$(( ))` or a backtick holding a blank before the escaped blank is not read as closed.
+// `$(( ))` or a backtick holding a blank before the escaped blank is not read as closed. A `$VAR` target
+// behind a second `$` or a backtick is one substituteVars skips: those two write y/x.
 test('#4294: known misses stay without a target', () => {
   for (const command of [
     'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
     'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
+    'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
   ]) {
     assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
   }
+});
+
+// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment, because one
+// token cannot see the expansion an earlier token opened. Base reads the plain word the same way
+// (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
+test('#4294: an expansion opened in an earlier token reads as a false deny, as the plain word does', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
 });
 ```
 
@@ -223,15 +241,15 @@ Use the same `bash(...)` payload helper the `AC3.1 #4210` test uses.
 - [ ] **Step 2: Run them to verify the class-3 pins fail**
 
 Run: `node --test --test-name-pattern="#4294" tests/hooks-gate-coverage.test.js tests/hooks-bash-prefilter.test.js`
-Expected: FAIL. The "resolves its target" test and the new prefilter test fail; the other two new gate tests and Task 1's pass at base.
+Expected: FAIL. Every row of the "resolves its glued redirect" loop, the false-deny test and the new prefilter test fail; the other new gate tests and Task 1's pass at base.
 
 - [ ] **Step 3: Implement `escapedBlankPrefixOk(raw, kinds, k)` above `gluedRedirectOpEnd` and call it**
 
-In `gluedRedirectOpEnd`, the rejection becomes: return null when `!plain` and neither the `BALANCED_GROUP_RE` exception nor `escapedBlankPrefixOk(raw, kinds, k)` holds. Extend that function's comment block with one sentence naming this second exception and `#4294`. The helper, whose guards the tests above were proved against in a scratch copy:
+In `gluedRedirectOpEnd`, the rejection becomes: return null when `!plain` and neither the `BALANCED_GROUP_RE` exception nor `escapedBlankPrefixOk(raw, kinds, k)` holds. In that function's comment block, change "The one exception is a prefix" to "One exception is a prefix" and add one sentence naming this second exception and `#4294`. The helper, whose guards the tests above were proved against in a scratch copy:
 
 ```js
 // #4294: a prefix whose LAST escaped blank (`\ ` or an escaped tab, kind `e`) follows only closed
-// expansions. Before that blank: no bare `(`, no stray (`x`) character, every bare `${` closed by a
+// expansions. Before that blank: no bare `(` or `$[`, no stray (`x`) character, every bare `${` closed by a
 // bare `}` (counted, so `${M:-${N}}` closes) and every bare backtick paired. After it: the plain-word
 // rule above (no stray, no bare `$`, backtick or `(`), so `$M\ $N>x` stays out as `$N>x` does (#4328).
 function escapedBlankPrefixOk(raw, kinds, k) {
@@ -249,6 +267,7 @@ function escapedBlankPrefixOk(raw, kinds, k) {
     const c = raw[j];
     if (c === '(') return false;
     if (c === '`') tick = !tick;
+    else if (c === '$' && raw[j + 1] === '[' && kinds[j + 1] === 'b') return false;
     else if (c === '$' && raw[j + 1] === '{' && kinds[j + 1] === 'b') { braces += 1; j += 1; }
     else if (c === '}' && braces > 0) braces -= 1;
   }
@@ -276,24 +295,26 @@ In the scratch checkout, copy this branch's `git-command.js` and the three test 
 8. Replace the before-part `if (kinds[j] !== 'b') continue;` with nothing. ``echo \`$M\ >x``.
 9. Drop the before-part `(` return. `echo a(b)\ >x`.
 10. Make the backtick toggle a no-op. ``echo `d\ >x``.
+10a. Drop the `$[` return. `echo $[1\ >x]`.
+10b. Drop `kinds[j + 1] === 'b'` from the `$[` branch. `echo $\[$M\ >x`.
 11. Make the `${` branch a no-op. `echo ${M\ >x}`.
 12. Drop `kinds[j + 1] === 'b'` from the `${` branch. `echo $\{M\ >x`.
 13. Make the `}` branch a no-op. `echo ${M}\ >x`.
 14. Replace `braces === 0 && !tick` with `true`. `echo ${M\ >x}`, ``echo `d\ >x``.
 15. Accept any `e` character as the blank (drop the space-or-tab test). `echo $M\a>x`.
-16. Revert the call in `gluedRedirectOpEnd`. Every class-3 row: AC1's "red when the change is reverted".
+16. Revert the call in `gluedRedirectOpEnd`. Every row of the "resolves its glued redirect" loop: AC1's "red when the change is reverted", each row its own test, so the count is the row count.
 
 Raw output goes to `$PIPELINE_RUN_DIR/evidence/4294-guard-mutants.txt`. Report one line per mutant: which rows went red.
 
 - [ ] **Step 6: Base comparison (scratch)**
 
-A scratchpad node script `require`s both copies' `git-command.js` and diffs `fileWriteTargets(cmd, '/r')` over every command in this task's and Task 1's lists plus every string command in `tests/hooks-gate-coverage.test.js`'s redirect tests (the `#4015`, `#4210` and `#4303` tests). Also run the same diff with `pathImpl` set to `path.win32` on both sides only if the helper's change could reach path resolution; it does not, since the helper touches no path, so say so instead of running it. Expected: the only differences are the `/r/x` targets this task's first test lists, moving from `[]` to `x`, each with a shell verdict above. Raw output goes to `$PIPELINE_RUN_DIR/evidence/4294-base-comparison.txt`.
+Step 5 left `{scratch}` holding this branch's copy, so first restore base there (`git -C "{scratch}" checkout dc02e270013c9ce0bb5d7ac4bdb78272822dcaa1 -- plugin/bin/lib/hooks/git-command.js`, its own Bash call). A scratchpad node script then `require`s both copies' `git-command.js` and diffs `fileWriteTargets(cmd, '/r')` over every command in this task's and Task 1's lists plus every string command in `tests/hooks-gate-coverage.test.js`'s redirect tests (the `#4015`, `#4210` and `#4303` tests). Also run the same diff with `pathImpl` set to `path.win32` on both sides only if the helper's change could reach path resolution; it does not, since the helper touches no path, so say so instead of running it. Expected: the only differences are the `/r/x` targets this task's first loop lists, moving from `[]` to `x`, and the two named false denies, each with a shell verdict above. Raw output goes to `$PIPELINE_RUN_DIR/evidence/4294-base-comparison.txt`.
 
 - [ ] **Step 7: Update the prose**
 
-`plugin/skills/_shared/policy-schema-coverage.md` line 28, after "…`diff <(a) <(b)>out`)." add: "The other exception is an escaped blank (`\ ` or an escaped tab) with everything before it closed, no bare `(` and every `${ … }` and backtick pair closed, and the rest of the word held to that same rule, so `echo $M\ >x`, `echo ${M}\ bar>x` and ``echo `d`\ >x`` resolve `x` while `echo ${M\ >x}` and `echo $M\ $N>x` do not (#4294); `echo $M>x` resolves no target either, a tracked gap (#4328). A target is read as its bash value, so an escaped blank (`> my\ file`) and a backslash-newline (`>/ma\`+newline+`in/x`) inside it join as bash joins them (#4281)."
+`plugin/skills/_shared/policy-schema-coverage.md` line 28: change "the one exception is a word that is exactly one balanced bare group" to "one exception is a word that is exactly one balanced bare group", and after "…`diff <(a) <(b)>out`)." add: "The other exception is an escaped blank (`\ ` or an escaped tab) with everything before it closed, no bare `(` and every `${ … }` and backtick pair closed, and the rest of the word held to that same rule, so `echo $M\ >x`, `echo ${M}\ bar>x` and ``echo `d`\ >x`` resolve `x` while `echo ${M\ >x}` and `echo $M\ $N>x` do not (#4294); `echo $M>x` resolves no target either, a tracked gap (#4328), and neither does a `$VAR` target after such a word (`echo $M\ >$WT/x`). An expansion an earlier word opened is not seen, so `echo ${M:-a $N\ >x}` names the fragment `x}`, a false deny, as `echo ${M:-a foo>x}` does. A target is read as its bash value, so an escaped blank (`> my\ file`) and a backslash-newline (`>/ma\`+newline+`in/x`) inside it join as bash joins them (#4281)."
 
-Journey, step 2's "Should understand", after "(`echo foo\ bar>x`)." add: "So is a `$NAME`, `${ … }` or backtick part closed before an escaped blank (`echo $M\ >x`, #4294); the text after that blank follows the same rule, so `echo $M>x` and `echo $M\ $N>x` stay without a target (#4328)." Step 3's gap list, after "(`$((1))>x`, `((i>0))>x`)," add: "a glued `>` after a bare `$NAME` (`echo $M>x`, #4328), a glued `>` after an escaped blank that follows a `$( )`, a `$(( ))` or a backtick holding a blank (`echo $(d)\ >x`)," Origin, a new bullet before "Related journeys": "- Updated during build of #4294. An escaped blank after closed expansions (`echo $M\ >x`) now resolves its glued redirect; the escaped-blank and line-continuation path words the record named were already bash values since #4281 and are pinned by name."
+Journey, step 2's "Should understand", after "(`echo foo\ bar>x`)." add: "So is a `$NAME`, `${ … }` or backtick part closed before an escaped blank (`echo $M\ >x`, #4294); the text after that blank follows the same rule, so `echo $M>x` and `echo $M\ $N>x` stay without a target (#4328)." In the same paragraph, change "The one exception is a single balanced group" to "One exception is a single balanced group". Step 3's gap list, after "(`$((1))>x`, `((i>0))>x`)," add: "a glued `>` after a bare `$NAME` (`echo $M>x`, #4328), a glued `>` after an escaped blank that follows a `$( )`, a `$(( ))` or a backtick holding a blank (`echo $(d)\ >x`), a `$VAR` target after such a word (`echo $M\ >$WT/x`)," Origin, a new bullet before "Related journeys": "- Updated during build of #4294. An escaped blank after closed expansions (`echo $M\ >x`) now resolves its glued redirect; the escaped-blank and line-continuation path words the record named were already bash values since #4281 and are pinned by name."
 
 Run: `node --test tests/hooks-gate-coverage.test.js`
 Expected: PASS (the prose-list anchors are untouched).
