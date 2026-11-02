@@ -61,7 +61,7 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793574876213
+    "lastAuditedMs": 1793586548326
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -121,7 +121,7 @@
   },
   "skill:compose-context-fencing": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793174065550
+    "lastAuditedMs": 1793586549908
   },
   "skill:run-directory-fact-packs": {
     "lastAuditedSha": null,
