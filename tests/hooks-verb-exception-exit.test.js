@@ -5,7 +5,7 @@
 // still exits 0 through the entry catch (never break a session). Both halves
 // are pinned here against real processes, with a Module._load preload standing
 // in for the fault.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const { execFileSync, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -16,6 +16,7 @@ const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const { main, VERBS } = require(HOOKS);
 
 const SANDBOX = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verb-exc-')));
+after(() => fs.rmSync(SANDBOX, { recursive: true, force: true }));
 
 function git(args, cwd) {
   return execFileSync('git', args, { cwd, encoding: 'utf8' });
@@ -80,9 +81,14 @@ test('AC1.1: a non-Error throw value is printed with String()', () => {
 
 test('AC2.1: a throwing EVENTS module still exits 0', () => {
   const cwd = fs.realpathSync(fs.mkdtempSync(path.join(SANDBOX, 'plain-')));
+  // The marker proves the injected run() actually ran: if the preload regex
+  // stopped matching, the real session-end would exit 0 and this test would
+  // otherwise pass vacuously.
+  const marker = path.join(SANDBOX, 'session-end-fault-fired');
   const preload = preloadFor('session-end-error', '/lib\\/hooks\\/session-end(\\.js)?$/',
-    "{ run() { throw new Error('injected session-end fault'); } }");
+    `{ run() { require('fs').writeFileSync(${JSON.stringify(marker)}, 'fired'); throw new Error('injected session-end fault'); } }`);
   const r = runWithPreload(preload, ['session-end'], { cwd, input: '{}' });
+  assert.ok(fs.existsSync(marker), 'the injected session-end fault fired');
   assert.equal(r.status, 0);
   assert.doesNotMatch(r.stderr, /claude-tweaks: session-end:/);
 });

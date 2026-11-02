@@ -1980,8 +1980,7 @@ async function main(argv) {
       return 1;
     }
   }
-  // #4932: a VERBS handler's unexpected exception exits 1 here; EVENTS still
-  // fall through to the entry's `.catch(() => process.exit(0))`.
+  // #4932: a VERBS exception exits 1 here; EVENTS still fall through to the entry catch.
   if (verb) {
     try {
       return await verb.run(argv);
