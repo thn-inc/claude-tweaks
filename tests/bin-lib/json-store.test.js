@@ -1,6 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
+const path = require('path');
 const { readJsonFile, writeJsonFile } = require('../../plugin/bin/lib/json-store');
 
 test('readJsonFile: returns the parsed value when the file exists and is valid JSON', () => {
@@ -55,7 +56,7 @@ test('writeJsonFile: two calls use distinct tmp paths within the same process (p
   writeJsonFile('/x/store.json', { a: 2 }, { mkdirSync, writeFile, rename });
   // Same pid within one process -> same tmp name is fine (rename is atomic per call and the two
   // calls are sequential here); this pins that the tmp path is derived from the real path, not hardcoded.
-  assert.ok(writes[0].startsWith('/x/store.json.tmp-'));
+  assert.ok(writes[0].startsWith(path.join('/x', 'store.json.tmp-')));
   assert.equal(writes[0], writes[1]);
 });
 
