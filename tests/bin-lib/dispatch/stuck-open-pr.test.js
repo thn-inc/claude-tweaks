@@ -501,9 +501,10 @@ test('#4951 AC1.1: an origin host the gate does not know is refused before any g
   assert.equal(run(['--records', RECORDS_PATH], world.deps), 2);
   assert.deepStrictEqual(world.gh, [], 'no gh call: neither --hostname git.corp.invalid nor the bare o/r slug');
   assert.deepStrictEqual(world.names(), ['readFile']);
-  assert.equal(world.err.join(''), `stuck-open-prs.js: ${refusal}\n`);
-  assert.match(world.err.join(''), /git\.corp\.invalid/);
-  assert.match(world.err.join(''), /GH_HOST=git\.corp\.invalid/);
+  const stderr = world.err.join('');
+  assert.equal(stderr, `stuck-open-prs.js: ${refusal}\n`);
+  assert.match(stderr, /git\.corp\.invalid/);
+  assert.match(stderr, /GH_HOST=git\.corp\.invalid/);
   assert.deepStrictEqual(world.out.map((line) => JSON.parse(line)), [{ failed: { code: 2, message: refusal } }]);
 });
 
