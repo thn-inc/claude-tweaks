@@ -1575,7 +1575,7 @@ async function reconcileWithAsyncMerge(checks, extra = {}) {
   postMergeMod.postMerge = async (opts) => {
     out.order.push('post-merge');
     out.postMergeOpts = opts;
-    return { entries: [{ runDir: '/x', pr: 1, action: 'ran' }], deferred: extra.postMergeDeferred || [], ...(extra.postMergeFailure ? { failure: extra.postMergeFailure } : {}) };
+    return { entries: [{ runDir: '/x', pr: 1, action: 'ran' }], deferred: extra.postMergeDeferred || [], ...(extra.postMergeFailure ? { failure: extra.postMergeFailure } : {}), ...(extra.postMergeDetail ? { detail: extra.postMergeDetail } : {}) };
   };
   archiveMod.archiveMerged = (opts) => {
     out.order.push('archive');
@@ -1669,6 +1669,17 @@ test('AC1 (#4599): a post-merge failure goes to skipped, leaves postMerge null a
   assert.equal(r.postMerge, null);
   assert.ok(r.skipped.some((s) => s.check === 'post-merge' && s.reason === 'not-github-issues'), JSON.stringify(r.skipped));
   assert.deepEqual(archiveOpts.postMergeDeferred, [], 'a failed check holds no run back from archiving');
+});
+
+test('#4933: a post-merge unknown-host failure carries its refusal detail into skipped and the summary line', async () => {
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — if it is GitHub Enterprise, export GH_HOST=git.corp.invalid';
+  const { r } = await reconcileWithAsyncMerge(['post-merge'], { postMergeFailure: 'unknown-host', postMergeDetail: detail });
+  assert.deepEqual(r.skipped.filter((s) => s.check === 'post-merge'), [{ check: 'post-merge', reason: 'unknown-host', detail }]);
+  const line = formatSummary(r).split('\n').find((l) => l.startsWith('skipped: post-merge'));
+  assert.equal(line, `skipped: post-merge — unknown-host (${detail})`);
+  assert.ok(line.includes('GH_HOST='), line);
+  const { r: bare } = await reconcileWithAsyncMerge(['post-merge'], { postMergeFailure: 'not-github-issues' });
+  assert.deepEqual(bare.skipped.filter((s) => s.check === 'post-merge'), [{ check: 'post-merge', reason: 'not-github-issues' }]);
 });
 
 test('AC1 (#4599): a pass that does not request post-merge or archive leaves postMerge null and does not run it', async () => {
@@ -1939,6 +1950,17 @@ test('formatSummary: a skipped entry carrying names (non-canonical-run-dir, #848
   };
   const summary = formatSummary(result);
   assert.strictEqual(summary, 'skipped: all — non-canonical-run-dir: 20260817T173343-spec-764');
+});
+
+test('formatSummary: a skipped entry\'s detail renders in parentheses after the reason, ahead of any count/names suffix; no detail renders unchanged (#4933)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = 'origin host git.corp.invalid is not a known GitHub host — export GH_HOST=git.corp.invalid';
+  const line = formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'unknown-host', detail }] });
+  assert.strictEqual(line, `skipped: post-merge — unknown-host (${detail})`);
+  assert.ok(line.includes('GH_HOST='), line);
+  assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'reap', reason: 'deferred', count: 2, detail: 'd' }] }), 'skipped: reap — deferred (d) x2');
+  assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'all', reason: 'non-canonical-run-dir', names: ['n1'], detail: 'd' }] }), 'skipped: all — non-canonical-run-dir (d): n1');
+  assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'not-github-issues' }] }), 'skipped: post-merge — not-github-issues');
 });
 
 test('formatSummary: post-merge entries render as "merged run" taken and skipped lines (#4599)', () => {

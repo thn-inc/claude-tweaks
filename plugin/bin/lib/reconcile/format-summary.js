@@ -200,14 +200,17 @@ function formatItemSkippedLine(result) {
 // One line per top-level `result.skipped` entry (index.js's shape:
 // `{check, reason}`, `{check, reason, count}`, or `{check, reason, names}` —
 // #848's non-canonical-run-dir entry, the one shape here that names concrete
-// directories rather than a count) — see the header comment for why these
+// directories rather than a count — any of them with an optional `detail`,
+// e.g. post-merge's `unknown-host` refusal text naming the `GH_HOST=…` opt-in,
+// rendered in parentheses after the reason) — see the header comment for why these
 // render individually rather than folding into the per-item aggregate above.
 function formatCheckSkipLines(result) {
   if (!Array.isArray(result.skipped)) return [];
   return result.skipped.map((e) => {
+    const detailSuffix = e.detail ? ` (${e.detail})` : '';
     const countSuffix = e.count > 1 ? ` x${e.count}` : '';
     const namesSuffix = Array.isArray(e.names) && e.names.length ? `: ${e.names.join(', ')}` : '';
-    return `skipped: ${e.check} — ${e.reason}${countSuffix}${namesSuffix}`;
+    return `skipped: ${e.check} — ${e.reason}${detailSuffix}${countSuffix}${namesSuffix}`;
   });
 }
 

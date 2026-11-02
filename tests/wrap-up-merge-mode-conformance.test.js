@@ -91,7 +91,7 @@ const MERGE_MODE_FACTS = {
   'already-step40-citations': /citing `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
   'already-step40b-citation': /names no target\), citing the same `parent-gate` backstop/,
   'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: no line names a `\/claude-tweaks:wrap-up` re-run/,
-  'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line/,
+  'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line, and `\{detail\}` when present: an unknown origin host's skip carries its refusal text there, naming the `GH_HOST=…` opt-in/,
   'already-exit-nonzero': /Any CLI exit other than 0 leaves no line to route on, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
   'already-unparseable': /an exit 0 whose stdout is empty or will not parse as JSON reads `cleanup: post-merge closes failed — unparseable output`/,
   'already-next-routes': /A failure line's next step follows its `next`/,
