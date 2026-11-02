@@ -6,6 +6,8 @@ Split from `_shared/github-pr-scan.md` (#4820) when that file reached the Read-l
 
 Three cheap counts for the dashboard's Triage Queue section. This scope exists so `/help` never hand-writes its own query for these numbers — see the fix this closes: Stage 4.6 previously computed "pending authorization" without excluding `bot:blocked` records, so a blocked record counted as both pending AND blocked on the same dashboard.
 
+**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub's cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope's rows, never suppressed, and render a floor count as `{N}+`.
+
 **Transport split (see `_shared/github-pr-scan.md`'s Transport section):** items 1 and 2 are issue-backed and run unchanged on either transport. Item 3's commits-endpoint query has no MCP equivalent — on `gh`-absent it degrades individually (omit the "Auto-merged this week" line rather than the whole scope).
 
 1. **Pending authorization** — `ready` ∧ no `auto:*` ∧ no `bot:*` (`bot:in-progress`, `bot:blocked`, or `bot:parked`). Origin-agnostic: matches `/claude-tweaks:backlog refine`'s own `ready`-queue pull (`skills/backlog/refine-mode.md`), which tiers no health-skill origin specially — every `ready` record, with or without a `by:*` label, is in scope.
@@ -14,17 +16,18 @@ Three cheap counts for the dashboard's Triage Queue section. This scope exists s
 
    ```bash
    TRIAGE_QUEUE_READY="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value triage-queue-ready.json)"
-   gh issue list --label ready --state open --json number,labels --limit 200 > "$TRIAGE_QUEUE_READY"
+   gh issue list --label ready --state open --json number,labels --limit {resolved-limit} > "$TRIAGE_QUEUE_READY"
    node -e "
      const { parseRecordFacets } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
      const { isPendingAuthorization } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/pending-authorization.js');
      const issues = require('$TRIAGE_QUEUE_READY');
+     if (issues.length >= Math.min({resolved-limit}, 1000)) console.error('WARNING: [triage] the ready fetch reached its cap — the pending count is a floor');
      const pending = issues.filter((i) => isPendingAuthorization(parseRecordFacets(i.labels))).length;
      console.log(pending);
    "
    ```
 
-2. **Blocked** — `gh issue list --label bot:blocked --state open --json number --limit 200 -q 'length'`
+2. **Blocked** — `gh issue list --label bot:blocked --state open --json number --limit {resolved-limit} -q 'length'`
 
 <!-- when: transport=gh -->
 3. **Auto-merged this week** — `[fast-lane]`-tagged, `[auto-merge]`-tagged, or
