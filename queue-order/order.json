@@ -1,36 +1,21 @@
 {
-  "computedAt": "2026-11-01T20:48:04.249Z",
+  "computedAt": "2026-11-02T07:48:12.136Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 4851,
-        "updatedAt": "2026-11-01T19:08:08Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4849,
-        "updatedAt": "2026-11-01T19:07:59Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4848,
-        "updatedAt": "2026-11-01T19:46:36Z",
+        "updatedAt": "2026-11-02T05:07:21Z",
         "state": "OPEN"
       },
       {
         "number": 4847,
-        "updatedAt": "2026-11-01T20:30:27Z",
+        "updatedAt": "2026-11-02T05:57:08Z",
         "state": "OPEN"
       },
       {
         "number": 4845,
         "updatedAt": "2026-11-01T20:41:57Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4833,
-        "updatedAt": "2026-11-01T20:41:52Z",
         "state": "OPEN"
       },
       {
@@ -50,7 +35,7 @@
       },
       {
         "number": 4824,
-        "updatedAt": "2026-11-01T20:36:13Z",
+        "updatedAt": "2026-11-01T20:51:02Z",
         "state": "OPEN"
       },
       {
@@ -60,22 +45,22 @@
       },
       {
         "number": 4820,
-        "updatedAt": "2026-11-01T18:31:51Z",
+        "updatedAt": "2026-11-02T00:56:09Z",
         "state": "OPEN"
       },
       {
         "number": 4819,
-        "updatedAt": "2026-11-01T18:31:47Z",
+        "updatedAt": "2026-11-02T02:17:44Z",
         "state": "OPEN"
       },
       {
         "number": 4818,
-        "updatedAt": "2026-11-01T18:31:43Z",
+        "updatedAt": "2026-11-01T21:50:37Z",
         "state": "OPEN"
       },
       {
         "number": 4817,
-        "updatedAt": "2026-11-01T18:31:38Z",
+        "updatedAt": "2026-11-02T06:51:19Z",
         "state": "OPEN"
       },
       {
@@ -85,7 +70,7 @@
       },
       {
         "number": 4815,
-        "updatedAt": "2026-11-01T18:31:30Z",
+        "updatedAt": "2026-11-02T07:42:19Z",
         "state": "OPEN"
       },
       {
@@ -95,32 +80,22 @@
       },
       {
         "number": 4813,
-        "updatedAt": "2026-11-01T18:31:21Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4812,
-        "updatedAt": "2026-11-01T20:21:58Z",
+        "updatedAt": "2026-11-02T06:19:12Z",
         "state": "OPEN"
       },
       {
         "number": 4811,
-        "updatedAt": "2026-11-01T18:31:13Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4810,
-        "updatedAt": "2026-11-01T18:31:09Z",
+        "updatedAt": "2026-11-02T07:36:24Z",
         "state": "OPEN"
       },
       {
         "number": 4809,
-        "updatedAt": "2026-11-01T18:31:05Z",
+        "updatedAt": "2026-11-02T03:55:52Z",
         "state": "OPEN"
       },
       {
         "number": 4807,
-        "updatedAt": "2026-11-01T18:31:00Z",
+        "updatedAt": "2026-11-02T07:40:00Z",
         "state": "OPEN"
       },
       {
@@ -145,32 +120,22 @@
       },
       {
         "number": 4802,
-        "updatedAt": "2026-11-01T18:30:39Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4801,
-        "updatedAt": "2026-11-01T18:30:35Z",
+        "updatedAt": "2026-11-02T06:14:29Z",
         "state": "OPEN"
       },
       {
         "number": 4800,
-        "updatedAt": "2026-11-01T18:30:31Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4799,
-        "updatedAt": "2026-11-01T18:30:27Z",
+        "updatedAt": "2026-11-02T07:16:23Z",
         "state": "OPEN"
       },
       {
         "number": 4798,
-        "updatedAt": "2026-11-01T18:30:23Z",
+        "updatedAt": "2026-11-02T07:04:10Z",
         "state": "OPEN"
       },
       {
         "number": 4797,
-        "updatedAt": "2026-11-01T18:30:18Z",
+        "updatedAt": "2026-11-02T07:18:48Z",
         "state": "OPEN"
       },
       {
@@ -185,12 +150,12 @@
       },
       {
         "number": 4793,
-        "updatedAt": "2026-11-01T18:30:06Z",
+        "updatedAt": "2026-11-02T07:37:08Z",
         "state": "OPEN"
       },
       {
         "number": 4792,
-        "updatedAt": "2026-11-01T18:30:01Z",
+        "updatedAt": "2026-11-02T07:36:24Z",
         "state": "OPEN"
       },
       {
@@ -200,27 +165,17 @@
       },
       {
         "number": 4786,
-        "updatedAt": "2026-11-01T18:29:53Z",
+        "updatedAt": "2026-11-02T06:57:09Z",
         "state": "OPEN"
       },
       {
         "number": 4785,
-        "updatedAt": "2026-11-01T18:29:49Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4783,
-        "updatedAt": "2026-11-01T18:29:45Z",
+        "updatedAt": "2026-11-02T06:04:02Z",
         "state": "OPEN"
       },
       {
         "number": 4781,
-        "updatedAt": "2026-11-01T18:29:36Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4756,
-        "updatedAt": "2026-11-01T20:26:28Z",
+        "updatedAt": "2026-11-02T05:57:34Z",
         "state": "OPEN"
       },
       {
@@ -315,12 +270,7 @@
       },
       {
         "number": 4611,
-        "updatedAt": "2026-11-01T20:46:21Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4593,
-        "updatedAt": "2026-11-01T20:45:23Z",
+        "updatedAt": "2026-11-02T06:12:17Z",
         "state": "OPEN"
       },
       {
@@ -365,7 +315,7 @@
       },
       {
         "number": 4565,
-        "updatedAt": "2026-11-01T19:08:10Z",
+        "updatedAt": "2026-11-02T04:34:07Z",
         "state": "OPEN"
       },
       {
@@ -381,11 +331,6 @@
       {
         "number": 4552,
         "updatedAt": "2026-10-30T13:47:25Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4548,
-        "updatedAt": "2026-11-01T19:15:33Z",
         "state": "OPEN"
       },
       {
@@ -1073,7 +1018,7 @@
   "groups": [
     [
       {
-        "body": "## Current State\n\n`findRecentCommitOverlap` in `plugin/bin/lib/issues/recent-commit-check.js` matches words from a new record's title against commit subjects from the last 14 days, and posts a triage comment on two or more shared words. On 2026-11-01 it commented on 12 of 14 new records: 10 matched only template words (`settle`, `digest`, `findings`, plus the area name), and 2 matched `pr-scan` and `item`. Passing files makes it worse, because the threshold drops to one word: #4809 went from 12 hits to 17.\n\nHistory is equally weak. Of 82 records carrying the comment, 2 closed as not planned (#1970, #1776). How many of the 54 completed ones were already fixed is unmeasured, and #1316's own requirement of a low false-positive rate was never measured.\n\nThe comment sets no label, so a true match does not stop a build either. `_shared/health-recent-commit-check.md` still calls it a gap-closer for the #1068 failure, where a record is built after its fix has already merged.\n\n## Deliverables\n\n- The screen asks whether the flawed code still exists. It extracts a record's anchors (the file:line references and quoted symbols in Current State, reusing `near-duplicate.js`'s anchor extraction where it fits), and tests them at `HEAD` and against commits in the lookback window touching those files.\n- A rollup record (a digest cluster) tests each entry's anchor and flags only entries whose anchor is gone.\n- A confirmed match sets `needs:decision` with a proposal naming the commit and the missing anchor, so the record does not build until a human answers. A weak or unprovable result posts nothing, and a failed screen still never blocks filing.\n- A record with no anchors gets no comment: no evidence means no signal.\n- The open-PR screen stops matching on title words alone: it requires a shared Key File or anchor.\n- A replay tool run over the 82 existing records states measured precision in the PR body.\n- `health-recent-commit-check.md` and all five filing call sites describe the new behavior.\n\n## Acceptance Criteria\n\n- A test proves a record whose anchor still exists at `HEAD` gets no comment and no label, even when commit subjects share its title words.\n- A test proves a record whose anchored line was removed by a commit in the window gets `needs:decision` naming that commit.\n- A test proves a rollup flags only the entries whose anchors are gone.\n- Replaying the fixture of #4807's title and Key Files produces no match.\n- A test proves a git failure or an anchorless record yields no comment and no filing failure.\n- The PR body quotes the replay's output over the 82 records.\n\n## Release Note\n\nFlag a new record only when the code it describes has really changed, and hold that record until someone confirms it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/recent-commit-check.js` — modify\n- `plugin/skills/_shared/health-recent-commit-check.md` — modify\n- `plugin/bin/lib/issues/near-duplicate.js` — modify\n- `plugin/skills/capture/SKILL.md` — modify\n- `plugin/skills/code-health/filing.md` — modify\n- `plugin/skills/harness-health/filing.md` — modify\n- `plugin/skills/docs-health/SKILL.md` — modify\n- `plugin/skills/journey-health/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._",
+        "body": "## Current State\n\n`findRecentCommitOverlap` in `plugin/bin/lib/issues/recent-commit-check.js` matches words from a new record's title against commit subjects from the last 14 days, and posts a triage comment on two or more shared words. On 2026-11-01 it commented on 12 of 14 new records: 10 matched only template words (`settle`, `digest`, `findings`, plus the area name), and 2 matched `pr-scan` and `item`. Passing files makes it worse, because the threshold drops to one word: #4809 went from 12 hits to 17.\n\nHistory is equally weak. Of 82 records carrying the comment, 2 closed as not planned (#1970, #1776). How many of the 54 completed ones were already fixed is unmeasured, and #1316's own requirement of a low false-positive rate was never measured.\n\nThe comment sets no label, so a true match does not stop a build either. `_shared/health-recent-commit-check.md` still calls it a gap-closer for the #1068 failure, where a record is built after its fix has already merged.\n\n## Deliverables\n\n- The screen asks whether the flawed code still exists. It extracts a record's anchors (the file:line references and quoted symbols in Current State, reusing `near-duplicate.js`'s anchor extraction where it fits), and tests them at `HEAD` and against commits in the lookback window touching those files.\n- A rollup record (a digest cluster) tests each entry's anchor and flags only entries whose anchor is gone.\n- A confirmed match sets `needs:decision` with a proposal naming the commit and the missing anchor, so the record does not build until a human answers. A weak or unprovable result posts nothing, and a failed screen still never blocks filing.\n- A record with no anchors gets no comment: no evidence means no signal.\n- The open-PR screen stops matching on title words alone: it requires a shared Key File or anchor.\n- A replay tool run over the 82 existing records states measured precision in the PR body.\n- `health-recent-commit-check.md` and all five filing call sites describe the new behavior.\n\n## Acceptance Criteria\n\n- A test proves a record whose anchor still exists at `HEAD` gets no comment and no label, even when commit subjects share its title words.\n- A test proves a record whose anchored line was removed by a commit in the window gets `needs:decision` naming that commit.\n- A test proves a rollup flags only the entries whose anchors are gone.\n- Replaying the fixture of #4807's title and Key Files produces no match.\n- A test proves a git failure or an anchorless record yields no comment and no filing failure.\n- The PR body quotes the replay's output over the 82 records.\n\n## Release Note\n\nFlag a new record only when the code it describes has really changed, and hold that record until someone confirms it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/recent-commit-check.js` — modify\n- `plugin/skills/_shared/health-recent-commit-check.md` — modify\n- `plugin/bin/lib/issues/near-duplicate.js` — modify\n- `plugin/skills/capture/SKILL.md` — modify\n- `plugin/skills/code-health/filing.md` — modify\n- `plugin/skills/harness-health/filing.md` — modify\n- `plugin/skills/docs-health/SKILL.md` — modify\n- `plugin/skills/journey-health/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-11-02). The governing rule is this record's own: a weak or unprovable signal posts nothing. Apply it to any further anchor-classification question rather than stopping on it.\n\n- **Line references: HEAD numbering.** A `file:line` reference is judged at `HEAD`. An in-range line counts as live. Only a missing file, or a line past the end of the file with a removing commit in the window, counts as gone. Line numbers drift too easily to prove more than that.\n- **Bare paths: context only.** A path that still exists casts no vote either way, and the decision comment never claims that no anchors remain.\n- **Stub captures: screened at shaping.** A stub has no anchors at filing, so `/specify` runs the screen when it shapes the record. This keeps coverage for the #3191 duplicate-of-open-PR case, and the journey is rewritten to say so.\n- **`relfile#Symbol` anchors** count as symbol anchors in that file.\n- **Rollups.** A rollup's proposal stays single-line for its single-line readers, naming the flagged entries' count and first entry, with the full list in the comment body.\n- **Dispatch holds on `needs:*`.** `dispatch/queue-pull-script.md`'s eligibility filter excludes a record with any `needs:*` label, so a confirmed match really does stop the build. A test covers this, with a report line that names the label.\n- **Plan shape.** Task 1 exports the anchor classifier that Task 2 uses. Tasks 2 and 3 carry `**Review risk:** high`.\n",
         "createdAt": "2026-11-01T19:08:08Z",
         "labels": [
           {
@@ -1122,167 +1067,11 @@
         "number": 4851,
         "state": "OPEN",
         "title": "Replace commit-title word matching in the recent-commit overlap screen with a code-liveness check",
-        "updatedAt": "2026-11-01T19:08:08Z",
+        "updatedAt": "2026-11-02T05:07:21Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
           "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "**Related:** #4736\n\n## Current State\n\n`plugin/bin/dispatch-resume.js:490` looks for a stalled PR only at `worktree-dispatch-record-{issue}`. A PR on any other head, such as `worktree-record-3942`, reads as `no-pr`, and the refusal says to run `/claude-tweaks:dispatch #N`. Dispatch's queue pull then drops that record because it has an open linked PR (`open-pr-exclusion-report.md`), and says it is not eligible until the PR merges or closes. Neither path can act.\n\nObserved 2026-11-01 after tidy released stale claims on #3942, #3977 and #4347, all `priority:high` with `auto:build`. Draft PRs #4444, #4445 and #4476 are all `CONFLICTING`, last touched 2026-10-26/27. `dispatch-resume.js` accepted #3977 and refused #3942 and #4347 with `no-pr`.\n\nThese records are invisible as well as stuck. `/claude-tweaks:backlog attention` has no row for a granted, unclaimed record whose open PR keeps it out of the queue, and tidy releases a claim without deciding what happens to its PR.\n\nThe same head shape also holds #3813 (PR #4641), #4477 (PR #4605) and #4467 (PR #4586). `resume.md:5` makes the fixed head deliberate, finding the PR by head instead of from the queue's exclusion file, because that file has no entry for a record the label pre-filter already dropped. A direct PR-side read keeps that property.\n\n## Deliverables\n\n- `dispatch-resume.js` finds the record's open PR through the same closing-reference connection the exclusion uses (`closedByPullRequestsReferences`), so any head name resolves, and keeps every existing safety check against the PR it finds. The worktree path and run binding derive from that PR rather than from the branch-name convention.\n- `/claude-tweaks:backlog attention` renders a row for a record that holds `auto:build`, has no `bot:*` claim, has an open linked PR, and has no live run, with the runnable remedy for that record: `/claude-tweaks:dispatch resume #N` when eligible, otherwise the close-and-redispatch steps.\n- Tidy's stale-claim release for a record with an open linked PR also states the PR's disposition, resume or close, in the finding and the approval text.\n- A refusal never names a remedy that the next command refuses: the `no-pr` line only appears when no open linked PR exists.\n- Every existing refusal still applies to a PR found this way, and a PR closing more than one record (such as #3984) refuses rather than resuming one member. `resume.md:5` states the new rule.\n\n## Acceptance Criteria\n\n- A test gives `dispatch-resume.js` a record whose open closing PR is on a non-`worktree-dispatch-record-` head, and it resolves that PR.\n- A test proves a record with no open closing PR still returns `no-pr`, and a PR that only mentions the record without closing it does not resolve.\n- A test proves the attention row renders for the granted, unclaimed, open-PR, no-live-run shape, and not for a record with a live run or a claim.\n- `tests/` pins that the stale-claim finding names a PR disposition when an open linked PR exists.\n\n## Release Note\n\nShow and restart granted work stuck behind a stale open pull request, whatever its branch is called.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/dispatch-resume.js` — modify\n- `plugin/skills/dispatch/resume.md` — modify\n- `plugin/skills/dispatch/open-pr-exclusion-report.md` — modify\n- `plugin/skills/backlog/attention-mode.md` — modify\n- `plugin/skills/tidy/issue-claims-backstops.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T19:07:58Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4849,
-        "state": "OPEN",
-        "title": "Granted records with a stale open PR are stuck: resume and dispatch refuse each other",
-        "updatedAt": "2026-11-01T19:07:59Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: session removing project-scope claude-tweaks installs across six repos (thn-inc/claude-tweaks PR #4841)\n\nDefer-reason: tangential\n\n## Current State\n\n`/init` Step 14 (`plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md`) treats `claude-tweaks@claude-tweaks-marketplace` as one of two hard requirements: its Detect section always makes it a declaration candidate, and its Apply section always adds it to the project's `.claude/settings.json#enabledPlugins` plus a `claude-tweaks-marketplace` entry under `extraKnownMarketplaces`, then writes the matching `marketplace add`/`update` lines and `PLUGIN_SPECS` entry into `scripts/claude-cloud-setup.sh`.\n\n`/routine`'s fleet check (`plugin/skills/routine/fleet.md`, step 1) confirms the same declaration is present.\n\nThere is no way to say \"this project relies on a user-scope install of claude-tweaks; don't declare it at project scope.\" A maintainer who removes the declaration on purpose (done 2026-11-01 across six repos, including this one in PR #4841) gets it re-added by the next `/init` run, and the fleet check reads the missing line as a fault.\n\n## Deliverables\n\n1. A policy key in `.claude-tweaks/policy.yml` (added per the `policy-key-addition` project skill) that turns off claude-tweaks' own project-scope declaration. Default keeps today's behavior.\n2. `/init` Step 14 honors the key: when it is off, Detect drops claude-tweaks from the hard-requirement candidates, Apply neither adds nor re-adds the `enabledPlugins` and `extraKnownMarketplaces` entries, and the generated `scripts/claude-cloud-setup.sh` omits the claude-tweaks marketplace lines and `PLUGIN_SPECS` entry. `superpowers@claude-plugins-official` stays a hard requirement.\n3. `/routine`'s fleet check honors the key: when it is off, a missing claude-tweaks declaration is not reported as a failure. Instead the check states that cloud firings in this project will not have claude-tweaks installed by the project declaration.\n\n## Acceptance Criteria\n\n- [ ] With the key unset, `/init` Step 14 and the fleet check behave exactly as today. A conformance test pins the default.\n- [ ] With the key off, `/init` Step 14's documented Apply output for a project with no claude-tweaks entry leaves `.claude/settings.json` without `claude-tweaks@claude-tweaks-marketplace` or a `claude-tweaks-marketplace` marketplace entry, and the generated setup script has no `claude-tweaks-marketplace` line. A test pins this against the step's template text.\n- [ ] With the key off, the fleet check's documented procedure reports the missing declaration as an informational line, not a failure, and names the cloud consequence. A test pins the wording.\n- [ ] `superpowers@claude-plugins-official` is still required in both places whatever the key says.\n- [ ] `npm test` passes.\n\n## Release Note\n\nProjects that rely on a user-scope install of claude-tweaks can now tell /init not to declare it in their committed settings, so re-running /init no longer adds it back.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/init/bootstrap/step-14-cloud-routine-parity.md` — Detect/Apply honor the opt-out key\n- `plugin/skills/routine/fleet.md` — Fleet check reports, not fails, when opted out\n- `plugin/bin/lib/policy-schema.js` — Register the new policy key\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T19:06:38Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4847,
-        "state": "OPEN",
-        "title": "Let a project opt out of /init declaring claude-tweaks in its committed settings",
-        "updatedAt": "2026-11-01T20:30:27Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
@@ -1619,6 +1408,78 @@
     ],
     [
       {
+        "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4603 made the parent gate's reads and the reconciler's two writes (`plugin/bin/lib/issues/below-floor-parent-close.js`) target one repository, adding `--repo {owner}/{repo}` to each (SDD rulings 18 and 19), so a multi-remote checkout never splits one gate across remotes. The gate's prose still carries bare writes with no `--repo`: `plugin/skills/wrap-up/verification-brief-parent-gate.md` runs `gh issue comment $PARENT_NUM --body-file ...` (around lines 439 and 594) and `gh issue close $PARENT_NUM --reason completed` / `--reason \"not planned\"` (around lines 447 and 455). On a checkout whose `gh` base repo differs from `origin`, those writes land in a different repository than the gate's reads. The same bare-write shape exists across the rest of the prose class (`_shared/health-filing-mechanics.md`, `_shared/issue-claims.md`'s claim comment, and similar fences), so this needs a plugin-wide pass, not a one-file edit. It was deferred in #4603 because it needs a verdict field or a resolution step that supplies `{owner}/{repo}` to the prose, plus a sweep of the class.\n\nLedger row 20 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] The Parent-Gate Procedure's Close and Apply fences pass `--repo {owner}/{repo}` on every `gh issue comment` and `gh issue close`, with `{owner}/{repo}` taken from the gate's own resolution (the CLI's verdict or the prose's resolution step), so reads and writes of one gate target one repository.\n- [ ] The same bare `gh issue` write shape is inventoried across `plugin/skills/**/*.md`; each fence either carries `--repo` or is recorded as intentionally cwd-scoped.\n\n## Acceptance Criteria\n\n- [ ] `grep -nE \"gh issue (comment|close)\" plugin/skills/wrap-up/verification-brief-parent-gate.md` lists only lines that also contain `--repo`, run first against the unfixed file to see it match the four bare lines.\n- [ ] A conformance test pins that every `gh issue comment|close` fence in that file carries `--repo`, and goes red when one is removed.\n- [ ] The inventory of the remaining prose fences is committed or filed, with no fence left unclassified.\n\n## Release Note\n\nThe close procedure for a decomposed feature's parent now comments and closes in the same repository it read from, so a checkout with more than one remote no longer writes to the wrong one.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/verification-brief-parent-gate.md` — the bare `gh issue comment` and `gh issue close` fences\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — the reconciler's writes already carry `--repo`; the pattern to copy\n- `plugin/bin/parent-gate.js` — supplies the resolved slug to the prose\n\n_Filed by `wrap-up` via specShapedBody._\n",
+        "createdAt": "2026-11-01T07:51:58Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4824,
+        "state": "OPEN",
+        "title": "Pass --repo on the parent gate prose's gh issue comment and close writes",
+        "updatedAt": "2026-11-01T20:51:02Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n`bin/residue.js` gave `remedy: auto` to all 39 worktree findings, though reconcile skips 35 as pr-open and 3 as pr-closed-unmerged. Only the Step 4.5 PR-state override keeps them from routing to removal, so any consumer reading the field alone would remove live work.\n\n## Deliverables\n\n- Have the worktree probe report a remedy that reflects PR state, or stop calling these auto.\n\n## Acceptance Criteria\n\n- A test reproduces the behavior above and passes after the change.\n\n## Release Note\n\nStop residue reports marking worktrees with open PRs as safe to remove automatically.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/residue.js` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-01T07:37:28Z",
         "labels": [
@@ -1697,240 +1558,6 @@
     ],
     [
       {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/github-pr-scan.md` hardcodes `--limit 50` and `--limit 200` (lines 87, 97, 259, 269). In this sweep the merged, closed, open-issue and PR-join queries all returned exactly the cap: open issues 200 of 308, and the PR join 200 of 1806. Queue counts read 54/0/16 at the cap, 83/0/21 complete.\n\n## Deliverables\n\n- Size these fetches from backlog-fetch-limit, or warn when a fetch returns exactly its limit.\n\n## Acceptance Criteria\n\n- A test reproduces the behavior above and passes after the change.\n\n## Release Note\n\nStop tidy's PR scan silently truncating results on large repositories.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:37:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4820,
-        "state": "OPEN",
-        "title": "pr-scan fixed limits truncate results here",
-        "updatedAt": "2026-11-01T18:31:51Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/github-pr-scan.md` line 87 treats `--state merged` and `--state closed` as mutually exclusive, but `gh pr list --state closed` also returns merged PRs. This sweep: merged 1643, closed 1763, with PR #1218 in both.\n\n## Deliverables\n\n- De-duplicate by PR number and correct the sentence.\n\n## Acceptance Criteria\n\n- A test reproduces the behavior above and passes after the change.\n\n## Release Note\n\nCount each closed PR once in tidy's PR scan.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:37:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4819,
-        "state": "OPEN",
-        "title": "pr-scan item 4 wrongly calls PR states exclusive",
-        "updatedAt": "2026-11-01T18:31:47Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/skills/_shared/github-pr-scan.md` line 244 reads each claim with `gh api .../contents/claims/... 2>/dev/null`, one core REST call per claim. This sweep's third pass got HTTP 403 on 1592 of 2104 reads, each treated as absent, reporting 0 live claims when 15 were live. It also spent the whole core quota, which stays at 0 until reset.\n\n## Deliverables\n\n- Read the claims with the batched git reader that the Step 4.7 backstops already prefer, and treat a failed read as could-not-read.\n\n## Acceptance Criteria\n\n- A test reproduces the behavior above and passes after the change.\n\n## Release Note\n\nKeep live claims visible when GitHub's rate limit interrupts tidy's PR scan.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:37:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4818,
-        "state": "OPEN",
-        "title": "pr-scan item 10 drops claims on API errors",
-        "updatedAt": "2026-11-01T18:31:43Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `reflect`, enough to promote as one record.\n\n## Deliverables\n\n- [reflect] gh-api-module-pattern skill: a write path added to a CLI that already proves run ownership before its first write must carry the same proof (closing-links.js 9b close vs 7a run-marker check) — .claude/skills/gh-api-module-pattern/SKILL.md, plugin/bin/closing-links.js — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] windows-checkout-test-parity skill: a test pinning one shell's behaviour skips where CI lacks that shell, so the workflow must install it (zsh on ubuntu-latest, #4107) — .claude/skills/windows-checkout-test-parity/SKILL.md, .github/workflows/test.yml — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] executable-snippet-pins: a go-red mutation of a fence that branches on a node -e exit status must change the exit outcome; an edit that makes node throw keeps the exit non-zero and proves nothing — .claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in reflect.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `plugin/bin/closing-links.js` — modify\n- `.claude/skills/windows-checkout-test-parity/SKILL.md` — modify\n- `.github/workflows/test.yml` — modify\n- `.claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-01T07:37:09Z",
         "labels": [
@@ -1980,7 +1607,7 @@
         "number": 4817,
         "state": "OPEN",
         "title": "Settle 3 digest findings in reflect",
-        "updatedAt": "2026-11-01T18:31:38Z",
+        "updatedAt": "2026-11-02T06:51:19Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -2093,84 +1720,6 @@
     ],
     [
       {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 12 active below-floor findings for area `dispatch`, enough to promote as one record.\n\n## Deliverables\n\n- [dispatch] nativeGh uses a local NATIVE_TIMEOUT_MS = 30000, bypassing gh-timeout-ms; third copy of that literal — plugin/bin/dispatch-resume.js:72, plugin/bin/resolve-blockers.js:54, plugin/bin/resolve-linked-prs.js:46 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] the record branch/worktree name (worktree-dispatch-record-N, dispatch-record-N) is built separately in the CLI and the verdict module with no shared helper — plugin/bin/lib/dispatch/resume-eligibility.js:73, plugin/bin/dispatch-resume.js:483, plugin/bin/dispatch-resume.js:599 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] the worktree path hardcodes .claude/worktrees instead of HARNESS_WORKTREE_DIR from lib/hooks/worktree-reap.js — plugin/bin/dispatch-resume.js:599 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] comments cite deleted #4588 spec numbering (\"Review Focus 6\", \"spec D1\", \"deliverable 4\") instead of naming the rule — plugin/bin/dispatch-resume.js:263, plugin/bin/lib/dispatch/resume-eligibility.js:9, plugin/bin/lib/dispatch/resume-eligibility.js:234, tests/bin-lib/dispatch/dispatch-resume-cli.test.js:516 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] readOpenBlockers makes one serial gh issue view per body-declared blocker (bounded, once per resume) — plugin/bin/dispatch-resume.js:220 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] resumableTombstoneReason hard-codes three resumable release-reason prefixes with no comment on why those three — plugin/bin/lib/dispatch/resume-eligibility.js:115 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] pipelines = [ctx.root, normalizePath(ctx.root)] has no comment saying why both root forms are accepted — plugin/bin/dispatch-resume.js:559 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [dispatch] parseStatus re-implements git-z.js parseStatusPorcelainZ (NUL split, rename skip) — the shared parser silently skips records under 4 chars where this one fails loud — plugin/bin/dispatch-resume.js:408, plugin/bin/lib/git-z.js:112 — Defer-reason: tiebreak-cant-tell — 2026-10-31T145643-release-standalone\n- [dispatch] nonEmptyString is re-declared with an identical body in the same feature's resume-eligibility.js — plugin/bin/dispatch-resume.js:180, plugin/bin/lib/dispatch/resume-eligibility.js:49 — Defer-reason: tiebreak-cant-tell — 2026-10-31T145643-release-standalone\n- [dispatch] dispatch build branch/worktree names (worktree-dispatch-record-N, dispatch-record-N) are rebuilt inline in three places with no shared builder — plugin/bin/lib/dispatch/resume-eligibility.js:73, plugin/bin/dispatch-resume.js:483, plugin/bin/dispatch-resume.js:599 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [dispatch] nonEmptyString/isObject re-declared in dispatch-resume.js and resume-eligibility.js instead of a shared primitive — plugin/bin/dispatch-resume.js:180, plugin/bin/lib/dispatch/resume-eligibility.js:49 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [dispatch] readOpenBlockers makes one gh issue view per body-text Blocked-by dependency (N+1) while the native path is one aliased GraphQL call — plugin/bin/dispatch-resume.js:220 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 12 small deferred findings in dispatch.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/dispatch-resume.js` — modify\n- `plugin/bin/resolve-blockers.js` — modify\n- `plugin/bin/resolve-linked-prs.js` — modify\n- `plugin/bin/lib/dispatch/resume-eligibility.js` — modify\n- `tests/bin-lib/dispatch/dispatch-resume-cli.test.js` — modify\n- `plugin/bin/lib/git-z.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:36:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4815,
-        "state": "OPEN",
-        "title": "Settle 12 digest findings in dispatch",
-        "updatedAt": "2026-11-01T18:31:30Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 5 active below-floor findings for area `wrap-up`, enough to promote as one record.\n\n## Deliverables\n\n- [wrap-up] merge mode makes a plain resolve-run-dir call then an --archived one, but --archived already runs steps 1-2 first; collapse to the single --archived call (prose + resolve-command conformance fact, 20/20 green) — plugin/skills/wrap-up/merge-mode.md:11, tests/wrap-up-merge-mode-conformance.test.js — Defer-reason: pre-existing-outside-diff — /claude-tweaks:release v6.157.2 release-gate review (run 2026-10-31T120244-release-standalone)\n- [wrap-up] engine-verify.js 'missing demo:pending label' remedy names only demo:pending while the check accepts accept:pending (tiebreak can't-tell: evidence quote unverifiable) — plugin/bin/lib/wrap-up/engine-verify.js:926 — Defer-reason: tiebreak-cant-tell — 2026-10-31T142701-release-standalone\n- [wrap-up] Section C step 2 mirror fallback's `|| exit 1` (unreadable work/ dir or spec file) has no instruction in the prose after the fence, which describes only the empty no-op, so a failed mirror read can be reported as a quiet no-op — plugin/skills/wrap-up/cleanup-procedures-execution.md:94 — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [wrap-up] no test covers a wrap-up-pack.json whose inputs.closingRecords is not an array (the Section C step 2 fall-through to the mirror headers) — tests/wrap-up-closing-records-array-fill.test.js, plugin/skills/wrap-up/cleanup-procedures-execution.md:91 — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [wrap-up] the header record: value is read with a whole-file /^record:/m regex in pack.js headerEntries and the mirror fallback, so a quoted body line can win when the header line is missing (tiebreak: unreachable in practice) — plugin/bin/lib/wrap-up/pack.js:164, plugin/skills/wrap-up/cleanup-procedures-execution.md:94 — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 5 small deferred findings in wrap-up.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/wrap-up/merge-mode.md` — modify\n- `tests/wrap-up-merge-mode-conformance.test.js` — modify\n- `plugin/bin/lib/wrap-up/engine-verify.js` — modify\n- `plugin/skills/wrap-up/cleanup-procedures-execution.md` — modify\n- `tests/wrap-up-closing-records-array-fill.test.js` — modify\n- `plugin/bin/lib/wrap-up/pack.js` — modify\n\n_Filed by `capture` via specShapedBody._",
         "createdAt": "2026-11-01T07:36:47Z",
         "labels": [
@@ -2225,396 +1774,6 @@
           "origin": "capture",
           "risk": "low",
           "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 15 active below-floor findings for area `tests`, enough to promote as one record.\n\n## Deliverables\n\n- [tests] The test name says the bodies already name this run, but the third names no run; the assertions are sound — tests/bin-lib/flow/pr-early-open.test.js:215 — Defer-reason: pre-existing-outside-diff — 2026-10-31T060905-release-standalone\n- [tests] Fixture repos from repo() are never removed, so each caller leaves a git repo in tmp on every run — tests/bin-lib/flow/artifact-overwrite-check.test.js:39 — Defer-reason: pre-existing-outside-diff — 2026-10-31T060905-release-standalone\n- [tests] The case \"a second close on the line\" is rejected by the raw-bracket rule and its expectation admits either reason, so it may not exercise line ownership — tests/bin-lib/issues/accept-verdict.test.js:172 — Defer-reason: tiebreak-cant-tell — spec-4610\n- [tests] the (resume-pr-9) test leaves its ct-claim-log-resume-* mkdtemp dir under os.tmpdir() — tests/bin-lib/claim-targets/claim-targets.test.js:1066 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [tests] acceptanceLabelingRow creates a temp run dir and never removes it — tests/bin-lib/wrap-up/engine-verify.test.js:1639 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [tests] the AC3.3 reader walk matches a closed list of three DEMO_ constants; a future DEMO_*_BATCH reader would pass both guards — tests/accept-label-reader-conformance.test.js:182 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [tests] no behavioral pre.run case pins the double-quoted git -C \"<repo>\" push origin --delete shape (regex-level pins only) — plugin/bin/lib/hooks/pre-tool-use.js:389, tests/hooks-policy-exemption.test.js:257 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [tests] the fixture key gitAvailable drives ghAvailable (its one consumer test is titled gh absent) — tests/bin-lib/dispatch/dispatch-resume-cli.test.js:93 — Defer-reason: pre-existing-outside-diff — 2026-10-31T145643-release-standalone\n- [tests] the #4554 CLI assertion cannot observe the ghAvailable probe change because the harness stubs ghAvailable; the probe is pinned by repo-resolve unit cases — tests/bin-lib/flow/pr-early-open.test.js:813 — Defer-reason: tiebreak-cant-tell — 2026-10-31T145643-release-standalone\n- [tests] \"reads events.jsonl exactly once\" counts monkey-patched fs.readFileSync calls (refactor-coupled to the I/O primitive) — tests/bin-lib/run-liveness/probes.test.js:182 — Defer-reason: tiebreak-cant-tell — 2026-10-31T145643-release-standalone\n- [tests] claim-targets.test.js (resume-pr-9) creates an os.tmpdir() mkdtemp root it never removes; the file has no cleanup and already leaked three — tests/bin-lib/claim-targets/claim-targets.test.js:1066 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [tests] resolve-policy-control-mode.test.js spawns mkdtemp + git init + node CLI per helper call (~128 sites) for checks resolvePolicyKeys could run in-process — tests/resolve-policy-control-mode.test.js:31 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [tests] acceptance-scan-server-filter.test.js regex pins the per-slice cap loop syntax while an executed-fence test already pins the behavior — tests/acceptance-scan-server-filter.test.js:219 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [tests] accept-verdict.test.js second-close case pins its reason with /raw|malformed/ (input always yields one reason) — tests/bin-lib/issues/accept-verdict.test.js:178 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [tests] makeBranchlessOriginAndClone (#4495) and makeBareOriginAndClone create os.tmpdir() fixture roots that are never removed — tests/bin-lib/issues/claims-git-cas.test.js:514 — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 15 small deferred findings in tests.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/flow/pr-early-open.test.js` — modify\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — modify\n- `tests/bin-lib/issues/accept-verdict.test.js` — modify\n- `tests/bin-lib/claim-targets/claim-targets.test.js` — modify\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — modify\n- `tests/accept-label-reader-conformance.test.js` — modify\n- `plugin/bin/lib/hooks/pre-tool-use.js` — modify\n- `tests/hooks-policy-exemption.test.js` — modify\n- `tests/bin-lib/dispatch/dispatch-resume-cli.test.js` — modify\n- `tests/bin-lib/run-liveness/probes.test.js` — modify\n- `tests/resolve-policy-control-mode.test.js` — modify\n- `tests/acceptance-scan-server-filter.test.js` — modify\n- `tests/bin-lib/issues/claims-git-cas.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:36:35Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4813,
-        "state": "OPEN",
-        "title": "Settle 15 digest findings in tests",
-        "updatedAt": "2026-11-01T18:31:21Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 7 active below-floor findings for area `docs`, enough to promote as one record.\n\n## Deliverables\n\n- [docs] The release edge ties review-debate- to a step that only writes review-contested-, and the removal note does not list the graph — docs/skill-graph.md:484 — Defer-reason: pre-existing-outside-diff — 2026-10-31T060905-release-standalone\n- [docs] Journey run-a-github-only-skill-without-a-worktree-2727 has steps with no URL/entry line, which the journey self-review structural check expects — docs/journeys/run-a-github-only-skill-without-a-worktree-2727.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T124904-spec-4702-4703\n- [docs] README.md covers changed SKILL.md files (build, capture, demo, dispatch, flow, tidy) but was not updated in v6.157.2..8951db932 — README.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [docs] CLAUDE.md covers 17 changed _shared/*.md contracts but was not updated in v6.157.2..8951db932 — CLAUDE.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [docs] docs/donts.md covers plugin/bin/lib/hooks/** (git-command.js changed) but was not updated in v6.157.2..8951db932 — docs/donts.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [docs] docs/hooks.md covers plugin/bin/lib/hooks/** (git-command.js changed) but was not updated in v6.157.2..8951db932 — docs/hooks.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n- [docs] docs/skill-authoring.md covers changed plugin/skills/**/*.md but was not updated in v6.157.2..8951db932 — docs/skill-authoring.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 7 small deferred findings in docs.\n\n## Technical Approach\n\n### Key Files\n\n- `docs/skill-graph.md` — modify\n- `docs/journeys/run-a-github-only-skill-without-a-worktree-2727.md` — modify\n- `docs/donts.md` — modify\n- `docs/hooks.md` — modify\n- `docs/skill-authoring.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:36:18Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4811,
-        "state": "OPEN",
-        "title": "Settle 7 digest findings in docs",
-        "updatedAt": "2026-11-01T18:31:13Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `_shared`, enough to promote as one record.\n\n## Deliverables\n\n- [_shared] Mode 2's sentence that all three outcomes auto-resolve sits beside a table marking two of them STAGED — plugin/skills/_shared/multi-agent-coordination.md:129 — Defer-reason: pre-existing-outside-diff — 2026-10-31T060905-release-standalone\n- [_shared] The #4580 rebind paragraph restates much of the #3887 procedure; the tiebreak judged merging them saves little — plugin/skills/_shared/pr-early-run-lifecycle.md:99 — Defer-reason: pre-existing-outside-diff — 2026-10-31T060905-release-standalone\n- [_shared] The status/reversibility enum lists Reversibility: n/a only for SCANNED/REFUSED/SKIP/FAILED, though AUTO lines use it and log-decision.js accepts it — plugin/skills/_shared/auto-decision-log.md:102 — Defer-reason: pre-existing-outside-diff — 2026-10-31T095259-spec-4549-4550-4556\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in _shared.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/multi-agent-coordination.md` — modify\n- `plugin/skills/_shared/pr-early-run-lifecycle.md` — modify\n- `plugin/skills/_shared/auto-decision-log.md` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:36:10Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4810,
-        "state": "OPEN",
-        "title": "Settle 3 digest findings in _shared",
-        "updatedAt": "2026-11-01T18:31:09Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 7 active below-floor findings for area `review`, enough to promote as one record.\n\n## Deliverables\n\n- [review] the older #1988-#2776 replay tests in artifact-overwrite-check.test.js skip silently with a bare return, while the new #4488 replay reports a visible t.skip (inconsistent skip convention) — tests/bin-lib/flow/artifact-overwrite-check.test.js:385,473 — Defer-reason: pre-existing-outside-diff — 2026-10-30T231455-record-4590\n- [review] a test named as pinning the non-Origin guard of isReferencePreservingOriginLine stays green without that guard because the added-count gate rejects its fixture first (reporter showed a mutation probe; not independently re-confirmed) — tests/bin-lib/flow/artifact-overwrite-check.test.js:721 — Defer-reason: tiebreak-cant-tell — 2026-10-30T231455-record-4590\n- [review] Step 4.0b no-PR local-merge branch reads the Fixes lines in prose with no same-repo filter (two independent tiebreaks refuted a cross-repo recurrence: compose-subject.js writes only bare Fixes #n lines; the finding was anchored at :93 but the text is at :75) — plugin/skills/_shared/pr-first-merge-post-merge.md — Defer-reason: tiebreak-cant-tell — 2026-10-31T030421-record-4597\n- [review] brokenSpanLines wrapped-span guard has no committed go-red self-test that feeds it a bad string (tiebreak refuted the passes-regardless claim; its evidence line sat outside the five-line window) — tests/below-floor-parent-close-conformance.test.js:748 — Defer-reason: tiebreak-cant-tell — 2026-10-31T075610-record-4602\n- [review] hooks-js-verb-registration project skill covers adding a verb, not adding a flag to an existing non-flag-strict verb (tiebreak could not confirm: the cited line did not exist; content duplicates the run ledger row 8 skill observation) — .claude/skills/hooks-js-verb-registration/SKILL.md, docs/plans/2026-10-31-merge-mode-archived-run-4677-ledger.md — Defer-reason: tiebreak-cant-tell — 2026-10-31T094853-spec-4677\n- [review] /review's Step 1.5 gate table STOPs on every red PR check with no explicit merge-verification off carve-out, contradicting _shared/pr-check-gate.md's red bullet — plugin/skills/review/code-mode-steps.md:109 — Defer-reason: pre-existing-outside-diff — 2026-10-31T095259-spec-4549-4550-4556\n- [review] CLI wrapper contract: a fail-closed branch wrapping an injected dependency needs a test of the real dependency failure shape, not only an injected throwing stub (dispatch-resume.js:341 shipped one) — .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md, plugin/bin/dispatch-resume.js:341 — Defer-reason: pre-existing-outside-diff — 2026-10-31T142701-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 7 small deferred findings in review.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/flow/artifact-overwrite-check.test.js` — modify\n- `plugin/skills/_shared/pr-first-merge-post-merge.md` — modify\n- `tests/below-floor-parent-close-conformance.test.js` — modify\n- `.claude/skills/hooks-js-verb-registration/SKILL.md` — modify\n- `plugin/skills/_shared/pr-check-gate.md` — modify\n- `plugin/skills/review/code-mode-steps.md` — modify\n- `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` — modify\n- `plugin/bin/dispatch-resume.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:35:56Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4809,
-        "state": "OPEN",
-        "title": "Settle 7 digest findings in review",
-        "updatedAt": "2026-11-01T18:31:05Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 4 active below-floor findings for area `hooks`, enough to promote as one record.\n\n## Deliverables\n\n- [hooks] resolve-run-dir --standalone appends -standalone even when the given name already ends in it, so a caller passing --standalone backlog-standalone mints a {ts}-backlog-standalone-standalone run dir (3 seen in ~1000 runs: 2026-08-19 record-213, 2026-10-04 dispatch, 2026-10-30 backlog; name-only, nothing misread) — plugin/bin/lib/hooks/run-dir-resolve.js:257 — Defer-reason: tangential — specify\n- [hooks] The existsSync to lstatType swap at a safety gate has no comment or record cross-reference, so a later simplification could silently reopen #4435. — plugin/bin/lib/hooks/resume-freshness.js:73 — Defer-reason: pre-existing-outside-diff — 2026-10-30T134829-release-standalone\n- [hooks] closedPrMatch supersede rule is pinned only by one newer interrupted run; add the active-superseder and two-open-runs cases (verified patch: each new test fails against its own mutant, 65/65 green on 273a29a) — plugin/bin/lib/hooks/run-dir-resolve.js:187, tests/hooks-run-dir-resolve.test.js — Defer-reason: pre-existing-outside-diff — /claude-tweaks:release v6.157.2 release-gate review (run 2026-10-31T120244-release-standalone)\n- [hooks] the #208 twin test claims to pin closedPrMatch's archived-first name tie, which no fixture can reach (archiveStatus drops the live twin first); reword the test name/comment to what it pins — plugin/bin/lib/hooks/run-dir-resolve.js:191, tests/hooks-run-dir-resolve.test.js:641 — Defer-reason: pre-existing-outside-diff — /claude-tweaks:release v6.157.2 release-gate review (run 2026-10-31T120244-release-standalone)\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 4 small deferred findings in hooks.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/run-dir-resolve.js` — modify\n- `plugin/bin/lib/hooks/resume-freshness.js` — modify\n- `tests/hooks-run-dir-resolve.test.js` — modify\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:35:47Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4807,
-        "state": "OPEN",
-        "title": "Settle 4 digest findings in hooks",
-        "updatedAt": "2026-11-01T18:31:00Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
@@ -2795,306 +1954,6 @@
     ],
     [
       {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/skills/tidy/step-1-records.md` (around line 274) recognizes the #4466 close marker with an inline regex that is a byte-for-byte copy of the unexported `HEADING_LINE_RE` in `plugin/bin/lib/issues/below-floor-parent-close.js` (line 56), with no pointer to it, while the GitHub scan calls the exported `isCloseMarkerComment`. A change to the close heading would silently make local-files report below-floor-closed parents as `[acceptance-gap]` rows. Found by the v6.159.0 release-gate review (lens 3g pair reproduced; tiebreaks confirmed low).\n\n## Deliverables\n\n- [ ] Export the heading regex (or a body-test helper) from `below-floor-parent-close.js` and use it at the local-files call site.\n\n## Acceptance Criteria\n\n`grep -n \"HEADING_LINE_RE\\|Closed below the oversight floor\" plugin/skills/tidy/step-1-records.md` shows a require of the exported helper, not a regex literal.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — modify\n- `plugin/skills/tidy/step-1-records.md` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-11-01T07:33:40Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4802,
-        "state": "OPEN",
-        "title": "Share one close-marker heading test between local-files Shape 7 and below-floor-parent-close.js",
-        "updatedAt": "2026-11-01T18:30:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nIn `plugin/skills/_shared/github-pr-scan-acceptance.md`'s parent-gate fetch block, `gh api user` (around line 461) runs unguarded, line 487 throws on an empty login, and lines 504-505 make that throw end the whole scope with no `[parent-gate]` rows. Before #4600 the block read only open parents and needed no login, so an identity that cannot call `/user` (for example a GitHub App installation token) now loses every open-parent row, not just close-marker recognition. The #4600 plan (line 192, its AC1.1 empty-LOGIN control) chose a softer outcome, and `isCloseMarkerComment` in `below-floor-parent-close.js` already accepts an empty login. Related: #4770 (the same failed-probe question in the Node module). Found by the v6.159.0 release-gate review (lens 3c; tiebreak confirmed medium; evidence re-read at 0baad51).\n\n## Deliverables\n\n- [ ] Make a failed or empty login degrade only close-marker recognition (an empty login, as the plan specified) instead of throwing.\n\n- [ ] Keep the open-parent `[parent-gate]` rows when the lookup fails, with a WARNING line naming the failure.\n\n## Acceptance Criteria\n\nA conformance or fixture test with an empty login file still produces the open-parent rows and a warning.\n\n`npm test` passes.\n\n## Release Note\n\nTidy's parent-gate report no longer goes empty when the GitHub token cannot read the current user.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/github-pr-scan-acceptance.md` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-11-01T07:33:36Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4801,
-        "state": "OPEN",
-        "title": "Keep tidy's open-parent [parent-gate] rows when the gh api user lookup fails",
-        "updatedAt": "2026-11-01T18:30:35Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe below-floor parent-close gate exists twice: as prose (`_shared/pr-first-merge-post-merge.md` Step 4.0b / `wrap-up/verification-brief-parent-gate.md`) and as the Node mirror `plugin/bin/lib/issues/below-floor-parent-close.js` (around line 163), with no CLI the prose calls. Each side's skip rules are pinned separately, so a skip rule added to one side alone leaves every suite green. Both sides agree today. Found by the v6.159.0 release-gate review (lens 3e, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Add a conformance test that enumerates Step 4.0b's skip rules from the prose and asserts `closeBelowFloorParents` implements exactly that set.\n\n## Acceptance Criteria\n\nAdding a skip rule to only one side turns the new conformance test red (checked by a temporary edit).\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — modify\n- `tests/below-floor-parent-close-conformance.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-11-01T07:33:33Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4800,
-        "state": "OPEN",
-        "title": "Pin the below-floor parent-close skip rules across the prose gate and its Node mirror",
-        "updatedAt": "2026-11-01T18:30:31Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`closeBelowFloorParents` in `plugin/bin/lib/issues/below-floor-parent-close.js` (around line 157) enumerates every sibling sub-issue with one `gh issue view` each before the single parent-label read, so a parent that is then skipped by `not-parent-issue-labeled`, `needs-label` or `sibling-unsettled` still costs N+1 calls; those gates read no per-sibling data. The account exhausted its REST core limit on 2026-10-31, which stalled release-please on every main push for half an hour. Found by the v6.159.0 release-gate review (lens 3d pair, tiebreaks confirmed low).\n\n## Deliverables\n\n- [ ] Evaluate the parent-level skip gates before enumerating siblings, so a skipped parent costs no per-sibling reads.\n\n## Acceptance Criteria\n\nA test with a fake `gh` counts calls for a parent that fails the parent-label gate and asserts no sibling `issue view` ran.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/below-floor-parent-close.js` — modify\n- `tests/bin-lib/issues/below-floor-parent-close.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-11-01T07:33:29Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4799,
-        "state": "OPEN",
-        "title": "Run below-floor-parent-close parent-level skip gates before the per-sibling reads",
-        "updatedAt": "2026-11-01T18:30:27Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nWhen the reconcile post-merge pass (`plugin/bin/lib/reconcile/post-merge.js`, around line 419) leaves a parent unclosed in Step 4.0b (a `gh-failed` or `internal-error` skip, e.g. the close comment posted but the close failed), it still writes a clean `ran` entry carrying only `parentsClosed`. The skips land only in `decisions.md` prose, so `hooks.js` counts the run as `postMergeRan` and SessionStart never reports the parent left open. Found by the v6.159.0 release-gate review (lens 3c, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Record Step 4.0b skips that left a parent open as a structured field on the post-merge entry.\n\n- [ ] Have SessionStart count and surface those entries rather than treating them as a clean `ran`.\n\n## Acceptance Criteria\n\nA test drives Step 4.0b to a `gh-failed` skip and asserts the entry is not a clean `ran` and that the SessionStart summary names the parent.\n\n`npm test` passes.\n\n## Release Note\n\nA parent issue the background merge pass failed to close is now reported at the next session start.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/hooks.js` — modify\n\n_Filed by `release` via specShapedBody._",
         "createdAt": "2026-11-01T07:33:24Z",
         "labels": [
@@ -3138,7 +1997,7 @@
         "number": 4798,
         "state": "OPEN",
         "title": "Surface a partial Step 4.0b parent-close instead of recording a clean ran",
-        "updatedAt": "2026-11-01T18:30:23Z",
+        "updatedAt": "2026-11-02T07:04:10Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3210,7 +2069,7 @@
         "number": 4797,
         "state": "OPEN",
         "title": "Replace post-merge.js hand-rolled takeClaim with a liveness-checked, owner-released claim",
-        "updatedAt": "2026-11-01T18:30:18Z",
+        "updatedAt": "2026-11-02T07:18:48Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3426,7 +2285,7 @@
         "number": 4793,
         "state": "OPEN",
         "title": "Look up native blocked-by links from another repository by owner and name, not by number alone",
-        "updatedAt": "2026-11-01T18:30:06Z",
+        "updatedAt": "2026-11-02T07:37:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3455,7 +2314,7 @@
     ],
     [
       {
-        "body": "Origin: SDD ruling deferred at Review Console (#4553)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4553 added a pre-claim blocker-landing check: `/flow` Step 2.7b (`plugin/skills/flow/validation.md`) and multi-spec Validation step 3 stop a run before Step 2.8 claims anything when an out-of-run blocker is `open` or `unlanded`.\n\n`plugin/skills/dispatch/settle-and-merge.md` Step 6 (Settle, on pipeline failure) has no special case for that stop. A dispatched record whose blocker never landed takes the generic HARD-GATE path, which counts a retry and may strip `auto:merge` until the record reaches `bot:blocked`, so it accrues noisy failed attempts for a condition no retry can change. Surfaced by the #4553 final review (Important 1) and deferred because the fix spans several separately pinned contracts.\n\n## Deliverables\n\nAdd a Settle special case in `plugin/skills/dispatch/settle-and-merge.md` Step 6 that recognizes the `/flow` blocker-landing stop and releases the claim without counting it toward the retry ceiling or revoking `auto:merge`.\n\nTeach `assess-agent-autonomy`'s failure classification, the headless self-report naming, and `/flow`'s failure-card gate name about that stop, each with its own pinning suite updated.\n\n## Acceptance Criteria\n\nA conformance test over `settle-and-merge.md` asserts Step 6 names the blocker-landing stop and states it does not count toward the retry ceiling; reverting the Step 6 text turns it red.\n\nA dispatched record whose out-of-run blocker is `unlanded` ends one Settle pass with the claim released and `auto:merge` still present.\n\n## Release Note\n\nA dispatched record stopped by an unlanded blocker no longer accrues failed attempts toward `bot:blocked`.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/settle-and-merge.md` — add the blocker-landing stop to Step 6\n- `plugin/skills/flow/failure-cards.md` — name the blocker-landing gate\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "body": "Origin: SDD ruling deferred at Review Console (#4553)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4553 added a pre-claim blocker-landing check: `/flow` Step 2.7b (`plugin/skills/flow/validation.md`) and multi-spec Validation step 3 stop a run before Step 2.8 claims anything when an out-of-run blocker is `open` or `unlanded`.\n\n`plugin/skills/dispatch/settle-and-merge.md` Step 6 (Settle, on pipeline failure) has no special case for that stop. A dispatched record whose blocker never landed takes the generic HARD-GATE path, which counts a retry and may strip `auto:merge` until the record reaches `bot:blocked`, so it accrues noisy failed attempts for a condition no retry can change. Surfaced by the #4553 final review (Important 1) and deferred because the fix spans several separately pinned contracts.\n\n## Deliverables\n\nAdd a Settle special case in `plugin/skills/dispatch/settle-and-merge.md` Step 6 that recognizes the `/flow` blocker-landing stop and releases the claim without counting it toward the retry ceiling or revoking `auto:merge`.\n\nTeach `assess-agent-autonomy`'s failure classification, the headless self-report naming, and `/flow`'s failure-card gate name about that stop, each with its own pinning suite updated.\n\nAdd a selection-time exclusion to dispatch's queue pull (`plugin/skills/dispatch/queue-pull-script.md`): run `preflight-records.js --blocker-landing` over the candidate pool and drop any record with an `unlanded` out-of-run blocker, recorded in `dispatch-exclusions.json` with its own reason, so a firing never spends a dispatch on a record that will stop at Step 2.7b. The record becomes eligible again as soon as its blocker lands.\n\nIn the claimed case (a handoff continuation re-runs Step 2.7b after an earlier call of the same run already claimed the record and opened its draft PR), the Settle special case also runs Settle step 5's PR tombstone: close the run's draft PR with its resume command, so the record is not stranded behind the `open-pr` exclusion.\n\n## Decisions\n\nAnswers to the plan-review questions on this record (2026-11-02):\n\n- Q1 (re-dispatch churn for unlanded-blocker records): Reading B, the queue-pull shape. Exclude at selection time with `preflight-records.js --blocker-landing` in the queue pull, not with a park-and-wake trigger.\n- Q2 (draft-PR fate in the claimed case): Reading A. Run Settle step 5's PR tombstone (close the PR with its resume command).\n\n## Acceptance Criteria\n\nA conformance test over `settle-and-merge.md` asserts Step 6 names the blocker-landing stop and states it does not count toward the retry ceiling; reverting the Step 6 text turns it red.\n\nA dispatched record whose out-of-run blocker is `unlanded` ends one Settle pass with the claim released and `auto:merge` still present.\n\nA queue pull over a pool containing a record with an `unlanded` out-of-run blocker excludes that record with its own exclusion reason, and includes it once the blocker lands.\n\nIn the claimed case, Settle closes the run's draft PR with its resume command; a test or conformance check pins that step.\n\n## Release Note\n\nA dispatched record stopped by an unlanded blocker no longer accrues failed attempts toward `bot:blocked`, and dispatch no longer selects such a record until its blocker lands.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/dispatch/settle-and-merge.md` — add the blocker-landing stop to Step 6\n- `plugin/skills/flow/failure-cards.md` — name the blocker-landing gate\n- `plugin/skills/dispatch/queue-pull-script.md` — add the blocker-landing exclusion\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-11-01T02:28:03Z",
         "labels": [
           {
@@ -3498,7 +2357,7 @@
         "number": 4792,
         "state": "OPEN",
         "title": "Teach /dispatch Settle to treat a /flow pre-claim blocker-landing stop as a non-failing stop",
-        "updatedAt": "2026-11-01T18:30:01Z",
+        "updatedAt": "2026-11-02T07:36:24Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -3570,7 +2429,7 @@
         "number": 4786,
         "state": "OPEN",
         "title": "Extend the stash guard to /dispatch Task agents and the express-lane agent",
-        "updatedAt": "2026-11-01T18:29:53Z",
+        "updatedAt": "2026-11-02T06:57:09Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -3580,228 +2439,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (wrap-up of #4559, ledger row 18)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nplugin/skills/build/dispatch.md line 19 holds the whole stash-guard stanza as one roughly 7KB span. Its reviewer-retry logic lives in prose the model must follow step by step: the git status check, the note file, the log-decision call, and the DONE to DONE_WITH_CONCERNS rewrite. The role-aware branch (implementer and fix dispatches versus reviewer dispatches) is prose, while plugin/bin/stash-guard.js already owns the snapshot, compare and restore. The one-line shape of the stanza is pinned by tests/dispatch-no-stash-conformance.test.js (about 45 verbatim fragments), which is why the review for #4559 could not restructure it in place. Found by the /review lenses for #4559 (ledger rows 18).\n\n## Deliverables\n\n- [ ] Move the role-aware branch and the reviewer-retry sequence into a `plugin/bin/stash-guard.js` subcommand, or into a lazy-loaded sub-file under `plugin/skills/build/`, so `dispatch.md` carries a short pointer instead of the procedure.\n- [ ] Keep every behavior the stanza states today (restore by sha, logged restore, hand-log on a failed append, voided reviewer verdict with one retry).\n- [ ] Re-pin the moved text in `tests/dispatch-no-stash-conformance.test.js` and `tests/stash-guard.test.js`, each pin shown red by reverting its source line.\n\n## Acceptance Criteria\n\n- [ ] The stash-guard stanza in `plugin/skills/build/dispatch.md` is under 2KB.\n- [ ] The reviewer-retry steps (git status check, note file, log-decision call, DONE to DONE_WITH_CONCERNS rewrite) are carried out by a stash-guard.js subcommand or named in a lazy-loaded sub-file the stanza points to.\n- [ ] `node --test tests/dispatch-no-stash-conformance.test.js tests/stash-guard.test.js` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/build/dispatch.md` — shorten the stash-guard stanza to a pointer\n- `plugin/bin/stash-guard.js` — own the role-aware branch and reviewer retry\n- `tests/dispatch-no-stash-conformance.test.js` — re-pin the moved text\n\n_Filed by `ledger resolve gate` via specShapedBody._",
-        "createdAt": "2026-10-31T23:31:30Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4785,
-        "state": "OPEN",
-        "title": "Move the stash-guard reviewer-retry logic out of build/dispatch.md into stash-guard.js or a lazy-loaded build sub-file",
-        "updatedAt": "2026-11-01T18:29:49Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Verified-as-of: 339a67da5171232f778858511dcc5d75b14b9519\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nlow Test quality — Item 10's trust-anchor sentence (\"Never take {run-id} from the PR body's own marker here\") — the route's security invariant — is unpinned: tests/sweep-backstop.test.js:244-250 pins only the validate-before-command and report-only-on-resume sentences, so a prose regression that takes the run id from the PR body keeps the suite green.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-15.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\nA sweep-backstop assertion pins item 10's rule that {run-id} comes from the claim blob's runId, never from the PR body's own marker.\n\n## Acceptance Criteria\n\n- [ ] `tests/sweep-backstop.test.js` asserts that item 10 of `plugin/skills/_shared/github-pr-scan.md` takes `{run-id}` from the claim blob's `runId`, never from the PR body's own marker.\n- [ ] Deleting that sentence from the skill file turns the new assertion red.\n- [ ] `npm test` passes.\n\n## Release Note\n\nInternal: a test now guards the sweep's rule against taking a resume run id from the PR body.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/sweep-backstop.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-10-31T22:09:41Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4783,
-        "state": "OPEN",
-        "title": "Pin github-pr-scan item 10's rule that the Resume run id never comes from the PR body",
-        "updatedAt": "2026-11-01T18:29:45Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Verified-as-of: 0baad513dff29666441ffe59028a441671179767\n\nOrigin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T212421-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nlow Architecture — Layering: the lib check drives the closing-links.js CLI entry point in-process and re-derives structured data from its stdout (parseEnvelope, lines 209-216, parses the last line); the unreadable-envelope state and its share of step40Failed exist only because of that text round trip, and the envelope keys the lib reads are an implicit contract held only by the CLI header comment.\n\nFound by the whole-branch release-gate review of already-merged history (staged as `staged/review-7.md` in run `2026-10-31T212421-release-standalone`), so no fix landed in the release itself.\n\n## Deliverables\n\nclosing-links exports a core function returning the post-merge envelope object, the CLI is a thin printer over it, and post-merge.js consumes the object directly.\n\n## Acceptance Criteria\n\n- [ ] `plugin/bin/lib/flow/closing-links.js` (or `plugin/bin/closing-links.js`) exports a core function returning the post-merge envelope; the CLI prints that object unchanged.\n- [ ] `plugin/bin/lib/reconcile/post-merge.js` calls the core function and no longer parses stdout (`parseEnvelope` and the unreadable-envelope state are gone).\n- [ ] `npm test` passes, including `tests/bin-lib/flow/closing-links-cli.test.js`.\n\n## Release Note\n\nInternal: post-merge reads closing-links results directly, removing its unreadable-envelope failure mode.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/closing-links.js` — modify\n- `plugin/bin/lib/flow/closing-links.js` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-10-31T22:09:34Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4781,
-        "state": "OPEN",
-        "title": "Have post-merge consume closing-links' envelope object instead of parsing its CLI stdout",
-        "updatedAt": "2026-11-01T18:29:36Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -4475,84 +3112,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Overview\n\nReplace wrap-up's Verification Brief with an **acceptance packet** for every project — universal, not gated on control mode. The packet is what the human finds at the acceptance control point: it makes validating a finished feature cheap, and it is the only artifact `/accept` and Dispatch both read. Control mode (separate units) later adds the stop-removing behaviors; the packet itself is a plain improvement that ships for everyone, migrated expand-contract.\n\nSections, in order (design section 6):\n\n1. **What changed** — user-facing summary, not a diff tour.\n2. **Recording** — the walkthrough of the feature in use (filled by the recording record; a placeholder section here).\n3. **Test guide** — numbered manual steps, each with a direct link that lands in the right state (role, test data). Credentials are referenced by vault entry name, never embedded as session tokens or passwords.\n4. **Couldn't test** — what the agent could not verify and why (no backend, no dev server, needs a real device, needs real credentials). **A check that skipped itself is listed here, never shown as silence.**\n5. **Tried to break** — the negative stories and edge cases run, with results.\n6. **Least confident** — where the agent's judgment is weakest (\"if I were you I'd poke here\"); sourced from review's low-confidence findings.\n7. **Risk proofs** — present only when risk flags were kept (the specific evidence per flag; filled by the risk-flag record).\n8. **Decisions left for you** — carried-forward items (filled by the control-mode records); omitted when empty.\n9. **Deploy status** — target and, for `dev`, whether the feature is confirmed live (filled by the dev-target record; for `local` it states the target).\n\n**Canonical copy:** a marker-block comment on the work record (a GitHub comment; the PR links to it). The run-dir copy is a working copy and is never read after the run. **One packet per work item; re-posting updates the same comment in place** (find by marker, edit by comment id), never a second comment. **Fact-validated narration:** every claim in sections 3-7 cites a gathered fact (story report, screenshot, test output, review finding) and the citations are validated against the gathered fact set, following the repo's gather / narrate / render pattern as `/activity` implements it (`plugin/bin/lib/activity/gather.js` and `render.js`; the `fact-validated-narration` skill is the checklist).\n\nAnti-goals this record carries: a \"tested X\" claim with no run behind it; a skipped check that shows as nothing; packet links that point at a build lacking the feature (deploy status owns that); secrets reaching a public surface (the recording record owns redaction, but this record must never embed credential-shaped values in the Test guide).\n\n**Contract decisions this record pins (the packet contract file states them; later records cite it):**\n\n- **Marker and lookup.** The canonical comment carries `<!-- acceptance-packet: v1 -->` on its first line (registered in `_shared/pr-run-comments.md`'s marker registry). A writer lists the work record's comments, keeps those that carry the marker and pass `comment-trust.js`, and edits the earliest by comment id; extra marker comments are reported, never edited or deleted. If the matched comment cannot be edited by the current identity, the run reports that visibly and posts nothing (never a second packet). The PR gets one idempotently appended body line `Acceptance packet: {comment url}`; with no PR (the `local-merge` model) there is no link and none is needed. Under `local-files` the packet lives in the record body between `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->` and is replaced in place between the delimiters.\n- **Facts and claims.** A fact is `{ id, kind, status, reason?, source }` with `kind` one of `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`; `status` one of `passed`, `failed`, `skipped`, `not-run`; ids are stable strings such as `check:unit-tests` or `story:login#negative-2`. A claim is `{ section, text, refs[] }` with `section` one of `what-changed`, `test-guide`, `tried-to-break`, `least-confident`, `risk-proofs`. Section-to-kind table (in the contract): what-changed cites `change`; test-guide cites `story` and `link`; tried-to-break cites `story` and `check`; least-confident cites `finding`; risk-proofs cites `flag` plus the proof fact. Sections 2 (Recording), 8 (Decisions) and 9 (Deploy status) render facts of kind `recording`, `decision` and `deploy` directly and are not narrated claims. `schemaVersion: 1` is one constant used by the facts file and the marker alike; later records add fact kinds only by extending the contract's table.\n- **Validation policy: visible drop.** `validatePacket` drops any claim whose `refs` is empty, names an absent fact, or names a fact incompatible with the claim, and the packet always states `N claims were dropped for missing evidence` (and lists them in the run-dir working copy). It never posts silently thinner. Compatibility: a claim asserting verification (tested, verified, works) may cite only `passed` facts; a claim citing a `failed` fact renders under Tried to break with the failure; one citing `skipped` or `not-run` moves to Couldn't test.\n- **The expected check set comes from outside the facts.** Gather derives the checks and stories expected for the work (the spec's Acceptance Criteria and verify expectations, the planned stories) independently of what ran; an expected check with no result fact renders under Couldn't test as `not run`, so a self-skipped check cannot be silent. Gather is `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic; a partial gather renders a stated `partial` note); narration is an LLM step in the wrap-up prose; wrap-up runs gather, narrate, validate, render, post in that order.\n- **Failure contract.** If the post or edit fails, the pending acceptance label is not applied and the failure is reported. The reader function `readPacket(comments)` in the same module applies the reader rules: an unknown `schemaVersion` reads as unreadable (stated, no second packet), duplicates resolve to the earliest trusted comment, an untrusted-author marker is ignored, and the run-dir copy is never consulted (a test proves a stale local copy is ignored).\n- **Links.** Test-guide links must be http(s) on the local base URL host or the `dev-base-url` host only; any other host is refused. A shared constant defines the credential-shaped key set, matched case-insensitively after normalization in query, fragment and userinfo: `token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`. The Recording record reuses this one constant for its redactor. When the deploy section is not confirmed live, each Test-guide link carries `(link unverified: deploy not confirmed live)`.\n- **Facts-poor and infra items.** A section with nothing to say renders one line stating why (`not applicable: no UI surface`), never an empty heading. For `Surface: infra`/`backend` work the Test guide lists commands to run instead of links. For decomposed work the packet lives on the parent (the feature-acceptance record owns the gate); a sub-issue's wrap-up posts nothing and the existing parent-gate routing stands.\n- **Size.** The renderer caps the comment at 60,000 characters (GitHub's limit is 65,536) and truncates by omitting whole items with a stated `truncated: N items omitted` line.\n- **Section 1 is cited too.** `what-changed` claims cite `change` facts (changed files, commits), so every narrated section is validated.\n- **Old brief.** All five Routing call sites land in `verification-brief.md`, so replacing its template migrates them at once; the old section map (The ask to What changed; What shipped to What changed; Confirmed to Test guide and Tried to break; Observation plan to Test guide) is a table in the contract. Briefs already posted stay readable through `plugin/skills/demo/legacy-brief-compatibility.md` (kept until the final cleanup record). A work item with only a legacy brief comment gets a new packet comment; the legacy comment is left untouched, and \"exactly one\" applies to packet comments.\n\n## Non-Goals\n\n- Not posting the recording or redaction (separate record), not deploy-status refresh (dev-target record), not the control-mode \"Decisions left for you\" population (control-mode records) — this record defines the sections and renders them when data exists.\n- Not the `/accept` skill or the verdict handler.\n- Not Dispatch's display of the packet.\n- Not removing the legacy-brief reader (`demo/legacy-brief-compatibility.md`); the five call sites in `verification-brief.md`'s Routing table keep working and now land on the packet.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| — | none intra-batch | — |\n\n## Current State\n\n- The Verification Brief: `plugin/skills/wrap-up/verification-brief.md` (about 31 KB). Its `## Routing` section lists five call sites (wrap-up Phase 4 acceptance-labeling, wrap-up's auto-merge short-circuit, dispatch's group auto-merge gate, dispatch close-out step 3, tidy's Open-parent-gate action). Its `## Verification Brief` template has sections The ask / What shipped / Confirmed / Observation plan. It already composes a **Try it block** for every record (`## Try it block`, backed by `plugin/skills/_shared/try-it.md`).\n- Parent-gate: `plugin/skills/wrap-up/verification-brief-parent-gate.md` (a decomposed sub-issue never carries its own pending label; its parent carries one gate). Feature-level acceptance for decomposed work is a separate record; here, keep the existing routing intact.\n- Engine: `plugin/bin/lib/wrap-up/engine-render.js` renders wrap-up output; `plugin/bin/lib/wrap-up/engine-verify.js` verifies it.\n- Pattern to follow: `/activity` splits gather (`gh` to `facts.json`) / narrate / render, and `render.js` drops every `refs[]` citation not present in the facts (warning forms: `dropped citation`, `ambiguous citation`, `unparseable citation`), refuses a schemaVersion mismatch, and neutralizes newlines and link brackets in free text so a citation-shaped string in prose cannot forge a heading or link.\n- Raw material: `/stories` negative stories, qa-agent step screenshots, review's low-confidence findings, `/walkthrough`'s GIF encoder.\n- A shared contract file for the packet does not exist yet: `plugin/skills/_shared/acceptance-packet.md` is new.\n\n## Deliverables\n\n- [ ] `plugin/skills/_shared/acceptance-packet.md` (new): the packet contract — section list and order, the marker-block comment format and its find-by-marker/edit-in-place rule, the fact schema (what each of sections 3-7 may cite), the untrusted-content rules for free text, and which other units fill which sections.\n- [ ] A packet builder module (pure, under `plugin/bin/lib/wrap-up/`) with `validatePacket(facts, narrative)` and `renderPacket(facts, narrative)`: drops or fails any claim in sections 3-7 whose citation is absent from the gathered facts; renders a skipped check under **Couldn't test**; neutralizes newlines and link brackets in narrative text per `/activity`'s `inline()` approach.\n- [ ] Wrap-up posts exactly one packet comment per work item through the existing github write transport (`_shared/github-write-transport.md`), edits it in place on re-run, and links it from the PR; under `work-backend: local-files` it writes the packet into the record body section instead.\n- [ ] `verification-brief.md` and `_shared/try-it.md` reworked so the Try it block and observation plan feed the packet's Test guide and Tried-to-break sections; the old brief sections are mapped, not silently dropped (a mapping table in the packet contract).\n- [ ] `plugin/bin/lib/wrap-up/packet-gather.js` (deterministic gather, partial-gather note) and `readPacket` (reader rules above) with the wrap-up prose that runs gather, narrate, validate, render, post in order; the PR-link line and the `local-files` delimiters from the contract decisions.\n- [ ] Tests: validation rejects an uncited claim; a skipped check lands in Couldn't test; re-render with an existing marker comment edits rather than posts; schema mismatch is refused.\n\n## Acceptance Criteria\n\n1. Given facts containing a story report with one failed and one skipped check, `renderPacket` outputs the skipped check under `Couldn't test` (with its reason) and the failure under `Tried to break`; nothing is omitted silently (a test counts input checks against rendered rows).\n2. A claim in the Test guide whose `refs` cites a fact id absent from the gathered facts is dropped by `validatePacket`, and the rendered packet states `1 claim was dropped for missing evidence`; a claim with no `refs` is dropped the same way; a \"verified\" claim citing a `failed` fact renders under Tried to break with the failure; one citing a `skipped` fact moves to Couldn't test. Each is pinned by a test.\n2a. An expected check (derived from the spec's Acceptance Criteria or planned stories) with no result fact at all renders under Couldn't test as `not run`.\n2b. `readPacket` returns the earliest trusted marker comment among duplicates, ignores an untrusted-author marker, reports `schemaVersion: 2` as unreadable, and never reads the run-dir copy.\n2c. When the post or edit fails (fake runner returns an error) the pending acceptance label is not applied and the failure is reported.\n2d. A packet that would exceed 60,000 characters is truncated by whole items with a `truncated: N items omitted` line.\n3. Wrap-up's second run on a work item that already has a packet comment edits that comment (same comment id) and the work item ends with exactly one comment carrying the marker (test against the fake runner).\n4. A narrative string containing `[x](https://evil.example)` or a forged `## Couldn't test` heading is rendered as inert prose (brackets escaped, newlines collapsed).\n5. The packet contract states, and a conformance test pins, that credentials appear only as vault entry names and that the link rules above hold: a link to a host other than the local base URL host or `dev-base-url` is refused; a link carrying any key from the shared credential-key constant in its query, fragment or userinfo is refused after case and percent-encoding normalization (tests for `TOKEN=`, `tok%65n=`, `#sig=`, `user:pass@`, `sessionid=`); a benign `/docs/token-guide` path is accepted. For a `Surface: infra` record the Test guide lists commands and renders no links; sections with nothing to say render a one-line reason.\n6. The five call sites in `verification-brief.md`'s Routing table still resolve and still apply the pending acceptance label; existing wrap-up tests pass unchanged apart from intended renames.\n7. `npm test` passes.\n\n## Release Note\n\nReplaced the verification brief with an acceptance packet that lists what changed, how to test it, what could not be tested and where confidence is lowest, with every claim tied to evidence.\n\n## Technical Approach\n\nThree-stage gather / narrate / render. Gather is deterministic and writes a facts file in the run directory (working copy). The narration step is judgment and writes a narrative with `refs[]` per claim. The renderer is deterministic and trusts only the facts. The canonical copy is the posted comment, found by its marker and edited in place; the run-dir copy is never read afterward. The packet is the same artifact for control mode on or off — only which sections are populated differs.\n\n### Data / API Surface\n\n- Marker: a fenced marker block comment, versioned (`schemaVersion: 1`), following the repo's other marker-comment convention (`_shared/pr-run-comments.md`); author-trust-gated on read (`plugin/bin/lib/issues/comment-trust.js`).\n- Facts: `{ checks[], stories[], findings[], links[], decisions[], deploy }` with stable ids that `refs[]` cite.\n- Sections 2, 7, 8, 9 render a stated placeholder (`not recorded`, `no kept risk flags`, none, `target: local`) until their owning records populate them.\n\n### Key Files\n\n- `plugin/skills/_shared/acceptance-packet.md` — new packet contract\n- `plugin/skills/wrap-up/verification-brief.md` — migrate to the packet; keep Routing\n- `plugin/skills/_shared/try-it.md` — Try it block feeds the Test guide\n- `plugin/bin/lib/wrap-up/engine-render.js` — render integration\n- `plugin/bin/lib/wrap-up/packet-gather.js` — new gather, `readPacket`, `validatePacket`, `renderPacket` (builder's split into sibling modules)\n- `plugin/skills/_shared/pr-run-comments.md` — register the `acceptance-packet` marker\n- `plugin/bin/lib/activity/render.js` — reference pattern for citation validation (read, do not edit)\n- `plugin/bin/lib/issues/comment-trust.js` — trust gate for reading the marker comment\n- `tests/try-it-contract-conformance.test.js` — pins the Try it contract; update with the move\n- `tests/bin-lib/wrap-up/engine-verify.test.js` — keep green\n\n## Gotchas\n\n- Replacing, not adding: two packets on one item is the failure mode; the old template is replaced in place in `verification-brief.md`, not kept beside the new one.\n- Do not read the run-dir copy after the run; `/accept` and Dispatch read GitHub (AC 2b proves the reader ignores a stale local copy).\n- The authenticated identity that posted the packet may differ on a re-run (cloud, Routine); AC 2c's failure path covers \"cannot edit\". Concurrent wrap-up runs on one record are prevented by the record claim; if one slips through, last write wins and the loser reports.\n- The gather step must never silently pass a failed gather: a partial gather renders a stated \"partial\" note, mirroring `/activity`'s Partial gather handling.\n- `tests/try-it-contract-conformance.test.js` and other prose-pinning tests fail when prose moves; run the whole suite (not only touched files) before merge.\n- The wrap-up skill text must stay within its size ceiling; put packet detail in the new `_shared` contract and cite it.\n- Parent-linked sub-issues keep today's routing (the parent carries the gate) until the feature-level-acceptance record changes it.\n\n**Related:** #4269\n\n\n<!-- work-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio -->\nwork-fingerprint: human-in-control-acceptance:acceptance-packet-schema-canonical-marker-comment-new-sectio\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Q1, what the parent gate posts: Reading A.** The parent gate keeps posting the legacy `## Verification Brief` until the feature-level acceptance record (#4617) changes it. Move the brief template verbatim into `plugin/skills/wrap-up/verification-brief-parent-gate.md`, so the parent path, `/tidy`'s opened-parent-gate check and `engine-verify.js`'s parent path stay unchanged in this record. `verification-brief.md` Step 4 still holds exactly one template (the packet), never two.\n- **Q2, credential screening scope: Reading B.** Apply the shared credential-key constant to `command` strings and Test-guide claim text as well as links (`key=`, `--key`, `Authorization:` and the other key shapes, matched case-insensitively). A matching entry is dropped from the packet and its omission noted in the packet, never rendered; the packet as a whole still posts. Add tests for a command and a claim-text match alongside AC5's link cases.\n- **Q3, where passed happy-path checks and stories render: Reading A.** `Tried to break` lists only negative stories (`negative: true`), edge-case checks and failures. Every other passed check or story renders in its own stated list (for example a \"Checks that passed\" block under Test guide), so a routine pass never reads as an attempt to break the feature. AC1's row count still holds across every section: each check/story fact renders exactly one row.\n- **Q4, an MCP-transport re-run that finds an existing packet: Reading A.** The gh-absent transport cannot edit a comment, so a re-run that finds a packet already posted counts as a failed edit under the Failure contract: it reports the failure, posts nothing, and applies no pending acceptance label. `/accept` never reads a stale packet under a pending label.\n- **Q5, records below the oversight floor: Reading B.** Every record with no parent gets a packet, below the floor included: the packet posts without `--label` there, and the below-floor \"Posting it alone\" path (the Try it block posted by itself) is retired. The packet stays universal, one per work item.\n- **Q6, where the expected verify-check names come from: Reading A.** Gather derives the expected checks itself from the project's verify-scope declaration (the checks `verify.js` reads through `decl.checks`, such as `tests`, `types`, `lint`). No new field is added to `verify-expectations.json`, and wrap-up passes no check list.\n- **Q7, whether a `local` deploy target counts as not confirmed live: Reading B.** The `(link unverified: deploy not confirmed live)` suffix applies only when the deploy target is `dev` and the feature is not confirmed live. Links on a `local` target carry no suffix; the deploy section still states the target.\n- **Q8, what makes a check an edge-case check: Reading A.** No check counts as an edge case until a signal for it exists, so `Tried to break` holds negative stories (`negative: true`) and failures only. A passing check renders under \"Checks that passed\". Defining an edge-case signal is out of scope for this record.\n- **Q9, a Test-guide manual step citing a not-run story: Reading B.** Only claims that assert verification (\"tested\", \"verified\", \"works\") route by the status of the fact they cite: failed to `Tried to break`, skipped or not-run to `Couldn't test`. A plain manual step stays in the Test guide whatever its cited story's status, so a packet built without QA keeps its testing steps.\n- **Q10, section 7 Risk proofs with no kept risk flags: Reading A.** The section always renders; with no kept risk flags it shows the placeholder `no kept risk flags`, so an empty section is never confused with a missing one.\n- **Q11, a project with no verify-scope declaration: Reading B.** A missing declaration is a normal project shape, as `verify.js` treats it: gather expects no verify checks and the packet carries no partial-gather note. Only a declaration that is present but unreadable or invalid counts as a partial gather and gets the note.\n",
-        "createdAt": "2026-10-30T11:46:06Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4611,
-        "state": "OPEN",
-        "title": "Acceptance packet: schema, canonical marker comment, new sections",
-        "updatedAt": "2026-11-01T20:46:21Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Defer-reason: tangential\n\n**Related:** #4502\n\n## Current State\n\n`plugin/bin/lib/issues/provenance.js`'s `resolveProvenance` gives a record with no `by:*` label the side-effect class named by its body's `Origin:` line. `plugin/bin/lib/issues/trust.js` counts a record whose `Origin:` line ends `from #N` as a corrective follow-up against #N's class. Neither checks who wrote the issue. `by:*` labels need triage access, but anyone who can open an issue in a public repo can write an `Origin:` line.\n\nSo in a public consumer repo, an outsider can file an issue whose body starts `Origin: demo changes-requested from #7`. It then counts as a corrective follow-up against #7's trust class, which can flip that class from `clean` to `mixed` and withhold autonomy grants (`autonomy.js`'s `permittedGrants`). It can also add samples to any side-effect class. The direction is mostly toward less autonomy, but class membership becomes forgeable. Found during #4502's brainstorm on 2026-10-30.\n\nIn this repo, every one of the 2,847 records was authored by the owner or by an installed app. So there is no observed case, and the exposure is in other public repos that use the plugin.\n\n## Deliverables\n\n1. Decide the rule for issues whose author has no trusted association (`OWNER`, `MEMBER` or `COLLABORATOR`, as `comment-trust.js` defines them) and is not an installed app. Either their `Origin:` line is ignored (the record resolves `human:human`), or they are excluded from trust rows entirely. State which in the PR and why.\n2. Fetch the author association wherever trust rows are built (the session-scoped record snapshot, `_shared/record-queue-fetch.md`), and pass it to `resolveProvenance` and `trustRows`.\n3. Tests for an outsider-authored record with a forged `Origin:` line.\n\n## Acceptance Criteria\n\n- An issue whose author association is `NONE` or `CONTRIBUTOR`, with `Origin: demo changes-requested from #7`, adds no follow-up to #7's class and joins no side-effect class.\n- The same body from an `OWNER`, `MEMBER` or `COLLABORATOR` author, or from an installed app, is unchanged.\n- A record fetched without an author association keeps today's behaviour, documented in the PR as the fail-open direction with its reason.\n- `npm test` passes.\n\n## Release Note\n\nTrust tracking now ignores provenance lines written by people outside the repository.\n\n### Key Files\n\n- `plugin/bin/lib/issues/provenance.js` (modify)\n- `plugin/bin/lib/issues/trust.js` (modify)\n- `plugin/bin/lib/issues/comment-trust.js` (read: the trusted-association set to reuse)\n- `plugin/bin/lib/issues/record-snapshot.js` (modify: carry the author association)\n\n_Filed by `capture` via specShapedBody._\n",
         "createdAt": "2026-10-30T07:49:28Z",
         "labels": [
@@ -4631,7 +3190,7 @@
     ],
     [
       {
-        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item still actionable (neither applied nor declined) is still listed by both readers.\n- A staged item excluded at the approval prompt, or skipped as `stale — skipped` by re-verify, moves to `staged/declined/` with one `decisions.md` line; neither reader counts it, and `archive-run --local-trail` treats it as resolved.\n- A staged item whose Approve rows split resolves per row outcome: at least one row applied and none failed resolves it `applied`, with its excluded or stale rows named on the same `decisions.md` line; every row excluded or stale, in any mix, moves it to `staged/declined/`; any failed row leaves it actionable in `staged/`.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Staged items `--approve` does not apply: Reading B.** An excluded or stale item is resolved but not applied: it moves to `staged/declined/` and is logged in `decisions.md`. Both readers skip it, and `--local-trail` can archive the run. The listing criterion narrows to items that are still actionable.\n- **Staged item whose Approve rows end differently: Reading A.** One landed row with no failed row resolves the item `applied`, naming its excluded or stale rows on the same `decisions.md` line. All rows excluded or stale, in any mix, declines it. A failed row keeps it actionable for a retry. Reading B was rejected because a mixed item would return at every `--approve` with its excluded rows excluded again, the stuck-item problem this record fixes.\n",
+        "body": "Defer-reason: tangential\n\n## Current State\n\n`plugin/skills/tidy/approve-mode.md`'s \"Archiving the run\" archives the run only after Step 7.5's commit lands. `plugin/skills/tidy/step-7-5-worktree-always.md`'s first paragraph skips the worktree, the commit and the PR whenever the approved set holds no working-tree write (an all-`gh` set), and says the run dir's audit files \"stay uncommitted at `$RUN_ROOT`\". `hooks.js archive-run` then refuses `audit-untracked` (decisions.md, report.md and staged/ are not tracked), so the run can never archive. Its `staged/` still holds the already-applied proposals, so `session-residue.js`'s `collectApprovableStandalone` lists it at every SessionStart (\"standalone run(s) finished with unapproved staged proposal(s)\"), and `backlog/attention-mode.md`'s tidy row keeps reading \"5 tidy proposal(s) staged awaiting approval\".\n\nObserved 2026-10-30 on `2026-10-28T172007-sweep-standalone`: `tidy --approve` applied all 7 items (3 digest absorbs into #4405/#4403/#4400, a new settle record #4560, 3 old-value-guarded `update-ref -d` orphan-ref deletions), logged each to decisions.md, closed the run, and `archive-run` refused `audit-untracked`. The same gap has been worked around by hand before. #3409, #3410, #4075 and #4470 each landed a sweep or tidy run's trail through a dedicated PR so the run could archive, so the cost recurs on every forge-only approval.\n\n## Deliverables\n\n1. Record per staged item that `--approve` applied it, in one representation both readers use, so `collectApprovableStandalone` and attention-mode's tidy row stop counting applied items. Examples: move applied items into `staged/applied/`, or a per-item outcome file the detectors read.\n2. Give the forge-only approval path a terminal state the residue probe accepts. Either commit the run trail through the existing `pr-first` housekeeping-PR path when the approved set is forge-only, or let `archive-run` accept an untracked trail for a closed run whose every staged item is recorded applied. State in the PR which one and why.\n3. Tests for both readers and for the archival outcome.\n\n## Acceptance Criteria\n\n- After `tidy --approve` applies every staged item of a forge-only approved set, the next SessionStart does not list that run under unapproved staged proposals, and `backlog attention`'s tidy row omits it.\n- That run reaches an archived (or documented terminal) state without a manual git step.\n- A run with at least one staged item still actionable (neither applied nor declined) is still listed by both readers.\n- A staged item excluded at the approval prompt, or skipped as `stale — skipped` by re-verify, moves to `staged/declined/` with one `decisions.md` line; neither reader counts it, and `archive-run --local-trail` treats it as resolved.\n- A staged item whose Approve rows split resolves per row outcome: at least one row applied and none failed resolves it `applied`, with its excluded or stale rows named on the same `decisions.md` line; every row excluded or stale, in any mix, moves it to `staged/declined/`; any failed row leaves it actionable in `staged/`.\n\n## Release Note\n\nAfter `/claude-tweaks:tidy --approve` applies a run's staged items, the session-start notice and `/claude-tweaks:backlog attention` stop reporting them as awaiting approval.\n\n### Key Files\n\n- `plugin/skills/tidy/approve-mode.md` (modify)\n- `plugin/skills/tidy/step-7-5-worktree-always.md` (modify)\n- `plugin/bin/lib/hooks/session-residue.js` (modify)\n- `plugin/skills/backlog/attention-mode.md` (modify)\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-10-31), applied to the Acceptance Criteria above.\n\n- **Staged items `--approve` does not apply: Reading B.** An excluded or stale item is resolved but not applied: it moves to `staged/declined/` and is logged in `decisions.md`. Both readers skip it, and `--local-trail` can archive the run. The listing criterion narrows to items that are still actionable.\n- **Staged item whose Approve rows end differently: Reading A.** One landed row with no failed row resolves the item `applied`, naming its excluded or stale rows on the same `decisions.md` line. All rows excluded or stale, in any mix, declines it. A failed row keeps it actionable for a retry. Reading B was rejected because a mixed item would return at every `--approve` with its excluded rows excluded again, the stuck-item problem this record fixes.\n- **Trail ruling (2026-11-01): local by default.** Deliverable 2 takes the `archive-run --local-trail` option, not the housekeeping PR: a run's trail lands in git only when its environment disappears afterwards, and #4850 owns that case and the `.gitignore` exceptions. Keep `archive-run`'s `audit-untracked` refusal for a run without `--local-trail`, so a trail with a landing PR still waiting is never moved early.\n- **Tidy row reading (2026-11-02): Reading A.** `backlog attention`'s tidy row walks back to the newest run with actionable ids, as `--approve` already does, and the accepted-limitation paragraph is removed. A settled newer run must never hide an older run that still has work: that masking is what this record fixes.\n- **Landing trails.** `archive-run --local-trail` refuses a run whose trail was adopted for a PR that is still open, and names that PR. `adopt-run-dir` records this in the run's state, so the check needs no guess from the branch name. A trail with a landing PR is never moved early.\n- **When an item settles.** An item moves to `staged/applied/` or `staged/declined/` only after Step 7.5's verification of that item passes. A failed verification or commit leaves it actionable in `staged/`.\n- **Retry route.** `tidy --approve` on a run with no actionable items re-runs its idempotent `close-run` and `archive-run` rather than stopping, so a settled but unarchived run can always finish.\n- **Tracked items.** A staged item already tracked by git settles through the commit in the scratch worktree, never as a rename left in the main checkout's index. An untracked item moves as a plain file.\n- **Items with no sidecar.** An item id is the file stem, whether or not a `.json` sidecar exists, and settling moves whichever of the pair exists. Mark Task 2 `**Review risk:** high`.\n- **Tracked item listing (2026-11-02): Reading B.** This amends the first Acceptance Criterion, which holds for a run whose staged items are all untracked. A tracked item stays listed until its PR merges and syncs, because it has not landed. `--approve`'s report and the notice name that pending state and the PR. No pending-record mechanism is added: tracked items are rare, and #4850 removes the cause.\n- **`--approve` during landing.** While a tracked item's PR is open, `--approve` refuses that run and names the PR. It never reports the item `stale`, so it never records it as declined.\n- **Merged but unsynced trail.** \"No manual git step\" applies to a run with no tracked items. For an adopted trail, `archive-run --local-trail`'s refusal prints the exact sync command. #4850 removes the dirty-checkout cause.\n- **Commit order.** Step 7.5 and approve-mode state the `--approve` exception to the `adopt-run-dir`-before-`git add` order, so the two files agree.\n- **`worktree-always` off.** `--approve` provisions a scratch worktree for a tracked item's commit when none exists.\n- **PR lookup scope.** The adoption stamp records the trail commit's sha, and `--local-trail` refuses only for an open PR containing that commit, so an earlier PR on a reused branch name never matches.\n- **Older settled runs.** `--find` walks back through settled runs as well as actionable ones, so an older run is never hidden. This is the same rule as the tidy row's Reading A.\n",
         "createdAt": "2026-10-30T05:17:39Z",
         "labels": [
           {
@@ -4680,7 +3239,7 @@
         "number": 4565,
         "state": "OPEN",
         "title": "tidy --approve leaves a forge-only approval run unarchivable, so its applied staged/ keeps raising the unapproved-proposals notice",
-        "updatedAt": "2026-11-01T19:08:10Z",
+        "updatedAt": "2026-11-02T04:34:07Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -12402,84 +10961,6 @@
           "risk": "medium",
           "size": "low",
           "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\nOrigin: reflect full from #4640\n\nDefer-reason: tangential\n\n**Related:** #4492, #4494, #4499, #4812\n\n## Current State\n\n`openPrEarly` in `plugin/bin/lib/flow/pr-early-open.js` picks a CLOSED prior-attempt PR for the branch and calls `deps.gh(['pr', 'reopen', String(pick.number), '--repo', repo])`. Today \"the call did not throw\" is the whole success test (`reopenRejected === null`). On that test alone it logs `reopened PR #{n} for {branch} (retry)`, rebinds an adopted PR's body, records the PR in `run-state.json`, pushes, and returns outcome `reopened`. It never reads the PR's state after the reopen.\n\nObserved on run `2026-11-01T165322-record-4640`: `decisions.md` has `AUTO 17:57:27 — log-decision: PR-early run lifecycle: reopened PR #4789 for worktree-dispatch-record-4640 (retry)`, yet `gh api repos/thn-inc/claude-tweaks/issues/4789/events` lists only `closed` (16:42:27Z) and `head_ref_deleted` (16:42:52Z), with no `reopened` event. The PR stayed CLOSED. The first PR-checklist refresh (18:37:51) was refused as a run-marker mismatch, and the phase-exit recovery at 18:39 opened a replacement draft PR #4832, about 40 minutes after the log claimed success.\n\nThe record's \"defect in `deps.gh`\" hypothesis was ruled out on 2026-11-01. The CLI's runner is `execFileSync('gh', args, …)` (`plugin/bin/pr-early-open.js:104`), wrapped at lines 182-189 so that it only tags timeouts and rethrows. Any non-zero `gh` exit throws, so `gh` 2.102.0 really did exit 0 on that reopen. In this code the reopen also runs before Step 2's push, so when a prior run's head branch was deleted, the head ref does not exist on the remote at reopen time. In the observed run it had been deleted at 16:42:52Z.\n\nThe create path already handles a PR it cannot see clearly. `lookForLanded` re-lists open PRs for the head after a failed `gh pr create`, and it adopts a PR that turns out to exist.\n\n## Deliverables\n\n1. After a non-throwing `gh pr reopen`, `openPrEarly` re-lists the branch's PRs with the existing `listPrs()` read and requires the picked PR to read `state: OPEN`. Only then does it log `reopened PR #{n} for {branch} (retry)`, rebind, record, push, and return `reopened`.\n2. When the re-read shows the picked PR still not OPEN, the call takes the existing rejected-reopen path in the same invocation. `reopenRejected` is set to the picked number, so the result carries `reopenRejected` for the caller's pointer-comment repoint. One distinct `decisions.md` line names the cause: `reopen of closed PR #{n} for {branch} exited 0 but the PR still reads {state}; creating`. Then a new draft PR is created through the existing create path.\n3. When the re-read itself fails (the `gh pr list` call throws or returns a non-array), the reopen is unconfirmed. It is handled like item 2, and the line says `could not confirm reopen of closed PR #{n} for {branch} ({error}); creating`. The existing create path's `lookForLanded` adopts the PR if the reopen did land. When the adopted PR is the picked prior-attempt PR, it is rebound to this run (`rebind(n, 'reopened')`) before the result returns, so a landed reopen never leaves a body naming the old run.\n4. The cause of the exit 0 is researched from `gh`'s own source for the installed version (`pkg/cmd/pr/reopen` in cli/cli at the tag matching `gh --version`). Do not create, close or reopen any real PR to reproduce it. The PR that fixes this states which branch of that command's code returns 0 without reopening, or states plainly that the source does not explain it.\n5. Fake-`gh` tests in `tests/bin-lib/flow/pr-early-open.test.js` cover:\n   - a reopen that exits 0 while the re-list still shows CLOSED, which ends in outcome `opened` with `reopenRejected` set;\n   - a re-list that throws after the reopen;\n   - the existing confirmed-reopen tests, updated so their `lists` sequence returns OPEN on the confirming read.\n\n## Acceptance Criteria\n\n- [ ] A reopen that exits 0 with the confirming list still showing the PR CLOSED never writes the `reopened PR #{n} … (retry)` line, never records that PR, and returns outcome `opened` with `reopenRejected: {n}` and the new PR's number.\n- [ ] That case's `decisions.md` contains the `exited 0 but the PR still reads CLOSED; creating` line.\n- [ ] A confirming list that throws produces the `could not confirm reopen` line and reaches the create path. When the create path's `lookForLanded` then finds the picked PR OPEN, the result is that PR and its body is rebound to this run.\n- [ ] A reopen whose confirming list shows OPEN behaves exactly as today: the same log line, rebind, record, push, and `reopened` outcome. The existing reopen tests pass with only their `lists` fixtures extended.\n- [ ] Removing the post-reopen confirmation turns the CLOSED-after-reopen test red. The red run is quoted in the PR.\n- [ ] The fixing PR's description records the source-level finding for item 4, or says the source does not explain it.\n- [ ] `npm test` passes.\n\n## Release Note\n\nStop the early draft-PR step from reporting a reopened PR that GitHub never reopened. It now opens a fresh draft instead.\n\n## Technical Approach\n\n- In `openPrEarly`'s CLOSED branch, after the `try { deps.gh(['pr', 'reopen', …]) }` succeeds, call `listPrs()` inside its own try. Treat `find((p) => p.number === pick.number && p.state === 'OPEN')` as the confirmation. On no match or a throw, set `reopenRejected = pick.number` and log the matching item 2 or item 3 line. The block that follows then skips straight to the create path, as it does for a thrown reopen.\n- The existing `if (reopenRejected !== null) log('reopen of closed PR … was rejected; creating')` line must not double-log for the new cases. Keep one line per cause.\n- For item 3's rebind, compare `created.number` with the remembered `pick.number` after the create path. When they match and the PR came from `lookForLanded`, run `namesOtherRun` and `rebind` on it.\n- Tests use the suite's existing `harness({ lists: [...] })` sequence to return OPEN, CLOSED or an Error on the confirming read.\n\n### Key Files\n\n- `plugin/bin/lib/flow/pr-early-open.js` — confirm OPEN with a `listPrs()` re-read after a non-throwing reopen; route an unconfirmed reopen to the create path with its own `decisions.md` line; rebind a landed picked PR\n- `tests/bin-lib/flow/pr-early-open.test.js` — CLOSED-after-reopen and failed-confirmation cases; extend the existing reopen tests' `lists` fixtures\n\n## Gotchas\n\n- **`plugin/bin/pr-early-open.js` needs no change.** Its runner already throws on any non-zero exit (Current State). Item 4 can still find that `gh` returns 0 without reopening, but that is `gh`'s behavior, and the state read is the fix either way.\n- **Don't reproduce against the real repo.** Opening, closing and reopening throwaway PRs to watch `gh` writes public state and notifications. Item 4 is source research only.\n- **The reopen still runs before the push.** Moving the push ahead of the reopen could change whether GitHub accepts a reopen whose head ref was deleted, but it also changes the push-then-create order the existing tests pin. That is out of scope here. The confirmation makes the order safe either way.\n- **The phase-exit recovery that opened #4832 later is a separate path.** This record keeps its behavior unchanged. After this fix it should no longer be needed for this case.\n- `**Related:**` lists only the near-duplicate hits that share a Key File (the #4492/#4494/#4499 policy-in-worktree family and the #4812 flow digest). The other 34 score-1 hits on 2026-11-01 matched on generic anchors (the noise #4846 tracks) and are not related.\n\n## Original request\n\npr-early-open logs \"reopened PR\" after a gh exit 0 without confirming the PR is OPEN\n\nOrigin: reflect full from #4640\n\nDefer-reason: tangential\n\n## Current State\n\n`plugin/bin/lib/flow/pr-early-open.js` (lines 187-207 on `origin/main`) calls `gh pr reopen` on a CLOSED prior-attempt PR and, when the call does not throw, logs `reopened PR #{n} for {branch} (retry)`, records the PR in `run-state.json`, and returns outcome `reopened`. It never re-reads the PR to confirm it is OPEN afterwards.\n\nObserved on run `2026-11-01T165322-record-4640`: `decisions.md` has `AUTO 17:57:27 — log-decision: PR-early run lifecycle: reopened PR #4789 for worktree-dispatch-record-4640 (retry)`, yet `gh api repos/thn-inc/claude-tweaks/issues/4789/events` lists only `closed` (16:42:27Z) and `head_ref_deleted` (16:42:52Z) — no `reopened` event ever. The PR stayed CLOSED, so the first PR-checklist refresh (18:37:51) was refused as a run-marker mismatch, and the phase-exit recovery at 18:39 had to open a replacement draft PR #4832 about 40 minutes after the log claimed success.\n\nIntegration-branch probe: `git grep -n -F -e 'reopen' origin/main -- plugin/bin/lib/flow/pr-early-open.js` matched only the reopen call, the rejected-reopen branch and the success log — no state read after the reopen — so the gap is present on `origin/main`.\n\n## Deliverables\n\nReproduce why `gh pr reopen` exited 0 against a CLOSED PR whose head branch had been deleted (the later 18:38 attempt on the same PR was rejected, so the first exit-0 is the unexplained one), and record the cause in the PR that fixes this.\n\nMake `pr-early-open.js` confirm the PR reads OPEN after a non-throwing reopen before it logs `reopened`, records the PR, or returns outcome `reopened`; a PR that is still CLOSED takes the existing rejected-reopen path and creates a new draft PR in the same call. Cover it with a fake-gh test in the neighbouring `pr-early-open` suite.\n\n## Open Question\n\nIs the unexplained exit 0 a `gh` behaviour (reopen succeeds silently or no-ops without an error for some PR/branch state), a race with the branch re-push, or a defect in how `deps.gh` wraps the call? The answer decides whether the fix is a post-reopen state read in `pr-early-open.js` alone or also a change to the gh runner.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/flow/pr-early-open.js` — confirm OPEN after a non-throwing reopen\n- `plugin/bin/pr-early-open.js` — gh runner wiring, if the cause is there\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-01T18:07:12Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4833,
-        "state": "OPEN",
-        "title": "pr-early-open logs \"reopened PR\" after a gh exit 0 without confirming the PR is OPEN",
-        "updatedAt": "2026-11-01T20:41:52Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
           "solutionUnjustified": false,
           "breaking": false,
           "needsDefinition": false,
