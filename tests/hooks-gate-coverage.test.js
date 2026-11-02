@@ -1041,6 +1041,45 @@ test('#4210 F2: an escaped character before a glued `>` still resolves its targe
   }
 });
 
+// #4294 classes 1 and 2 are bash word values since #4281, so these are characterization pins of
+// #4281's tokenize, shown red against a scratch mutant of its unescaping lines. bash 3.2, bash 5 and
+// zsh write each target.
+const at4294 = (action, f) => [{ action, file: path.resolve(f) }];
+for (const [command, actual, expected] of [
+  ['mkdir a\\ b', mkdirTargets, at4294('mkdir', '/r/a b')],
+  ['mkdir -p /r/a\\ b/c', mkdirTargets, at4294('mkdir', '/r/a b/c')],
+  ['cp a my\\ file.js', fileWriteTargets, at4294('copy', '/r/my file.js')],
+  ['cd /r/a\\ b && git commit -m x', gitTargets, [{ action: 'commit', dir: path.resolve('/r/a b') }]],
+  ['echo x >/ma\\\nin/x', fileWriteTargets, at4294('write', '/main/x')],
+  ['mkdir -p \\\n/abs/dir', mkdirTargets, at4294('mkdir', '/abs/dir')],
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves bash's target (characterization of #4281)`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
+
+// #4294 AC2, #4212's carried-over expectations as amended at plan review (Q1): an escaped quote is a
+// literal path character, so bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c;
+// `echo "a\" b>c "` and `echo foo\>x` write nothing; `echo foo\\>x` writes x. `echo $M>x` writes x
+// too, a known miss #4328 owns.
+test('AC2.1 #4294: #4212\'s carried-over redirect expectations hold', () => {
+  const at = (f) => [{ action: 'write', file: path.resolve('/r', f) }];
+  assert.deepStrictEqual(fileWriteTargets('echo "a\\" b>c "', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('echo foo>x', '/r'), at('x'));
+  assert.deepStrictEqual(fileWriteTargets('echo foo\\\\>x', '/r'), at('x'));
+  assert.deepStrictEqual(fileWriteTargets('echo foo\\>x', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('echo $M>x', '/r'), []);
+  assert.deepStrictEqual(fileWriteTargets('echo a\\"b>c', '/r'), at('c'));
+  assert.deepStrictEqual(gitTargets("cd \\'/wt\\' && git commit -m x", '/r'), [{ action: 'commit', dir: path.resolve('/r', "'/wt'") }]);
+  assert.deepStrictEqual(fileWriteTargets("echo x > \\'/abs/f\\'", '/r'), at("'/abs/f'"));
+});
+
+// #4294 AC3: #4210's cases still resolve. bash 3.2, bash 5 and zsh write x and out.
+test('AC3.1 #4294: #4210\'s quoted-span and one-word-group redirects still resolve', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo "hi">x', '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  assert.deepStrictEqual(fileWriteTargets('(ls)>out', '/r'), [{ action: 'write', file: path.resolve('/r', 'out') }]);
+});
+
 // #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
 // bare on the token as typed; a quoted `>` or one a `$VAR` expands to is a word.
 test('#4210 F3: a quoted or expanded leading `>` resolves no target', () => {

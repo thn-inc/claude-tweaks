@@ -857,6 +857,24 @@ test('#4281: spanKinds stays aligned with the value, and an escaped character is
   assert.strictEqual(tokenize('p a\\ b').spanKinds[1], 'beb');
 });
 
+test('AC1.1 #4294: tokenize unescapes a blank and deletes a line continuation, with the mask shrinking to the value (characterization of #4281)', () => {
+  // Q2: tokens are bash word values and the typed text stays in typed.
+  const q2 = tokenize("cp a C:\\r\\x \\'/wt\\'");
+  assert.deepStrictEqual(q2.tokens, ['cp', 'a', 'C:rx', "'/wt'"]);
+  assert.strictEqual(q2.typed[2], 'C:\\r\\x');
+  for (const [seg, word, value, kinds] of [
+    ['mkdir a\\ b', 1, 'a b', 'beb'],
+    ['echo a\\"b', 1, 'a"b', 'beb'],
+    ['echo x >/ma\\\nin/x', 2, '>/main/x', 'bbbbbbbb'],
+    ['mkdir -p \\\n/abs', 2, '/abs', 'bbbb'],
+  ]) {
+    const { tokens, spanKinds } = tokenize(seg);
+    assert.strictEqual(tokens[word], value, seg);
+    assert.strictEqual(spanKinds[word], kinds, seg);
+    tokens.forEach((tok, i) => assert.strictEqual(spanKinds[i].length, tok.length, `${seg} word ${i}`));
+  }
+});
+
 test('#4281: typed keeps the word as typed', () => {
   assert.strictEqual(tokenize('tee D:\\a\\x').typed[1], 'D:\\a\\x');
 });
