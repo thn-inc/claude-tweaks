@@ -61,6 +61,16 @@ A `navigate` step takes no locator; its URL goes in the `target` field (the cano
 
 An optional per-step field, `caption: "<one line>"`, exists purely for `/claude-tweaks:walkthrough` — a one-line human-readable description shown beside that step's frame in a generated GIF's caption list. It is expand-only (no existing story's meaning changes) and is never read by QA execution: `qa-agent.md`'s step mapping does not reference it.
 
+An optional story-level field, `secrets:`, marks values the story reveals as sensitive — an API key, a recovery code, a one-time token, an invite link. Each entry is either a `pattern:` (a JavaScript regex matching the value) or a `locator:` naming the element that displays it (`role` with an optional `name`, `label`, or `placeholder`; `testid` is not accepted because accessibility snapshots carry no test ids, and `text` is not accepted because it would name the value itself — write a `pattern` for either). A locator's value is read at run time from the story's own snapshots and is never written to a file:
+
+```yaml
+    secrets:
+      - pattern: "pt_[A-Za-z0-9]{24}"
+      - locator: { role: code, name: "Push token" }
+```
+
+Prompt instructions cannot reach the snapshots, traces and screenshots `playwright-cli` writes on its own, so `/test qa` scrubs them instead: after a story that declares `secrets:` finishes, pass or fail, the qa-agent runs `bin/qa-scrub.js`, which replaces each value with `[REDACTED:qa-secret]` in snapshot YAML, trace files and console logs and deletes the screenshots taken from the reveal onward. The QA report records `{N} secret value(s) scrubbed from {M} artifact(s); {K} screenshot(s) removed` per story, and a scrub that cannot prove every value gone fails the story. A story without `secrets:` runs exactly as before. Use fake values in story files and fixtures — the patterns live in the story YAML, which is committed.
+
 See locator types and preference order in `story-examples.md`.
 
 A file may also carry file-level blocks alongside `stories`: `setup` (viewport, shared auth, pre-steps), `teardown` (post-run steps), and `target_env` (the Target Environment Guard's recorded classification — see Step 2). Complete worked examples of every block live in `story-examples.md`; this schema section is canonical for field semantics and is not restated elsewhere in this file.

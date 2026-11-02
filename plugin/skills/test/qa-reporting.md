@@ -10,6 +10,7 @@ QA collection, recoveries, reporting, and ledger writes — Phases 4, 4.5, 5, 5.
     - Recovered locators array (from the `REPORT_JSON` comment's `recovered_locators` field — may be empty)
     - Page inventories array (from the `REPORT_JSON` comment's `page_inventories` field — one entry per unique URL visited, may be empty)
     - Trace path (from the `TRACE:` line, if present — only for failures)
+    - Secret scrub outcome (from the `REPORT_JSON` comment's `scrub` field — present only for a story that declared `secrets:`; carry it into the Phase 5 payload unchanged, and never reword a story with a failed scrub as passing)
     - The full agent report text
     - Elapsed time (from the timing data recorded in Phase 3, step 20)
 23. Be resilient: if an agent times out or crashes, mark that story as FAIL and include whatever output was available. If a `TRACE:` line is present in the partial output, retain it.
@@ -95,11 +96,14 @@ After ALL agents in a tier complete (not during execution — to avoid file writ
       "screenshot_dir": "{SCREENSHOT_PATH}",
       "category": "optional — set for story-bug or a manual override of a FAIL story",
       "recovered_locators": [],
-      "page_inventories": []
+      "page_inventories": [],
+      "scrub": "optional — only for a story that declared secrets: the agent's REPORT_JSON scrub object as-is"
     }
   ]
 }
 ```
+
+The writer keeps `scrub`'s `ok`, the three counts and `remaining`, recomposes its `line`, and refuses (exit 1, `scrub-failed-not-fail`) a story whose scrub failed but whose status is not `FAIL` — a scrub that could not prove the secret gone is never reported clean. A story without `scrub` gets no `scrub` key in `report.json`.
 
 Exit codes: `0` written; `1` the results payload is unreadable or invalid — fix the payload the stderr reason names and re-run; `2` malformed invocation, `3` `--out` unwritable — surface stderr verbatim. Do not retry around the writer: never compose or hand-edit `report.json` — the QA pass stamp below reads only what this writer wrote.
 
@@ -178,11 +182,14 @@ The schema below is the shape the writer produces.
       "error": null,
       "caveats": [],
       "trace": "{trace path or null}",
-      "screenshot_dir": "{SCREENSHOT_PATH}"
+      "screenshot_dir": "{SCREENSHOT_PATH}",
+      "scrub": { "ok": true, "values_scrubbed": N, "artifacts_scrubbed": N, "screenshots_removed": N, "remaining": [], "line": "{N} secret value(s) scrubbed from {M} artifact(s); {K} screenshot(s) removed" }
     }
   ]
 }
 ```
+
+(`stories[].scrub` is present only for a story that declared `secrets:`.)
 
 The `summary.passed` count includes both PASS and PASS_WITH_CAVEATS stories (since caveats are informational). The `summary.pass_with_caveats` count is the subset of passed stories that had caveats. The `findings` array contains classified failure findings and caveat-derived ux-issue findings. Each failure finding includes the `trace` path captured by the qa-agent before closing the session — a Chrome DevTools trace, opened via Chrome DevTools → Performance → Load profile (the CLI has no trace-viewing subcommand). The `caveats` array contains raw observations from PASS_WITH_CAVEATS stories. The `recovered_locators` array contains all locator recoveries across all stories — each entry includes the source file and step index so the YAML update can be traced. The `page_inventories` array contains structured snapshot data per unique URL — consumed by `/review` lens 3h (UX analysis, `ux-analysis.md`) and `/visual-review` (`browser-review.md`'s Shared review contract, "First Impressions (Step 2)") to ground page-level recommendations in observed structure.
 
@@ -240,6 +247,15 @@ Auto-recovered {N} locator(s) in {M} story file(s). Story YAML files have been u
 | 2   | {story.id}   | {story name} | {filename}  | PASS_WITH_CAVEATS | {passed}/{total} | {N}s    |
 | 3   | {story.id}   | {story name} | {filename}  | FAIL              | {passed}/{total} | {N}s    |
 | 4   | {story.id}   | {story name} | {filename}  | SKIPPED           | —                | —       |
+
+## Secret Scrub
+
+(Only include when any story in `report.json` carries `scrub` — a story that declared `secrets:`)
+
+| Story ID   | Outcome                                                                    | Remaining paths |
+| ---------- | -------------------------------------------------------------------------- | --------------- |
+| {story.id} | {scrub.line}                                                               | —               |
+| {story.id} | {scrub.line} — scrub FAILED, story marked FAIL                             | {scrub.remaining, one per line} |
 
 ## Skipped (dependency, auth-vault, target-environment, or step-origin skips)
 

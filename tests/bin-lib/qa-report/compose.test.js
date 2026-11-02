@@ -222,3 +222,57 @@ test('filters default to null and pass through', () => {
     tag: 'smoke', priority: null, retry: null, journey: null,
   });
 });
+
+// #4477: a story that declared `secrets:` carries its scrub outcome.
+const STORY_KEYS = ['id', 'name', 'source_file', 'status', 'steps_passed', 'steps_total', 'elapsed_seconds',
+  'error', 'caveats', 'trace', 'screenshot_dir'];
+const scrub = (extra) => ({
+  ok: true, values_scrubbed: 1, artifacts_scrubbed: 4, screenshots_removed: 2, remaining: [], ...extra,
+});
+
+test('AC4.1: a story without scrub has exactly the pre-change keys', () => {
+  const { report } = compose([story('a', 'PASS'), story('b', 'FAIL', { error: 'boom' })]);
+  for (const s of report.stories) assert.deepEqual(Object.keys(s), STORY_KEYS);
+  assert.equal(JSON.stringify(report).includes('scrub'), false);
+});
+
+test('AC3.1: a scrubbed story carries counts and the composed line', () => {
+  const { report, error } = compose([story('a', 'PASS', {
+    scrub: scrub({ line: 'agent-written text is ignored', deleted: [], errors: [], reveal: 'snapshot', no_matches: false }),
+  })]);
+  assert.equal(error, undefined);
+  assert.deepEqual(Object.keys(report.stories[0]), [...STORY_KEYS, 'scrub']);
+  assert.deepEqual(report.stories[0].scrub, {
+    ok: true, values_scrubbed: 1, artifacts_scrubbed: 4, screenshots_removed: 2, remaining: [],
+    line: '1 secret value(s) scrubbed from 4 artifact(s); 2 screenshot(s) removed',
+  });
+});
+
+test('AC5.1: a failed scrub on a PASS story is refused', () => {
+  for (const status of ['PASS', 'PASS_WITH_CAVEATS', 'SKIPPED']) {
+    assert.deepEqual(compose([story('a', status, { scrub: scrub({ ok: false, remaining: ['/t/x.trace'] }) })]),
+      { error: 'scrub-failed-not-fail: a' });
+  }
+});
+
+test('AC5.1: a failed scrub on a FAIL story lists remaining paths', () => {
+  const { report } = compose([story('a', 'FAIL', {
+    error: 'secret scrub incomplete: 1 path(s) still hold a secret value or could not be checked',
+    scrub: scrub({ ok: false, remaining: ['/t/x.trace'] }),
+  })]);
+  assert.equal(report.stories[0].scrub.ok, false);
+  assert.deepEqual(report.stories[0].scrub.remaining, ['/t/x.trace']);
+  assert.equal(report.summary.failed, 1);
+});
+
+test('a malformed scrub is refused', () => {
+  const bad = [
+    'yes', null, [], scrub({ ok: 'true' }), scrub({ values_scrubbed: -1 }), scrub({ artifacts_scrubbed: 1.5 }),
+    scrub({ screenshots_removed: '2' }), scrub({ remaining: '/x' }), scrub({ remaining: [3] }),
+    { ok: true, values_scrubbed: 1, artifacts_scrubbed: 1 },
+  ];
+  for (const s of bad) assert.deepEqual(compose([story('a', 'FAIL', { scrub: s })]), { error: 'invalid-scrub: a' });
+  const noRemaining = scrub();
+  delete noRemaining.remaining;
+  assert.deepEqual(compose([story('a', 'PASS', { scrub: noRemaining })]).report.stories[0].scrub.remaining, []);
+});
