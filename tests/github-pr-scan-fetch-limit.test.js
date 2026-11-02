@@ -379,13 +379,18 @@ test('triage item 1 reproduces #4820: the pre-change fence reports a capped pend
 // Limit 2 against 2 rows reached its cap, so the count is a floor and the fence says so; limit 3 against 2 is a real count;
 // the fetch is --label filtered, so GitHub caps it at 1000 whatever --limit says: 1000 rows under 1500 is the cap, 999 is not.
 const assertItem1CapCases = (f, shell = 'bash') => {
-  const capped = runFence(f, { limit: 2, ghRows: readyRows(2), shell });
-  assert.equal(capped.status, 0, capped.stderr);
+  // Every run must exit 0, so a fence that crashes on a no-warn path cannot pass as "no WARNING:".
+  const run = (limit, rows) => {
+    const r = runFence(f, { limit, ghRows: readyRows(rows), shell });
+    assert.equal(r.status, 0, `item 1: the fence must exit 0 (limit ${limit}, ${rows} rows): ${r.stderr}`);
+    return r;
+  };
+  const capped = run(2, 2);
   assert.equal(capped.stdout.trim(), '2', 'item 1: the capped count still prints');
   assert.match(capped.stderr, TRIAGE_WARNING, 'item 1: a fetch at the limit must warn');
-  assert.ok(!runFence(f, { limit: 3, ghRows: readyRows(2), shell }).stderr.includes('WARNING:'), 'item 1: a fetch under the limit must not warn');
-  assert.match(runFence(f, { limit: 1500, ghRows: readyRows(1000), shell }).stderr, TRIAGE_WARNING, 'item 1: 1000 rows is the --label cap and must warn');
-  assert.ok(!runFence(f, { limit: 1500, ghRows: readyRows(999), shell }).stderr.includes('WARNING:'), 'item 1: 999 rows under a 1500 limit must not warn');
+  assert.ok(!run(3, 2).stderr.includes('WARNING:'), 'item 1: a fetch under the limit must not warn');
+  assert.match(run(1500, 1000).stderr, TRIAGE_WARNING, 'item 1: 1000 rows is the --label cap and must warn');
+  assert.ok(!run(1500, 999).stderr.includes('WARNING:'), 'item 1: 999 rows under a 1500 limit must not warn');
 };
 
 for (const shell of ['bash', 'zsh']) {
@@ -410,4 +415,8 @@ test('triage item 1 go-red: a threshold that drops the label cap, or the compari
     assert.notEqual(mutated, fence);
     assert.throws(() => assertItem1CapCases(mutated), { message: /item 1:/ }, `a threshold of "${wrong}" must fail a pinned case`);
   }
+  // A fence that crashes on a no-warn path (999 rows, under the cap) prints no WARNING:, so only the exit-status check catches it.
+  const crashing = fence.replace('console.log(pending);', 'console.log(pending); if (issues.length === 999) process.exit(3);');
+  assert.notEqual(crashing, fence);
+  assert.throws(() => assertItem1CapCases(crashing), { message: /item 1: the fence must exit 0 \(limit 1500, 999 rows\)/ }, 'a crash on the no-warn path must fail the status check');
 });
