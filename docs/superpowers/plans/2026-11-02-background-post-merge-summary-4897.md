@@ -35,6 +35,7 @@ Scope keywords: postMergeFailed, postMergeRan, step40Failed
 ---
 
 ### Task 1: Judge entries with classifyEntry and carry records
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/reconcile/post-merge.js` (`processRun`'s `recordsOf`, its comment)
@@ -145,7 +146,7 @@ git commit -m "Judge background post-merge entries with classifyEntry — a fail
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/session-start.js:339-350`
-- Modify: `docs/reconcile-checks.md:717-731`
+- Modify: `docs/reconcile-checks.md:717-744`
 - Modify: `docs/journeys/close-a-below-floor-decomposition-parent-4466.md:79`
 - Modify: `docs/journeys/session-start-fast-background-reconcile.md:42`
 - Test: `tests/hooks-session-start.test.js`
@@ -195,7 +196,7 @@ With no records: `post-merge steps failed for N merged run(s) (tidy's parent-gat
 
 When `postMergeRan` is 0 and `ranClosed` is above 0, push `post-merge steps closed ${ranClosed} parent record(s) below the oversight floor`. Update the comments at `:339-340` and `:348-349`.
 
-Docs: rewrite the Surfacing bullet to state the `classifyEntry` rule, `postMergeFailedRecords`, that `postMergeParentsClosed` counts every `ran` run's closes, the new line text, and that a non-clean loop entry carries `records`. State that #4798 adds `parentFailures` to loop entries, only if it has not merged yet when this task runs; otherwise describe the field as present. Update the failed-line quote in both journeys. No change to `plugin/bin/lib/reconcile/post-merge.js:139` or `plugin/skills/_shared/pr-first-merge-post-merge.md:88`: those log a no-closing-set SKIP, whose "recovers them" means parents and is true.
+Docs: rewrite the Surfacing bullet to state the `classifyEntry` rule, `postMergeFailedRecords`, that `postMergeParentsClosed` counts every `ran` run's closes, the new line text, and that a non-clean loop entry carries `records` (and `logFailed` when set). Replace the bullet's "counting only those runs' closes": M now includes closes by failed runs. In the Single-run bullet, the sentence saying `postMerge` entries never carry `records` or `logFailed` becomes: `postMergeOne` entries always carry them, a non-clean loop entry carries them too, and `parentFailures`, `verdict`, `next` and `failedSteps` stay single-run. State that #4798 adds `parentFailures` to loop entries, only if it has not merged yet when this task runs; otherwise describe the field as present. Update the failed-line quote in both journeys. No change to `plugin/bin/lib/reconcile/post-merge.js:139` or `plugin/skills/_shared/pr-first-merge-post-merge.md:88`: those log a no-closing-set SKIP, whose "recovers them" means parents and is true.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
