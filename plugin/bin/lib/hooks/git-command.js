@@ -1198,6 +1198,10 @@ function powershellOpaqueCommand(command, cwd) {
 // `ps`-led segment before a `grep`/`egrep`/`fgrep`-led one arms the `kill` segments that FOLLOW the
 // pair (`kill 123; ps aux | grep node` stays silent, unlike `pgrep`, which arms command-wide), as does
 // a `$(ps …`/backtick opener inside the `kill` itself; a `ps` with `-p`/`--pid` is a PID lookup and arms nothing.
+// Why the two differ: `pgrep` arms command-wide because its result reaches the `kill` through a variable
+// (`P=$(pgrep node); kill $P`), which the walk cannot order; the cost is an occasional spurious warning on a
+// PID-scoped `kill` that shares a command with `pgrep`. A `ps … | grep` listing is often run only to look, so
+// it arms only what follows it (the #4548 SDD rulings on pgrep arming, ledger rows 13 and 16).
 // Deliberate narrow miss: a positional PowerShell command (`powershell "Stop-Process -Name node"`,
 // which Windows PowerShell 5.1 runs as `-Command`) is not scanned, here or in powershellOpaqueCommand —
 // only an explicit `-Command` (here also `-c`) is, like every best-effort parser in this module.
@@ -1207,6 +1211,9 @@ function powershellOpaqueCommand(command, cwd) {
 // segment, and widening that scanner is out of this parser's scope. Only the pgrep/pidof arming
 // reads into a substitution.
 const PROCESS_KILL_WORDS = Object.freeze(['pkill', 'killall', 'taskkill', 'kill', 'stop-process']);
+// Wrapper nesting (`sh -c 'bash -c "…"'`) is scanned this deep; a deeper nest reads as no kill (silence,
+// never a block), which bounds the recursion and keeps a pathological command linear. Four covers every
+// real wrapper chain (`sudo sh -c 'cmd /c …'`); the cap is pinned by a test in tests/hooks-git-command.test.js.
 const PROCESS_KILL_MAX_DEPTH = 4;
 // `$(pgrep …)` or `` `pgrep …` `` — a kill fed the names a process search found.
 // The directory part excludes the substitution delimiters (a `$` may start a variable in the path:
@@ -1298,6 +1305,7 @@ function processKillLabels(command, cwd, depth) {
   let pairAt = -1;
   let getProcessSeen = false;
   forEachCommandSegment(command, cwd, (t, _effCwd, quoting, again) => {
+    // `again` marks the walk's repeat visit to a compound segment (forEachCommandSegment's header); the first visit already reported it.
     if (again || !t.length) return;
     const slot = { labels: [], killLed: false, stopConsumer: false, psOpener: false, psInline: false };
     slots.push(slot);

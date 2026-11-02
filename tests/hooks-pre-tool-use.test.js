@@ -1501,7 +1501,10 @@ test('#4548: a compound command with several name kills warns once', () => {
   assert.strictEqual(out.json.systemMessage.split('by image or name').length - 1, 1);
 });
 
-for (const cmd of ['kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"']) {
+for (const cmd of [
+  'kill 12345', 'taskkill /PID 12345 /T /F', 'kill -- -12345', 'taskkill /FI "PID eq 123"',
+  'lsof -nP -iTCP:3000 -sTCP:LISTEN -t | xargs kill',
+]) {
   test(`#4548: \`${cmd}\` is PID-scoped and stays silent`, () => {
     const out = runKill(cmd);
     assert.ok(silentKill(out), `expected no warning for: ${cmd}, got ${JSON.stringify(out)}`);

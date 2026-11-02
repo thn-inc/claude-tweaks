@@ -39,7 +39,7 @@ function nameKillParagraph(text) {
   return paragraphsOf(text).find((p) => p.startsWith(NAME_KILL_LABEL)) || '';
 }
 
-// subagent-dispatch-core.md before #4548: the no-stash paragraph (line 45) verbatim, followed directly by
+// subagent-dispatch-core.md before #4548: the no-stash paragraph verbatim, followed directly by
 // the next heading, so the helper has a real "rule absent" shape to go red on.
 const PRE_CHANGE_CORE =
   '**Never run `git stash` in any form.** A dispatched agent shares its worktree with the dispatcher and possibly sibling agents, and `git stash` (worse, `--include-untracked`) sweeps *their* in-flight state — staged edits, untracked files it never saw created — into a stash entry nothing else knows exists; an agent that finishes without restoring it has silently deleted sibling work, and the loss surfaces only when the dispatcher next looks for those files. The stash stack is also shared repo-wide across every worktree, so even a restore can collide with another session\'s entries. To compare against a clean baseline, read it without mutating the tree: `git show HEAD:<path>` for file contents, `git diff HEAD -- <path>` for what changed. To set your own work aside, make a WIP commit on the branch instead.\n\n## Foreground Execution Discipline\n';
@@ -86,6 +86,20 @@ test('#4548: build/dispatch.md forwards the no-name-kill rule to every dispatch 
   assert.strictEqual(text.indexOf(cherryPickLabel, cherryPick + 1), -1, 'the "Cherry-pick source-branch PR check" label occurs twice — the ordering window is ambiguous');
   assert.ok(label > guard && label < cherryPick, 'the no-name-kill forward must sit after the stash-guard paragraph and before the cherry-pick check');
   assert.ok(cite > label && cite < cherryPick, 'the no-name-kill citation must sit inside the forwarded sentence');
+  // The label and the citation alone leave the operative clause free to be rewritten while the test stays green.
+  const forward = text.slice(label, cherryPick);
+  for (const literal of [
+    'to never kill a process by image or name',
+    '`taskkill /IM`',
+    '`pkill`',
+    '`killall`',
+    '`Stop-Process -Name`',
+    '`pgrep`-fed `kill`',
+    'the listener PID on a port it owns',
+    'leaving the process running and reporting it',
+  ]) {
+    assert.ok(forward.includes(literal), `the build/dispatch.md no-name-kill forward must carry ${literal}`);
+  }
 });
 
 // ---- The three literal prompt templates carry the rule verbatim (agents see only their prompt) ----
@@ -116,6 +130,8 @@ const NAME_KILL_PATTERNS = [
     `the region must name ${literal} as a forbidden form`,
   ]),
   [/-sTCP:LISTEN/, 'the region must give the own-port-listener alternative (lsof … -sTCP:LISTEN)'],
+  [/taskkill \/PID \{pid\} \/T \/F/, 'the region must give the win32 PID-scoped alternative (taskkill /PID {pid} /T /F)'],
+  [/leave the process running and report it/, 'the region must say to leave the process running and report it when no PID can be identified'],
 ];
 
 function assertNameKillRule(region) {
@@ -192,7 +208,7 @@ test('#4548: the lsof -ti tcp: corpus walk finds a planted offender', () => {
   }
 });
 
-// Each site's line as it read before #4548 replaced it (3a2b73cf5): the frozen control the
+// Each site's line as it read before #4548 replaced it: the frozen control the
 // listener-scoped check below must reject.
 const PRE_CHANGE_TEARDOWN_LINES = [
   "- **Standalone** (no run dir): the calling skill stops the server before it returns, and notes that it was started for automation. `ephemeral-server.txt` is never written on this path (Step 4 above writes it only \"when a pipeline run dir exists\"), so cleanup stops the server it itself started by PID: on POSIX, `lsof -ti tcp:{port} | xargs kill` — the same port-based mechanism Section D's rule in `wrap-up/cleanup-procedures-execution.md` uses when no lease exists, which is always the case here; on win32, where `lsof` does not exist, `taskkill /PID {pid} /T /F` against the PID this same procedure recorded when it started the server — the same tree kill Section D's win32 branch uses, since a leader-only stop leaves shell-spawned children holding their ports on this platform too.",
