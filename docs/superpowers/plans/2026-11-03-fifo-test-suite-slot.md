@@ -74,7 +74,7 @@ Tests, each inside `withTempDir`, using `slotArgs`:
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test --test-name-pattern="AC2\.1|AC3\.1|heartbeat|rejoins|new arrival|only its lock|queued waiter|base lane" tests/run-tests-isolation.test.js`
+Run: `node --test --test-name-pattern="AC2\.1|AC3\.1|heartbeat|rejoins|new arrival|only its lock|queued waiter|ticket in the base lane" tests/run-tests-isolation.test.js`
 Expected: FAIL. `AC2.1` fails because the slot is taken with no sleep; the ticket tests fail on missing `ticket-*.json` files.
 
 - [ ] **Step 3: Implement the queue in `tools/run-tests.js`**
