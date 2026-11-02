@@ -317,7 +317,10 @@ test('#4806: the schema probe and every GraphQL page carry --hostname right afte
   const rest = viaRepo.calls.filter((a) => a[1] === '--paginate');
   assert.deepStrictEqual(rest, [['api', '--paginate', 'repos/o/r/issues/5/sub_issues', '--jq', '.[].number', '--hostname', 'ghe.example.com']]);
 
-  const viaRemote = deps({ remoteUrl: () => 'git@ghe.example.com:acme/widget.git' });
+  const viaRemote = deps({
+    remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
+  });
   assert.strictEqual(run(nums, viaRemote), 0);
   assertHosted(viaRemote);
 
