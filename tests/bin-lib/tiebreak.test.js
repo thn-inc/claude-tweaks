@@ -373,6 +373,69 @@ test('evidence verification: an evidence path mismatch is unverified (AC10.1)', 
   assert.equal(r.reason, 'evidence-path-mismatch');
 });
 
+// ---- skill-relative Location (#4164) ----
+
+const SKILL_FINDING = { lens: '3a', path: 'wrap-up/x.md', line: 10, claim: 'c', reporterSeverity: 'high', kind: 'unconfirmed' };
+const SKILL_LINES = Array.from({ length: 20 }, (_, i) => `// filler line ${i + 1}`);
+SKILL_LINES[9] = 'const answer = compute(input);'; // line 10
+const SKILL_FULL_PATH = 'plugin/skills/wrap-up/x.md';
+const SKILL_QUOTE = 'const answer = compute(input);';
+const only = (served) => (asked) => {
+  if (asked !== served) throw new Error(`ENOENT: ${asked}`);
+  return SKILL_LINES.join('\n');
+};
+const every = () => SKILL_LINES.join('\n');
+const cite = (p) => `${p}:10 \`${SKILL_QUOTE}\``;
+
+test('AC1.1 AC1.2 skill-relative Location with full-path Evidence resolves confirmed (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('same reply with verdict refuted resolves drop (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ verdict: 'refuted', evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.outcome, 'drop');
+});
+
+test('AC2.1 AC2.2 another file is still a mismatch (#4164)', () => {
+  for (const p of ['plugin/skills/review/x.md', 'plugin/bin/x.md']) {
+    const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(p) }), { readFile: every, now: NOW });
+    assert.ok(isCantTell(r), p);
+    assert.equal(r.reason, 'evidence-path-mismatch', p);
+  }
+});
+
+test('AC3.1 a plugin/ finding never gains the skills prefix (#4164)', () => {
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/x.md' };
+  const r = resolveTiebreak(f, reply({ evidence: cite('plugin/skills/plugin/bin/x.md') }), { readFile: every, now: NOW });
+  assert.equal(r.reason, 'evidence-path-mismatch');
+});
+
+test('a skill-relative finding citing the path as given still verifies (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite('wrap-up/x.md') }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
+test('the canonical file missing is unverified (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only('wrap-up/x.md'), now: NOW });
+  assert.equal(r.reason, 'evidence-unverified');
+});
+
+test('the id and logged Location stay the finding\'s own (#4164)', () => {
+  const r = resolveTiebreak(SKILL_FINDING, reply({ evidence: cite(SKILL_FULL_PATH) }), { readFile: only(SKILL_FULL_PATH), now: NOW });
+  assert.equal(r.id, findingId(SKILL_FINDING));
+  assert.match(r.logLine, /wrap-up\/x\.md:10/);
+  assert.ok(!r.logLine.includes('plugin/skills/'));
+});
+
+test('AC4.1 a single-backtick wrap of a backtick-bearing line resolves confirmed (#4164)', () => {
+  const lines = [...SKILL_LINES];
+  lines[9] = 'Run `foo` then `bar` now';
+  const f = { ...SKILL_FINDING, path: 'plugin/bin/foo.js' };
+  const r = resolveTiebreak(f, reply({ evidence: 'plugin/bin/foo.js:10 `Run `foo` then `bar` now`' }), { readFile: () => lines.join('\n'), now: NOW });
+  assert.equal(r.outcome, 'confirmed');
+});
+
 test('line forms: a range uses its first line, an absent line is cant-tell (AC9.1)', () => {
   const range = resolve({ ...FINDING, line: '20-24' }, reply());
   assert.equal(range.outcome, 'confirmed');

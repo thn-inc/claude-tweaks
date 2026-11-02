@@ -278,9 +278,12 @@ its shape owes:
   reader only through a step string `tests/bin-lib/reconcile/post-merge.test.js` retypes.
 - *A declared divergence* is stated on both sides: the prose's "except that it skips the
   **Self-inclusion rule**" clause, and the `selfInclude: false` the check passes, pinned by running it.
-- *Skip rules* stay unpinned today. The prose's sentences (no `parent-issue` label, a `needs:*`
-  label, a parent already handled, `CLOSED`, `REOPENED`) are pinned by wording, and the module's
-  `skipped` reasons by its own fixtures, so a skip rule added to the prose leaves every suite green.
+- *Skip rules* are pinned by the #4800 block of the same suite. A table classifies every Step 4.0b
+  skip sentence, failing on a sentence no row matches and on a row no sentence matches; the gate's
+  no-op states and close step 1's no-op values join the prose set. That set must equal
+  `DELIBERATE_SKIP_REASONS`, and, less the gate's pass-through states (the module emits those as
+  `verdict.state`, never as a literal), the quoted literals the module source names. A rule added
+  as a clause inside a sentence a row already matches is the one shape it does not see.
 
 Walk the procedure section by section, and name the shape each part takes, before you call the
 mirror pinned.

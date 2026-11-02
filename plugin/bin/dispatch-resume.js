@@ -40,13 +40,16 @@
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (closing-PR read, truncated connection included, label or blocker
-//      read, claim read, stalled-worktree `git status`, branch reads, run-dir listing), or the bound
-//      run has no listing entry or no stamped worktree; no failed read is taken as clean, with two
+//      read, claim read, stalled-worktree `git status`, branch reads, run-dir listing), the pipelines
+//      dir is unlistable, or the bound run has no listing entry or no stamped worktree; no failed
+//      read is taken as clean, with three
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
-//      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
+//      null when `git worktree list` cannot be read, so `siblingLive` is then false), the
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
 //      unreadable policy.yml resolves the `body-text` default and skips the native-blocker gate,
-//      exactly as resolve-policy.js (and so Step 2's queue) reads it
+//      exactly as resolve-policy.js (and so Step 2's queue) reads it — and a listed run dir whose
+//      run-state.json is unreadable or corrupt (the shared listing reads it as `state: null`),
+//      which boundRunConflict skips instead of refusing
 // Order: read the closing PRs, classify the run a sole kept PR's marker names, then selectResumePr — a
 // refusal there prints and exits 3 before any sibling, claim or worktree read, and before any run-dir
 // read when no marker names this record (the worktree comes from the chosen PR's head). The only git
@@ -81,7 +84,7 @@ const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--
   + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName[, liveRun]} (exit 3)\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
   + '                     or {concurrent:true, reason, line[, liveRun]} (exit 3)\n'
-  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 transient read failure\n';
+  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 read failure (transient, or an unlistable pipelines dir)\n';
 
 // The closing connection, so a PR that only mentions the record is never listed and any head resolves.
 const RESUME_PR_QUERY = 'query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:100){pageInfo{hasNextPage} nodes{url number state headRefName headRefOid isDraft isCrossRepository repository{nameWithOwner} closingIssuesReferences(first:1){totalCount} body}}}}}';
@@ -126,6 +129,21 @@ function resolveWorkLinks() {
   return String(entry.value);
 }
 
+// The shared listing reads an unlistable pipelines dir as "no runs": the bound-run scan passed as clean
+// (verdict and --bound-run modes) and this session's own lock could read as a live sibling. Only an absent
+// dir (ENOENT) is genuinely empty, so any other readdir error throws (#4809).
+function listRunDirsFailClosed(cwd, opts) {
+  const start = cwd || process.cwd(); // iterRunDirsWithState's own anchor
+  const base = path.join(mainCheckoutRoot(start) || start, '.claude-tweaks', 'pipelines');
+  try {
+    fs.readdirSync(base);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return [];
+    throw e;
+  }
+  return listRunDirsWithState(cwd, opts);
+}
+
 const realDeps = {
   ghAvailable: () => ghAvailable(),
   gh: defaultGh,
@@ -141,7 +159,7 @@ const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,
   findSiblingOnWorktree: findSessionOnWorktree,
-  listRunDirsWithState,
+  listRunDirsWithState: listRunDirsFailClosed,
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
