@@ -5,20 +5,30 @@
 // what is eligible. Every read is read-only — resume mints, archives and binds in its own steps.
 //
 // Usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]
-//   (verdict)    Stdout is one JSON line.
+//   (verdict)    Stdout is one JSON line. The PR is whichever open PR closes the record, on any head;
+//                the stalled worktree is derived from that PR's head.
 //     eligible → {eligible:true, issue, prUrl, prNumber, headRefName, priorRunId, priorRunDir,
 //                 priorRunPath, archivePriorRun, closePriorRun, localBranchExists, worktreePath,
 //                 context:{lastPhase, openDefects}}
-//     refused  → {eligible:false, issue, reason, line}   (`line` is the verdict's, printed verbatim)
+//     refused  → {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName}
+//                (`line` is the verdict's; the rest is refusalDetail's: [], null, null, null for
+//                no-pr). A caller prints `line` verbatim, or `remedy` in its place on disposition
+//                `close`. liveRun:true is added when a provably live owner holds the run, whatever
+//                the refusal's reason; a `close` refusal then carries a wait-then-resume remedy and
+//                disposition `resume`, never the close steps.)
 //     An eligible verdict then runs the run-dir scan below with the prior run's own root dir
 //     excluded, so a run left bound to the stalled worktree refuses before anything is archived.
 //   --bound-run  resume step 6a, after `record-worktree --dispatch` bound the new run: skips the
-//                verdict and re-checks concurrency. Prints {concurrent:false}, or {concurrent:true,
-//                reason:'live-sibling'|'concurrent-resume'|'stale-bound-run', line}. The bound run dir
-//                must resolve to a top-level dir of the main checkout's .claude-tweaks/pipelines/ (a
-//                worktree-local shadow is refused, [IL-127]); the run's own binding excludes its
-//                worktree lock from the sibling check, so a second resume that bound first shows up in
-//                the run-dir scan.
+//                verdict and re-checks concurrency against the worktree stamped on that run. Prints
+//                {concurrent:false}, or {concurrent:true, reason:'live-sibling'|'concurrent-resume'|
+//                'stale-bound-run', line}, plus liveRun:true when a provably live owner refused it.
+//                The bound run dir must resolve to a top-level dir of the main checkout's
+//                .claude-tweaks/pipelines/ (a worktree-local shadow is refused, [IL-127]); the run's
+//                own binding excludes its worktree lock from the sibling check, so a second resume
+//                that bound first shows up in the run-dir scan.
+//   The sibling check reads `#N` by token, then, on no hit, an exact read of the head and derived
+//   worktree (verdict) or the stamped worktree (--bound-run), so a worktree with no record number is
+//   still seen and a head sharing tokens with an unrelated session is not refused over it.
 //   The run-dir scan: a non-terminal top-level run dir (never an ad-hoc one) bound to the stalled
 //   worktree is `concurrent-resume`, or `stale-bound-run` — naming hooks.js close-run on that dir —
 //   when its owner is provably dead by the same owner ladder the prior run's probe uses (an owner
@@ -29,15 +39,17 @@
 //   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
-//   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
-//      `git status`, branch reads, run-dir listing); no failed read is taken as clean, with two
+//   4  a read failed transiently (closing-PR read, truncated connection included, label or blocker
+//      read, claim read, stalled-worktree `git status`, branch reads, run-dir listing), or the bound
+//      run has no listing entry or no stamped worktree; no failed read is taken as clean, with two
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
 //      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
 //      unreadable policy.yml resolves the `body-text` default and skips the native-blocker gate,
 //      exactly as resolve-policy.js (and so Step 2's queue) reads it
-// Order: list the PRs, then selectResumePr — a refusal there prints and exits 3 before any run-dir,
-// sibling, claim or worktree read (the prior run id comes from the chosen PR's marker). The only git
+// Order: read the closing PRs, classify the run a sole kept PR's marker names, then selectResumePr — a
+// refusal there prints and exits 3 before any sibling, claim or worktree read, and before any run-dir
+// read when no marker names this record (the worktree comes from the chosen PR's head). The only git
 // call against the stalled worktree is the --no-optional-locks `status`.
 'use strict';
 
@@ -53,22 +65,26 @@ const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
-const { findConflictingSession } = require('./lib/hooks/sibling-sessions');
+const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
 const { listRunDirsWithState, isAdHocRunDir } = require('./lib/hooks/context');
 const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
 const { DEFAULT_PROBES } = require('./lib/run-liveness/probes');
 const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe');
 const { resolveTarget } = require('./lib/stage-item/write');
 const { lstatType } = require('./lib/path-guard');
-const { selectResumePr, resumeEligibility, resumeContext } = require('./lib/dispatch/resume-eligibility');
+const {
+  selectResumePr, resumeEligibility, resumeContext, worktreeNameForHead, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
+} = require('./lib/dispatch/resume-eligibility');
 
 const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
-  + '  prints one JSON line: {eligible:true,…} (exit 0) or {eligible:false, issue, reason, line} (exit 3)\n'
+  + '  prints one JSON line: {eligible:true,…} (exit 0) or\n'
+  + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName[, liveRun]} (exit 3)\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
-  + '                     or {concurrent:true, reason, line} (exit 3)\n'
+  + '                     or {concurrent:true, reason, line[, liveRun]} (exit 3)\n'
   + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 transient read failure\n';
 
-const PR_FIELDS = 'url,number,headRefName,headRefOid,body,isDraft,isCrossRepository';
+// The closing connection, so a PR that only mentions the record is never listed and any head resolves.
+const RESUME_PR_QUERY = 'query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:100){pageInfo{hasNextPage} nodes{url number state headRefName headRefOid isDraft isCrossRepository repository{nameWithOwner} closingIssuesReferences(first:1){totalCount} body}}}}}';
 const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
 // This build's own hooks.js, so the stale-bound-run remedy is a command the human can paste as is.
 const HOOKS_JS = path.join(__dirname, 'hooks.js');
@@ -124,6 +140,7 @@ const realDeps = {
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,
+  findSiblingOnWorktree: findSessionOnWorktree,
   listRunDirsWithState,
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
@@ -162,6 +179,10 @@ class Exit extends Error {
 
 const errText = (e) => (e && e.message) || String(e);
 
+// The two exits that print a verdict (verdict mode): in-process callers branch on them, so they import these.
+const EXIT_ELIGIBLE = 0;
+const EXIT_REFUSED = 3;
+
 // A dep call whose failure is a transient read failure (exit 4), never a clean answer.
 function read(label, fn) {
   try {
@@ -182,13 +203,33 @@ const normalizePath = (p) => safeReal(p) || path.resolve(p);
 
 // ---- gathering ----
 
+// The record's open closing PRs. A reply that cannot prove it is the whole connection is a failed read,
+// never an empty listing, since no-pr must mean no open PR closes the record. isCrossRepository is
+// also true for a PR in another repository: GitHub reports false when its head and base both sit there.
 function listPrs(ctx) {
-  const out = read('gh pr list', () => ctx.deps.gh([
-    'pr', 'list', '--repo', ctx.slug, '--head', ctx.head, '--state', 'open', '--json', PR_FIELDS,
+  const [owner, repo] = ctx.slug.split('/').slice(-2);
+  const out = read('closing PR read', () => ctx.deps.gh([
+    'api', 'graphql', '-f', `query=${RESUME_PR_QUERY}`, '-f', `owner=${owner}`, '-f', `repo=${repo}`, '-F', `issue=${ctx.issue}`,
   ]));
-  const prs = parseJson('gh pr list output', out);
-  if (!Array.isArray(prs)) throw new Exit(4, 'gh pr list: the listing was not an array');
-  return prs;
+  const issue = parseJson('closing PR read output', out)?.data?.repository?.issue;
+  if (!isObject(issue)) throw new Exit(4, `closing PR read: no issue #${ctx.issue} in the reply`);
+  const connection = issue.closedByPullRequestsReferences;
+  if (!isObject(connection) || !Array.isArray(connection.nodes)) throw new Exit(4, 'closing PR read: nodes was not an array');
+  if (connection.pageInfo?.hasNextPage !== false) throw new Exit(4, `closing PR read: more than 100 PRs close #${ctx.issue}, or the page state is missing`);
+  if (!connection.nodes.every((node) => isObject(node) && typeof node.state === 'string')) {
+    throw new Exit(4, 'closing PR read: a node was unreadable or carried no state');
+  }
+  const thisRepo = `${owner}/${repo}`.toLowerCase();
+  return connection.nodes.filter((node) => node.state === 'OPEN').map((node) => ({
+    url: node.url,
+    number: node.number,
+    headRefName: node.headRefName,
+    headRefOid: node.headRefOid,
+    body: node.body,
+    isDraft: node.isDraft,
+    isCrossRepository: node.isCrossRepository !== false || String(node.repository?.nameWithOwner).toLowerCase() !== thisRepo,
+    closingRecords: node.closingIssuesReferences?.totalCount,
+  }));
 }
 
 function issueView(ctx, number, fields) {
@@ -334,12 +375,12 @@ function ownerClass(deps, state) {
 // is never a record claim (#2783), and a second resume always binds a formal record-N run. A
 // provably dead owner (ownerClass, never this session's own) is a leftover the human can close;
 // this session's own run names both readings (a resume still running, or a crashed one to close);
-// an unknown or other-host owner's line names how to settle it; a live owner's run may still end.
-function boundRunConflict(ctx, excluded) {
+// an unknown or other-host owner's line names how to settle it; a live owner's run may still end, and
+// only that hit sets liveRun.
+function boundRunConflict(ctx, excluded, listing) {
   const { deps, issue } = ctx;
   const skip = new Set(excluded.filter((d) => d !== null).map(normalizePath));
   const worktreeKey = normalizePath(ctx.worktreePath);
-  const listing = read('run dir listing', () => deps.listRunDirsWithState(ctx.mainRoot));
   for (const { dir, state } of listing) {
     if (skip.has(normalizePath(dir)) || isAdHocRunDir(dir)) continue;
     if (!state || !NON_TERMINAL.has(state.status)) continue;
@@ -377,6 +418,7 @@ function boundRunConflict(ctx, excluded) {
     return {
       reason: 'concurrent-resume',
       line: `#${issue}'s stalled worktree ${ctx.worktreePath} is bound to another active run ${name} — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${issue} once that run ends`,
+      liveRun: true,
     };
   }
   return null;
@@ -398,9 +440,14 @@ function listingWithPriorRun(ctx, prior) {
 }
 
 function siblingConflict(ctx, listing) {
-  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId };
-  if (listing) opts.listRunDirsWithState = listing;
+  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId, listRunDirsWithState: listing };
   return read('sibling-session check', () => ctx.deps.findSibling(`#${ctx.issue}`, opts));
+}
+
+// The exact read, for a worktree with no record number to match: `branch` null reads the path alone.
+function siblingOnWorktree(ctx, listing, branch, worktreePath) {
+  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId, listRunDirsWithState: listing };
+  return read('sibling-session check', () => ctx.deps.findSiblingOnWorktree({ branch, worktreePath }, opts));
 }
 
 function parseBranchHeader(header) {
@@ -476,6 +523,27 @@ function emit(ctx, obj) {
   ctx.deps.stdout(`${JSON.stringify(obj)}\n`);
 }
 
+// Every verdict-mode refusal: the verdict's reason and line, what a caller reports about them, and
+// liveRun only when a provably live owner holds the run: the verdict says so, or `prior` (the PR marker's
+// classified run, null when no marker names this record) does, whichever refusal fired first.
+function refusal(ctx, prs, verdict, prior = null) {
+  const { issue, mainRoot } = ctx;
+  const liveRun = verdict.liveRun === true || (prior !== null && prior.priorRunDir === 'live-owner');
+  emit(ctx, {
+    eligible: false,
+    issue,
+    reason: verdict.reason,
+    line: verdict.line,
+    ...refusalDetail({ issue, verdict, prs, mainRoot, liveRun }),
+    ...(liveRun ? { liveRun: true } : {}),
+  });
+  return EXIT_REFUSED;
+}
+
+function listRuns(ctx) {
+  return read('run dir listing', () => ctx.deps.listRunDirsWithState(ctx.mainRoot));
+}
+
 function runVerdict(ctx) {
   const { deps, issue } = ctx;
   let available = false;
@@ -487,23 +555,25 @@ function runVerdict(ctx) {
     throw new Exit(2, `could not resolve the repo slug: ${errText(e)}`);
   }
   if (!ctx.slug) throw new Exit(2, 'could not resolve the repo slug (gh repo view returned nothing)');
-  ctx.head = `worktree-dispatch-record-${issue}`;
 
   const prs = listPrs(ctx);
-  const selected = selectResumePr(issue, prs);
-  if (!selected.ok) {
-    emit(ctx, { eligible: false, issue, reason: selected.reason, line: selected.line });
-    return 3;
-  }
-  const { pr, runId } = selected;
+  const markedRun = ownMarkerRunId(issue, prs);
+  const prior = markedRun === null ? null : classifyPriorRun(ctx, markedRun);
+  const selected = selectResumePr(issue, prs, {
+    runGone: () => prior !== null && closeOutCannotResolve(prior.priorRunDir),
+  });
+  if (!selected.ok) return refusal(ctx, prs, selected, prior);
+  const { pr } = selected;
+  ctx.worktreePath = path.join(ctx.mainRoot, '.claude', 'worktrees', ...worktreeNameForHead(pr.headRefName).split('/'));
 
   const record = readRecord(ctx);
   const openBlockers = readOpenBlockers(ctx, record.body);
   const claim = read('claim read', () => deps.readClaim(ctx.slug, issue));
   if (!claim || claim.failure) throw new Exit(4, `claim read: ${claim && claim.failure ? claim.failure : 'no result'}`);
 
-  const prior = classifyPriorRun(ctx, runId);
-  const siblingLive = siblingConflict(ctx, listingWithPriorRun(ctx, prior)) !== null;
+  const priorListing = listingWithPriorRun(ctx, prior);
+  const siblingLive = siblingConflict(ctx, priorListing) !== null
+    || siblingOnWorktree(ctx, priorListing, pr.headRefName, ctx.worktreePath) !== null;
   const wt = readWorktreeState(ctx);
   const local = wt.exists ? { localBranchSha: null, branchCheckedOutAt: null } : readLocalBranch(ctx, pr.headRefName);
 
@@ -524,19 +594,15 @@ function runVerdict(ctx) {
     openBlockers,
     localBranchSha: local.localBranchSha,
     branchCheckedOutAt: local.branchCheckedOutAt,
+    mainRoot: ctx.mainRoot,
   });
-  if (!verdict.eligible) {
-    emit(ctx, { eligible: false, issue, reason: verdict.reason, line: verdict.line });
-    return 3;
-  }
+  if (!verdict.eligible) return refusal(ctx, prs, verdict, prior);
   // The --bound-run scan, run here too so a run left bound to the worktree refuses at Step 2, before
   // Step 3 archives anything. Only an eligible verdict reaches it, so every verdict refusal keeps
-  // its precedence; the prior run's own root dir is the run being resumed, never a rival.
-  const hit = boundRunConflict(ctx, [prior.priorRunPath]);
-  if (hit !== null) {
-    emit(ctx, { eligible: false, issue, ...hit });
-    return 3;
-  }
+  // its precedence; the prior run's own root dir is the run being resumed, never a rival. Each hit's
+  // line says to settle that run and resume, so its disposition is `resume`.
+  const hit = boundRunConflict(ctx, [prior.priorRunPath], listRuns(ctx));
+  if (hit !== null) return refusal(ctx, prs, { ...hit, disposition: 'resume' });
   emit(ctx, {
     eligible: true,
     issue,
@@ -552,7 +618,7 @@ function runVerdict(ctx) {
     worktreePath: ctx.worktreePath,
     context: readContext(ctx, prior),
   });
-  return 0;
+  return EXIT_ELIGIBLE;
 }
 
 // Resume step 6a. The new run's binding makes `ownedWorktreePaths` skip the stalled worktree whatever
@@ -568,17 +634,28 @@ function runBound(ctx, boundRun) {
     throw new Exit(2, `--bound-run ${boundRun} is not a top-level run dir of ${ctx.root}`);
   }
 
-  const conflict = siblingConflict(ctx, deps.listRunDirsWithState);
-  if (conflict !== null) {
+  const liveSibling = (conflict) => {
     emit(ctx, {
       concurrent: true,
       reason: 'live-sibling',
       line: `#${issue} has another worktree in use by a live session (${conflict.path}) — stop this resume, then run /claude-tweaks:dispatch resume #${issue} once that session ends`,
     });
     return 3;
-  }
+  };
+  const conflict = siblingConflict(ctx, deps.listRunDirsWithState);
+  if (conflict !== null) return liveSibling(conflict);
 
-  const hit = boundRunConflict(ctx, [bound]);
+  const listing = listRuns(ctx);
+  const boundKey = normalizePath(bound);
+  const entry = listing.find(({ dir }) => normalizePath(dir) === boundKey);
+  const worktree = entry && entry.state ? nonEmptyString(entry.state.worktree) : null;
+  if (worktree === null) throw new Exit(4, `--bound-run ${boundRun}: the run has no stamped worktree to re-check`);
+  ctx.worktreePath = worktree;
+
+  const onWorktree = siblingOnWorktree(ctx, deps.listRunDirsWithState, null, worktree);
+  if (onWorktree !== null) return liveSibling(onWorktree);
+
+  const hit = boundRunConflict(ctx, [bound], listing);
   if (hit !== null) {
     emit(ctx, { concurrent: true, ...hit });
     return 3;
@@ -603,7 +680,6 @@ function run(argv, deps) {
       issue: opts.issue,
       mainRoot,
       root: path.join(mainRoot, '.claude-tweaks', 'pipelines'),
-      worktreePath: path.join(mainRoot, '.claude', 'worktrees', `dispatch-record-${opts.issue}`),
     };
     return opts.boundRun ? runBound(ctx, opts.boundRun) : runVerdict(ctx);
   } catch (e) {
@@ -612,6 +688,8 @@ function run(argv, deps) {
   }
 }
 
-module.exports = { run, parseArgs, realDeps, classifyPriorRun };
+module.exports = {
+  run, parseArgs, realDeps, classifyPriorRun, EXIT_ELIGIBLE, EXIT_REFUSED,
+};
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);
