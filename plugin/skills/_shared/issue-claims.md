@@ -44,9 +44,17 @@ PUT whose re-read is absent and whose `GET repos/{owner}/{repo}/branches/claims-
 never contested, never a generic transport failure. `claim-targets.js` bootstraps it once per run
 from the default branch tip (`claim-store.js`'s `ensureClaimsBranch`: a create-only git push, else
 `POST repos/{owner}/{repo}/git/refs`; "already exists" is a lost race and counts as success), then
-retries; a refused creation exits `6` naming the branch and the reason verbatim. The MCP transport
-bootstraps via the **Bootstrap the branch** bullet below. `release-claim.js` never creates it: a
-branchless remote is exit `3` (a "nothing to release" note, no comment, on either `gh` transport).
+retries; a refused creation exits `6` naming the branch and the reason verbatim; a network failure
+or rate limit during it is transient (exit `4`). The MCP transport bootstraps via the **Bootstrap
+the branch** bullet below. `release-claim.js` never creates it: a branchless remote is exit `3` (a
+"nothing to release" note, no comment, on either `gh` transport).
+
+**Permission refusal (#4899).** Under the `gh` transport, a claim read or write that GitHub refuses
+for permissions (`permission-denied`: a plain HTTP 401/403, not a rate limit) stops `claim-targets.js`
+with exit `7`, naming the operation and the reason, with or without `--keep-going`, and releases the
+claims this run already took. It is neither a contest nor transient: a retry under the same token is
+refused again. The gh-absent MCP claim procedure keeps such a refusal transient and never reaches
+exit `7`.
 
 **One keyspace, one classifier, both transports.** `claims/issue-<number>.json`, a blob on the
 `claims-registry` branch, is the *only* lock — checked and written identically whether this run
@@ -335,7 +343,8 @@ tombstoned and released like any other, so a later run can reclaim it immediatel
 it absent/unreadable (in which case the release is a no-op and the target is surfaced in
 `releaseFailed`, not silently retried a second time). Either way the target is never left
 invisibly holding a claim until TTL — visible in `released` or `releaseFailed`, never dropped from
-both.
+both. A read-back that GitHub refuses for permissions stays `claim-unverified` (exit `5`): the write
+was accepted and only its confirmation was refused, so exit `7` covers the claim read and write only.
 
 ## The mirror (human visibility only — never identity)
 
@@ -614,6 +623,7 @@ Fail-closed on claiming; never block the session.
 | Release fails | Log; TTL is the backstop |
 | Release attempted but the blob's current `runId` is not this run's | Skip the write, log — a successor holds the lock (ownership rule) |
 | Blob listing fails in `/tidy` | Skip the sweep step, note it in the report |
+| Claim read or write refused for permissions (`permission-denied`, `gh` transport) | `claim-targets.js` exits `7`, releasing this run's claims — see the exception below. The gh-absent MCP procedure keeps it transient (the next row) |
 | Any other `gh`/MCP failure during claim | Drop that issue, log, continue — partial batch over hung batch |
 
 **Recognition.** A `gh`/MCP failure in the table above is classified per
@@ -621,7 +631,7 @@ Fail-closed on claiming; never block the session.
 follows that file's taxonomy; every other failure class in this table applies exactly as
 stated.
 
-**Group-claim-all-or-abort exception.** The row above assumes an independent-batch context (dispatch's per-issue loop, `/tidy`'s sweep), where dropping one issue and continuing is safe. A consumer claiming multiple targets under the group-claim-all-or-abort invariant (`flow/claim-targets.md`'s Step 2.8) gets different treatment: any transient `gh`/MCP failure during a claim read or write — not just a classification-based contest — triggers the same all-or-abort release-and-stop (or `keep-going` skip) as a live contest, since silently continuing with one named target unclaimed reopens the double-build race group-claiming exists to prevent.
+**Group-claim-all-or-abort exception.** The row above assumes an independent-batch context (dispatch's per-issue loop, `/tidy`'s sweep), where dropping one issue and continuing is safe. A consumer claiming multiple targets under the group-claim-all-or-abort invariant (`flow/claim-targets.md`'s Step 2.8) gets different treatment: any transient `gh`/MCP failure during a claim read or write — not just a classification-based contest — triggers the same all-or-abort release-and-stop (or `keep-going` skip) as a live contest, since silently continuing with one named target unclaimed reopens the double-build race group-claiming exists to prevent. A `permission-denied` claim read or write is the exception to "transient": under the `gh` transport it stops the run with exit `7`, with or without `keep-going`, and releases the claims this run already took (a retry under the same token is refused again). The gh-absent MCP claim procedure stays transient and does not reach exit `7`.
 
 ## Deliverable-name collisions (bin/ CLIs)
 

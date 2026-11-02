@@ -45,6 +45,7 @@ const MIGRATED_FILES = [
   '_shared/github-pr-scan-acceptance.md',
   '_shared/github-pr-scan.md',
   '_shared/github-pr-scan-triage.md', // #4820: the triage-queue scope split out of github-pr-scan.md
+  '_shared/github-pr-scan-unsettled-resume.md', // #4804: item 10's split; resolves its per-run path via session-tmp-resolve.js
   '_shared/harness-health-analysis.md',
   '_shared/label-bootstrap.md',
   'capture/SKILL.md',

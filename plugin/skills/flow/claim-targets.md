@@ -321,7 +321,8 @@ stays best-effort and the claim read stays the authoritative hold check:
   yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
   Also covers a `claims-registry` branch still missing after a successful bootstrap (#4495) —
   `error: 'claims-branch-missing'`, or a bootstrap that hit a secondary rate limit,
-  `error: 'claims-branch-bootstrap-rate-limited'` — both rendered on the same transient-failure card.
+  `error: 'claims-branch-bootstrap-rate-limited'`, or a network failure (a primary rate limit included),
+  `error: 'claims-branch-bootstrap-network-failure'` — all rendered on the same transient-failure card.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -338,9 +339,10 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
-- **6** (#4495) — the `claims-registry` branch was missing on origin and could not be created
-  (also under `--keep-going`): stdout carries `{branchMissing: {branch, reason}, released,
-  releaseFailed}`, stderr carries the remedy. Render:
+- **6** (#4495) — the `claims-registry` branch was missing on origin and creating it was refused
+  — a permission error, a ruleset, `gh` absent; a network failure is exit 4 instead — also under
+  `--keep-going`: stdout carries `{branchMissing: {branch, reason}, released, releaseFailed}`,
+  stderr carries the remedy. Render:
 
   ```markdown
   ## Flow: Claims branch missing
@@ -350,12 +352,29 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — nothing to choose between.
+- **7** (#4899) — GitHub refused a claim read or write for permissions (a plain HTTP 401/403 — a
+  rate-limited 403 is exit 4), also under `--keep-going`: stdout carries
+  `{permissionDenied: {issue, operation, reason}, released, releaseFailed}`, stderr carries the
+  remedy. Render:
+
+  ```markdown
+  ## Flow: Claim permission denied
+
+  GitHub refused the claim {operation} for #{target}: {reason}.
+  Next: check the token's access to this repository and the `claims-registry` branch.
+  ```
+
+  `{target}` is `permissionDenied.issue`; `{operation}` and `{reason}` are the same-named fields.
+  No `AskUserQuestion` — nothing to choose between. A dispatched run (`dispatched: true`) also
+  reports `OUTCOME: build-test-blocked` (`OUTCOME: blocked` on a second call), `ISSUE #{n}: failed:claim-permission-denied` and
+  `STATUS: BLOCKED`, which stops the dispatching firing (`dispatch/SKILL.md`'s Claim permission stop). This is the `gh` transport only:
+  the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a
   timeout, which is exit 4 instead per #3065) — a bug in this call, not a claim outcome. Treat as
   a hard stop.
 
-**On exit 3, 4, 5, or 6** — release nothing further (the CLI's `released`/`releaseFailed` already covers
+**On exit 3, 4, 5, 6, or 7** — release nothing further (the CLI's `released`/`releaseFailed` already covers
 the attempt; a non-empty `releaseFailed` is not this step's problem to retry — the named claim
 simply rides out its TTL). When this
 invocation minted the run dir itself (`PIPELINE_RUN_DIR` was unset on entry) and it still holds no
@@ -424,7 +443,8 @@ The `released` array's write (default mode, no `--keep-going`) uses the reason
 Failure-posture table — the CLI's own `ABORT_REASON`, not something this flow step writes itself.
 
 **`--keep-going`** — the CLI never exits 3, 4, or 5 (it still exits 6 — a missing, uncreatable
-claims branch fails every target alike); a per-target contest, transient failure, or unverified
+claims branch fails every target alike — and 7 — a refused claim read or write, with the same token
+for every target); a per-target contest, transient failure, or unverified
 write is downgraded to a `skipped` entry in the exit-0 JSON envelope
 (`{issue, reason: 'contested', holder}`, `{issue, reason: 'transient', error}`,
 `{issue, reason: 'unverified'}` (#2073), or, for a pr-opened tombstone whose linked PR is still open

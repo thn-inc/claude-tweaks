@@ -90,15 +90,16 @@ function runBlock(shell, block, records) {
   }
 }
 
-// #4740 — fallback mode: no wrap-up-pack.json, and the block's MIRROR literal points at a
-// temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
+// #4740 — fallback mode: no wrap-up-pack.json (unless `pack` supplies one), and the block's
+// MIRROR literal points at a temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
 // no work/ directory at all. Returns status, stderr and the probe's output without asserting,
 // so the go-red control can read a failure. `workMode` chmods the mirror's work/ after
 // its files are written; it is restored in the finally so the temp dir can be removed.
 const MIRROR_LITERAL = '{worktree}/.claude-tweaks/pipelines/{run-id}';
-function runFallback(shell, block, specs, { workMode } = {}) {
+function runFallback(shell, block, specs, { workMode, pack } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-4740-'));
   try {
+    if (pack !== undefined) fs.writeFileSync(path.join(dir, 'wrap-up-pack.json'), JSON.stringify(pack));
     const mirror = path.join(dir, 'mirror');
     if (specs !== null) {
       fs.mkdirSync(path.join(mirror, 'work'), { recursive: true });
@@ -156,8 +157,37 @@ for (const shell of SHELLS) {
   }
 }
 
+const NON_ARRAY_PACKS = {
+  string: { inputs: { closingRecords: '909' } },
+  object: { inputs: { closingRecords: { 0: 909 } } },
+  null: { inputs: { closingRecords: null } },
+  absent: { inputs: {} },
+};
+
 for (const shell of SHELLS) {
   const skip = skipFor(shell);
+  for (const [label, pack] of Object.entries(NON_ARRAY_PACKS)) {
+    test(`${shell.name}: a pack whose closingRecords is ${label} falls through to the mirror headers (#4814 AC1.1)`, { skip }, () => {
+      const r = runFallback(shell, liveBlock(), { '101-spec.md': specHeader(101) }, { pack });
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+    });
+  }
+  test(`${shell.name}: control — a guard exiting 0 on a non-array yields zero records, so the fall-through test can go red (#4814)`, { skip }, () => {
+    const mutated = liveBlock().replace('if(!Array.isArray(c))process.exit(1)', 'if(!Array.isArray(c))process.exit(0)');
+    assert.notStrictEqual(mutated, liveBlock(), 'the guard literal vanished: the control would be vacuous');
+    const r = runFallback(shell, mutated, { '101-spec.md': specHeader(101) }, { pack: NON_ARRAY_PACKS.string });
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 0, els: [] });
+  });
+  test(`${shell.name}: live block with no pack skips a body-quoted record: when the frontmatter has none (#4814 AC1.1)`, { skip }, () => {
+    const r = runFallback(shell, liveBlock(), {
+      '101-spec.md': specHeader(101),
+      '303-spec.md': '---\norigin: capture\n---\n# Spec\n\nrecord: 999\n',
+      '404-spec.md': '# Spec\n\nrecord: 999\n',
+    });
+    assert.strictEqual(r.status, 0, r.stderr);
+    assert.deepStrictEqual({ count: r.count, els: r.els }, { count: 1, els: ['101'] });
+  });
   test(`${shell.name}: live block with no pack and an empty mirror work/ exits 0 with count=0 (#4740 AC1)`, { skip }, () => {
     const r = runFallback(shell, liveBlock(), {});
     assert.strictEqual(r.status, 0, r.stderr);

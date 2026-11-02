@@ -165,6 +165,7 @@ const POLICY_KEYS = [
   { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long one `git` subprocess call on the claims-registry, pr-checks and compose-subject runners may run before it is killed.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'declare-claude-tweaks', type: 'boolean', default: true, summary: "When false, /init stops declaring claude-tweaks in committed project settings and the cloud setup script; superpowers stays.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
   // Renamed from merge-check in #331 (default-parity: that key also defaulted
   // true) — the old name collided with assess-agent-autonomy's merge-check

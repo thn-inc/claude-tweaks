@@ -73,7 +73,7 @@ When `## Current State` names the callers, gates, or user-visible outcome the ch
 
 {One plain-language, verb-first sentence describing what this record delivers, written for someone reading the release notes — never a raw conventional-commit subject, an internal module name, a record number, or a file path. Required on every record, including one with no end-user-visible effect: describe what changed from the release-notes reader's perspective, even when that's "no user-visible change" phrased plainly (e.g. "Improved internal test coverage for the release composer") — never omitted.}
 
-Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since only the first line survives at merge time.
+Example: "Added a visible warning when memory usage is critical" — verb-first, plain language, no record numbers or file paths. The `Release-Note:` trailer this section composes into at merge time is single-line by construction (`plugin/bin/lib/release/subject.js`'s `Release-Note:` paragraph) — write this section as one line even if drafting notes elsewhere run longer, since a single-record note is read to its first line only, and a bundled note is joined onto one line.
 
 ## Technical Approach
 

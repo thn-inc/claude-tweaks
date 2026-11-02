@@ -12,10 +12,8 @@
 // frozen excerpt to use as a control); the one behaviour change to existing text (item 8) has its
 // pre-change fence frozen below and run, so the silent-truncation symptom is reproduced.
 //
-// Known pre-existing defect, out of scope for #4820 and fixed in flight by #4818 (PR #4883): item 10's second fence
-// reads `process.env.UNSETTLED_AGE`, but its first fence sets `UNSETTLED_AGE` as an unexported shell
-// variable in a separate Bash call, so a literal run of the two fences sees it unset. The item-10 test
-// sets `UNSETTLED_AGE` in the spawn env instead of relying on the fences to pass it along.
+// Item 10's second fence resolves `UNSETTLED_AGE` itself (#4818), and reads its claims as the rows
+// `bin/read-claims.js` prints, terminator included; the item-10 test writes its claims fixture in that shape.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
@@ -356,7 +354,11 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
     limit,
     env: { UNSETTLED_AGE: '24' },
     files: {
-      'pr-scan-unsettled-claims.jsonl': Array.from({ length: claimedCount }, (_, i) => JSON.stringify({ number: 500 + i, claimedAt: hoursAgo(48), source: 'claim' })).join('\n'),
+      // read-claims.js's rows: one per blob, then the `complete` terminator every finished read ends with.
+      'pr-scan-unsettled-claims.jsonl': [
+        ...Array.from({ length: claimedCount }, (_, i) => ({ number: 500 + i, state: 'live', claimedAt: hoursAgo(48) })),
+        { number: null, state: 'complete', count: claimedCount },
+      ].map((r) => JSON.stringify(r)).join('\n'),
       'pr-scan-unsettled-labelled.json': labelled(labelledCount),
       'pr-scan-unsettled-prs.json': prs(prCount, oldestHours),
     },
@@ -420,7 +422,7 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   assertLabelQualified(run(3, 1, 3, fence, 72));
 
   // Go-red: a qualifier keyed on any count other than the PR count comes out wrong on that case.
-  const PR_CAPPED_LINE = 'const PR_CAPPED = prs.length >= LIMIT;';
+  const PR_CAPPED_LINE = 'const PR_CAPPED = prs !== null && prs.length >= LIMIT;';
   assert.ok(fence.includes(PR_CAPPED_LINE), 'the PR_CAPPED line must be present to mutate');
   for (const wrong of ["require('$PR_SCAN_UNSETTLED_LABELLED').length", 'candidates.length']) {
     const mutated = fence.replace(PR_CAPPED_LINE, `const PR_CAPPED = ${wrong} >= LIMIT;`);
