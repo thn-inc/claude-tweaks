@@ -205,11 +205,10 @@ function ownMarkerRunId(issue, prs) {
 function closeRedispatchRemedy({
   issue, prNumber, headRefName, mainRoot, forks = [],
 }) {
-  const name = worktreeNameForHead(headRefName);
+  const worktree = worktreePathForHead(mainRoot, headRefName);
   const closePr = `close PR #${prNumber} (gh pr close ${prNumber})`;
   const redispatch = redispatchStep(issue, forks);
-  if (name === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
-  const worktree = worktreePathForHead(mainRoot, headRefName);
+  if (worktree === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
   return `${closePr}, unlock and remove its worktree if one exists (git worktree unlock "${worktree}"; git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
 

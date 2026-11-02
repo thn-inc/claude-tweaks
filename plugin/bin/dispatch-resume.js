@@ -305,9 +305,9 @@ function readJsonFile(deps, file) {
 // mkdirs archive/{runId} and writes `status: 'archiving'` there before moving anything, so a failed
 // attempt leaves the marker beside the real root dir. It wins when archive/{runId}/run-state.json parses
 // as an object whose status is not 'archiving' (archive-merged.js's own real-prior-archive test), or when
-// the root dir is absent or holds no run-state.json (a late-write `work/` stub that
-// recreated the root after archiving). Any other
-// state falls through to the root classification, so a live root owner is still probed.
+// the root dir is absent or holds no run-state.json (a late-write `work/` stub that recreated the root
+// after archiving). Any other state falls through to the root classification, so a live root owner is
+// still probed.
 function classifyPriorRun(ctx, runId) {
   const { deps } = ctx;
   const archiveDir = path.join(ctx.root, 'archive', runId);

@@ -197,7 +197,7 @@ function runnerTimeoutFor(envValue) {
   const primitivesPath = require.resolve('../../plugin/bin/lib/shared-primitives');
   let seen = null;
   try {
-    cp.execFileSync = (cmd, args, opts) => { seen = opts.timeout; return ''; };
+    cp.execFileSync = (cmd, args, opts) => { if (cmd === 'gh') seen = opts.timeout; return ''; };
     delete require.cache[cliPath];
     delete require.cache[primitivesPath];
     // number-list-cli destructures execFileSync at require time, so the stub is installed first.
