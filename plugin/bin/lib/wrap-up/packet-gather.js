@@ -23,7 +23,8 @@ const AC_TITLE_RE = /^Acceptance Criteria(?:\s*\(.*\))?$/i;
 // `1.`, `2a.`, `1)`, or bold: `**1.**`, `**1)**`.
 const AC_NUMBERED_RE = /^(?:(\d+[a-z]?)[.)]\s+|\*\*(\d+[a-z]?)[.)]\*\*\s*)(\S.*)$/;
 // `- `, `* `, `- [ ]`, `- [x]`. Anchored at column 0, so a nested bullet is not a criterion.
-const AC_BULLET_RE = /^[-*]\s+(?:\[[ xX]\]\s+)?(\S.*)$/;
+// A checkbox with no text states nothing, and must not shift the positional ids after it.
+const AC_BULLET_RE = /^[-*]\s+(?!\[[ xX]\]\s*$)(?:\[[ xX]\]\s+)?(\S.*)$/;
 const THEMATIC_BREAK_RE = /^(?:[-*_]\s*){3,}$/;
 const POSITIONAL_AC_PREFIX = 'AC';
 // A backtick fence's info string holds no backtick, so a line opening with inline
@@ -33,8 +34,10 @@ const FENCE_RE = /^ {0,3}(?:(`{3,})([^`]*)|(~{3,})(.*))$/;
 const NEGATIVE_ID_PREFIX = 'neg-';
 const NEGATIVE_TAG = 'negative';
 const STORIES_KEY_RE = /^stories:\s*(?:#.*)?$/;
-const LIST_ITEM_RE = /^(\s*)(-\s+)(.*)$/;
+// A bare `-` opens an item too, its keys on the lines below it.
+const LIST_ITEM_RE = /^(\s*)(-(?:\s+|$))(.*)$/;
 const ID_KEY_RE = /^id:\s*(.*)$/;
+const FLOW_COMMENT_RE = /(?:^|\s)#.*$/;
 const FLOW_TAGS_RE = /^tags:\s*\[(.*)$/;
 const BLOCK_TAGS_RE = /^tags:\s*(?:#.*)?$/;
 const BLOCK_ITEM_RE = /^-\s+(.*)$/;
@@ -65,24 +68,31 @@ const ownValue = (object, key) => (isObject(object) && Object.hasOwn(object, key
 
 // ---- acceptance criteria ----
 
-function parseAcceptanceCriteria(specText) {
-  const criteria = [];
-  let sectionLevel = null;
-  let bullets = 0;
+// The lines outside code fences, the fence lines themselves excluded.
+function linesOutsideFences(text) {
+  const outside = [];
   let fence = null;
-  for (const line of specText.split(/\r?\n/)) {
+  for (const line of text.split(/\r?\n/)) {
     const fenceLine = FENCE_RE.exec(line);
     const marker = fenceLine && (fenceLine[1] || fenceLine[3]);
     if (fence) {
       const trailing = fenceLine && (fenceLine[2] ?? fenceLine[4]);
       const closes = marker && marker[0] === fence[0] && marker.length >= fence.length && trailing.trim() === '';
       if (closes) fence = null;
-      continue;
-    }
-    if (marker) {
+    } else if (marker) {
       fence = marker;
-      continue;
+    } else {
+      outside.push(line);
     }
+  }
+  return outside;
+}
+
+function parseAcceptanceCriteria(specText) {
+  const criteria = [];
+  let sectionLevel = null;
+  let bullets = 0;
+  for (const line of linesOutsideFences(specText)) {
     const heading = HEADING_RE.exec(line);
     if (heading) {
       const level = heading[1].length;
@@ -135,11 +145,14 @@ function tiebreakFindingText(findings, id) {
 }
 
 // The first line alone is often a generic heading or a `Target:`, so a named field wins.
+// A `Title:` in a quoted code block is the block's, not the file's.
 function stagedFindingText(text) {
   if (typeof text !== 'string') return null;
-  const field = TITLE_FIELD_RE.exec(text) ?? FINDING_FIELD_RE.exec(text);
+  const outside = linesOutsideFences(text);
+  const prose = outside.join('\n');
+  const field = TITLE_FIELD_RE.exec(prose) ?? FINDING_FIELD_RE.exec(prose);
   if (field) return field[1].trim();
-  const lines = text.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const lines = outside.map((line) => line.trim()).filter(Boolean);
   const heading = lines.findIndex((line) => FINDING_HEADING_RE.test(line));
   const underHeading = heading === -1 ? undefined : lines[heading + 1];
   if (underHeading !== undefined && !HEADING_RE.test(underHeading)) return underHeading;
@@ -182,8 +195,10 @@ const stripYamlQuotes = (value) => value.replace(/^(["'])(.*)\1$/, '$2');
 const yamlScalar = (value) => stripYamlQuotes(stripYamlComment(value));
 const indentOf = (line) => line.length - line.trimStart().length;
 
-// A flow list's text up to its closing bracket, which may be several lines away.
-function readFlowTags(listed, story) {
+// A flow list's text up to its closing bracket, which may be several lines away. The
+// comment goes first: a bracket or comma inside one is not the list's.
+function readFlowTags(line, story) {
+  const listed = line.replace(FLOW_COMMENT_RE, '');
   const end = listed.indexOf(']');
   const entries = end === -1 ? listed : listed.slice(0, end);
   if (entries.split(',').map(yamlScalar).includes(NEGATIVE_TAG)) story.tagged = true;
@@ -206,6 +221,7 @@ function readStoryKey(body, story) {
 function readStoryLine(line, story) {
   const indent = indentOf(line);
   const body = line.trim();
+  story.keyIndent ??= indent;
   if (story.tagsOpen) {
     const entry = indent >= story.keyIndent ? BLOCK_ITEM_RE.exec(body) : null;
     if (entry) {
@@ -217,14 +233,22 @@ function readStoryLine(line, story) {
   if (indent === story.keyIndent) readStoryKey(body, story);
 }
 
-// The items of the `stories:` list, each opened by any `- ` line at the list's indent,
-// so an id need not be an item's first key. A file with no `stories:` key opens the list
-// at its first `- id:`. A key at or left of that indent ends the list.
+// The items of each `stories:` list, each opened by any `- ` line at the list's indent,
+// so an id need not be an item's first key. A key at or left of that indent ends a list,
+// and reading goes on, since a later document may hold another. The first `stories:` key
+// excludes every list above it and any list under another key after it; a file with no
+// such key reads every list that opens with a `- id:`.
 function parseStoryFile(text) {
   const stories = [];
   let sawStoriesKey = false;
+  let inStories = false;
   let itemIndent = null;
   let current = null;
+  const closeList = () => {
+    itemIndent = null;
+    current = null;
+    inStories = false;
+  };
   for (const line of text.split(/\r?\n/)) {
     const body = line.trim();
     if (body === '' || body.startsWith('#')) continue;
@@ -236,19 +260,24 @@ function parseStoryFile(text) {
       }
       current.flowOpen = false;
     }
+    if (indent === 0 && STORIES_KEY_RE.test(body)) {
+      if (!sawStoriesKey) stories.length = 0;
+      closeList();
+      sawStoriesKey = true;
+      inStories = true;
+      continue;
+    }
     const item = LIST_ITEM_RE.exec(line);
-    const opensList = itemIndent === null && item && (sawStoriesKey || ID_KEY_RE.test(item[3]));
+    const opensList = itemIndent === null && item && (inStories || (!sawStoriesKey && ID_KEY_RE.test(item[3])));
     if (item && (opensList || indent === itemIndent)) {
       itemIndent = indent;
-      current = { id: null, tagged: false, tagsOpen: false, flowOpen: false, keyIndent: indent + item[2].length };
+      const keyIndent = item[3] === '' ? null : indent + item[2].length;
+      current = { id: null, tagged: false, tagsOpen: false, flowOpen: false, keyIndent };
       stories.push(current);
       readStoryKey(item[3], current);
-    } else if (itemIndent === null) {
-      if (indent === 0 && STORIES_KEY_RE.test(body)) sawStoriesKey = true;
-    } else if (indent <= itemIndent) {
-      break;
-    } else {
-      readStoryLine(line, current);
+    } else if (itemIndent !== null) {
+      if (indent <= itemIndent) closeList();
+      else readStoryLine(line, current);
     }
   }
   return stories
@@ -298,12 +327,24 @@ function changeFacts(changes, commits) {
   ];
 }
 
-function verifyCheckResult(entry) {
+// `report.pass` and each `exitCode` stay raw when verify adjudicates a failing run to a
+// pass; `effectivePass` is the verdict, there so no consumer re-derives it (#3316).
+function adjudicatedReason(report) {
+  if (report?.effectivePass !== true) return null;
+  const baseline = report.baselineAdjudicated;
+  if (baseline?.verdict === 'pass') {
+    return typeof baseline.baseRef === 'string' ? `baseline-adjudicated vs ${baseline.baseRef}` : 'baseline-adjudicated';
+  }
+  return report.preExistingAdjudicated ? 'declared pre-existing failure' : 'adjudicated by verify';
+}
+
+function verifyCheckResult(entry, adjudicated) {
   if (!isObject(entry)) return NO_CHECK_RESULT;
   if (entry.exitCode === 0) return { status: 'passed' };
   if (entry.skipped) return { status: 'skipped', reason: String(entry.skipped) };
   // A null exit code is a hang or a spawn failure, which verify already counts as failed.
   if (entry.exitCode === undefined) return NO_CHECK_RESULT;
+  if (adjudicated !== null) return { status: 'passed', reason: adjudicated };
   const summary = typeof entry.summary === 'string' && entry.summary !== '' ? entry.summary : null;
   return { status: 'failed', reason: summary ?? `exit ${entry.exitCode}` };
 }
@@ -311,13 +352,14 @@ function verifyCheckResult(entry) {
 function checkFacts(report, expectedChecks) {
   const results = isObject(report?.checks) ? report.checks : {};
   const names = new Set([...(expectedChecks ?? []), ...Object.keys(results)]);
+  const adjudicated = adjudicatedReason(report);
   return [...names].map((name) => {
     const entry = ownValue(results, name);
     return {
       id: `check:${encodeFactKey(name)}`,
       kind: 'check',
       source: entry === undefined ? 'verify-scope' : 'verify-report',
-      ...verifyCheckResult(entry),
+      ...verifyCheckResult(entry, adjudicated),
     };
   });
 }

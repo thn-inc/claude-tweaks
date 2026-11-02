@@ -154,6 +154,15 @@ test('parseAcceptanceCriteria reads every criterion form records use', () => {
   ]);
 });
 
+test('an empty checkbox is no criterion and shifts no positional id', () => {
+  const spec = ['## Acceptance Criteria', '- [ ]', '- first', '- [x] ', '- [X]', '* [ ]   ', '- [ ] second', '- [x]third'].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(spec), [
+    { id: 'AC1', text: 'first' },
+    { id: 'AC2', text: 'second' },
+    { id: 'AC3', text: '[x]third' },
+  ]);
+});
+
 test('a real checkbox record parses to positional criteria', () => {
   const specText = [
     '## Deliverables',
@@ -292,6 +301,51 @@ test('a failing exit with no summary states the code; a hang with a null code st
   assert.deepEqual(statusOf(result, 'check:a'), ['failed', 'exit 2']);
   assert.deepEqual(statusOf(result, 'check:hang'), ['failed', 'exit null']);
   assert.deepEqual(statusOf(result, 'check:empty'), ['not-run', 'no result recorded']);
+});
+
+test('a run verify adjudicated to a pass reports its failing check as passed, with the reason', () => {
+  const checks = {
+    tests: { command: 'npm test', exitCode: 1, summary: '1 failing' },
+    lint: { command: 'x', exitCode: 0 },
+    types: { command: 'y', skipped: 'fail-fast' },
+  };
+  const baseline = gather({
+    report: { pass: false, effectivePass: true, baselineAdjudicated: { verdict: 'pass', baseRef: 'origin/main' }, checks },
+  });
+  assert.deepEqual(statusOf(baseline, 'check:tests'), ['passed', 'baseline-adjudicated vs origin/main']);
+  assert.deepEqual(statusOf(baseline, 'check:lint'), ['passed', undefined]);
+  assert.deepEqual(statusOf(baseline, 'check:types'), ['skipped', 'fail-fast']);
+
+  const preExisting = gather({ report: { pass: false, effectivePass: true, preExistingAdjudicated: { files: ['a'] }, checks } });
+  assert.deepEqual(statusOf(preExisting, 'check:tests'), ['passed', 'declared pre-existing failure']);
+
+  const neither = gather({ report: { pass: false, effectivePass: true, checks } });
+  assert.deepEqual(statusOf(neither, 'check:tests'), ['passed', 'adjudicated by verify']);
+});
+
+test('an adjudicated pass renders under Checks that passed, stating why', () => {
+  const result = gather({
+    report: {
+      pass: false,
+      effectivePass: true,
+      baselineAdjudicated: { verdict: 'pass', baseRef: 'origin/main' },
+      checks: { tests: { command: 'npm test', exitCode: 1, summary: '1 failing' } },
+    },
+  });
+  const { markdown } = renderPacket(result, { schemaVersion: 1, claims: [] });
+  assert.ok(markdown.includes('- `check:tests` — passed: baseline-adjudicated vs origin/main'), markdown);
+  assert.ok(!markdown.includes('failed: 1 failing'), markdown);
+});
+
+test('a verdict that is not literally true leaves a raw failure failed', () => {
+  const checks = { tests: { command: 'npm test', exitCode: 1, summary: '1 failing' } };
+  for (const report of [
+    { pass: false, effectivePass: false, baselineAdjudicated: { verdict: 'attributable', baseRef: 'origin/main' }, checks },
+    { pass: false, effectivePass: 'true', checks },
+    { pass: false, checks },
+  ]) {
+    assert.deepEqual(statusOf(gather({ report }), 'check:tests'), ['failed', '1 failing']);
+  }
 });
 
 test('an expected check named like an inherited property has no result', () => {
@@ -567,6 +621,62 @@ test('parseStoryFile reads only the stories list', () => {
     { id: 'b', negative: false },
   ]);
   assert.deepEqual(parseStoryFile('- id: bare\n  tags: [negative]\n'), [{ id: 'bare', negative: true }]);
+});
+
+test('parseStoryFile reads past a leading list, excluding it only when stories: is found', () => {
+  assert.deepEqual(parseStoryFile('- id: leading\nstories:\n  - id: a\n'), [{ id: 'a', negative: false }]);
+  assert.deepEqual(parseStoryFile('- id: leading\nother: 1\n- id: next\n'), [
+    { id: 'leading', negative: false },
+    { id: 'next', negative: false },
+  ]);
+});
+
+test('parseStoryFile reads past a bare - line, in the list and as an item', () => {
+  assert.deepEqual(parseStoryFile('stories:\n  - id: a\n  -\n  - id: b\n'), [
+    { id: 'a', negative: false },
+    { id: 'b', negative: false },
+  ]);
+  assert.deepEqual(parseStoryFile('stories:\n  -\n    id: nested\n    tags: [negative]\n  - id: b\n'), [
+    { id: 'nested', negative: true },
+    { id: 'b', negative: false },
+  ]);
+});
+
+test('parseStoryFile reads every document of a multi-document file', () => {
+  assert.deepEqual(parseStoryFile('stories:\n  - id: a\n---\nstories:\n  - id: b\n'), [
+    { id: 'a', negative: false },
+    { id: 'b', negative: false },
+  ]);
+  assert.deepEqual(parseStoryFile('- id: a\n---\n- id: b\n  tags: [negative]\n...\n'), [
+    { id: 'a', negative: false },
+    { id: 'b', negative: true },
+  ]);
+  assert.deepEqual(parseStoryFile('stories:\n  - id: a\nother:\n  - id: outside\n---\nstories:\n  - id: b\n'), [
+    { id: 'a', negative: false },
+    { id: 'b', negative: false },
+  ]);
+});
+
+test('a comment in a flow tag list holds no bracket or comma of the list', () => {
+  const text = [
+    'stories:',
+    '  - id: a',
+    '    tags: [x, # not, negative',
+    '      y]',
+    '  - id: b',
+    '    tags: [x, # not ]',
+    '      negative]',
+    '  - id: c',
+    '    tags: [ # opening comment',
+    '      x, y # ], negative',
+    '    ]',
+    '    priority: negative',
+  ].join('\n');
+  assert.deepEqual(parseStoryFile(text), [
+    { id: 'a', negative: false },
+    { id: 'b', negative: true },
+    { id: 'c', negative: false },
+  ]);
 });
 
 test('parseStoryFile on a file with no stories is empty', () => {
@@ -1046,6 +1156,17 @@ test('a staged finding reads its Title, then its Finding field, then its first l
   assert.equal(textOf('## Finding\n\n## Next\nnext prose\n'), '## Finding');
   assert.equal(textOf('  \n'), 'review-unconfirmed-1.md');
   assert.equal(textOf(null), 'review-unconfirmed-1.md');
+});
+
+test('a field or first line inside a code fence is not the staged finding', () => {
+  const textOf = (body) => lowConfidenceFindings(
+    { items: [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }], findings: [], decisions: '' },
+    () => body,
+  )[0].text;
+  assert.equal(textOf('```\nTitle: fenced\n```\nTitle: the real one\n'), 'the real one');
+  assert.equal(textOf('~~~md\nFinding: fenced\n~~~\n\nFinding: the real one\n'), 'the real one');
+  assert.equal(textOf('```\nTitle: fenced\n```\nprose after it\n'), 'prose after it');
+  assert.equal(textOf('```\nTitle: only fenced\n```\n'), 'review-unconfirmed-1.md');
 });
 
 test('lowConfidenceFindings falls back to the id, and leaves other sections out', () => {
