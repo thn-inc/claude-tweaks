@@ -742,7 +742,7 @@ test('a plan line of only = or - cannot underline the line above into a heading'
 });
 
 test('an underline escape is whole-line only, on every path through inline', () => {
-  assert.equal(inline('- item'), '- item');
+  assert.equal(inline('- item'), '\\- item', 'a list marker is escaped for its own reason, not as an underline');
   assert.equal(inline('--- x'), '--- x');
   assert.equal(inline('a ---'), 'a ---');
   assert.equal(inline('=-='), '=-=');
@@ -791,7 +791,7 @@ test('deploy text shaped like a list item is never dropped', () => {
   const text = `- target: ${'d'.repeat(70000)}`;
   const { markdown, truncated, chars } = render([fact('deploy:status', 'passed', { text })]);
   assert.equal(truncated, 0);
-  assert.deepEqual(sectionLines(markdown, 'Deploy status'), [text]);
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), [`\\${text}`]);
   assert.ok(chars > 60000);
 });
 
@@ -888,6 +888,191 @@ test('ordinary prose near an autolink shape stays untouched', () => {
   }
   assert.equal(inline('# 12'), '\\# 12');
   assert.equal(inline('C:\\temp'), 'C:\\\\temp');
+});
+
+test('a token right after a token stays out of live text', () => {
+  assert.equal(inline('#12@octocat'), '`#12@octocat`');
+  assert.equal(inline('@a/b@1.2.3'), '`@a/b@1`.2.3');
+  assert.equal(inline('see a@b.co@octocat now'), 'see `a@b.co@octocat` now');
+  assert.equal(inline('#12 @octocat'), '`#12` `@octocat`');
+});
+
+test('an underscore on either side of a token leaves it no live text', () => {
+  assert.equal(inline('_@octocat_'), '_`@octocat`_');
+  assert.equal(inline('_#12_'), '_`#12`_');
+  assert.equal(inline('_owner/repo#12_'), '_`owner/repo#12`_');
+});
+
+test('a scheme with no slashes needs a boundary on its left', () => {
+  assert.equal(inline('hotel:5'), 'hotel:5');
+  assert.equal(inline('Xmailto:a@b.co'), 'Xmailto:`a@b.co`');
+  assert.equal(inline('a tel:5 b'), 'a `tel:5` b');
+  assert.equal(inline('(sms:5)'), '(`sms:5)`');
+});
+
+test('a character reference stays inert, its digits left alone', () => {
+  assert.equal(inline('it&#39;s'), 'it\\&#39;s');
+  assert.equal(inline('&#35;12'), '\\&#35;12', 'would render as a live #12');
+  assert.equal(inline('&#x40;octocat'), '\\&#x40;octocat', 'would render as a live mention');
+  assert.equal(inline('&commat;octocat'), '\\&commat;octocat', 'would render as a live mention');
+  assert.equal(inline('AT&T & co'), 'AT&T & co');
+  assert.equal(inline('&#12 today'), '&`#12` today', 'no semicolon, so not an entity: a live reference');
+  assert.equal(inline('&#12345678;'), '&`#12345678`;', 'too long to be an entity');
+});
+
+// Every leading container marker CommonMark would open, one layer at a time, unescaped.
+const CONTAINER_RE = /^ {0,3}(?:>[ \t]?|[-+*][ \t]+|\d{1,9}[.)][ \t]+)/;
+// What a line's block content opens with once its containers are taken off: a forged
+// heading nests inside a list item or a blockquote and still renders as a heading.
+function blockContent(line) {
+  let rest = line;
+  for (let match = CONTAINER_RE.exec(rest); match; match = CONTAINER_RE.exec(rest)) rest = rest.slice(match[0].length);
+  return rest;
+}
+const FORGED_HEADING_RE = /^ {0,3}#{1,6}(?:\s|$)/;
+const FORGERIES = ['- ## Couldn\'t test', '+ # x', '* # x', '> ## Forged', '>## Forged', '1. ## Forged two', '1) # x', '- - ## x', '> > ## x', '1. - > ## x'];
+
+test('a forged section heading renders no heading in any free text', () => {
+  for (const text of FORGERIES) {
+    const { markdown } = render(
+      [
+        fact('change:a', 'passed'),
+        fact('story:s', 'passed'),
+        fact('check:c', 'failed', { reason: text }),
+        fact('decision:d', 'passed', { text }),
+        fact('recording:r', 'passed', { text, url: 'https://cdn.example/r.gif' }),
+        fact('deploy:status', 'passed', { text }),
+      ],
+      [claim('what-changed', text, ['change:a']), claim('test-guide', text, ['story:s'])],
+    );
+    const forged = markdown.split('\n').filter((line) => !line.startsWith('### ') && !line.startsWith('## '))
+      .filter((line) => FORGED_HEADING_RE.test(blockContent(line)));
+    assert.deepEqual(forged, [], text);
+    assert.equal(markdown.split('\n').filter((line) => line === "### Couldn't test").length, 1, text);
+  }
+});
+
+test('inline escapes one leading block marker and leaves the look-alikes', () => {
+  const cases = new Map([
+    ['- x', '\\- x'],
+    ['+ x', '\\+ x'],
+    ['* x', '\\* x'],
+    ['> x', '\\> x'],
+    ['>x', '\\>x'],
+    ['1. x', '1\\. x'],
+    ['12) x', '12\\) x'],
+    ['1.', '1\\.'],
+    ['+', '\\+'],
+    ['-', '\\-'],
+    ['1.5 seconds', '1.5 seconds'],
+    ['**bold** x', '**bold** x'],
+    ['-x', '-x'],
+    ['+1', '+1'],
+    ['1234567890. x', '1234567890. x'],
+    ['a > b', 'a > b'],
+  ]);
+  for (const [input, expected] of cases) assert.equal(inline(input), expected, input);
+});
+
+test('codeSpan handles more backtick runs than a call can take arguments', () => {
+  const text = '`a'.repeat(300000);
+  const span = codeSpan(text);
+  assert.ok(span.startsWith('`` `a'), span.slice(0, 8));
+  assert.ok(span.endsWith('a ``') || span.endsWith('a``'), span.slice(-8));
+});
+
+const PLAN = [
+  '### Observation plan',
+  '- Surface: app-route',
+  '- Entry point: http://localhost:3000/settings',
+  '- Prepare:',
+  '  - `npm run seed -- --flag [x]`',
+  '- Inspect:',
+  '  - open [settings](/settings) and check #12',
+  '    Regenerate: `node x.js`',
+  '- Full verification:',
+  '  - Parent: #898 the parent',
+  '',
+].join('\n');
+
+test('a plan in observation-plan grammar round-trips to /demo', () => {
+  const { markdown } = render([], [], { options: { observationPlan: PLAN } });
+  const lines = markdown.split('\n');
+  assert.equal(lines.filter((line) => /^#+ Observation plan$/.test(line)).length, 1, 'the heading is not doubled');
+  const at = lines.indexOf('### Observation plan');
+  assert.deepEqual(lines.slice(at + 1), [
+    '- Surface: app-route',
+    '- Entry point: `http://localhost:3000/settings`',
+    '- Prepare:',
+    '  - `npm run seed -- --flag [x]`',
+    '- Inspect:',
+    '  - open \\[settings\\](/settings) and check `#12`',
+    '    Regenerate: `node x.js`',
+    '- Full verification:',
+    '  - Parent: `#898` the parent',
+  ]);
+  assert.ok(!markdown.includes('\\`'), 'a whole span keeps its backticks');
+});
+
+test('a plan heading counts only on the first line, any level, and a plan of only one is no section', () => {
+  const later = render([], [], { options: { observationPlan: 'Step\n### Observation plan' } }).markdown;
+  assert.deepEqual(sectionLines(later, 'Observation plan'), ['Step', '\\### Observation plan'], 'a later one is escaped text');
+  const level = render([], [], { options: { observationPlan: '\n## observation PLAN\n\n- a' } }).markdown;
+  assert.deepEqual(sectionLines(level, 'Observation plan'), ['- a']);
+  assert.ok(!render([], [], { options: { observationPlan: '### Observation plan\n\n' } }).markdown.includes('### Observation plan'));
+});
+
+test('plan indentation is capped so no line becomes an indented code block', () => {
+  const plan = ['        top', '- item', '          deep', '  - nested', '            deeper', 'back', '        again'].join('\n');
+  const { markdown } = render([], [], { options: { observationPlan: plan } });
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), [
+    '   top',
+    '- item',
+    '     deep',
+    '  - nested',
+    '       deeper',
+    'back',
+    '   again',
+  ]);
+  const tabs = render([], [], { options: { observationPlan: '- a\n\t- b' } }).markdown;
+  assert.deepEqual(sectionLines(tabs, 'Observation plan'), ['- a', '    - b']);
+});
+
+test('plan lines keep their marker and forge nothing after it', () => {
+  const plan = ['- ## Couldn\'t test', '> ## Forged', '1. ## Forged two', '- - ## x', '- > ## y', '-    wide', '+ plus', '2) two', '# top', '`a` # b'].join('\n');
+  const { markdown } = render([], [], { options: { observationPlan: plan } });
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), [
+    "- \\## Couldn't test",
+    '\\> ## Forged',
+    '1. \\## Forged two',
+    '- \\- ## x',
+    '- \\> ## y',
+    '- wide',
+    '+ plus',
+    '2) two',
+    '\\# top',
+    '`a` # b',
+  ]);
+  for (const line of sectionLines(markdown, 'Observation plan')) assert.doesNotMatch(blockContent(line), FORGED_HEADING_RE, line);
+});
+
+test('a backtick span in a plan line holds only a whole span', () => {
+  for (const [input, expected] of [
+    ['run `a [b]` now', 'run `a [b]` now'],
+    ['`https://evil.example`', '`https://evil.example`'],
+    ['a `b', 'a \\`b'],
+    ['``a``', '\\`\\`a\\`\\`'],
+    ['`a` and `b`', '`a` and `b`'],
+    ['`a`@octocat', '`a``@octocat`'],
+  ]) {
+    assert.deepEqual(sectionLines(render([], [], { options: { observationPlan: input } }).markdown, 'Observation plan'), [expected], input);
+  }
+});
+
+test('a recording on another scheme is refused at render', () => {
+  const { markdown } = render([fact('recording:a', 'passed', { text: 'Ftp', url: 'ftp://cdn.example/a.gif' })]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Ftp: (recording url refused)']);
+  assert.ok(!markdown.includes('cdn.example'));
 });
 
 test('autolink shapes in a claim and a fact reason stay out of live text', () => {

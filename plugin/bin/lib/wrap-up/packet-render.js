@@ -12,21 +12,33 @@ const { validatePacket } = require('./packet-validate');
 // Every shape GitHub can turn into a link or a notification. A plain `word:value` is
 // not one: `link:deploy`, `localhost:3000` and `C:\temp` stay prose, so only the
 // schemes with no `//` that make a real link are named. Each repeat before an anchor
-// is bounded, which keeps the scan linear on a long run of word characters.
+// is bounded, which keeps the scan linear on a long run of word characters. `_` is no
+// word character here: GitHub links `_@octocat_`. A character reference's digits are no
+// `#12`: `escapeText` already keeps the reference itself from decoding.
 const URL_TAIL = '[^\\s`<>]+';
-const NOT_AFTER_WORD = '(?<![a-z0-9_])';
-const NOT_BEFORE_WORD = '(?![a-z0-9_])';
+const NOT_AFTER_WORD = '(?<![a-z0-9])';
+const NOT_BEFORE_WORD = '(?![a-z0-9])';
 const AUTOLINK_TOKEN_RE = new RegExp([
   `(?:https?:\\/\\/|www\\.)${URL_TAIL}`,
   `[a-z][a-z0-9+.-]{1,31}:\\/\\/${URL_TAIL}`,
-  `(?:mailto|xmpp|tel|sms):${URL_TAIL}`,
+  `${NOT_AFTER_WORD}(?:mailto|xmpp|tel|sms):${URL_TAIL}`,
   '[a-z0-9._%+-]{1,64}@[a-z0-9_-]+(?:\\.[a-z0-9_-]+)+',
-  `(?<![a-z0-9_/])[a-z0-9][a-z0-9-]{0,38}(?:\\/[a-z0-9._-]{1,100})?#\\d+${NOT_BEFORE_WORD}`,
+  `(?<![a-z0-9/])[a-z0-9][a-z0-9-]{0,38}(?:\\/[a-z0-9._-]{1,100})?#\\d+${NOT_BEFORE_WORD}`,
   `${NOT_AFTER_WORD}@[a-z0-9][a-z0-9-]*(?:\\/[a-z0-9_-]+)?`,
-  `${NOT_AFTER_WORD}#\\d+${NOT_BEFORE_WORD}`,
-].join('|'), 'gi');
+  `${NOT_AFTER_WORD}(?!(?<=&)#\\d{1,7};)#\\d+${NOT_BEFORE_WORD}`,
+].join('|'), 'i');
 const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const ROW_KINDS = Object.freeze(['check', 'story']);
+
+const PLAN_HEADING = 'Observation plan';
+const PLAN_HEADING_RE = /^#{1,6}[ \t]+observation plan[ \t]*$/i;
+const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
+// One backtick each side and none inside: a linear scan, since a failed opener reads no
+// further than the next backtick. Any other run stays escaped, and inert either way.
+const PLAN_CODE_SPAN_RE = /(?<!`)`([^`]+)`(?!`)/g;
+const PLAN_INDENT_RE = /^[ \t]*/;
+const TAB_COLUMNS = 4;
+const MAX_RELATIVE_INDENT = 3;
 
 // A whitespace run holding a line break becomes one space. Matching the run first
 // keeps this linear; `\s*[\r\n]+\s*` is quadratic on a long run of spaces.
@@ -34,26 +46,53 @@ const collapseLines = (s) => String(s).replace(/\s+/g, (run) => (/[\r\n]/.test(r
 
 // Beyond `[`, `]` and `<`: a backslash, or it would cancel the escape added after it
 // (`\[` to `\\[`); a backtick, or it would pair with a URL's code span and leave the
-// URL outside it.
-const escapeText = (text) => text.replace(/[\\`[\]<]/g, '\\$&');
+// URL outside it; the `&` of a character reference, or `&#35;12` and `&commat;octocat`
+// would decode into a live reference and a live mention after the token scan.
+const escapeText = (text) => text.replace(/[\\`[\]<]|&(?=#|[a-z][a-z0-9]{1,31};)/gi, '\\$&');
+
+// Each scan starts where the last token ended, so its lookbehinds cannot read a token's
+// last character as a word before the next one. Adjacent tokens share one span: a
+// closing backtick is no boundary, and `#12` `@octocat` touching would still be one run.
+function spanTokens(text) {
+  let out = '';
+  let rest = text;
+  let run = '';
+  const closeRun = () => {
+    if (run !== '') out += codeSpan(run);
+    run = '';
+  };
+  for (let match = AUTOLINK_TOKEN_RE.exec(rest); match; match = AUTOLINK_TOKEN_RE.exec(rest)) {
+    if (match.index > 0) {
+      closeRun();
+      out += escapeText(rest.slice(0, match.index));
+    }
+    run += match[0];
+    rest = rest.slice(match.index + match[0].length);
+  }
+  closeRun();
+  return out + escapeText(rest);
+}
+
+// What would open a block at the start of a line. A leading `~~~` would open a fence
+// that runs to the end of the comment; a blockquote or list marker would hold a real
+// heading, `- ## Couldn't test` among them, nested in it, and one layer escaped leaves
+// the rest as paragraph text. A line of only `=` or `-` would underline the line above
+// it into a heading. The digits are capped where CommonMark caps an ordered marker.
+const escapeBlockStart = (text) => text
+  .replace(/^(?:[#~>]|[-+*](?=\s|$))/, '\\$&')
+  .replace(/^(\d{1,9})([.)])(?=\s|$)/, '$1\\$2')
+  .replace(/^(?:=+|-+)$/, '\\$&');
 
 function inline(s) {
-  const text = collapseLines(s).trim();
-  let out = '';
-  let at = 0;
-  for (const match of text.matchAll(AUTOLINK_TOKEN_RE)) {
-    out += escapeText(text.slice(at, match.index)) + codeSpan(match[0]);
-    at = match.index + match[0].length;
-  }
-  out += escapeText(text.slice(at));
-  // A leading `~~~` would open a fence that runs to the end of the comment, and a
-  // line of only `=` or `-` would underline the line above it into a heading.
-  return out.replace(/^[#~]/, '\\$&').replace(/^(?:=+|-+)$/, '\\$&');
+  return escapeBlockStart(spanTokens(collapseLines(s).trim()));
 }
 
 function codeSpan(s) {
   const text = collapseLines(s);
-  const longestRun = Math.max(0, ...(text.match(/`+/g) || []).map((run) => run.length));
+  // A loop, not Math.max(...runs): a long enough text has more runs than a call can
+  // take arguments.
+  let longestRun = 0;
+  for (const [run] of text.matchAll(/`+/g)) longestRun = Math.max(longestRun, run.length);
   const fence = '`'.repeat(longestRun + 1);
   const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
   return `${fence}${pad}${text}${pad}${fence}`;
@@ -177,6 +216,55 @@ function screenedLines(screened) {
   return [`${screened.length} Test guide ${noun} omitted for credential-shaped content: ${keys}`];
 }
 
+// `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:demo`,
+// which reads the comment's raw text: a list marker stays a marker, a whole backtick
+// span stays a span, and a sub-bullet stays under its parent. Whatever follows the
+// marker gets inline()'s escapes, so `- ## Couldn't test` forges nothing.
+function planText(text) {
+  let out = '';
+  let at = 0;
+  for (const match of text.matchAll(PLAN_CODE_SPAN_RE)) {
+    out += spanTokens(text.slice(at, match.index)) + codeSpan(match[1]);
+    at = match.index + match[0].length;
+  }
+  return escapeBlockStart(out + spanTokens(text.slice(at)));
+}
+
+const indentWidth = (line) => [...PLAN_INDENT_RE.exec(line)[0]].reduce((sum, char) => sum + (char === '\t' ? TAB_COLUMNS : 1), 0);
+
+// A plan's own `### Observation plan` heading is the section's, and blank edges are noise.
+function planBody(plan) {
+  const lines = plan.split(/\r\n|\r|\n/);
+  const trimBlankEdges = () => {
+    while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+    while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop();
+  };
+  trimBlankEdges();
+  if (lines.length > 0 && PLAN_HEADING_RE.test(lines[0].trim())) lines.shift();
+  trimBlankEdges();
+  return lines;
+}
+
+// `column` is where the open list item's content starts. Up to three spaces past it
+// stays in that item; a fourth would open an indented code block, so it is capped there.
+function renderPlanLines(lines) {
+  let column = 0;
+  return lines.map((line) => {
+    const text = line.trim();
+    if (text === '') return '';
+    const indent = Math.min(indentWidth(line), column + MAX_RELATIVE_INDENT);
+    const pad = ' '.repeat(indent);
+    const marker = PLAN_LIST_MARKER_RE.exec(text);
+    if (marker === null) {
+      if (indent < column) column = 0;
+      return `${pad}${planText(text)}`;
+    }
+    const opener = `${marker[0].trimEnd()} `;
+    column = indent + opener.length;
+    return `${pad}${opener}${planText(text.slice(marker[0].length))}`;
+  });
+}
+
 const truncatedLines = (n) => (n > 0 ? [`truncated: ${n} items omitted`] : []);
 
 function compose(doc, omitted) {
@@ -237,9 +325,9 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
   const sections = SECTIONS
     .map(({ key, heading }) => ({ heading, body: SECTION_BODIES[key](ctx) }))
     .filter(({ body }) => body.length > 0);
-  if (typeof observationPlan === 'string' && observationPlan.trim() !== '') {
-    const lines = observationPlan.split(/\r\n|\r|\n/);
-    sections.push({ heading: 'Observation plan', body: lines.map((line) => note(inline(line))) });
+  const planLines = typeof observationPlan === 'string' ? planBody(observationPlan) : [];
+  if (planLines.length > 0) {
+    sections.push({ heading: PLAN_HEADING, body: renderPlanLines(planLines).map(note) });
   }
 
   const top = [PACKET_MARKER, '', `## Acceptance packet — #${facts.record}`, ''];
