@@ -14,7 +14,8 @@ function readSkillFile(...segments) {
 const PRIMITIVE_DOC = readSkillFile('_shared', 'multi-agent-coordination.md');
 // Several of /review's decision-log templates live in sub-files lazy-loaded from SKILL.md rather
 // than inlined in it: reproduction's in step3-lens-dispatch.md, Cross-Lens Debate's and
-// Per-Candidate Refutation's in step3-debate-and-refutation.md. Concatenate all three so this
+// Per-Candidate Refutation's in step3-debate-and-refutation.md, the post-fan-out sweep's STAGED
+// template in step3-fanout-sweep.md. Concatenate all four so this
 // still asserts against the real documented format wherever it currently lives.
 const REVIEW_SKILL = ['SKILL.md', 'step3-lens-dispatch.md', 'step3-debate-and-refutation.md', 'step3-fanout-sweep.md']
   .map((f) => readSkillFile('review', f))

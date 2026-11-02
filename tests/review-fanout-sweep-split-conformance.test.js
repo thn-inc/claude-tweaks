@@ -16,6 +16,7 @@ const OLD_CITATIONS = [
   "`step3-lens-dispatch.md`'s post-fan-out",
   'sweep (`step3-lens-dispatch.md`)',
   '`step3-lens-dispatch.md` defines the post-fan-out',
+  'sweep callers check their subdir too (`step3-lens-dispatch.md`)',
 ];
 
 function stubSection(dispatch) {
@@ -54,6 +55,7 @@ const load = () => ({
     'step3-cross-lens-corroboration.md': read('plugin/skills/review/step3-cross-lens-corroboration.md'),
     'step3-routing.md': read('plugin/skills/review/step3-routing.md'),
     'review-summary-template.md': read('plugin/skills/review/review-summary-template.md'),
+    'subagent-output-contract.md': read('plugin/skills/_shared/subagent-output-contract.md'),
   },
 });
 
@@ -78,4 +80,15 @@ test('go-red (b): the tiebreak citation reverted to step3-lens-dispatch.md fails
   const reverted = tb.replace(phrase, "`step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep");
   assert.notStrictEqual(reverted, tb);
   assert.ok(missing({ ...t, citers: { ...t.citers, 'step3-tiebreak.md': reverted } }).length > 0);
+});
+
+test('go-red (c): the output-contract scratch-rule citation reverted to step3-lens-dispatch.md fails', () => {
+  const t = load();
+  const name = 'subagent-output-contract.md';
+  const phrase = 'sweep callers check their subdir too (`step3-fanout-sweep.md`)';
+  const contract = t.citers[name];
+  assert.ok(contract.includes(phrase));
+  const reverted = contract.replace(phrase, 'sweep callers check their subdir too (`step3-lens-dispatch.md`)');
+  assert.notStrictEqual(reverted, contract);
+  assert.ok(missing({ ...t, citers: { ...t.citers, [name]: reverted } }).includes(`${name} has no old citation`));
 });

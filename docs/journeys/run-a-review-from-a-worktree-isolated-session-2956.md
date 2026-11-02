@@ -2,6 +2,7 @@
 files:
   - plugin/skills/review/review-effort-derivation.md
   - plugin/skills/review/step3-lens-dispatch.md
+  - plugin/skills/review/step3-fanout-sweep.md
   - plugin/skills/review/step3-debate-and-refutation.md
   - plugin/bin/lib/review-context/build.js
 ---
