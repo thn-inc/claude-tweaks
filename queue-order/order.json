@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T21:18:17.036Z",
+  "computedAt": "2026-11-02T21:33:29.161Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -10,7 +10,7 @@
       },
       {
         "number": 4845,
-        "updatedAt": "2026-11-02T20:22:47Z",
+        "updatedAt": "2026-11-02T21:28:41Z",
         "state": "OPEN"
       },
       {
@@ -710,7 +710,7 @@
       },
       {
         "number": 4252,
-        "updatedAt": "2026-10-31T09:59:24Z",
+        "updatedAt": "2026-11-02T21:33:08Z",
         "state": "OPEN"
       },
       {
@@ -1066,7 +1066,7 @@
         "number": 4845,
         "state": "OPEN",
         "title": "Artifact-overwrite check: attribute only the run's own first-parent commits",
-        "updatedAt": "2026-11-02T20:22:47Z",
+        "updatedAt": "2026-11-02T21:28:41Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
@@ -8638,7 +8638,7 @@
         "number": 4252,
         "state": "OPEN",
         "title": "local-merge: the merge fences compose the merge commit without --keep-open, so a deferred record still gets a closing keyword",
-        "updatedAt": "2026-10-31T09:59:24Z",
+        "updatedAt": "2026-11-02T21:33:08Z",
         "facets": {
           "origin": null,
           "risk": "medium",
