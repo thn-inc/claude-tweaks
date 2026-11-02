@@ -332,10 +332,11 @@ test('#1493 C1: Step 7.5\'s copy+add lands decisions.md, report.md, and staged/*
   const staged = git('diff', 'HEAD~1', 'HEAD', '--name-only').trim().split('\n').filter(Boolean).sort();
   // git prints repo-relative paths with forward slashes on every platform, so the expected
   // IDs are built with path.posix (runRel stays native for the git add above).
+  const runRelPosix = path.posix.join('.claude-tweaks', 'pipelines', runId);
   assert.deepStrictEqual(staged, [
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'decisions.md'),
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'report.md'),
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'staged', 'digest-promotion-1.md'),
+    path.posix.join(runRelPosix, 'decisions.md'),
+    path.posix.join(runRelPosix, 'report.md'),
+    path.posix.join(runRelPosix, 'staged', 'digest-promotion-1.md'),
   ].sort(), `expected exactly decisions.md/report.md/staged/** to be committed, got: ${JSON.stringify(staged)}`);
 });
 
@@ -366,9 +367,10 @@ test('#1494 review fix: Step 7.5\'s copy+add also lands in a *-sweep-standalone*
   git('commit', '-q', '-m', 'Tidy: housekeeping');
 
   const staged = git('diff', 'HEAD~1', 'HEAD', '--name-only').trim().split('\n').filter(Boolean).sort();
+  const runRelPosix = path.posix.join('.claude-tweaks', 'pipelines', runId);
   assert.deepStrictEqual(staged, [
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'decisions.md'),
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'report.md'),
-    path.posix.join('.claude-tweaks', 'pipelines', runId, 'staged', 'digest-promotion-1.md'),
+    path.posix.join(runRelPosix, 'decisions.md'),
+    path.posix.join(runRelPosix, 'report.md'),
+    path.posix.join(runRelPosix, 'staged', 'digest-promotion-1.md'),
   ].sort(), `expected exactly decisions.md/report.md/staged/** to be committed, got: ${JSON.stringify(staged)}`);
 });
