@@ -111,7 +111,7 @@ function runFence(fence, { limit = 1000, ghRows = [], files = {}, env = {}, shel
 // `--limit {resolved-limit}` in separate spans is no match.
 function limitSites(text) {
   const joined = text.replace(/\\\n\s*/g, ' ');
-  return [...joined.matchAll(/gh (?:issue|pr) list\b[^`\n]*?--limit\s+([^\s`]+)/g)].map((m) => m[1]);
+  return [...joined.matchAll(/gh (?:issue|pr) list\b[^`\n]*?--limit[\s=]+([^\s`]+)/g)].map((m) => m[1]);
 }
 const fixedLimitSites = (text) => limitSites(text).filter((t) => /^\d+$/.test(t));
 
@@ -148,6 +148,9 @@ test('no gh list call in github-pr-scan.md carries a fixed --limit', () => {
   assert.equal(fixedLimitSites('gh pr list --state all --json number \\\n  --limit 200 > "$X"').length, 1);
   // ... passes a sized call ...
   assert.deepEqual(fixedLimitSites('gh issue list --state open --limit {resolved-limit}'), []);
+  // ... sees the `--limit=N` form the stub also accepts ...
+  assert.deepEqual(fixedLimitSites('gh issue list --limit=200 --json number'), ['200']);
+  assert.deepEqual(limitSites('gh issue list --limit={resolved-limit} --json number'), ['{resolved-limit}']);
   // ... and ignores a comment that names a limit with no `gh … list` on the line.
   assert.deepEqual(fixedLimitSites('#    across `--state all --limit 200` exceed'), []);
 });
@@ -372,6 +375,19 @@ test('triage item 1 reproduces #4820: the pre-change fence reports a capped pend
   assert.equal(reverted, PRE_CHANGE_TRIAGE_ITEM1);
 });
 
+// The four cap cases for item 1, written once: the bash/zsh test runs them per shell, the go-red test runs them on mutants.
+// Limit 2 against 2 rows reached its cap, so the count is a floor and the fence says so; limit 3 against 2 is a real count;
+// the fetch is --label filtered, so GitHub caps it at 1000 whatever --limit says: 1000 rows under 1500 is the cap, 999 is not.
+const assertItem1CapCases = (f, shell = 'bash') => {
+  const capped = runFence(f, { limit: 2, ghRows: readyRows(2), shell });
+  assert.equal(capped.status, 0, capped.stderr);
+  assert.equal(capped.stdout.trim(), '2', 'item 1: the capped count still prints');
+  assert.match(capped.stderr, TRIAGE_WARNING, 'item 1: a fetch at the limit must warn');
+  assert.ok(!runFence(f, { limit: 3, ghRows: readyRows(2), shell }).stderr.includes('WARNING:'), 'item 1: a fetch under the limit must not warn');
+  assert.match(runFence(f, { limit: 1500, ghRows: readyRows(1000), shell }).stderr, TRIAGE_WARNING, 'item 1: 1000 rows is the --label cap and must warn');
+  assert.ok(!runFence(f, { limit: 1500, ghRows: readyRows(999), shell }).stderr.includes('WARNING:'), 'item 1: 999 rows under a 1500 limit must not warn');
+};
+
 for (const shell of ['bash', 'zsh']) {
   test(`triage item 1 counts the whole ready universe at a high limit and warns at the cap (${shell})`, { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false }, () => {
     const fence = fenceAfter(TRIAGE, TRIAGE_ITEM1_LABEL);
@@ -380,24 +396,7 @@ for (const shell of ['bash', 'zsh']) {
     assert.equal(whole.status, 0, whole.stderr);
     assert.equal(whole.stdout.trim(), String(READY_UNIVERSE));
     assert.ok(!whole.stderr.includes('WARNING:'), whole.stderr);
-    if (shell !== 'bash') return;
-    // Limit 2 against 2 rows: the fetch reached its cap, so the count is a floor and the fence says so.
-    const capped = runFence(fence, { limit: 2, ghRows: readyRows(2) });
-    assert.equal(capped.status, 0, capped.stderr);
-    assert.equal(capped.stdout.trim(), '2');
-    assert.match(capped.stderr, TRIAGE_WARNING);
-    // Limit 3 against 2 rows: a real count.
-    const under = runFence(fence, { limit: 3, ghRows: readyRows(2) });
-    assert.equal(under.status, 0, under.stderr);
-    assert.ok(!under.stderr.includes('WARNING:'), under.stderr);
-    // The fetch is --label filtered, so GitHub caps it at 1000 whatever --limit says: 1000 rows under a limit of 1500 is the cap ...
-    const labelCap = runFence(fence, { limit: 1500, ghRows: readyRows(1000) });
-    assert.equal(labelCap.status, 0, labelCap.stderr);
-    assert.match(labelCap.stderr, TRIAGE_WARNING);
-    // ... and 999 rows is not.
-    const belowLabelCap = runFence(fence, { limit: 1500, ghRows: readyRows(999) });
-    assert.equal(belowLabelCap.status, 0, belowLabelCap.stderr);
-    assert.ok(!belowLabelCap.stderr.includes('WARNING:'), belowLabelCap.stderr);
+    assertItem1CapCases(fence, shell);
   });
 }
 
@@ -405,16 +404,10 @@ test('triage item 1 go-red: a threshold that drops the label cap, or the compari
   const fence = fenceAfter(TRIAGE, TRIAGE_ITEM1_LABEL);
   const CHECK = 'issues.length >= Math.min({resolved-limit}, 1000)';
   assert.ok(fence.includes(CHECK), 'the threshold must be present to mutate');
-  const assertCases = (f) => {
-    assert.match(runFence(f, { limit: 2, ghRows: readyRows(2) }).stderr, TRIAGE_WARNING, 'item 1: a fetch at the limit must warn');
-    assert.ok(!runFence(f, { limit: 3, ghRows: readyRows(2) }).stderr.includes('WARNING:'), 'item 1: a fetch under the limit must not warn');
-    assert.match(runFence(f, { limit: 1500, ghRows: readyRows(1000) }).stderr, TRIAGE_WARNING, 'item 1: 1000 rows is the --label cap and must warn');
-    assert.ok(!runFence(f, { limit: 1500, ghRows: readyRows(999) }).stderr.includes('WARNING:'), 'item 1: 999 rows under a 1500 limit must not warn');
-  };
-  assertCases(fence);
+  assertItem1CapCases(fence);
   for (const wrong of ['issues.length >= {resolved-limit}', 'issues.length > Math.min({resolved-limit}, 1000)', 'issues.length >= Math.max({resolved-limit}, 1000)']) {
     const mutated = fence.replace(CHECK, wrong);
     assert.notEqual(mutated, fence);
-    assert.throws(() => assertCases(mutated), { message: /item 1:/ }, `a threshold of "${wrong}" must fail a pinned case`);
+    assert.throws(() => assertItem1CapCases(mutated), { message: /item 1:/ }, `a threshold of "${wrong}" must fail a pinned case`);
   }
 });
