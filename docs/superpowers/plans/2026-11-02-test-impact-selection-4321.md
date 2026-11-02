@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T081005-record-4321/work/4321-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T202324-record-4321/work/4321-spec.md`
 
 ## Global Constraints
 
@@ -25,9 +25,9 @@
 
 - `.release-please-manifest.json`: a test reads it (`tests/bin-lib/residue/cli.test.js`, exact `f` entry), so the spec's "`suites: []` unless a test reads it" resolves to an impact rule.
 - `.github/workflows/**`: traced by exact `f` reads (`tests/merge-verification.test.js` reads `test.yml`) and `d` listings, so it is an impact rule.
-- `perf/**`: **departs from the spec's wording.** The spec says the suite set `npm run test:perf` belongs to, but the declaration has only `tests` and `journeys`. A `perf` suite would join every full verify (`everySuite`, and `suiteComposed.declared` for the stamp), running timing budgets that `docs/plugin-structure.md` keeps out of `npm test` because they flake under sibling load. `suites: []` fails the "no source tree maps to nothing" pin, and tests do read `perf/`: `tests/wall-clock-budget-conformance.test.js` (`f`), `tests/package-json-test-script.test.js` and `tests/plan-citations-resolve.test.js` (`d`). So `perf/**` is an impact rule. No coverage is lost: today's superseded full run is `npm test`, which never runs `perf/` either. Log it per Task 2 Step 6.
+- `perf/**`: decided by the maintainer in the spec's `## Plan Review Decisions` (Reading B): an impact rule selecting only the tests that read `perf/`, with budgets left to the scheduled `test-perf.yml` workflow and no `perf` suite added. Tests do read `perf/`: `tests/wall-clock-budget-conformance.test.js` (`f`), `tests/package-json-test-script.test.js` and `tests/plan-citations-resolve.test.js` (`d`). No coverage is lost: today's superseded full run is `npm test`, which never runs `perf/` either.
 
-Waived AC4.1: needs 10 or more pipeline runs after merge, so no build can test it; it stays open for `/claude-tweaks:wrap-up` through the ledger row in Task 2 Step 7, with Deliverable 3.
+Waived AC4.1: per the spec's `## Plan Review Decisions` (Reading B) the count covers only runs on a released build carrying Deliverable 1, so no build can test it; it stays open for `/claude-tweaks:wrap-up` through the ledger row in Task 2 Step 6, with Deliverable 3.
 Waived AC4.2: same reason as AC4.1.
 
 ## Review Focus
@@ -179,7 +179,7 @@ Stage the eight files above by explicit path. Message: `Carry the impact outcome
 **Files:**
 - Modify: `.claude-tweaks/verify-scope.json`
 - Test: `tests/verify-scope-declaration.test.js`
-- Modify: `docs/plans/2026-11-02-test-impact-selection-ledger.md` (Step 7)
+- Modify: `docs/plans/2026-11-02-test-impact-selection-ledger.md` (Step 6)
 
 **Interfaces:**
 - Consumes: nothing from Task 1 in code. Step 5's replay reads `.impact.superseded`, which already exists.
@@ -239,26 +239,22 @@ Expected: PASS, including the `AC2.1` release-reader and `#4024 expand-contract`
 The script and input are scratch, already written, and uncommitted. Run from the worktree root, with the full output going to the evidence log:
 
 ```bash
-mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T081005-record-4321/evidence"
+mkdir -p "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T202324-record-4321/evidence"
 ```
 
 ```bash
-node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T081005-record-4321/evidence/replay-59-prs.txt"
+node "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/replay-4321.js" "$PWD" "/private/tmp/claude-501/-Users-thomasholknielsen-Code-Workspaces-claude-tweaks--claude-worktrees-dispatch-record-4593/5799247f-6f2c-45e0-9656-5044fb4c1207/scratchpad/prs-4321.json" "$PWD/.claude-tweaks/verify-scope.json" > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T202324-record-4321/evidence/replay-59-prs.txt"
 ```
 
 Expected: `"prs": 59`, `"supersededByUnmatched"` at most 5. On the rules before Step 3 the same command printed 37 superseded, 35 by unmatched, 20 eligible, 2 with no impact paths, which matches the record's figures.
 
 Write one `AC evidence` line naming AC2, the command shape and the counts to a session temp file, then log it with `log-decision.js --run {run-dir} --section "/build" --status AUTO --step "AC evidence" --text-file {file}`, citing `evidence/replay-59-prs.txt`.
 
-- [ ] **Step 6: Log the `perf/**` departure**
+- [ ] **Step 6: Commit, with the deferred re-measure on the ledger**
 
-Run `log-decision.js --section "/build" --status AUTO --step "Task 2" --reversibility high` with `--text-file`, the line being: `premise reversed: perf/** maps to the test:perf suite → perf/** is an impact rule; the declaration has no perf suite, and adding one would run timing budgets on every full verify`.
+Append to the ledger table. The version is unknown until release-please cuts it, so the row names the release by what it must contain:
 
-- [ ] **Step 7: Commit, with the deferred re-measure on the ledger**
-
-Append to the ledger table:
-
-`| 1 | ops | Re-measure impact outcomes across the next 10 or more pipeline runs from timing.json verify entries (AC4, Deliverable 3); fix or file the dominant fallback with counts. (reason-not-auto: requires post-merge pipeline runs) | open | Defer-reason: blocked-dependency — needs this PR merged and 10 or more later runs |`
+`| 1 | ops | Re-measure impact outcomes across 10 or more pipeline runs on a released build carrying Deliverable 1, from timing.json verify entries (AC4, Deliverable 3); fix or file the dominant fallback with counts. (reason-not-auto: requires pipeline runs on a released build) | open | Defer-reason: blocked-dependency — needs the first v* release containing PR #4969's Deliverable 1, then 10 or more pipeline runs on it |`
 
 Stage `.claude-tweaks/verify-scope.json`, `tests/verify-scope-declaration.test.js` and the ledger by explicit path. Message: `Add impact rules for the common superseding paths — refs #4321`, with the `Claude-Session:` trailer.
 
