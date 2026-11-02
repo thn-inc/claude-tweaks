@@ -9,6 +9,9 @@ const { execFileSync } = require('child_process');
 const pre = require('../plugin/bin/lib/hooks/pre-tool-use');
 const ctxLib = require('../plugin/bin/lib/hooks/context');
 const { shellQuote } = require('./helpers/shell-quote');
+const { fakeGh } = require('./helpers/fake-gh');
+const { STUB_SKIP } = require('./helpers/path-stub');
+const { FORGE_DEGRADE_MEMO_TTL_MS } = require('../plugin/bin/lib/policy-schema');
 
 function gitRepo() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-'));
@@ -1808,6 +1811,101 @@ test('bookkeeping-stamps gate (#4578 Q5): the override receives an onDegrade cal
   assert.strictEqual(typeof (got && got.onDegrade), 'function', 'the override must receive { onDegrade } as its second argument');
   const persisted = JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
   assert.strictEqual(persisted.prExempt, true, 'a clean local-merge resolution still persists prExempt');
+});
+
+// --- #4830: the gate passes the run-scoped degrade memo TTL ---
+//
+// These drive the REAL resolver (no `resolveIntegrationModel` override) through the
+// gate with a fake `gh`. The fixture's main repo gets an origin remote so detection
+// reaches the `gh` probe instead of returning `local-merge` at the git-remote step.
+// The gate hardcodes HOOK_FORGE_PROBE_TIMEOUT_MS (5 s), so a 'hang' detection (two
+// attempts) takes ~10 s here by design.
+function degradeMemoFixture() {
+  const main = gitRepo();
+  execFileSync('git', ['-C', main, 'remote', 'add', 'origin', 'https://github.com/o/n.git']);
+  const wt = linkedWorktreeOf(main);
+  commitMaterializedSpec(wt, path.join('work', '991-spec.md'));
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-bsg-proj-'));
+  return { wt, project };
+}
+const readRunState = (run) => JSON.parse(fs.readFileSync(path.join(run, 'run-state.json'), 'utf8'));
+
+test('bookkeeping-stamps gate (#4830 AC1): three covered calls inside the TTL run one detection (two gh attempts) — the memo skips the rest', { skip: STUB_SKIP }, () => {
+  const { wt, project } = degradeMemoFixture();
+  const { run } = mkRunDir(project, wt, undefined);
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const input = editInput(path.join(wt, 'src', 'x.js'));
+    // Call 1 detects: two hook-bounded attempts, both hang, so the detection degrades and stamps the memo.
+    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: { status: 'active', worktree: wt }, cwd: wt }), {});
+    assert.strictEqual(gh.count(), 2, 'call 1 spends the two bounded attempts');
+    // Calls 2 and 3 load run-state.json from disk, as a fresh hook process would.
+    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: readRunState(run), cwd: wt }), {});
+    assert.deepStrictEqual(pre.run({ input, runDir: run, runState: readRunState(run), cwd: wt }), {});
+    assert.strictEqual(gh.count(), 2, 'calls 2 and 3 are inside the TTL — the memo skips the probe');
+    const persisted = readRunState(run);
+    assert.strictEqual(typeof persisted.forgeDegradedAt, 'number', 'the degrade stamp is persisted');
+    assert.strictEqual(persisted.prExempt, undefined, 'a degraded or memoized detection never persists prExempt');
+  } finally {
+    gh.restore();
+  }
+});
+
+test('bookkeeping-stamps gate (#4830 AC3): an expired memo plus a recovered gh clears the memo and persists prExempt', { skip: STUB_SKIP }, () => {
+  const { wt, project } = degradeMemoFixture();
+  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS });
+  // 'fail' is a definitive answer (exit 1, no timeout): detection resolves local-merge cleanly.
+  const gh = fakeGh({ first: 'fail' });
+  try {
+    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    assert.deepStrictEqual(out, {});
+    assert.strictEqual(gh.count(), 1, 'the expired memo re-probes');
+    const persisted = readRunState(run);
+    assert.strictEqual(persisted.forgeDegradedAt, null, 'a clean detection clears the memo');
+    assert.strictEqual(persisted.prExempt, true, 'a clean local-merge verdict persists prExempt');
+  } finally {
+    gh.restore();
+  }
+});
+
+// The safety direction of Q5: once the memo expires and `gh` answers, a
+// GitHub-backed run resolves pr-first again and the gate enforces. Red against
+// the mutation `return model;` -> `return 'local-merge';` at the end of
+// resolveRunPinnedIntegrationModel, which every 'fail'-mode recovery case misses.
+test('bookkeeping-stamps gate (#4830): an expired memo plus a recovered gh resolving pr-first clears the memo and denies (enforcement returns)', { skip: STUB_SKIP }, () => {
+  const { wt, project } = degradeMemoFixture();
+  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS });
+  const gh = fakeGh({ first: 'ok' });
+  try {
+    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    assert.ok(out.json, 'expected a deny once the recovered detection resolves pr-first with no PR recorded');
+    const spec = out.json.hookSpecificOutput;
+    assert.strictEqual(spec.permissionDecision, 'deny');
+    assert.match(spec.permissionDecisionReason, /record-pr|PR-early/);
+    assert.strictEqual(gh.count(), 1, 'the expired memo re-probes once');
+    const persisted = readRunState(run);
+    assert.strictEqual(persisted.forgeDegradedAt, null, 'a clean detection clears the memo');
+    assert.strictEqual(persisted.prExempt, undefined, 'a pr-first verdict never persists prExempt');
+  } finally {
+    gh.restore();
+  }
+});
+
+test('bookkeeping-stamps gate (#4830 AC2): an expired memo at the gate re-probes and refreshes the stamp', { skip: STUB_SKIP }, () => {
+  const { wt, project } = degradeMemoFixture();
+  const before = Date.now() - 2 * FORGE_DEGRADE_MEMO_TTL_MS;
+  const { run } = mkRunDir(project, wt, undefined, { forgeDegradedAt: before });
+  const gh = fakeGh({ first: 'hang' });
+  try {
+    const out = pre.run({ input: editInput(path.join(wt, 'src', 'x.js')), runDir: run, runState: readRunState(run), cwd: wt });
+    assert.deepStrictEqual(out, {});
+    assert.strictEqual(gh.count(), 2, 'the expired memo re-probes: two bounded attempts');
+    const persisted = readRunState(run);
+    assert.ok(persisted.forgeDegradedAt > before, 'the degrade stamp is refreshed');
+    assert.strictEqual(persisted.prExempt, undefined, 'a degraded detection never persists prExempt');
+  } finally {
+    gh.restore();
+  }
 });
 
 // --- #1460: an unrelated dangling run must not deny a fresh scratch worktree ---

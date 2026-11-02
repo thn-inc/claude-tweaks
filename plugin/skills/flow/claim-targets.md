@@ -321,7 +321,8 @@ stays best-effort and the claim read stays the authoritative hold check:
   yet); stderr names the timeout and the `gh-timeout-ms`/`CLAUDE_TWEAKS_GH_TIMEOUT_MS` override.
   Also covers a `claims-registry` branch still missing after a successful bootstrap (#4495) —
   `error: 'claims-branch-missing'`, or a bootstrap that hit a secondary rate limit,
-  `error: 'claims-branch-bootstrap-rate-limited'` — both rendered on the same transient-failure card.
+  `error: 'claims-branch-bootstrap-rate-limited'`, or a network failure (a primary rate limit included),
+  `error: 'claims-branch-bootstrap-network-failure'` — all rendered on the same transient-failure card.
 - **5** (#2073) — a claim write reported success but the post-write read-back never confirmed it
   (a live claim carrying this run's `runId`) — same fail-fast/all-or-abort shape as exit 3/4: stdout
   carries `{unverified: [{issue}], released, releaseFailed}`. The unverified target itself is never
@@ -338,9 +339,10 @@ stays best-effort and the claim read stays the authoritative hold check:
   ```
 
   No `AskUserQuestion` — same as the contest and transient cards, nothing to choose between.
-- **6** (#4495) — the `claims-registry` branch was missing on origin and could not be created
-  (also under `--keep-going`): stdout carries `{branchMissing: {branch, reason}, released,
-  releaseFailed}`, stderr carries the remedy. Render:
+- **6** (#4495) — the `claims-registry` branch was missing on origin and creating it was refused
+  — a permission error, a ruleset, `gh` absent; a network failure is exit 4 instead — also under
+  `--keep-going`: stdout carries `{branchMissing: {branch, reason}, released, releaseFailed}`,
+  stderr carries the remedy. Render:
 
   ```markdown
   ## Flow: Claims branch missing

@@ -7,11 +7,13 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
+const { FINDING_PATH } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'finding-path'));
 const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
 const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'append'));
+const { aggregateReproductionProblem } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'aggregate-reproduction'));
 const { readText } = require('../../helpers/read-skill');
 const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
 
@@ -908,6 +910,55 @@ test('a two-finding coincidence line needs both verdicts (#3949)', () => {
   assert.deepStrictEqual(findings([line, va.entry, vb.entry].join('\n')), [], 'both verdicts supersede it');
 });
 
+test('#4581: a coincidence line with a multi-word quoted lens keys both locations on the lens first token', () => {
+  const a = tbFinding({ lens: '3f', line: 4, claim: 'a' });
+  const b = tbFinding({ lens: '3f', line: 9, claim: 'b' });
+  const va = tbVerdict(a, { verdict: 'confirmed' });
+  const vb = tbVerdict(b, { verdict: 'confirmed' });
+  const multiWord = tbCoincidence({ ...a, lens: '3f Test quality' }, 9);
+  assert.strictEqual(findings([multiWord, va.entry].join('\n')).length, 1, 'the first key alone leaves the line open');
+  assert.strictEqual(findings([multiWord, vb.entry].join('\n')).length, 1, 'the second key alone leaves the line open');
+  assert.deepStrictEqual(findings([multiWord, va.entry, vb.entry].join('\n')), [], 'both keys settle it');
+  const singleToken = tbCoincidence(a, 9);
+  assert.strictEqual(findings([singleToken, va.entry].join('\n')).length, 1, 'single-token lens: one verdict leaves the line open');
+  assert.deepStrictEqual(findings([singleToken, va.entry, vb.entry].join('\n')), [], 'single-token lens: both verdicts settle it');
+});
+
+test('#4581: a coincidence line keys both locations whatever its case', () => {
+  const a = tbFinding({ path: 'x/y.js', line: 1, claim: 'a' });
+  const b = tbFinding({ path: 'x/y.js', line: 2, claim: 'b' });
+  const va = tbVerdict(a, { verdict: 'confirmed' });
+  const vb = tbVerdict(b, { verdict: 'confirmed' });
+  const line = '- STAGED 09:59:00 — Reproduction: Lens "3a" Findings x/y.js:1 / x/y.js:2 Share a location but not substance; both staged unconfirmed. Reversibility: high.';
+  assert.strictEqual(findings([line, va.entry].join('\n')).length, 1, 'the first key alone leaves the line open');
+  assert.strictEqual(findings([line, vb.entry].join('\n')).length, 1, 'the second key alone leaves the line open');
+  assert.deepStrictEqual(findings([line, va.entry, vb.entry].join('\n')), [], 'both keys settle it');
+});
+
+// The writer (log-decision's aggregate detector) exempts a coincidence line exactly when the reader keys both of its
+// locations: both parse it with console/finding-path.js's parseCoincidence. The empty quoted lens is where the two
+// earlier copies split (the writer exempted it, the reader keys no lens from it).
+test('#4581: the aggregate detector exempts exactly the coincidence lines the reader keys on both locations', () => {
+  const va = tbVerdict(tbFinding({ line: 4, claim: 'a' }), { verdict: 'confirmed' }).entry;
+  const vb = tbVerdict(tbFinding({ line: 9, claim: 'b' }), { verdict: 'confirmed' }).entry;
+  const cases = [
+    ['lens "3a Test quality" findings src/a.js:4 / src/a.js:9', true],
+    ['Lens "3a" Findings src/a.js:4 / src/a.js:9 Share a location', true],
+    ['lens 3a findings src/a.js:4 / src/a.js:9', true],
+    ['lens "3a" findings at src/a.js:4 / at src/a.js:9', true],
+    ['lens "3a" findings src/a.js:4 / :9', false],
+    ['lens "3a" findings src/a.js:4 / src/a:9', false],
+    ['lens "" findings src/a.js:4 / src/a.js:9', false],
+  ];
+  for (const [clause, keyed] of cases) {
+    const text = `Reproduction: ${/share a location/i.test(clause) ? clause : `${clause} share a location`} but not substance; both staged unconfirmed`;
+    const line = `- STAGED 09:59:00 — ${text}. Reversibility: high.`;
+    const readerKeysBoth = findings([line, va].join('\n')).length === 1 && findings([line, va, vb].join('\n')).length === 0;
+    const writerExempts = aggregateReproductionProblem({ status: 'STAGED', text }) === null;
+    assert.deepStrictEqual([clause, readerKeysBoth, writerExempts], [clause, keyed, keyed]);
+  }
+});
+
 test('a verdict logged before the STAGED line does not supersede it (#3949)', () => {
   const f = tbFinding();
   assert.strictEqual(findings([tbVerdict(f, { verdict: 'confirmed' }).entry, tbStaged(f)].join('\n')).length, 1);
@@ -1095,6 +1146,136 @@ test('a tiebreak verdict line for a $-path round-trips through parseTiebreakLine
   assert.deepStrictEqual([parsed.kind, parsed.path, parsed.key], ['confirmed', 'routes/$id.tsx', '3a|routes/$id.tsx:7']);
 });
 
+// ---- #4632: a space-holding finding path keys whole ----
+test('AC1.1 AC1.2: a dropped verdict for a dir/x.ts:3 settles that line only; b dir/x.ts:3 stays keep-staged (#4632)', () => {
+  const a = tbFinding({ lens: '3b', path: 'a dir/x.ts', line: 3 });
+  const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
+  const items = findings([tbStaged(a), tbStaged(b), tbVerdict(a, { verdict: 'refuted' }).entry].join('\n'));
+  // A coordination id keeps only line.slice(2, 60), which cuts before `.ts`.
+  assert.deepStrictEqual(items.map((i) => [i.id.includes('finding b dir/x.'), i.resolution]), [[true, 'keep-staged']]);
+});
+test('a space path with no verdict of its own settles on a plain-path verdict at its suffix, as before (#4632)', () => {
+  const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
+  const plain = tbFinding({ lens: '3b', path: 'dir/x.ts', line: 3 });
+  assert.deepStrictEqual(findings([tbStaged(b), tbVerdict(plain, { verdict: 'refuted' }).entry].join('\n')), []);
+});
+test('a path holding two spaces keys whole: its own verdict settles it, a sibling sharing the last two tokens stays keep-staged (#4632)', () => {
+  const mine = tbFinding({ lens: '3b', path: 'my a dir/x.ts', line: 3 });
+  const sib = tbFinding({ lens: '3b', path: 'b a dir/x.ts', line: 3 });
+  const items = findings([tbStaged(mine), tbStaged(sib), tbVerdict(mine, { verdict: 'refuted' }).entry].join('\n'));
+  assert.deepStrictEqual(items.map((i) => [i.id.includes('finding b a dir/'), i.resolution]), [[true, 'keep-staged']]);
+});
+test('AC2.1: a lone STAGED line at my dir/x.ts:3 is settled by its own dropped, digested, console and confirmed verdict (#4632)', () => {
+  const f = tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3 });
+  const low = tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3, reporterSeverity: 'low' });
+  for (const [finding, opts, outcome] of [[f, { verdict: 'refuted' }, 'drop'], [low, { severity: 'low' }, 'digest'], [f, { verdict: 'confirmed' }, 'confirmed']]) {
+    const v = tbVerdict(finding, opts);
+    assert.strictEqual(v.r.outcome, outcome);
+    assert.deepStrictEqual(findings([tbStaged(finding), v.entry].join('\n')), [], `${outcome}: no item left`);
+  }
+  const c = tbVerdict(f, { recommendation: 'file' });
+  assert.strictEqual(c.r.outcome, 'console');
+  assert.deepStrictEqual(findings([tbStaged(f), c.entry].join('\n')).map((i) => i.id), [`tiebreak:${c.r.id}`], 'console: only the tiebreak item');
+});
+test('AC3.1: a confirmed verdict at my dir/x.ts:3 parses with the whole path and key (#4632)', () => {
+  const v = tbVerdict(tbFinding({ lens: '3b', path: 'my dir/x.ts', line: 3 }), { verdict: 'confirmed' });
+  const p = parseTiebreakLine(v.entry);
+  assert.deepStrictEqual([p.kind, p.path, p.key], ['confirmed', 'my dir/x.ts', '3b|my dir/x.ts:3']);
+  // Anchored on the line end like the other verdict shapes: text after `Confirmed.` is not a verdict.
+  assert.strictEqual(parseTiebreakLine(v.entry.replace(' Reversibility:', ' Then more. Reversibility:')), null);
+});
+test('AC4.1: drifted STAGED prose before a space-free path still settles (#4632)', () => {
+  const v = tbVerdict(tbFinding({ lens: '3c', path: 'plugin/a.ts', line: 4 }), { verdict: 'refuted' }).entry;
+  for (const loc of ['at plugin/a.ts:4', 'Error handling at plugin/a.ts:4']) {
+    assert.deepStrictEqual(findings([stagedLow('3c', loc), v].join('\n')), [], loc);
+  }
+});
+test('AC6.1: a space-free verdict path keys byte-identically to the FINDING_PATH key (#4632)', () => {
+  const OLD = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+  for (const path of ['src/a.js', 'packages/@scope/x.ts', 'app/[id]/page.tsx', 'routes/$id.tsx']) {
+    for (const verdict of ['confirmed', 'refuted', 'cant-tell']) {
+      const entry = tbVerdict(tbFinding({ path, line: 7 }), { verdict }).entry;
+      const m = OLD.exec(entry);
+      assert.strictEqual(parseTiebreakLine(entry).key, `3a|${m[1]}:${m[2]}`, `${path} ${verdict}`);
+    }
+  }
+  // Lens class: a quoted lens "3a b" keys `3a` on the verdict side, as findingKey does on the STAGED side.
+  const odd = tbFinding({ lens: '3a b', path: 'src/a.js', line: 7 });
+  const oddVerdict = tbVerdict(odd, { verdict: 'refuted' }).entry;
+  assert.strictEqual(parseTiebreakLine(oddVerdict).key, '3a|src/a.js:7');
+  assert.deepStrictEqual(findings([tbStaged(odd), oddVerdict].join('\n')), []);
+});
+const spaceA = tbFinding({ lens: '3b', path: 'a dir/x.ts', line: 3 });
+test('Review Focus 1: a coincidence line at a dir/x.ts:3 / a dir/x.ts:5 keys both locations whole (#4632)', () => {
+  const a5 = tbFinding({ lens: '3b', path: 'a dir/x.ts', line: 5, claim: 'second' });
+  const b5 = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 5, claim: 'sibling' });
+  const line = tbCoincidence(spaceA, 5);
+  const v3 = tbVerdict(spaceA, { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([line, v3].join('\n')).map((i) => i.resolution), ['keep-staged'], 'only the :3 verdict');
+  assert.deepStrictEqual(findings([line, v3, tbVerdict(b5, { verdict: 'confirmed' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged'], 'a sibling path\'s :5 verdict');
+  assert.deepStrictEqual(findings([line, v3, tbVerdict(a5, { verdict: 'confirmed' }).entry].join('\n')), [], 'both verdicts settle it');
+});
+test('Review Focus 1: a coincidence line whose second location FINDING_PATH cannot read stays open on the first location\'s verdict alone (#4632)', () => {
+  const line = '- STAGED 09:59:00 — Reproduction: lens "3a" findings src/a.ts:3 / `src/a.ts`:5 share a location but not substance; both staged unconfirmed. Reversibility: high.';
+  const v3 = tbVerdict(tbFinding({ lens: '3a', path: 'src/a.ts', line: 3 }), { verdict: 'confirmed' }).entry;
+  assert.deepStrictEqual(findings([line, v3].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
+test('Review Focus 3: a re-staged space-path finding stays open after its earlier verdict (#4632, #4583)', () => {
+  const d = [tbStaged(spaceA), tbVerdict(spaceA, { verdict: 'refuted' }).entry, tbStaged(spaceA)];
+  assert.deepStrictEqual(findings(d.join('\n')).map((i) => i.resolution), ['keep-staged']);
+  // A sibling path's later verdict does not settle the re-stage either.
+  const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3 });
+  assert.deepStrictEqual(findings([...d, tbVerdict(b, { verdict: 'refuted' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
+test('Review Focus 3: a re-staged space-path finding settles on a later #3772 Confirmed elevation at its shortest key, as before (#4632, #4583)', () => {
+  const d = [tbStaged(spaceA), tbVerdict(spaceA, { verdict: 'refuted' }).entry, tbStaged(spaceA)];
+  const elevation = '- AUTO 10:01:00 — Reproduction: lens "3b" finding a dir/x.ts:3 elevated via direct-verification override. Confirmed, low. Reversibility: high.';
+  assert.deepStrictEqual(findings([...d, elevation].join('\n')), []);
+  // Only a prose settler counts at the shortest key: a later tiebreak verdict at plain dir/x.ts:3 does not settle it.
+  const plain = tbFinding({ lens: '3b', path: 'dir/x.ts', line: 3 });
+  assert.deepStrictEqual(findings([...d, tbVerdict(plain, { verdict: 'refuted' }).entry].join('\n')).map((i) => i.resolution), ['keep-staged']);
+});
+test('Review Focus 4: a contested pair at a space path settles through its own console verdict; a sibling space path\'s file stays keep-staged (#4632)', () => {
+  const b = tbFinding({ lens: '3b', path: 'b dir/x.ts', line: 3, claim: 'sibling' });
+  const v = tbVerdict(spaceA, { recommendation: 'file' });
+  const d = [tbDebate(spaceA, 'review-contested-1.md'), tbDebate(b, 'review-contested-2.md'), v.entry].join('\n');
+  const items = findings(d, { 'review-contested-1.md': positions(spaceA, partner), 'review-contested-2.md': positions(b, partner) });
+  assert.deepStrictEqual(items.map((i) => [i.id, i.resolution]), [['review-contested-1.md', 'filed'], ['review-contested-2.md', 'keep-staged']]);
+  assert.strictEqual(items[0].tiebreak.id, v.r.id);
+});
+test('Review Focus 5: verdicts at a dir/x.ts:3 and plain dir/x.ts:3 each settle their own STAGED line (#4632)', () => {
+  const plain = tbFinding({ lens: '3b', path: 'dir/x.ts', line: 3, claim: 'plain' });
+  const va = tbVerdict(spaceA, { recommendation: 'file' });
+  const vp = tbVerdict(plain, { recommendation: 'drop' });
+  const staged = [`${tbStaged(spaceA)} Stage path: staged/review-unconfirmed-1.md.`, `${tbStaged(plain)} Stage path: staged/review-unconfirmed-2.md.`];
+  for (const order of [[va, vp], [vp, va]]) {
+    const items = findings([...staged, ...order.map((v) => v.entry)].join('\n'), { 'review-unconfirmed-1.md': 'x', 'review-unconfirmed-2.md': 'x' });
+    assert.deepStrictEqual(items.map((i) => [i.id, i.resolution, i.tiebreak.id]), [['review-unconfirmed-1.md', 'filed', va.r.id], ['review-unconfirmed-2.md', 'dropped', vp.r.id]]);
+  }
+});
+test('Review Focus 6: a wrapped STAGED citation [a dir/x.ts:3] settles on its own verdict, [b dir/x.ts:3] stays keep-staged (#4632)', () => {
+  const v = tbVerdict(spaceA, { verdict: 'refuted' }).entry;
+  for (const wrap of [(loc) => `[${loc}]`, (loc) => `(${loc})`]) {
+    assert.deepStrictEqual(findings([stagedLow('3b', wrap('a dir/x.ts:3')), v].join('\n')), [], wrap('a'));
+    assert.deepStrictEqual(findings([stagedLow('3b', wrap('b dir/x.ts:3')), v].join('\n')).map((i) => i.resolution), ['keep-staged'], wrap('b'));
+  }
+});
+test('Review Focus 7: a re-staged contested partner with its own outdated console verdict takes the pair\'s later verdict, space path or not (#4632, #4583)', () => {
+  const f = tbFinding();
+  const run = (path, lead = []) => {
+    const p = tbFinding({ lens: '3f', path, line: 5, claim: 'partner claim' });
+    const d = [...lead, stagedLow('3f', `${path}:5`), tbVerdict(p, { recommendation: 'file' }).entry, stagedLow('3f', `${path}:5`),
+      tbDebate(f, 'review-contested-1.md'), tbVerdict(f, { verdict: 'confirmed' }).entry].join('\n');
+    return findings(d, { 'review-contested-1.md': positions(f, p) });
+  };
+  for (const path of ['src/c.js', 'c dir/y.ts']) {
+    assert.deepStrictEqual(run(path).map((i) => [i.id, i.resolution]), [['review-contested-1.md', 'dismissed']], path);
+  }
+  // A sibling space path at the same lens and line takes neither the partner's own verdict nor the inherited one.
+  const items = run('c dir/y.ts', [stagedLow('3f', 'x dir/y.ts:5')]);
+  assert.deepStrictEqual(items.map((i) => [i.id.includes('finding x dir/y.'), i.resolution]), [[false, 'dismissed'], [true, 'keep-staged']]);
+});
+
 // ---- #4563: a settled contested file settles its partner finding ----
 const positions = (a, b) => `# Review — contested finding\n\n## Positions\n\n- **Finding A (lens ${a.lens}, low)** — ${a.path}:${a.line}: claim A\n- **Finding B (lens ${b.lens}, medium)** — ${b.path}:${b.line}: claim B\n\n## Judge 1 (partial)\n\nx\n`;
 const partner = { lens: '3f', path: 'src/a.js', line: 7 };
@@ -1150,6 +1331,10 @@ test('the Positions read stops at the next heading: a bullet under a later secti
 });
 test('a lens token in a converged-positive debate entry matches case-insensitively, like findingKey (#4563)', () => {
   const d = [stagedLow('3a', 'src/a.js:5'), debatePositive(' (Lens "3a" finding src/a.js:5 — confirmed)')].join('\n');
+  assert.deepStrictEqual(findings(d), []);
+});
+test('#4581: a multi-word quoted lens in a converged-positive debate entry keys on its first token, like findingKey', () => {
+  const d = [stagedLow('3f Test quality', 'src/a.js:5'), debatePositive(' (lens "3f Test quality" finding src/a.js:5 — confirmed)')].join('\n');
   assert.deepStrictEqual(findings(d), []);
 });
 test('an unsettled contested file leaves its partner keep-staged (#4563 AC4)', () => {
