@@ -39,6 +39,15 @@ test('AC1.2: unset resolves true, false resolves false, malformed resolves true'
   assert.strictEqual(resolveIn('declare-claude-tweaks: off\n'), 'true');
 });
 
+// The kernel prose (routine-template-schema.md) restates these rules for a sandbox with no
+// resolver: pin them against the resolver itself so a parser change cannot leave the prose wrong.
+test('kernel strictness clause matches the resolver: trailing comment opts out; quoted, commented-out and indented keys do not', () => {
+  assert.strictEqual(resolveIn('declare-claude-tweaks: false # opted out\n'), 'false');
+  assert.strictEqual(resolveIn('declare-claude-tweaks: "false"\n'), 'true');
+  assert.strictEqual(resolveIn('# declare-claude-tweaks: false\n'), 'true');
+  assert.strictEqual(resolveIn('  declare-claude-tweaks: false\n'), 'true');
+});
+
 const STEP14 = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-14-cloud-routine-parity.md'));
 const INIT_SKILL = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'SKILL.md'));
 const collapse = (s) => s.replace(/\s+/g, ' ');
@@ -450,7 +459,7 @@ function rawSlice(text, from, to, label) {
   return text.slice(start, end);
 }
 
-const step15Raw = (text) => rawSlice(text, '**Apply the Setup script to a dedicated environment (deferred from Step 14).**', '**For each selected candidate:**', 'Step 15');
+const step15Raw = (text) => rawSlice(text, '**Opt-out notice.**', '**For each selected candidate:**', 'Step 15');
 const createStep7Raw = (text) => rawSlice(text, '**Step 7 — Preview and confirm.**', '**Step 8 — Create.**', 'create Step 7');
 const STEP15_SLICE = collapse(step15Raw(STEP15));
 const CREATE_SLICE = collapse(createStep7Raw(CREATE));
@@ -490,23 +499,25 @@ test('go-red: the once-only check reports a literal that appears twice in its sl
   }
 });
 
+const SETUP_OFFER_MARKER = '**Apply the Setup script to a dedicated environment (deferred from Step 14).**';
 const ZERO_CANDIDATES_MARKER = '**Zero candidates were selected**';
 const STEP15_NOTICE_MARKER = '**Opt-out notice.**';
-const step15NoticeOrder = (rawText) => requireOrder(collapse(step15Raw(rawText)), [ZERO_CANDIDATES_MARKER, STEP15_NOTICE_MARKER], 'Step 15');
+const step15NoticeOrder = (rawText) => requireOrder(collapse(rawText), [STEP15_NOTICE_MARKER, SETUP_OFFER_MARKER, ZERO_CANDIDATES_MARKER], 'Step 15');
 
-test('the Step 15 notice sits outside the zero-candidates bullet', () => {
+test('the Step 15 notice precedes the Setup-script offer it says it comes before', () => {
   step15NoticeOrder(STEP15);
   const slice = step15Raw(STEP15);
   const paragraphs = slice.split(/\n\n/);
-  const zeroIdx = paragraphs.findIndex((p) => p.includes(ZERO_CANDIDATES_MARKER));
   const noticeIdx = paragraphs.findIndex((p) => p.startsWith(STEP15_NOTICE_MARKER));
-  assert.ok(zeroIdx !== -1 && noticeIdx > zeroIdx, 'Zero-candidates bullet / notice paragraph not found in live order');
+  const offerIdx = paragraphs.findIndex((p) => p.startsWith(SETUP_OFFER_MARKER));
+  const zeroIdx = paragraphs.findIndex((p) => p.includes(ZERO_CANDIDATES_MARKER));
+  assert.ok(noticeIdx !== -1 && offerIdx > noticeIdx && zeroIdx > offerIdx, 'notice / Setup-script offer / zero-candidates bullet not found in live order');
   assert.strictEqual(paragraphs.filter((p) => p.startsWith(STEP15_NOTICE_MARKER)).length, 1);
-  // The notice is its own paragraph, so it cannot be a continuation of the bullet it follows.
+  // The notice is its own paragraph, so it cannot be a continuation of the offer or its bullets.
   assert.ok(!paragraphs[zeroIdx].includes(STEP15_NOTICE_MARKER), 'notice shares a paragraph with the zero-candidates bullet');
-  // Permutation control: swap the two whole paragraphs, so both markers survive in the wrong order.
+  // Permutation control: swap the notice and offer paragraphs, so both markers survive in the wrong order.
   const permuted = paragraphs.slice();
-  [permuted[zeroIdx], permuted[noticeIdx]] = [permuted[noticeIdx], permuted[zeroIdx]];
+  [permuted[noticeIdx], permuted[offerIdx]] = [permuted[offerIdx], permuted[noticeIdx]];
   const swapped = STEP15.replace(slice, () => permuted.join('\n\n'));
   assert.notEqual(swapped, STEP15);
   assert.throws(() => step15NoticeOrder(swapped), { message: /must come after/ });
