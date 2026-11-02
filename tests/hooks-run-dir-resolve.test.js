@@ -789,6 +789,7 @@ test('AC1.1 #4807: with two newer open live runs, --archived names the newest as
   writeRunState(mkRunDir(main, '2026-02-01T000000-spec-65'), { status: 'interrupted', worktree: null });
   writeRunState(mkRunDir(main, '2026-03-01T000000-spec-65'), { status: 'interrupted', worktree: null });
   const out = resolve({ cwd: main, env: {}, specSlug: 'spec-65', archived: true });
+  assert.strictEqual(out.ok, false);
   assert.strictEqual(out.reason, 'archived-superseded');
   assert.match(out.message, /2026-03-01T000000-spec-65/);
   assert.doesNotMatch(out.message, /2026-02-01T000000-spec-65/);
