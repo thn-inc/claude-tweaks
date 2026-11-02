@@ -32,6 +32,7 @@ const ROW_KINDS = Object.freeze(['check', 'story']);
 
 const WITHHELD_REASON = '(reason withheld: credential-shaped)';
 const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+const WITHHELD_ID = '(id withheld: credential-shaped)';
 
 const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
@@ -113,13 +114,16 @@ const statusWord = (status) => (status === 'not-run' ? 'not run' : status);
 // screened wherever it renders. The matched text never does; the row or line stays.
 const screenedInline = (text, withheld) => (findCredentialInText(text) ? withheld : inline(text));
 const statusWithReason = (fact) => `${statusWord(fact.status)}: ${screenedInline(fact.reason ?? '', WITHHELD_REASON) || 'no reason recorded'}`;
-const citations = (refs) => refs.map(codeSpan).join(', ');
+// A fact key is percent-encoded, which the screen decodes. The id is display only here:
+// validation has already matched it, and the fact stays citable.
+const idSpan = (id) => (findCredentialInText(id) ? WITHHELD_ID : codeSpan(id));
+const citations = (refs) => refs.map(idSpan).join(', ');
 const claimText = (claim) => `${inline(claim.text)} (${citations(claim.refs)})`;
 const claimLine = (claim) => `- ${claimText(claim)}`;
-const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites ${codeSpan(because.id)} — ${statusWithReason(because)})`;
+const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
-const rowLine = (fact) => `- ${codeSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
-const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || codeSpan(fact.id);
+const rowLine = (fact) => `- ${idSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
+const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || idSpan(fact.id);
 
 // Decision Q3's row placement: every check/story fact lands in exactly one place.
 function rowPlace(fact) {
@@ -173,7 +177,7 @@ function testGuideBody(ctx) {
   const body = itemsOr(steps, 'not applicable: no tested stories or links were gathered');
   const refused = facts.refused ?? [];
   if (refused.length > 0) {
-    const entries = refused.map(({ id, reason }) => `${inline(id)} (${screenedInline(reason, WITHHELD_REASON)})`);
+    const entries = refused.map(({ id, reason }) => `${screenedInline(id, WITHHELD_ID)} (${screenedInline(reason, WITHHELD_REASON)})`);
     body.push(note(`- ${refused.length} link(s) refused: ${entries.join('; ')}`));
   }
   const passed = rowsIn('checks-passed');
@@ -280,6 +284,30 @@ function renderPlanLines(lines) {
   });
 }
 
+// Screened on the raw line, the whole of it: its Prepare commands and Entry point are
+// the Test guide's, in a section the contract's map files under it (Decision Q2). A key
+// often leaves its value on the next line, so what a dropped line continues with a
+// trailing `\`, or holds at a deeper indent, a blank line between them or not, goes too.
+function screenPlanLines(lines, screened) {
+  let droppedIndent = null;
+  let continues = false;
+  return lines.filter((line) => {
+    const blank = line.trim() === '';
+    const indent = indentWidth(line);
+    const key = findCredentialInText(line);
+    if (key) screened.push({ section: PLAN_SECTION, key });
+    const held = droppedIndent !== null && !blank && indent > droppedIndent;
+    if (!key && !continues && !held) {
+      if (!blank) droppedIndent = null;
+      return true;
+    }
+    continues = line.trimEnd().endsWith('\\');
+    // A continuation sits at any indent, so only a key line says what is under it.
+    if (key) droppedIndent = droppedIndent === null ? indent : Math.min(droppedIndent, indent);
+    return false;
+  });
+}
+
 const truncatedLines = (n) => (n > 0 ? [`truncated: ${n} items omitted`] : []);
 
 function compose(doc, omitted) {
@@ -343,14 +371,8 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
   const screened = screenedClaims.map(({ claim, key }) => ({ section: claim.section, key }));
   const planLines = typeof observationPlan === 'string' ? planBody(observationPlan) : [];
   if (planLines.length > 0) {
-    // Screened on the raw line, the whole of it: its Prepare commands and Entry point are
-    // the Test guide's, in a section the contract's map files under it (Decision Q2).
-    const shown = planLines.filter((line) => {
-      const key = findCredentialInText(line);
-      if (key) screened.push({ section: PLAN_SECTION, key });
-      return !key;
-    });
-    const body = shown.length > 0 ? renderPlanLines(shown) : [PLAN_ALL_SCREENED];
+    const shown = screenPlanLines(planLines, screened);
+    const body = shown.some((line) => line.trim() !== '') ? renderPlanLines(shown) : [PLAN_ALL_SCREENED];
     sections.push({ heading: PLAN_HEADING, body: body.map(note) });
   }
 

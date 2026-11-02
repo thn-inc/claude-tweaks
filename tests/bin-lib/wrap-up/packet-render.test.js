@@ -688,6 +688,68 @@ test('a plan line carrying a credential is dropped and stated, never rendered', 
 test('a plan of only credential lines keeps its heading and states why it is empty', () => {
   const { markdown } = render([], [], { options: { observationPlan: 'token=abc' } });
   assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['all lines omitted for credential-shaped content']);
+  const blank = render([], [], { options: { observationPlan: '- token=a1\n\n- password=b2' } }).markdown;
+  assert.deepEqual(sectionLines(blank, 'Observation plan'), ['all lines omitted for credential-shaped content']);
+});
+
+test('what a dropped plan line continues or holds goes with it, and nothing else does', () => {
+  const linesOf = (plan) => sectionLines(render([], [], { options: { observationPlan: plan } }).markdown, 'Observation plan');
+  const SHOWN = '- shown';
+  // A backslash continuation at any indent, chained.
+  assert.deepEqual(linesOf(`- --token \\\nvalue-one \\\nvalue-two\n${SHOWN}`), [SHOWN]);
+  // A plain line after a dropped one is not a continuation.
+  assert.deepEqual(linesOf(`- token=a\n${SHOWN}`), [SHOWN]);
+  // Deeper lines under a dropped line, a blank between them included.
+  assert.deepEqual(linesOf(`- token=a\n  - child\n\n    deeper\n${SHOWN}`), [SHOWN]);
+  // Under a dropped line nested in a kept parent; a sibling at the same indent stays.
+  assert.deepEqual(linesOf('- Prepare:\n  - token=a\n      value\n  - sibling'), ['- Prepare:', '  - sibling']);
+  // A shallower continuation leaves the anchor at the key line.
+  assert.deepEqual(linesOf('  - --token \\\nvalue\n  - sibling\n'), ['  - sibling']);
+  // A kept line above ending in a backslash holds nothing back.
+  assert.deepEqual(linesOf(`- keep \\\n${SHOWN}`), ['- keep \\\\', SHOWN]);
+  // Each key in a dropped run is still stated.
+  const { screened } = render([], [], { options: { observationPlan: '- token=a\n  - password=b' } });
+  assert.deepEqual(screened.map(({ key }) => key), ['token', 'password']);
+});
+
+const WITHHELD_ID = '(id withheld: credential-shaped)';
+
+test('a credential-shaped id is withheld wherever it renders, and its row stays', () => {
+  const { markdown } = render(
+    [
+      fact('story:password%3DidSECRET', 'passed'),
+      fact('check:token%3DidSECRET2', 'failed', { reason: 'boom' }),
+      fact('check:skip%3Bkey%3DidSECRET4', 'skipped', { reason: 'r' }),
+      fact('decision:secret%3DidSECRET5', 'passed'),
+      fact('change:a', 'passed'),
+      fact('story:plain', 'failed', { reason: 'bad' }),
+      fact('story:sig%3DidSECRET6', 'failed', { reason: 'bad' }),
+    ],
+    [
+      claim('what-changed', 'Changed', ['change:a']),
+      claim('tried-to-break', 'Broke', ['story:sig%3DidSECRET6', 'story:plain']),
+      claim('test-guide', 'It works', ['story:sig%3DidSECRET6']),
+    ],
+    { extra: { refused: [{ id: 'token=idSECRET3', reason: 'host not allowed: x' }, { id: 'link:plain', reason: 'r' }] } },
+  );
+  assert.doesNotMatch(markdown, /idSECRET/);
+  assert.ok(sectionLines(markdown, 'Test guide').includes(`- ${WITHHELD_ID} — passed`), 'a row');
+  const tried = sectionLines(markdown, 'Tried to break');
+  assert.ok(tried.includes(`- ${WITHHELD_ID} — failed: boom`), 'a failed row');
+  assert.ok(tried.includes(`- Broke (${WITHHELD_ID}, \`story:plain\`)`), 'a citation');
+  assert.ok(tried.includes(`- It works (moved: cites ${WITHHELD_ID} — failed: bad)`), 'a moved claim');
+  assert.ok(sectionLines(markdown, "Couldn't test").includes(`- ${WITHHELD_ID} — skipped: r`), 'a skipped row');
+  assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), [`- ${WITHHELD_ID}`]);
+  assert.ok(sectionLines(markdown, 'Test guide').includes(`- 2 link(s) refused: ${WITHHELD_ID} (host not allowed: x); link:plain (r)`));
+  assert.ok(sectionLines(markdown, 'What changed').includes('- Changed (`change:a`)'), 'an ordinary id still shows');
+});
+
+test('a screened id changes no validation: the fact stays citable', () => {
+  const { dropped } = render(
+    [fact('story:password%3Dx', 'passed')],
+    [claim('test-guide', 'Open it', ['story:password%3Dx'])],
+  );
+  assert.deepEqual(dropped, []);
 });
 
 test('several refused links share one inert line', () => {

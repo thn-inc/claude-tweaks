@@ -949,6 +949,25 @@ test('a plan line carrying a credential is dropped by the CLI, stated in --dropp
   assert.equal(JSON.parse(h.stdout()).screened, 2);
 });
 
+test('a dropped plan key line takes its value line with it', (t) => {
+  const ws = workspace(t);
+  const plan = writeText(ws.file('plan.md'), [
+    '- Prepare:',
+    '  - curl -H "Authorization: \\',
+    '    Bearer SECRET-ONE" http://localhost',
+    '  - npm run seed --api-key \\',
+    'SECRET-TWO',
+    '  - npm run ok',
+  ].join('\n'));
+  const droppedOut = ws.file('dropped.json');
+  const h = harness(ws);
+  assert.equal(run([...renderArgs(ws), '--observation-plan', plan, '--dropped-out', droppedOut], h.deps), 0, h.stderr());
+  const markdown = fs.readFileSync(ws.file('out.md'), 'utf8');
+  for (const secret of ['SECRET-ONE', 'SECRET-TWO']) assert.ok(!markdown.includes(secret), secret);
+  assert.ok(markdown.endsWith('### Observation plan\n- Prepare:\n  - npm run ok'), markdown);
+  assert.deepEqual(readJson(droppedOut).screened, [{ section: 'observation-plan', key: 'authorization' }, { section: 'observation-plan', key: 'api_key' }]);
+});
+
 test('render forwards --observation-plan', (t) => {
   const ws = workspace(t);
   const plan = writeText(ws.file('plan.txt'), 'watch the error rate\n');
