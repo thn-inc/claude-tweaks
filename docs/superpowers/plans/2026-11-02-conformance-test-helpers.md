@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+, `node --test`, `node:assert/strict`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T091845-record-4827/work/4827-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T203218-record-4827/work/4827-spec.md`
 
 ## Global Constraints
 
@@ -321,7 +321,7 @@ const factsMissingFrom = (text, facts) => missingFactsOf(factPairs(facts))(text)
 const assertEachFactGoesRed = (text, facts) => assertEachPatternGoesRed(text, factPairs(facts), missingFactsOf(factPairs(facts)));
 ```
 
-Rename the remaining `missingFactsOf(` call sites (lines 128, 210, 274, 335, 343, 357, 417, 472) to `factsMissingFrom(`.
+Rename the remaining `missingFactsOf(` call sites (lines 128, 215, 279, 340, 348, 362, 422, 477) to `factsMissingFrom(`.
 
 - [ ] **Step 2: Run the file in isolation (AC2.1)**
 
