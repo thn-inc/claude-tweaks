@@ -85,7 +85,7 @@ function run(argv, deps = {}) {
 
   const { run: runDir, ...checkOpts } = opts;
   if (runDir) {
-    // Read directly and treat any failure as "absent" (no existence pre-check).
+    // Read directly, no existence pre-check; any read failure is exit 3.
     const file = path.join(runDir, 'manifest.yml');
     let text;
     try {
@@ -108,9 +108,8 @@ function run(argv, deps = {}) {
   } catch (err) {
     // Only an ArtifactOverwriteCheckError -- a walk failure (unresolvable
     // ref, git not on PATH) or an unusable manifest -- is this CLI's own
-    // exit 3. Anything else
-    // is a real bug in the check itself and must crash loud, not be
-    // misreported as an environment problem (refs #2014 review).
+    // exit 3. Anything else is a real bug in the check itself and must crash
+    // loud, not be misreported as an environment problem (refs #2014 review).
     if (!(err instanceof ArtifactOverwriteCheckError)) throw err;
     stderr.write(`check-artifact-overwrite: ${err.message}\n`);
     return 3;
