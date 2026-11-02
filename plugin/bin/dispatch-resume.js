@@ -110,6 +110,19 @@ function resolveWorkLinks() {
   return String(entry.value);
 }
 
+// The shared listing reads an unlistable pipelines dir as "no runs", which would pass the --bound-run
+// scan as clean; only an absent dir (ENOENT) is genuinely empty, so any other readdir error throws (#4809).
+function listRunDirsFailClosed(cwd, opts) {
+  const base = path.join(mainCheckoutRoot(cwd) || cwd, '.claude-tweaks', 'pipelines');
+  try {
+    fs.readdirSync(base);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return [];
+    throw e;
+  }
+  return listRunDirsWithState(cwd, opts);
+}
+
 const realDeps = {
   ghAvailable: () => ghAvailable(),
   gh: defaultGh,
@@ -124,7 +137,7 @@ const realDeps = {
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,
-  listRunDirsWithState,
+  listRunDirsWithState: listRunDirsFailClosed,
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
