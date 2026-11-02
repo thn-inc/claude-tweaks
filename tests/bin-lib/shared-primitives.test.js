@@ -364,6 +364,69 @@ test('GH_TIMEOUT_MS: an out-of-range env override with no policy set falls throu
   });
 });
 
+// GH_BATCH_TIMEOUT_MS (#4815): max(30000, GH_TIMEOUT_MS) — the bound for one
+// aliased GraphQL batch. A twin of freshGhTimeoutMs() reading the composed getter.
+function freshBatchTimeoutMs() {
+  delete require.cache[MODULE_PATH];
+  // eslint-disable-next-line global-require
+  return require('../../plugin/bin/lib/shared-primitives').GH_BATCH_TIMEOUT_MS;
+}
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: no override -> the 30000 floor', () => {
+  withTempCwd(() => {
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshBatchTimeoutMs(), 30000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms above the floor wins', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 45000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshBatchTimeoutMs(), 45000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms below the floor keeps 30000', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 8000\n');
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshBatchTimeoutMs(), 30000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('AC1.1: GH_BATCH_TIMEOUT_MS: CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor wins', () => {
+  withTempCwd(() => {
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = '50000';
+    try {
+      assert.strictEqual(freshBatchTimeoutMs(), 50000);
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+      else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
+test('GH_BATCH_TIMEOUT_MS is an enumerable export', () => {
+  assert.ok(Object.keys(require('../../plugin/bin/lib/shared-primitives')).includes('GH_BATCH_TIMEOUT_MS'));
+});
+
 // GIT_TIMEOUT_MS resolution (#3051): same shape as GH_TIMEOUT_MS above —
 // env var > `git-timeout-ms` policy key > hard-coded 30000 default.
 function freshGitTimeoutMs() {
