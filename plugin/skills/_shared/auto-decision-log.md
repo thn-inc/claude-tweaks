@@ -89,7 +89,7 @@ drop the leading slash (`--section reflect`) — the CLI adds it back internally
 Each entry follows this shape:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}.
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}.
 ```
 
 | Field | Required | Format |
@@ -99,7 +99,7 @@ Each entry follows this shape:
 | Step or location | yes | Skill step name OR file:line if relevant |
 | Short action | yes | One sentence: what was decided |
 | Detail line | optional | Wraps to second line if needed; explain rationale |
-| Reversibility | yes | `high` / `med` / `low` — drives Review Console sort order (SCANNED, REFUSED, SKIP, and FAILED entries: N/A — nothing to revert) |
+| Reversibility | yes | `high` / `med` / `low` / `n/a` — drives Review Console sort order. `n/a` means nothing to revert: always on SCANNED, REFUSED, SKIP, and FAILED entries, and on an AUTO entry that changed nothing revertible (a detection, a dispatch-time model selection, a ledger creation). It is `log-decision.js`'s default when `--reversibility` is omitted |
 | Commit ref / stage path | when reversible | `commit abc1234` or `stage path: staged/...` |
 
 ## Failure-cause completeness (test-gate entries)
@@ -116,7 +116,7 @@ Never write a partial named list (e.g. "8 fail: {6 named categories}") with no s
 A decision that consulted a policy/config lever may name it at the end of its entry:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}. [lever: {key}={value} ({source})]
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}. [lever: {key}={value} ({source})]
 ```
 
 The bracketed field is **always last** — after the existing optional `{; commit ref or stage path}` element when that is present. Multiple levers are semicolon-separated inside one bracket pair. The lever field is optional; absence is valid and no reader may require its presence. Absence means "not lever-governed or not yet adopted" — never an error.

@@ -491,3 +491,52 @@ test('#4581: accepts an AUTO aggregate reproduction line (out of scope)', () => 
 test('#4581: accepts a non-reproduction STAGED line naming several locations', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'findings a/b.js:1 and c/d.js:2 staged to staged/review-1.patch']));
 test('#4581: accept — step text before the marker is not checked', () => acceptsLine(['--step', 'Step 3 lens 3a findings', '--text', 'Reproduction: lens "3a" finding a/b.js:1 not reproduced']));
 test('#4581: accept — a quoted marker inside another line', () => acceptsLine(['--step', 'Step 3 Routing', '--text', 'see "Reproduction: 3 findings" above']));
+
+const { readText } = require('../../helpers/read-skill');
+
+const DECISION_LOG_DOC = path.resolve(__dirname, '../../..', 'plugin/skills/_shared/auto-decision-log.md');
+
+function cliReversibility() {
+  const { main, run: runDir } = fixture();
+  const out = [];
+  assert.equal(run(['--run', runDir, '--status', 'AUTO', '--text', 'x', '--reversibility', 'bogus'], deps(main, out)), 2, 'bogus reversibility is a usage error');
+  const err = streamOf(out, 'err');
+  const m = err.match(/must be one of ([^,]+),/);
+  assert.ok(m, `stderr names the accepted reversibility vocabulary: ${err}`);
+  return m[1].split('|');
+}
+
+function assertDocVocabulary(docText, vocab) {
+  const row = docText.match(/^\| Reversibility \| yes \| (.+?) — /m);
+  assert.ok(row, 'auto-decision-log.md has a Reversibility table row');
+  const rowTokens = [...row[1].matchAll(/`([^`]+)`/g)].map((t) => t[1]);
+  assert.deepStrictEqual(rowTokens.sort(), [...vocab].sort(), 'Reversibility table row lists the vocabulary');
+  const templates = docText.split('\n').filter((l) => l.startsWith('- {STATUS} {HH:MM:SS}'));
+  assert.ok(templates.length >= 2, `at least 2 entry templates start "- {STATUS} {HH:MM:SS}", found ${templates.length}`);
+  for (const line of templates) {
+    const m = line.match(/Reversibility: \{([^}]+)\}/);
+    assert.ok(m, `entry template has a Reversibility group: ${line}`);
+    assert.deepStrictEqual(m[1].split('|').sort(), [...vocab].sort(), `Reversibility template lists the vocabulary: ${line}`);
+  }
+}
+
+test('AC1.1: auto-decision-log.md lists exactly the reversibility values log-decision.js accepts', () => {
+  const vocab = cliReversibility();
+  assert.deepStrictEqual([...vocab].sort(), ['high', 'low', 'med', 'n/a'], 'log-decision.js accepts high|med|low|n/a');
+  assertDocVocabulary(readText(DECISION_LOG_DOC), vocab);
+});
+
+test('go-red: the vocabulary pin fails when n/a is dropped from the doc', () => {
+  const live = readText(DECISION_LOG_DOC);
+  const vocab = cliReversibility();
+
+  const dropRow = live.replace('`high` / `med` / `low` / `n/a` — ', '`high` / `med` / `low` — ');
+  assert.ok(dropRow.includes('`high` / `med` / `low` — '), 'fixture 1: the pre-#4810 table-row prefix is present');
+  assert.notStrictEqual(dropRow, live, 'fixture 1 differs from the live doc');
+  assert.throws(() => assertDocVocabulary(dropRow, vocab), { name: 'AssertionError', message: /Reversibility table row lists the vocabulary/ });
+
+  const dropTemplate = live.replace('{high|med|low|n/a}', '{high|med|low}');
+  assert.ok(dropTemplate.includes('Reversibility: {high|med|low}'), 'fixture 2: the pre-#4810 template literal is present');
+  assert.notStrictEqual(dropTemplate, live, 'fixture 2 differs from the live doc');
+  assert.throws(() => assertDocVocabulary(dropTemplate, vocab), { name: 'AssertionError', message: /Reversibility template lists the vocabulary/ });
+});
