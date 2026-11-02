@@ -28,6 +28,8 @@ Through `_shared/github-write-transport.md`'s CRUD mapping, so an MCP-only sandb
 1. **Read state** — needed to skip an already-posted comment and to skip closing an already-closed record. Two calls, per `_shared/github-write-transport.md`'s CRUD table: `gh issue view N --json state` (or `issue_read` get mode) for open/closed, and `gh api repos/{owner}/{repo}/issues/N/comments?per_page=100` (or `issue_read` get_comments mode) to check for an existing `Shipped in v{version}` comment.
 
    Either call failing — a non-zero exit, output that is not parseable JSON, or the MCP equivalent erroring — is a per-record `FAILED` with the verb `read`, and **no write is attempted for that record**. Never write blind on an unread state: it cannot tell an already-booked record from an unbooked one, so guessing produces either a duplicate `Shipped in v{version}` comment or a second close. The loop continues to the next record exactly as it does for a failed write, and the record counts in the summary's `{k} failed`.
+
+   A number whose Step 4 issue-vs-PR lookup failed stayed in the shipped set unclassified, and `gh issue view` succeeds on a PR, so first re-read it here with `gh api repos/{owner}/{repo}/issues/N` (or `issue_read` where `gh` is absent): a `pull_request` key in the payload makes it a PR, which is skipped as a drop and never commented or closed.
 2. **Comment**, unless a comment already reads the exact text below — `gh issue comment N --body-file {file}` (or `add_issue_comment`), body:
    ```
    Shipped in v{version} — {release url}

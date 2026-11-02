@@ -159,3 +159,8 @@ test('parseCommit reads Fixes/Refs lines from a CRLF body', () => {
   const c = parseCommit({ sha: 'm'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\r\n\r\nFixes #10\r\nRefs #11\r\n' });
   assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
 });
+
+test('parseCommit tolerates trailing spaces and tabs after a Fixes/Refs number', () => {
+  const c = parseCommit({ sha: 'n'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\n\nFixes #10  \nRefs #11\t\n' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
+});
