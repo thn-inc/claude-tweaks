@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
+const { chmodDenialSkip } = require('./helpers/root');
 const { QA_STAMP_NAME } = require('../plugin/bin/lib/verify/qa-stamp');
 const { readRecord, writeRecord, defaultFacets } = require('../plugin/bin/lib/issues/local-store');
 const { LOCAL_START, LOCAL_END, MAX_PACKET_CHARS, PACKET_MARKER } = require('../plugin/bin/lib/wrap-up/packet-contract');
@@ -348,8 +349,7 @@ test('a real read failure of the findings is a stated partial, never a clean emp
   assert.ok(facts.partial.includes('review findings not read — low-confidence findings not listed'));
 });
 
-test('the real readdir reports a denied staged/ dir, where a missing one reads as empty', (t) => {
-  if (process.platform === 'win32' || process.getuid() === 0) return t.skip('needs a mode bit that denies a read');
+test('the real readdir reports a denied staged/ dir, where a missing one reads as empty', chmodDenialSkip('root: mode bits do not deny a read'), (t) => {
   const ws = workspace(t);
   writeText(path.join(ws.runDir, 'decisions.md'), `${stagedLow('src/open.js:9')}\n`);
   const staged = path.join(ws.runDir, 'staged');

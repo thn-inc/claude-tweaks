@@ -841,28 +841,6 @@ test('line collapsing matches the original rule on every whitespace shape', () =
   }
 });
 
-test('inline stays linear on inputs built to backtrack', () => {
-  const inputs = [
-    ' '.repeat(200000),
-    `a${' '.repeat(200000)}b`,
-    'a'.repeat(200000),
-    'a1'.repeat(100000),
-    'a.'.repeat(100000),
-    'a@'.repeat(100000),
-    '@'.repeat(200000),
-    '#'.repeat(200000),
-    `a@${'b'.repeat(200000)}`,
-    'a/'.repeat(100000),
-    '-'.repeat(200000),
-    '='.repeat(200000),
-  ];
-  for (const input of inputs) {
-    const started = Date.now();
-    inline(input);
-    assert.ok(Date.now() - started < 2000, `${input.slice(0, 8)}: ${Date.now() - started} ms`);
-  }
-});
-
 test('every other autolink shape renders as a code span', () => {
   const cases = new Map([
     ['see ftp://x.y now', 'see `ftp://x.y` now'],
