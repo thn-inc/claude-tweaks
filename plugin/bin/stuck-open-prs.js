@@ -33,7 +33,7 @@ const { classifyClaimBlob } = require('./lib/issues/claims');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions,
 } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
 const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
@@ -45,10 +45,13 @@ const USAGE = 'usage: stuck-open-prs.js --records <path> [--help]\n'
 
 // ---- real deps ----
 
-// One aliased GraphQL call covers every candidate; the shared timeout bounds it like the other batched reads.
+// One aliased GraphQL call covers every candidate, up to a full 200-record snapshot, so the 5s single-call
+// default times out on a real backlog (observed: ETIMEDOUT); 30s is resolve-linked-prs.js's bound for the
+// same batched read.
+const LINKED_TIMEOUT_MS = 30000;
 function ghRunner(args) {
   return execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', timeout: GH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
+    encoding: 'utf8', timeout: LINKED_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
   }));
 }
 
