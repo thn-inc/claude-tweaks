@@ -158,7 +158,7 @@ test('the Already merged section hand-lists none of the words post-merge.js clas
     ...CLEAN_CLOSING_LINKS, ...RERUN_REASONS, ...RERUN_WHERE_GH_REASONS,
     // Words the classifier denies by default: the failure action words and the no-next-step skip reasons.
     'reopen-failed', 'close-failed', 'close-pending', 'base-unchecked',
-    'not-github-issues', 'no-remote', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable',
+    'not-github-issues', 'no-remote', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'unknown-host',
   ];
   const section = alreadyMergedSection();
   assert.deepEqual(owned.filter((w) => section.includes(`\`${w}\``)), []);

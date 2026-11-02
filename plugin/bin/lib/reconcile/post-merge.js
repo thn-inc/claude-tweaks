@@ -634,7 +634,7 @@ function processRun({
 
 module.exports = {
   postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
-  composeSkipText, composeSummaryText, boundDetail,
+  composeSkipText, composeSummaryText, boundDetail, oneLine,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
 };

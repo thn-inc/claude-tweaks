@@ -1963,6 +1963,14 @@ test('formatSummary: a skipped entry\'s detail renders in parentheses after the 
   assert.strictEqual(formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'not-github-issues' }] }), 'skipped: post-merge — not-github-issues');
 });
 
+test('formatSummary: a skipped entry\'s multi-line detail renders flattened on one line (#4933)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null };
+  const detail = 'origin host git.corp.invalid is not known\n  export GH_HOST=git.corp.invalid\r\nthen re-run';
+  const line = formatSummary({ ...base, skipped: [{ check: 'post-merge', reason: 'unknown-host', detail }] });
+  assert.strictEqual(line, 'skipped: post-merge — unknown-host (origin host git.corp.invalid is not known export GH_HOST=git.corp.invalid then re-run)');
+  assert.ok(!/[\r\n]/.test(line), line);
+});
+
 test('formatSummary: post-merge entries render as "merged run" taken and skipped lines (#4599)', () => {
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
