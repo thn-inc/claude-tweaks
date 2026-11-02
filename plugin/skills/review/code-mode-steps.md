@@ -132,12 +132,13 @@ On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{in
 
 ### Merge-Provenance Check
 
-Before analyzing the diff, detect whether the base branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
+Before analyzing the diff, detect whether the integration branch was merged into this branch mid-history — content that arrived that way is not work this branch introduced and must not be reviewed as such. `{base}`/`{branch}` reuse whatever base-branch resolution the rest of this step already uses.
 
 ```bash
 git log --merges {base}..{branch} --oneline # detect
 ```
 
+- **A `base:{ref}` scope** — skip the detect and count it as no merge commits detected, in every later step that asks: `{ref}` is a fixed point on the integration branch, so a merge in this range is how a PR shipped, never base content arriving. Every path in the diff stays in scope.
 - **No merge commits detected** (the common case) — this check is a no-op: no further computation, no new output section. The rest of Step 2 proceeds exactly as before, against the full diff.
 - **Merge commits detected** — read `merge-provenance-check.md` in this skill's directory: the own-work file-set computation, how to report the excluded files, and the own-work scope that replaces the raw `git diff` scope for Steps 3, 3.5, and 5.
 
