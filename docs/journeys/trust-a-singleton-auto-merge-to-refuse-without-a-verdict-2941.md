@@ -11,7 +11,7 @@ files:
 # Trust a Singleton Auto-Merge to Refuse Without a Verdict
 
 **Persona:** A claude-tweaks maintainer who granted `auto:merge` on a single record, let `/claude-tweaks:dispatch` (or a direct `/claude-tweaks:flow #N`) run it unattended overnight, and the next morning reads `decisions.md` and `git log` to decide whether the fast lane can keep that grant — after once finding a PR merged with no `merge-check` ever run (#2938).
-**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance brief posted, no ledger deletion pushed, no merge.
+**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance packet or brief posted, no ledger deletion pushed, no merge.
 **Entry point:** `/claude-tweaks:wrap-up`'s Review Console reaching `wrap-up/auto-merge-short-circuit.md` for a record whose live labels carry `auto:merge` (or a matured `auto:merge-pending`, or a `merge-authorization: pre-authorized` run).
 **Success state:** `decisions.md` shows `Auto-merge short-circuit: #N assess-agent-autonomy verdict auto-merge` before any acceptance-labeling or merge line, and the merge landed — or it shows `Auto-merge short-circuit: #N merge-check verdict not confirmed in decisions.md (latest: …) — treated as needs-human` and the PR is still open, awaiting the maintainer, with the console resolved to `leave-open`.
 
