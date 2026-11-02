@@ -2031,6 +2031,8 @@ test('acceptance-labeling fail detail carries the not-due skip reason alongside 
 // A resolved parent (a verdict label) owes nothing more; a gated parent owes the
 // brief its gate posted whatever its risk tier -- only a `due` parent meets the floor.
 const BRIEF_3508 = { body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' };
+// Sub-issues for a parent whose siblings are all done: #900 reads `open` on GitHub but is the
+// run's own record (parentGateRow's `records: [900]`), which the check counts as closed.
 function closedSubs3508(risk) {
   return [
     { number: 900, state: 'open', labels: [risk] },
@@ -2126,18 +2128,17 @@ const GATE_TABLE_HEADING = '**What the `acceptance-labeling` row does with each 
 const GATE_TABLE_END = '## Close the parent below the floor';
 const GATE_TABLE_STATES = ['`incomplete`', '`resolved`', '`gated`', '`due`, `exceeds: false`', '`due`, `exceeds: true`'];
 function gateTableFixture3508(state) {
-  const closed = (risk) => closedSubs3508(risk);
   switch (state) {
     case '`incomplete`':
       return parentGateRow({ records: [900], subIssues: [{ number: 900, state: 'open', labels: ['risk:high'] }, { number: 901, state: 'open', labels: ['risk:high'] }] });
     case '`resolved`':
-      return parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closed('risk:high') });
+      return parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
     case '`gated`':
-      return parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closed('risk:medium') });
+      return parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closedSubs3508('risk:medium') });
     case '`due`, `exceeds: false`':
-      return parentGateRow({ records: [900], subIssues: closed('risk:medium') });
+      return parentGateRow({ records: [900], subIssues: closedSubs3508('risk:medium') });
     case '`due`, `exceeds: true`':
-      return parentGateRow({ records: [900], subIssues: closed('risk:high') });
+      return parentGateRow({ records: [900], subIssues: closedSubs3508('risk:high') });
     default:
       throw new Error(`no fixture for gate state ${state}`);
   }
@@ -2149,30 +2150,36 @@ function assertGateTableTwin(doc) {
   assert.ok(end > start, 'the gate-state table is not followed by the close-below-the-floor section');
   const rows = doc.slice(start, end).split('\n').filter((l) => l.startsWith('| `')).map((l) => {
     const cells = l.split('|').slice(1, -1).map((c) => c.trim());
-    return { state: cells[0], result: cells[1].match(/`([^`]+)`/)[1], detail: cells[2].match(/`([^`]+)`/)[1] };
+    return { state: cells[0], results: [...cells[1].matchAll(/`([^`]+)`/g)].map((m) => m[1]), detail: cells[2].match(/`([^`]+)`/)[1] };
   });
   assert.deepStrictEqual(rows.map((r) => r.state), GATE_TABLE_STATES);
   for (const r of rows) {
     const { row } = gateTableFixture3508(r.state);
     const emitted = row.detail.replace(/#898/g, '#P').replace('1 sibling', 'N sibling');
-    assert.strictEqual(row.result, r.result, `${r.state}: result`);
+    // Only the gated row names a second outcome (the brief present); every other row names one.
+    assert.strictEqual(r.results.length, r.state === '`gated`' ? 2 : 1, `${r.state}: result words ${r.results}`);
+    assert.strictEqual(row.result, r.results[0], `${r.state}: result`);
     assert.strictEqual(emitted, r.detail, `${r.state}: detail`);
+    if (r.state === '`gated`') {
+      const { row: withBrief } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], parentComments: [BRIEF_3508], subIssues: closedSubs3508('risk:medium') });
+      assert.strictEqual(withBrief.result, r.results[1], `${r.state}: result with a brief`);
+    }
   }
 }
 const PARENT_GATE_DOC_3508 = readText(path.join(__dirname, '../../../plugin/skills/wrap-up/verification-brief-parent-gate.md'));
 
+// The go-red control rides the positive test, so a restored old condition in engine-verify.js
+// fails this test on its first assertion rather than leaving a doc-only control green.
 test('AC3.1: #3508 the procedure\'s gate-state table matches the row the check emits', () => {
   assertGateTableTwin(PARENT_GATE_DOC_3508);
-});
-
-test('#3508 the gate-state table pin goes red on a reworded detail and a dropped row', () => {
   // Each mutant must differ from the doc, or the control would pass vacuously on an input it never changed.
   const reworded = PARENT_GATE_DOC_3508.replace('already dispositioned', 'already accepted');
   const dropped = PARENT_GATE_DOC_3508.split('\n').filter((l) => !l.startsWith('| `gated` |')).join('\n');
-  assert.notStrictEqual(reworded, PARENT_GATE_DOC_3508, 'the reworded mutant must differ from the doc');
-  assert.notStrictEqual(dropped, PARENT_GATE_DOC_3508, 'the dropped-row mutant must differ from the doc');
-  assert.throws(() => assertGateTableTwin(reworded));
-  assert.throws(() => assertGateTableTwin(dropped));
+  const briefHalf = PARENT_GATE_DOC_3508.replace('`pass` with one', '`warn` with one');
+  for (const [name, mutant] of [['reworded detail', reworded], ['dropped row', dropped], ['reworded brief half', briefHalf]]) {
+    assert.notStrictEqual(mutant, PARENT_GATE_DOC_3508, `the ${name} mutant must differ from the doc`);
+    assert.throws(() => assertGateTableTwin(mutant), undefined, `the ${name} mutant must fail the pin`);
+  }
 });
 
 // #4551: work-links body-text fixture. bodies: { [n]: body string | null };
