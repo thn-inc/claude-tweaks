@@ -337,17 +337,27 @@ async function run(ctx) {
         // Post-merge Steps 4.0/4.0b run late for a PR that merged after its session (#4599); a status file
         // from before that lacks these fields, and the Number.isInteger guards render nothing for it.
         // postMergeParentsClosed and postMergeUnmarkedParentsClosed are disjoint: the closes by runs that
-        // wrote their marker, and by runs whose marker write failed.
+        // wrote their marker, and by runs whose marker write failed. postMergeParentsClosed counts every
+        // `ran` run's closes, a run whose Step 4.0 failed included (its Step 4.0b can still close one).
         const unmarkedClosed = Number.isInteger(s.postMergeUnmarkedParentsClosed) ? s.postMergeUnmarkedParentsClosed : 0;
         const ranClosed = Number.isInteger(s.postMergeParentsClosed) ? s.postMergeParentsClosed : 0;
         if (s.postMergeRan) {
           lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${ranClosed ? `, closing ${ranClosed} parent record(s) below the oversight floor` : ''}`);
+        } else if (ranClosed) {
+          // Every run that closed a parent failed its Step 4.0: the closes still happened and are not dropped.
+          lines.push(`post-merge steps closed ${ranClosed} parent record(s) below the oversight floor`);
         }
         // The parents are closed on GitHub; only the run's decisions.md marker is missing.
         if (unmarkedClosed) lines.push(`post-merge steps closed ${unmarkedClosed} parent record(s) below the oversight floor in run(s) whose decisions.md marker could not be written`);
-        // Step 4.0 failed, or the check threw, for these (counted apart from `postMergeRan`): no parent was
-        // closed, so tidy's parent-gate backstop is the recovery.
-        if (s.postMergeFailed) lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (tidy's parent-gate backstop recovers them)`);
+        // A step failed, or the check threw, for these (counted apart from `postMergeRan`). Tidy's
+        // parent-gate backstop recovers the parents; the records Step 4.0 listed (`postMergeFailedRecords`,
+        // absent from an older status file) get no retry, so they are named for a hand reopen or close.
+        if (s.postMergeFailed) {
+          const failedRecords = Array.isArray(s.postMergeFailedRecords) && s.postMergeFailedRecords.length
+            ? `records ${s.postMergeFailedRecords.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, and no later pass retries them; `
+            : '';
+          lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
+        }
         if (s.archived) lines.push(`${s.archived} pipeline run(s) archived`);
         if (s.archivedBranches) lines.push(`${s.archivedBranches} local branch(es) archived/deleted`);
         if (s.prunedRemote) lines.push(`${s.prunedRemote} merged remote branch(es) deleted on origin`);

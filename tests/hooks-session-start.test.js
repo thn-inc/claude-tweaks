@@ -749,8 +749,30 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   const failed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.match(
     failed.json.hookSpecificOutput.additionalContext,
-    /post-merge steps ran for 1 merged run\(s\); post-merge steps failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers them\)\./,
+    /post-merge steps ran for 1 merged run\(s\); post-merge steps failed for 2 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)\./,
   );
+
+  // AC5.1 AC5.2 AC5.3 AC5.4
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101, 102] });
+  const named = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(named, /records #101, #102 need a hand reopen or close per _shared\/pr-first-merge-post-merge\.md Step 4\.0/);
+  assert.match(named, /no later pass retries them/);
+  assert.match(named, /tidy's parent-gate backstop recovers the parents/);
+
+  // AC6.1 AC6.2: an older status file, and a non-array value
+  for (const summary of [{ postMergeRan: 0, postMergeFailed: 1 }, { postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: 'x' }]) {
+    seed(summary);
+    const unnamed = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+    assert.match(unnamed, /post-merge steps failed for 1 merged run\(s\) \(tidy's parent-gate backstop recovers the parents\)/);
+    assert.doesNotMatch(unnamed, /records #/);
+  }
+
+  // AC7.1
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeParentsClosed: 2 });
+  const closedByFailed = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(closedByFailed, /post-merge steps closed 2 parent record\(s\) below the oversight floor/);
+  assert.doesNotMatch(closedByFailed, /steps ran for/);
+
   seed({ postMergeRan: 0, postMergeFailed: 1 });
   const onlyFailed = await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project });
   assert.doesNotMatch(onlyFailed.json.hookSpecificOutput.additionalContext, /steps ran for/);
