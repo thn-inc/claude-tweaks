@@ -334,3 +334,101 @@ test('settle-and-merge.md Claim-contest special case covers the exit-6 Claims br
   assert.match(section, /dispatch-retry-ceiling/);
   assert.match(section, /no failure comment/);
 });
+
+test('AC6.1: flow/claim-targets.md carries the exit-7 card with no retry and no question (#4899)', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **7**');
+  assert.ok(start !== -1, 'exit-7 bullet should exist');
+  const end = content.indexOf('\n- **2**', start);
+  assert.ok(end !== -1, 'exit-7 bullet should end before the exit-2 bullet');
+  const bullet = content.slice(start, end);
+  assert.match(bullet, /## Flow: Claim permission denied/);
+  assert.match(bullet, /\{operation\}/);
+  assert.match(bullet, /\{reason\}/);
+  assert.match(bullet, /token's access/);
+  assert.match(bullet, /claims-registry/);
+  assert.match(bullet, /No `AskUserQuestion`/);
+  const card = bullet.slice(bullet.indexOf('```markdown'));
+  assert.doesNotMatch(card, /re-run/i, 'a refused token is not fixed by a re-run');
+  assert.match(content, /On exit 3, 4, 5, 6, or 7/);
+});
+
+test('AC6.1: settle-and-merge.md treats the claim permission denied stop as a pre-flight stop (#4899)', () => {
+  const content = read('plugin/skills/dispatch/settle-and-merge.md');
+  const sectionStart = content.indexOf('**Claim-contest special case');
+  assert.ok(sectionStart !== -1, 'Claim-contest special case section should exist');
+  const sectionEnd = content.indexOf('\n**Open-linked-PR enrichment', sectionStart);
+  assert.ok(sectionEnd !== -1, 'special-case section should end before the open-linked-PR enrichment paragraph');
+  const section = content.slice(sectionStart, sectionEnd);
+  assert.match(section, /Claim permission denied/);
+  assert.match(section, /flow-step-2\.8-claim-permission-denied/);
+  assert.match(section, /failed:claim-permission-denied/);
+  assert.match(section, /claim-permission-denied stop, skip steps 1-7/);
+  assert.match(section, /no release/);
+  assert.match(section, /dispatch-retry-ceiling/);
+  assert.match(section, /no failure comment/);
+  assert.match(section, /no `bot:blocked`/);
+  assert.match(section, /grants untouched/);
+  assert.match(section, /since the four are different stop shapes/);
+});
+
+test('the express call reports the claim permission denied line (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/express-prompt.md'), /ISSUE #\{issue\}: failed:claim-permission-denied/);
+  const lane = read('plugin/skills/_shared/express-lane.md');
+  assert.match(lane, /exit 7/);
+  assert.match(lane, /failed:claim-permission-denied/);
+});
+
+test('flow/claim-targets.md states the MCP claim path is not this stop (#4899)', () => {
+  const content = read('plugin/skills/flow/claim-targets.md');
+  const start = content.indexOf('- **7**');
+  assert.ok(start !== -1, 'exit-7 bullet should exist');
+  const bullet = content.slice(start, content.indexOf('\n- **2**', start));
+  assert.match(bullet, /gh-absent[^\n]*this stop|MCP[^\n]*transient[^\n]*#4899/);
+});
+
+test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied stop, in every selection form (#4899)', () => {
+  const content = read('plugin/skills/dispatch/SKILL.md');
+  const start = content.indexOf('**Claim permission stop (#4899).**');
+  assert.ok(start !== -1, 'Claim permission stop paragraph should exist');
+  const end = content.indexOf('\n\n', start);
+  const paragraph = content.slice(start, end === -1 ? undefined : end);
+  assert.match(paragraph, /failed:claim-permission-denied/);
+  assert.match(paragraph, /every selection form/);
+  assert.match(paragraph, /attempt no further group/);
+  assert.match(paragraph, /same token/);
+});
+
+test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays it (#4899)', () => {
+  for (const file of ['firing-exclusion.md', 'next-ranking.md']) {
+    const content = read(`plugin/skills/dispatch/${file}`);
+    assert.match(content, /claim-permission-denied/, `${file} must name the stop`);
+    assert.match(content, /ends the firing/, `${file} must say the stop ends the firing`);
+  }
+  assert.match(read('plugin/skills/dispatch/reporting.md'), /claim-permission-denied/);
+});
+
+test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {
+  const walk = (dir, ext) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) return walk(full, ext);
+    return entry.name.endsWith(ext) ? [full] : [];
+  });
+  const files = [
+    ...walk(path.join(REPO_ROOT, 'plugin/skills'), '.md'),
+    ...walk(path.join(REPO_ROOT, 'plugin/bin'), '.js'),
+    path.join(REPO_ROOT, 'docs/plugin-structure.md'),
+    path.join(REPO_ROOT, 'docs/journeys/act-on-a-contested-claim.md'),
+  ];
+  assert.ok(files.length > 50, 'the sweep should cover the plugin tree');
+  const offenders = [];
+  for (const file of files) {
+    readText(file).split('\n').forEach((line, i) => {
+      if (/(claim read( or write)?|claim write|401\/403)[^.\n]{0,80}\bexits? 4\b/i.test(line)) {
+        offenders.push(`${path.relative(REPO_ROOT, file)}:${i + 1}`);
+      }
+    });
+  }
+  assert.deepStrictEqual(offenders, []);
+  assert.match(read('docs/plugin-structure.md'), /7 GitHub refused a claim read or write/);
+});

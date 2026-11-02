@@ -44,7 +44,9 @@ that card's own routing into `dispatch/resume-confirmation.md` was itself skippe
 `DISPATCH_HEADLESS=1`, since that routing's own headless skip is what leaves the card as this Task
 call's terminal output), or its "Claims branch missing" stop (`claim-targets.js` exit 6, #4495: the
 `claims-registry` branch is missing on origin and creating it was refused — a network failure
-during the bootstrap is exit 4, never this stop) — no build or test ever ran, the pipeline stopped
+during the bootstrap is exit 4, never this stop), or its "Claim permission denied" stop
+(`claim-targets.js` exit 7, #4899: GitHub refused a claim read or write for permissions — the first
+call reports `ISSUE #{n}: failed:claim-permission-denied`) — no build or test ever ran, the pipeline stopped
 before the Config Manifesto, this record was never claimed by this run at all, so step 1 below's
 ownership check will correctly find no claim to release (skip is the right outcome there, not an
 error). The one thing this case adds: **when `DISPATCH_HEADLESS=1` was set on this Task call's
@@ -53,7 +55,8 @@ firing (bare drain or its `next` alias), where nobody is present to read the sto
 `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
 using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop,
 `flow-step-2.8-claim-in-flight` for the in-flight stop, or `flow-step-2.8-claims-branch-missing` for
-the claims-branch-missing stop — distinct names, since the three are different stop shapes and must
+the claims-branch-missing stop, or `flow-step-2.8-claim-permission-denied` for the claim-permission-denied
+stop — distinct names, since the four are different stop shapes and must
 dedup separately — and that stop's own card text as the diagnostic body. This is the one Settle
 branch that runs *before* any release/classification logic, since there is nothing to release or
 classify — it is a pre-flight stop, not a build/test failure. When `DISPATCH_HEADLESS` is unset (a
@@ -62,6 +65,11 @@ sufficient; nobody headless needs a durable trace of it. For the
 claims-branch-missing stop, skip steps 3-7 below: no `failure-check` classification, no attempt
 counted against `dispatch-retry-ceiling`, and no failure comment — a repository whose claims branch
 cannot be created would otherwise exhaust the ceiling on a record that was never at fault.
+For the claim-permission-denied stop, skip steps 1-7 below: no release, no `failure-check`
+classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment,
+no `bot:blocked`, grants untouched — the token, not the record, is at fault. The CLI already attempted
+the release of any claim this run took, and a release here under the same token would post a false
+release comment on a record this run never claimed.
 
 **Open-linked-PR enrichment for the contested-claim shape (#2402).** For the contested-claim stop
 specifically — never the in-flight stop, whose card already names its PR via `link` — attempt one

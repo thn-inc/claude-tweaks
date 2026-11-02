@@ -10,7 +10,7 @@ The express agent's procedure (#4025): a small, low-risk singleton record is bui
 
 One agent, inside a worktree already stamped by `record-worktree`. Every git call is `git -C "{wt}" …`.
 
-1. **Claim** with `claim-targets.js` per `flow/claim-targets.md` (on the `/claude-tweaks:flow` entry its Step 2.8 has already claimed — go to step 2). A non-zero exit is outcome `blocked`: render that file's card for the exit and stop.
+1. **Claim** with `claim-targets.js` per `flow/claim-targets.md` (on the `/claude-tweaks:flow` entry its Step 2.8 has already claimed — go to step 2). A non-zero exit is outcome `blocked`: render that file's card for the exit and stop. On exit 7, the report also carries `ISSUE #{n}: failed:claim-permission-denied`, which stops the firing.
 2. **Edit.** Read the record (`gh issue view {n} --json number,title,body,labels`), then edit only its `### Key Files` and test files.
 3. **Commit the edit** — `git -C "{wt}" add` by explicit path (never `-A` or `.`), message `{Verb} {what} — refs #{n}` — always before any test runs, so an escalation leaves a clean tree for `/flow`'s Adopt-or-create check.
 4. **Impacted tests.** Run `test/verification.md`'s scoped invocation (its Re-verify scoping: `verify.js --run "{run-dir}" --scope .claude-tweaks/verify-scope.json --integration-branch {ref}`), or its Step 2 full invocation when the project has no `.claude-tweaks/verify-scope.json`. A red run is not fixed on the lane: it writes no pass stamp, and step 5 escalates it.
