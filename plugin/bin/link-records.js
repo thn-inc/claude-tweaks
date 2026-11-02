@@ -4,7 +4,8 @@
 // One GraphQL databaseId batch (every number appearing in --parent/--subs/--blocked-by),
 // then the sub_issues + blocked_by POSTs via bin/lib/issues/link.js. Prints one JSON
 // envelope. Exit 0 on success or partial-with-`failed` (the caller reads `failed`);
-// 1 when databaseId resolution fails; 2 on a malformed invocation or when `gh` is
+// 1 when databaseId resolution fails; 2 on a malformed invocation, an origin host
+// with no GitHub signal (refused before any gh call, #4933), or when `gh` is
 // absent — these two endpoints have no GitHub MCP equivalent, so the fallback is
 // `work-links: body-text` (record-creation.md Step 4's text-based linking).
 'use strict';

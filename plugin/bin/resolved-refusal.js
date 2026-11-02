@@ -12,13 +12,14 @@
 // `gh api graphql` call failed, returned GraphQL errors, or the issue is missing
 // (stderr names it; a caller treats this as fail-closed). Exit 2: malformed
 // invocation (missing or non-positive-integer <n>, unknown flag), `gh` absent,
-// or owner/repo could not be resolved (no --repo and no readable `origin` remote).
+// or owner/repo could not be resolved (no --repo and no readable `origin` remote,
+// or an origin host with no GitHub signal — refused before any gh call, #4933).
 'use strict';
 
 const { evaluateResolvedRefusal, fetchResolvedRefusalEvidence, defaultRunner } = require('./lib/issues/resolved-refusal');
 const {
   parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
-} =require('./lib/repo-resolve');
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: resolved-refusal.js <n> [--repo owner/name] [--help]\n';
 

@@ -585,8 +585,8 @@ test('--facts-json reads no remote without a qualified closing token', (t) => {
 });
 
 // #4933: the facts path makes no gh call, so an origin host with no GitHub signal is not refused;
-// the origin is read only to judge a qualified --closing token, and its host is normalized.
-test('facts-json path: an unknown origin host is not refused and its host is normalized', (t) => {
+// the origin is read only to judge a qualified --closing token.
+test('facts-json path: the facts path is not refused for an unknown origin host', (t) => {
   const file = writeFacts(t, worldAsMcp({ issues: { 12: OPEN } }, 11)); // 12 is open: only a closing token covers it
   const over = { ...NO_GH, remoteUrl: () => 'https://Git.Corp.Invalid./o/r.git', gateDeps: { env: {} } };
   const r = go(['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file], {}, over);

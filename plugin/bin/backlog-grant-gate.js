@@ -40,7 +40,7 @@ const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost, gateOriginRepo,
-} =require('./lib/repo-resolve');
+} = require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 

@@ -30,7 +30,7 @@ const wtDetect = require('./lib/hooks/worktree-detect');
 const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
   parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
-} =require('./lib/repo-resolve');
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
 

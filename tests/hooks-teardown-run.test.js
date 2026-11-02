@@ -386,12 +386,13 @@ test('AC15 (#2747): teardown-run resolves the GHE host from the origin remote an
   assert.deepStrictEqual(calls, [{ args: ['repos/acme/widgets/git/refs/heads/feat-branch'], host: 'ghe.example.com' }]);
 });
 
-test('AC8.1 teardown (#4933): an unknown origin host issues no gh DELETE and skips with the refusal', () => {
+test('AC8.1 teardown (#4933): an unknown origin host issues no gh DELETE and skips with the refusal', (t) => {
   const { root, wt, runDir } = fixtureRepo();
   git(root, 'remote', 'set-url', 'origin', 'https://git.corp.invalid/o/r.git');
   writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
 
   const emptyGhConfig = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-ghcfg-')));
+  t.after(() => fs.rmSync(emptyGhConfig, { recursive: true, force: true }));
   const calls = [];
   let result;
   assert.doesNotThrow(() => {

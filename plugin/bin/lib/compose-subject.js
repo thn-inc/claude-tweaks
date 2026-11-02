@@ -35,7 +35,8 @@
 // commit-scope token composeSubject rejects) OR a record that cannot be composed (no resolvable Type, `breaking` label with no
 // ## Breaking Change section — the composer's own usage error, message on
 // stderr); 2 `gh` absent or owner/repo unresolvable (no --repo and no readable
-// origin remote); 3 an external read failed — a `gh issue view` call, the
+// origin remote, or an origin host with no GitHub signal — refused before any gh
+// call, #4933); 3 an external read failed — a `gh issue view` call, the
 // `git diff --name-only -z` behind --range, or the `gh pr diff --name-only`
 // behind --pr, or an `--out-dir` write failed.
 // --range is read with -z and --end-of-options so a C-quoted (non-ASCII) path

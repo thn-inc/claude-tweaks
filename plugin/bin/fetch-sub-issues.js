@@ -38,7 +38,7 @@ const { fetchNativeSubIssues } = require('./lib/issues/native-dependencies');
 const { probeSchemaStrict } = require('./lib/issues/capabilities-probe');
 const {
   parseRepo, ghAvailable, remoteUrl, ghOptions, pinExplicitRepoHost, gateOriginRepo,
-} =require('./lib/repo-resolve');
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: fetch-sub-issues.js [<n> ...] [--repo owner/name] [--resolve-retries] [--help]\n';
 
