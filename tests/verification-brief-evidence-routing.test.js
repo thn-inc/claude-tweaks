@@ -103,7 +103,7 @@ function assertRouting(s) {
   assert.ok(!s.includes('git switch'), 'no in-place git switch');
 
   assert.ok(s.includes('--run "{run-dir}" --section "/wrap-up"'), 'routing is logged under /wrap-up with the resolved run dir, not a bare $PIPELINE_RUN_DIR');
-  assert.match(s, /name the evidence PR's URL in the brief/);
+  assert.match(s, /name the evidence PR's URL in the packet's Test guide/);
 }
 
 test("AC4.1 AC4.2: Step 4 routes the screenshot commit on bin/evidence-route.js's JSON", () => {
