@@ -108,8 +108,9 @@ function ghErrorText(e) {
 
 // Pure: classify a caught execFileSync error into {failure, status} — split
 // out from defaultGhApi's catch block so the text-matching regexes below are
-// unit-testable without touching the real `gh` binary. `defaultGhApi` is the
-// only caller.
+// unit-testable without touching the real `gh` binary. Direct callers:
+// `defaultGhApi`, `release-claim/release.js`, `reconcile/preflight.js`,
+// `reconcile/pr-state.js`, `reconcile/release-merged.js`.
 //
 // `_shared/issue-claims.md`'s "The lock" step 1 documents a 404 as a normal
 // outcome ("file does not exist"), not an error — gh reports it as
@@ -148,6 +149,21 @@ function ghErrorText(e) {
 // generic network failure (record-697's incident read exactly that way
 // before diagnosis; #787's amendment requires this to classify as its own
 // distinct, transient outcome).
+//
+// An HTTP 401 or 403 that is not a rate limit is `permission-denied` (with
+// `status` the number 401 or 403): the token reached GitHub and was refused,
+// which is a refusal, not transport — folding it into `network-failure` made
+// a permissions problem read as a retryable network one (#4756). A primary
+// rate limit is excluded: "API rate limit exceeded" or `X-RateLimit-Remaining:
+// 0` (a 403 or 429) stays `network-failure`, since waiting clears it and a
+// permission verdict there would be wrong (`_shared/github-rate-limit.md`).
+//
+// Outcomes by retry class (#4756 — the one rule the claims-branch bootstrap
+// applies, via `TRANSIENT_BOOTSTRAP_FAILURES` below): `network-failure` (also
+// the catch-all for any text no pattern here matches, an unrecognised 4xx
+// included) and `secondary-rate-limit` are transient — a later run may
+// succeed. `permission-denied`, `gh-absent` and every `failure: null` status
+// answer (404, 409, 422) are answers a retry will not change.
 function classifyGhApiError(e) {
   if (e && e.code === 'ENOENT') return { failure: 'gh-absent', status: null };
   const text = ghErrorText(e);
@@ -155,6 +171,9 @@ function classifyGhApiError(e) {
   if (/HTTP 404|Not Found/.test(text)) return { failure: null, status: 404 };
   if (/HTTP 422|Unprocessable|Validation failed/.test(text)) return { failure: null, status: 422 };
   if (/HTTP 409|Conflict|does not match/i.test(text)) return { failure: null, status: 409 };
+  if (/API rate limit exceeded|X-RateLimit-Remaining:\s*0\b/i.test(text)) return { failure: 'network-failure', status: null };
+  const denied = /HTTP (401|403)\b/.exec(text);
+  if (denied) return { failure: 'permission-denied', status: Number(denied[1]) };
   return { failure: 'network-failure', status: null };
 }
 
@@ -176,7 +195,7 @@ function defaultGhApi(args) {
   }
 }
 
-// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'truncated' }
+// (ghApi, repoSlug) -> { entries: [{name, sha}], failure: null|'gh-absent'|'network-failure'|'secondary-rate-limit'|'permission-denied'|'truncated' }
 // #3098: the Contents-API directory listing this used to make caps at 1000
 // entries (GitHub's own documented limit for that endpoint) — silently, with
 // no truncation signal at all. `claims-registry` long since passed that
@@ -512,36 +531,54 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // (#4495) Nothing there: either a real contest (the claim was released or
     // swept since) or the claims-registry branch itself does not exist, which
     // makes the PUT fail the same way. Only the branch lookup tells them
-    // apart; an unanswerable one is transient, never a manufactured contest.
+    // apart; an unanswerable one is never a manufactured contest — it reports
+    // the lookup's own failure kind as-is (a network failure, a rate limit, or
+    // `permission-denied`), and the caller decides what that kind means.
     if (!fresh.failure && fresh.absent) {
-      const exists = claimsBranchExists(deps.ghApi, repoSlug);
-      if (exists === false) return { ok: false, branchMissing: true, failure: null };
-      if (exists === null) return { ok: false, failure: 'network-failure' };
+      const lookup = readClaimsBranch(deps.ghApi, repoSlug);
+      if (lookup.exists === false) return { ok: false, branchMissing: true, failure: null };
+      if (lookup.exists === null) return { ok: false, failure: lookup.result.failure };
     }
     return { ok: false, conflict: true, failure: null };
   }
   return { ok: r.failure === null, failure: r.failure };
 }
 
+// (ghApi, repoSlug) -> { exists: true | false | null, result }
+// The branch lookup behind `claimsBranchExists`, keeping the raw ghApi answer
+// so a caller that must tell WHY the lookup could not answer (the bootstrap's
+// 422 re-read) can read the failure kind. `exists` is null = could not tell.
+function readClaimsBranch(ghApi, repoSlug) {
+  const result = ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name']);
+  if (result.status === 404) return { exists: false, result };
+  if (result.failure) return { exists: null, result };
+  return { exists: true, result };
+}
+
 // (ghApi, repoSlug) -> true | false | null   (null = could not tell)
 // Whether the remote has the `CLAIMS_BRANCH` branch, over the same
 // never-throwing seam as every contents-API call here (#4495).
 function claimsBranchExists(ghApi, repoSlug) {
-  const r = ghApi([`repos/${repoSlug}/branches/${CLAIMS_BRANCH}`, '-q', '.name']);
-  if (r.status === 404) return false;
-  if (r.failure) return null;
-  return true;
+  return readClaimsBranch(ghApi, repoSlug).exists;
 }
+
+// The one transient-vs-refusal rule for the bootstrap's contents-API leg
+// (#4756): a failure is transient exactly when the classifier called it
+// `network-failure` (no answer worth acting on: a timeout, a 5xx, a primary
+// rate limit) or `secondary-rate-limit` — a later run may succeed. Anything
+// else (permission-denied, gh-absent, a status answer with `failure: null`)
+// is an answer from the remote or the environment that a retry will not change.
+const TRANSIENT_BOOTSTRAP_FAILURES = new Set(['network-failure', 'secondary-rate-limit']);
 
 // A contents-API refusal as a result. The reason is verbatim: the response text
 // when `defaultGhApi` kept it, else the classified failure, else the bare
-// status. A secondary rate limit is the one failure the classifier already
-// knows is transient, so it is flagged.
+// status. A transient failure also carries its kind, so the caller can tell a
+// network failure from a rate limit; a refusal carries neither key.
 function apiRefusal(r) {
   return {
     ok: false,
     reason: r.error || r.failure || `HTTP ${r.status}`,
-    ...(r.failure === 'secondary-rate-limit' ? { transient: true } : {}),
+    ...(TRANSIENT_BOOTSTRAP_FAILURES.has(r.failure) ? { transient: true, failure: r.failure } : {}),
   };
 }
 
@@ -565,18 +602,33 @@ function createClaimsBranchContentsApi(ghApi, repoSlug) {
     '-f', `sha=${tipSha}`,
   ]);
   if (r.failure === null && r.status === null) return { ok: true, created: true };
-  if (r.status === 422 && claimsBranchExists(ghApi, repoSlug) === true) return { ok: true, created: false };
+  if (r.status === 422) {
+    // Branch on the raw re-read, not on `exists` (which counts any failure-free,
+    // non-404 answer as "there"): only a clean answer proves the lost race.
+    const { result } = readClaimsBranch(ghApi, repoSlug);
+    if (result.failure === null && result.status === null) return { ok: true, created: false };
+    const postRefusal = apiRefusal(r);
+    if (result.status === 404) return postRefusal;
+    // The re-read could not settle it: its own failure kind decides transient
+    // vs refusal, and the POST's reason stays in front. A status answer with
+    // `failure: null` (a 409, a 422) is a refusal, never a guessed lost race.
+    const reread = apiRefusal(result);
+    return { ...reread, reason: `${postRefusal.reason}; branch re-read: ${reread.reason}` };
+  }
   return apiRefusal(r);
 }
 
 // (deps: {ghApi, gitRunner?}, repoSlug)
-// -> { ok: true, created, via: 'git' | 'contents-api' } | { ok: false, reason, transient? }
+// -> { ok: true, created, via: 'git' | 'contents-api' }
+//  | { ok: false, reason }
+//  | { ok: false, reason, transient: true, failure: 'network-failure' | 'secondary-rate-limit' }
 // Creates the missing `CLAIMS_BRANCH` (#4495) — the one bootstrap every
 // caller shares: a git push first (when a `gitRunner` is supplied), the
 // contents API when git cannot. A refusal is never retried; `reason` carries
 // each leg's own text verbatim. `transient: true` marks a contents-API leg
-// that hit a secondary rate limit — a later run may succeed, so it is no
-// refusal to act on.
+// whose failure was a network failure or a secondary rate limit (see
+// TRANSIENT_BOOTSTRAP_FAILURES) — a later run may succeed, so it is no refusal
+// to act on; `failure` names which of the two it was.
 function ensureClaimsBranch(deps, repoSlug) {
   const reasons = [];
   if (deps.gitRunner) {
@@ -587,7 +639,7 @@ function ensureClaimsBranch(deps, repoSlug) {
   const a = createClaimsBranchContentsApi(deps.ghApi, repoSlug);
   if (a.ok) return { ok: true, created: a.created, via: 'contents-api' };
   reasons.push(`contents-api: ${a.reason}`);
-  return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true } : {}) };
+  return { ok: false, reason: reasons.join('; '), ...(a.transient ? { transient: true, failure: a.failure } : {}) };
 }
 
 function isSameRepoPrUrl(link, owner, repo) {
