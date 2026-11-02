@@ -108,7 +108,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
 
-   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop this step with no carrier commit, before step 3's branch finish, because a merge with no closing keyword leaves the record open, and report one `cleanup: closing-keyword carrier failed — {first stderr line}` line in the closing report.
+   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop here with no carrier commit: skip steps 3, 3.5, 3.6, 4, and 5 below and Section E, the same posture as "Kept as-is" below, because a merge with no closing keyword leaves the record open. Report one `cleanup: closing-keyword carrier failed — {stderr's Error: line}` line in the closing report.
 
    **Why a dedicated commit, not the merge artifact** — see
    `cleanup-procedures-execution-appendix.md`'s "Step 2" section; read only if the rationale
