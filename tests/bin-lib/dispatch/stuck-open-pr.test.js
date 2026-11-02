@@ -346,6 +346,17 @@ test('a throwing sibling read stays visible as a row, never as a clean record', 
   }
 });
 
+test('a no-row verdict ends the record before the exact read, so that read throwing cannot turn it into a row', () => {
+  for (const [reason, over] of [['live-sibling', {}], ['live-claim', {}], ['prior-run-live', { liveRun: true }]]) {
+    const env = makeEnv({
+      exactThrows: true, verdicts: { 1: { code: 3, json: refusedJson(1, reason, { headRefName: 'fix/thing', ...over }) } },
+    });
+    assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+    assert.deepStrictEqual(rows(env), [], reason);
+    assert.equal(env.names().includes('findSiblingOnWorktree'), false, reason);
+  }
+});
+
 test('a verdict that fails to run or parse stays visible as a row naming its exit code', () => {
   for (const [verdict, code] of [[{ code: 4 }, 4], [{ code: 2 }, 2], [{ code: 3, raw: 'not json\n' }, 3], [{ code: 0, raw: '[]\n' }, 0]]) {
     const env = makeEnv({ verdicts: { 1: verdict } });

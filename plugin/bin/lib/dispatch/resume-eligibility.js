@@ -354,9 +354,10 @@ function resumeEligibility(input) {
   const worktreeMissing = worktreeBranch === null;
   const hasLocalBranch = worktreeMissing && nonEmptyString(localBranchSha) !== null;
   if (worktreeMissing && nonEmptyString(branchCheckedOutAt) !== null) {
-    // Still registered at the stalled path itself: the directory is gone, so prune, not remove.
+    // Still registered at the stalled path itself: the directory is gone, so prune, not remove. Prune
+    // skips a locked entry, and readLocalBranch lists it either way, so the lock goes first.
     if (typeof worktreePath === 'string' && path.resolve(branchCheckedOutAt) === path.resolve(worktreePath)) {
-      return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is still registered to the missing worktree ${worktreePath} — prune it with git -C "${mainRoot}" worktree prune, then run ${resumeCmd}`);
+      return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is still registered to the missing worktree ${worktreePath} — run git -C "${mainRoot}" worktree unlock "${worktreePath}" (ignore a "not locked" error), then git -C "${mainRoot}" worktree prune, then run ${resumeCmd}`);
     }
     return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is checked out at ${branchCheckedOutAt} — remove that worktree (or resume from it), then run ${resumeCmd}`);
   }

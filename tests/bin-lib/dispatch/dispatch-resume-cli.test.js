@@ -416,7 +416,36 @@ test('the prune remedy reads the main checkout from the gatherer, not from the w
   env.cfg.porcelain = `worktree ${MAIN}\nHEAD ${OID}\nbranch refs/heads/main\n\nworktree ${wt}\nHEAD ${OID}\nbranch refs/heads/fix/thing\n\n`;
   const r = exec(env);
   assert.equal(r.json.reason, 'branch-checked-out');
-  assert.ok(r.json.line.includes(`git -C "${MAIN}" worktree prune`), r.json.line);
+  assert.ok(r.json.line.includes(`run git -C "${MAIN}" worktree unlock "${wt}" (ignore a "not locked" error), then git -C "${MAIN}" worktree prune, then run`), r.json.line);
+});
+
+// ownMarkerRunId's two gates: the one run a verdict on this listing can be about.
+test('two kept PRs with a live owner on the first marker carry no liveRun: the listing names no one run', () => {
+  const env = makeEnv();
+  env.cfg.prs = [
+    prEntry(),
+    prEntry({ number: 4700, url: 'https://github.com/o/r/pull/4700', body: 'claude-tweaks-run: 2026-10-31T101632-record-4589\n' }),
+  ];
+  setRunState(env, { status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'multiple-prs');
+  assert.deepStrictEqual(r.json.prNumbers, [PR, 4700]);
+  assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
+  assert.deepStrictEqual(env.calls.fs, [], 'no run dir is read for a listing with no one run');
+});
+
+test('a marker naming another record is never classified: a foreign live run sets no liveRun', () => {
+  const foreign = '2026-10-30T101632-record-1';
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ headRefName: 'worktree-dispatch-record-1', body: `claude-tweaks-run: ${foreign}\n` })];
+  env.cfg.dirs[path.join(ROOT, foreign)] = ['run-state.json', 'work'];
+  env.cfg.files[path.join(ROOT, foreign, 'run-state.json')] = JSON.stringify({ status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'foreign-pr');
+  assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
+  assert.deepStrictEqual(env.calls.fs, [], 'the foreign run dir is never read');
 });
 
 test('context is read from the archived decisions.md', () => {

@@ -222,7 +222,7 @@ function stuckRowFor(deps, {
     // refusal is hidden by a hit.
     if (verdict === null || verdict.eligible !== false) return row;
     if (tokenHit) return null;
-    const head =verdict && typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
+    const head = typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
     if (head !== null && deps.findSiblingOnWorktree({ branch: head }, { cwd: mainRoot }) !== null) return null;
     return row;
   } catch {

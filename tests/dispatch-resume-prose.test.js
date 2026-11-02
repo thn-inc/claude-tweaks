@@ -385,7 +385,8 @@ const STEP_2_CLAIMS = [
   ['a fork names the PR', /each naming the PR, never `no-pr`/],
   ['disposition values', /`disposition` \(`resume`, `close-out` or `close`; null for `no-pr`\)/],
   ['refusal shape', /\{eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName\}/],
-  ['liveRun on a refusal', /\(plus `liveRun: true` when a provably live owner refused it\)/],
+  ['liveRun on a refusal', /\(plus `liveRun: true` when a run's owner is provably live, the prior run's or another run's bound to the stalled worktree, whatever the refusal's reason\)/],
+  ['a close refusal prints remedy in place of line', /print `line` verbatim as the whole refusal and stop, or `remedy` verbatim in its place when `disposition` is `close`, since `remedy` carries the full steps and names a fork PR that keeps the record excluded/],
   ['a non-draft PR never takes close', /a non-draft PR is never told to close, so a foreign, multi-record or cross-repo one reads `close-out` or review-by-hand/],
   ['a non-draft among several PRs reads review by hand', /more than one open PR closes it \(close the extra one; a non-draft among them reads review by hand\)/],
   ['no-pr keeps the plain dispatch remedy', /no open PR closes it \(a plain dispatch applies\)/],
@@ -395,6 +396,17 @@ const STEP_6A_CLAIMS = [
   ['the worktree comes from the bound run stamp', /It reads the worktree from the bound run's own stamp \(what Step 6 wrote\)/],
   ['liveRun changes nothing', /a provably live owner adds `liveRun: true`, which changes nothing here — every exit 3 stops the same way/],
 ];
+// A rewrite of the condition, not a deletion: the pin must not survive either branch being reversed.
+test('resume.md Step 2 control: rewriting which refusal prints remedy, or the printed field, goes red', () => {
+  const [, closePrintsRemedy] = STEP_2_CLAIMS.find(([label]) => label === 'a close refusal prints remedy in place of line');
+  const step = stepParagraph(RESUME, '2');
+  for (const [from, to] of [['when `disposition` is `close`', 'when `disposition` is `resume`'], ['or `remedy` verbatim in its place', 'or `line` verbatim in its place']]) {
+    const mutated = step.replace(from, to);
+    assert.notStrictEqual(mutated, step, from);
+    assert.doesNotMatch(mutated, closePrintsRemedy, from);
+  }
+});
+
 for (const [text, label, re] of CLOSING_REFERENCE_CLAIMS) test(`resume.md states ${label}`, () => assertPinned(text, re, label));
 for (const [label, re] of STEP_2_CLAIMS) test(`resume.md Step 2 states ${label}`, () => assertPinned(stepParagraph(RESUME, '2'), re, label));
 for (const [label, re] of STEP_6A_CLAIMS) test(`resume.md Step 6a states ${label}`, () => assertPinned(stepParagraph(RESUME, '6a'), re, label));
@@ -421,7 +433,7 @@ const NO_CLAIM_CLAIMS = [
   ['the held-claim route is kept', /from its still-held claim/],
   ['the no-claim route takes the PR from the verdict', /with no claim held \(a stuck record's released claim\), take the PR from `bin\/dispatch-resume\.js --issue \{N\}` — `prNumber` when eligible, else its single `prNumbers` entry/],
   ['a refused verdict is accepted only when its remedy names close-out', /only when the refused verdict's `remedy` names `\/claude-tweaks:dispatch close-out #\{N\}`/],
-  ['any other verdict prints its remedy or line and stops', /any other verdict \(several PRs, a by-hand or close remedy, no PR, a failed read\) prints the verdict's `remedy` or `line` and stops for that record/],
+  ['any other verdict prints its remedy, its line only when remedy is null, and stops', /any other verdict \(several PRs, a by-hand or close remedy, no PR, a failed read\) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record/],
   ['the whole-list search stays ruled out', /rather than searching the whole open-PR list: from its still-held claim/],
 ];
 for (const [label, re] of NO_CLAIM_CLAIMS) {
@@ -437,9 +449,13 @@ test('close-out.md close-out #N: dropping the remedy condition or the stop goes 
   };
   const [, , [, conditionRe], [, stopRe]] = NO_CLAIM_CLAIMS;
   const condition = row.match(/ only when the refused verdict's `remedy` names `[^`]+`/)[0];
-  const stop = row.match(/; any other verdict \([^)]*\) prints the verdict's `remedy` or `line` and stops for that record/)[0];
+  const stop = row.match(/; any other verdict \([^)]*\) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record/)[0];
   assert.throws(() => assertPinned(drop(condition), conditionRe, 'remedy condition'), /remedy condition: missing/);
   assert.throws(() => assertPinned(drop(stop), stopRe, 'stop'), /stop: missing/);
+  // The old either-order wording reads as a free choice: reinstating it goes red on the same pin.
+  const either = row.replace("`remedy`, or its `line` when `remedy` is null,", '`remedy` or `line`');
+  assert.notStrictEqual(either, row);
+  assert.throws(() => assertPinned(either, stopRe, 'prefers remedy'), /prefers remedy: missing/);
 });
 
 // ---- task-prompt.md ---------------------------------------------------------------------------

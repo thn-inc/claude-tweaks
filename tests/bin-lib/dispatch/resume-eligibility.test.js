@@ -342,7 +342,7 @@ const REFUSALS = [
   ['branch checked out elsewhere', { worktreeBranch: null, branchCheckedOutAt: '/repo/.claude/worktrees/other' }, 'branch-checked-out',
     "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['branch still registered to the missing stalled worktree', { worktreeBranch: null, branchCheckedOutAt: WT }, 'branch-checked-out',
-    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C \"/repo\" worktree prune, then run /claude-tweaks:dispatch resume #4589", 'resume'],
+    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — run git -C \"/repo\" worktree unlock \"/repo/.claude/worktrees/dispatch-record-4589\" (ignore a \"not locked\" error), then git -C \"/repo\" worktree prune, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['local branch diverged', { worktreeBranch: null, localBranchSha: 'b'.repeat(40) }, 'branch-diverged',
     "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   // A guard input the gatherer forgot or mistyped is a refusal, never "nothing to refuse" (Closed rule).
@@ -590,7 +590,7 @@ test('the prune remedy names the given main checkout, quoted, for a head with a 
     prs: [prEntry({ headRefName: 'fix/thing' })], mainRoot: main, worktreePath: wt, worktreeBranch: null, branchCheckedOutAt: wt,
   });
   assert.equal(v.reason, 'branch-checked-out');
-  assert.equal(v.line, `#${N}'s branch fix/thing is still registered to the missing worktree ${wt} — prune it with git -C "${main}" worktree prune, then run /claude-tweaks:dispatch resume #${N}`);
+  assert.equal(v.line, `#${N}'s branch fix/thing is still registered to the missing worktree ${wt} — run git -C "${main}" worktree unlock "${wt}" (ignore a "not locked" error), then git -C "${main}" worktree prune, then run /claude-tweaks:dispatch resume #${N}`);
 });
 const FORK = { number: 4611, isCrossRepository: true };
 test('a fork PR beside the kept PR ends the close remedy by naming it, never the dispatch it would refuse', () => {
