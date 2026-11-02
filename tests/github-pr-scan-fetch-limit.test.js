@@ -209,9 +209,17 @@ const UNIVERSE = 308;
 
 test('item 8 reproduces #4820: the pre-change fence reports capped counts silently', () => {
   const run = runFence(PRE_CHANGE_ITEM8, { ghRows: issueRows(UNIVERSE) });
-  assert.equal(run.status, 0, run.stderr);
+  assert.equal(run.status, 0, `item 8: the pre-change fence must exit 0: ${run.stderr}`);
   assert.deepEqual(JSON.parse(run.stdout), { pending: 0, blocked: 0, backlog: 200 }, `${UNIVERSE} open issues must read as 200`);
   assert.ok(!run.stderr.includes('WARNING:'), `the pre-change fence never warns: ${run.stderr}`);
+  // The frozen text still describes the live fence apart from the two edits: it is the live fence with the
+  // limit and the warning line reverted.
+  const live = fenceAfter(REPO_WIDE, ITEM8_LABEL);
+  const reverted = live
+    .replace('--limit {resolved-limit}', '--limit 200')
+    .replace(/^ {2}if \(issues\.length >= \{resolved-limit\}\).*\n/m, '');
+  assert.notEqual(reverted, live);
+  assert.equal(reverted, PRE_CHANGE_ITEM8, 'item 8: PRE_CHANGE_ITEM8 has drifted from the live fence');
 });
 
 for (const shell of ['bash', 'zsh']) {
@@ -219,31 +227,56 @@ for (const shell of ['bash', 'zsh']) {
     const fence = fenceAfter(REPO_WIDE, ITEM8_LABEL);
     // A limit above the universe counts all of it, with no warning.
     const whole = runFence(fence, { limit: 1000, ghRows: issueRows(UNIVERSE), shell });
-    assert.equal(whole.status, 0, whole.stderr);
+    assert.equal(whole.status, 0, `item 8: the high-limit run must exit 0: ${whole.stderr}`);
     assert.deepEqual(JSON.parse(whole.stdout), { pending: 0, blocked: 0, backlog: UNIVERSE });
     assert.ok(!whole.stderr.includes('WARNING:'), whole.stderr);
     // The same universe at the old cap is truncated to 200, and now says so.
     const capped = runFence(fence, { limit: 200, ghRows: issueRows(UNIVERSE), shell });
-    assert.equal(capped.status, 0, capped.stderr);
+    assert.equal(capped.status, 0, `item 8: the capped run must exit 0: ${capped.stderr}`);
     assert.deepEqual(JSON.parse(capped.stdout), { pending: 0, blocked: 0, backlog: 200 });
     assert.match(capped.stderr, queueWarning(200));
     if (shell !== 'bash') return;
     // A universe exactly the size of the limit cannot be told from a truncated one: it warns too.
     const exact = runFence(fence, { limit: 200, ghRows: issueRows(200) });
+    assert.equal(exact.status, 0, `item 8: the exact-limit run must exit 0: ${exact.stderr}`);
     assert.match(exact.stderr, queueWarning(200));
     // One row under the limit is a real count: no warning.
     const under = runFence(fence, { limit: 200, ghRows: issueRows(199) });
-    assert.equal(under.status, 0, under.stderr);
+    assert.equal(under.status, 0, `item 8: the under-limit run must exit 0: ${under.stderr}`);
     assert.ok(!under.stderr.includes('WARNING:'), under.stderr);
     // The open-issue fetch is unfiltered, so it paginates past 1000: 1000 rows under a limit of 1500 is not a cap ...
     const pastThousand = runFence(fence, { limit: 1500, ghRows: issueRows(1000) });
-    assert.equal(pastThousand.status, 0, pastThousand.stderr);
+    assert.equal(pastThousand.status, 0, `item 8: the past-1000 run must exit 0: ${pastThousand.stderr}`);
     assert.ok(!pastThousand.stderr.includes('WARNING:'), pastThousand.stderr);
     // ... and reaching the limit itself is.
     const atLimit = runFence(fence, { limit: 1500, ghRows: issueRows(1500) });
+    assert.equal(atLimit.status, 0, `item 8: the at-limit run must exit 0: ${atLimit.stderr}`);
     assert.match(atLimit.stderr, queueWarning(1500));
   });
 }
+
+// ---- item 4: the merged/closed branch cross-check ----------------------------------------------------
+
+// The cross-check yields no count, so neither the WARNING nor the floor clause of the Fetch limit rule fires for it:
+// a list that reached the cap says so with one `[pr]` info row, or older merged/closed branches go unchecked silently.
+const ITEM4_CAP_SENTENCE = 'When either list returns `{resolved-limit}` rows, merged/closed branches older than the oldest row fetched went unchecked — emit one `[pr]` info row saying so, naming the state and the cap.';
+
+test('item 4 says a merged/closed list that reached the cap leaves older branches unchecked', () => {
+  const start = REPO_WIDE.indexOf('4. **Merged/closed PRs with local remnants**');
+  assert.ok(start !== -1, 'item 4 not found');
+  const end = REPO_WIDE.indexOf('\n5. ', start);
+  assert.ok(end !== -1, 'item 5 not found');
+  const item4 = REPO_WIDE.slice(start, end);
+  const assertCapRow = (t) => assert.ok(t.includes(ITEM4_CAP_SENTENCE), 'item 4: the cap-reached `[pr]` info row sentence must be present');
+  assertCapRow(item4);
+  const mutated = item4.replace(ITEM4_CAP_SENTENCE, '');
+  assert.notEqual(mutated, item4);
+  assert.throws(() => assertCapRow(mutated), { message: /item 4: the cap-reached/ });
+  // A sentence that drops the state-and-cap naming is not the pinned one.
+  const vague = item4.replace(', naming the state and the cap.', '.');
+  assert.notEqual(vague, item4);
+  assert.throws(() => assertCapRow(vague), { message: /item 4: the cap-reached/ });
+});
 
 // ---- item 10: the unsettled-run join ---------------------------------------------------------------
 
@@ -254,14 +287,16 @@ const PR_QUALIFIER = '(the PR fetch hit backlog-fetch-limit — an older PR may 
 test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the PR-join cap', () => {
   const fence = fenceAfter(REPO_WIDE, '10. **Unsettled run**', 1);
   const labelled = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, updatedAt: hoursAgo(48) }));
-  const prs = (n) => Array.from({ length: n }, (_, i) => ({ number: 9000 + i, url: `https://example.test/pull/${9000 + i}`, closingIssuesReferences: [] }));
-  const run = (limit, labelledCount, prCount, fenceText = fence) => runFence(fenceText, {
+  // `gh pr list` returns newest first: every row but the last was created 1h ago, the last (the oldest fetched) `oldestHours` ago.
+  // The labelled rows are claimed 48h ago, so the default 1h oldest row postdates the claim and 72h predates it.
+  const prs = (n, oldestHours) => Array.from({ length: n }, (_, i) => ({ number: 9000 + i, url: `https://example.test/pull/${9000 + i}`, createdAt: hoursAgo(i === n - 1 ? oldestHours : 1), closingIssuesReferences: [] }));
+  const run = (limit, labelledCount, prCount, fenceText = fence, oldestHours = 1) => runFence(fenceText, {
     limit,
     env: { UNSETTLED_AGE: '24' },
     files: {
       'pr-scan-unsettled-claims.jsonl': '',
       'pr-scan-unsettled-labelled.json': labelled(labelledCount),
-      'pr-scan-unsettled-prs.json': prs(prCount),
+      'pr-scan-unsettled-prs.json': prs(prCount, oldestHours),
     },
   });
 
@@ -297,14 +332,39 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   };
   assertPrOnlyCapped(run(3, 1, 3));
 
+  // A capped PR fetch whose oldest row predates the claim already reached back past it, so a PR for the claim would
+  // have been fetched: the no-PR row is a real result, with no qualifier. Computed per candidate against its own claimedAt.
+  const assertCappedPredatesClaim = (r) => {
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stderr.includes('WARNING:'), `predates-claim: the labelled fetch is under the limit, so no warning: ${r.stderr}`);
+    assert.match(r.stdout, /no PR found \d+h after claim — resume:/, `predates-claim: the no-PR row must be unqualified: ${r.stdout}`);
+    assert.ok(!r.stdout.includes('(the PR fetch hit'), `predates-claim: a capped fetch reaching back past the claim carries no qualifier: ${r.stdout}`);
+  };
+  assertCappedPredatesClaim(run(3, 1, 3, fence, 72));
+
   // Go-red: a qualifier keyed on any count other than the PR count comes out wrong on that case.
-  const PR_CAPPED_LINE = 'const PR_CAPPED = prs.length >= LIMIT ?';
+  const PR_CAPPED_LINE = 'const PR_CAPPED = prs.length >= LIMIT;';
   assert.ok(fence.includes(PR_CAPPED_LINE), 'the PR_CAPPED line must be present to mutate');
   for (const wrong of ["require('$PR_SCAN_UNSETTLED_LABELLED').length", 'candidates.length']) {
-    const mutated = fence.replace(PR_CAPPED_LINE, `const PR_CAPPED = ${wrong} >= LIMIT ?`);
+    const mutated = fence.replace(PR_CAPPED_LINE, `const PR_CAPPED = ${wrong} >= LIMIT;`);
     assert.notEqual(mutated, fence);
     assert.throws(() => assertPrOnlyCapped(run(3, 1, 3, mutated)), { message: /PR-only cap/ }, `a qualifier keyed on ${wrong} must fail the PR-only case`);
   }
+
+  // Go-red: the qualifier must also depend on the oldest fetched PR's createdAt against the candidate's claimedAt.
+  const GATE = 'PR_CAPPED && OLDEST_PR > Date.parse(claimedAt) ?';
+  assert.ok(fence.includes(GATE), 'the createdAt/claimedAt gate must be present to mutate');
+  const noDate = fence.replace(GATE, 'PR_CAPPED ?');
+  assert.notEqual(noDate, fence);
+  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, noDate, 72)), { message: /predates-claim/ }, 'a qualifier with no createdAt check must fail the predates-claim case');
+  const reversed = fence.replace(GATE, 'PR_CAPPED && OLDEST_PR < Date.parse(claimedAt) ?');
+  assert.notEqual(reversed, fence);
+  assert.throws(() => assertPrOnlyCapped(run(3, 1, 3, reversed)), { message: /PR-only cap/ }, 'a reversed createdAt comparison must fail the PR-only case');
+  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, reversed, 72)), { message: /predates-claim/ }, 'a reversed createdAt comparison must fail the predates-claim case');
+  // The oldest row is the minimum createdAt, not the first or last row's: a fence reading the first (newest) row sees 1h ago.
+  const firstRow = fence.replace('Math.min(...prs.map((pr) => Date.parse(pr.createdAt)))', 'Date.parse(prs[0].createdAt)');
+  assert.notEqual(firstRow, fence);
+  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, firstRow, 72)), { message: /predates-claim/ }, 'reading the newest row instead of the oldest must fail the predates-claim case');
 });
 
 // ---- the gh stub itself ----------------------------------------------------------------------------
