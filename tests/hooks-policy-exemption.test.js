@@ -8,7 +8,7 @@
 // tests/hooks-pre-tool-use.test.js rather than imported across test files —
 // see the dispatch note on that convention.
 'use strict';
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -25,8 +25,19 @@ const { isPolicyOnlyCommit, POLICY_COMMIT_ALLOWLIST, isDeleteOnlyPush, DELETE_ON
 // already) — matches tests/hooks-git-exec.test.js's own override pattern.
 if (!process.env.CT_HOOKS_GIT_TIMEOUT_MS) process.env.CT_HOOKS_GIT_TIMEOUT_MS = '60000';
 
+// Every tmp root a test creates is registered here and removed once, after the
+// file's last test (a test that throws mid-body would otherwise leak its dir).
+const tmpRoots = [];
+after(() => {
+  for (const root of tmpRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function trackTmp(dir) {
+  tmpRoots.push(dir);
+  return dir;
+}
+
 function gitRepoWithCommit() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-'));
+  const dir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-')));
   execFileSync('git', ['-C', dir, 'init', '-q']);
   execFileSync('git', ['-C', dir, 'config', 'user.email', 'test@example.com']);
   execFileSync('git', ['-C', dir, 'config', 'user.name', 'Test']);
@@ -101,7 +112,7 @@ test('policy.yml SWAPPED for a symlink escaping elsewhere resolves to denied', (
   // Content matches so isWorktreeAlwaysOn still reads true through the
   // symlink — the only thing under test here is isPolicyFile's leaf-symlink
   // handling, not an accidental policy-off side effect from the swap.
-  const elsewhereDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-else-'));
+  const elsewhereDir = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-else-')));
   const elsewhere = path.join(elsewhereDir, 'elsewhere.yml');
   fs.writeFileSync(elsewhere, 'worktree-always: true\n');
   fs.unlinkSync(path.join(repo, '.claude-tweaks', 'policy.yml'));
@@ -219,7 +230,7 @@ test("#3900 AC1.1: git -C '<repo>' push origin --delete a && rm -rf x stays deni
 test('#3900 AC1.1: the -C target, not the cwd, is the repo — a delete-only push is allowed and a content push denied from an unrelated non-repo cwd', () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
-  const elsewhere = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-'));
+  const elsewhere = trackTmp(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-pe-elsewhere-')));
   const allowed = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin --delete feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
   assertAllowed(allowed);
   const denied = pre.run({ input: bashInput(`git -C ${shellQuote(repo)} push origin feature-x`, elsewhere), runDir: null, runState: null, cwd: elsewhere });
@@ -415,7 +426,7 @@ test('POLICY_COMMIT_ALLOWLIST matches exactly the admitted shapes', () => {
 // ─── git-spawn-failure fails closed ────────────────────────────────────────
 
 test('isPolicyOnlyCommit fails closed when git cannot answer (non-repo cwd)', () => {
-  const nonRepo = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-'));
+  const nonRepo = trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-polexempt-norepo-')));
   assert.strictEqual(isPolicyOnlyCommit('git commit -m x', nonRepo), false);
 });
 

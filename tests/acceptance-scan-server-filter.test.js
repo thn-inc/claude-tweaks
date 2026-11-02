@@ -203,7 +203,7 @@ test('oversight floor is not in the search string', () => {
   assert.ok(!hasOversightFloor('-label:demo:approved'));
 });
 
-test('searched fetches warn at the search ceiling, per date slice', () => {
+test('searched fetches cap at min(LIMIT, 1000) and drop the whole-fetch comparison', () => {
   assertClaimPinned(
     GAP,
     PRE_CHANGE_GAP_FETCH,

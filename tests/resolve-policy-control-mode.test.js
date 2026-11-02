@@ -59,6 +59,11 @@ function cliJson(policy, ...keys) {
 // which the CLI derives or special-cases after resolvePolicyKeys, so tests of
 // those keys must use cliJson().
 function json(policy, ...keys) {
+  for (const key of keys) {
+    if (['integration-model', 'merge-verification', 'model-profiles'].includes(key) || key.includes(',')) {
+      throw new Error(`json() cannot resolve ${key}: use cliJson() — the CLI derives or special-cases it after resolvePolicyKeys`);
+    }
+  }
   return JSON.parse(JSON.stringify(resolvePolicyKeys(keys, { policyRaw: policy === undefined ? null : policy, runConfigRaw: null })));
 }
 
@@ -73,6 +78,12 @@ test('the in-process json() helper matches the CLI JSON output', () => {
   ];
   for (const [policy, ...keys] of cases) {
     assert.deepStrictEqual(json(policy, ...keys), cliJson(policy, ...keys), `${JSON.stringify(policy)} ${keys.join(',')}`);
+  }
+});
+
+test('json() refuses keys the CLI derives or special-cases, and comma-joined keys', () => {
+  for (const k of ['integration-model', 'merge-verification', 'model-profiles', 'control-mode,autonomy']) {
+    assert.throws(() => json(undefined, k), /use cliJson\(\)/);
   }
 });
 
