@@ -222,7 +222,7 @@ function refusalDetail({ issue, verdict, prs, mainRoot }) {
   }
   return {
     prNumbers: subject.map((p) => p.number).filter(isPositiveInteger).sort((a, b) => a - b),
-    disposition: verdict.disposition === undefined ? null : verdict.disposition,
+    disposition: verdict.disposition ?? null,
     remedy,
     headRefName: only === null ? null : only.headRefName,
   };

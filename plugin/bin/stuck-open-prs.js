@@ -12,10 +12,11 @@
 // copied from the record, so the caller can rank the row and print its age. `pr` is the verdict's own PR
 // when it names one, else the linked-PR read's. When the check cannot run (exit 2 or 4 once the invocation
 // parsed) stdout is `{failed:{code, message}}` instead, so a caller that redirects it keeps the could-not-run
-// state in its file: a file without a `rows` array is a check that did not run, never an empty answer. A record renders no row
-// when it has no open closing PR, when a live claim holds it, when a live sibling session holds a record
-// the verdict refused, or when the verdict says a provably live run does; a read that failed is a row
-// whose remedy says so, never an absent one. Per record with an open PR, in this order, because the verdict
+// state in its file: a file without a `rows` array is a check that did not run, never an empty answer. A
+// record renders no row when it has no open closing PR, when a live claim holds it, when a live sibling
+// session holds a record the verdict refused, or when the verdict says a provably live run does; a read
+// that failed is a row whose remedy says so, never an absent one. Per record with an open PR, in this
+// order, because the verdict
 // can refuse a PR it cannot resume (foreign, bundled, a fork's, not a draft) before it reads either:
 //   1. the claim (a live one skips the record; a failed read is an unreadable row and the verdict never runs)
 //   2. the sibling session by `#N` token (the hit is held for step 3)

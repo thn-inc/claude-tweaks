@@ -26,10 +26,11 @@ function stuckCandidates(records) {
   return out;
 }
 
+const isPositiveInteger = (v) => Number.isInteger(v) && v > 0;
+
 // The PR a verdict is about: its own when it names one (an eligible verdict's `prNumber`, or the single
 // entry of a refusal's `prNumbers`), else null. The linked-PR read can list a fork's PR first, so the
 // row never takes its number from there when the verdict has one.
-const isPositiveInteger = (v) => Number.isInteger(v) && v > 0;
 function verdictPr(verdict) {
   if (verdict.eligible === true) return isPositiveInteger(verdict.prNumber) ? verdict.prNumber : null;
   return Array.isArray(verdict.prNumbers) && verdict.prNumbers.length === 1 && isPositiveInteger(verdict.prNumbers[0])
