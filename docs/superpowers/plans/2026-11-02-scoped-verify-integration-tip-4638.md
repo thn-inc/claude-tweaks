@@ -2,60 +2,63 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A scoped verify run with `--integration-branch` at the integration tip runs the suites its changed paths map to, instead of excluding them all as "identical to the tip" and stamping `verifiedHead: true` from zero suites.
+**Goal:** Merge narrowing never leaves a scoped verify with zero suites over a delta whose paths map to at least one suite, and a run at the integration tip runs the suites its changed paths map to.
 
-**Architecture:** `mergeNarrowing` trusts merged-in files on the premise that `{ref}`'s tip passed its own CI. That premise only means something when the branch has work of its own to set against `{ref}`. With nothing of its own, `{ref}`'s tip vouches for itself. The function declines (returns `null`, its documented over-verifying fallback) in exactly that case, so `verify.js` needs no change: `narrowing` is `null`, the full `anchor..HEAD` set reaches `selectScope`, and the suites run.
+**Architecture:** Two guards. `mergeNarrowing` declines when HEAD has no commit ahead of `{ref}`, because `{ref}`'s tip would otherwise vouch for itself (this also covers a dirty tree at the tip, which an outcome check alone would not). `verify.js` then checks the outcome: when the narrowed set selects no suite, it drops the narrowing and re-selects over the full `anchor..HEAD` set. A delta whose paths map to no suite still selects `none` over the full set and still stamps, which is the bookkeeping exemption.
 
 **Tech Stack:** Node 18+, `node --test`, git plumbing through the injectable `execImpl` seam.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T105933-record-4638/work/4638-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T204655-record-4638/work/4638-spec.md`. Its `## Plan Review Decisions` section overrides the Acceptance Criterion where they conflict: Reading A on scope, Reading B on bookkeeping-only deltas.
 
 ## Global Constraints
 
 - Acceptance criterion, verbatim: "A scoped run at the integration tip runs the suites its changed paths map to, or reports that it verified nothing; it never stamps verifiedHead from zero suites over a non-empty delta."
-- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`.
-- `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A seam whose calls are *probes* runs quiet" — every new git call goes through the existing `tryGit(execImpl, …)`.
+- Decision, verbatim: "\"Never\" is universal: any narrowing that leaves zero suites over a non-empty delta declines or does not stamp."
+- Decision, verbatim: "They are exempt: \"the suites its changed paths map to\" being none is a legitimate zero, and `none` still stamps."
+- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`. End each commit message with `Claude-Session: https://claude.ai/code/session_017vXcAcBQg1Wk6xJwTFGwNm`.
+- `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A seam whose calls are *probes* runs quiet" — the new git read goes through the existing `tryGit(execImpl, …)`.
 - `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A module that parses git's output pins that output's format against the user's and the repo's git config." The new read is `rev-list --count`, a bare integer no diff or color config rewrites.
 - `changed-files.js`'s own header rule, quoted: "the fallback over-verifies, never under-verifies." A failed read in the new guard returns `null`, never a narrowed set.
-- Path-containment and spawn scans: `tests/path-guard-conformance.test.js` and `tests/windows-hide-spawn-conformance.test.js` run with this task's focused tests. The change adds no `fs` call and no direct spawn.
+- The change adds no `fs` call and no direct spawn, so `tests/path-guard-conformance.test.js` and `tests/windows-hide-spawn-conformance.test.js` stay as they are; they run with this task's focused tests.
 - No `git stash` in any form.
 
 ## Review Focus
 
 Each line is pinned by a named test in Task 1.
 
-1. HEAD is the integration tip and the tree is dirty: the dirty path must not license excluding everything else. Expected `null`. Test: `AC1.1: at the tip with a dirty tree narrowing still declines`.
-2. HEAD sits on the integration line behind its tip: no commit of its own, so `{ref}` cannot vouch for it. Expected `null`. Test: `AC1.1: behind the tip on the integration line narrowing declines`.
-3. A no-ff merge commit whose tree equals `{ref}`, no own work, clean: not an ancestor of `{ref}`, but still self-vouching. Expected `null`. Test: `AC1.2: a merge-only branch with nothing of its own declines`.
-4. A branch with real own work and a `--theirs` conflict resolution: tree equals `{ref}`, yet it must keep narrowing (#3072 Important 2). The existing test at `changed-files.test.js` "a conflict resolved in the integration branch's favour" stays green, unedited.
-5. The count read fails: never reads as "ahead of ref". Expected `null`. Test: `a failing ahead-count read degrades to null`.
+1. HEAD is the integration tip and the tree is dirty on a mapped path: the dirty path selects a suite, so only the `mergeNarrowing` guard stops it excluding everything else. Test: `AC1.1: at the tip with a dirty tree narrowing still declines`.
+2. A pre-anchor commit of the branch's own, then an anchor, then a merge: `own` is non-empty but shares no path with the changed set. Test: `AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites`.
+3. One commit past the tip touching only a bookkeeping path. Test: `AC1.3: a bookkeeping commit past a merge does not hide the merged-in paths`.
+4. The narrowed set selects only static checks (`static-only`, zero suites), which a guard keyed on `mode === 'none'` would miss. Test: `AC1.3: a static-only narrowed set also declines`.
+5. A delta that is bookkeeping on both sides of the merge stays exempt. Test: `AC1.4: a bookkeeping-only delta still stamps none, unnarrowed`.
 
 ---
 
-### Task 1: Decline merge narrowing when the branch has nothing of its own
+### Task 1: Never let merge narrowing produce a zero-suite stamp
 
 **Review risk:** high
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/bin/lib/verify/changed-files.js:165-205`
+- Modify: `plugin/bin/lib/verify/changed-files.js:165-192`
+- Modify: `plugin/bin/verify.js:602-632`
 - Test: `tests/bin-lib/verify/changed-files.test.js`
 - Test: `tests/bin-lib/verify/cli.test.js`
 - Modify: `plugin/skills/test/verification.md:94`
 - Modify: `docs/plugin-structure.md:58`
-- Modify: `docs/plugin-structure.md:194`
+- Modify: `docs/plugin-structure.md:195`
 
 `Waived docs/journeys/run-a-deterministic-verification-check.md: Common Step 6 (/claude-tweaks:journeys) owns journey edits; its step 14 "Should understand" and "Red flags" lines need the new decline rule.`
 
-`verify.js` is a consumer that needs no edit: line 611 assigns `narrowing`, a `null` already means "use the unnarrowed set", and line 1029 reports it as `mergeNarrowing: null`. `mergeNarrowing` has one production caller (`git grep -n "mergeNarrowing(" -- plugin` lists only `plugin/bin/verify.js:611` and the definition).
+`mergeNarrowing` has one production caller. `git grep -n "mergeNarrowing(" -- plugin` lists `plugin/bin/verify.js:611` and the definition.
 
 **Interfaces:**
-- Consumes: `tryGit`, `preferOriginRef`, `parseNameOnlyZ` in `changed-files.js`.
-- Produces: `mergeNarrowing({ anchor, integrationBranch, files, execImpl })` keeps its signature and return shape; it returns `null` in the two new cases below.
+- Consumes: `tryGit`, `preferOriginRef` in `changed-files.js`; `selectScope` through the existing `select` closure in `verify.js`, which reads the outer `files` and `statuses` bindings on each call.
+- Produces: `mergeNarrowing({ anchor, integrationBranch, files, execImpl })` keeps its signature and return shape, and also returns `null` when HEAD has no commit ahead of `{ref}`.
 
 - [ ] **Step 1: Write the failing tests**
 
-In `tests/bin-lib/verify/changed-files.test.js`, after the `#3072 Important 2` test, add the tests below. `tipRepo` builds the shape behind the incident: the anchor on the integration line, then a real merge landing on that line, then `feat` fast-forwarded onto it.
+In `tests/bin-lib/verify/changed-files.test.js`, after the `#3072 Important 2` test:
 
 ```js
 // #4638: the anchor is on trunk's line; a side branch merges into trunk with a
@@ -95,13 +98,6 @@ test('AC1.1: behind the tip on the integration line narrowing declines (#4638)',
   assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
 });
 
-test('AC1.2: a merge-only branch with nothing of its own declines (#4638)', () => {
-  const r = mergeRepo();
-  mergeTrunkWith(r, [['ui/a.js', 'a']]);
-  const files = changedSince(r, r.anchor);
-  assert.strictEqual(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), null);
-});
-
 test('a failing ahead-count read degrades to null (#4638)', () => {
   const r = mergeRepo();
   mergeTrunkWith(r, [['ui/a.js', 'a']]);
@@ -116,17 +112,32 @@ test('a failing ahead-count read degrades to null (#4638)', () => {
 });
 ```
 
-Re-point two existing failure-path fixtures, or the new final guard makes them pass without reaching the read they exist to test. In `a failing working-tree status read degrades to null` and `a failing anchor merge-base or pre-anchor diff degrades to null`, add `r.commit('src/own.py', 'own');` straight after `mergeTrunkWith(...)`. Add this control as the last line of the status test:
+In `tests/bin-lib/verify/cli.test.js`, after the `#3072 AC3` test. `runScoped` and the rule set are local to these tests; `mergedScopedRepo`, `anchorFullPass`, `mergeTrunk`, `commitFile`, `stampOf` and `runCli` already exist in that file.
 
 ```js
-  assert.ok(mergeNarrowing({ anchor: r.anchor, integrationBranch: 'trunk', files, execImpl: r.exec }), 'control: the same repo narrows when git succeeds');
-```
+// #4638: mergedScopedRepo's rules plus a bookkeeping path (no suite, no static)
+// and a static-only path (no suite, static).
+function zeroSuiteRepo() {
+  const r = scopedRepo([
+    { match: 'src/**', suites: ['unit'], static: true },
+    { match: 'ui/**', suites: ['other'], static: true },
+    { match: 'docs/**', suites: [] },
+    { match: 'cfg/**', suites: [], static: true },
+  ]);
+  const trunk = r.branch;
+  r.git('checkout', '-q', '-b', 'feat');
+  return { ...r, trunk };
+}
 
-In `tests/bin-lib/verify/cli.test.js`, after the `#3072 AC3` test, add the end-to-end regression. It uses the `mergedScopedRepo`, `anchorFullPass`, `commitFile`, `stampOf` and `runCli` helpers already in that file. `r.marker` is the file `unitCmd` writes, and `anchorFullPass` deletes it after the anchor run.
+async function runScoped(r) {
+  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0', '--cmd', 'types=node -e 0', '--cmd', 'lint=node -e 0'], { cwd: r.repo });
+  assert.strictEqual(run.code, 0, run.stderr);
+  const stamp = stampOf(r.gitDir);
+  return { run, stamp, report: JSON.parse(fs.readFileSync(stamp.reportPath, 'utf8')) };
+}
 
-```js
-test('--scope --integration-branch: at the integration tip the changed paths run their suites, never a zero-suite stamp (#4638 AC1.1, AC1.2)', async () => {
-  const r = mergedScopedRepo();
+test('--scope --integration-branch: AC1.1, AC1.2: at the integration tip the changed paths run their suites, never a zero-suite stamp (#4638)', async () => {
+  const r = zeroSuiteRepo();
   await anchorFullPass(r);
   r.git('checkout', '-q', r.trunk);
   r.git('checkout', '-q', '-b', 'side');
@@ -135,71 +146,147 @@ test('--scope --integration-branch: at the integration tip the changed paths run
   r.git('merge', '-q', '--no-ff', '--no-edit', 'side');
   r.git('checkout', '-q', 'feat');
   r.git('merge', '-q', '--ff-only', r.trunk);
-  const run = await runCli(['--scope', r.declPath, '--integration-branch', r.trunk, '--cmd', `unit=${r.unitCmd}`, '--cmd', 'other=node -e 0'], { cwd: r.repo });
-  assert.strictEqual(run.code, 0, run.stderr);
+  const { run, stamp, report } = await runScoped(r);
   assert.doesNotMatch(run.stdout, /merge-narrowed/);
   assert.doesNotMatch(run.stdout, /still-verified/);
   assert.match(run.stdout, /^Scope: scoped — 1 changed file\(s\) since/m);
   assert.ok(fs.existsSync(r.marker), 'the unit suite must actually have run');
-  const s = stampOf(r.gitDir);
-  assert.deepStrictEqual(s.suitesRun, ['unit']);
-  const report = JSON.parse(fs.readFileSync(s.reportPath, 'utf8'));
+  assert.deepStrictEqual(stamp.suitesRun, ['unit']);
   assert.strictEqual(report.scope.mergeNarrowing, null);
   assert.deepStrictEqual(report.scope.changedFiles, ['src/merged.js']);
+});
+
+test('--scope --integration-branch: AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  commitFile(r, 'src/pre.js', 'pre');
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js']);
+  const { run, stamp, report } = await runScoped(r);
+  assert.doesNotMatch(run.stdout, /still-verified/);
+  assert.deepStrictEqual(stamp.suitesRun, ['other']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
+});
+
+test('--scope --integration-branch: AC1.3: a merge with nothing of its own never stamps from zero suites (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js']);
+  const { stamp, report } = await runScoped(r);
+  assert.deepStrictEqual(stamp.suitesRun, ['other']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: AC1.3: a bookkeeping commit past a merge does not hide the merged-in paths (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js']);
+  commitFile(r, 'docs/a.md', 'docs');
+  const { run, stamp, report } = await runScoped(r);
+  assert.doesNotMatch(run.stdout, /still-verified/);
+  assert.deepStrictEqual(stamp.suitesRun, ['other']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.changedFiles, ['docs/a.md', 'ui/a.js']);
+});
+
+test('--scope --integration-branch: AC1.3: a static-only narrowed set also declines (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js']);
+  commitFile(r, 'cfg/a.json', '{}');
+  const { stamp, report } = await runScoped(r);
+  assert.deepStrictEqual(stamp.suitesRun, ['other']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: AC1.4: a bookkeeping-only delta still stamps none, unnarrowed (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['docs/b.md']);
+  commitFile(r, 'docs/a.md', 'docs');
+  const { run, stamp, report } = await runScoped(r);
+  assert.match(run.stdout, /^Scope: none — 2 changed file\(s\) since/m);
+  assert.match(run.stdout, /still-verified: bookkeeping-only delta \(docs\/a\.md, docs\/b\.md\)/);
+  assert.strictEqual(stamp.scope, 'none');
+  assert.deepStrictEqual(stamp.suitesRun, []);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+});
+
+test('--scope --integration-branch: AC1.3: narrowing that leaves a suite still narrows (#3072 stays) (#4638)', async () => {
+  const r = zeroSuiteRepo();
+  await anchorFullPass(r);
+  mergeTrunk(r, ['ui/a.js']);
+  commitFile(r, 'src/own.js', 'own');
+  const { run, stamp, report } = await runScoped(r);
+  assert.match(run.stdout, /^merge-narrowed: 1 merge-identical path\(s\) excluded/m);
+  assert.deepStrictEqual(stamp.suitesRun, ['unit']);
+  assert.deepStrictEqual(report.scope.mergeNarrowing.excludedFiles, ['ui/a.js']);
 });
 ```
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js`
-Expected: FAIL. The `AC1.1` and `AC1.2` tests fail because `mergeNarrowing` returns a narrowed object, and the CLI test fails on `/merge-narrowed/`. This appends to two already-passing files, so plan-audit reports it as append-shaped. `a failing ahead-count read` passes at this step, because no such read exists yet; it goes red only under the mutation in Step 5.
+Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. The CLI `AC1.1`, `AC1.3` zero-suite and `AC1.4` tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. Two pass at this step, because they pin behavior that must survive: `a failing ahead-count read` goes red only under Step 5's mutation, and `narrowing that leaves a suite still narrows` holds before and after. This appends to two already-passing files, so plan-audit reports it as append-shaped.
 
-- [ ] **Step 3: Implement the two declines in `mergeNarrowing`**
+- [ ] **Step 3: Implement both guards**
 
-Keep the signature. Add two guards:
+In `plugin/bin/lib/verify/changed-files.js`, after `if (!hasMergedRef) return null;` and before the `differs` read:
 
-1. After `if (!hasMergedRef) return null;` and before the `differs` read:
-   ```js
-   const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
-   if (ahead === null || ahead.trim() === '0') return null;
-   ```
-   A `rev-list --count` read rather than `merge-base --is-ancestor`, because `tryGit` flattens the latter's "no" and "could not run" into the same `null`, and this guard must fail toward not narrowing.
-2. After the `ownAsOfAnchor` loop and before `const excluded = …`: `if (own.size === 0) return null;`.
+```js
+const ahead = tryGit(execImpl, ['rev-list', '--count', '--end-of-options', `${ref}..HEAD`]);
+if (ahead === null || ahead.trim() === '0') return null;
+```
 
-Extend the block comment above the function with: "Narrowing declines (#4638) when the branch has nothing of its own to set against {ref} — HEAD has no commit ahead of {ref}, or the own set came out empty. {ref}'s tip would then vouch for itself, and the premise that it passed its own CI is exactly what the run is there to check: at 844e0d7eb this excluded all 298 changed paths and stamped a zero-suite pass."
+A `rev-list --count` read rather than `merge-base --is-ancestor`, because `tryGit` flattens the latter's "no" and "could not run" into the same `null`, and this guard must fail toward not narrowing. Extend the block comment above the function with: "Narrowing declines (#4638) when HEAD has no commit ahead of {ref}: {ref}'s tip would then vouch for itself, and the premise that it passed its own CI is exactly what the run is there to check. At 844e0d7eb this excluded all 298 changed paths and stamped a zero-suite pass. verify.js also drops a narrowing whose result selects no suite."
+
+In `plugin/bin/verify.js`, capture the full set before the `parsed.integrationBranch && anchorSha` narrowing block (`const unnarrowed = { files, statuses };`). Right after `sel = select(impactCtx);`, before the impact-subset block, add the outcome guard:
+
+```js
+// #4638: narrowing never earns a zero-suite stamp. Re-select over the full set;
+// a delta whose paths map to no suite still reads none there and still stamps.
+if (narrowing && sel.suites.length === 0) {
+  ({ files, statuses } = unnarrowed);
+  narrowing = null;
+  sel = select(impactCtx);
+}
+```
+
+`sel.suites` is either an array or the string `'*'`, whose length is 1, so `length === 0` means zero suites in every mode, `static-only` included.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/test-skill-affected-conformance.test.js`
-Expected: PASS, including every pre-existing `#3072` test, with no `#3072` assertion edited.
+Expected: PASS, including every pre-existing `#3072` test with no `#3072` assertion edited.
 
-- [ ] **Step 5: Prove each guard and each re-pointed downstream test can go red**
+- [ ] **Step 5: Prove each guard can go red**
 
-In a scratch checkout, per the dispatch instructions. Each mutation is applied alone, and the named test must fail:
+In a scratch copy of the two source files (never `git stash`), or by editing and restoring with `git show HEAD:{path}`, apply each mutation alone. The named test must fail:
 
-| Mutation to `changed-files.js` | Test that must fail |
+| Mutation | Test that must fail |
 |---|---|
-| Delete the `ahead.trim() === '0'` clause | `AC1.1: at the tip with a dirty tree narrowing still declines`, `AC1.1: behind the tip on the integration line narrowing declines` |
+| Delete the `ahead.trim() === '0'` clause | `AC1.1: at the tip with a dirty tree narrowing still declines` |
 | Delete the `ahead === null` clause | `a failing ahead-count read degrades to null` |
-| Delete `if (own.size === 0) return null;` | `AC1.2: a merge-only branch with nothing of its own declines` |
-| Delete both guards | `--scope --integration-branch: at the integration tip the changed paths run their suites` |
-| Delete the `status === null` return | `a failing working-tree status read degrades to null` |
-| Delete the `mb === null` return | `a failing anchor merge-base or pre-anchor diff degrades to null` |
-| Delete the `ownAsOfAnchor === null` return | `a failing anchor merge-base or pre-anchor diff degrades to null` |
+| Delete the `verify.js` outcome guard | `AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites` |
+| Change the guard's condition to `sel.mode === 'none'` | `AC1.3: a static-only narrowed set also declines` |
+| Make the guard always fire when `narrowing` is set | `AC1.3: narrowing that leaves a suite still narrows` |
+| Restore only `files`, not `statuses`, in the guard | none expected on this fixture: `statuses` is `null` without an `impact` block; report it as a known survivor |
 
-Report each mutation's result. A surviving mutant is a finding, not a pass. The clean HEAD-at-tip test alone does not separate the two guards, since either one declines there; the dirty and behind-tip tests are what isolate the first, and the merge-only test isolates the second.
+The new `ahead` guard sits ahead of the `differs`, `status` and `mb` reads. Their existing failure-path tests still reach them, because `mergeTrunkWith`'s merge commit is one commit ahead of trunk. Prove that: delete the `status === null` return and confirm `a failing working-tree status read degrades to null` fails, and delete the `mb === null` return and confirm `a failing anchor merge-base or pre-anchor diff degrades to null` fails.
+
+Report each mutation's result. A surviving mutant other than the one named above is a finding, not a pass.
 
 - [ ] **Step 6: Update the prose that describes the old behavior**
 
-In `plugin/skills/test/verification.md:94`, insert this sentence directly after the sentence ending "(e.g. a merge conflict resolved in `{ref}`'s favour).":
+In `plugin/skills/test/verification.md:94`, insert directly after the sentence ending "(e.g. a merge conflict resolved in `{ref}`'s favour).":
 
-"Narrowing also needs something of the branch's own to set against `{ref}`: when HEAD has no commit ahead of `{ref}` — the integration tip itself, or behind it on that line — or the branch's own set comes out empty, it declines and every changed path selects its suites as usual, since `{ref}`'s tip would otherwise vouch for itself (#4638)."
+"Narrowing declines when HEAD has no commit ahead of `{ref}` (the integration tip itself, or behind it on that line), and the runner drops it when the narrowed set selects no suite: `{ref}`'s tip must not vouch for itself, and narrowing never earns a zero-suite stamp. A delta whose paths map to no suite at all still selects `none` over the full set and still stamps (#4638)."
 
 In the same paragraph, change "`null` when no qualifying merge was found" to "`null` when no qualifying merge was found or narrowing declined".
 
-In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref or the branch's own set is empty (#4638) —". In `docs/plugin-structure.md:194`, change "null when no qualifying merge)" to "null when no qualifying merge, or when HEAD has no commit ahead of that branch or nothing of its own (#4638))".
+In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref (#4638) —". In `docs/plugin-structure.md:195`, change "null when no qualifying merge)" to "null when no qualifying merge or when narrowing declined — HEAD has no commit ahead of that branch, or the narrowed set selects no suite, #4638)".
 
-Headroom: `verification.md` is 42,277 B against the 52,500 B rail; this adds about 300 B.
+Headroom: `verification.md` is about 42,300 B against the 52,500 B rail; this adds about 350 B.
 
 - [ ] **Step 7: Run the affected suites**
 
@@ -209,6 +296,6 @@ Expected: PASS.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugin/bin/lib/verify/changed-files.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
-git commit -m "Decline merge narrowing when the branch has nothing of its own — refs #4638"
+git add plugin/bin/lib/verify/changed-files.js plugin/bin/verify.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
+git commit -m "Keep merge narrowing from earning a zero-suite stamp — refs #4638"
 ```
