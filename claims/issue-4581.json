@@ -1,7 +1,7 @@
 {
+  "released": true,
   "runId": "2026-11-01T182321-spec-4581",
-  "sessionId": "e54a63ff-3c8c-4beb-8436-4a87d641fa01",
-  "claimedAt": "2026-11-01T18:26:25.630Z",
-  "ttlHours": 72,
-  "host": "Thomass-MacBook-Pro-3376.local"
+  "reason": "pr-opened: spec 4581",
+  "releasedAt": "2026-11-02T05:54:43.604Z",
+  "link": "https://github.com/thn-inc/claude-tweaks/pull/4844"
 }
