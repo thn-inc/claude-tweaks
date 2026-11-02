@@ -148,8 +148,10 @@ const DISPOSITION_FACTS = [
   { name: 'matched row is scoped to the dispatch form', pin: 'runs the verdict only when the printed `resume` is `/claude-tweaks:dispatch resume #{n}`' },
   { name: 'a PR body resume line stands', pin: "a PR body's own resume line stands, with no verdict run" },
   { name: 'matched row exit 0 keeps the command', pin: 'exit 0 keeps the printed command' },
-  { name: 'matched row no-pr resolves', pin: 'render `Resolve open PR #{number} ({url}) before any release` instead' },
-  { name: 'matched row replaced rendering', pin: 'renders `PR #{number} ({url}): {disposition} — {remedy}` in place of the Resume rendering' },
+  { name: 'dispatch form runs the same command', pin: 'For the dispatch form, run the same command' },
+  { name: 'matched row no-pr resolves', pin: 'on exit 3 with reason `no-pr` render `Resolve open PR #{number} ({url}) before any release` instead' },
+  { name: 'matched row replaced rendering', pin: 'any other exit 3 renders `PR #{number}: {disposition} — dispatch-resume.js --issue {n} prints the steps` in place of the Resume rendering' },
+  { name: 'intro scopes the matched rows to the dispatch form', pin: 'for each one `stale-claim-pr.js` matched with the dispatch-resume command printed as `resume`' },
   { name: 'matched row failed read keeps the command', pin: 'on exit 2 or 4 it keeps the command and appends the same unknown note' },
   { name: 'matched row stays never staged', pin: 'That row stays never staged and its claim never released' },
   { name: 'stale claim reads resumable', pin: 'the same as the `swept: stale claim` tombstone the Release writes' },
@@ -179,6 +181,30 @@ for (const fact of DISPOSITION_FACTS) {
     const mutated = stripFact(BACKSTOPS, fact);
     assert.notEqual(mutated, BACKSTOPS, 'the strip matched something');
     assert.deepEqual(missingDispositionFacts(mutated), [fact.name]);
+  });
+}
+
+// A rewrite of a guard condition, not a deletion: each `from` sits inside its fact's pinned phrase and is
+// unique at its first occurrence in the section, so replacing it changes exactly that fact's string.
+const DISPOSITION_REWRITES = [
+  { fact: 'matched row no-pr resolves', from: 'exit 3 with reason `no-pr` render', to: 'exit 3 with reason refused render' },
+  { fact: 'matched row no-pr resolves', from: 'on exit 3 with reason `no-pr` render', to: 'render' },
+  { fact: 'matched row replaced rendering', from: 'any other exit 3 renders', to: 'exit 3 renders' },
+  { fact: 'matched row replaced rendering', from: 'any other exit 3 renders', to: 'exit 0 renders' },
+  { fact: 'dispatch form runs the same command', from: 'For the dispatch form, run', to: 'For either form, run' },
+  { fact: 'intro scopes the matched rows to the dispatch form', from: 'the dispatch-resume command printed as `resume`', to: 'a printed resume command' },
+  { fact: 'matched row exit 0 keeps the command', from: 'exit 0 keeps the printed command', to: 'exit 3 keeps the printed command' },
+  { fact: 'matched row failed read keeps the command', from: 'it keeps the command and appends', to: 'it drops the command and appends' },
+];
+
+for (const { fact, from, to } of DISPOSITION_REWRITES) {
+  test(`AC4.1 control: rewriting "${from}" to "${to}" reports exactly "${fact}" (#4849)`, () => {
+    const section = dispositionSection(BACKSTOPS);
+    const flatSection = section.replace(/\s+/g, ' ');
+    assert.ok(flatSection.includes(from), 'the rewrite target is in the section');
+    const mutated = BACKSTOPS.replace(section, flatSection.replace(from, to));
+    assert.notEqual(mutated, BACKSTOPS);
+    assert.deepEqual(missingDispositionFacts(mutated), [fact]);
   });
 }
 
@@ -214,12 +240,25 @@ test('AC4.1 control: the old plain-Release sentence alone is reported as the old
   assert.deepEqual(handoffProblems(mutated), ['old sentence']);
 });
 
-// A staged claim-releases row's action stays the short form so the Approve item passes the Width gate;
-// a close remedy never fits a `command` line (its worktree path alone runs past 100 characters).
+// A staged claim-releases row's action states the disposition in a short form so the Approve item passes
+// the Width gate; the whole remedy runs about 360 characters, past the 100-character gate on one `command`
+// line. The four forms are the rulings of the #4849 fix round.
 const STAGED_FACTS = [
-  { name: 'short form only', pin: "`claim-releases` row's `action` carries only the short form `PR #{number}: {disposition}`" },
-  { name: 'full remedy stays in the finding', pin: "the full remedy stays in the finding's `{recommendation}`" },
-  { name: 'command stays the release mutation', pin: 'which stays the release mutation' },
+  { name: 'one-PR action', pin: "`claim-releases` row's `action` reads `Release claim; PR #{number} disposition: {disposition}` for one open PR" },
+  { name: 'several-PR action', pin: '`Release claim; {k} open PRs, disposition: {disposition}` for several (no `#` refs)' },
+  { name: 'unknown-PR action', pin: '`Release claim; open linked PR unknown (dispatch-resume exit {code})` after exit 2 or 4' },
+  { name: 'no-pr action', pin: 'and the plain release action for `no-pr`' },
+  { name: 'remedy stays off command', pin: "The full remedy stays in the finding's `{recommendation}` and in the staged `.md` body, never in `command`, which stays the release mutation" },
+];
+const STAGED_REWRITES = [
+  { fact: 'remedy stays off command', from: 'never in `command`', to: 'also in `command`' },
+  { fact: 'remedy stays off command', from: ' and in the staged `.md` body', to: '' },
+  { fact: 'remedy stays off command', from: 'which stays the release mutation', to: 'which carries the remedy' },
+  { fact: 'one-PR action', from: 'for one open PR', to: 'for several open PRs' },
+  { fact: 'one-PR action', from: 'disposition: {disposition}` for one', to: 'disposition: {remedy}` for one' },
+  { fact: 'several-PR action', from: 'for several (no `#` refs)', to: 'for several (with `#` refs)' },
+  { fact: 'unknown-PR action', from: 'after exit 2 or 4', to: 'after exit 3' },
+  { fact: 'no-pr action', from: 'for `no-pr`', to: 'for `close`' },
 ];
 const STAGED_BANNED = /`claim-releases`[^.]*verbatim/;
 
@@ -229,7 +268,7 @@ function stagedProblems(flat) {
   return problems;
 }
 
-test('AC4.1: a staged claim-releases row carries the short disposition and keeps the remedy off command (#4849)', () => {
+test('AC4.1: a staged claim-releases row states its disposition in short form and keeps the remedy off command (#4849)', () => {
   assert.deepEqual(stagedProblems(STEP6.replace(/\s+/g, ' ')), []);
 });
 
@@ -239,6 +278,16 @@ for (const fact of STAGED_FACTS) {
     const mutated = flat.replace(fact.pin, '');
     assert.notEqual(mutated, flat);
     assert.deepEqual(stagedProblems(mutated), [fact.name]);
+  });
+}
+
+for (const { fact, from, to } of STAGED_REWRITES) {
+  test(`AC4.1 control: step-6-auto rewriting "${from}" to "${to}" reports exactly "${fact}" (#4849)`, () => {
+    const flat = STEP6.replace(/\s+/g, ' ');
+    assert.ok(flat.includes(from), 'the rewrite target is in step-6-auto.md');
+    const mutated = flat.replace(from, to);
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(stagedProblems(mutated), [fact]);
   });
 }
 
