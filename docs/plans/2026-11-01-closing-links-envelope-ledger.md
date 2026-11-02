@@ -2,9 +2,9 @@
 
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
-| 1 | build | SDD ruling — post-merge.js header drops "2 malformed invocation" (core never returns exit 2): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 2 | build | SDD ruling — reconcile-checks.md transient-failure paragraph drops "Exits 2 (malformed invocation)": ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
-| 3 | build | SDD ruling — unpinned pre-merge gh pr view field list fixed now (targeted test 0699c14dc), not deferred: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 1 | build | SDD ruling — post-merge.js header drops "2 malformed invocation" (core never returns exit 2): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — the core takes parsed options and can never return exit 2, so the header clause is dropped; folded into Task 2's brief |
+| 2 | build | SDD ruling — reconcile-checks.md transient-failure paragraph drops "Exits 2 (malformed invocation)": ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — consistent with the pre-flight header ruling, the core never returns exit 2, so the docs clause is dropped |
+| 3 | build | SDD ruling — unpinned pre-merge gh pr view field list fixed now (targeted test 0699c14dc), not deferred: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — fails the deferral gate (closing-links.js is in this diff and the fix is one localized test), so the pre-merge field-list test stays |
 | 4 | build/skill | gh-api-module-pattern extended: an in-process caller consumes a CLI module's exported core (an object return) rather than driving run(argv) and parsing stdout; cli-wrapper-contract.md:44 headline updated in this build (#4781) | observation | — |
 | 5 | review/convention | low — .claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:44 documents only the in-process-caller side; nothing says how a second CLI builds a core that returns an object | fixed | Added a core-versus-printer bullet after line 44 (9a9629063). |
 | 6 | review/convention | low — plugin/bin/lib/reconcile/post-merge.js:289 keeps the seam name closingLinksRun although it now injects the closingLinks core | fixed | Renamed to deps.closingLinks in post-merge.js and every post-merge.test.js fake (9a9629063). |
