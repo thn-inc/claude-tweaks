@@ -51,8 +51,9 @@ Step 4.0b entry also differs, as its bullet and the paragraphs after this list s
 returns to `verification-brief.md`'s **Posting it alone** and posts this sub-issue's Try it block
 (with any end-to-end variant appended to `"$TRY_IT"`). The one exception is the fail-open fallback
 below, which hands this record to the no-parent path, so the block lands where that path's
-Oversight-floor gate puts it: embedded in the record's own brief (Step 4's template) when it clears
-the floor, posted alone (**Posting it alone**) when it does not. The parent-side
+Oversight-floor gate puts it: the Test guide of the record's own packet
+(`_shared/acceptance-packet.md`). That path posts a packet on either side of the floor, with the
+pending label only above it. The parent-side
 (`/claude-tweaks:tidy`) entry does not post one, and neither does the post-merge
 `_shared/pr-first-merge-post-merge.md` Step 4.0b entry: it posts no Try it block and appends
 nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already posted its own.
@@ -534,7 +535,49 @@ Where no register exists (fewer than 4 sub-issues — the threshold that was the
 `promise-register-min-leaves` policy lever until its retirement in #331; removal trail:
 `_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it above.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
 
-Render the same `## Verification Brief` template Step 4 (`verification-brief.md`) renders, with:
+```markdown
+## Verification Brief
+
+### The ask
+{condensed vision/why — the record's problem statement, not just the Acceptance Criteria
+checklist; a human returning days later needs to remember *why*, not just *what to check*}
+
+### What shipped
+{one-paragraph summary from the record body + diff}
+
+{the Try it block composed in **Try it block** above — re-run the **Try it block** resolve line, read the file at the path `$TRY_IT` names, and insert its content verbatim, its own `### Try it` heading included}
+
+### Confirmed
+{app-route/rendered-page, walk completed:}
+Visual review walked {journey/page name} — {clean | "found and fixed: {N} issues — {one line each}"}.
+
+{screenshot embeds from above, 1-3}
+
+{app-route/rendered-page, browser unavailable:}
+_Visual verification wasn't available in this environment._
+
+{diff/rationale, same shape as cli/flow/diff below}
+
+{cli/flow/diff:}
+Code review: {spec-compliance verdict}. {key quality notes, 1-2 lines}
+
+{diff, embedded in full or bounded to key hunks per Step 3}
+
+### Observation plan
+- Surface: {rendered-page | app-route | cli | flow | diff}
+- Entry point: {from Step 2}
+- Prepare: {command sub-bullets, or none}
+- Inspect: {pointer sub-bullets — flow pointers may carry an indented Regenerate: line}
+
+{this section's content follows `skills/_shared/observation-plan.md`'s schema and grammar; it is
+always present on a sub-issue brief — a parent brief omits it (Parent-Gate Procedure)}
+
+---
+
+_Posted by {poster}. Resolve with `/claude-tweaks:demo`._
+```
+
+Render this template — the legacy Verification Brief, kept for the parent gate until the feature-level acceptance record (#4617) moves parents to the acceptance packet (`_shared/acceptance-packet.md`) — with:
 **The ask** — the parent's own design summary (problem, chosen approach — `_shared/work-record.md`'s
 Decomposition rules); **What shipped** — one-paragraph summary of what was delivered across the
 assembled sub-issues; **Confirmed** — part 1 above, in place of Step 4's kind-keyed Confirmed
