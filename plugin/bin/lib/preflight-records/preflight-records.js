@@ -21,15 +21,14 @@ const {
 const { extractKeyFiles, groupByFileOverlap, directOverlaps } = require('../issues/grouping');
 const { fetchNativeDependencies: sharedFetchNativeDependencies } = require('../issues/native-dependencies');
 const { repoSlug, ghOptions } = require('../repo-resolve');
+const sharedPrimitives = require('../shared-primitives');
 
 // Every call here contacts GitHub, so each is bounded (an unbounded execFileSync
-// hangs pre-flight on a black-holed remote). 30s, not the 5s single-call default:
-// the same runner carries the batched alias GraphQL reads and --blocker-landing's
-// compare fan-out (fetch-sub-issues.js's batched runner is bounded the same way).
-const GH_CALL_TIMEOUT_MS = 30000;
-
+// hangs pre-flight on a black-holed remote). The batched bound (GH_BATCH_TIMEOUT_MS,
+// read per call), not the 5s single-call default: the same runner carries the
+// batched alias GraphQL reads and --blocker-landing's compare fan-out.
 function defaultRunner(args) {
-  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: GH_CALL_TIMEOUT_MS, windowsHide: true }));
+  return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, windowsHide: true }));
 }
 
 // A runner may throw a non-Error (string, object, undefined) — never let a
