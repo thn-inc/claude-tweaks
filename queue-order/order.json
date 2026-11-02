@@ -1,11 +1,11 @@
 {
-  "computedAt": "2026-11-02T10:53:15.202Z",
+  "computedAt": "2026-11-02T10:59:11.127Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
         "number": 4940,
-        "updatedAt": "2026-11-02T10:51:48Z",
+        "updatedAt": "2026-11-02T10:57:07Z",
         "state": "OPEN"
       },
       {
@@ -109,11 +109,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4800,
-        "updatedAt": "2026-11-02T07:16:23Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4798,
         "updatedAt": "2026-11-02T10:49:56Z",
         "state": "OPEN"
@@ -125,7 +120,7 @@
       },
       {
         "number": 4795,
-        "updatedAt": "2026-11-02T10:49:52Z",
+        "updatedAt": "2026-11-02T10:54:08Z",
         "state": "OPEN"
       },
       {
@@ -1003,78 +998,6 @@
   "groups": [
     [
       {
-        "body": "Origin: reflect full from #4847\n\nDefer-reason: tangential\n\n## Current State\n\n#4847 added the `declare-claude-tweaks` policy key: at `false`, `/init` Step 14 stops adding claude-tweaks to the project's committed `.claude/settings.json` and `scripts/claude-cloud-setup.sh`, and `/routine fleet` reports the parity gap as an opt-out instead of failing. Three routine-side surfaces still ignore the key, so a routine created or fired in an opted-out project runs in a sandbox the setup script no longer installs claude-tweaks into:\n\n- `plugin/skills/_shared/routine-template-schema.md` (the kernel self-heal, near line 67) runs `bash scripts/claude-cloud-setup.sh` on every firing where the plugin cache is empty. At `declare-claude-tweaks: false` that script no longer installs claude-tweaks, so every firing self-heals into a script that cannot help and then fails at \"version unresolved\" instead of naming the opt-out.\n\n- `plugin/skills/init/bootstrap/step-15-routine-installation.md` (the Setup-script environment offer) offers to apply the script to a dedicated environment without mentioning the opt-out.\n\n- `plugin/skills/routine/create-and-update.md` (`/routine create`) does not warn that the routine it creates will fire without claude-tweaks.\n\nAbsence probe (integration branch): `git grep -n -F -e declare-claude-tweaks origin/main -- plugin/skills/routine plugin/skills/_shared/routine-template-schema.md` returned no match at the time of filing.\n\n## Deliverables\n\nMake the kernel self-heal in `plugin/skills/_shared/routine-template-schema.md` opt-out aware: at `declare-claude-tweaks: false`, skip the self-heal and print one line naming the opt-out instead of the generic \"version unresolved\" failure.\n\nMake `/init` Step 15's Setup-script environment offer and `/routine create` state, once, that the project opted out of declaring claude-tweaks and that a routine fired there needs claude-tweaks supplied another way, or the key set back to true.\n\nPin each added line with a conformance assertion in the existing `tests/declare-claude-tweaks-opt-out.test.js`, discriminating against the default (`true`) path.\n\n## Acceptance Criteria\n\nWith `declare-claude-tweaks: false`, the kernel self-heal text in `routine-template-schema.md` names the opt-out and does not instruct running `scripts/claude-cloud-setup.sh`.\n\nWith the key unset or `true`, the self-heal text is unchanged in behavior (a test asserts the default path).\n\n`step-15-routine-installation.md` and `routine/create-and-update.md` each carry the opt-out notice, pinned by `tests/declare-claude-tweaks-opt-out.test.js`.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change for projects that keep the default; projects that opted out of declaring claude-tweaks get a clear message instead of a failing routine self-heal.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/routine-template-schema.md` — modify\n- `plugin/skills/init/bootstrap/step-15-routine-installation.md` — modify\n- `plugin/skills/routine/create-and-update.md` — modify\n- `tests/declare-claude-tweaks-opt-out.test.js` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
-        "createdAt": "2026-11-02T06:32:04Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          }
-        ],
-        "number": 4940,
-        "state": "OPEN",
-        "title": "Make routine self-heal, /init Step 15 and /routine create aware of declare-claude-tweaks: false",
-        "updatedAt": "2026-11-02T10:51:48Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "## Current State\n\n`findRecentCommitOverlap` in `plugin/bin/lib/issues/recent-commit-check.js` matches words from a new record's title against commit subjects from the last 14 days, and posts a triage comment on two or more shared words. On 2026-11-01 it commented on 12 of 14 new records: 10 matched only template words (`settle`, `digest`, `findings`, plus the area name), and 2 matched `pr-scan` and `item`. Passing files makes it worse, because the threshold drops to one word: #4809 went from 12 hits to 17.\n\nHistory is equally weak. Of 82 records carrying the comment, 2 closed as not planned (#1970, #1776). How many of the 54 completed ones were already fixed is unmeasured, and #1316's own requirement of a low false-positive rate was never measured.\n\nThe comment sets no label, so a true match does not stop a build either. `_shared/health-recent-commit-check.md` still calls it a gap-closer for the #1068 failure, where a record is built after its fix has already merged.\n\n## Deliverables\n\n- The screen asks whether the flawed code still exists. It extracts a record's anchors (the file:line references and quoted symbols in Current State, reusing `near-duplicate.js`'s anchor extraction where it fits), and tests them at `HEAD` and against commits in the lookback window touching those files.\n- A rollup record (a digest cluster) tests each entry's anchor and flags only entries whose anchor is gone.\n- A confirmed match sets `needs:decision` with a proposal naming the commit and the missing anchor, so the record does not build until a human answers. A weak or unprovable result posts nothing, and a failed screen still never blocks filing.\n- A record with no anchors gets no comment: no evidence means no signal.\n- The open-PR screen stops matching on title words alone: it requires a shared Key File or anchor.\n- A replay tool run over the 82 existing records states measured precision in the PR body.\n- `health-recent-commit-check.md` and all five filing call sites describe the new behavior.\n\n## Acceptance Criteria\n\n- A test proves a record whose anchor still exists at `HEAD` gets no comment and no label, even when commit subjects share its title words.\n- A test proves a record whose anchored line was removed by a commit in the window gets `needs:decision` naming that commit.\n- A test proves a rollup flags only the entries whose anchors are gone.\n- Replaying the fixture of #4807's title and Key Files produces no match.\n- A test proves a git failure or an anchorless record yields no comment and no filing failure.\n- The PR body quotes the replay's output over the 82 records.\n\n## Release Note\n\nFlag a new record only when the code it describes has really changed, and hold that record until someone confirms it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/recent-commit-check.js` — modify\n- `plugin/skills/_shared/health-recent-commit-check.md` — modify\n- `plugin/bin/lib/issues/near-duplicate.js` — modify\n- `plugin/skills/capture/SKILL.md` — modify\n- `plugin/skills/code-health/filing.md` — modify\n- `plugin/skills/harness-health/filing.md` — modify\n- `plugin/skills/docs-health/SKILL.md` — modify\n- `plugin/skills/journey-health/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-11-02). The governing rule is this record's own: a weak or unprovable signal posts nothing. Apply it to any further anchor-classification question rather than stopping on it.\n\n- **Line references: HEAD numbering.** A `file:line` reference is judged at `HEAD`. An in-range line counts as live. Only a missing file, or a line past the end of the file with a removing commit in the window, counts as gone. Line numbers drift too easily to prove more than that.\n- **Bare paths: context only.** A path that still exists casts no vote either way, and the decision comment never claims that no anchors remain.\n- **Stub captures: screened at shaping.** A stub has no anchors at filing, so `/specify` runs the screen when it shapes the record. This keeps coverage for the #3191 duplicate-of-open-PR case, and the journey is rewritten to say so.\n- **`relfile#Symbol` anchors** count as symbol anchors in that file.\n- **Rollups.** A rollup's proposal stays single-line for its single-line readers, naming the flagged entries' count and first entry, with the full list in the comment body.\n- **Dispatch holds on `needs:*`.** `dispatch/queue-pull-script.md`'s eligibility filter excludes a record with any `needs:*` label, so a confirmed match really does stop the build. A test covers this, with a report line that names the label.\n- **Plan shape.** Task 1 exports the anchor classifier that Task 2 uses. Tasks 2 and 3 carry `**Review risk:** high`.\n",
         "createdAt": "2026-11-01T19:08:08Z",
         "labels": [
@@ -1824,78 +1747,6 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate (wrap-up of #4505)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4505 solves \"an explicit `--repo` owns its host\" twice. `pinExplicitRepoHost` (`plugin/bin/lib/repo-resolve.js`) mutates `process.env.GH_HOST` once `--repo` is parsed, and 11 CLIs wire it through `realDeps.pinGhHost` plus a `deps.pinGhHost(repoSpec)` call, rostered in `PIN_WIRED` in `tests/gh-host-seam-conformance.test.js`. `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` instead builds a per-call env (`nativeRunnerFor`) and never touches `process.env`.\n\nA process-global pin forces `plugin/bin/materialize.js` to restore the environment it had before the pin (`envBeforeGhHostPin`) before running record-authored shell commands. Unifying the two touches 12 CLIs and materialize's premise-check plumbing, which is why the review deferred it as `genuinely-larger` (ledger row 16 of `docs/plans/2026-10-31-gh-host-seam-ledger.md`, review lens 3e).\n\n## Deliverables\n\n- [ ] Pick one mechanism (a per-call env carried by `ghOptions`, or the process-global pin) and migrate all 12 CLIs to it.\n\n- [ ] Delete the other mechanism and the `envBeforeGhHostPin` restore if the per-call env wins.\n\n- [ ] Update `PIN_WIRED` and the `gh-api-module-pattern` skill's explicit-`--repo` bullet to describe the one mechanism.\n\n## Acceptance Criteria\n\n- [ ] A CLI given an explicit `--repo` on another host sends every gh call it makes (including a call that carries no host flag) to that host, asserted through a recording runner.\n\n- [ ] `plugin/bin/materialize.js` runs a record-authored shell command with the environment the user had, asserted by an exported `GH_HOST` surviving it.\n\n- [ ] `grep -F \"pinExplicitRepoHost\" plugin/bin -r` shows at most the one mechanism the record chose, and `node --test tests/gh-host-seam-conformance.test.js` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/repo-resolve.js` — collapse the two host-pin mechanisms into one\n- `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` — `nativeRunnerFor` onto the chosen mechanism\n- `plugin/bin/materialize.js` — drop or keep `envBeforeGhHostPin` per the chosen mechanism\n- `tests/gh-host-seam-conformance.test.js` — update the `PIN_WIRED` roster\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — describe the one mechanism\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6562848768).\n\n- **Decision: Reading A.** A module-scoped explicit host recorded in `repo-resolve.js`, which `ghOptions` adds as `GH_HOST` to each gh call's own env, counts as the per-call env mechanism. The per-call `deps.explicitHost` override passed into `ghOptions` (for callers such as `backlog-grant-gate.js` that need the host on only some calls) is part of that same one mechanism. `process.env.GH_HOST` is never written, so `materialize.js`'s `envBeforeGhHostPin` restore is deleted. The 11 CLIs that already wire `pinGhHost` keep their wiring lines. AC3's \"the one mechanism the record chose\" means this mechanism.\n",
-        "createdAt": "2026-11-01T05:54:57Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4795,
-        "state": "OPEN",
-        "title": "Unify the two explicit --repo host-pin mechanisms behind one seam",
-        "updatedAt": "2026-11-02T10:49:52Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
