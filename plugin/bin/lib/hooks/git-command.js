@@ -1805,8 +1805,9 @@ const KNOWN_SHELL_WORDS = new Set(['sh', 'bash', 'zsh', 'dash', 'ksh', 'mksh', '
 //           opener's index in the outer text, `shell` whether a token on the line names a
 //           KNOWN_SHELL_WORDS program), because a structure is open (`lineOpen`:
 //           left open on an earlier line or on this one), the line feeds them to
-//           something other than a known data reader, the line continues, or an
-//           unquoted body expands `$(` or a backtick; `end` is the index after the last;
+//           something other than a known data reader, the line continues, an
+//           unquoted body expands `$(` or a backtick, or a heredoc's `$( … )` closed on
+//           its opener line (`sameLineClose`, #4246); `end` is the index after the last;
 //   strip - every body is data; `end` is the index after the last one.
 function planHeredocBodies(str, start, pending, lineText, lineOpen) {
   const bodies = [];
@@ -1817,7 +1818,10 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
     bodies.push({ h, text: body.text });
     p = body.end;
   }
-  const keep = lineOpen || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
+  // #4246: bash 3.2 and zsh run a same-line-closed heredoc's would-be body as commands, so the
+  // line's bodies are all kept (scanned as commands) whatever reads them; a mixed line such as
+  // `cat $(cat <<A) <<B` keeps B's too, a spurious deny the scan accepts.
+  const keep = lineOpen || pending.some((h) => h.sameLineClose) || CONTINUATION_RE.test(lineText) || !lineFeedsOnlyDataReaders(lineText);
   const expands = bodies.some(({ h, text }) => !h.quoted && /\$\(|`/.test(text));
   if (keep || expands) {
     const shell = tokenize(lineText).typed.some((tok) => programNames(tok).some((n) => KNOWN_SHELL_WORDS.has(n)));
@@ -1827,8 +1831,8 @@ function planHeredocBodies(str, start, pending, lineText, lineOpen) {
 }
 
 // The single char-level pass behind stripHeredocBodies. Quote, escape, and comment
-// handling mirror splitSegments, so a `<<` inside quotes or after a word-boundary
-// `#` is never an opener. Every terminated body is cut out of the outer text with its
+// handling mirror splitSegments, so a `<<` inside quotes, inside a closed `${ … }` with no `$(`, or after a
+// word-boundary `#` is never an opener. Every terminated body is cut out of the outer text with its
 // closing line, so the outer scan resumes after the delimiter with fresh quote state and
 // never plans an opener inside a body; a kept body is returned as its own chunk.
 function scanHeredocs(str) {
@@ -1846,7 +1850,9 @@ function scanHeredocsWith(str, spans) {
   let quote = null;
   // Each open `"$( … )"` substitution (#4210): its paren depth and where its own text starts. A
   // heredoc opened inside one is planned against that text (`cat <<'EOF'`), never the outer line,
-  // since the substitution's command is the one that reads the body.
+  // since the substitution's command is the one that reads the body. #4246 adds a frame for each
+  // open unquoted `$( … )` too (`dq: false`), only so a heredoc can tell its substitution closed on
+  // the opener line; it leaves the planned line text as before.
   const subs = [];
   // Parens left open by a `((` or `$((`: `((` opens two and every single paren inside counts, so
   // `((cd x && ls) | cat)` (bash's nested-subshell reading) closes at its final `)`. It spans
@@ -1856,6 +1862,12 @@ function scanHeredocsWith(str, spans) {
   let pending = []; // heredocs opened on the current logical line, in order
   let sticky = false; // a structure was left open on an earlier line: keep every later body
   let lineStart = 0;
+  let param; // the `${ … }` span read at the current `$`
+  // #4246: each closed `${ … }` read a character at a time because it holds a `$(`: its end and the
+  // frame count when it opened. A `<<` with no frame opened since is the span's own text, not an
+  // opener; one inside its substitution is. An entry the scan has passed is popped when next read.
+  const params = [];
+  const popParams = () => { while (params.length && params[params.length - 1].end <= i) params.pop(); };
   let i = 0;
   while (i < str.length) {
     const ch = str[i];
@@ -1872,7 +1884,7 @@ function scanHeredocsWith(str, spans) {
       // is found, and its body no longer reads as quotes. `subs` holds one paren depth per
       // open substitution; the `)` that closes the last one returns to the double quote.
       emit('$(');
-      subs.push({ depth: 1, start: i + 2 });
+      subs.push({ depth: 1, start: i + 2, dq: true, dqStart: i + 2, heredocs: [] });
       quote = null;
       i += 2;
     } else if (quote === '"') {
@@ -1905,7 +1917,10 @@ function scanHeredocsWith(str, spans) {
       emit(str.slice(i, j));
       i = j;
     } else if (ch === '\n') {
-      const lineText = str.slice(subs.length ? Math.max(lineStart, subs[subs.length - 1].start) : lineStart, i);
+      // #4246: only a `"$( … )"` frame narrows the planned text; an unquoted one plans as before.
+      // Each frame carries the innermost `"$(` frame's start (`dqStart`), so this reads it in O(1).
+      const dqStart = subs.length ? subs[subs.length - 1].dqStart : null;
+      const lineText = str.slice(dqStart !== null ? Math.max(lineStart, dqStart) : lineStart, i);
       i += 1;
       emit(ch);
       sticky = sticky || lineLeavesStructureOpen(lineText);
@@ -1920,6 +1935,29 @@ function scanHeredocsWith(str, spans) {
       }
       pending = [];
       lineStart = i;
+    } else if (ch === '$' && str[i + 1] === '{' && (param = spans.param(str, i + 2)).closed) {
+      // #4246: a closed `${ … }` is word text, so a `<<` inside it opens nothing out here. One that
+      // holds a `$(` is read a character at a time (its entry in `params` keeps its own `<<` text),
+      // so a heredoc inside that substitution is planned as any other. An unclosed one (or the flat
+      // reading, which never closes) falls through to the branches below.
+      if (str.slice(i, param.end).includes('$(')) {
+        popParams();
+        params.push({ end: param.end, subs: subs.length });
+        emit('${');
+        i += 2;
+      } else {
+        emit(str.slice(i, param.end));
+        i = param.end;
+      }
+    } else if (parenDepth === 0 && ch === '$' && str[i + 1] === '(' && str[i + 2] !== '(') {
+      // #4246: an unquoted `$( … )` opens a frame, so a heredoc opened inside it knows when its
+      // substitution closes (the `)` branch below). `quote` is always null here: the branches
+      // above take every character inside quotes. Inside an open `((`/`$((` a `$(` opens no frame
+      // and its parens count toward parenDepth, as before #4246, since that branch takes every `)`.
+      // `$((` is arithmetic and stays with parenDepth.
+      emit('$(');
+      subs.push({ depth: 1, start: i + 2, dq: false, dqStart: subs.length ? subs[subs.length - 1].dqStart : null, heredocs: [] });
+      i += 2;
     } else if (ch === '$' && str[i + 1] === '[') {
       bracketDepth += 1;
       emit('$[');
@@ -1944,8 +1982,15 @@ function scanHeredocsWith(str, spans) {
     } else if (subs.length > 0 && (ch === '(' || ch === ')')) {
       subs[subs.length - 1].depth += ch === '(' ? 1 : -1;
       if (subs[subs.length - 1].depth === 0) {
-        subs.pop();
-        quote = '"';
+        const popped = subs.pop();
+        if (popped.dq) quote = '"';
+        // #4246: a heredoc opened inside a `$( … )` that closes on its opener line has no body to
+        // bash 3.2 and zsh, which run the lines after it as commands, while bash 5 reads them as
+        // its body. Marked here so planHeredocBodies keeps every body on the line: each would-be
+        // body is scanned as commands, and the outer scan still resumes after the delimiter. The
+        // frame lists its own heredocs, so this costs one step per heredoc; one opened on an earlier
+        // line is marked too, harmlessly, since its line was planned already.
+        for (const h of popped.heredocs) h.sameLineClose = true;
       }
       emit(ch);
       i += 1;
@@ -1953,14 +1998,18 @@ function scanHeredocsWith(str, spans) {
       emit('<<<'); // a here-string is never a heredoc
       i += 3;
     } else if (ch === '<' && str[i + 1] === '<') {
-      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener.
-      const h = parenDepth === 0 && bracketDepth === 0 ? readHeredocOpener(str, i + 2) : null;
+      // A `<<` inside an open `((...))` or `$[...]` is an arithmetic shift, not an opener; one in a
+      // `${ … }`'s own text (no frame opened since, #4246) is literal text.
+      popParams();
+      const inParam = params.length > 0 && params[params.length - 1].subs === subs.length;
+      const h = parenDepth === 0 && bracketDepth === 0 && !inParam ? readHeredocOpener(str, i + 2) : null;
       if (h && h.unprovable) {
         emit(str.slice(i));
         break;
       }
       if (h) {
         h.at = outLen;
+        if (subs.length) subs[subs.length - 1].heredocs.push(h); // #4246: the substitution it was opened in
         emit(str.slice(i, h.end));
         pending.push(h);
         i = h.end;
