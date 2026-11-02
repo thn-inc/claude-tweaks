@@ -1587,16 +1587,10 @@ async function runCheckPassReentry(argv) {
   }
   // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
   reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-  let verdict;
-  try {
-    verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
-      online: argv.slice(3).includes('--online'),
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-    });
-  } catch (e) {
-    process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
-    return 1;
-  }
+  const verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+    online: argv.slice(3).includes('--online'),
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+  });
   await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
   return 0;
 }
@@ -1983,6 +1977,8 @@ async function main(argv) {
     }
   }
   // #4932: a VERBS exception exits 1 here; EVENTS still fall through to the entry catch.
+  // The `await` is load-bearing: `return verb.run(argv)` would hand an async
+  // handler's rejection past this catch to the entry catch, exiting 0 again.
   if (verb) {
     try {
       return await verb.run(argv);

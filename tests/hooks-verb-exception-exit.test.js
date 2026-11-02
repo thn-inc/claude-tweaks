@@ -7,10 +7,11 @@
 // in for the fault.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { gitRepo } = require('./helpers/git-fixtures');
 
 const HOOKS = path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 const { main, VERBS } = require(HOOKS);
@@ -18,20 +19,10 @@ const { main, VERBS } = require(HOOKS);
 const SANDBOX = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-verb-exc-')));
 after(() => fs.rmSync(SANDBOX, { recursive: true, force: true }));
 
-function git(args, cwd) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8' });
-}
-
 // A realpath'd git repo with one commit and an active run dir, so
-// `check-staged-inventory --run <runDir>` anchors and reaches its handler.
+// `--run <runDir>` anchors and the verb reaches its handler.
 function runDirFixture() {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(SANDBOX, 'repo-')));
-  git(['init', '-q', '--initial-branch=main'], root);
-  git(['config', 'user.email', 'test@example.com'], root);
-  git(['config', 'user.name', 'Test'], root);
-  fs.writeFileSync(path.join(root, 'a.txt'), 'one\n');
-  git(['add', 'a.txt'], root);
-  git(['commit', '-q', '-m', 'seed'], root);
+  const root = gitRepo({ parent: SANDBOX, branch: 'main' });
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', '2026-11-02T000000-spec-999');
   fs.mkdirSync(runDir, { recursive: true });
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({ status: 'active' }));
@@ -91,6 +82,21 @@ test('AC2.1: a throwing EVENTS module still exits 0', () => {
   assert.ok(fs.existsSync(marker), 'the injected session-end fault fired');
   assert.equal(r.status, 0);
   assert.doesNotMatch(r.stderr, /claude-tweaks: session-end:/);
+});
+
+test('record-pr still records {number, url} when deriving the branch throws', () => {
+  const { root, runDir } = runDirFixture();
+  // The marker proves the injected deriveBranch ran: with no recorded worktree
+  // the real one returns null, which records the same {number, url}.
+  const marker = path.join(SANDBOX, 'derive-branch-fault-fired');
+  const preload = preloadFor('derive-branch-error', '/lib\\/hooks\\/run-integrity(\\.js)?$/',
+    `Object.assign({}, load.call(this, request, ...rest), { deriveBranch() { require('fs').writeFileSync(${JSON.stringify(marker)}, 'fired'); throw new Error('injected deriveBranch fault'); } })`);
+  const r = runWithPreload(preload, ['record-pr', '--run', runDir, '7', 'https://github.com/o/r/pull/7'], { cwd: root });
+  assert.ok(fs.existsSync(marker), 'the injected deriveBranch fault fired');
+  assert.equal(r.status, 0);
+  assert.match(r.stdout, /PR #7 recorded/);
+  const state = JSON.parse(fs.readFileSync(path.join(runDir, 'run-state.json'), 'utf8'));
+  assert.deepEqual(state.pr, { number: 7, url: 'https://github.com/o/r/pull/7' });
 });
 
 test('#4932: an unusable stderr still returns 1 for a throwing verb', async () => {
