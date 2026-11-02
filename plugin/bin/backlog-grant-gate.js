@@ -100,13 +100,14 @@ const realDeps = {
   // `unattended` ceiling this runs with no human to retry, so a spurious
   // timeout-kill is worse than the slow-but-eventually-successful unbounded
   // call it would replace.
-  runner: (args, o = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true })),
-  // #4505: an explicit --repo's host for the native owner/repo calls only, as
-  // GH_HOST on their env. The issue lists read cwd's own repo, so they keep
-  // `runner`: a GH_HOST that matches none of cwd's remotes would break them.
+  runner: (args, o = {}, seam = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true }, seam)),
+  // #4505: an explicit --repo's host for the native owner/repo calls only; it
+  // rides ghOptions's per-call `explicitHost` (#4795), the one way a host
+  // reaches gh. The issue lists read cwd's own repo, so they keep `runner`
+  // without it: a GH_HOST that matches none of cwd's remotes would break them.
   nativeRunnerFor: (repoSpec) => {
     const host = explicitRepoGhHost(repoSpec);
-    return host ? (args) => realDeps.runner(args, { env: { ...process.env, GH_HOST: host } }) : null;
+    return host ? (args) => realDeps.runner(args, {}, { explicitHost: host }) : null;
   },
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.

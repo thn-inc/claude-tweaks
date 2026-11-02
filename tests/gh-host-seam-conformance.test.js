@@ -287,10 +287,13 @@ test('AC3.1: every gh spawn under plugin/bin/ routes through ghOptions', () => {
     'wrap these gh spawns\' options in repo-resolve.js\'s ghOptions(args, { … }) — without it a GitHub Enterprise origin\'s calls go to github.com');
 });
 
-// An explicit --repo pins its own host (repo-resolve.js's pinExplicitRepoHost), and each CLI that
-// takes --repo wires that by hand: a `pinGhHost` dep in realDeps plus a `deps.pinGhHost(…)` call in
-// run(). The spawn scan above cannot see a CLI that drops either half, and the CLI then splits one
-// record across two hosts on a GHE origin (found in #4505's review), so the roster is pinned here.
+// An explicit --repo records its host through repo-resolve.js's pinExplicitRepoHost, which ghOptions
+// adds to every later gh call's own env (process.env is never written). Each CLI that takes --repo
+// wires that by hand: a `pinGhHost` dep in realDeps plus a `deps.pinGhHost(…)` call in run(). A
+// caller scoping the host to some calls passes ghOptions's `deps.explicitHost` instead
+// (backlog-grant-gate.js). The spawn scan above cannot see a CLI that drops either half, and the CLI
+// then splits one record across two hosts on a GHE origin (found in #4505's review), so the roster
+// is pinned here.
 const PIN_WIRED = ['activity-gather.js', 'fetch-sub-issues.js', 'lib/compose-subject.js', 'lib/number-list-cli.js', 'link-records.js',
   'list-claims.js', 'materialize.js', 'preflight-records.js', 'release-claim.js', 'repair-claim.js', 'resolved-refusal.js'];
 
@@ -305,4 +308,31 @@ test('review (#4505): every CLI that pins its explicit --repo host keeps both ha
     .map((file) => path.relative(BIN_ROOT, file).replace(/\\/g, '/'))
     .sort();
   assert.deepEqual(wired, [...PIN_WIRED].sort(), 'a CLI wires pinGhHost that PIN_WIRED does not list, or one stopped: settle the roster');
+});
+
+// #4795: an explicit --repo's host reaches gh one way only — ghOptions adds it to a
+// call's own env (repo-resolve.js). A file that builds `GH_HOST: …` into an env or
+// assigns `….GH_HOST = …` has grown a second mechanism. Blank mode, so a GH_HOST
+// named in a message string or comment is not code.
+const GH_HOST_BUILD = /\bGH_HOST\s*:(?!:)|\bGH_HOST\s*=(?!=)/;
+function ghHostBuilders(raw) {
+  const blank = stripComments(raw, BLANK);
+  const verdict = stripperVerdict(raw, blank);
+  if (verdict !== 'ok') return [STRIPPER_VERDICT_MESSAGES[verdict]];
+  return blank.split('\n').map((l, i) => (GH_HOST_BUILD.test(l) ? `line ${i + 1}` : null)).filter(Boolean);
+}
+test('#4795: the matcher flags an env built or assigned with GH_HOST, and not a read or a message', () => {
+  assert.equal(ghHostBuilders('const e = { ...process.env, GH_HOST: h };').length, 1);
+  assert.equal(ghHostBuilders('process.env.GH_HOST = h;').length, 1);
+  assert.equal(ghHostBuilders("const { GH_HOST: _p, ...env } = process.env;").length, 1);
+  assert.deepEqual(ghHostBuilders("if ('GH_HOST' in base) x(); if (e.GH_HOST === h) y(); const m = 'GH_HOST: set';"), []);
+});
+test('AC3.1 (#4795): no file under plugin/bin but repo-resolve.js builds or assigns GH_HOST', () => {
+  const offenders = [];
+  for (const file of walk(BIN_ROOT)) {
+    const rel = path.relative(BIN_ROOT, file).replace(/\\/g, '/');
+    if (rel === 'lib/repo-resolve.js') continue;
+    for (const where of ghHostBuilders(readText(file))) offenders.push(`${rel}: ${where}`);
+  }
+  assert.deepEqual(offenders, [], 'route the host through ghOptions (an explicit --repo: pinExplicitRepoHost, or deps.explicitHost for one call) instead of building GH_HOST by hand');
 });
