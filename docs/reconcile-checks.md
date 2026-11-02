@@ -595,7 +595,9 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   any other value, or none, skips the whole check as `not-github-issues` and writes nothing. A
   checkout without an `origin` slug fails as `no-remote`, an `origin` on a host that is not a known
   GitHub host fails as `unknown-host` (#4933; no gh call is made, and the failure carries a `detail`
-  holding the refusal text, which names the `GH_HOST=<host>` opt-in), and a caller that passes no
+  holding the refusal text, which names the `GH_HOST=<host>` opt-in; `reconcile()` copies it onto
+  the `skipped` entry and `format-summary.js` renders it flattened and bounded as
+  `skipped: post-merge — unknown-host ({detail})`), and a caller that passes no
   PR-state resolver fails as `no-pr-states` (a programming error, handled like the others).
 - **Marker rule.** A run is done when a `decisions.md` line, read through `parseEntry`, has the
   location `reconcile post-merge` (this check's own summary entry) or one ending in `pr-first-merge
