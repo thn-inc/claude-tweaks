@@ -1,6 +1,6 @@
 // tests/bin-lib/wrap-up/packet-gather.test.js
 // Acceptance-packet deterministic gather and packet reader (#4611).
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
@@ -20,6 +20,16 @@ const {
 const { validateFactsShape } = require('../../../plugin/bin/lib/wrap-up/packet-validate');
 const { renderPacket } = require('../../../plugin/bin/lib/wrap-up/packet-render');
 const { findingItems } = require('../../../plugin/bin/lib/console/resolve');
+
+const tempDirs = [];
+function tempDir(prefix) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  tempDirs.push(dir);
+  return dir;
+}
+after(() => {
+  for (const dir of tempDirs) fs.rmSync(dir, { recursive: true, force: true });
+});
 
 const QA_NOTE = 'QA report not read — selected stories not listed';
 const SCOPE_NOTE = 'verify-scope declaration not read — expected checks not derived';
@@ -107,8 +117,84 @@ test('parseAcceptanceCriteria reads only top-level items in its own section', ()
   ].join('\r\n');
   assert.deepEqual(parseAcceptanceCriteria(spec), [
     { id: '1', text: 'one' },
+    { id: 'AC1', text: 'bullet' },
     { id: '2a', text: 'two a' },
   ]);
+});
+
+test('parseAcceptanceCriteria reads every criterion form records use', () => {
+  const spec = [
+    '## Acceptance Criteria',
+    '',
+    '1) paren',
+    '**2.** bold',
+    '**3)** bold paren',
+    '- [ ] box',
+    '- [x] done',
+    '* star',
+    '- plain',
+    '  - nested bullet',
+    '    * deeper bullet',
+    '  - [ ] nested box',
+    '---',
+    '* * *',
+    '- ',
+    'prose - not a bullet',
+    '4a. numbered',
+  ].join('\n');
+  assert.deepEqual(parseAcceptanceCriteria(spec), [
+    { id: '1', text: 'paren' },
+    { id: '2', text: 'bold' },
+    { id: '3', text: 'bold paren' },
+    { id: 'AC1', text: 'box' },
+    { id: 'AC2', text: 'done' },
+    { id: 'AC3', text: 'star' },
+    { id: 'AC4', text: 'plain' },
+    { id: '4a', text: 'numbered' },
+  ]);
+});
+
+test('a real checkbox record parses to positional criteria', () => {
+  const specText = [
+    '## Deliverables',
+    '',
+    '- not a criterion',
+    '',
+    '## Acceptance Criteria',
+    '',
+    '- [ ] `dispositionState([{name: "demo:approved"}])` returns the same state.',
+    '- [ ] A unit test feeds the MCP label-object shape.',
+    '',
+    '## Release Note',
+    '',
+    '- not a criterion either',
+  ].join('\n');
+  const result = gather({ specText, acResults: { AC1: 'met' } });
+  assert.deepEqual(idsOf(result, 'check'), ['check:ac-AC1', 'check:ac-AC2']);
+  assert.deepEqual(statusOf(result, 'check:ac-AC1'), ['passed', undefined]);
+  assert.deepEqual(statusOf(result, 'check:ac-AC2'), ['not-run', 'no spec-compliance result recorded']);
+  assert.ok(result.expected.includes('check:ac-AC2'));
+  assertShapeOk(result);
+});
+
+test('parseAcceptanceCriteria accepts a level-3 heading and a parenthesized one', () => {
+  const ids = (spec) => parseAcceptanceCriteria(spec).map((ac) => ac.id);
+  assert.deepEqual(ids('### Acceptance Criteria\n1. a\n#### sub\n2. b\n### Next\n3. c\n'), ['1', '2']);
+  assert.deepEqual(ids('### Acceptance Criteria\n1. a\n## Next\n2. b\n'), ['1']);
+  assert.deepEqual(ids('## Acceptance Criteria (from the design doc)\n- a\n### sub\n- b\n## Next\n- c\n'), ['AC1', 'AC2']);
+  assert.deepEqual(ids('## Acceptance Criteria Notes\n1. a\n'), []);
+  assert.deepEqual(ids('## Delete + Tombstone Acceptance Criteria\n1. a\n'), []);
+  assert.deepEqual(ids('#### Acceptance Criteria\n1. a\n'), []);
+});
+
+test('a present spec with no parsed criteria is a stated partial', () => {
+  const NOTE = 'spec holds no parsed acceptance criteria — acceptance criteria not derived';
+  assert.ok(gather({ specText: '## Overview\n\nNo section here.\n' }).partial.includes(NOTE));
+  assert.ok(gather({ specText: '## Acceptance Criteria\n\nProse only.\n' }).partial.includes(NOTE));
+  assert.ok(!gather({ specText: '## Acceptance Criteria\n- a\n' }).partial.includes(NOTE));
+  const absent = gather({ specText: null });
+  assert.ok(!absent.partial.includes(NOTE));
+  assert.ok(absent.partial.includes('spec not found — acceptance criteria not derived'));
 });
 
 test('parseAcceptanceCriteria skips code fences, including a heading inside one', () => {
@@ -258,6 +344,16 @@ test('partial gather is stated', () => {
   assert.deepEqual(statusOf(result, 'check:lint'), ['not-run', 'no result recorded']);
   assert.deepEqual(idsOf(result, 'check'), ['check:tests', 'check:lint']);
   assertShapeOk(result);
+});
+
+test('a report with no usable checks is stated as unread', () => {
+  const NOTE = 'verify report not found';
+  assert.ok(gather({ report: {} }).partial.includes(NOTE));
+  assert.ok(gather({ report: { checks: null } }).partial.includes(NOTE));
+  const arrayShaped = gather({ specText: null, report: { checks: [{ command: 'x', exitCode: 0 }] } });
+  assert.ok(arrayShaped.partial.includes(NOTE));
+  assert.deepEqual(idsOf(arrayShaped, 'check'), []);
+  assert.ok(!gather({ report: { checks: {} } }).partial.includes(NOTE));
 });
 
 test('a complete gather carries no partial note', () => {
@@ -412,6 +508,67 @@ test('parseStoryFile stops a block tag list at the next key', () => {
   assert.deepEqual(parseStoryFile(text), [{ id: 'first', negative: false }]);
 });
 
+test('parseStoryFile reads an item whose id is not its first key', () => {
+  const text = [
+    'stories:',
+    '  - description: x',
+    '    id: neg-a',
+    '  - tags: [negative]',
+    '    id: b',
+    '  - priority: high',
+    '    steps:',
+    '      - id: nested',
+    '    id: c',
+  ].join('\n');
+  assert.deepEqual(parseStoryFile(text), [
+    { id: 'neg-a', negative: true },
+    { id: 'b', negative: true },
+    { id: 'c', negative: false },
+  ]);
+});
+
+test('parseStoryFile reads a flow tag list spanning lines', () => {
+  const text = [
+    'stories:',
+    '  - id: a',
+    '    tags: [form,',
+    '      "negative"]',
+    '    priority: high',
+    '  - id: b',
+    '    tags: [form, # a comment',
+    '      smoke]',
+    '    priority: negative',
+    '  - id: c',
+    '    tags: [',
+    '      smoke,',
+    '      negative',
+    '    ]',
+    '  - id: unterminated',
+    '    tags: [smoke,',
+    '  - id: d',
+    '    tags: [negative]',
+    '  - id: e',
+    '    tags: [form] # not, negative',
+  ].join('\n');
+  assert.deepEqual(parseStoryFile(text), [
+    { id: 'a', negative: true },
+    { id: 'b', negative: false },
+    { id: 'c', negative: true },
+    { id: 'unterminated', negative: false },
+    { id: 'd', negative: true },
+    { id: 'e', negative: false },
+  ]);
+});
+
+test('parseStoryFile reads only the stories list', () => {
+  assert.deepEqual(parseStoryFile('defaults:\n  - name: x\nstories:\n  - id: a\nother:\n  - id: b\n'), [{ id: 'a', negative: false }]);
+  assert.deepEqual(parseStoryFile('stories:\n- id: a\n  tags: [negative]\n- id: b\n'), [
+    { id: 'a', negative: true },
+    { id: 'b', negative: false },
+  ]);
+  assert.deepEqual(parseStoryFile('- id: bare\n  tags: [negative]\n'), [{ id: 'bare', negative: true }]);
+});
+
 test('parseStoryFile on a file with no stories is empty', () => {
   assert.deepEqual(parseStoryFile('schema_version: 2\nstories: []\n'), []);
 });
@@ -445,9 +602,20 @@ test('storyResultsFromQaReport maps QA statuses', () => {
   assert.deepEqual(storyResultsFromQaReport({ stories: [] }), []);
 });
 
-test('storyResultsFromQaReport skips an entry with no usable id, so the gather never emits an invalid fact', () => {
-  const results = storyResultsFromQaReport({ stories: [null, { status: 'PASS' }, { id: '', status: 'PASS' }, { id: 'a', status: 'PASS' }] });
-  assert.deepEqual(results, [{ id: 'a', status: 'passed' }]);
+test('a QA entry with no usable id is counted in a stated partial, never a fact', () => {
+  const NOTE = 'QA report entries with no story id, not listed: 3';
+  const storyResults = storyResultsFromQaReport({
+    stories: [null, { status: 'FAIL', error: 'boom' }, { id: '', status: 'PASS' }, { id: 'a', status: 'PASS' }],
+  });
+  assert.equal(storyResults.length, 4);
+  assert.deepEqual(storyResults[1], { id: null, status: 'failed', reason: 'boom' });
+  const result = gather({ storyResults });
+  assert.ok(result.partial.includes(NOTE), JSON.stringify(result.partial));
+  assert.deepEqual(idsOf(result, 'story'), ['story:a']);
+  assert.deepEqual(result.expected, ['check:ac-1', 'story:a']);
+  assertShapeOk(result);
+  const clean = gather({ storyResults: storyResultsFromQaReport({ stories: [{ id: 'a', status: 'PASS' }] }) });
+  assert.ok(!clean.partial.some((note) => note.startsWith('QA report entries')));
 });
 
 test('storiesFromQaStamp reads only a stamp at HEAD', () => {
@@ -597,8 +765,12 @@ test('surface is normalized to the lowercase enum', () => {
 
   // The renderer compares exactly: a normalized surface renders commands only.
   const narrative = { schemaVersion: 1, claims: [{ section: 'test-guide', text: 'Run it', refs: ['link:c'] }] };
-  const rendered = renderPacket(gather({ surface: 'Infra', links: [{ id: 'c', label: 'c', command: 'terraform plan' }] }), narrative);
+  const rendered = renderPacket(gather({
+    surface: 'Infra',
+    links: [{ id: 'c', label: 'c', command: 'terraform plan' }, { id: 'u', label: 'u', url: `${LOCAL}/secret-path` }],
+  }), narrative);
   assert.ok(rendered.markdown.includes('`terraform plan`'));
+  assert.ok(!rendered.markdown.includes('secret-path'));
 });
 
 test('a command link carrying a credential flag is refused', () => {
@@ -749,7 +921,7 @@ const bareDeps = () => ({
 });
 
 function runDirFixture({ decisions, staged = {}, reviewFindings = null }) {
-  const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'packet-gather-'));
+  const runDir = tempDir('packet-gather-');
   fs.mkdirSync(path.join(runDir, 'staged'));
   fs.writeFileSync(path.join(runDir, 'decisions.md'), decisions);
   for (const [name, body] of Object.entries(staged)) fs.writeFileSync(path.join(runDir, 'staged', name), body);
@@ -789,7 +961,7 @@ test("low-confidence findings are the Review Console's set", () => {
   });
   assert.equal(withStaged.length, 2);
   assert.deepEqual(withStaged.map((f) => f.n), [1, 2]);
-  assert.ok(withStaged.some((f) => f.text === 'Title: an unconfirmed finding'));
+  assert.ok(withStaged.some((f) => f.text === 'an unconfirmed finding'));
   assert.ok(withStaged.some((f) => f.text === UNSETTLED_TEXT));
   assert.deepEqual(idsOf(gather({ lowConfidence: withStaged }), 'finding'), ['finding:1', 'finding:2']);
 });
@@ -819,6 +991,61 @@ test('a can\'t-tell verdict with no findings entry falls back to its id', () => 
   assert.deepEqual(consoleFindings({ decisions: `${CANT_TELL}\n` }), [{ n: 1, text: `tiebreak:${TIEBREAK_ID}` }]);
   const blankClaim = [{ id: TIEBREAK_ID, path: 'src/c.js', line: 7, claim: '  ' }];
   assert.deepEqual(consoleFindings({ decisions: `${CANT_TELL}\n`, reviewFindings: blankClaim }), [{ n: 1, text: `tiebreak:${TIEBREAK_ID}` }]);
+});
+
+const STAGED_FILE_LINE = '- STAGED 10:00:00 — Reproduction: lens "3a" finding src/a.js:9 not reproduced. Stage path: staged/review-unconfirmed-1.md. Reversibility: high.';
+const SETTLERS = {
+  confirmed: ['- AUTO 10:00:01 — Reproduction: lens "3a" finding src/a.js:9 confirmed by tiebreak:abcdef012345. Confirmed.', 'dismissed'],
+  refuted: ['- AUTO 10:00:01 — Tiebreak tiebreak:abcdef012345: lens "3a" finding src/a.js:9 dropped: refuted by tiebreak. Evidence: src/a.js:9 no such bug. Severity: medium.', 'dropped'],
+  digested: ['- AUTO 10:00:01 — Tiebreak tiebreak:abcdef012345: lens "3a" finding src/a.js:9 digested: verdict:cant-tell. Severity: low.', 'dismissed'],
+};
+
+for (const [name, [verdict, resolution]] of Object.entries(SETTLERS)) {
+  test(`a staged finding the tiebreak settled (${name}) is absent, and n stays contiguous`, () => {
+    const fixture = {
+      decisions: `${[STAGED_FILE_LINE, verdict, UNSETTLED].join('\n')}\n`,
+      staged: { 'review-unconfirmed-1.md': 'Title: settled finding\n' },
+    };
+    const runDir = runDirFixture(fixture);
+    const { items } = findingItems({ runDir, deps: bareDeps() });
+    assert.deepEqual(items[0].id, 'review-unconfirmed-1.md');
+    assert.equal(items[0].resolution, resolution);
+    assert.equal(items[0].tiebreak, undefined);
+    assert.deepEqual(consoleFindings(fixture), [{ n: 1, text: UNSETTLED_TEXT }]);
+  });
+}
+
+test("a can't-tell with Recommendation: drop stays, on a staged file or on its own", () => {
+  const verdict = '- STAGED 10:00:01 — Tiebreak tiebreak:abcdef012345: lens "3a" finding src/a.js:9 console: verdict:cant-tell. Severity: medium. Recommendation: drop.';
+  const fixture = {
+    decisions: `${[STAGED_FILE_LINE, verdict].join('\n')}\n`,
+    staged: { 'review-unconfirmed-1.md': 'Title: a judged finding\n' },
+  };
+  const { items } = findingItems({ runDir: runDirFixture(fixture), deps: bareDeps() });
+  assert.equal(items[0].resolution, 'dropped');
+  assert.ok(items[0].tiebreak);
+  assert.deepEqual(consoleFindings(fixture), [{ n: 1, text: 'a judged finding' }]);
+
+  const alone = { decisions: `${CANT_TELL.replace('Recommendation: file', 'Recommendation: drop')}\n` };
+  assert.deepEqual(consoleFindings(alone), [{ n: 1, text: `tiebreak:${TIEBREAK_ID}` }]);
+});
+
+test('a staged finding reads its Title, then its Finding field, then its first line, then its id', () => {
+  const textOf = (body) => lowConfidenceFindings(
+    { items: [{ id: 'review-unconfirmed-1.md', section: 'Low-confidence findings' }], findings: [], decisions: '' },
+    () => body,
+  )[0].text;
+  assert.equal(textOf('# Generic heading\n\nFinding: the finding\nTitle: the title\n'), 'the title');
+  assert.equal(textOf('**Title:** bold title\n'), 'bold title');
+  assert.equal(textOf('Target: docs/a.md\nInvariant: x\nFinding: low thing\n'), 'low thing');
+  assert.equal(textOf('# Generic\n\n- Finding: bulleted\n'), 'bulleted');
+  assert.equal(textOf('# Generic\n\n- **Finding:** bold bullet\n'), 'bold bullet');
+  assert.equal(textOf('# Generic\n\n## Finding\n\nunder the heading\n\nmore\n'), 'under the heading');
+  assert.equal(textOf('\n# Only a heading\nprose\n'), '# Only a heading');
+  assert.equal(textOf('Title:   \nFinding: empty title skipped\n'), 'empty title skipped');
+  assert.equal(textOf('## Finding\n\n## Next\nnext prose\n'), '## Finding');
+  assert.equal(textOf('  \n'), 'review-unconfirmed-1.md');
+  assert.equal(textOf(null), 'review-unconfirmed-1.md');
 });
 
 test('lowConfidenceFindings falls back to the id, and leaves other sections out', () => {
@@ -888,6 +1115,19 @@ test('readPacket: the marker must lead the first line', () => {
   const leadingBlank = comment({ url: 'b', body: `\n${V1}\nbody` });
   assert.equal(readPacket([quoted, leadingBlank]).status, 'none');
   assert.equal(readPacket([comment({ url: 'n', body: null }), null]).status, 'none');
+});
+
+test('readPacket: the marker is the whole first line, with an unpadded version', () => {
+  const statusFor = (body) => readPacket([comment({ url: 'x', body })]).status;
+  assert.equal(statusFor(`${V1} trailing prose\nbody`), 'none');
+  assert.equal(statusFor(`${V1} \nbody`), 'none');
+  assert.equal(statusFor('<!-- acceptance-packet: v01 -->\nbody'), 'none');
+  assert.equal(statusFor(`${V1}\r\nbody`), 'found');
+  assert.equal(statusFor(V1), 'found');
+  const unknown = readPacket([comment({ url: 'x', body: '<!-- acceptance-packet: v2 -->' })]);
+  assert.equal(unknown.status, 'unreadable');
+  assert.equal(unknown.version, 2);
+  assert.equal(statusFor('<!-- acceptance-packet: v0 -->'), 'unreadable');
 });
 
 test('readPacket: the unknown version of the earliest decides, however later comments read', () => {
@@ -962,7 +1202,7 @@ function withoutFileReads(fn) {
 }
 
 test('AC2b stale run-dir copy is ignored', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'packet-stale-'));
+  const dir = tempDir('packet-stale-');
   fs.writeFileSync(path.join(dir, 'packet-4611.md'), 'STALE');
   const comments = [comment({ url: 'live', body: `${V1}\nLIVE` })];
   const result = withoutFileReads(() => readPacket(comments));
