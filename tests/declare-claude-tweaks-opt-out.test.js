@@ -405,3 +405,63 @@ test('kernel opt-out go-red controls', () => {
     assert.throws(() => check(mutated), { message }, name);
   }
 });
+
+// /init Step 15 and /routine create state the opt-out once (#4940): Step 15 prints the notice
+// ahead of the Setup-script offer, and `create` skips its own copy under `--source init`.
+const STEP15 = readText(path.join(ROOT, 'plugin', 'skills', 'init', 'bootstrap', 'step-15-routine-installation.md'));
+const CREATE = readText(path.join(ROOT, 'plugin', 'skills', 'routine', 'create-and-update.md'));
+
+function rawSlice(text, from, to, label) {
+  const start = text.indexOf(from);
+  const end = start === -1 ? -1 : text.indexOf(to, start + from.length);
+  assert.ok(start !== -1 && end !== -1, label + ' anchors missing');
+  return text.slice(start, end);
+}
+
+const step15Raw = (text) => rawSlice(text, '**Apply the Setup script to a dedicated environment (deferred from Step 14).**', '**For each selected candidate:**', 'Step 15');
+const createStep7Raw = (text) => rawSlice(text, '**Step 7 — Preview and confirm.**', '**Step 8 — Create.**', 'create Step 7');
+const STEP15_SLICE = collapse(step15Raw(STEP15));
+const CREATE_SLICE = collapse(createStep7Raw(CREATE));
+
+const ROUTINE_NOTICE_FACTS = [
+  ['step15 resolves the key once', STEP15_SLICE, '**Opt-out notice.** When at least one candidate was selected, resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks` once, before the offer above.'],
+  ['step15 notice line', STEP15_SLICE, '`Routines: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — a routine fired here needs claude-tweaks supplied to its environment another way, or the key set back to true.`'],
+  ['step15 create calls skip their copy', STEP15_SLICE, 'The `/claude-tweaks:routine create … --source init` calls below then skip their own copy of it.'],
+  ['step15 default unchanged', STEP15_SLICE, 'At `true` (the default) nothing prints and the offer is unchanged.'],
+  ['create resolves the key', CREATE_SLICE, 'When `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks` prints `false`, render one more line, once:'],
+  ['create notice line', CREATE_SLICE, '`claude-tweaks: not declared — this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks, and this routine will fire without it unless claude-tweaks is supplied to its environment another way, or the key is set back to true.`'],
+  ['create skips under --source init', CREATE_SLICE, 'Skip that line under `--source init`: `/claude-tweaks:init` Step 15 already printed the notice once for its run.'],
+  ['create default unchanged', CREATE_SLICE, 'At `true` (the default) the preview is unchanged.'],
+];
+
+test('AC (Step 15 + /routine create): each carries the opt-out notice, once', () => {
+  assert.deepStrictEqual(missingFacts(ROUTINE_NOTICE_FACTS), []);
+  for (const [name, slice, literal] of ROUTINE_NOTICE_FACTS) {
+    assert.strictEqual(slice.split(literal).length, 2, `${name}: literal must occur exactly once in its slice`);
+    const doctored = slice.replace(literal, '');
+    assert.notEqual(doctored, slice, name);
+    assert.deepStrictEqual(missingFacts(ROUTINE_NOTICE_FACTS.map((f) => (f[0] === name ? [name, doctored, literal] : f))), [name]);
+  }
+});
+
+const ZERO_CANDIDATES_MARKER = '**Zero candidates were selected**';
+const STEP15_NOTICE_MARKER = '**Opt-out notice.**';
+const step15NoticeOrder = (rawText) => requireOrder(collapse(step15Raw(rawText)), [ZERO_CANDIDATES_MARKER, STEP15_NOTICE_MARKER], 'Step 15');
+
+test('the Step 15 notice sits outside the zero-candidates bullet', () => {
+  step15NoticeOrder(STEP15);
+  const slice = step15Raw(STEP15);
+  const paragraphs = slice.split(/\n\n/);
+  const zeroIdx = paragraphs.findIndex((p) => p.includes(ZERO_CANDIDATES_MARKER));
+  const noticeIdx = paragraphs.findIndex((p) => p.startsWith(STEP15_NOTICE_MARKER));
+  assert.ok(zeroIdx !== -1 && noticeIdx > zeroIdx, 'Zero-candidates bullet / notice paragraph not found in live order');
+  assert.strictEqual(paragraphs.filter((p) => p.startsWith(STEP15_NOTICE_MARKER)).length, 1);
+  // The notice is its own paragraph, so it cannot be a continuation of the bullet it follows.
+  assert.ok(!paragraphs[zeroIdx].includes(STEP15_NOTICE_MARKER), 'notice shares a paragraph with the zero-candidates bullet');
+  // Permutation control: swap the two whole paragraphs, so both markers survive in the wrong order.
+  const permuted = paragraphs.slice();
+  [permuted[zeroIdx], permuted[noticeIdx]] = [permuted[noticeIdx], permuted[zeroIdx]];
+  const swapped = STEP15.replace(slice, permuted.join('\n\n'));
+  assert.notEqual(swapped, STEP15);
+  assert.throws(() => step15NoticeOrder(swapped), { message: /must come after/ });
+});
