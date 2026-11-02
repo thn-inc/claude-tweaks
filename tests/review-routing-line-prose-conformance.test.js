@@ -230,10 +230,16 @@ function markerPath() {
 }
 
 // A stderr line that closes the quote and runs a command substitution, which would create the marker file.
-// The shell sees the marker path, so a Windows path goes in with forward slashes (its backslashes would be escapes).
-const rawStderr = (marker) => `x'$(touch ${marker.split(path.sep).join('/')})'y`;
-// The rule's escaping: each ' becomes '\'', the whole value wrapped in single quotes.
-const shellSingleQuote = (value) => `'${value.split("'").join("'\\''")}'`;
+// The shell sees the marker path, so a Windows path goes in with forward slashes (its backslashes would be escapes);
+// double-quoted, so a temp path holding a space stays one argument.
+const rawStderr = (marker) => `x'$(touch "${marker.split(path.sep).join('/')}")'y`;
+// The rule's escaping, read from the prose rather than restated here: each ' is written as the span the rule names,
+// the whole value wrapped in single quotes. A rule that named a wrong escape turns the round trip below red.
+const shellSingleQuote = (value) => {
+  const named = composerRuleParagraph().match(/written as `([^`]+)`/);
+  assert.ok(named, 'the composer rule must name the span each \' is written as');
+  return `'${value.split("'").join(named[1])}'`;
+};
 
 test('#4637: a --stack-stderr value escaped by the rule round-trips a POSIX shell byte-identical and runs nothing', { skip: SH_SKIP }, () => {
   const marker = markerPath();
@@ -267,6 +273,13 @@ test('#4637: the "Staging a patch" paragraph points its --stack-stderr usage bac
   const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
   assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
   assert.ok(paragraph.includes('follow the quoting rule above'), `the --stack-stderr usage must cite the quoting rule: ${paragraph}`);
+});
+
+test('#4637: both --stack-stderr spans in the "Staging a patch" paragraph are single-quoted', () => {
+  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
+  assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  const spans = paragraph.match(/--stack-stderr [^`\s]/g) || [];
+  assert.deepEqual(spans, ["--stack-stderr '", "--stack-stderr '"], `the conflict and unverifiable-stack spans must each open with a single quote: ${paragraph}`);
 });
 
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
