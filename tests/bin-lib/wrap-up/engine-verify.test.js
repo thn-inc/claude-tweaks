@@ -1679,14 +1679,14 @@ test('AC3.1: engine-verify agrees on mixed labels', () => {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-outranked-');
     assert.strictEqual(row.result, 'fail', labels.join('+'));
     assert.match(row.detail, /#900: pending label outranked by a verdict — run \/claude-tweaks:demo #900/, labels.join('+'));
-    assert.doesNotMatch(row.detail, /missing demo:pending label/, labels.join('+'));
+    assert.doesNotMatch(row.detail, /missing demo:pending or accept:pending label/, labels.join('+'));
   }
 
   // No pending label at all keeps the existing missing line, even beside a verdict.
   for (const labels of [[], ['accept:approved'], ['demo:changes-requested'], ['accept:approved', 'demo:approved'], ['demo:approved', 'accept:approved']]) {
     const row = acceptanceLabelingRow(labels, 'verify-acceptance-nopending-');
     assert.strictEqual(row.result, 'fail', labels.join('+') || '(none)');
-    assert.match(row.detail, /#900: missing demo:pending label/, labels.join('+') || '(none)');
+    assert.match(row.detail, /#900: missing demo:pending or accept:pending label/, labels.join('+') || '(none)');
     assert.doesNotMatch(row.detail, /outranked/, labels.join('+') || '(none)');
   }
 });
@@ -1858,7 +1858,7 @@ test('AC2.1: acceptance-labeling still fails a due, above-floor parent missing d
     ],
   });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#898: missing demo:pending label/);
+  assert.match(row.detail, /#898: missing demo:pending or accept:pending label/);
 });
 
 test('AC3.1: acceptance-labeling skips a due parent below the oversight floor', () => {
@@ -1899,7 +1899,7 @@ test('acceptance-labeling counts every run sub-issue of a shared parent as close
     ],
   });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#898: missing demo:pending label/);
+  assert.match(row.detail, /#898: missing demo:pending or accept:pending label/);
   assert.strictEqual(calls.filter((a) => isSubIssuesCall(a)).length, 1, 'parent #898 must be enumerated once for two run sub-issues');
 });
 
@@ -1912,7 +1912,7 @@ test('acceptance-labeling fails closed on an unscored sibling when the parent ga
     ],
   });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#898: missing demo:pending label/);
+  assert.match(row.detail, /#898: missing demo:pending or accept:pending label/);
 });
 
 test('acceptance-labeling reads the parent floor as the highest sub-issue risk tier, not the first or last valid one', () => {
@@ -1925,7 +1925,7 @@ test('acceptance-labeling reads the parent floor as the highest sub-issue risk t
     ],
   });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#898: missing demo:pending label/);
+  assert.match(row.detail, /#898: missing demo:pending or accept:pending label/);
 });
 
 test('acceptance-labeling takes the oversight floor from policy.yml: risk-floor medium requires a due risk:medium parent to carry demo:pending', () => {
@@ -1938,7 +1938,7 @@ test('acceptance-labeling takes the oversight floor from policy.yml: risk-floor 
     ],
   });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#898: missing demo:pending label/);
+  assert.match(row.detail, /#898: missing demo:pending or accept:pending label/);
 });
 
 test('acceptance-labeling falls back to the default high floor when policy.yml sets an invalid risk-floor', () => {
@@ -2003,7 +2003,7 @@ test('acceptance-labeling pass detail carries the not-due skip reason of a sibli
 test('acceptance-labeling fail detail carries the not-due skip reason alongside the missing demo:pending line', () => {
   const row = twoParentRow({ dueParentLabels: [], dueParentComments: [] });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#899: missing demo:pending label/);
+  assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
   assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
 });
 
@@ -2070,7 +2070,7 @@ test('AC2.1/AC2.2: body-text resolveParent reads the Parent line and targets the
   const { row, calls, deps, repoRoot } = bodyTextRow(BODY_TEXT_AC2);
   assert.deepStrictEqual(resolveParent(20, deps, repoRoot, 'body-text'), { ok: true, parent: 12 });
   assert.strictEqual(calls.filter(isGraphqlCall).length, 0, 'body-text must issue no GraphQL Issue.parent call');
-  assert.doesNotMatch(row.detail, /#20: missing demo:pending label/);
+  assert.doesNotMatch(row.detail, /#20: missing demo:pending or accept:pending label/);
   assert.ok(!calls.some((a) => isIssueViewCall(a, 20, 'labels,comments')), 'the run record #20 is never checked as a target; its parent #12 is');
 });
 
@@ -2095,7 +2095,7 @@ test('AC4.1: body-text record with no Parent line is checked as its own target',
   const { row, calls, deps, repoRoot } = bodyTextRow({ records: [20], bodies: { 20: 'Surface: backend\n' } });
   assert.deepStrictEqual(resolveParent(20, deps, repoRoot, 'body-text'), { ok: true, parent: null });
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#20: missing demo:pending label/);
+  assert.match(row.detail, /#20: missing demo:pending or accept:pending label/);
   assert.ok(calls.some((a) => isIssueViewCall(a, 20, 'labels,comments')), 'the record is its own target');
   assert.ok(bodyCalls(calls, 20).length >= 1, 'expected a body fetch for #20');
   assert.strictEqual(calls.filter(isGraphqlCall).length, 0);
@@ -2201,7 +2201,7 @@ test('body-text parent shared by two run records is enumerated once', () => {
   assert.strictEqual(calls.filter((a) => isIssueViewCall(a, 20, 'state,labels')).length, 1);
   assert.strictEqual(calls.filter((a) => isIssueViewCall(a, 12, 'labels,comments')).length, 1, 'parent #12 checked once');
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#12: missing demo:pending label/);
+  assert.match(row.detail, /#12: missing demo:pending or accept:pending label/);
 });
 
 test('AC6.1: explicit native issues no body fetch', () => {
@@ -2239,7 +2239,7 @@ test('AC10.1/AC11.1: body-text Parent line absent from the parent task list is a
   assert.ok(calls.some((a) => isIssueViewCall(a, 12, 'labels,comments')), 'the due gate makes #12 a checked target');
   assert.ok(calls.some((a) => isIssueViewCall(a, 22, 'labels,comments')), '#22 is checked as its own target');
   assert.strictEqual(row.result, 'fail', row.detail);
-  assert.match(row.detail, /#22: missing demo:pending label/);
+  assert.match(row.detail, /#22: missing demo:pending or accept:pending label/);
   assert.doesNotMatch(row.detail, /#12: missing/, 'the due, labeled parent #12 passes');
 });
 
