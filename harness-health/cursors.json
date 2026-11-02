@@ -197,7 +197,7 @@
   },
   "skill:single-source-constant-guard": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793566905459
+    "lastAuditedMs": 1793600089714
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
@@ -209,7 +209,7 @@
   },
   "skill:bin-source-scan-conformance": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793570020322
+    "lastAuditedMs": 1793600084507
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
