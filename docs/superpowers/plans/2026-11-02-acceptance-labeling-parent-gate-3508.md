@@ -29,7 +29,7 @@
 
 ## Review Focus
 
-- A parent carrying both `demo:pending` and `demo:approved` resolves to `resolved` and skips. It no longer fails `pending label outranked by a verdict`.
+- A parent carrying both `demo:pending` and `demo:changes-requested` resolves to `resolved` and skips. It no longer fails `pending label outranked by a verdict`. (Corrected at build: pending outranks `approved`, so `demo:pending` beside `demo:approved` reads `gated`.)
 - A verdict in the other spellings (`accept:approved`, `demo:changes-requested`) skips the same way as `demo:approved`.
 - A sub-issue reopened after its parent was accepted (a sibling still open) reads `already dispositioned`, not `not due`, because the parent's label wins.
 - A `gated` parent with an open sibling and a below-floor tier still has its brief checked, and a trusted brief on it passes rather than skips.
