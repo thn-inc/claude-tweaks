@@ -938,7 +938,7 @@ function brokenSpanLines(text) {
   for (const line of text.split('\n')) {
     if (/^\s*```/.test(line)) { fenced = !fenced; continue; }
     if (fenced) continue;
-    if ((line.match(/`/g) || []).length % 2 === 1 || /\bgh$/.test(line)) bad.push(line);
+    if ((line.match(/`/g) || []).length % 2 === 1 || /\bgh\s*$/.test(line)) bad.push(line);
   }
   return bad;
 }
@@ -971,6 +971,18 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   const failOpen = collapse(paragraph(gate, '**Fail open on every `gh` call'));
   assert.ok(failOpen.includes('neither `gh` nor the GitHub MCP server is available'), 'fail open only when neither transport is available');
   assert.ok(!failOpen.includes('If `gh` is unavailable'), 'a gh-absent run with MCP no longer skips');
+});
+
+test('#4809: Step 4.0b reads only bare same-repo Fixes lines after a no-PR local merge', () => {
+  const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
+  assert.ok(step40b.includes('a `Fixes {owner}/{repo}#{n}` line naming any repository is not in the set'));
+  assert.ok(step40b.includes('the merge-message composer `bin/compose-subject.js` renders only the bare form, in `bin/lib/release/subject.js`'));
+});
+
+test('#4809: brokenSpanLines reports a wrapped span and a line-ending gh, and ignores fenced blocks', () => {
+  const bad = ['ok `a` line', 'opens `a span', 'closes it` here', 'then run gh', 'then run gh ', '```', 'odd ` inside a fence', '```', 'after `fence', 'clean'].join('\n');
+  assert.deepEqual(brokenSpanLines(bad), ['opens `a span', 'closes it` here', 'then run gh', 'then run gh ', 'after `fence']);
+  assert.deepEqual(brokenSpanLines('all `fine` here\n```\n`\n```'), []);
 });
 
 test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
@@ -1226,4 +1238,73 @@ test('#4603 go-red control: the pre-#4603 gate narrates every one of them', { sk
 test('#4603 go-red control: the pre-#4603 Close step 1 reads the login itself', { skip: preChange4603Gate.skip }, () => {
   assert.throws(() => assertStep1RoutesOnIdempotence(closeStep1(preChange4603Gate.text)), /step 1 names already-closed/);
   assert.ok(collapse(closeStep1(preChange4603Gate.text)).includes('gh api user'));
+});
+
+// ---- #4770: a failed identity read counts trusted authors only, and the prose says so ----
+//
+// New prose, so no frozen pre-change excerpt exists: every go-red control strips exactly one fact's
+// literal from the live region in memory and asserts the predicate reports exactly that fact.
+const IDENTITY_NOTE_4770 = '`identity probe failed — close marker matched against trusted authors only`';
+const TIDY_LINE_4770 = (tidy) => tidy.split('\n').find((l) => l.startsWith('- [x] Closed parent below the floor:') && l.includes('`github-issues`'));
+const FACTS_4770 = [
+  ['close-note', (g) => closeStep1(g), IDENTITY_NOTE_4770],
+  ['never-skips', (g) => closeStep1(g), 'the CLI never skips the parent'],
+  ['facts-me', (g) => section(g, '- `parentComments` —', 'The verdict carries one field each:'), '- `me` — `get_me`, recorded whole even when it fails'],
+  ['facts-exception', (g) => section(g, '- `parentComments` —', 'The verdict carries one field each:'), 'If any MCP read other than `get_me` fails, write no file'],
+  ['skipped-note', (g) => section(g, '- `skipped` —', 'Route on its exit code:'), 'plus the identity-probe degrade note when the login read failed or printed none'],
+  ['tidy', (_g, t) => TIDY_LINE_4770(t), 'when the identity read fails'],
+];
+const missingFacts4770 = (gate, tidy, names = FACTS_4770.map(([n]) => n)) =>
+  FACTS_4770.filter(([n, region, lit]) => names.includes(n) && !collapse(region(gate, tidy)).includes(lit)).map(([n]) => n);
+// The document with one fact's literal removed from its region (whitespace-tolerant, so a wrapped
+// literal is still found), rebuilt as full gate and tidy texts for the predicate to re-read.
+const withoutLiteral4770 = (gate, tidy, name) => {
+  const [, region, lit] = FACTS_4770.find(([n]) => n === name);
+  const raw = region(gate, tidy);
+  assert.equal(collapse(raw).split(lit).length - 1, 1, `${name}: the literal occurs exactly once in its region`);
+  const wrapped = new RegExp(lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
+  const doctored = raw.replace(wrapped, '');
+  assert.notEqual(doctored, raw, `${name}: the literal was found in the raw region`);
+  const inGate = gate.includes(raw);
+  assert.ok(inGate || tidy.includes(raw), `${name}: the region is a slice of the gate or tidy text`);
+  return inGate ? { gate: gate.replace(raw, () => doctored), tidy } : { gate, tidy: tidy.replace(raw, () => doctored) };
+};
+const stripFact4770 = (gate, tidy, name) => {
+  const rebuilt = withoutLiteral4770(gate, tidy, name);
+  return missingFacts4770(rebuilt.gate, rebuilt.tidy);
+};
+const goRed4770 = (name) => assert.deepEqual(stripFact4770(read(GATE_REL), read('tidy/SKILL.md'), name), [name], `go-red: dropping ${name} reports exactly it`);
+
+test('#4770: a failed identity read counts trusted authors only and is noted', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['close-note', 'never-skips']), []);
+  assert.ok(!collapse(closeStep1(read(GATE_REL))).includes('gh api user'), 'step 1 still makes no login read of its own');
+  goRed4770('close-note');
+  goRed4770('never-skips');
+});
+
+test('#4770: the MCP facts list keeps a failed get_me', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['facts-me', 'facts-exception']), []);
+  goRed4770('facts-me');
+  goRed4770('facts-exception');
+});
+
+test('#4770: the verdict\'s skipped field names the degrade note', () => {
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['skipped-note']), []);
+  goRed4770('skipped-note');
+});
+
+test('#4770: tidy\'s below-floor verify line accepts a trusted comment alone when the identity read fails', () => {
+  assert.ok(TIDY_LINE_4770(read('tidy/SKILL.md')), 'the github-issues form exists');
+  assert.deepEqual(missingFacts4770(read(GATE_REL), read('tidy/SKILL.md'), ['tidy']), []);
+  goRed4770('tidy');
+});
+
+test('#4770: the prose note matches the code constant', () => {
+  const { IDENTITY_PROBE_FAILED_NOTE } = require('../plugin/bin/lib/issues/parent-gate');
+  const m = collapse(closeStep1(read(GATE_REL))).match(/`(identity probe failed[^`]*)`/);
+  assert.ok(m, 'step 1 carries the note in backticks');
+  assert.equal(m[1], IDENTITY_PROBE_FAILED_NOTE);
+  // go-red: rebuild the gate text with the note removed and the same match finds nothing.
+  const rebuilt = withoutLiteral4770(read(GATE_REL), read('tidy/SKILL.md'), 'close-note');
+  assert.equal(collapse(closeStep1(rebuilt.gate)).match(/`(identity probe failed[^`]*)`/), null);
 });
