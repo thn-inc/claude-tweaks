@@ -11,7 +11,9 @@
 // that never actually matched pre-tool-use.js's real behavior. The directly
 // invoked CLI verbs below (record-worktree, resolve-run-dir, close-run, …)
 // are a separate contract and may exit non-zero on malformed or rejected
-// input.
+// input. A VERBS command's unexpected exception exits 1 with
+// `claude-tweaks: {verb}: {message}` on stderr (#4932), while EVENTS keep exit
+// 0 through the entry catch.
 'use strict';
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
@@ -955,11 +957,11 @@ async function runRecordPr(argv) {
     // Best-effort: a run with no recorded worktree, or a derivation that
     // comes back null, simply records {number, url} as before.
     // Guarded because this is the first external-process call in a verb that
-    // previously had none: main()'s own `.catch(() => process.exit(0))` would
-    // swallow a throw here and skip writeRunState entirely, exiting 0 with no
-    // output — the PR silently never recorded, while every other failure
-    // branch in this verb prints a "not recorded" notice. Degrading to the
-    // pre-#1672 {number, url} write is the correct best-effort outcome.
+    // previously had none: without the guard, a throw here would exit 1 with
+    // `claude-tweaks: record-pr: …` (#4932) and still skip writeRunState — the
+    // PR would not be recorded, while every other failure branch in this verb
+    // prints a "not recorded" notice. Degrading to the pre-#1672 {number, url}
+    // write is the correct best-effort outcome.
     let prBranch = null;
     try {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
@@ -1585,16 +1587,10 @@ async function runCheckPassReentry(argv) {
   }
   // Disclosure goes to stderr: stdout is reserved for the verdict JSON alone.
   reportWorktreeLocalFallback(runDir, worktreeLocalFallback, process.stderr);
-  let verdict;
-  try {
-    verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
-      online: argv.slice(3).includes('--online'),
-      sessionId: process.env.CLAUDE_CODE_SESSION_ID,
-    });
-  } catch (e) {
-    process.stderr.write(`claude-tweaks: check-pass-reentry failed — ${e.message}\n`);
-    return 1;
-  }
+  const verdict = require('./lib/flow/consolidated-pass').checkPassReentry(runDir, {
+    online: argv.slice(3).includes('--online'),
+    sessionId: process.env.CLAUDE_CODE_SESSION_ID,
+  });
   await new Promise((resolve) => process.stdout.write(`${JSON.stringify(verdict)}\n`, resolve));
   return 0;
 }
@@ -1803,7 +1799,9 @@ async function runReconcileBackground(argv) {
   // blocking failure — this process is detached (spawn'd with
   // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
   // exit code or stdout, so every path below returns 0 and best-effort
-  // swallows its own errors rather than surfacing them anywhere.
+  // swallows its own errors rather than surfacing them anywhere. A throw
+  // outside those catches (a require, the lock acquire, its finally release)
+  // exits 1 per #4932, equally unread.
   const cwd = process.cwd();
   const { reconcile } = require('./lib/reconcile');
   const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
@@ -1987,7 +1985,19 @@ async function main(argv) {
       return 1;
     }
   }
-  if (verb) return verb.run(argv);
+  // #4932: a VERBS exception exits 1 here; EVENTS still fall through to the entry catch.
+  // The `await` is load-bearing: `return verb.run(argv)` would hand an async
+  // handler's rejection past this catch to the entry catch, exiting 0 again.
+  if (verb) {
+    try {
+      return await verb.run(argv);
+    } catch (err) {
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${err && err.message ? err.message : String(err)}\n`);
+      } catch { /* stderr unusable — the exit code still carries the failure */ }
+      return 1;
+    }
+  }
   if (!EVENTS.includes(cmd)) {
     // #1586: every table verb already dispatched before this point — reaching
     // here means `cmd` is neither a hook event (EVENTS) nor any of the named

@@ -2539,7 +2539,7 @@ async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipp
   spawnMod.spawnBackgroundIfStale = (args) => { spawnCalls.push(args); return spawnResult; };
   process.stdout.write = (chunk) => { outputs.push(String(chunk)); return true; };
   try {
-    for (const argv of argvs) await main(['node', 'hooks.js', ...argv]);
+    for (const argv of argvs) assert.equal(await main(['node', 'hooks.js', ...argv]), 0, `main(${argv.join(' ')}) exit code`);
   } finally {
     reconcileMod.reconcile = originalReconcile;
     spawnMod.spawnBackgroundIfStale = originalSpawn;
