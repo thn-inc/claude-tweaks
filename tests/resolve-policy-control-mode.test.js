@@ -1,8 +1,10 @@
 // tests/resolve-policy-control-mode.test.js — #4609: the thirteen flat
 // control-mode policy keys, the `element` list validation they introduced,
-// isControlModeOn, and the `risk-path-globs` block key. Every test builds a
+// isControlModeOn, and the `risk-path-globs` block key. JSON-shape checks run
+// resolvePolicyKeys in-process (json(), pinned equal to the CLI by the parity
+// test); --values output, stderr warnings and invocation errors still build a
 // throwaway fixture repo under os.tmpdir() (never inside this repo — IL-80),
-// writes policy.yml into it, and spawns bin/resolve-policy.js with cwd set
+// write policy.yml into it, and spawn bin/resolve-policy.js with cwd set
 // there. The keys are inert: nothing reads them yet, so this file pins only
 // resolution and validation.
 'use strict';
@@ -41,11 +43,32 @@ function values(policy, ...keys) {
   return { stdout: res.stdout, stderr: res.stderr, status: res.status };
 }
 
-function json(policy, ...keys) {
+function cliJson(policy, ...keys) {
   const res = spawnSync(process.execPath, [CLI, ...keys], { cwd: makeRepo(policy), encoding: 'utf8' });
   assert.strictEqual(res.status, 0, `expected exit 0, got ${res.status}; stderr: ${res.stderr}`);
   return JSON.parse(res.stdout);
 }
+
+// In-process twin of cliJson. The JSON round-trip mirrors the CLI's
+// JSON.stringify(result): it drops an `undefined` value, which the release-hook
+// test's `{ source: 'policy' }` expectation relies on.
+function json(policy, ...keys) {
+  return JSON.parse(JSON.stringify(resolvePolicyKeys(keys, { policyRaw: policy === undefined ? null : policy, runConfigRaw: null })));
+}
+
+test('the in-process json() helper matches the CLI JSON output', () => {
+  const cases = [
+    [undefined, 'control-mode', 'owned-owners'],
+    ['control-mode: maybe\n', 'control-mode'],
+    ['release-hook: ""\n', 'release-hook'],
+    ['deploy-command: "never closed\n', 'deploy-command'],
+    ['risk-path-globs:\r\n  auth: [src/auth/**]\r\nautonomy: trusted\r\n', 'risk-path-globs', 'autonomy'],
+    ['risk-categories: data-export,pii\n', 'risk-categories'],
+  ];
+  for (const [policy, ...keys] of cases) {
+    assert.deepStrictEqual(json(policy, ...keys), cliJson(policy, ...keys), `${JSON.stringify(policy)} ${keys.join(',')}`);
+  }
+});
 
 test('AC1.1: with no keys set, control-mode, acceptance-target and deploy-reach print their defaults', () => {
   const res = values(undefined, 'control-mode', 'acceptance-target', 'deploy-reach');
