@@ -1,8 +1,9 @@
 // tests/github-pr-scan-fetch-limit.test.js
 //
 // Conformance for #4820: the PR scan in _shared/github-pr-scan.md sized its `gh issue list` /
-// `gh pr list` fetches with hardcoded `--limit 50/100/200`, so a repo past the cap (354 open issues
-// against 200) had its `[queue]` counts silently truncated. The `current-pr` and `repo-wide` scopes
+// `gh pr list` fetches with hardcoded `--limit 50/100/200`, so a repo past the cap had its `[queue]`
+// counts silently truncated: the sweep the record cites saw 200 of 308 open issues, and 354 open
+// issues were measured live against the same cap at plan time. The `current-pr` and `repo-wide` scopes
 // now take `--limit {resolved-limit}` (`backlog-fetch-limit`) and warn when a fetch reaches the cap.
 //
 // The prose is the declared contract: an agent runs these fences, so the live file is read and the
@@ -63,10 +64,22 @@ function fenceAfter(text, label, nth = 0) {
 
 const ZSH_MISSING = Boolean(spawnSync('zsh', ['-f', '-c', 'true']).error);
 
-// Runs one extracted fence with `{resolved-limit}` substituted in every place it occurs. `gh` is a shell
-// function serving `ghRows` (JSON), so no network is touched and no PATH shim is needed; fixture paths
-// travel through the spawn env, forward-slashed. `files` are written under the session temp root before
-// the run: `{ name: rows }`, rows an array written as JSON or a string written as-is.
+// The `gh` stub: a shell function serving the first N rows of the fixture universe (`ghRows`), N being the
+// number after `--limit` in its argv, or every row when the call carries no `--limit`. That models the
+// real truncation, so a fence that fetches with a fixed cap gets a short list from a longer universe.
+const GH_STUB = `gh() {
+  local n="" prev="" a
+  for a in "$@"; do
+    if [ "$prev" = "--limit" ]; then n="$a"; fi
+    prev="$a"
+  done
+  node -e 'const r = require(process.env.FAKE_GH_OUT); const n = Number(process.argv[1]); console.log(JSON.stringify(n > 0 ? r.slice(0, n) : r));' -- "$n"
+}`;
+
+// Runs one extracted fence with `{resolved-limit}` substituted in every place it occurs. `gh` is the shell
+// function above, so no network is touched and no PATH shim is needed; fixture paths travel through the
+// spawn env, forward-slashed. `files` are written under the session temp root before the run:
+// `{ name: rows }`, rows an array written as JSON or a string written as-is.
 function runFence(fence, { limit = 1000, ghRows = [], files = {}, env = {}, shell = 'bash' } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-scan-fence-'));
   const sessionId = `pr-scan-fence-${path.basename(dir)}`;
@@ -79,7 +92,7 @@ function runFence(fence, { limit = 1000, ghRows = [], files = {}, env = {}, shel
       fs.writeFileSync(path.join(root, name), typeof rows === 'string' ? rows : JSON.stringify(rows));
     }
     const body = fence.replaceAll('{resolved-limit}', String(limit));
-    const script = `gh() { cat "$FAKE_GH_OUT"; }\n${body}`;
+    const script = `${GH_STUB}\n${body}`;
     const argv = shell === 'zsh' ? ['-f', '-c', script] : ['--noprofile', '--norc', '-c', script];
     const run = spawnSync(shell, argv, {
       encoding: 'utf8',
@@ -186,23 +199,34 @@ test('the Output Contract\'s [queue] row renders a floor count', () => {
 
 const ITEM8_LABEL = '8. **Grant-queue counts**';
 const issueRows = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, title: `r${i + 1}`, labels: [] }));
-const QUEUE_WARNING = /^WARNING: \[queue\] fetched 200 open issues, the backlog-fetch-limit cap — these counts are a floor$/m;
+const queueWarning = (n) => new RegExp(`^WARNING: \\[queue\\] fetched ${n} open issues, the backlog-fetch-limit cap — these counts are a floor$`, 'm');
+// The spec's symptom: 308 open issues, a fetch capped at 200.
+const UNIVERSE = 308;
 
 test('item 8 reproduces #4820: the pre-change fence reports capped counts silently', () => {
-  const run = runFence(PRE_CHANGE_ITEM8, { ghRows: issueRows(200) });
+  const run = runFence(PRE_CHANGE_ITEM8, { ghRows: issueRows(UNIVERSE) });
   assert.equal(run.status, 0, run.stderr);
-  assert.deepEqual(JSON.parse(run.stdout), { pending: 0, blocked: 0, backlog: 200 });
+  assert.deepEqual(JSON.parse(run.stdout), { pending: 0, blocked: 0, backlog: 200 }, `${UNIVERSE} open issues must read as 200`);
   assert.ok(!run.stderr.includes('WARNING:'), `the pre-change fence never warns: ${run.stderr}`);
 });
 
 for (const shell of ['bash', 'zsh']) {
-  test(`item 8 warns when the open-issue fetch reaches the limit (${shell})`, { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false }, () => {
+  test(`item 8 counts the whole universe at a high limit and warns when the fetch reaches the limit (${shell})`, { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false }, () => {
     const fence = fenceAfter(REPO_WIDE, ITEM8_LABEL);
-    const capped = runFence(fence, { limit: 200, ghRows: issueRows(200), shell });
+    // A limit above the universe counts all of it, with no warning.
+    const whole = runFence(fence, { limit: 1000, ghRows: issueRows(UNIVERSE), shell });
+    assert.equal(whole.status, 0, whole.stderr);
+    assert.deepEqual(JSON.parse(whole.stdout), { pending: 0, blocked: 0, backlog: UNIVERSE });
+    assert.ok(!whole.stderr.includes('WARNING:'), whole.stderr);
+    // The same universe at the old cap is truncated to 200, and now says so.
+    const capped = runFence(fence, { limit: 200, ghRows: issueRows(UNIVERSE), shell });
     assert.equal(capped.status, 0, capped.stderr);
     assert.deepEqual(JSON.parse(capped.stdout), { pending: 0, blocked: 0, backlog: 200 });
-    assert.match(capped.stderr, QUEUE_WARNING);
+    assert.match(capped.stderr, queueWarning(200));
     if (shell !== 'bash') return;
+    // A universe exactly the size of the limit cannot be told from a truncated one: it warns too.
+    const exact = runFence(fence, { limit: 200, ghRows: issueRows(200) });
+    assert.match(exact.stderr, queueWarning(200));
     // One row under the limit is a real count: no warning.
     const under = runFence(fence, { limit: 200, ghRows: issueRows(199) });
     assert.equal(under.status, 0, under.stderr);
@@ -213,7 +237,7 @@ for (const shell of ['bash', 'zsh']) {
     assert.ok(!pastThousand.stderr.includes('WARNING:'), pastThousand.stderr);
     // ... and reaching the limit itself is.
     const atLimit = runFence(fence, { limit: 1500, ghRows: issueRows(1500) });
-    assert.match(atLimit.stderr, /^WARNING: \[queue\] fetched 1500 open issues, the backlog-fetch-limit cap — these counts are a floor$/m);
+    assert.match(atLimit.stderr, queueWarning(1500));
   });
 }
 
@@ -227,7 +251,7 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   const fence = fenceAfter(REPO_WIDE, '10. **Unsettled run**', 1);
   const labelled = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, updatedAt: hoursAgo(48) }));
   const prs = (n) => Array.from({ length: n }, (_, i) => ({ number: 9000 + i, url: `https://example.test/pull/${9000 + i}`, closingIssuesReferences: [] }));
-  const run = (limit, labelledCount, prCount) => runFence(fence, {
+  const run = (limit, labelledCount, prCount, fenceText = fence) => runFence(fenceText, {
     limit,
     env: { UNSETTLED_AGE: '24' },
     files: {
@@ -259,4 +283,22 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   assert.equal(labelCap.status, 0, labelCap.stderr);
   assert.match(labelCap.stderr, UNSETTLED_WARNING);
   assert.ok(!labelCap.stdout.includes(PR_QUALIFIER), 'the PR fetch is unfiltered, so two rows under 1500 is not a cap');
+
+  // Only the PR fetch hits the limit (3 PRs against a limit of 3, one labelled row): the qualifier is keyed on
+  // the PR count alone, so it appears and the bot:in-progress warning does not.
+  const assertPrOnlyCapped = (r) => {
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(!r.stderr.includes('WARNING:'), `PR-only cap: the labelled fetch is under the limit, so no warning: ${r.stderr}`);
+    assert.ok(r.stdout.includes(PR_QUALIFIER), `PR-only cap: the no-PR row must carry the PR-fetch qualifier: ${r.stdout}`);
+  };
+  assertPrOnlyCapped(run(3, 1, 3));
+
+  // Go-red: a qualifier keyed on any count other than the PR count comes out wrong on that case.
+  const PR_CAPPED_LINE = 'const PR_CAPPED = prs.length >= LIMIT ?';
+  assert.ok(fence.includes(PR_CAPPED_LINE), 'the PR_CAPPED line must be present to mutate');
+  for (const wrong of ["require('$PR_SCAN_UNSETTLED_LABELLED').length", 'candidates.length']) {
+    const mutated = fence.replace(PR_CAPPED_LINE, `const PR_CAPPED = ${wrong} >= LIMIT ?`);
+    assert.notEqual(mutated, fence);
+    assert.throws(() => assertPrOnlyCapped(run(3, 1, 3, mutated)), { message: /PR-only cap/ }, `a qualifier keyed on ${wrong} must fail the PR-only case`);
+  }
 });
