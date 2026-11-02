@@ -61,11 +61,11 @@
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793610126596
+    "lastAuditedMs": 1793620667814
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793605911341
+    "lastAuditedMs": 1793620659157
   },
   "skill:work-record-facet-rename": {
     "lastAuditedSha": null,
@@ -121,7 +121,7 @@
   },
   "skill:compose-context-fencing": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793586549908
+    "lastAuditedMs": 1793620666254
   },
   "skill:run-directory-fact-packs": {
     "lastAuditedSha": null,
@@ -225,7 +225,7 @@
   },
   "skill:lib-module-split": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793570148429
+    "lastAuditedMs": 1793620669227
   },
   "skill:.claude/skills/skill-prose-conformance-tests/SKILL.md": {
     "lastAuditedSha": null,
