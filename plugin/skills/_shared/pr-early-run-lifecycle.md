@@ -121,7 +121,8 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   gh pr reopen {number} --repo {host}/{owner}/{repo}
   ```
 
-  **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
+  **Reopen succeeds** (a zero exit is not proof: Step 1's `gh pr list` re-list must read the picked
+  PR `state: OPEN`, #4833): record via `record-pr` and skip creation, same as the OPEN branch above.
   **This log line is mandatory, not optional, for the same reason the reuse-open and no-match
   lines are (#1800)** — and it names `{branch}`, not just `{number}`, so the bookkeeping-stamps
   gate's first-push exemption can match it against the push it precedes:
@@ -144,7 +145,15 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   {run-id}. Reversibility: n/a.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
-  rejects): fall through to creation below. The fresh PR reuses the same title/body template;
+  rejects), or the re-list does not read the picked PR `state: OPEN` (or fails): fall through to
+  creation below, logging one cause line in place of the rejected-reopen one (`{error}` writes
+  `failed` as `errored`, so it never reads as a degrade):
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} exited 0 but the PR still reads {state}; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: could not confirm reopen of closed PR #{number} for {branch} ({error}); creating. Reversibility: n/a.`
+
+  An adopted picked PR is rebound as above. The fresh PR reuses the same title/body template;
   its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a pointer
   comment already exists on the issue from an earlier attempt that reached far enough to post one
   (Verification Brief routing, `_shared/pr-run-comments.md`) — update that pointer comment to the
