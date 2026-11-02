@@ -459,11 +459,10 @@ test('AC1.1 #4807: --standalone with a name already ending in -standalone is not
   assert.strictEqual(out.created, true);
   assert.strictEqual(path.basename(out.path), '2026-03-04T050607-backlog-standalone');
   assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
-  // Only a trailing `-standalone` segment counts: a mid-name occurrence is still suffixed.
+  // Only a trailing `-standalone` segment counts: a leading `standalone-x` (no leading dash)
+  // and a mid-name `-standalone-x` segment are both still suffixed.
   const mid = resolve({ cwd: gitRepo(), env: {}, standalone: 'standalone-x', create: true, now });
   assert.strictEqual(path.basename(mid.path), '2026-03-04T050607-standalone-x-standalone');
-  // A `-standalone` segment followed by more name is still suffixed (the brief's
-  // `standalone-x` has no leading dash, so it does not exercise the mid-name case).
   const midDash = resolve({ cwd: gitRepo(), env: {}, standalone: 'backlog-standalone-x', create: true, now });
   assert.strictEqual(path.basename(midDash.path), '2026-03-04T050607-backlog-standalone-x-standalone');
   // The bare word `standalone` has no leading dash, so it is suffixed (`endsWith('standalone')` would not).
