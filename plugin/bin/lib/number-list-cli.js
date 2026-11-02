@@ -5,8 +5,8 @@
 // USAGE string, error-message prefix, and per-number result shape (#1981).
 // Zero runtime npm deps.
 //
-// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote,
-//   runnerTimeoutMs }) -> { run, parseArgs, parseNumbers, realDeps }
+// makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote })
+//   -> { run, parseArgs, parseNumbers, realDeps }
 //
 // - name: the CLI's own filename (e.g. "resolve-blockers.js"), used as the
 //   error-message prefix ("{name}: ...").
@@ -22,20 +22,17 @@
 // - ghRequiredNote (optional): a trailing note appended to the "`gh` is
 //   required" exit-2 message (resolve-blockers.js's own
 //   "(work-links: native)" qualifier; resolve-linked-prs.js passes none).
-// - runnerTimeoutMs (optional, default 30000): the runner's execFileSync
-//   timeout — 30s bound for ONE GraphQL call covering the whole aliased
-//   batch, whatever its size — matches fetch-sub-issues.js's precedent for
-//   its own 50-alias batch shape rather than #1154's 5s single-call
-//   default, since a comma-list here can legitimately span the full
-//   ~200-record queues unblocked-records.md/queue-pull-script.md build
-//   from `--limit 200`.
+//
+// realDeps.runner's timeout is shared-primitives' GH_BATCH_TIMEOUT_MS, read per call.
 'use strict';
 
 const { execFileSync } = require('child_process');
 const {
   parseRepo, ghAvailable, remoteUrl, repoResolutionNote, ghOptions, pinExplicitRepoHost,
 } = require('./repo-resolve');
-const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
+const sharedPrimitives = require('./shared-primitives');
+
+const { LARGE_MAX_BUFFER_BYTES } = sharedPrimitives;
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -49,7 +46,7 @@ function parseNumbers(raw) {
   return numbers;
 }
 
-function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runnerTimeoutMs = 30000 }) {
+function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote }) {
   function parseArgs(argv) {
     const opts = { numbersRaw: null, repo: null, help: false };
     if (argv[0] === '--help' || argv[0] === '-h') { opts.help = true; return opts; }
@@ -75,7 +72,7 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
     // #4505: an explicit --repo's host reaches every fetch call, including the
     // GraphQL owner/repo queries that thread no --hostname for github.com.
     pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
-    runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })),
+    runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: sharedPrimitives.GH_BATCH_TIMEOUT_MS, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
   };

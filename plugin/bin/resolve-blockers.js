@@ -46,12 +46,6 @@ const USAGE = 'usage: resolve-blockers.js <n>[,<n2>,...] [--repo owner/name] [--
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-blockers.js',
   usage: USAGE,
-  // 30s bound: ONE GraphQL call for the whole aliased batch, whatever its
-  // size — matches fetch-sub-issues.js's precedent for its own 50-alias
-  // batch shape rather than #1154's 5s single-call default, since a
-  // comma-list here can legitimately span the full ~200-record queues
-  // unblocked-records.md/queue-pull-script.md build from `--limit 200`.
-  runnerTimeoutMs: 30000,
   ghRequiredNote: '(work-links: native)',
   fetch: ({
     numbers, owner, repo, host, runner,

@@ -1770,3 +1770,29 @@ test('the real exists dep: a directory and a file are present, a missing path an
 test('the real workLinks dep resolves to a string', () => {
   assert.equal(typeof realDeps.workLinks(), 'string');
 });
+
+test("AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+  const cp = require('node:child_process');
+  const origExec = cp.execFileSync;
+  const envKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const hadEnv = Object.prototype.hasOwnProperty.call(process.env, envKey);
+  const origEnv = process.env[envKey];
+  const resumePath = require.resolve('../../../plugin/bin/dispatch-resume');
+  const primitivesPath = require.resolve('../../../plugin/bin/lib/shared-primitives');
+  let seen = null;
+  try {
+    // dispatch-resume reads the getter at require time, so the env var and the stub come first.
+    process.env[envKey] = '45000';
+    cp.execFileSync = (cmd, args, opts) => { if (cmd === 'gh') seen = opts.timeout; return '{}'; };
+    delete require.cache[resumePath];
+    delete require.cache[primitivesPath];
+    const fresh = require(resumePath);
+    try { fresh.realDeps.fetchNative({ numbers: [1], owner: 'o', repo: 'r' }); } catch { /* the '{}' reply fails to parse; only the captured timeout matters */ }
+    assert.equal(seen, 45000);
+  } finally {
+    cp.execFileSync = origExec;
+    if (hadEnv) process.env[envKey] = origEnv; else delete process.env[envKey];
+    delete require.cache[resumePath];
+    delete require.cache[primitivesPath];
+  }
+});

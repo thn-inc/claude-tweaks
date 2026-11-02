@@ -62,7 +62,7 @@ const { parseDependencies } = require('./lib/issues/record');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
-const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
+const { GH_TIMEOUT_MS, GH_BATCH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
 const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
@@ -85,7 +85,6 @@ const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--
 
 // The closing connection, so a PR that only mentions the record is never listed and any head resolves.
 const RESUME_PR_QUERY = 'query($owner:String!,$repo:String!,$issue:Int!){repository(owner:$owner,name:$repo){issue(number:$issue){closedByPullRequestsReferences(first:100){pageInfo{hasNextPage} nodes{url number state headRefName headRefOid isDraft isCrossRepository repository{nameWithOwner} closingIssuesReferences(first:1){totalCount} body}}}}}';
-const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
 // This build's own hooks.js, so the stale-bound-run remedy is a command the human can paste as is.
 const HOOKS_JS = path.join(__dirname, 'hooks.js');
 
@@ -107,9 +106,10 @@ function defaultGit(args) {
   });
 }
 
+// One aliased GraphQL call, so it gets the batched bound.
 function nativeGh(args) {
   return execFileSync('gh', args, ghOptions(args, {
-    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: NATIVE_TIMEOUT_MS,
+    encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: GH_BATCH_TIMEOUT_MS,
     maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true,
   }));
 }
