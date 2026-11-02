@@ -303,8 +303,8 @@ test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-ru
   const runs = [
     { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] },
     { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') },
-    { list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: closedDecisions },
-    { list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: closedDecisions, edit: new Error('HTTP 422') },
+    { lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]], decisions: closedDecisions },
+    { lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]], decisions: closedDecisions, edit: new Error('HTTP 422') },
   ];
   const emitted = [];
   for (const script of runs) {
