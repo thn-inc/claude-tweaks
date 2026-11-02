@@ -1257,7 +1257,7 @@ async function runTeardownRun(argv) {
 
 async function runArchiveRun(argv) {
   const {
-    archiveRunDir, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
+    archiveRunDir, archiveCommitLine, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, listSpecDirs, listStagedItems, consoleReplacedByAutoMerge,
     TIEBREAK_COVERAGE_HINT, CANT_TELL_UNFILED_HINT, unfiledCantTellFindings,
   } = require('./lib/reconcile/archive-merged');
   const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
@@ -1393,12 +1393,15 @@ async function runArchiveRun(argv) {
     // `hint`, never a string match against a specific reason code.
     const hintSuffix = typeof result.hint === 'string' && result.hint.length ? ` — ${result.hint}` : '';
     process.stdout.write(`claude-tweaks: archival refused — ${result.reason}${hintSuffix}\n`);
+    // #3721: a refusal after the archive commit landed still reports that commit.
+    if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
     return 0;
   }
   for (const name of result.movedEntries) {
     process.stdout.write(`moved: ${name}\n`);
   }
   process.stdout.write(`claude-tweaks: archived ${path.basename(runDir)}\n`);
+  if (result.commit) process.stdout.write(`${archiveCommitLine(mainRoot, result.commit)}\n`);
   return 0;
 }
 

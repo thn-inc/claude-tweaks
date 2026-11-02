@@ -617,6 +617,117 @@ test('archiveRunDir: the git mv of work/ is committed, not left staged (no uncom
   assert.match(git(['log', '-1', '--format=%s'], root).trim(), /archive run/);
 });
 
+test('#3721 AC1.1: archiveRunDir returns the commit it made', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.commit.sha, git(['rev-parse', '--short', 'HEAD'], root).trim());
+  assert.strictEqual(result.commit.branch, 'main');
+});
+
+test('#3721 AC1.2: archiveRunDir with nothing tracked returns no commit field', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['rm', '-rq', '--cached', '--', path.join(runDir, 'work')], root);
+  git(['commit', '-q', '-m', 'untrack'], root);
+  fs.rmSync(path.join(runDir, 'work'), { recursive: true });
+  const before = git(['rev-parse', 'HEAD'], root).trim();
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.ok, true);
+  assert.ok(!('commit' in result));
+  assert.strictEqual(git(['rev-parse', 'HEAD'], root).trim(), before);
+});
+
+test('#3721 archiveRunDir on a detached HEAD reports branch detached', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['checkout', '-q', '--detach'], root);
+  assert.strictEqual(archiveRunDir(root, runDir).commit.branch, 'detached');
+});
+
+test('#3721 a commit followed by a refusal still returns the commit', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  fs.writeFileSync(path.join(runDir, 'tracked-stray.md'), 'oops\n');
+  git(['add', path.relative(root, path.join(runDir, 'tracked-stray.md'))], root);
+  git(['commit', '-q', '-m', 'accidentally track a stray file'], root);
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'tracked-entry');
+  assert.strictEqual(result.commit.sha, git(['rev-parse', '--short', 'HEAD'], root).trim());
+  assert.strictEqual(result.commit.branch, 'main');
+});
+
+test('#3721 a refusal before any commit carries no commit field', () => {
+  // Nothing tracked under work/, so no commit runs; the stray file then refuses.
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['rm', '-rq', '--cached', '--', path.join(runDir, 'work')], root);
+  fs.rmSync(path.join(runDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'tracked-stray.md'), 'oops\n');
+  git(['add', path.relative(root, path.join(runDir, 'tracked-stray.md'))], root);
+  git(['commit', '-q', '-m', 'stray only'], root);
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.reason, 'tracked-entry');
+  assert.ok(!('commit' in result));
+});
+
+// A fake `git(args, cwd)` for the probe seam: `answers` maps the first argv
+// word to a result; a missing key fails with a timeout (an unanswered probe).
+function fakeGit(answers) {
+  return (args) => answers[args[0]] || { stdout: null, failure: 'timeout', stderr: '', exitCode: null };
+}
+const OK = (stdout) => ({ stdout, failure: null, stderr: null });
+
+test('#3721 readArchiveCommit: a failed sha probe stores null', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    'rev-parse': { stdout: null, failure: 'timeout', exitCode: null },
+    'symbolic-ref': OK('refs/heads/main'),
+  });
+  assert.deepStrictEqual(readArchiveCommit('/x', fake), { sha: null, branch: 'main' });
+});
+
+test('#3721 readArchiveCommit: symbolic-ref exit 1 is detached', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    'rev-parse': OK('abc1234'),
+    'symbolic-ref': { stdout: null, failure: 'git-error', exitCode: 1 },
+  });
+  assert.strictEqual(readArchiveCommit('/x', fake).branch, 'detached');
+});
+
+test('#3721 readArchiveCommit: an unanswered symbolic-ref is not detached', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  for (const failed of [
+    { stdout: null, failure: 'timeout', exitCode: null },
+    { stdout: null, failure: 'git-error', exitCode: 128 },
+  ]) {
+    const fake = fakeGit({ 'rev-parse': OK('abc1234'), 'symbolic-ref': failed });
+    assert.strictEqual(readArchiveCommit('/x', fake).branch, null);
+  }
+});
+
+test('#3721 archiveCommitLine: a null sha never prints a placeholder', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: null, branch: 'main' }, fakeGit({}));
+  assert.doesNotMatch(line, /unknown on|on unknown/);
+  assert.match(line, /^claude-tweaks: committed the archive move but could not read its sha \(push state unknown\)$/);
+});
+
+test('#3721 archiveCommitLine: a null branch never prints detached', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: null }, fakeGit({}));
+  assert.match(line, /could not read its branch \(push state unknown\)$/);
+  assert.doesNotMatch(line, /detached/);
+});
+
+test('#3721 archiveCommitLine: a throwing probe degrades instead of throwing', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: 'main' }, () => { throw new Error('boom'); });
+  assert.match(line, / \(push state unknown\)$/);
+});
+
 test('archiveRunDir: run-state.json moves to the archived location with status: clean, not left orphaned at the old path', () => {
   const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { root, runDir, runId } = runDirFixture();

@@ -238,7 +238,7 @@ function isOrphanedMint(dir, now = Date.now()) {
 // reason — co-locating the recovery story with the detector rather than
 // leaving it to a dispatcher-side `if (reason === '…')` string match that
 // drifts the moment a reason code is renamed. `hooks.js`'s `archive-run`
-// verb reads only `ok`/`reason`/`hint`/`movedEntries` off the result; it no
+// verb reads only `ok`/`reason`/`hint`/`movedEntries`/`commit` off the result; it no
 // longer special-cases any specific reason string.
 // Hints stay `null` for the codes whose one-line reason already says what
 // happened — writing prose for all fourteen-odd reason codes here would be
@@ -261,6 +261,51 @@ function refusal(reason, { hint = null, ...extra } = {}) {
 // PostToolUse hook holding the lock in the same shared main checkout) is
 // retried rather than surfacing as a hard `commit-failed` refusal.
 const commitGit = withIndexLockRetry(runGit);
+
+// #3721: what the archive commit landed as, read straight after it so
+// `archive-run` can say where it went. `null` in either field means that probe
+// went unanswered — never a stand-in value. `branch` is 'detached' only when
+// `symbolic-ref` answers exit 1 (HEAD is not a symbolic ref); a timeout or any
+// other exit code is an unanswered probe, not a detached HEAD.
+function readArchiveCommit(root, git = runGit) {
+  const head = git(['rev-parse', '--short', 'HEAD'], root);
+  const sha = !head.failure && head.stdout ? head.stdout : null;
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  let branch = null;
+  if (!ref.failure && ref.stdout) branch = ref.stdout.replace(/^refs\/heads\//, '');
+  else if (ref.failure && ref.exitCode === 1) branch = 'detached';
+  return { sha, branch };
+}
+
+// #3721: the one stdout line `archive-run` prints for the commit it made.
+// Informational — it never throws and never fails the verb. The push state is
+// re-derived from the live HEAD ref, not `commit.branch`, so a branch literally
+// named "detached" keeps its real upstream.
+function archiveCommitLine(root, commit, git = runGit) {
+  let state = 'push state unknown';
+  try {
+    const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+    if (!ref.failure && ref.stdout) {
+      const upstream = git(['for-each-ref', '--format=%(upstream:short)', ref.stdout], root);
+      if (!upstream.failure) {
+        if (!upstream.stdout) {
+          state = 'no upstream configured';
+        } else {
+          const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
+          if (!ahead.failure) state = `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
+        }
+      }
+    } else if (ref.failure && ref.exitCode === 1) {
+      state = 'no upstream configured';
+    }
+  } catch {
+    state = 'push state unknown';
+  }
+  const { sha, branch } = commit;
+  if (sha && branch) return `claude-tweaks: committed ${sha} on ${branch} (${state})`;
+  const missing = !sha && !branch ? 'sha and branch' : !sha ? 'sha' : 'branch';
+  return `claude-tweaks: committed the archive move but could not read its ${missing} (${state})`;
+}
 
 // An orphaned mint that reaches this function has nothing to git-mv and
 // nothing to finalize as terminal (no run-state.json, since record-worktree
@@ -1320,6 +1365,10 @@ function archiveRunDir(root, runDir) {
   // function's own enumeration swap (above) exists to eliminate.
   const movedEntries = [];
 
+  // #3721: set once the archive commit lands (see `readArchiveCommit`); a
+  // refusal after that point still carries it, because the commit is real.
+  let archiveCommit = null;
+
   // #2816: every refusal below this point runs after the `archiving`
   // marker (writeRunState above) already created `archiveDir` on disk — a
   // structural/content refusal (audit-untracked, tracked-entry, a
@@ -1349,7 +1398,7 @@ function archiveRunDir(root, runDir) {
     if (!archiveDirPreexisted && movedEntries.length === 0 && !GIT_TIMING_REFUSAL_REASONS.has(reason)) {
       try { fs.rmSync(archiveDir, { recursive: true, force: true }); } catch { /* best-effort */ }
     }
-    return refusal(reason, extra);
+    return archiveCommit ? { ...refusal(reason, extra), commit: archiveCommit } : refusal(reason, extra);
   }
 
   const specDirs = listSpecDirs(runDir);
@@ -1557,6 +1606,7 @@ function archiveRunDir(root, runDir) {
       const fullyReverted = revertStagedOps(root, stagedOps);
       return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
+    archiveCommit = readArchiveCommit(root);
   }
 
   // Tracked-entry guard: a git-tracked file in the run dir outside work/
@@ -1746,7 +1796,7 @@ function archiveRunDir(root, runDir) {
     /* best-effort — non-empty for an unexpected reason, or already gone */
   }
 
-  return { ok: true, movedEntries };
+  return { ok: true, movedEntries, ...(archiveCommit ? { commit: archiveCommit } : {}) };
 }
 
 // #1613: how long a run dir can sit in a "structurally stuck" skip reason
@@ -2708,7 +2758,7 @@ function archiveMerged({
 }
 
 module.exports = {
-  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, listSpecDirs,
+  archiveMerged, countOwnerlessNonClean, prefetchArchivePrStates, decideArchive, decideArchiveCore, unclosedRecords, readConsoleState, consoleResidue, consoleAckRemedy, filingRerunRemedy, consoleResidueHint, archiveRunDir, readArchiveCommit, archiveCommitLine, listSpecDirs,
   isStaleDir, classifyRunDir,
   isOrphanedMint, isAdHocStandaloneMint, isAdHocIntrinsicSkip, ADHOC_INTRINSIC_STUCK_REASONS, archiveOrphanedMint, ORPHAN_MINT_TTL_MS, trackArchiveResult,
   localHasMerge, lastOwnEventMs, ownEventRecency, isAbandonedInterrupted, STALE_INTERRUPTED_TTL_MS,
