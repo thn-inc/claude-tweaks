@@ -52,7 +52,7 @@ inclusion:
    expires, judge that unit yourself, log the downgrade, and mark its findings `unconfirmed`; that
    child is abandoned and no longer counts as outstanding, so your final reply still ends with
    `STATUS: {WORD}`. For a `/claude-tweaks:review` lens unit, log that downgrade as the single-read
-   coverage line, and carry its caveat, from `review/step3-lens-dispatch.md`'s partner-died
+   coverage line, and carry its caveat, from `review/step3-tier-variants.md`'s partner-died
    paragraph. Ignore a late result; if a late notification re-wakes you after your final
    reply, repeat your whole final reply unchanged — the dispatcher keeps only your latest reply, so
    a bare `STATUS:` line would replace the report. A child that reports a failure (a `failed`

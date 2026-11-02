@@ -463,6 +463,8 @@ test('code-mode-steps wiring assertions can go red', () => {
 // --- step3-lens-dispatch.md: the low tier routes through the tiebreak; the Direct-verification override is retired ---
 
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
+// #4826: the low-tier and partner-died paragraphs moved to step3-tier-variants.md.
+const TIER_VARIANTS = path.join(SKILLS, 'review', 'step3-tier-variants.md');
 
 const lowTierParagraph = (text) => lineStartingWith(text, '**Low-tier single-read dispatch (`low` only).**');
 const overrideParagraph = (text) => lineStartingWith(text, '> **Direct-verification override.**');
@@ -480,14 +482,14 @@ const lowTierMissing = missingFactsOf(LOW_TIER_REQUIRED);
 const lowTierLeftovers = leftoverFactsOf(LOW_TIER_FORBIDDEN);
 
 test('AC4.1 low tier hands findings to the tiebreak', () => {
-  const paragraph = lowTierParagraph(readText(STEP3));
+  const paragraph = lowTierParagraph(readText(TIER_VARIANTS));
   assert.notEqual(paragraph, '', 'the low-tier single-read paragraph was not found');
   assert.deepEqual(lowTierMissing(paragraph), [], 'the low-tier paragraph must hand findings to the tiebreak');
   assert.deepEqual(lowTierLeftovers(paragraph), [], 'the low-tier paragraph must not keep the old direct-verification path');
 });
 
 test('AC4.1 the low-tier assertions can go red', () => {
-  const paragraph = lowTierParagraph(readText(STEP3));
+  const paragraph = lowTierParagraph(readText(TIER_VARIANTS));
   assertEachPatternGoesRed(paragraph, LOW_TIER_REQUIRED, lowTierMissing);
   assert.deepEqual(lowTierLeftovers(`${paragraph} the only path to \`confirmed\` is the Direct-verification override`), ['the old only-path-to-confirmed sentence']);
   assert.deepEqual(lowTierLeftovers(`${paragraph} confirmed via direct verification`), ['the old direct-verification confirmation log line']);
@@ -1017,6 +1019,7 @@ const SUMMARY_TEMPLATE = path.join(SKILLS, 'review', 'review-summary-template.md
 const liveTexts = () => ({
   tiebreak: tiebreakText(),
   step3: readText(STEP3),
+  tierVariants: readText(TIER_VARIANTS),
   debate: debateText(),
   template: readText(SUMMARY_TEMPLATE),
 });
@@ -1281,7 +1284,7 @@ test('the resolve-tiebreak failure-line assertions can go red', () => {
 // Final re-review residuals: every unconfirmed source keeps a console-visible line, and the
 // two "run the sweep once" sentences name Step 3.7's re-run.
 const nearLocationLine = (texts) => documentedTemplate(texts.step3, ['share a location but not substance']);
-const partnerDiedParagraph = (texts) => lineStartingWith(texts.step3, '> **Reproduction-pair partner dies or is unavailable.**');
+const partnerDiedParagraph = (texts) => lineStartingWith(texts.tierVariants, '> **Reproduction-pair partner dies or is unavailable.**');
 const PER_FINDING_LINE = /per-finding (?:`unconfirmed` )?line/;
 function residualProblems(texts) {
   const problems = [];
@@ -1302,8 +1305,8 @@ test('each console-visibility and sweep re-run assertion can go red', () => {
   const live = liveTexts();
   const cases = [
     [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
-    [{ step3: live.step3.replace(', plus the per-finding line above for each finding it reports.', '') }, 'hung-agent findings get no per-finding line'],
-    [{ step3: live.step3.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
+    [{ step3: live.step3.replace(", plus `step3-tier-variants.md`'s low-tier per-finding line for each finding it reports.", '') }, 'hung-agent findings get no per-finding line'],
+    [{ tierVariants: live.tierVariants.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
     [{ step3: live.step3.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],
     [{ debate: live.debate.replace(' (Step 3.7 re-runs it for its own waves)', '') }, 'debate sweep says once without the Step 3.7 re-run'],
     [{ tiebreak: live.tiebreak.replace(', logging only what the earlier sweep did not already report', '') }, 'Step 3.7 sweep re-logs earlier leftovers'],
