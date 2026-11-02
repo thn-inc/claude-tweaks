@@ -93,6 +93,30 @@ test('checkLink fragment keys: split on &, text before =, decoded and lowercased
   assert.deepEqual(check('http://localhost:3000/p#note=token'), { ok: true });
 });
 
+test('checkLink refuses a query inside a fragment', () => {
+  const cases = [
+    ['http://localhost:3000/#/cb?token=abc', 'token'],
+    ['http://localhost:3000/#/cb?x=1&sig=abc', 'sig'],
+    ['http://localhost:3000/#/cb?jwt', 'jwt'],
+    ['http://localhost:3000/#/cb%3Ftoken=abc', 'token'],
+    ['http://localhost:3000/#state=x?token=abc', 'token'],
+  ];
+  for (const [url, key] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason: `credential key in fragment: ${key}` }, url);
+  }
+});
+
+test('checkLink keeps accepting a benign fragment that only mentions a key', () => {
+  for (const fragment of ['token-guide', '/docs/token-guide', '/cb?role=admin', '/token?x=1', 'note=token']) {
+    assert.deepEqual(check(`http://localhost:3000/#${fragment}`), { ok: true }, fragment);
+  }
+});
+
+test('checkLink: a stray % elsewhere in the fragment does not hide an encoded key', () => {
+  assert.deepEqual(check('http://localhost:3000/#100%&tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
+  assert.deepEqual(check('http://localhost:3000/#100%?tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
+});
+
 test('every credential key refuses in query and in fragment', () => {
   for (const key of CREDENTIAL_KEYS) {
     assert.deepEqual(check(`http://localhost:3000/?${key}=1`), { ok: false, reason: `credential key in query: ${key}` });
@@ -111,6 +135,25 @@ test('normalizeKey survives malformed percent escapes', () => {
   assert.equal(normalizeKey('100%'), '100%');
   assert.equal(normalizeKey('TOK%ZZ'), 'tok%zz');
   assert.equal(normalizeKey('%2525ZZ'), '%zz');
+});
+
+test('normalizeKey decodes each valid escape and leaves each invalid one literal', () => {
+  assert.equal(normalizeKey('100% tok%65n'), '100% token');
+  assert.equal(normalizeKey('%ZZ%41'), '%zza');
+  assert.equal(normalizeKey('%FF%41'), '%ffa');
+  assert.equal(normalizeKey('%41%FF%42'), 'a%ffb');
+  assert.equal(normalizeKey('caf%C3%A9 %C3'), 'café %c3');
+  assert.equal(normalizeKey('%F0%9F%98%80%'), '😀%');
+  assert.equal(normalizeKey('%25%36%35'), 'e');
+});
+
+test('findCredentialInText: a stray or invalid escape does not hide an encoded key', () => {
+  assert.equal(findCredentialInText('100% done, tok%65n=abc'), 'token');
+  assert.equal(findCredentialInText('%FF%20tok%65n=abc'), 'token');
+  assert.equal(findCredentialInText('50% off, cli --%6Bey abc'), 'key');
+  assert.equal(findCredentialInText('100% done, to%6ben=abc'), 'token');
+  assert.equal(findCredentialInText('100% done'), null);
+  assert.equal(findCredentialInText(undefined), null);
 });
 
 test('contract constants hold their exact values', () => {
