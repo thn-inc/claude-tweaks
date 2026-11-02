@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T13:10:23.636Z",
+  "computedAt": "2026-11-02T13:25:37.196Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -60,7 +60,7 @@
       },
       {
         "number": 4817,
-        "updatedAt": "2026-11-02T13:07:56Z",
+        "updatedAt": "2026-11-02T13:14:38Z",
         "state": "OPEN"
       },
       {
@@ -970,7 +970,7 @@
       },
       {
         "number": 3721,
-        "updatedAt": "2026-10-27T16:47:48Z",
+        "updatedAt": "2026-11-02T13:24:52Z",
         "state": "OPEN"
       },
       {
@@ -1432,6 +1432,84 @@
           "breaking": false,
           "needsDefinition": false,
           "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `reflect`, enough to promote as one record.\n\n## Deliverables\n\n- [reflect] gh-api-module-pattern skill: a write path added to a CLI that already proves run ownership before its first write must carry the same proof (closing-links.js 9b close vs 7a run-marker check) — .claude/skills/gh-api-module-pattern/SKILL.md, plugin/bin/closing-links.js — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] windows-checkout-test-parity skill: a test pinning one shell's behaviour skips where CI lacks that shell, so the workflow must install it (zsh on ubuntu-latest, #4107) — .claude/skills/windows-checkout-test-parity/SKILL.md, .github/workflows/test.yml — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] executable-snippet-pins: a go-red mutation of a fence that branches on a node -e exit status must change the exit outcome; an edit that makes node throw keeps the exit non-zero and proves nothing — .claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in reflect.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `plugin/bin/closing-links.js` — modify\n- `.claude/skills/windows-checkout-test-parity/SKILL.md` — modify\n- `.github/workflows/test.yml` — modify\n- `.claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6571003055).\n\n- **Decision: Reading A.** The run-marker proof covers only the non-default-base path of `closing-links.js --mode post-merge`: the marker check runs when the PR merged into a base other than the default branch, ahead of both that path's reopens and its 9b closes. Default-base post-merge reopens (step 8b, #4199) deliberately stay unproven, so the common default-base path, including the reconciler's late runs, gains no new exit 4. Record this choice in the spec and pin it with a test asserting a default-base post-merge run still reopens for a foreign or marker-less PR body.\n",
+        "createdAt": "2026-11-01T07:37:09Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2myw",
+            "name": "by:capture",
+            "description": "Origin: filed via /capture",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4817,
+        "state": "OPEN",
+        "title": "Settle 3 digest findings in reflect",
+        "updatedAt": "2026-11-02T13:14:38Z",
+        "facets": {
+          "origin": "capture",
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
           "stage": "ready",
           "grants": {
             "build": true,
@@ -10170,7 +10248,7 @@
         "number": 3721,
         "state": "OPEN",
         "title": "archive-run: commits the archive move on the current branch without reporting the commit or that it is unpushed",
-        "updatedAt": "2026-10-27T16:47:48Z",
+        "updatedAt": "2026-11-02T13:24:52Z",
         "facets": {
           "origin": null,
           "risk": "low",
