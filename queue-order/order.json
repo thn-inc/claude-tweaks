@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T08:09:20.635Z",
+  "computedAt": "2026-11-02T08:28:02.693Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -95,7 +95,7 @@
       },
       {
         "number": 4807,
-        "updatedAt": "2026-11-02T07:40:00Z",
+        "updatedAt": "2026-11-02T08:18:01Z",
         "state": "OPEN"
       },
       {
@@ -115,7 +115,7 @@
       },
       {
         "number": 4803,
-        "updatedAt": "2026-11-01T18:30:44Z",
+        "updatedAt": "2026-11-02T08:25:13Z",
         "state": "OPEN"
       },
       {
@@ -705,7 +705,7 @@
       },
       {
         "number": 4321,
-        "updatedAt": "2026-10-31T09:58:30Z",
+        "updatedAt": "2026-11-02T08:27:17Z",
         "state": "OPEN"
       },
       {
@@ -1783,84 +1783,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/skills/tidy/SKILL.md` (line 130, the Prune-plan Execution column) tells the agent to re-run a bare `bin/plan-retention.js`, while `plugin/skills/tidy/scan-procedures.md:53` and `docs/skill-authoring.md:146` use `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`. A consumer project root has no `bin/`, so the step fails there when taken literally. Found by the v6.159.0 release-gate review (lens 3a, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Replace the bare path with `node \"${CLAUDE_PLUGIN_ROOT}/bin/plan-retention.js\"`.\n\n## Acceptance Criteria\n\n`grep -n \"bin/plan-retention.js\" plugin/skills/tidy/SKILL.md` shows only the `${CLAUDE_PLUGIN_ROOT}` form.\n\n`npm test` passes.\n\n## Release Note\n\nTidy's plan-pruning re-check now runs correctly in projects that use the plugin.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/tidy/SKILL.md` — modify\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-11-01T07:33:43Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4803,
-        "state": "OPEN",
-        "title": "tidy/SKILL.md: run plan-retention.js through CLAUDE_PLUGIN_ROOT in the prune re-verify step",
-        "updatedAt": "2026-11-01T18:30:44Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
@@ -8165,7 +8087,7 @@
         "number": 4321,
         "state": "OPEN",
         "title": "Test-impact selection never fires: .claude/skills/** changes and other unmatched paths force the full suite",
-        "updatedAt": "2026-10-31T09:58:30Z",
+        "updatedAt": "2026-11-02T08:27:17Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
