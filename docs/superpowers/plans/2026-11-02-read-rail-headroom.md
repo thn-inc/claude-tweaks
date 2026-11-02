@@ -41,8 +41,7 @@
 - Modify: `plugin/skills/ledger/SKILL.md:54` (Create's caller list cites `build/SKILL.md` Spec Step 2.5's "If the ledger doesn't exist, create it")
 - Modify: `docs/plugin-structure.md:106` (build row: file list + one description clause)
 - Test: `tests/build-manual-steps-split-conformance.test.js` (new)
-- Waived `plugin/skills/build/build-options.md`: line 39's "(Step 2.5 auto-executable-command confirmation)" still names the step correctly; no change.
-- Waived `plugin/skills/specify/spec-template.md`: line 217's "Classified at build start (Step 2.5)" still correct; no change.
+- No change (classified): `plugin/skills/build/build-options.md` line 39's "(Step 2.5 auto-executable-command confirmation)" and `plugin/skills/specify/spec-template.md` line 217's "Classified at build start (Step 2.5)" still name the step correctly.
 
 **Moved-prose pins (grep `tests/` and `plugin/` for the moved block's phrases — `Auth-gap`, `Truly manual`, `wholly operational`, `CLI/API check`, `user-declined`, `If the ledger doesn't exist, create it`):** no test pins any of them; the one plugin hit outside the moved file is `ledger/SKILL.md:54` (listed above). `tests/build-skip-degrade-trace-adoption.test.js` pins only the skip line, which stays in SKILL.md.
 
@@ -100,7 +99,7 @@ git commit -m "Move build Spec Step 2.5 triage into manual-steps.md — Read-rai
 - Modify: `plugin/skills/review/step3-tiebreak.md:33`
 - Modify: `plugin/skills/review/step3-cross-lens-corroboration.md:20`
 - Modify: `plugin/skills/review/step3-routing.md:158`
-- Modify: `plugin/skills/review/review-summary-template.md:14,105`
+- Modify: `plugin/skills/review/review-summary-template.md:14-105` (lines 14 and 105 only)
 - Modify: `docs/skill-graph.md:532` ("The post-fan-out sweep's leftover-listener check (`step3-lens-dispatch.md`)")
 - Modify: `docs/plugin-structure.md:109` (review row)
 - Modify (retarget pins): `tests/multi-agent-coordination.test.js:19,1477-1501`, `tests/review-lens-no-suites-conformance.test.js:127-135`, `tests/review-tiebreak-step-conformance.test.js:1039,1145-1158`, `tests/bin-lib/review-context/prose.test.js:101-106`
@@ -173,8 +172,9 @@ git commit -m "Move review post-fan-out sweep into step3-fanout-sweep.md — Rea
 **Files:**
 - Waived `plugin/skills/review/step3-lens-dispatch.md`, `plugin/skills/build/SKILL.md`: read only (measured by `wc -c`).
 
-Waived AC1.1 (as a test): byte pins outside `budgets.js` are forbidden (`tests/skill-size-single-source.test.js`, decision 0024); evidenced by this task's recorded `wc -c` instead.
-Waived AC2.1 (as a plan test beyond Tasks 1-2): the full `npm test` pass is `/build` Common Step 5's verification run through `verify.js`, not a plan task.
+Waived AC1.1: a byte pin outside `budgets.js` is forbidden (`tests/skill-size-single-source.test.js`, decision 0024) — evidenced by this task's recorded `wc -c` instead.
+
+AC2.1's full `npm test` pass is `/build` Common Step 5's verification run through `verify.js`; Tasks 1-2 cover its conformance-suite half.
 
 - [ ] **Step 1: Capture the measurement** (run dir is `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T101852-record-4826`, written `{run}` here — always spelled out literally in commands):
 
