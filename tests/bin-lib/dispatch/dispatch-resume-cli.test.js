@@ -1408,6 +1408,8 @@ test('the real listRunDirsWithState dep: a missing pipelines dir lists nothing, 
     fs.mkdirSync(path.join(dir, '.claude-tweaks'));
     fs.writeFileSync(path.join(dir, '.claude-tweaks', 'pipelines'), 'not a directory');
     assert.throws(() => realDeps.listRunDirsWithState(dir));
+    // no cwd: starts from process.cwd() like iterRunDirsWithState, never a TypeError from path.join(undefined)
+    assert.ok(Array.isArray(realDeps.listRunDirsWithState()));
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
