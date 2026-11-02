@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T23:02:15.499Z",
+  "computedAt": "2026-11-02T23:14:51.916Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -610,7 +610,7 @@
       },
       {
         "number": 4333,
-        "updatedAt": "2026-10-31T09:58:13Z",
+        "updatedAt": "2026-11-02T23:14:09Z",
         "state": "OPEN"
       },
       {
@@ -7247,7 +7247,7 @@
         "number": 4333,
         "state": "OPEN",
         "title": "Make the test-suite slot in tools/run-tests.js FIFO so a queued run cannot starve",
-        "updatedAt": "2026-10-31T09:58:13Z",
+        "updatedAt": "2026-11-02T23:14:09Z",
         "facets": {
           "origin": null,
           "risk": "low",
