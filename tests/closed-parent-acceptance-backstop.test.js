@@ -376,6 +376,17 @@ test('AC1.1: the local-files close fence appends the section once and closes the
   }
 });
 
+test('AC2.1: Shape 7 loads the exported heading regex with no gh on PATH', () => {
+  const t = localFixture();
+  t.parent(9, 'Closed above floor', { closed: true });
+  t.subIssue(91, 9, 'high');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'path'));
+  env.PATH = mkTmp('cp-nopath-');
+  const r = spawnSync(process.execPath, ['-e', scanScript(LOCAL, "'\\t[parent-gate] '"), '--', 'high'], { cwd: t.cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
+});
+
 test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning line', () => {
   const t = localFixture();
   t.parent(10, 'No subs A', { closed: true });
