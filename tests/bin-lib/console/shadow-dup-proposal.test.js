@@ -270,7 +270,7 @@ function victimPair() {
   return { leaf, victim };
 }
 
-test('readNoFollow characterization: with O_NOFOLLOW a regular file reads and a missing leaf surfaces ENOENT', () => {
+test('readNoFollow characterization: a regular file reads and a missing leaf surfaces ENOENT on the platform\'s own constants', () => {
   const leaf = leafFile('plain bytes\n');
   assert.equal(readNoFollow(leaf), 'plain bytes\n');
   assert.throws(() => readNoFollow(path.join(path.dirname(leaf), 'gone.md')), { code: 'ENOENT' });
