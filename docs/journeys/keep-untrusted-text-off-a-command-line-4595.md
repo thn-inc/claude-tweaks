@@ -31,7 +31,7 @@ files:
 
 ### 3. A paste command is rendered only when it matches its composer's grammar
 - **URL:** N/A
-- **Action:** When the step shows the user a command built from untrusted parts, it checks every part against the composer's exact shape. That means fixed literals, each slot's allowed characters stated, and nothing trailing. Example: tidy Step 4.7's Resume line, held to `plugin/bin/lib/flow/pr-body.js`'s `composeResumeLine`. If any part fails, the step shows a line that is not a command and names the item, such as "Resolve open PR #N".
+- **Action:** When the step shows the user a command built from untrusted parts, it checks every part against the composer's exact shape. That means fixed literals, each slot's allowed characters stated, and nothing trailing. Example: tidy Step 4.7's Resume line, held to `plugin/bin/lib/flow/pr-body.js`'s `composeResumeLine`. If any part fails, the step shows a line that is not a command and names the item, such as "Resolve open PR N".
 - **Should feel:** Safe to copy. Any command the user sees is one the plugin itself could have composed.
 - **Should understand:** A PR body is untrusted even when it carries the plugin's own marker.
 - **Red flags:** A rendered paste line that echoes whatever followed a heading in a PR body.
