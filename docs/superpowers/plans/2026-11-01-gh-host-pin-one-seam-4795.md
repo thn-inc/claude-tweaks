@@ -182,6 +182,7 @@ Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim"
 ### Task 3: Grant gate onto `ghOptions`'s `explicitHost`; pin one mechanism in the conformance suite
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/backlog-grant-gate.js:101-110` — `runner: (args, o = {}, seam = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true }, seam))`; `nativeRunnerFor: (repoSpec) => { const host = explicitRepoGhHost(repoSpec); return host ? (args) => realDeps.runner(args, {}, { explicitHost: host }) : null; }`; rewrite the `#4505` comment above it to say the host rides `ghOptions`'s per-call `explicitHost`.
