@@ -65,6 +65,9 @@ negative stories and failures only, and a routine pass never renders there.
   of the body when no such block exists. Whitespace around a delimiter does not change what it is. An
   end closes the nearest start above it. Repeated blocks collapse into one at the first one's place, and
   any text between them stays. A start with no end pairing it loses its delimiter line, and the text after it stays.
+  An end delimiter with no start above it is ordinary text: it is never a block, and it stays where it is.
+  When the first start in the body is such an orphan, the packet lands on that orphan's line, ahead of any
+  complete block below it, which is removed like any repeated block.
 - **How many.** One packet per work item. A legacy brief comment is left untouched, and "exactly one"
   counts packet comments only.
 - **Parents.** Decomposed work: the packet lives on the parent and a sub-issue's wrap-up posts none.
@@ -83,7 +86,7 @@ negative stories and failures only, and a routine pass never renders there.
 
 `schemaVersion: 1` is one constant used by the facts, the narrative and the marker.
 
-**The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], expected[], facts[] }`.
+**The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], facts[] }`.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
 `command`, `label`, `negative`, `live` and `target`.
 
@@ -230,7 +233,7 @@ block marker is escaped too, `>`, a list marker, `1.` or `1)`, so `- ## Couldn't
 heading, and so is a character reference's `&`, since `&#35;12` and `&commat;octocat` would decode into a
 live reference and a live mention. A URL in free
 text renders as a code span, as does every other shape GitHub would link or notify: any `scheme://` URL,
-`mailto:`, a bare email, `@mention`, `#12` and `owner/repo#12`, tokens that touch sharing one span. A `command` renders in a backtick-safe
+`mailto:`, a bare email, `@mention`, `#12` and `owner/repo#12`, and `GH-12`, tokens that touch sharing one span. A bare commit SHA and `owner/repo@sha` stay live. A `command` renders in a backtick-safe
 code span. Links render only from `link` facts and a `recording` fact's `url`. An evidence screenshot is
 therefore a plain link and not an embedded image: only a screened fact produces a live link, and media
 belongs to the recording record.
@@ -247,7 +250,9 @@ credential screen with no host rule, since a recording may live on any host; a r
 **In a URL**, the keys are matched in the query, the fragment and the userinfo, case-insensitive after
 percent-decoding, so `?TOKEN=` and `?tok%65n=` both refuse. Decoding is per escape run, tolerating a stray
 `%`. A query inside a fragment (`#/cb?token=abc`) and nested keys in a query (`?next=/cb?token=abc`) are
-screened. A benign path such as `/docs/token-guide` is not.
+screened. A benign path such as `/docs/token-guide` is not. A key counts as a whole word, as the last
+word of a compound (`authToken`, `clientSecret`, `v2token`, `CLIENTSECRET`), or in brackets
+(`token[]=`, `token[sub]=`, `user[password]=`), as described under **In text**.
 
 **In text.** The same constant screens every `command` string, every claim's text in any section, each
 observation-plan line, and all other free text that renders: a `reason`, decision, recording and deploy
@@ -263,6 +268,14 @@ case-insensitive after percent-decoding: `tok%65n=`, or `100% tok%65n=` with a s
 - The header `Authorization:`.
 - URL userinfo in text: `https://user:pass@example.com`.
 
+A key is a whole word or the last word of a compound, and a word break is a `-` or `_`, a change from
+lowercase to uppercase (`authToken`, `APIToken`), a change between letters and digits (`v2token`), or the
+start of an all-caps key at the end of an all-caps word (`CLIENTSECRET`), so `_authToken=` and
+`curl --authToken abc` match. A key also matches inside brackets, with the brackets skipped: `token[]=`,
+`token[sub]=`, `user[password]=`. A lowercase word that merely contains a key, with no such break,
+is no match: `monkey=`, `keyboard=`, `author=`, `tokenizer=`. The screen over-matches on purpose,
+so `?sort_key=name` and an all-caps `MONKEY=` are dropped too.
+
 `monkey=1`, `/docs/token-guide` and `acceptance-packet.js --help` are not matches. A match
 drops that entry, and its omission is stated by id or key, never its text, and the packet still posts:
 
@@ -274,8 +287,10 @@ drops that entry, and its omission is stated by id or key, never its text, and t
   or `1 entry omitted` in the singular. `render --dropped-out` holds the same section and key.
 - A `reason` renders `(reason withheld: credential-shaped)` and its row stays, so the row count holds.
 - Any other free text renders `(text withheld: credential-shaped)`.
-- A fact id or refused id renders `(id withheld: credential-shaped)` and its row stays. Validation is
-  unchanged: a withheld id stays citable.
+- A fact id or refused id renders `(id withheld: credential-shaped)` and its row stays. Inside a claim's
+  citation list a withheld id renders without a second pair of parentheses: a claim whose only citation
+  is withheld reads `(id withheld: credential-shaped)`, a mixed list reads
+  `(id withheld: credential-shaped, \`story:x\`)`. Validation is unchanged: a withheld id stays citable.
 
 **Credentials in the Test guide** appear only as vault entry names: a step that needs a login names the
 entry to use, never its value.

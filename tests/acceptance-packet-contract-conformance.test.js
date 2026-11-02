@@ -243,6 +243,12 @@ test('the local-files block rules stated are what the code does', () => {
   assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${block('B')}`, 'N'), `${block('N')}\nx`);
   assert.strictEqual(upsertLocalPacket(`${LOCAL_START}\nnotes`, 'N'), `${block('N')}\nnotes`);
   assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${LOCAL_START}\ny`, 'N'), `${block('N')}\nx\ny`);
+
+  assert.match(body, /An end delimiter with no start above it is ordinary text: it is never a block, and it stays where it is/);
+  assert.match(body, /When the first start in the body is such an orphan, the packet lands on that orphan's line, ahead of any\s+complete block below it, which is removed like any repeated block/);
+  assert.strictEqual(upsertLocalPacket(`${LOCAL_END}\nx\n${LOCAL_START}\ny`, 'N'), `${LOCAL_END}\nx\n${block('N')}\ny`);
+  assert.strictEqual(upsertLocalPacket(`${LOCAL_END}\nx`, 'N'), `${LOCAL_END}\nx\n\n${block('N')}`);
+  assert.strictEqual(upsertLocalPacket(`${LOCAL_START}\nx\n${block('A')}\ny`, 'N'), `${block('N')}\nx\ny`);
 });
 
 test('what a dropped plan line takes with it, and a withheld id, are stated and rendered', () => {
@@ -497,6 +503,7 @@ const UNTRUSTED_FACTS = [
   ['a command renders in a code span', /A `command` renders in a backtick-safe code span/],
   ['links come only from facts', /Links render only from `link` facts and a `recording` fact's `url`/],
   ['the autolink forms', /any `scheme:\/\/` URL, `mailto:`, a bare email, `@mention`, `#12` and `owner\/repo#12`/],
+  ['GH-12 is neutralized and a SHA stays live', /`#12` and `owner\/repo#12`, and `GH-12`[^.]*\. A bare commit SHA and `owner\/repo@sha` stay live/],
   ['a leading block marker escapes', /A leading block marker is escaped too, `>`, a list marker, `1\.` or `1\)`/],
   ['a character reference escapes', /a character reference's `&`/],
   ['touching tokens share a span', /tokens that touch sharing one span/],
@@ -507,8 +514,11 @@ for (const [label, pattern] of UNTRUSTED_FACTS) {
 }
 
 test('inline() renders each autolink form the contract names as a code span', () => {
-  for (const form of ['ssh://host/path', 'mailto:a@b.co', 'a@b.co', '@octocat', '#12', 'owner/repo#12']) {
+  for (const form of ['ssh://host/path', 'mailto:a@b.co', 'a@b.co', '@octocat', '#12', 'owner/repo#12', 'GH-12']) {
     assert.strictEqual(inline(form), codeSpan(form), form);
+  }
+  for (const live of ['abc1234def', 'owner/repo@abc1234']) {
+    assert.strictEqual(inline(live), live, `${live} stays live`);
   }
 });
 
@@ -586,6 +596,25 @@ test('each text shape the contract names is screened, and the benign ones are no
   for (const benign of ['monkey=1', '/docs/token-guide', 'acceptance-packet.js --help']) {
     assert.strictEqual(findCredentialInText(benign), null, `${benign} is not screened`);
     assert.ok(body.includes(`\`${benign}\``), `the contract must name ${benign}`);
+  }
+});
+
+test('the camelCase, compound and bracket matching the contract states is what the screen does', () => {
+  const body = inSection('## Links and credentials');
+  assert.match(body, /A key is a whole word or the last word of a compound/);
+  assert.match(body, /A key also matches inside brackets, with the brackets skipped/);
+  assert.match(body, /A lowercase word that merely contains a key, with no such break,\s+is no match/);
+  for (const shape of ['_authToken=', 'curl --authToken abc', 'token[]=', 'token[sub]=', 'user[password]=', 'CLIENTSECRET=', 'v2token=', 'APIToken=']) {
+    assert.ok(findCredentialInText(shape), `${shape} is screened`);
+    assert.ok(body.includes(`\`${shape.replace(/=$/, '')}`), `the contract must name ${shape}`);
+  }
+  for (const benign of ['monkey=', 'keyboard=', 'author=', 'tokenizer=']) {
+    assert.strictEqual(findCredentialInText(benign), null, `${benign} is not screened`);
+    assert.ok(body.includes(`\`${benign}\``), `the contract must name ${benign}`);
+  }
+  const allowedHosts = ['example.com'];
+  for (const url of ['https://example.com/?authToken=a', 'https://example.com/?token[]=a', 'https://example.com/#/cb?authToken=a']) {
+    assert.strictEqual(checkLink(url, { allowedHosts }).ok, false, url);
   }
 });
 

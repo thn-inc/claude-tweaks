@@ -12,7 +12,7 @@ const { readRecord, writeRecord, defaultFacets } = require('../plugin/bin/lib/is
 const { LOCAL_START, LOCAL_END, MAX_PACKET_CHARS, PACKET_MARKER } = require('../plugin/bin/lib/wrap-up/packet-contract');
 
 const BIN = path.join(__dirname, '..', 'plugin', 'bin', 'acceptance-packet.js');
-const { run, parseArgs } = require(BIN);
+const { run, parseArgs, droppedEntry } = require(BIN);
 
 const H = 'a'.repeat(40);
 const OTHER = 'b'.repeat(40);
@@ -96,6 +96,7 @@ function gather(ws, extraArgs, overrides) {
 const idsOf = (facts, kind) => facts.facts.filter((f) => f.kind === kind).map((f) => f.id);
 const factOf = (facts, id) => facts.facts.find((f) => f.id === id);
 const REPORT = { checks: { tests: { command: 'npm test', exitCode: 0, summary: 'ok' } } };
+const STALE_FACTS = '{"stale":"an earlier gather"}';
 
 function writeStamp(gitDir, { sha = H, stories = [{ id: 'neg-x', file: 's.yaml', sha256: HASH }], reportPath } = {}) {
   writeJson(path.join(gitDir, QA_STAMP_NAME), { sha, dirty: false, stories, storiesDir: 'stories', ...(reportPath ? { reportPath } : {}) });
@@ -503,6 +504,25 @@ test('gather with an unwritable --out exits 1', (t) => {
   assert.match(h.stderr(), /--out/);
 });
 
+for (const [name, argsFor, overrides] of [
+  ['a --run that is refused (exit 3)', (ws) => ['--run', path.join(ws.root, 'no-such-run')], {}],
+  ['a facts write that fails (exit 1)', () => [], { writeFile: () => { throw new Error('disk full'); } }],
+]) {
+  test(`gather failing on ${name} removes an earlier --out`, (t) => {
+    const ws = workspace(t);
+    const out = writeText(ws.file('facts.json'), STALE_FACTS);
+    const h = harness(ws, overrides);
+    assert.notEqual(run(['gather', '--record', '7', '--out', out, ...argsFor(ws)], h.deps), 0);
+    assert.throws(() => fs.statSync(out));
+  });
+}
+
+test('gather that succeeds replaces an earlier --out rather than removing it', (t) => {
+  const ws = workspace(t);
+  writeText(ws.file('facts.json'), STALE_FACTS);
+  assert.equal(gather(ws, []).facts.record, 7);
+});
+
 // ---- the run-dir boundary ----
 
 function shadowFixture(t) {
@@ -755,6 +775,13 @@ test('an unreadable report flag falls back to the snapshot', (t) => {
   assert.equal(factOf(facts, 'check:tests').status, 'passed');
   assert.ok(factOf(facts, 'story:reported'));
   assert.ok(!facts.partial.includes('QA report not read — selected stories not listed'));
+  assert.ok(facts.partial.includes('--report input not read — treated as absent'));
+});
+
+test('a --report that reads states no partial note', (t) => {
+  const ws = workspace(t);
+  const report = writeJson(ws.file('report.json'), REPORT);
+  assert.ok(!gather(ws, ['--report', report]).facts.partial.some((note) => note.startsWith('--report')));
 });
 
 test('--head wins over the manifest head', (t) => {
@@ -879,6 +906,15 @@ test('--dropped-out holds a section and a fixed reason for every drop, never a c
     { section: 'risk-proofs', reason: 'risk proof cites no flag' },
     { section: 'risk-proofs', reason: 'risk proof cites no proof fact' },
   ]);
+});
+
+test('a validator entry without a known reasonKind is withheld, whatever its free-form reason says', () => {
+  const secret = 'S3CRET-VALUE';
+  const claim = { section: 'what-changed', text: 'x', refs: [] };
+  const withheld = { section: 'what-changed', reason: 'dropped (reason withheld)' };
+  assert.deepEqual(droppedEntry({ claim, reason: `a future reason holding ${secret}` }), withheld);
+  assert.deepEqual(droppedEntry({ claim, reason: `absent fact ${secret}`, reasonKind: `absent fact ${secret}` }), withheld);
+  assert.deepEqual(droppedEntry({ claim, reason: 'no refs', reasonKind: 'no refs' }), { section: 'what-changed', reason: 'no refs' });
 });
 
 const STALE = 'an earlier render';

@@ -203,10 +203,15 @@ function upsertLocalPacket(recordBody, packetMarkdown) {
       kept.push(...lines.slice(at, start));
       at = end + 1;
     }
-    return [...kept, ...lines.slice(at)].join('\n');
+    const body = [...kept, ...lines.slice(at)].join('\n');
+    // Removing a last line that had no CR leaves the line above it with a bare one.
+    return body.endsWith('\r') && !recordBody.endsWith('\r') ? body.slice(0, -1) : body;
   }
   const eol = recordBody.includes('\r\n') ? '\r\n' : '\n';
-  const head = recordBody.replace(/[\r\n]+$/, '');
+  // Not `replace(/[\r\n]+$/, '')`: that rescans the whole newline run from every start of it.
+  let headEnd = recordBody.length;
+  while (headEnd > 0 && (recordBody[headEnd - 1] === '\n' || recordBody[headEnd - 1] === '\r')) headEnd -= 1;
+  const head = recordBody.slice(0, headEnd);
   const block = renderLocalBlock(packetMarkdown, eol);
   if (head === '') return block;
   return `${head}${eol}${eol}${block}${head === recordBody ? '' : eol}`;

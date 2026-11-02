@@ -882,9 +882,12 @@ function scanPrBrief(prComments, target) {
 // `readPacket` (whole first line equals the marker, trusted authors only). The
 // brief forms below -- a confirmed brief on the issue, or the pr-first pointer
 // plus a brief on the PR -- are legacy readers, reached only when no trusted
-// packet exists and kept until demo/legacy-brief-compatibility.md's cleanup
-// record. A trusted packet of an unknown schema version fails rather than
-// falling through, so a brief beside it cannot pass it.
+// packet exists. Removal condition: these readers go once no open record carries
+// a Verification Brief without an acceptance packet, to be scheduled by the final
+// contract-cleanup record the human-in-control epic (#4608) names (#4613's
+// non-goals); demo/legacy-brief-compatibility.md records the same test. A trusted
+// packet of an unknown schema version fails rather than falling through, so a
+// brief beside it cannot pass it.
 //
 // #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
 // oversight floor first (verification-brief-parent-gate.md's "Evaluate the

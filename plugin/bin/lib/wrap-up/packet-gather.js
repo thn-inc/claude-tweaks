@@ -6,7 +6,6 @@
 // Pure: no git, gh or fs. The CLI reads the inputs and passes them in.
 'use strict';
 
-const crypto = require('crypto');
 const {
   SCHEMA_VERSION,
   PACKET_MARKER_RE,
@@ -15,9 +14,17 @@ const {
 } = require('./packet-contract');
 const { checkLink, findCredentialInText } = require('./packet-links');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
-const { SECTIONS: CONSOLE_SECTIONS } = require('../console/resolve');
+const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
 
-const HEADING_RE = /^(#{1,6})\s+(.*?)\s*$/;
+// The text is read up to a line terminator (`.` stops at one) and trimmed after, and
+// what follows it must be whitespace. A trailing `\s*$` in the pattern is quadratic on a
+// long whitespace run.
+const HEADING_RE = /^(#{1,6})\s+(.*)/;
+function parseHeading(line) {
+  const match = HEADING_RE.exec(line);
+  if (match === null || line.slice(match[0].length).trim() !== '') return null;
+  return { level: match[1].length, text: match[2].trimEnd() };
+}
 const AC_HEADING_LEVELS = Object.freeze([2, 3]);
 const AC_TITLE_RE = /^Acceptance Criteria(?:\s*\(.*\))?$/i;
 // `1.`, `2a.`, `1)`, or bold: `**1.**`, `**1)**`.
@@ -45,9 +52,11 @@ const BLOCK_ITEM_RE = /^-\s+(.*)$/;
 const QA_SELECTION_RE = /QA (?:scoped: (\d+)\/\d+|skipped: (\d+) selected stories)/g;
 const DECISION_ID_RE = /^decision:.*#([0-9a-f]{8})(?:-\d+)?$/;
 const TIEBREAK_PREFIX = 'tiebreak:';
-// Each runs to its sentence's end. A `.` inside a path is not one.
-const LOW_CONFIDENCE_NOTE_RE = /\s*Staged to Review Console as low-confidence.*?(?:\.(?=\s|$)|$)/;
-const REVERSIBILITY_CLAUSE_RE = /\s*Reversibility:.*?(?:\.(?=\s|$)|$)/;
+// Each runs to its sentence's end. A `.` inside a path is not one. The whitespace before
+// a clause goes with it, but not through a leading `\s*` here: unanchored, that is
+// quadratic on a long whitespace run, so stripClause walks back over it instead.
+const LOW_CONFIDENCE_NOTE_RE = /Staged to Review Console as low-confidence.*?(?:\.(?=\s|$)|$)/;
+const REVERSIBILITY_CLAUSE_RE = /Reversibility:.*?(?:\.(?=\s|$)|$)/;
 const DECISION_LEAD_IN = ' — ';
 const SETTLED_RESOLUTIONS = Object.freeze(['dismissed', 'dropped']);
 // `Title: x`, `- Finding: x`, `- **Finding:** x`, the shapes archived staged files use.
@@ -93,12 +102,12 @@ function parseAcceptanceCriteria(specText) {
   let sectionLevel = null;
   let bullets = 0;
   for (const line of linesOutsideFences(specText)) {
-    const heading = HEADING_RE.exec(line);
+    const heading = parseHeading(line);
     if (heading) {
-      const level = heading[1].length;
+      const { level } = heading;
       // A deeper heading stays inside the section.
       if (sectionLevel === null || level <= sectionLevel) {
-        sectionLevel = AC_HEADING_LEVELS.includes(level) && AC_TITLE_RE.test(heading[2]) ? level : null;
+        sectionLevel = AC_HEADING_LEVELS.includes(level) && AC_TITLE_RE.test(heading.text) ? level : null;
       }
       continue;
     }
@@ -127,14 +136,33 @@ function acFact({ id, text }, acResults) {
 
 // ---- review findings ----
 
-function decisionFindingText(decisions, hash) {
-  const line = decisions.split(/\r?\n/).find((candidate) => (
-    crypto.createHash('sha256').update(candidate).digest('hex').startsWith(hash)
-  ));
+// `text` without its first `re` match and the whitespace just before it.
+function stripClause(text, re) {
+  const match = re.exec(text);
+  if (match === null) return text;
+  let start = match.index;
+  while (start > 0 && /\s/.test(text[start - 1])) start -= 1;
+  return text.slice(0, start) + text.slice(match.index + match[0].length);
+}
+
+// The first line of each hash, keyed by the id suffix the console mints for it. Built
+// once per call, and only when a decision item needs it.
+function decisionLinesByHash(decisions) {
+  const byHash = new Map();
+  for (const line of decisions.split(/\r?\n/)) {
+    // decisionLineHash is the Review Console's own: resolve.js mints the item id from it.
+    const hash = decisionLineHash(line);
+    if (!byHash.has(hash)) byHash.set(hash, line);
+  }
+  return byHash;
+}
+
+function decisionFindingText(linesByHash, hash) {
+  const line = linesByHash.get(hash);
   if (line === undefined) return null;
   const leadIn = line.indexOf(DECISION_LEAD_IN);
   const body = leadIn === -1 ? line : line.slice(leadIn + DECISION_LEAD_IN.length);
-  return body.replace(LOW_CONFIDENCE_NOTE_RE, '').replace(REVERSIBILITY_CLAUSE_RE, '').trim() || null;
+  return stripClause(stripClause(body, LOW_CONFIDENCE_NOTE_RE), REVERSIBILITY_CLAUSE_RE).trim() || null;
 }
 
 function tiebreakFindingText(findings, id) {
@@ -155,11 +183,12 @@ function stagedFindingText(text) {
   const lines = outside.map((line) => line.trim()).filter(Boolean);
   const heading = lines.findIndex((line) => FINDING_HEADING_RE.test(line));
   const underHeading = heading === -1 ? undefined : lines[heading + 1];
-  if (underHeading !== undefined && !HEADING_RE.test(underHeading)) return underHeading;
+  if (underHeading !== undefined && parseHeading(underHeading) === null) return underHeading;
   return lines[0] ?? null;
 }
 
 function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
+  let linesByHash = null;
   return items
     // A settled staged file keeps its section. A can't-tell verdict keeps its item,
     // even at a `dropped` default: an agent that could not tell settled nothing.
@@ -168,7 +197,10 @@ function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
     .map(({ id }, index) => {
       const decision = DECISION_ID_RE.exec(id);
       let text;
-      if (decision) text = decisionFindingText(decisions, decision[1]);
+      if (decision) {
+        linesByHash ??= decisionLinesByHash(decisions);
+        text = decisionFindingText(linesByHash, decision[1]);
+      }
       else if (id.startsWith(TIEBREAK_PREFIX)) text = tiebreakFindingText(findings, id.slice(TIEBREAK_PREFIX.length));
       else text = stagedFindingText(readStaged(id));
       return { n: index + 1, text: text ?? id };
@@ -190,7 +222,14 @@ function expectedChecksFromDeclaration(decl) {
   return [...decl.suites, ...['types', 'lint'].filter((key) => decl.checks[key] !== null)];
 }
 
-const stripYamlComment = (value) => value.replace(/\s+#.*$/, '').trim();
+// A comment opens at the first `#` that follows whitespace. Found by scanning, not by a
+// `\s+#` regex, which is quadratic on a long whitespace run with no `#` after it.
+function stripYamlComment(value) {
+  for (let at = value.indexOf('#', 1); at !== -1; at = value.indexOf('#', at + 1)) {
+    if (/\s/.test(value[at - 1])) return value.slice(0, at).trim();
+  }
+  return value.trim();
+}
 const stripYamlQuotes = (value) => value.replace(/^(["'])(.*)\1$/, '$2');
 const yamlScalar = (value) => stripYamlQuotes(stripYamlComment(value));
 const indentOf = (line) => line.length - line.trimStart().length;
@@ -479,12 +518,6 @@ function gatherPacketFacts(inputs) {
     else byId.set(fact.id, fact);
   }
 
-  const expected = new Set([
-    ...(inputs.expectedChecks ?? []).map((name) => `check:${encodeFactKey(name)}`),
-    ...acFacts.map(({ id }) => id),
-    ...stories.map(({ id }) => id),
-  ]);
-
   return {
     schemaVersion: SCHEMA_VERSION,
     record: inputs.record,
@@ -492,7 +525,6 @@ function gatherPacketFacts(inputs) {
     allowedHosts,
     partial: partialNotes(inputs, criteria, unmatchedAcKeys(inputs.acResults, criteria), [...repeated]),
     refused: linkOutcomes.flatMap(({ refused }) => (refused ? [refused] : [])),
-    expected: [...expected],
     facts: [...byId.values()],
   };
 }

@@ -623,6 +623,29 @@ describe('upsertLocalPacket', () => {
     assert.equal(upsertLocalPacket('# Record\r\n', 'A\nB'), `# Record\r\n\r\n${crlfBlock('A\r\nB')}\r\n`);
   });
 
+  test('a CRLF body whose orphan last line has no final newline keeps no bare CR', () => {
+    const crlfBlock = (packet) => `${LOCAL_START}\r\n${packet}\r\n${LOCAL_END}`;
+    assert.equal(
+      upsertLocalPacket(`${crlfBlock('OLD')}\r\ntext\r\n${LOCAL_START}`, 'NEW'),
+      `${crlfBlock('NEW')}\r\ntext`,
+    );
+    assert.equal(
+      upsertLocalPacket(`${crlfBlock('OLD')}\r\ntext\r\n${LOCAL_START}\r\n`, 'NEW'),
+      `${crlfBlock('NEW')}\r\ntext\r\n`,
+    );
+  });
+
+  test('a long newline run after the record text is trimmed in linear time', () => {
+    for (const eol of ['\n', '\r\n']) {
+      const run = eol.repeat(200000);
+      const start = Date.now();
+      const result = upsertLocalPacket(`${run}x`, 'PACKET');
+      assert.equal(result, `${run}x${eol}${eol}${LOCAL_START}${eol}PACKET${eol}${LOCAL_END}`);
+      assert.equal(upsertLocalPacket(`x${run}`, 'PACKET'), `x${eol}${eol}${LOCAL_START}${eol}PACKET${eol}${LOCAL_END}${eol}`);
+      assert.ok(Date.now() - start < 5000, `took ${Date.now() - start}ms`);
+    }
+  });
+
   test('an orphan start is the block start, and never swallows the text after it', () => {
     const stray = `${LOCAL_START}\nhuman notes\n`;
     const first = upsertLocalPacket(stray, 'ONE');

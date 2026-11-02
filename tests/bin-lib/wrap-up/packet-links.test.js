@@ -419,6 +419,89 @@ test('findCredentialInText compares keys with - and _ removed, and returns the c
   }
 });
 
+test('findCredentialInText: a key is the last word of a camelCase, digit or all-caps compound', () => {
+  const cases = [
+    ['authToken=abc', 'token'],
+    ['sessionToken=abc', 'token'],
+    ['apiToken=abc', 'token'],
+    ['clientSecret=abc', 'secret'],
+    ['APIToken=abc', 'token'],
+    ['_authToken=abc123', 'token'],
+    ['v2token=abc', 'token'],
+    ['export CLIENTSECRET=abc', 'secret'],
+    ['curl --authToken abc', 'token'],
+    ['cli --clientSecret=abc', 'secret'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+});
+
+test('findCredentialInText: bracket forms are screened', () => {
+  const cases = [
+    ['token[]=abc', 'token'],
+    ['token[sub]=abc', 'token'],
+    ['token[a][b]=abc', 'token'],
+    ['user[password]=x', 'password'],
+    ['user[password][]=x', 'password'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+});
+
+test('findCredentialInText: a lowercase word that merely contains a key is not a match', () => {
+  for (const text of ['monkey=1', 'keyboard=1', 'author=1', 'tokenizer=1', 'passwordless: yes', 'JavaScript: x', 'iPhone=1', 'tokens[]=1', 'see authToken in the docs']) {
+    assert.equal(findCredentialInText(text), null, text);
+  }
+});
+
+test('checkLink refuses a camelCase or bracketed key in the query and the fragment', () => {
+  const cases = [
+    ['http://localhost:3000/?authToken=abc', 'query', 'token'],
+    ['http://localhost:3000/?sessionToken=abc', 'query', 'token'],
+    ['http://localhost:3000/?apiToken=abc', 'query', 'token'],
+    ['http://localhost:3000/?clientSecret=abc', 'query', 'secret'],
+    ['http://localhost:3000/?_authToken=abc123', 'query', 'token'],
+    ['http://localhost:3000/?CLIENTSECRET=abc', 'query', 'secret'],
+    ['http://localhost:3000/?token[]=abc', 'query', 'token'],
+    ['http://localhost:3000/?token%5B%5D=abc', 'query', 'token'],
+    ['http://localhost:3000/?user[password]=x', 'query', 'password'],
+    ['http://localhost:3000/?authToken', 'query', 'token'],
+    ['http://localhost:3000/#authToken=abc', 'fragment', 'token'],
+    ['http://localhost:3000/#/cb?authToken=abc', 'fragment', 'token'],
+    ['http://localhost:3000/#user[password]=x', 'fragment', 'password'],
+  ];
+  for (const [url, where, key] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason: `credential key in ${where}: ${key}` }, url);
+  }
+});
+
+test('checkLink accepts a word that merely contains a key, in the query and the fragment', () => {
+  const accepted = [
+    'http://localhost:3000/?monkey=1&keyboard=2&author=3&tokenizer=4',
+    'http://localhost:3000/#monkey=1',
+    'http://localhost:3000/#/author=1',
+    'http://localhost:3000/?next=/docs/token-guide',
+    'http://localhost:3000/docs/token-guide',
+  ];
+  for (const url of accepted) assert.deepEqual(check(url), { ok: true }, url);
+});
+
+test('the credential screen stays linear on long adversarial input', () => {
+  const inputs = [
+    'A'.repeat(200000),
+    'aB'.repeat(100000),
+    'token['.repeat(50000),
+    `${'['.repeat(100000)}token=`,
+    '1a'.repeat(100000),
+    '_'.repeat(200000),
+  ];
+  const start = Date.now();
+  for (const input of inputs) {
+    findCredentialInText(input);
+    check(`http://localhost:3000/?${input}`);
+    check(`http://localhost:3000/#${input}`);
+  }
+  assert.ok(Date.now() - start < 10000, `took ${Date.now() - start}ms`);
+});
+
 test('findCredentialInText: URL userinfo reports password, never the matched text', () => {
   const cases = [
     'curl http://user:hunter2@localhost:3000/',

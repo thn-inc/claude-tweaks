@@ -6,8 +6,9 @@
 'use strict';
 
 const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
-const { checkLink, findCredentialInText } = require('./packet-links');
+const { checkLink, findCredentialInText, normalizeKey } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
+const { escapeRegExp } = require('../shared-primitives');
 
 // Every shape GitHub can turn into a link or a notification. A plain `word:value` is
 // not one: `link:deploy`, `localhost:3000` and `C:\temp` stay prose, so only the
@@ -26,13 +27,16 @@ const AUTOLINK_TOKEN_RE = new RegExp([
   `(?<![a-z0-9/])[a-z0-9][a-z0-9-]{0,38}(?:\\/[a-z0-9._-]{1,100})?#\\d+${NOT_BEFORE_WORD}`,
   `${NOT_AFTER_WORD}@[a-z0-9][a-z0-9-]*(?:\\/[a-z0-9_-]+)?`,
   `${NOT_AFTER_WORD}(?!(?<=&)#\\d{1,7};)#\\d+${NOT_BEFORE_WORD}`,
+  // GitHub's `GH-12` spelling of the same reference.
+  `${NOT_AFTER_WORD}GH-\\d+${NOT_BEFORE_WORD}`,
 ].join('|'), 'i');
 const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
 const WITHHELD_REASON = '(reason withheld: credential-shaped)';
 const WITHHELD_TEXT = '(text withheld: credential-shaped)';
-const WITHHELD_ID = '(id withheld: credential-shaped)';
+const WITHHELD_ID_NOTE = 'id withheld: credential-shaped';
+const WITHHELD_ID = `(${WITHHELD_ID_NOTE})`;
 
 const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
@@ -117,7 +121,9 @@ const statusWithReason = (fact) => `${statusWord(fact.status)}: ${screenedInline
 // A fact key is percent-encoded, which the screen decodes. The id is display only here:
 // validation has already matched it, and the fact stays citable.
 const idSpan = (id) => (findCredentialInText(id) ? WITHHELD_ID : codeSpan(id));
-const citations = (refs) => refs.map(idSpan).join(', ');
+// A citation list is already in parentheses, so a withheld id is the bare note here.
+const citationSpan = (id) => (findCredentialInText(id) ? WITHHELD_ID_NOTE : codeSpan(id));
+const citations = (refs) => refs.map(citationSpan).join(', ');
 const claimText = (claim) => `${inline(claim.text)} (${citations(claim.refs)})`;
 const claimLine = (claim) => `- ${claimText(claim)}`;
 const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
@@ -251,17 +257,18 @@ function planText(text) {
 
 const indentWidth = (line) => [...PLAN_INDENT_RE.exec(line)[0]].reduce((sum, char) => sum + (char === '\t' ? TAB_COLUMNS : 1), 0);
 
+// In place, and returns the same array.
+function trimBlankEdges(lines) {
+  while (lines.length > 0 && lines[0].trim() === '') lines.shift();
+  while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop();
+  return lines;
+}
+
 // A plan's own `### Observation plan` heading is the section's, and blank edges are noise.
 function planBody(plan) {
-  const lines = plan.split(/\r\n|\r|\n/);
-  const trimBlankEdges = () => {
-    while (lines.length > 0 && lines[0].trim() === '') lines.shift();
-    while (lines.length > 0 && lines.at(-1).trim() === '') lines.pop();
-  };
-  trimBlankEdges();
+  const lines = trimBlankEdges(plan.split(/\r\n|\r|\n/));
   if (lines.length > 0 && PLAN_HEADING_RE.test(lines[0].trim())) lines.shift();
-  trimBlankEdges();
-  return lines;
+  return trimBlankEdges(lines);
 }
 
 // `column` is where the open list item's content starts. Up to three spaces past it
@@ -284,20 +291,33 @@ function renderPlanLines(lines) {
   });
 }
 
+// Whether the credential key the screen found is the last thing on the line, bare, as a
+// `--flag`, or before a `=` or `:`: its value is then on the next line. The key compares
+// with `-` and `_` ignored, as the screen does.
+function keyEndsLine(line, key) {
+  const spelled = [...key.replace(/[-_]/g, '')].map(escapeRegExp).join('[-_]*');
+  return new RegExp(`${spelled}[-_]*["'\`]?\\s*[=:]?$`).test(normalizeKey(line).trimEnd());
+}
+
 // Screened on the raw line, the whole of it: its Prepare commands and Entry point are
 // the Test guide's, in a section the contract's map files under it (Decision Q2). A key
 // often leaves its value on the next line, so what a dropped line continues with a
 // trailing `\`, or holds at a deeper indent, a blank line between them or not, goes too.
+// So does the next line after a key that ends its own line with no value, at any indent:
+// `- --api-key` over a sibling `- SECRET` leaves the value in the sibling.
 function screenPlanLines(lines, screened) {
   let droppedIndent = null;
   let continues = false;
+  let awaitsValue = false;
   return lines.filter((line) => {
     const blank = line.trim() === '';
     const indent = indentWidth(line);
     const key = findCredentialInText(line);
     if (key) screened.push({ section: PLAN_SECTION, key });
     const held = droppedIndent !== null && !blank && indent > droppedIndent;
-    if (!key && !continues && !held) {
+    const valueLine = awaitsValue && !blank;
+    if (!blank) awaitsValue = key !== null && keyEndsLine(line, key);
+    if (!key && !continues && !held && !valueLine) {
       if (!blank) droppedIndent = null;
       return true;
     }
@@ -319,16 +339,26 @@ function compose(doc, omitted) {
   return lines.join('\n');
 }
 
-const bodyChars = (body) => body.reduce((sum, { text }) => sum + text.length + 1, 0);
+// A body line's share of the section: its text and the newline that joins it.
+const lineChars = ({ text }) => text.length + 1;
+const bodyChars = (body) => body.reduce((sum, line) => sum + lineChars(line), 0);
 
 // Drops one item, then repairs what the drop could leave behind: a label with no
-// rows, or a heading with no line under it.
+// rows, or a heading with no line under it. `section.chars` follows the edits, not a
+// re-count of the whole body, which is quadratic over a long run of dropped rows.
 function dropLastItem(section) {
   const { body } = section;
-  body.splice(body.findLastIndex(({ droppable }) => droppable), 1);
-  if (body.at(-1)?.text === CHECKS_PASSED_LABEL) body.splice(-2, 2);
-  if (body.length === 0) body.push(note('all items omitted by truncation'));
-  section.chars = bodyChars(body);
+  let { chars } = section;
+  for (const line of body.splice(body.findLastIndex(({ droppable }) => droppable), 1)) chars -= lineChars(line);
+  if (body.at(-1)?.text === CHECKS_PASSED_LABEL) {
+    for (const line of body.splice(-2, 2)) chars -= lineChars(line);
+  }
+  if (body.length === 0) {
+    const emptied = note('all items omitted by truncation');
+    body.push(emptied);
+    chars += lineChars(emptied);
+  }
+  section.chars = chars;
 }
 
 // Works on a copy: when notes alone exceed the cap no drop can meet it, and the CLI
@@ -371,7 +401,7 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
   const screened = screenedClaims.map(({ claim, key }) => ({ section: claim.section, key }));
   const planLines = typeof observationPlan === 'string' ? planBody(observationPlan) : [];
   if (planLines.length > 0) {
-    const shown = screenPlanLines(planLines, screened);
+    const shown = trimBlankEdges(screenPlanLines(planLines, screened));
     const body = shown.some((line) => line.trim() !== '') ? renderPlanLines(shown) : [PLAN_ALL_SCREENED];
     sections.push({ heading: PLAN_HEADING, body: body.map(note) });
   }

@@ -238,8 +238,9 @@ test('exit-4 MCP path: existing packet is reported, posts nothing, applies no la
   assert.ok(post > existing, 'only no packet posts');
   assert.ok(branch.indexOf('`update_pull_request`') > post, 'the PR line follows the post');
   assert.ok(branch.includes('`Acceptance packet: {comment url}`'));
-  assert.ok(branch.includes('unless the line is already present'));
-  assert.ok(branch.includes("matching `publishPacket`'s step 4"));
+  assert.ok(!branch.includes('unless the line is already present'), 'an existing line is replaced, not left alone');
+  assert.ok(branch.includes("matching `publishPacket`'s `replacePacketLine`: replace this record's existing `Acceptance packet:` line"), branch);
+  assert.ok(branch.includes('append that line after a blank line when the body has none, and write nothing when the body already reads that way'), branch);
   assert.ok(branch.includes('A failed read or an `unreadable` packet: report it, write nothing'), 'the two read outcomes make no write');
 });
 
@@ -462,6 +463,37 @@ test('every Routing call site remains in ## Routing (AC6)', () => {
   ]) {
     assert.ok(routing.includes(row), `Routing keeps ${row}`);
   }
+  // Each row is not enough: the routing must still end in the pending label above the floor.
+  const rule = flat(routing);
+  assert.ok(rule.includes('run the Parent-Gate Procedure below in place of — not alongside — Steps 1-4'), 'a parent-resolvable record');
+  assert.ok(rule.includes('run the **Oversight-floor gate** below, then Steps 1-4, applying `demo:pending` to the record itself only when the gate says the record clears the floor'), 'any other record');
+  const post = between(step4(), 'acceptance-packet.js" post', '\n```');
+  assert.ok(post.includes('--label demo:pending'), `the post fence applies the pending label: ${post}`);
+  assert.ok(flat(step4()).includes('`--label` omitted below the floor (Decision Q5)'), 'and drops it below the floor');
+});
+
+test('every pasted gather value has a stated grammar, and {surface} is pasted only inside the gather fence', () => {
+  const doc = brief();
+  const rule = flat(between(step4(), 'Several pasted values come from text the plugin did not write', '- `--run` —'));
+  assert.ok(rule.includes('Paste a value only when it matches its grammar; otherwise omit its flag and say so in the summary'), rule);
+  for (const literal of [
+    '`{surface}`: exactly one of `web`, `mobile`, `desktop`, `backend`, `infra`, `terminal`',
+    '`{integration-branch}` and `{head}`: letters, digits and `.` `_` `/` `-` only',
+    '`{local-url}`: an `http://` or `https://` URL with no `"`, backtick, `$`, `\\` or whitespace',
+    '(`{run-dir}`, `{spec}`, `{report}`, `{qa-report}`, `{stories-dir}`, and Post\'s `{record-file}`)',
+  ]) {
+    assert.ok(rule.includes(literal), `states ${literal}`);
+  }
+  // Every `--flag "{value}"` the gather fence pastes from non-plugin text is named by that rule.
+  const fence = between(step4(), 'acceptance-packet.js" gather', '\n```');
+  const governed = ['{surface}', '{integration-branch}', '{head}', '{local-url}', '{run-dir}', '{spec}', '{report}', '{qa-report}', '{stories-dir}'];
+  for (const placeholder of governed) assert.ok(fence.includes(placeholder), `the fence pastes ${placeholder}`);
+  const pasted = [...fence.matchAll(/\{[a-z-]+\}/g)].map((m) => m[0]);
+  assert.deepStrictEqual(pasted.filter((p) => !governed.includes(p) && p !== '{N}'), [], 'no lowercase placeholder escapes the grammar rule');
+  assert.ok(rule.includes('`{N}` and `{pr-number}`: digits only'), rule);
+  // No other bash fence in the file pastes {surface}.
+  const fences = [...doc.matchAll(/```bash\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+  assert.deepStrictEqual(fences.filter((f) => f.includes('{surface}')).length, 1, 'only the gather fence pastes {surface}');
 });
 
 test('try-it.md names the packet\'s Test guide', () => {

@@ -3,6 +3,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
+  REASON_KINDS,
   SchemaError,
   validateFactsShape,
   validateNarrativeShape,
@@ -97,6 +98,29 @@ test('drops an incompatible kind', () => {
     validate([claim('test-guide', 'Run the tests', ['story:login', 'check:unit-tests'])]),
     'incompatible fact check:unit-tests (check) for test-guide',
   );
+});
+
+test('every drop carries a fixed reasonKind holding no claim-supplied value', () => {
+  const secret = 'S3CRET-VALUE';
+  const flagged = [fact('flag:billing', 'passed')];
+  const cases = [
+    [claim(`section-${secret}`, 'x', ['story:login']), 'unknown section'],
+    [claim('what-changed', 'x', []), 'no refs'],
+    [claim('test-guide', 'x', [`link:${secret}`]), 'absent fact'],
+    [claim('test-guide', 'x', ['check:unit-tests']), 'incompatible fact'],
+    [claim('risk-proofs', 'x', ['check:unit-tests']), 'risk proof cites no flag'],
+    [claim('risk-proofs', 'x', ['flag:auth', 'flag:billing']), 'risk proof cites no proof fact'],
+    [claim('tried-to-break', 'x', ['story:login']), 'tried-to-break claim cites no negative or failed fact'],
+  ];
+  for (const [c, kind] of cases) {
+    const result = validate([c], {}, flagged);
+    assertOnly(result, 'dropped');
+    assert.equal(result.dropped[0].reasonKind, kind);
+    assert.ok(Object.values(REASON_KINDS).includes(result.dropped[0].reasonKind));
+    assert.ok(result.dropped[0].reason.startsWith(kind));
+    assert.ok(!result.dropped[0].reasonKind.includes(secret));
+  }
+  assert.deepEqual(new Set(cases.map(([, kind]) => kind)), new Set(Object.values(REASON_KINDS)));
 });
 
 test('a verified claim citing a failed fact moves to tried-to-break', () => {

@@ -84,8 +84,6 @@ test('AC2a expected AC with no result renders not-run', () => {
   });
   assert.deepEqual(statusOf(result, 'check:ac-1'), ['passed', undefined]);
   assert.deepEqual(statusOf(result, 'check:ac-2a'), ['not-run', 'no spec-compliance result recorded']);
-  assert.ok(result.expected.includes('check:ac-1'));
-  assert.ok(result.expected.includes('check:ac-2a'));
   assert.equal(factOf(result, 'check:ac-1').source, 'spec-compliance');
 });
 
@@ -182,7 +180,6 @@ test('a real checkbox record parses to positional criteria', () => {
   assert.deepEqual(idsOf(result, 'check'), ['check:ac-AC1', 'check:ac-AC2']);
   assert.deepEqual(statusOf(result, 'check:ac-AC1'), ['passed', undefined]);
   assert.deepEqual(statusOf(result, 'check:ac-AC2'), ['not-run', 'no spec-compliance result recorded']);
-  assert.ok(result.expected.includes('check:ac-AC2'));
   assertShapeOk(result);
 });
 
@@ -248,7 +245,6 @@ test('nested AC lists do not repeat ids', () => {
   const result = gather({ specText });
   assert.equal(factOf(result, 'check:ac-1').text, 'first');
   assert.equal(result.facts.filter((f) => f.id === 'check:ac-1').length, 1);
-  assert.equal(result.expected.filter((id) => id === 'check:ac-1').length, 1);
   assert.ok(result.partial.includes('repeated fact ids, first kept: check:ac-1'));
   assertShapeOk(result);
 });
@@ -354,14 +350,18 @@ test('an expected check named like an inherited property has no result', () => {
   assert.equal(factOf(result, 'check:constructor').source, 'verify-scope');
 });
 
-test('expected lists declared checks and ACs, never a check only the report named', () => {
+test('a declared check and an AC with no result are not-run facts; a check only the report named is not declared', () => {
   const result = gather({
     specText: '## Acceptance Criteria\n1. a\n',
     report: { checks: { extra: { command: 'x', exitCode: 0 } } },
     expectedChecks: ['tests'],
   });
-  assert.deepEqual([...result.expected].sort(), ['check:ac-1', 'check:tests']);
+  assert.deepEqual(statusOf(result, 'check:ac-1'), ['not-run', 'no spec-compliance result recorded']);
+  assert.deepEqual(statusOf(result, 'check:tests'), ['not-run', 'no result recorded']);
+  assert.equal(factOf(result, 'check:tests').source, 'verify-scope');
   assert.deepEqual(statusOf(result, 'check:extra'), ['passed', undefined]);
+  assert.equal(factOf(result, 'check:extra').source, 'verify-report');
+  assert.equal(Object.hasOwn(result, 'expected'), false, 'the facts document carries no expected list');
 });
 
 test('expected checks from the declaration', () => {
@@ -722,7 +722,7 @@ test('a QA entry with no usable id is counted in a stated partial, never a fact'
   const result = gather({ storyResults });
   assert.ok(result.partial.includes(NOTE), JSON.stringify(result.partial));
   assert.deepEqual(idsOf(result, 'story'), ['story:a']);
-  assert.deepEqual(result.expected, ['check:ac-1', 'story:a']);
+  assert.deepEqual(idsOf(result, 'check'), ['check:ac-1']);
   assertShapeOk(result);
   const clean = gather({ storyResults: storyResultsFromQaReport({ stories: [{ id: 'a', status: 'PASS' }] }) });
   assert.ok(!clean.partial.some((note) => note.startsWith('QA report entries')));
@@ -760,9 +760,6 @@ test('Q13: an unselected story produces no fact; a stamp-skipped selected story 
   assert.equal(factOf(result, 'story:a').source, 'qa-report');
   assert.equal(factOf(result, 'story:a').negative, false);
   assert.equal(factOf(result, 'story:c'), undefined);
-  assert.ok(result.expected.includes('story:a'));
-  assert.ok(result.expected.includes('story:neg-b'));
-  assert.ok(!result.expected.includes('story:c'));
   assert.ok(!result.partial.some((note) => note.startsWith('repeated fact ids')), 'a stamp winning is not a repeat');
 
   const neither = gather({ storyIndex, storyResults: null, stampStories: null });
@@ -773,7 +770,6 @@ test('Q13: an unselected story produces no fact; a stamp-skipped selected story 
 test('a stamp-only story is selected and expected', () => {
   const result = gather({ stampStories: [{ id: 'x', status: 'passed' }] });
   assert.deepEqual(statusOf(result, 'story:x'), ['passed', undefined]);
-  assert.ok(result.expected.includes('story:x'));
 });
 
 test('a story listed twice in a QA report keeps the first and states the repeat', () => {
@@ -1191,6 +1187,52 @@ test('a repeated line is found through its -k id suffix', () => {
   assert.deepEqual(lowConfidenceFindings({ items, findings: [], decisions: `other\n${line}\n` }, () => null), [
     { n: 1, text: 'lens "3a" finding src/a.js:1 x.' },
   ]);
+});
+
+const WIDE = ' '.repeat(100000);
+
+// The text the gather reads off one decisions line, through the id the console mints for it.
+function decisionTextOf(...lines) {
+  const items = lines.map((line) => {
+    const hash = crypto.createHash('sha256').update(line).digest('hex').slice(0, 8);
+    return { id: `decision:${line.slice(2, 60)}#${hash}`, section: 'Low-confidence findings' };
+  });
+  return lowConfidenceFindings({ items, findings: [], decisions: `${lines.join('\n')}\n` }, () => null).map(({ text }) => text);
+}
+
+test('two decision items each read their own line, in one pass over the log', () => {
+  const first = '- STAGED 10:00:00 — first finding. Staged to Review Console as low-confidence. Reversibility: high.';
+  const second = '- STAGED 10:00:01 — second finding. Reversibility: low.';
+  assert.deepEqual(decisionTextOf(first, second), ['first finding.', 'second finding.']);
+});
+
+test('the note and clause strip takes the whitespace before them, and a long whitespace run costs no time', () => {
+  assert.deepEqual(decisionTextOf('- STAGED 10:00:00 — a b   Reversibility: high.'), ['a b']);
+  assert.deepEqual(decisionTextOf('- STAGED 10:00:00 — a  \t Reversibility: high. tail'), ['a tail']);
+  assert.deepEqual(decisionTextOf('- STAGED 10:00:00 — a  Staged to Review Console as low-confidence at x.y. Reversibility: z'), ['a']);
+  // No clause in the line: the run is part of the text, and the result is the line's body trimmed.
+  assert.deepEqual(decisionTextOf(`- STAGED 10:00:00 — x${WIDE}y`), [`x${WIDE}y`]);
+  assert.deepEqual(decisionTextOf(`- STAGED 10:00:00 — a${WIDE}Reversibility: high.${WIDE}b`), [`a${WIDE}b`]);
+});
+
+test('a heading is read the same with a long interior or trailing whitespace run', () => {
+  const ids = (spec) => parseAcceptanceCriteria(spec).map((ac) => ac.id);
+  assert.deepEqual(ids('## Acceptance Criteria   \n1. a\n'), ['1']);
+  assert.deepEqual(ids(`## Acceptance Criteria${WIDE}\n1. a\n`), ['1']);
+  assert.deepEqual(ids(`## Acceptance${WIDE}Criteria\n1. a\n`), []);
+  assert.deepEqual(ids(`## Acceptance Criteria\n1. a\n### a${WIDE}b\n2. b\n`), ['1', '2']);
+  // A heading with nothing but whitespace after the marker is a heading with no text.
+  assert.deepEqual(ids(`## Acceptance Criteria\n1. a\n##${WIDE}\n2. b\n`), ['1']);
+});
+
+test('a story value is cut at a comment after whitespace, and a long whitespace run is part of the value', () => {
+  const idsOf2 = (text) => parseStoryFile(text).map(({ id }) => id);
+  assert.deepEqual(idsOf2('stories:\n  - id: a   # comment\n'), ['a']);
+  assert.deepEqual(idsOf2('stories:\n  - id: "a" # comment\n'), ['a']);
+  assert.deepEqual(idsOf2('stories:\n  - id: a#b\n'), ['a#b']);
+  assert.deepEqual(idsOf2('stories:\n  - id: a\t# comment # more\n'), ['a']);
+  assert.deepEqual(idsOf2(`stories:\n  - id: a${WIDE}b\n`), [`a${WIDE}b`]);
+  assert.deepEqual(idsOf2(`stories:\n  - id: a${WIDE}# c\n`), ['a']);
 });
 
 // readPacket

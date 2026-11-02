@@ -736,12 +736,43 @@ test('a credential-shaped id is withheld wherever it renders, and its row stays'
   assert.ok(sectionLines(markdown, 'Test guide').includes(`- ${WITHHELD_ID} — passed`), 'a row');
   const tried = sectionLines(markdown, 'Tried to break');
   assert.ok(tried.includes(`- ${WITHHELD_ID} — failed: boom`), 'a failed row');
-  assert.ok(tried.includes(`- Broke (${WITHHELD_ID}, \`story:plain\`)`), 'a citation');
+  assert.ok(tried.includes('- Broke (id withheld: credential-shaped, `story:plain`)'), 'a citation, one pair of parentheses');
   assert.ok(tried.includes(`- It works (moved: cites ${WITHHELD_ID} — failed: bad)`), 'a moved claim');
   assert.ok(sectionLines(markdown, "Couldn't test").includes(`- ${WITHHELD_ID} — skipped: r`), 'a skipped row');
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), [`- ${WITHHELD_ID}`]);
   assert.ok(sectionLines(markdown, 'Test guide').includes(`- 2 link(s) refused: ${WITHHELD_ID} (host not allowed: x); link:plain (r)`));
   assert.ok(sectionLines(markdown, 'What changed').includes('- Changed (`change:a`)'), 'an ordinary id still shows');
+});
+
+test('a claim whose only citation is withheld renders one pair of parentheses', () => {
+  const { markdown } = render(
+    [fact('story:sig%3DidSECRET6', 'failed', { reason: 'bad' })],
+    [claim('tried-to-break', 'Broke', ['story:sig%3DidSECRET6'])],
+  );
+  assert.ok(sectionLines(markdown, 'Tried to break').includes(`- Broke ${WITHHELD_ID}`));
+  assert.doesNotMatch(markdown, /\(\(/);
+});
+
+test('a plan key with no value takes the next line with it, at any indent', () => {
+  const linesOf = (plan) => sectionLines(render([], [], { options: { observationPlan: plan } }).markdown, 'Observation plan');
+  const SHOWN = '- shown';
+  assert.deepEqual(linesOf(`- --api-key\n- SECRET1\n${SHOWN}`), [SHOWN]);
+  assert.deepEqual(linesOf(`- api_key=\n- SECRET2\n${SHOWN}`), [SHOWN]);
+  assert.deepEqual(linesOf(`- token:\n- SECRET3\n${SHOWN}`), [SHOWN]);
+  // A blank line between the key and its value changes nothing.
+  assert.deepEqual(linesOf(`- --api-key\n\n- SECRET4\n${SHOWN}`), [SHOWN]);
+  // A key with its value on the line, or no key, leaves the next line alone.
+  assert.deepEqual(linesOf(`- token=a\n- keep\n${SHOWN}`), ['- keep', SHOWN]);
+  assert.deepEqual(linesOf(`- --api-key=\n- SECRET5\n- keep\n${SHOWN}`), ['- keep', SHOWN]);
+  const { markdown } = render([], [], { options: { observationPlan: `- --api-key\n- SECRET6\n${SHOWN}` } });
+  assert.doesNotMatch(markdown, /SECRET/);
+});
+
+test('screening an edge plan line leaves no blank edge behind', () => {
+  for (const plan of ['- token=a\n\n- shown', '- shown\n\n- token=a']) {
+    const { markdown } = render([], [], { options: { observationPlan: plan } });
+    assert.ok(markdown.endsWith('### Observation plan\n- shown'), JSON.stringify(markdown));
+  }
 });
 
 test('a screened id changes no validation: the fact stays citable', () => {
@@ -1034,6 +1065,10 @@ test('every other autolink shape renders as a code span', () => {
     ['see owner/repo#12.', 'see `owner/repo#12`.'],
     ['see octocat#12', 'see `octocat#12`'],
     ['(.owner/repo#12)', '(.`owner/repo#12`)'],
+    ['fixes GH-12 today', 'fixes `GH-12` today'],
+    ['gh-12', '`gh-12`'],
+    ['(GH-7)', '(`GH-7`)'],
+    ['GH-12 GH-13', '`GH-12` `GH-13`'],
   ]);
   for (const [input, expected] of cases) assert.equal(inline(input), expected);
 });
@@ -1057,6 +1092,11 @@ test('ordinary prose near an autolink shape stays untouched', () => {
     '12:30',
     'a/b/c',
     'src/lib/a#12',
+    'GH-ABC',
+    'GH-',
+    'GH-12a',
+    'flight-12',
+    'xGH-12',
     '://x',
   ]) {
     assert.equal(inline(prose), prose);

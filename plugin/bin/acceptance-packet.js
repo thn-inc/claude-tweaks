@@ -8,9 +8,10 @@
 //   0 success, including snapshot's two skips (nothing ahead of the base; a snapshot
 //     already there on a re-run from the main checkout).
 //   1 a payload or write failure: gather's or render's unwritable --out, render's
-//     invalid or over-cap input (any earlier --out and --dropped-out are removed, so
-//     a stale packet is not there to post), post's ok:false or unreadable --body-file,
-//     local's unreadable record or --body-file or failed write.
+//     invalid or over-cap input, post's ok:false or unreadable --body-file, local's
+//     unreadable record or --body-file or failed write. On any non-zero exit, gather
+//     removes an earlier --out and render an earlier --out and --dropped-out, so stale
+//     facts or a stale packet are not there to render or post.
 //   2 a malformed invocation, post's or local's --body-file with no packet marker on its
 //     first line included. Nothing runs, and no MCP fallback is signalled.
 //   3 a --run that resolveTarget refuses (gather, snapshot), or a snapshot write
@@ -58,6 +59,7 @@ const {
 } = require('./lib/wrap-up/packet-gather');
 const { publishPacket, upsertLocalPacket } = require('./lib/wrap-up/packet-post');
 const { renderPacket } = require('./lib/wrap-up/packet-render');
+const { REASON_KINDS } = require('./lib/wrap-up/packet-validate');
 
 const USAGE = [
   'usage: acceptance-packet.js snapshot --run <dir> --base <ref>',
@@ -100,9 +102,10 @@ const LOG_LINE_RE = /^([0-9a-f]+)\t(.*)$/;
 const GH_ABSENT = "gh absent — follow _shared/acceptance-packet.md's MCP path";
 const FINDINGS_NOT_READ = 'review findings not read — low-confidence findings not listed';
 const UNKNOWN_SECTION = 'unknown';
-// The validator's three reasons that interpolate a claim-supplied value: the section or
-// a ref. Each is cut back to its fixed lead-in.
-const INTERPOLATED_REASON_RE = /^(unknown section|absent fact|incompatible fact) .*$/s;
+// What --dropped-out says for a dropped claim whose validator entry carries no known
+// `reasonKind`: the free-form `reason` may hold a narrator's value, so it is never written.
+const REASON_WITHHELD = 'dropped (reason withheld)';
+const FIXED_REASONS = new Set(Object.values(REASON_KINDS));
 
 const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -455,6 +458,13 @@ const isEntryList = (value) => Array.isArray(value) && value.every((entry) => (
 const isDeploy = (value) => isObject(value) && typeof value.target === 'string';
 
 function runGather(opts, deps) {
+  const code = gatherToFile(opts, deps);
+  // An earlier run's facts would still read as this run's, and a caller that ignores the exit code would render them.
+  if (code !== 0) removeIfPresent(deps, opts.out);
+  return code;
+}
+
+function gatherToFile(opts, deps) {
   let runDir = null;
   if (opts.run !== undefined) {
     const target = anchoredRun(opts.run, deps);
@@ -478,6 +488,9 @@ function runGather(opts, deps) {
   };
 
   const snapshot = runDir === null ? NO_SNAPSHOT : readSnapshot(runDir, deps);
+  // A named --report that will not read falls back to the snapshot's copy, and says so.
+  const reportFlag = readObject(opts.report);
+  if (opts.report !== undefined && reportFlag === null) notes.push(notReadNote('--report'));
   const head = opts.head ?? snapshot.head ?? 'HEAD';
   const base = snapshot.mergeBase ?? opts.base;
   const storyResults = storyResultsFromQaReport(readObject(opts.storyResults)) ?? storyResultsFromQaReport(snapshot.qaReport);
@@ -492,7 +505,7 @@ function runGather(opts, deps) {
       localBaseUrl: opts.localBaseUrl,
       devBaseUrl: opts.devBaseUrl,
       specText: opts.spec === undefined ? null : readTextOrNull(deps, opts.spec),
-      report: readObject(opts.report) ?? snapshot.report,
+      report: reportFlag ?? snapshot.report,
       expectedChecks: readExpectedChecks(opts, deps),
       acResults: optionalJson('--ac-results', isObject),
       links: optionalJson('--links', isEntryList),
@@ -526,12 +539,13 @@ function runGather(opts, deps) {
 
 // ---- render ----
 
-// Section and fixed reason only: a claim's text, section and refs are the narrator's, and
-// this file is a working copy nobody screened.
-function droppedEntry({ claim, reason }) {
+// Section and the validator's fixed `reasonKind` only: a claim's text, section and refs
+// are the narrator's, this file is a working copy nobody screened, and an entry without a
+// known kind is withheld rather than parsed.
+function droppedEntry({ claim, reasonKind }) {
   return {
     section: CLAIM_SECTIONS.includes(claim.section) ? claim.section : UNKNOWN_SECTION,
-    reason: reason.replace(INTERPOLATED_REASON_RE, '$1'),
+    reason: FIXED_REASONS.has(reasonKind) ? reasonKind : REASON_WITHHELD,
   };
 }
 
@@ -704,6 +718,6 @@ function run(argv, overrides = {}) {
   return HANDLERS[parsed.command](parsed.opts, deps);
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, droppedEntry };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

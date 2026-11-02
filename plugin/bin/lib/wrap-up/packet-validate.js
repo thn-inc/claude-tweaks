@@ -16,6 +16,19 @@ const {
 } = require('./packet-contract');
 const { findCredentialInText } = require('./packet-links');
 
+// The fixed, value-free lead of every drop reason, carried on each dropped entry as
+// `reasonKind`: a consumer that writes a drop somewhere unscreened (the CLI's --dropped-out)
+// writes this and never parses `reason`, which interpolates a section or a ref for three kinds.
+const REASON_KINDS = Object.freeze({
+  unknownSection: 'unknown section',
+  noRefs: 'no refs',
+  absentFact: 'absent fact',
+  incompatibleFact: 'incompatible fact',
+  noFlag: 'risk proof cites no flag',
+  noProofFact: 'risk proof cites no proof fact',
+  noNegative: 'tried-to-break claim cites no negative or failed fact',
+});
+
 const ROUTED_KINDS = Object.freeze(['check', 'story']);
 const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label']);
 const isObject = (value) => value !== null && typeof value === 'object';
@@ -141,28 +154,28 @@ const isUntested = (fact) => fact.status === 'skipped' || fact.status === 'not-r
 // each rule assumes the ones above it passed.
 function placeClaim(claim, factsById, result) {
   const { section, text, refs } = claim;
-  const drop = (reason) => result.dropped.push({ claim, reason });
+  const drop = (reasonKind, detail = '') => result.dropped.push({ claim, reason: `${reasonKind}${detail}`, reasonKind });
   const move = (to, because) => result.moved.push({ claim, to, because });
 
-  if (!CLAIM_SECTIONS.includes(section)) return drop(`unknown section ${section}`);
+  if (!CLAIM_SECTIONS.includes(section)) return drop(REASON_KINDS.unknownSection, ` ${section}`);
   const key = findCredentialInText(text);
   if (key) return result.screened.push({ claim, key });
-  if (refs.length === 0) return drop('no refs');
+  if (refs.length === 0) return drop(REASON_KINDS.noRefs);
   const absent = refs.find((id) => !factsById.has(id));
-  if (absent !== undefined) return drop(`absent fact ${absent}`);
+  if (absent !== undefined) return drop(REASON_KINDS.absentFact, ` ${absent}`);
 
   const cited = refs.map((id) => factsById.get(id));
   const incompatible = cited.find((fact) => !SECTION_KINDS[section].includes(fact.kind));
-  if (incompatible) return drop(`incompatible fact ${incompatible.id} (${incompatible.kind}) for ${section}`);
+  if (incompatible) return drop(REASON_KINDS.incompatibleFact, ` ${incompatible.id} (${incompatible.kind}) for ${section}`);
   if (section === 'risk-proofs' && !cited.some((fact) => fact.kind === 'flag')) {
-    return drop('risk proof cites no flag');
+    return drop(REASON_KINDS.noFlag);
   }
   if (section === 'risk-proofs' && cited.every((fact) => fact.kind === 'flag')) {
-    return drop('risk proof cites no proof fact');
+    return drop(REASON_KINDS.noProofFact);
   }
   if (section === 'tried-to-break' && !cited.some(isFailed)) {
     const negatives = cited.filter((fact) => fact.negative === true);
-    if (negatives.length === 0) return drop('tried-to-break claim cites no negative or failed fact');
+    if (negatives.length === 0) return drop(REASON_KINDS.noNegative);
     if (negatives.every(isUntested)) return move('couldnt-test', negatives[0]);
   }
 
@@ -188,6 +201,7 @@ function validatePacket(facts, narrative) {
 }
 
 module.exports = {
+  REASON_KINDS,
   SchemaError,
   validateFactsShape,
   validateNarrativeShape,
