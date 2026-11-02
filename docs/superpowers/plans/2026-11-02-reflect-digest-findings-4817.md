@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T063507-record-4817/work/4817-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T130547-record-4817/work/4817-spec.md`
 
 ## Global Constraints
 
