@@ -40,6 +40,11 @@ test('both proofs fail when one strip also breaks a neighbouring pattern', () =>
   assert.throws(() => assertEveryMatchGoesRed('alpha beta', overlapping, missingOverlap), /removing only "the pair"/);
 });
 
+test('both proofs fail on an empty fact list instead of passing with nothing checked', () => {
+  assert.throws(() => assertEachPatternGoesRed('alpha beta', [], missingFactsOf([])), /fact list is empty/);
+  assert.throws(() => assertEveryMatchGoesRed('alpha beta', [], missingFactsOf([])), /fact list is empty/);
+});
+
 test('globalOf adds the g flag once and keeps the other flags', () => {
   assert.equal(globalOf(/a/i).flags, 'gi');
   assert.equal(globalOf(/a/g).flags, 'g');
@@ -74,4 +79,8 @@ test('sectionOf matches the whole heading line, never a prefix or a deeper headi
   assert.throws(() => sectionOf(DOC, '## Sub'), /heading not found: ## Sub/);
   assert.throws(() => sectionOf(DOC, '## Fir'), /heading not found: ## Fir/);
   assert.throws(() => sectionOf(DOC, '## Absent'), /heading not found: ## Absent/);
+});
+
+test('sectionOf names the document it searched when the heading is missing', () => {
+  assert.throws(() => sectionOf(DOC, '## Absent'), /text opens "intro"/);
 });

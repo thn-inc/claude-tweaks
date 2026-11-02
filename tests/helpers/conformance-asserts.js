@@ -12,6 +12,7 @@ const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !p
 const globalOf = (pattern) => new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
 
 function proveEachGoesRed(text, patterns, missingOf, stripWith) {
+  assert.ok(patterns.length > 0, 'fact list is empty — the proof has nothing to check');
   for (const [pattern, fact] of patterns) {
     const doctored = text.replace(stripWith(pattern), '');
     assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
@@ -42,7 +43,7 @@ const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.
 function sectionOf(text, heading) {
   const padded = `\n${text}\n`;
   const start = padded.indexOf(`\n${heading}\n`);
-  assert.notEqual(start, -1, `heading not found: ${heading}`);
+  assert.notEqual(start, -1, `heading not found: ${heading} (text opens "${text.split('\n', 1)[0].slice(0, 60)}")`);
   const next = padded.indexOf('\n## ', start + 1);
   return next === -1 ? text.slice(start) : text.slice(start, next - 1);
 }
