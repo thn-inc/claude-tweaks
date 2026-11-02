@@ -200,9 +200,11 @@ function lowConfidenceFindings({ items, findings, decisions }, readStaged) {
       if (decision) {
         linesByHash ??= decisionLinesByHash(decisions);
         text = decisionFindingText(linesByHash, decision[1]);
+      } else if (id.startsWith(TIEBREAK_PREFIX)) {
+        text = tiebreakFindingText(findings, id.slice(TIEBREAK_PREFIX.length));
+      } else {
+        text = stagedFindingText(readStaged(id));
       }
-      else if (id.startsWith(TIEBREAK_PREFIX)) text = tiebreakFindingText(findings, id.slice(TIEBREAK_PREFIX.length));
-      else text = stagedFindingText(readStaged(id));
       return { n: index + 1, text: text ?? id };
     });
 }
