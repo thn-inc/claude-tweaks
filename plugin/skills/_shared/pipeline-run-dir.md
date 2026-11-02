@@ -37,7 +37,7 @@ rather than silently substituted. Never creates a directory unless `--create` is
   4), and `flow/claim-targets.md`'s direct-invocation mint use — `config.yml`/`decisions.md` are
   written later, by whichever step actually initializes the run.
 - `--create` with `--standalone <name>`: `_shared/run-dir-resolution.md`'s step 4
-  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/`, pre-populated with
+  standalone-auto-fallback shape — `{ISO-timestamp}-{name}-standalone/` (a `{name}` already ending in `-standalone` is not suffixed twice), pre-populated with
   `decisions.md` and `staged/`. Pass `--mode auto` too when the caller is on that step's
   standalone-auto allowlist (the command then
   refuses to create outside auto mode); omit `--mode` entirely for a caller that creates in every

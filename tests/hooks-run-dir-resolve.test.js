@@ -449,6 +449,25 @@ test('standalone fallback with --create mints a directory with decisions.md and 
   assert.ok(fs.existsSync(path.join(out.path, 'decisions.md')));
 });
 
+// #4807: a caller passing a name already ending in `-standalone` (seen 3 times in ~1000 runs,
+// e.g. `--standalone backlog-standalone`) minted `{ts}-backlog-standalone-standalone`.
+test('AC1.1 #4807: --standalone with a name already ending in -standalone is not suffixed twice', () => {
+  const main = gitRepo();
+  const now = new Date('2026-03-04T05:06:07Z');
+  const out = resolve({ cwd: main, env: {}, standalone: 'backlog-standalone', create: true, now });
+  assert.strictEqual(out.ok, true);
+  assert.strictEqual(out.created, true);
+  assert.strictEqual(path.basename(out.path), '2026-03-04T050607-backlog-standalone');
+  assert.ok(fs.statSync(path.join(out.path, 'staged')).isDirectory());
+  // Only a trailing `-standalone` segment counts: a mid-name occurrence is still suffixed.
+  const mid = resolve({ cwd: gitRepo(), env: {}, standalone: 'standalone-x', create: true, now });
+  assert.strictEqual(path.basename(mid.path), '2026-03-04T050607-standalone-x-standalone');
+  // A `-standalone` segment followed by more name is still suffixed (the brief's
+  // `standalone-x` has no leading dash, so it does not exercise the mid-name case).
+  const midDash = resolve({ cwd: gitRepo(), env: {}, standalone: 'backlog-standalone-x', create: true, now });
+  assert.strictEqual(path.basename(midDash.path), '2026-03-04T050607-backlog-standalone-x-standalone');
+});
+
 // #848: record #764's run dir was minted as `20260817T173343-spec-764` — no
 // dashes — invisible to context.js's RUN_ID_RE-filtered enumeration.
 // formatTimestamp is the one implementation every one of the three mint
