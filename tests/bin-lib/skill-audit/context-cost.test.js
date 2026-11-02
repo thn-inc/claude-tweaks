@@ -326,8 +326,8 @@ test('findComposeCallSites: finds all four real merge sites in the shipped corpu
   assert.deepStrictEqual(files, [
     'dispatch/task-prompt.md',
     'wrap-up/auto-merge-short-circuit.md',
+    'wrap-up/execution-and-verification.md',
     'wrap-up/merge-mode.md',
-    'wrap-up/review-console.md',
   ]);
   for (const site of sites) {
     assert.strictEqual(site.sources.length, 2);
