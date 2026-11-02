@@ -36,20 +36,20 @@ const out = (deps) => JSON.parse(deps.calls.stdout[0]);
 
 test('report mode: lists uncovered reversals, writes nothing', () => {
   const deps = fakeDeps({ [DECISIONS]: REV, '/b.md': BODY });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md'], deps), 0);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md'], deps), 0);
   assert.deepEqual(out(deps), { reversals: 1, uncovered: ['health endpoint → release tag'], changed: false, reason: 'summary-required' });
   assert.deepEqual(Object.keys(deps.files).sort(), ['/b.md', DECISIONS]);
 });
 
 test('no decisions.md at all is fail-open: zero reversals, no-reversals', () => {
   const deps = fakeDeps({ '/b.md': BODY });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md'], deps), 0);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md'], deps), 0);
   assert.equal(out(deps).reason, 'no-reversals');
 });
 
 test('apply mode writes the revised body to --out', () => {
   const deps = fakeDeps({ [DECISIONS]: REV, '/b.md': BODY, '/s.md': 'Reads the release tag.\n' });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 0);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 0);
   const o = out(deps);
   assert.equal(o.changed, true);
   assert.equal(o.out, '/o.md');
@@ -59,7 +59,7 @@ test('apply mode writes the revised body to --out', () => {
 test('apply mode with every reversal already noted writes nothing', () => {
   const noted = BODY.replace('Old mechanism.', 'Revised during build: health endpoint → release tag\n\nReads the release tag.');
   const deps = fakeDeps({ [DECISIONS]: REV, '/b.md': noted, '/s.md': 'x' });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 0);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 0);
   assert.equal(out(deps).reason, 'already-noted');
   assert.equal('/o.md' in deps.files, false);
 });
@@ -71,19 +71,19 @@ test('bundle run reads every spec-{id}/decisions.md and unions them', () => {
     [DECISIONS]: '- AUTO 10:00:00 — x: premise reversed: parent → ignored. Reversibility: high.',
     '/b.md': BODY,
   }, { multispec: { specs: [{ id: 1 }, { id: 2 }, { id: 3 }] } });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md'], deps), 0);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md'], deps), 0);
   assert.deepEqual(out(deps).uncovered, ['health endpoint → release tag', 'C → D']);
 });
 
 test('malformed invocations exit 2 and write nothing', () => {
   const cases = [
     [],
-    ['--run-dir', '/rd'],
+    ['--run-dir', RD],
     ['--body-file', '/b.md'],
-    ['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md'],
-    ['--run-dir', '/rd', '--body-file', '/b.md', '--out', '/o.md'],
-    ['--run-dir', '/rd', '--body-file', '/missing.md'],
-    ['--run-dir', '/rd', '--body-file', '/b.md', '--bogus', 'x'],
+    ['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/s.md'],
+    ['--run-dir', RD, '--body-file', '/b.md', '--out', '/o.md'],
+    ['--run-dir', RD, '--body-file', '/missing.md'],
+    ['--run-dir', RD, '--body-file', '/b.md', '--bogus', 'x'],
     ['--run-dir', '--body-file', '/b.md'],
   ];
   for (const argv of cases) {
@@ -105,8 +105,8 @@ test('a worktree-local shadow --run-dir is refused (exit 2), never read as no-re
   const deps = fakeDeps({ [DECISIONS]: REV, '/b.md': BODY, '/s.md': 'x' });
   const seen = [];
   deps.anchoredOrOutsideMessage = (dir, cwd, flag) => { seen.push([dir, cwd, flag]); return '--run-dir resolves to a worktree shadow'; };
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 2);
-  assert.deepEqual(seen, [['/rd', '/wt', '--run-dir']]);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps), 2);
+  assert.deepEqual(seen, [[RD, '/wt', '--run-dir']]);
   assert.match(deps.calls.stderr[0], /worktree shadow/);
   assert.deepEqual(deps.calls.stdout, []);
   assert.equal('/o.md' in deps.files, false);
@@ -114,10 +114,10 @@ test('a worktree-local shadow --run-dir is refused (exit 2), never read as no-re
 
 test('an unreadable --summary-file or unwritable --out is exit 2', () => {
   const deps = fakeDeps({ [DECISIONS]: REV, '/b.md': BODY });
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/nope.md', '--out', '/o.md'], deps), 2);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/nope.md', '--out', '/o.md'], deps), 2);
   const deps2 = fakeDeps({ [DECISIONS]: REV, '/b.md': BODY, '/s.md': 'x' });
   deps2.writeFile = () => { throw new Error('EACCES'); };
-  assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps2), 2);
+  assert.equal(run(['--run-dir', RD, '--body-file', '/b.md', '--summary-file', '/s.md', '--out', '/o.md'], deps2), 2);
 });
 
 test('real subprocess: a temp single-record run dir is revised end to end', () => {

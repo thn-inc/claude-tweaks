@@ -16,8 +16,10 @@ const { formatEntry, appendEntry } = require('../plugin/bin/lib/log-decision/app
 const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
 // The CLI resolves --run and --worktree, so the fakes' keys and the expected
-// values are resolved the same way. Sibling run dirs and deps.cwd() come back
-// from the fakes verbatim and stay literal.
+// values are resolved the same way. Sibling run dirs come back from the fakes
+// verbatim and stay literal. deps.cwd() is passed through verbatim, so
+// '/wt/current' stays literal; the #4704 fakes return MAIN from it so one value
+// stands for the main checkout.
 const PRIMARY = path.resolve('/run/primary');
 const MAIN = path.resolve('/main');
 
