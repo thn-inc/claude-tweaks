@@ -59,6 +59,7 @@ const { execFileSync } = require('child_process');
 const claimStore = require('./lib/issues/claim-store');
 const { defaultRunner: gitCasRunner } = require('./lib/issues/claims-git-cas');
 const { parseDependencies } = require('./lib/issues/record');
+const { parseStatusPorcelainZ } = require('./lib/git-z');
 const { fetchNativeDependencies } = require('./lib/issues/native-dependencies');
 const { resolvePolicyConfig } = require('./lib/policy-schema');
 const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
@@ -457,23 +458,24 @@ function parseBranchHeader(header) {
 }
 
 // `status --porcelain -b -z` → { branch, dirty }. First record is the `## ` branch header; every later
-// `XY path` record is a dirty path, a rename/copy being followed by its original-path record.
+// `XY path` record is a dirty path, a rename/copy being followed by its original-path record. The
+// records after the header go to git-z's `parseStatusPorcelainZ` in strict mode, so a short record
+// still fails loud rather than being skipped.
 function parseStatus(out) {
   const fail = (why) => new Exit(4, `git status (stalled worktree): ${why}`);
   if (typeof out !== 'string') throw fail('output was not text');
-  const records = out.split('\0');
-  if (!records[0].startsWith('## ')) throw fail('output did not start with a "## " branch header');
-  const branch = parseBranchHeader(records[0].slice(3));
+  const nul = out.indexOf('\0');
+  const header = nul < 0 ? out : out.slice(0, nul);
+  if (!header.startsWith('## ')) throw fail('output did not start with a "## " branch header');
+  const branch = parseBranchHeader(header.slice(3));
   if (branch === null) throw fail('the "## " branch header named no branch');
-  const dirty = [];
-  for (let i = 1; i < records.length; i++) {
-    const rec = records[i];
-    if (rec === '') continue;
-    if (rec.length < 4) throw fail(`a status record was shorter than "XY path" (${JSON.stringify(rec)})`);
-    dirty.push(rec.slice(3));
-    if (rec[0] === 'R' || rec[0] === 'C' || rec[1] === 'R' || rec[1] === 'C') i++;
+  let records;
+  try {
+    records = parseStatusPorcelainZ(nul < 0 ? '' : out.slice(nul + 1), { strict: true });
+  } catch (e) {
+    throw fail(e.message);
   }
-  return { branch, dirty };
+  return { branch, dirty: records.map((r) => r.path) };
 }
 
 function readWorktreeState(ctx) {
