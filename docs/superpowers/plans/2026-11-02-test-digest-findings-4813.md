@@ -33,7 +33,8 @@
 
 ### Task 1: Remove leaked os.tmpdir() fixture roots (Deliverables 2, 4, 5, 11, 15)
 
-**Role:** transcription
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/bin-lib/flow/artifact-overwrite-check.test.js` (`repo()` at :38)
@@ -45,10 +46,12 @@
 
 - [ ] **Step 1: Measure the leak before the change**
 
-Run each suite and count matching entries in `os.tmpdir()` before and after:
-`node -e "const fs=require('fs'),os=require('os');const p=['ct-artifact-overwrite-','ct-claim-log-','verify-acceptance-','claims-git-cas-'];console.log(p.map(x=>x+fs.readdirSync(os.tmpdir()).filter(n=>n.startsWith(x)).length).join(' '))"`
-Then `node --test tests/bin-lib/flow/artifact-overwrite-check.test.js tests/bin-lib/claim-targets/claim-targets.test.js tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/issues/claims-git-cas.test.js`, then the counter again.
-Expected: every prefix's count grows.
+Measure each suite against its own fresh, empty temp root, so sibling sessions sharing `os.tmpdir()` cannot move the count (Node's `os.tmpdir()` honours `TMPDIR`). For each suite: `mkdir` an empty scratch dir `{S}`, run `TMPDIR="{S}" node --test {suite}`, then `ls "{S}"`. Count only the in-scope prefixes:
+- `artifact-overwrite-check.test.js`: `ct-artifact-overwrite-`
+- `claim-targets.test.js`: `ct-claim-log-resume-`, `ct-claim-log-anchored-`, `ct-claim-log-unanchored-`
+- `claims-git-cas.test.js`: `claims-git-cas-`
+- `engine-verify.test.js`: only the seven prefixes `acceptanceLabelingRow` is passed (`verify-acceptance-accept-pass-`, `verify-acceptance-mixed-pass-`, `-mixed-pass2-`, `-mixed-pass3-`, `-mixed-pass4-`, `verify-acceptance-outranked-`, `verify-acceptance-nopending-`). Other `verify-acceptance-*` and `verify-clean-reporoot-` leaks in that file belong to other tests and are out of D5's scope. `acceptanceLabelingRow`'s own `repoRoot` is checked by code review of Step 4 instead.
+Expected: each in-scope prefix appears at least once.
 
 - [ ] **Step 2: artifact-overwrite-check — register every `repo()` dir**
 
@@ -68,8 +71,8 @@ Import `after`, a module-level `fixtureRoots` array, and push `root` in both `ma
 
 - [ ] **Step 6: Verify no leak and green suites**
 
-Re-run Step 1's counter, the four suites, and the counter again.
-Expected: all four suites pass, and every prefix's count is unchanged across the run.
+Re-run Step 1's per-suite measurement, each against a fresh empty `{S}`.
+Expected: all four suites pass, and no in-scope prefix remains in any `{S}`.
 
 - [ ] **Step 7: Commit**
 
@@ -112,6 +115,7 @@ Temporarily change `/[<>]/` in `plugin/bin/lib/issues/accept-verdict.js` (the ra
 ### Task 3: Widen the DEMO_ reader-walk matcher (Deliverable 6)
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/accept-label-reader-conformance.test.js` (`DEMO_MATCH_RE` :159, `demoLabelUse` :208, self-tests :243-249 and :319-329)
@@ -148,6 +152,7 @@ Expected: PASS, including the whole-tree walk (`plugin/bin` names only `DEMO_PEN
 ### Task 4: Behavioral pin for the double-quoted `git -C "<repo>"` delete push (Deliverable 7)
 
 **Role:** transcription
+**Review risk:** high
 
 **Files:**
 - Modify: `tests/hooks-policy-exemption.test.js` (after the #3900 test at :188-193)
@@ -246,7 +251,14 @@ Expected: PASS, with 59 tests and a `# duration_ms` well below Step 1's.
 
 - [ ] **Step 1: pr-early-open — test name (D1) and the #4554 scope comment (D9)**
 
-Rename the :215 test to `'AC2.1: a reused PR whose body already names this run, or names no run at all, gets no gh pr edit, on either reuse path'`. Above the `CLI: a gh timeout exits 1 …(#4554)` test, add a two-line comment. It should say that `cliDeps` stubs `ghAvailable`, so this test pins only the CLI's error routing (the timeout hint, never the gh-absent message). The probe's own timed-out-means-present rule is pinned by `tests/bin-lib/repo-resolve.test.js`'s `ghAvailable` cases.
+Rename the :215 test to `'AC2.1: a reused PR whose body already names this run, or names no run at all, gets no gh pr edit, on either reuse path'`. Above the `CLI: a gh timeout exits 1 …(#4554)` test, add exactly:
+
+```js
+// cliDeps stubs ghAvailable, so this pins only the CLI's error routing (the timeout
+// hint, never the gh-absent message). The probe's own rule that a timed-out
+// `gh --version` means present is pinned by tests/bin-lib/repo-resolve.test.js's
+// ghAvailable cases (#4554).
+```
 
 - [ ] **Step 2: dispatch-resume-cli — rename the fixture key (D8)**
 
@@ -254,11 +266,27 @@ Rename the `makeEnv` config key `gitAvailable` to `ghAvailable` at all three sit
 
 - [ ] **Step 3: probes — make the read-count coupling explicit (D10)**
 
-Keep the spy. Add a comment above it: the test pins that `ownEventAt` takes both answers from one snapshot (#4560's double-read fix). It counts `fs.readFileSync` calls, so a change to `readEventLines`' I/O primitive turns the count to 0 and fails loud, never silently. Give the final assertion the message `'ownEventAt must answer both fields from one read of events.jsonl (#4560); 0 reads means readEventLines stopped using fs.readFileSync — re-point this spy, do not drop the check'`.
+Keep the spy. Add exactly this comment above `const realRead = fs.readFileSync;`:
+
+```js
+  // Pins that ownEventAt takes both answers from one snapshot of events.jsonl (#4560's
+  // double-read fix). The spy counts fs.readFileSync calls, so a change to readEventLines'
+  // I/O primitive turns the count to 0 and fails loud rather than passing silently.
+```
+
+Give the final assertion the message `'ownEventAt must answer both fields from one read of events.jsonl (#4560); 0 reads means readEventLines stopped using fs.readFileSync — re-point this spy, do not drop the check'`.
 
 - [ ] **Step 4: acceptance-scan-server-filter — drop the loop-syntax regex pin (D13)**
 
-In `searched fetches warn at the search ceiling, per date slice`, delete the second `assertClaimPinned` (the `/for \(const \[\w+, (\w+)\] of slices\) …/` pattern) and its two-line comment. In their place, add a one-line comment saying the per-slice comparison is pinned by behavior in `the extracted closed-record fence warns per slice at the cap, naming the slice that reached it`. Keep the `CAP` pin and both `raw.length` absence checks.
+In `searched fetches warn at the search ceiling, per date slice`, delete the second `assertClaimPinned` (the `/for \(const \[\w+, (\w+)\] of slices\) …/` pattern) and its whole three-line comment (:213-215). Put exactly this comment in their place:
+
+```js
+  // The per-slice comparison is pinned by behaviour in "the extracted closed-record fence warns
+  // per slice at the cap, naming the slice that reached it". The whole-fetch `raw.length >= CAP`
+  // test is gone: a comparison over the combined rows cannot tell which slice is full.
+```
+
+Keep the `CAP` pin and both `raw.length` absence checks.
 
 - [ ] **Step 5: Run the four suites**
 
