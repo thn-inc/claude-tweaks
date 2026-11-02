@@ -489,10 +489,11 @@ lines, to it with the Write tool, as step 3 does, so no record title passes thro
 ```js
 const fs = require('fs');
 const { readRecord, writeRecord, closeRecord } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
 const parentCloseSection = fs.readFileSync('{parent-close-comment}', 'utf8').trimEnd();
 const parentRecord = readRecord(parentPath);
 if (!parentRecord.facets.closed) {
-  if (!/^## Closed below the oversight floor\s*$/m.test(parentRecord.body)) {
+  if (!HEADING_LINE_RE.test(parentRecord.body)) {
     parentRecord.body = parentRecord.body + '\n\n' + parentCloseSection;
     writeRecord(parentPath, parentRecord);
   }

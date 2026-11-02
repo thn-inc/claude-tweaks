@@ -77,6 +77,16 @@ function composeCloseComment({ maxTier, riskFloor, notPlanned, lines } = {}) {
   return `${parts.join('\n\n')}\n`;
 }
 
+// Every skip reason this module emits as a deliberate gate outcome, never a failure: skipReason's own
+// reasons, the parentGateState verdicts it passes through (`resolved`, `gated`, `incomplete` —
+// lib/issues/acceptance.js), and the close loop's idempotence skips. `gh-failed`, `internal-error` and
+// the step-wide `invalid-risk-floor` are failures and stay out, so a caller reading this list in the
+// deny direction reports any reason not named here — one added later included — as a failure.
+const DELIBERATE_SKIP_REASONS = Object.freeze([
+  'not-parent-issue-labeled', 'needs-label', 'sibling-unsettled', 'resolved', 'gated', 'incomplete',
+  'above-floor', 'already-closed', 'reopened-by-human',
+]);
+
 // A gate verdict -> the parent-level reason this parent is skipped, or null. These
 // need only the parent's labels (parentIssue, needs) and the sub-issue numbers (held),
 // so the caller runs them before any per-sibling read. In the order the prose routes them.
@@ -200,4 +210,6 @@ function closeBelowFloorParents({
   return { closed, skipped };
 }
 
-module.exports = { CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment };
+module.exports = {
+  CLOSE_HEADING, DELIBERATE_SKIP_REASONS, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
+};

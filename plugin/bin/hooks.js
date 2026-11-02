@@ -162,7 +162,7 @@ function usageText() {
 // verb and fails closed: a verb with no entry refuses every flag, and a flagless
 // verb carries `[]`. `--help`/`-h` are never declared; main() intercepts both
 // anywhere in the argument list (value positions included) before the
-// undeclared-flag scan.
+// undeclared-flag scan. An undeclared flag is refused on stderr with exit 1 (#4834).
 // tests/hooks-js-flag-strict.test.js enforces the membership. The table gates
 // flags only: archive-run keeps its ctxLib.resolveRunDir fallback, because
 // unambiguousOnly is chosen per call site (resolveOpts), not by this table —
@@ -206,21 +206,23 @@ const KNOWN_FLAGS = {
 // declares it, so it must never be a boolean flag on another verb.
 const VALUE_FLAGS = new Set(['--run', '--specs', '--spec', '--status', '--phase', '--now', '--approve', '--decline', '--reverse-failed', '--filing-failed', '--ledger', '--spec-slug', '--mode', '--standalone', '--worktree', '--record', '--checks']);
 
-// First `--*`-shaped token in `args` that isn't declared for this verb, or
-// null when every `--*` token is declared (or there are none). Scans the
-// FULL argument list, not just a fixed position. A token consumed as a value
-// is skipped, so main() checks --help and -h over every position separately
-// (#1143's "anywhere in the argument list" guarantee).
+// Returns the first refused `--*` token in `args`: an undeclared flag, as
+// `{ token, valueFlag: null }`, or any `--*` token sitting in a declared value
+// flag's value position, as `{ token, valueFlag }` naming that flag. Returns
+// null when nothing is refused. Scans the FULL argument list, not just a
+// fixed position. A token consumed as a value is skipped, so main() checks
+// --help and -h over every position separately (#1143's "anywhere in the
+// argument list" guarantee).
 function firstUnknownFlag(knownFlags, args) {
   const known = new Set(knownFlags);
   for (let i = 0; i < args.length; i += 1) {
     const a = args[i];
     if (typeof a !== 'string' || !a.startsWith('--')) continue;
-    if (!known.has(a)) return a;
+    if (!known.has(a)) return { token: a, valueFlag: null };
     if (VALUE_FLAGS.has(a)) {
       // A value flag followed by a "--" token has no value: refuse that token.
       const next = args[i + 1];
-      if (typeof next === 'string' && next.startsWith('--')) return next;
+      if (typeof next === 'string' && next.startsWith('--')) return { token: next, valueFlag: a };
       i += 1; // skip this flag's own value
     }
   }
@@ -1868,7 +1870,9 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const { classifyEntry, isFailedRun, failedRecordNumbers } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
+    const failedRanEntries = postMergeEntries.filter(isFailedRun);
     const parentsClosedBy = (counts) => postMergeEntries
       .filter(counts)
       .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
@@ -1877,11 +1881,18 @@ async function runReconcileBackground(argv) {
       // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
-      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
-      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
-      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'clean').length,
+      // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
+      // failed (non-zero exit, unreadable envelope, or a non-clean word such as close-failed), Step 4.0b
+      // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
+      // counted as ran. A failed Step 4.0 with no closing set skips Step 4.0b, so that parent waits for tidy's
+      // backstop; with a closing set Step 4.0b still runs and the parent stays open only if a record is unsettled.
+      postMergeFailed: failedRanEntries.length + postMergeEntries.filter((e) => e.reason === 'error').length,
+      // The record numbers those failed runs name (Step 4.0's four lists, carried on a loop entry whose Step 4.0
+      // printed a non-clean word), sorted and unique; empty when no failed run carried any.
+      postMergeFailedRecords: failedRecordNumbers(postMergeEntries),
+      // A failed run's Step 4.0 could not append a decisions.md line, so SessionStart must not point there.
+      postMergeFailedLogMissing: failedRanEntries.some((e) => e.logFailed === true),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
       // (closed on GitHub all the same, only the decisions.md marker is missing).
@@ -1943,10 +1954,11 @@ async function main(argv) {
   // #1012, #4777: ANY undeclared --* argument (--help included — it is never
   // declared) intercepts here, before resolveRunArg or any lib call ever runs,
   // for every VERBS-table verb. A verb missing its KNOWN_FLAGS entry fails
-  // closed and refuses every flag. The refusal keeps the #1012/#1143 shape —
-  // usage on stdout, exit 0 (tests/hooks-help-guard.test.js pins it) — even for
-  // resolve-run-dir, whose callers capture stdout as a path: such a caller gets
-  // the usage line, not an empty value.
+  // closed and refuses every flag. --help/-h keeps the #1012/#1143 shape — usage
+  // on stdout, exit 0 (tests/hooks-help-guard.test.js pins it). An undeclared
+  // flag is a caller mistake, so it is refused on stderr with exit 1, the
+  // unknown-verb shape (#1586, #4834): a caller capturing stdout gets an empty
+  // value and a non-zero exit.
   if (verb) {
     // -h is a single-dash short flag, so firstUnknownFlag's `--`-prefixed
     // scan never sees it. --help is checked in every position too: the scan
@@ -1954,9 +1966,25 @@ async function main(argv) {
     // value position would otherwise reach the handler as that flag's value.
     const argsAfterCmd = argv.slice(3);
     const hasHelpFlag = argsAfterCmd.includes('-h') || argsAfterCmd.includes('--help');
-    if (hasHelpFlag || firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd)) {
+    if (hasHelpFlag) {
       process.stdout.write(`claude-tweaks: usage: ${verb.usage}\n`);
       return 0;
+    }
+    const unknown = firstUnknownFlag(KNOWN_FLAGS[cmd] || [], argsAfterCmd);
+    if (unknown) {
+      const reason = unknown.valueFlag
+        ? `${unknown.valueFlag} needs a value, got '${unknown.token}'`
+        : `unknown flag '${unknown.token}'`;
+      // fs.writeSync in a try/catch, not process.stderr.write: a closed (EBADF)
+      // or broken (EPIPE) stderr would otherwise throw into the entry's
+      // `.catch(() => process.exit(0))` and turn this refusal back into the
+      // silent exit 0 that #4834 removed. Pinned by tests/hooks-js-flag-strict
+      // .test.js's "#4834: an unusable stderr still refuses with exit 1".
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${reason}\n`);
+        fs.writeSync(2, `claude-tweaks: usage: ${verb.usage}\n`);
+      } catch { /* stderr unusable — the exit code still carries the refusal */ }
+      return 1;
     }
   }
   if (verb) return verb.run(argv);
