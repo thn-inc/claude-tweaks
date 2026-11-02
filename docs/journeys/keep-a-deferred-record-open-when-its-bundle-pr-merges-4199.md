@@ -38,7 +38,7 @@ files:
 - **URL:** —
 - **Action:** `pr-first-merge.md` Step 3 passes the deferred record as `--keep-open`. The squash body then writes `Refs #{n}` for it and `Fixes #{m}` only for the finished records.
 - **Should feel:** Nothing to do. The merge message matches the PR body's intent.
-- **Should understand:** The merge commit message is a second closing channel, independent of the PR body. Both have to be clean.
+- **Should understand:** The merge commit message is a second closing channel, independent of the PR body. Both have to be clean. A later `/claude-tweaks:release` reads the same line: it books only a commit's `Fixes` numbers, so unless another merge's `Fixes` line ships `#{n}`, the record renders on the console's `Kept open (not booked)` line and Step 7 neither comments on it nor closes it, even when the subject's `(#N)` suffix names it.
 - **Red flags:** `Fixes #{n}` in the merged commit's message for a deferred record.
 
 ### 4. The post-merge reopen pass runs — `node "${CLAUDE_PLUGIN_ROOT}/bin/closing-links.js" --run "{run-dir}" --mode post-merge` (`pr-first-merge-post-merge.md` Step 4.0)
@@ -60,4 +60,5 @@ files:
 - Steps 1-4 built in this session; mechanism probed live on throwaway PR #4234 / issue #4233
 - Updated by #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a merge into a non-default base, Step 4.0 closes the PR's still-open `Fixes` records itself and reports `closed[]`, `closeFailed[]`, or `base-unchecked` with `unchecked[]`
 - Updated by #4599 (run `2026-10-31T135734-record-4599`): an armed merge GitHub completes later is no longer a gap. The reconciler's `post-merge` check runs Step 4.0 for it once, with reopens bounded to 10 minutes after `mergedAt`
+- Step 3 updated for #4634 (a release books only a commit's `Fixes` numbers, so the `Refs` line also keeps the deferred record out of Step 7's comment and close)
 - Related: #3412 (reconciler keeps an unfinished record's claim when its bundle PR merges early), #2724 (the record PR #4144 closed by mistake)

@@ -289,6 +289,7 @@ MANIFEST: {absolute path to this group's run-dir manifest.yml/decisions.md -- a
 
 One line per issue in this group that hit a HARD-GATE (omit if none):
 ISSUE #{n}: failed:{gate}
+  (a claim-targets.js exit 7 uses the gate value `claim-permission-denied`, exactly, with `OUTCOME: build-test-blocked`)
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /

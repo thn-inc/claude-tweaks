@@ -9,7 +9,7 @@
 //   node -e "const fs=require('fs'),{aggregateReproductionProblem:f}=require('./plugin/bin/lib/log-decision/aggregate-reproduction'),d=process.argv[1];let n=0,r=0;for(const p of fs.readdirSync(d,{recursive:true}))if(/(^|\/)decisions\.md$/.test(p))for(const l of fs.readFileSync(d+'/'+p,'utf8').split('\n')){const m=/^- STAGED \d\d:\d\d:\d\d — (.*)$/.exec(l);if(m&&/\breproduction:\s/i.test(m[1])){n++;if(f({status:'STAGED',text:m[1]}))r++}}console.log(n,r)" .claude-tweaks/pipelines
 'use strict';
 
-const { FINDING_PATH_UNIT, FINDING_PATH, COINCIDENCE } = require('../console/finding-path');
+const { FINDING_PATH, readsLocation, parseCoincidence } = require('../console/finding-path');
 
 const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // A plural phrase with a zero quantifier (`no`, `zero`, `0`) anywhere before `findings` names no findings, not
@@ -17,10 +17,6 @@ const LENS = String.raw`lens(?:es)?\s+(?:"[^"]*"|\S+)`;
 // including one written after `(`, which WORD admits (`Lens 3c (no findings)`).
 const NOT_ZERO = String.raw`(?!\(?(?:no|zero|0)\s)`;
 const WORD = String.raw`${NOT_ZERO}[\w/()-]+\s+`;
-const COINCIDENCE_RE = new RegExp(COINCIDENCE, 'i');
-// Whether FINDING_PATH reads a location in a text: any `{path}:{line}` match ends in one path unit plus `.ext:line`, so
-// testing that suffix gives the same answer and stays linear (the full FINDING_PATH restarts inside a long token).
-const LOCATION_RE = new RegExp(String.raw`${FINDING_PATH_UNIT}\.[A-Za-z0-9]+:\d+`);
 // A match starts only where the previous character cannot be part of a path: without that left edge a global scan
 // restarts inside every long dot-free token and runs quadratic (158 s on a 200k-character token).
 const PATH_RE = new RegExp(String.raw`(?<![A-Za-z0-9_./@+~%$\[\]()-])${FINDING_PATH}(?::\d+)?`, 'g');
@@ -48,14 +44,14 @@ function aggregateReproductionProblem({ status, step, text }) {
   const at = entry.search(/(?<!["'`])\breproduction:\s/i);
   if (at < 0) return null;
   // The coincidence clause is exempt, not the whole line: drop it and judge whatever else the line says. This runs on
-  // the real paths, before PATH_RE: COINCIDENCE needs each location's `:line`, which a neutralized `PATH` has absorbed
-  // (pinned by cli.test.js's `accepts the documented coincidence line (lens with spaces)`).
-  // A clause whose location FINDING_PATH cannot read (`src/a:9`) still matches COINCIDENCE, but lineKeys leaves that
-  // line open, so it is not exempt.
+  // the real paths, before PATH_RE: parseCoincidence needs each location's `:line`, which a neutralized `PATH` has
+  // absorbed (pinned by cli.test.js's `accepts the documented coincidence line (lens with spaces)`).
+  // A clause whose location FINDING_PATH cannot read (`src/a:9`) still parses, but lineKeys leaves that line open, so
+  // it is not exempt.
   const marked = entry.slice(at);
-  const co = COINCIDENCE_RE.exec(marked);
-  const coincidence = co !== null && LOCATION_RE.test(co[3]) && LOCATION_RE.test(co[4]);
-  const tail = coincidence ? marked.replace(COINCIDENCE_RE, ' ') : marked;
+  const co = parseCoincidence(marked);
+  const coincidence = co !== null && readsLocation(co.first) && readsLocation(co.second);
+  const tail = coincidence ? `${marked.slice(0, co.index)} ${marked.slice(co.index + co.length)}` : marked;
   // Neutralize paths so a path containing `findings` never counts as the plural subject.
   const bare = tail.replace(PATH_RE, 'PATH');
   // Two `lens … finding` clauses name several findings; after a coincidence clause (already two), one more does.
