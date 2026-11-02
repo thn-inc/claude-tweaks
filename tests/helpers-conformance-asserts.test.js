@@ -61,6 +61,15 @@ test('sectionOf runs to the end of the text for the last section', () => {
   assert.equal(sectionOf(DOC, '## Last'), '## Last\nbody three\n');
 });
 
+test('sectionOf finds a heading on the text\'s first line', () => {
+  assert.equal(sectionOf('## First\nbody one\n## Next\nbody two\n', '## First'), '## First\nbody one');
+});
+
+test('sectionOf finds a heading on the last line with no trailing newline, and a heading that is the whole text', () => {
+  assert.equal(sectionOf('intro\n## Last', '## Last'), '## Last');
+  assert.equal(sectionOf('## Only', '## Only'), '## Only');
+});
+
 test('sectionOf matches the whole heading line, never a prefix or a deeper heading', () => {
   assert.throws(() => sectionOf(DOC, '## Sub'), /heading not found: ## Sub/);
   assert.throws(() => sectionOf(DOC, '## Fir'), /heading not found: ## Fir/);

@@ -35,12 +35,16 @@ function assertEveryMatchGoesRed(text, patterns, missingOf) {
 const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
 // The text from a whole heading line (`## Foo`) to the next `## ` heading, or to the end of the text.
-// Asserts the heading exists.
+// Asserts the heading exists. The search runs over the text padded with a newline on each side, so a
+// heading on the first line, or on the last line with no trailing newline, is still a whole line.
+// Padding shifts every index by one, so `start` is the heading's own index in `text` and `next - 1`
+// is the index of the newline that ends the section.
 function sectionOf(text, heading) {
-  const start = text.indexOf(`\n${heading}\n`);
+  const padded = `\n${text}\n`;
+  const start = padded.indexOf(`\n${heading}\n`);
   assert.notEqual(start, -1, `heading not found: ${heading}`);
-  const next = text.indexOf('\n## ', start + 1);
-  return next === -1 ? text.slice(start + 1) : text.slice(start + 1, next);
+  const next = padded.indexOf('\n## ', start + 1);
+  return next === -1 ? text.slice(start) : text.slice(start, next - 1);
 }
 
 module.exports = { missingFactsOf, assertEachPatternGoesRed, assertEveryMatchGoesRed, globalOf, lineStartingWith, sectionOf };
