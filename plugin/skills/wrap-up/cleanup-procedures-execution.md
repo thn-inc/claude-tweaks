@@ -81,7 +81,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
-   read each `{n}-spec.md` match's numeric header `record:` field, skipping a file whose
+   read each `{n}-spec.md` match's numeric frontmatter `record:` field, skipping a file whose
    `record:` is missing or not a number (`pack.js`'s header reader accepts the same names and values):
 
    ```bash
@@ -91,7 +91,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(dir,f),"utf8").match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const h=/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(dir,f),"utf8")),m=h&&h[1].match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
@@ -107,6 +107,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    was never an issue to close. Skip the commit if one for these issues already exists on the
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
+
+   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop here with no carrier commit: skip steps 3, 3.5, 3.6, 4, and 5 below and Section E, the same posture as "Kept as-is" below, because a merge with no closing keyword leaves the record open. Report one `cleanup: closing-keyword carrier failed — {stderr's Error: line}` line in the closing report.
 
    **Why a dedicated commit, not the merge artifact** — see
    `cleanup-procedures-execution-appendix.md`'s "Step 2" section; read only if the rationale
