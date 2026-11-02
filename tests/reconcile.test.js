@@ -617,6 +617,175 @@ test('archiveRunDir: the git mv of work/ is committed, not left staged (no uncom
   assert.match(git(['log', '-1', '--format=%s'], root).trim(), /archive run/);
 });
 
+test('#3721 AC1.1: archiveRunDir returns the commit it made', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.commit.sha, git(['rev-parse', '--short', 'HEAD'], root).trim());
+  assert.strictEqual(result.commit.branch, 'main');
+});
+
+test('#3721 AC1.2: archiveRunDir with nothing tracked returns no commit field', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['rm', '-rq', '--cached', '--', path.join(runDir, 'work')], root);
+  git(['commit', '-q', '-m', 'untrack'], root);
+  fs.rmSync(path.join(runDir, 'work'), { recursive: true });
+  const before = git(['rev-parse', 'HEAD'], root).trim();
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.ok, true);
+  assert.ok(!('commit' in result));
+  assert.strictEqual(git(['rev-parse', 'HEAD'], root).trim(), before);
+});
+
+test('#3721 archiveRunDir on a detached HEAD reports branch detached', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['checkout', '-q', '--detach'], root);
+  assert.strictEqual(archiveRunDir(root, runDir).commit.branch, 'detached');
+});
+
+test('#3721 a commit followed by a refusal still returns the commit', () => {
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  fs.writeFileSync(path.join(runDir, 'tracked-stray.md'), 'oops\n');
+  git(['add', path.relative(root, path.join(runDir, 'tracked-stray.md'))], root);
+  git(['commit', '-q', '-m', 'accidentally track a stray file'], root);
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.ok, false);
+  assert.strictEqual(result.reason, 'tracked-entry');
+  assert.strictEqual(result.commit.sha, git(['rev-parse', '--short', 'HEAD'], root).trim());
+  assert.strictEqual(result.commit.branch, 'main');
+});
+
+test('#3721 a refusal before any commit carries no commit field', () => {
+  // Nothing tracked under work/, so no commit runs; the stray file then refuses.
+  const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const { root, runDir } = runDirFixture();
+  git(['rm', '-rq', '--cached', '--', path.join(runDir, 'work')], root);
+  fs.rmSync(path.join(runDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(runDir, 'tracked-stray.md'), 'oops\n');
+  git(['add', path.relative(root, path.join(runDir, 'tracked-stray.md'))], root);
+  git(['commit', '-q', '-m', 'stray only'], root);
+  const result = archiveRunDir(root, runDir);
+  assert.strictEqual(result.reason, 'tracked-entry');
+  assert.ok(!('commit' in result));
+});
+
+// A fake `git(args, cwd)` for the probe seam: `answers` maps the first argv
+// word to a result; a missing key fails with a timeout (an unanswered probe).
+function fakeGit(answers) {
+  return (args) => answers[args[0]] || { stdout: null, failure: 'timeout', stderr: '', exitCode: null };
+}
+const OK = (stdout) => ({ stdout, failure: null, stderr: null });
+
+const ARCHIVE_RUN_ID = '2026-08-01T120000-record-3721-x';
+const OWN_SUBJECT = `[reconcile] archive run ${ARCHIVE_RUN_ID}`;
+
+test('#3721 readArchiveCommit: a failed sha probe stores null', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    show: { stdout: null, failure: 'timeout', exitCode: null },
+    'symbolic-ref': OK('refs/heads/main'),
+  });
+  assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: null, branch: 'main' });
+});
+
+test('#3721 readArchiveCommit: reads the sha and subject in one spawn', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const calls = [];
+  const fake = (args) => {
+    calls.push(args);
+    return args[0] === 'show' ? OK(`abc1234\n${OWN_SUBJECT}`) : OK('refs/heads/main');
+  };
+  assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: 'abc1234', branch: 'main' });
+  // The property is one spawn for sha and subject together, not the argv that spawn uses.
+  assert.strictEqual(calls.filter((a) => a[0] === 'show').length, 1);
+  assert.ok(!calls.some((a) => a[0] === 'rev-parse' || a[0] === 'log'));
+});
+
+test('#3721 readArchiveCommit: a foreign HEAD subject stores a null sha', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    show: OK('abc1234\nsomebody else committed in the window'),
+    'symbolic-ref': OK('refs/heads/main'),
+  });
+  assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: null, branch: 'main' });
+});
+
+test('#3721 readArchiveCommit: symbolic-ref exit 1 is detached', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    show: OK(`abc1234\n${OWN_SUBJECT}`),
+    'symbolic-ref': { stdout: null, failure: 'git-error', exitCode: 1 },
+  });
+  assert.strictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake).branch, 'detached');
+});
+
+test('#3721 readArchiveCommit: an unanswered symbolic-ref is not detached', () => {
+  const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
+  for (const failed of [
+    { stdout: null, failure: 'timeout', exitCode: null },
+    { stdout: null, failure: 'git-error', exitCode: 128 },
+  ]) {
+    const fake = fakeGit({ show: OK(`abc1234\n${OWN_SUBJECT}`), 'symbolic-ref': failed });
+    assert.strictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake).branch, null);
+  }
+});
+
+const AC2_PREFIX = /^claude-tweaks: committed [0-9a-f]{7,} on \S+ \(/;
+
+test('#3721 archiveCommitLine: a null sha never prints a placeholder', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: null, branch: 'main' }, fakeGit({}));
+  assert.doesNotMatch(line, /unknown on|on unknown/);
+  assert.doesNotMatch(line, AC2_PREFIX);
+  assert.strictEqual(line, 'claude-tweaks: committed the archive move on main but could not read its sha (push state unknown)');
+});
+
+test('#3721 archiveCommitLine: a null branch never prints detached', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: null }, fakeGit({}));
+  assert.doesNotMatch(line, /detached/);
+  assert.doesNotMatch(line, AC2_PREFIX);
+  assert.strictEqual(line, 'claude-tweaks: committed abc1234 but could not read its branch (push state unknown)');
+});
+
+test('#3721 archiveCommitLine: both halves null keeps the generic line', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: null, branch: null }, fakeGit({}));
+  assert.doesNotMatch(line, AC2_PREFIX);
+  assert.strictEqual(line, 'claude-tweaks: committed the archive move but could not read its sha and branch (push state unknown)');
+});
+
+test('#3721 archiveCommitLine: a failed for-each-ref is push state unknown', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    'symbolic-ref': OK('refs/heads/main'),
+    'for-each-ref': { stdout: null, failure: 'git-error', exitCode: 128 },
+  });
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: 'main' }, fake);
+  assert.match(line, / \(push state unknown\)$/);
+});
+
+test('#3721 archiveCommitLine: a zero ahead count is push state unknown', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const fake = fakeGit({
+    'symbolic-ref': OK('refs/heads/main'),
+    'for-each-ref': OK('origin/main'),
+    'rev-list': OK('0'),
+  });
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: 'main' }, fake);
+  assert.match(line, / \(push state unknown\)$/);
+  assert.doesNotMatch(line, /0 ahead/);
+});
+
+test('#3721 archiveCommitLine: a throwing probe degrades instead of throwing', () => {
+  const { archiveCommitLine } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const line = archiveCommitLine('/x', { sha: 'abc1234', branch: 'main' }, () => { throw new Error('boom'); });
+  assert.match(line, / \(push state unknown\)$/);
+});
+
 test('archiveRunDir: run-state.json moves to the archived location with status: clean, not left orphaned at the old path', () => {
   const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
   const { root, runDir, runId } = runDirFixture();
@@ -1708,6 +1877,15 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nintegration-branch: main\n');
   fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
   git(['add', 'merged.txt'], seedDir);
+  // extra.closedRun (#3721): seed the run already closed (status clean, no worktree), so the clean-status sweep archives it.
+  // extra.trackedWork / extra.trackedStray (#3721): git-track a work/ spec / a stray file under the run dir, so mainDir receives them through the fast-forward.
+  const trackedRel = '.claude-tweaks/pipelines/2026-10-17T062549-spec-3630';
+  for (const [flag, rel] of [[extra.trackedWork, 'work/3630-spec.md'], [extra.trackedStray, 'tracked-stray.md']]) {
+    if (!flag) continue;
+    fs.mkdirSync(path.dirname(path.join(seedDir, trackedRel, rel)), { recursive: true });
+    fs.writeFileSync(path.join(seedDir, trackedRel, rel), '# 3630\n');
+    git(['add', '-f', `${trackedRel}/${rel}`], seedDir);
+  }
   git(['commit', '-q', '-m', 'async merge'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
   const NEW = git(['rev-parse', 'HEAD'], seedDir).trim();
@@ -1720,7 +1898,9 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   fs.writeFileSync(path.join(runDir, 'config.yml'), 'x: 1\n');
   fs.writeFileSync(path.join(runDir, 'console.json'), JSON.stringify({ resolved: true }));
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify({
-    status: 'active', worktree: path.join(mainDir, '.claude', 'worktrees', 'gone'), pr: { number: 3630100, branch: 'feat-async' },
+    status: extra.closedRun ? 'clean' : 'active',
+    worktree: extra.closedRun ? null : path.join(mainDir, '.claude', 'worktrees', 'gone'),
+    pr: { number: 3630100, branch: 'feat-async' },
   }));
   const pr = {
     number: 3630100, state: 'MERGED', mergedAt: '2026-10-19T00:00:00Z', updatedAt: '2026-10-19T00:00:00Z',
@@ -1777,6 +1957,56 @@ test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merg
   assert.ok(!(r.runs || []).some((x) => x.reason === 'local-behind-merge'), JSON.stringify(r.runs));
   // basename, not the path: reconcile reports the realpath of the temp dir (/private/var on macOS).
   assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+});
+
+test('#3721 AC4.1: a reconcile run entry for an archived tracked-work run includes the commit', { skip: STUB_SKIP }, async () => {
+  const { r, mainDir } = await archiveAsyncMergedRun(['archive'], { trackedWork: true });
+  const [entry] = r.runs;
+  assert.strictEqual(entry.action, 'archived');
+  assert.deepStrictEqual(entry.commit, { sha: git(['rev-parse', '--short', 'HEAD'], mainDir).trim(), branch: 'main' });
+});
+
+test('#3721 AC4.1 clean-status sweep: an archived closed run\'s entry includes the commit', { skip: STUB_SKIP }, async () => {
+  const { r, mainDir } = await archiveAsyncMergedRun(['archive'], { trackedWork: true, closedRun: true });
+  const [entry] = r.runs;
+  assert.strictEqual(entry.action, 'archived');
+  assert.deepStrictEqual(entry.commit, { sha: git(['rev-parse', '--short', 'HEAD'], mainDir).trim(), branch: 'main' });
+});
+
+test('#3721 an archived run with nothing tracked has no commit in its reconcile entry', { skip: STUB_SKIP }, async () => {
+  const { r } = await archiveAsyncMergedRun(['archive']);
+  assert.strictEqual(r.runs[0].action, 'archived');
+  assert.ok(!('commit' in r.runs[0]));
+});
+
+test('#3721 a skipped reconcile entry carries the commit its refused attempt made', { skip: STUB_SKIP }, async () => {
+  const { r, mainDir } = await archiveAsyncMergedRun(['archive'], { trackedWork: true, trackedStray: true });
+  const [entry] = r.runs;
+  assert.strictEqual(entry.action, 'skipped');
+  assert.strictEqual(entry.reason, 'tracked-entry');
+  assert.deepStrictEqual(entry.commit, { sha: git(['rev-parse', '--short', 'HEAD'], mainDir).trim(), branch: 'main' });
+});
+
+test('#3721 a mixed pass names only the tracked run', () => {
+  const { archiveMerged, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const trackedId = '2026-08-01T120000-record-3721-tracked';
+  const trackedDir = mintEmptyRunDir(root, trackedId);
+  fs.mkdirSync(path.join(trackedDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(trackedDir, 'work', '3721-spec.md'), '# 3721\n');
+  git(['add', '-f', `.claude-tweaks/pipelines/${trackedId}/work/3721-spec.md`], root);
+  git(['commit', '-q', '-m', 'track spec'], root);
+  const bareDir = mintEmptyRunDir(root, '2026-08-01T120100-record-3721-bare');
+  const old = new Date(Date.now() - ORPHAN_MINT_TTL_MS * 2);
+  for (const d of [trackedDir, bareDir]) fs.utimesSync(d, old, old);
+
+  const result = archiveMerged({ cwd: root });
+
+  assert.strictEqual(result.archived.length, 2, JSON.stringify(result));
+  assert.deepStrictEqual(Object.keys(result.archiveCommits), [trackedDir]);
+  const picked = result.archiveCommits[trackedDir];
+  assert.match(picked.sha, /^[0-9a-f]{7,}$/);
+  assert.strictEqual(picked.branch, 'main');
 });
 
 test('#4599 end to end: a run post-merge deferred in the same pass is not archived — it is skipped post-merge-pending and stays at its top-level path', { skip: STUB_SKIP }, async () => {
