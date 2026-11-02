@@ -1379,7 +1379,10 @@ async function runArchiveRun(argv) {
       return 0;
     }
   }
-  // Output below is informational human text, never parsed by any caller
+  // Output below is informational human text. The one line a caller reads is
+  // the success line `claude-tweaks: archived {run-id}` (skills/tidy/SKILL.md
+  // and skills/release/SKILL.md key on it); the "moved:" and "committed" lines
+  // are informational only, and any added line must leave that one intact
   // (skills/flow/multispec-review-console.md's parent-dir archival is a
   // future caller of this verb, not a consumer of this stdout format).
   // The "moved:" lines are read from archiveRunDir's own movedEntries

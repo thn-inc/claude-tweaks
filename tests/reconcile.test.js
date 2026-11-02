@@ -699,8 +699,9 @@ test('#3721 readArchiveCommit: reads the sha and subject in one spawn', () => {
     return args[0] === 'show' ? OK(`abc1234\n${OWN_SUBJECT}`) : OK('refs/heads/main');
   };
   assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: 'abc1234', branch: 'main' });
-  assert.deepStrictEqual(calls.filter((a) => a[0] === 'show'), [['show', '-s', '--format=%h%n%s', 'HEAD']]);
-  assert.ok(!calls.some((a) => a[0] === 'rev-parse'));
+  // The property is one spawn for sha and subject together, not the argv that spawn uses.
+  assert.strictEqual(calls.filter((a) => a[0] === 'show').length, 1);
+  assert.ok(!calls.some((a) => a[0] === 'rev-parse' || a[0] === 'log'));
 });
 
 test('#3721 readArchiveCommit: a foreign HEAD subject stores a null sha', () => {

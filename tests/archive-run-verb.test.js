@@ -652,6 +652,7 @@ test('#3721 AC2.1: tracked work prints the committed line', () => {
 test('#3721 AC2.2: an untracked-only run prints no committed line', () => {
   const { root, runDir } = runDirFixture('clean');
   const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /^claude-tweaks: archived /m, 'the verb ran and archived');
   assert.doesNotMatch(result.stdout, /committed/);
 });
 

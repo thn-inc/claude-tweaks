@@ -262,6 +262,10 @@ function refusal(reason, { hint = null, ...extra } = {}) {
 // retried rather than surfacing as a hard `commit-failed` refusal.
 const commitGit = withIndexLockRetry(runGit);
 
+// #3721: the archive commit's subject, written once so the commit and
+// `readArchiveCommit`'s own-commit check cannot drift apart.
+const archiveCommitSubject = (runId) => `[reconcile] archive run ${runId}`;
+
 // #3721: what the archive commit landed as, read straight after it so
 // `archive-run` can say where it went. `null` in either field means that probe
 // went unanswered — never a stand-in value. `branch` is 'detached' only when
@@ -275,7 +279,7 @@ function readArchiveCommit(root, runId, git = runGit) {
   let sha = null;
   if (!head.failure && head.stdout) {
     const [short, subject] = head.stdout.split('\n');
-    if (short && subject === `[reconcile] archive run ${runId}`) sha = short;
+    if (short && subject === archiveCommitSubject(runId)) sha = short;
   }
   const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
   let branch = null;
@@ -1605,7 +1609,7 @@ function archiveRunDir(root, runDir) {
     // rather than sweeping whatever else a human or sibling session happens
     // to have staged in this shared main checkout at the same moment.
     const commitPaths = workMoves.flatMap(([src, dest]) => [src, dest]);
-    const commit = commitGit(['commit', '-m', `[reconcile] archive run ${runId}`, '--', ...commitPaths], root);
+    const commit = commitGit(['commit', '-m', archiveCommitSubject(runId), '--', ...commitPaths], root);
     if (commit.failure) {
       // A partial revert (some ops' `git reset`/`git checkout` or disk move
       // failed) is a distinct outcome from a clean one: the retry guard
