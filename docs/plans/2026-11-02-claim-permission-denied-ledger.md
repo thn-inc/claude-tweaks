@@ -21,3 +21,18 @@
 | 17 | review | Error handling: the exit-7 card does not name `releaseFailed` (low) | accepted | Tiebreak recommended drop: the spec's Gotchas accept the TTL lapse, stdout names it, and the sibling stop cards omit it too. |
 | 18 | review | Test quality: journey step 3e has no positive pin (info) | accepted | Tiebreak recommended drop: the spec asks for pins on the card and Settle only, and step 3d is equally unpinned. |
 | 19 | review/hindsight | The shared self-report template still interpolates the diagnostic into a double-quoted `--body`; this review fixed only the two `{reason}` claim stops | deferred | Staged for the Review Console: staged/reflect-1.md. |
+| 20 | wrap-up | [skill: skill-prose-conformance-tests] A retirement sweep that walks only `plugin/` and `docs/` misses the prose in `.claude/skills/` | fixed | Anti-Patterns row added: e41670d2c. |
+| 21 | wrap-up | [skill: gh-api-module-pattern] A real `gh` failure's `error` opens with the `Command failed:` argv line, so a reason built on it carries the claim payload | fixed | Error-text bullet extended: 88de8d6fa. |
+| 22 | wrap-up | [skill: NEW] A new `claim-targets.js` stop has no roster of the sites it must reach (systemic) | open | New skill candidate for the Review Console: staged/wrap-up-skill-new-claim-targets-stop-addition.md. |
+| 23 | wrap-up | A merged PR's worktree was reaped mid-session; another occurrence of #4960 | open | Console approval posts one recurrence comment on #4960; staged/wrap-up-reflect-insights.md #4. |
+| 24 | wrap-up | A per-file byte assertion in a new test tripped skill-size-single-source only at the full run | accepted | Not captured: `.claude/skills/skill-prose-conformance-tests/SKILL.md` already states the rule. |
+| 25 | wrap-up | 13 harness Bash refusals in a two-task record | accepted | Not captured: all command-shape refusals the refused-command journey and the user's memory already cover. |
+| 26 | wrap-up | Tradeoff: the firing stop relies on a self-reported line | accepted | Not captured: one-off; dispatch already routes on self-reported lines (row 16). |
+| 27 | wrap-up | Tradeoff: the gh-absent MCP claim path stays transient | accepted | Not captured: stated limitation, carried by row 5's staged/leftover-1.md. |
+| 28 | wrap-up | [journey] drain-the-queue-past-a-chain-of-overlapping-records-3278.md: Step 3's budget-left red flag excepts a Claim permission stop (staged/wrap-up-journey-1.md) | open | — |
+| 29 | wrap-up | [journey] reap-merged-worktrees-at-drain-end-3026.md: the Entry point names a Claim permission stop as a third drain termination (staged/wrap-up-journey-2.md) | open | — |
+| 30 | wrap-up | [journey] dispatch-a-named-list-longer-than-the-batch-size-4219.md: Step 2 names the Claim permission stop as the exception to every named record being accounted for (staged/wrap-up-journey-3.md) | open | — |
+| 31 | wrap-up | [journey] gather-the-wrap-up-fact-pack-1930.md: Step 2 names the claim-permission-denied teardown, which skips Section E and its pack (staged/wrap-up-journey-4.md) | open | — |
+| 32 | wrap-up | [journey] act-on-a-contested-claim.md: step 3d no longer calls the contents-API refusal text verbatim (staged/wrap-up-journey-5.md) | open | — |
+| 33 | wrap-up | [skill] cli-wrapper-contract.md: the domain exit-code bullets name 3 through 7 (staged/wrap-up-skill-1.md) | open | — |
+| 34 | wrap-up | Docs and journey edits: `dispatch/SKILL.md` and `reporting.md` require a Claim permission stop's report to name only the stopped record, so later named records can go unmentioned | open | Found by the Journeys row. staged/wrap-up-journey-3.md documents the behaviour as it stands; decide at the Console whether to fix the report instead. |
