@@ -88,6 +88,11 @@ shared repo-wide across every worktree of this checkout, so any of them can pop,
 a sibling worktree's in-flight work. To compare against a baseline without mutating the tree, use
 `git show <rev>:<path>`; to set your own work aside, make a temporary WIP commit instead.
 
+Never kill a process by image or name (`taskkill /IM`, `pkill`, `killall`, `Stop-Process -Name`,
+a `pgrep`-fed `kill`): the process table is shared machine-wide with sibling sessions. Kill only
+a PID you started or your own port's listener (`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`; win32:
+`taskkill /PID {pid} /T /F`); otherwise leave the process running and report it.
+
 OUTPUT FORMAT (required) -- return ONLY these lines, no preamble:
 
 GROUP: {issue}
