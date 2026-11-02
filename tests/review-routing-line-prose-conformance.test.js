@@ -223,10 +223,10 @@ test('#4637: the composer rule single-quotes --stack-stderr alongside --category
 const hasPosixSh = spawnSync('sh', ['-c', 'exit 0'], { windowsHide: true }).status === 0;
 const SH_SKIP = process.platform === 'win32' && !hasPosixSh ? 'no POSIX sh on win32, so the shell round trip cannot run' : false;
 
-function markerDir() {
+function markerPath() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rrl-stderr-'));
   roots.push(dir);
-  return dir;
+  return path.join(dir, 'marker');
 }
 
 // A stderr line that closes the quote and runs a command substitution, which would create the marker file.
@@ -236,8 +236,7 @@ const rawStderr = (marker) => `x'$(touch ${marker.split(path.sep).join('/')})'y`
 const shellSingleQuote = (value) => `'${value.split("'").join("'\\''")}'`;
 
 test('#4637: a --stack-stderr value escaped by the rule round-trips a POSIX shell byte-identical and runs nothing', { skip: SH_SKIP }, () => {
-  const dir = markerDir();
-  const marker = path.join(dir, 'marker');
+  const marker = markerPath();
   const raw = rawStderr(marker);
   const out = spawnSync('sh', ['-c', `printf '%s' ${shellSingleQuote(raw)}`], { encoding: 'utf8', windowsHide: true });
   assert.equal(out.status, 0, out.stderr);
@@ -246,8 +245,7 @@ test('#4637: a --stack-stderr value escaped by the rule round-trips a POSIX shel
 });
 
 test('#4637 go-red: the same value left unescaped inside single quotes does not round-trip, and its substitution runs', { skip: SH_SKIP }, () => {
-  const dir = markerDir();
-  const marker = path.join(dir, 'marker');
+  const marker = markerPath();
   const raw = rawStderr(marker);
   const out = spawnSync('sh', ['-c', `printf '%s' '${raw}'`], { encoding: 'utf8', windowsHide: true });
   assert.notEqual(out.stdout, raw, 'the unescaped value must not round-trip');
