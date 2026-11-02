@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793610953147
+    "lastAuditedMs": 1793658224020
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -169,7 +169,7 @@
   },
   "skill:windows-checkout-test-parity": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793628400759
+    "lastAuditedMs": 1793659282070
   },
   "skill:node-test-output-evidence": {
     "lastAuditedSha": null,
@@ -213,7 +213,7 @@
   },
   "skill:hooks-js-verb-registration": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793609826930
+    "lastAuditedMs": 1793658219609
   },
   "skill:verify-scope-rule-kind": {
     "lastAuditedSha": null,
