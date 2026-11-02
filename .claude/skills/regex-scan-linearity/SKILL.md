@@ -18,6 +18,7 @@ Feed the function a long run of characters its pattern accepts, without the term
 - a long token of the matched class with no terminator: `'a'.repeat(200000)` against `FINDING_PATH` (no `.ext`)
 - many repetitions of a separator a lazy group can stop at: `'a b:1 / '.repeat(25000)`
 - a long newline run under `/m`: `'\n'.repeat(40000)`
+- a long run of spaces inside one line, with a non-space after it: `` `a${' '.repeat(200000)}b` ``. The newline run above does not exercise this
 - a long repeated group: `'a.'.repeat(20000)`, `'/'.repeat(200)`
 
 Seconds at these sizes is the bug; the fixed #4581 detector takes single-digit milliseconds on the 200k-character token. `perf/aggregate-reproduction-linearity.test.js` holds the #4581 cases.
@@ -28,7 +29,19 @@ Seconds at these sizes is the bug; the fixed #4581 detector takes single-digit m
 2. **A lazy or unbounded group rescanning to the end once per split.** #4632's coincidence locations `.+?:\d+` rescanned the rest of the line once per ` / `. Fix: a tempered token that cannot cross a boundary, `(?:(?!:\d).)+:\d+` (`COINCIDENCE_LOCATION` in `plugin/bin/lib/console/finding-path.js`). #2622's `(?:seg\.)+` took a `{1,8}` cap instead.
 3. **A `\s` that crosses newlines under `/m`.** `^\s*` restarts at every line and runs across blank-line runs. Fix: `[ \t]` (#3412).
 
+Shape 1 also hides at the edge of a regex, on a whitespace or newline run rather than a token. #4611's `packet-gather.js` and `packet-render.js` had `\s*$`, `\s+#`, an unanchored leading `\s*` and `\s*[\r\n]+\s*`, and `packet-post.js` had `[\r\n]+$`. Each restarts at every character of the run and fails at its end (6 to 26 s at 100k to 200k characters). Shape 3's `[ \t]` does not help here: `[ \t]*$` times the same as `\s*$` on `a`, 60k spaces, `b`. Take the run out of the regex and handle it in code: match the run and then test it (`collapseLines` in `packet-render.js`), trim after matching (`parseHeading` in `packet-gather.js`), scan with `indexOf` (`stripYamlComment`), or walk back by hand (`stripClause`, `upsertLocalPacket`).
+
 A scan that re-reads the input once per match is the same cost without a regex: #3903's brace tracker recounted from the start of the file for every match. Keep one persistent scan position.
+
+### A line under `m` is JS's line, not git's
+
+This one is a wrong answer, not a slow one. A commit body's line ends at LF, but JS `^` and `$` under `m` also break on U+2028 and U+2029, so `Release-Note: A Fixes #99` read as a `Fixes #99` footer and booked #99 (#4634, a review probe, one fix wave). Split on `'\n'` and match each line without `m`, as `parseCommit` in `plugin/bin/lib/release-local/commits.js` and `extractReleaseNotes` in `plugin/bin/lib/release-notes.js` do. Three details come with the split:
+
+- `.` stops at U+2028 and U+2029 too, so `/^N: (.*)$/` fails on a line holding one and the line silently drops. Capture with `[^\n]*`.
+- `split('\n')` leaves a CRLF body's `\r` on the line. Tolerate it in the pattern (`[ \t]*\r?$`) or strip it first (`parseFixesSpan` in `plugin/bin/lib/flow/closing-links.js`).
+- `\s` matches both separators and LF, so `\s*$` under `m` can run past the end of the line.
+
+Probe a footer reader with the separator in front of the footer: `` `a Fixes #99\n\nFixes #10` `` must return `[10]`. `fixesRecords` in `plugin/bin/lib/express/sampling.js` and `parseFixesMembers` in `plugin/bin/lib/reconcile/console-execute.js` read PR bodies with `/gm` and return `[99, 10]`.
 
 ## Decision Framework
 
@@ -43,6 +56,7 @@ A scan that re-reads the input once per match is the same cost without a regex: 
 - Wall-clock budgets live in `perf/{name}-linearity.test.js`, run by `npm run test:perf`, never by `npm test`. `tests/wall-clock-budget-conformance.test.js` fails any `performance.now()` comparison under `tests/` (#3412, #3491). A `ms < 750` assertion in `tests/` failed `npm test` under load (`shell-scanner-bash-differential`), and #4581's timing tests failed the conformance scan until commit b2f7aa3b2 moved them.
 - The file header names the record, says it is deliberately not part of `npm test`, gives `Run with: npm run test:perf`, and lists each shape found with its pre-fix time.
 - Assert the verdict as well as the time, as the #3412 and #4581 files do, so a fix that changes the answer is caught.
+- Assert a long output with `assert.ok(value === expected, ...)` and a length-only message: a failing `deepEqual` prints all 200k characters (`perf/packet-gather-linearity.test.js`).
 - Each case goes red when its fix is reverted. Prove it once by reverting.
 - A grammar shared by a writer and a reader is one source (`plugin/bin/lib/console/finding-path.js`). Its comment states what keeps the scan linear (`COINCIDENCE_LOCATION`: a location never spans a second finding).
 
@@ -68,5 +82,6 @@ Run the perf suite: `npm run test:perf`.
 ## Reference
 
 - `perf/aggregate-reproduction-linearity.test.js`, `perf/closing-keyword-linearity.test.js`, `perf/heredoc-scan-linearity.test.js`, `perf/scale-readiness-linearity.test.js`
+- `perf/packet-gather-linearity.test.js`, `perf/packet-render-linearity.test.js`, `perf/packet-links-post-linearity.test.js`
 - `plugin/bin/lib/console/finding-path.js`, `plugin/bin/lib/log-decision/aggregate-reproduction.js`
 - Domain detail stays in `code-health-focus-vertical` (item 6, generators) and `shell-scanner-bash-differential` (the write gate's caps)

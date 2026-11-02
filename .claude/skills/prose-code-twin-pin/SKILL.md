@@ -310,6 +310,20 @@ The map also drops the `- ` bullet and `formatEntry`'s default `log-decision:` s
 templates leave out. Keep it to placeholders plus such known differences, so a real drift is not
 normalized away.
 
+**Prose-parser instance (#4940):** the prose side can restate a parser's acceptance rule for a
+reader that has no code to run. The routine kernel in `_shared/routine-template-schema.md` reads
+`declare-claude-tweaks` only on its empty-plugin-cache branch, where `bin/resolve-policy.js` is not
+installed, so its clause (a top-level, unquoted `false`, optionally followed by a `# comment`) is a
+hand copy of `parseFlatLines` in `plugin/bin/lib/policy-schema.js`. No word of the clause is a key,
+case or array literal there, so step 1's grep finds nothing. The build shipped it unpinned; #4940's
+review caught that, and accepted the prose parser because the resolver cannot run on that branch.
+`tests/declare-claude-tweaks-opt-out.test.js` now pins it two ways: one `resolve-policy.js --values`
+run per clause (a trailing comment, a quoted `"false"`, a commented-out line, an indented key), and
+a byte-pin of the clause with a strip control per clause. The two halves sit in separate tests
+joined only by a comment, so a parser change turns the resolver test red and leaves the clause pin
+green. Keep each clause and its input on one table row, asserting both, so the red row names the
+clause to edit.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.

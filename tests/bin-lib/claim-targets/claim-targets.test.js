@@ -5,7 +5,7 @@
 // fakes, assert after `run()` returns.
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,6 +26,11 @@ const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/l
 // reintroducing the I1/C1 false-contest / lost-update bug in production.
 const claimStore = require('../../../plugin/bin/lib/issues/claim-store');
 const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+
+const tmpRoots = [];
+after(() => {
+  for (const d of tmpRoots) fs.rmSync(d, { recursive: true, force: true });
+});
 
 const REPO = 'acme/w';
 const NOW = Date.parse('2026-08-17T00:00:00.000Z');
@@ -1064,6 +1069,7 @@ test('(resume-pr-8b) a matched stale claim whose write loses the race is skipped
 
 test('(resume-pr-9) defaultAppendClaimLog with resumePr writes the resume-pr claim line, still claim-log-only', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-resume-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git'));
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-4588');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1838,6 +1844,7 @@ test('--run: appendClaimLog is called once per claimed issue with its transport,
 // the shared test-runner process, and never a write into the real repo).
 test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1864,6 +1871,7 @@ test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process 
 // os.tmpdir()'s own ancestry has no `.git` to find.
 test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it): throws, naming the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-'));
+  tmpRoots.push(runDir);
 
   assert.throws(
     () => defaultAppendClaimLog({ runDir, issue: 2775, transport: 'git' }),
@@ -1876,6 +1884,7 @@ test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it)
 // stand, and claimLogFailures must name the issue and carry the reason.
 test('--run pointed at an unanchored dir, with the real defaultAppendClaimLog: claim stands, claimLogFailures names the issue and the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-run-'));
+  tmpRoots.push(runDir);
   const runId = path.basename(runDir);
   const { ghApi } = makeGhApi({
     reads: { 752: [readAbsent, confirmRead(runId)] },
@@ -2604,26 +2613,217 @@ test('(bm17) two targets under --keep-going, first bootstrap hits a secondary ra
   assert.equal(state.refPosts, 1, 'bootstrap is attempted once per run');
 });
 
-test('(perm-read) a permission-403 claim read keeps its pre-split exit 4, now naming permission-denied', () => {
-  const ghApi = (args) => {
-    if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) {
-      return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
-    }
-    throw new Error(`unexpected ghApi ${args.join(' ')}`);
-  };
+// ---- #4899: GitHub refusing a claim read or write is exit 7, not a transient 4 ----
+// The refusal is a standing condition (a token without access to the repo or the
+// claims-registry branch), so a retry cannot help; it carries the forge's own
+// text in `permissionDenied.reason` and, unlike a transient, stops even under
+// --keep-going.
+const PERM_403 = { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+const PERM_401 = { stdout: null, failure: 'permission-denied', status: 401, error: 'HTTP 401: Bad credentials' };
+const NET_FAIL = { stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT 140.82.112.6:443' };
+const SECONDARY_LIMIT = { stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: You have exceeded a secondary rate limit' };
+
+function assertPermissionStop(code, io, { issue, operation, reason }) {
+  assert.equal(code, 7, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.permissionDenied.issue, issue);
+  assert.equal(body.permissionDenied.operation, operation);
+  assert.equal(body.permissionDenied.reason, reason);
+  assert.equal(body.transient, undefined, 'a permission refusal is not a transient');
+  const stderr = io.err.join('');
+  assert.ok(stderr.includes(`#${issue}`), stderr);
+  assert.match(stderr, /token/);
+  return body;
+}
+
+test('AC1.1: a 403 claim read exits 7 with operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
   const { gh } = makeGh({});
   const { deps, io } = baseDeps({ ghApi, gh });
 
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
-  assert.equal(code, 4, io.err.join(''));
-  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'permission-denied');
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, []);
 });
 
-test('(perm-write) a permission-403 claim write keeps exit 4, naming permission-denied', () => {
+test('AC1.1: a 401 claim read exits 7 with operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_401] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 401: Bad credentials' });
+});
+
+test('AC2.1: a 403 claim write exits 7 with operation write', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('AC2.1: a 401 claim write exits 7 with operation write', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [PERM_401] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 401: Bad credentials' });
+});
+
+test('AC3.1: --keep-going with a 403 on the second target exits 7 and releases the first', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead()], 721: [PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721', '--keep-going'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 721, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, [720]);
+  assert.deepEqual(body.releaseFailed, []);
+  assert.equal(body.skipped, undefined, 'the refusal is run-level, never a per-target skip');
+});
+
+test('AC4.1: network-failure and secondary rate limit claim reads and writes still exit 4', () => {
+  const cases = [
+    ['read network-failure', { reads: { 720: [NET_FAIL] } }, 'network-failure'],
+    ['read secondary-rate-limit', { reads: { 720: [SECONDARY_LIMIT] } }, 'secondary-rate-limit'],
+    ['write network-failure', { reads: { 720: [readAbsent] }, writes: { 720: [NET_FAIL] } }, 'network-failure'],
+    ['write secondary-rate-limit', { reads: { 720: [readAbsent] }, writes: { 720: [SECONDARY_LIMIT] } }, 'secondary-rate-limit'],
+  ];
+  for (const [label, fixture, error] of cases) {
+    const { ghApi } = makeGhApi(fixture);
+    const { gh } = makeGh({});
+    const { deps, io } = baseDeps({ ghApi, gh });
+
+    const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+    assert.equal(code, 4, `${label}: ${io.err.join('')}`);
+    const body = JSON.parse(io.out[0]);
+    assert.equal(body.transient[0].error, error, label);
+    assert.equal(body.permissionDenied, undefined, label);
+  }
+});
+
+test('AC5.1: a bootstrap refused by a permission 403 still exits 6 with branchMissing', () => {
+  const { ghApi } = makeBranchlessGhApi({
+    postResponse: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 6, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.equal(body.branchMissing.branch, 'claims-registry');
+  assert.equal(body.permissionDenied, undefined);
+});
+
+test('git-leg fallback: git read transport failure then contents-API 403 exits 7 operation read', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = () => { throw new Error('fatal: unable to access the remote'); };
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('write fallback re-read: git push transport failure then a 403 re-read exits 7 operation write', () => {
+  // The git read finds a released (reclaimable) claim, so the write is a
+  // conditional one; the git push fails at the transport, and the contents-API
+  // re-read that verifies the content before the fallback PUT answers 403.
+  const { ghApi } = makeGhApi({ reads: { 720: [PERM_403] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+  deps.gitRunner = (args) => {
+    if (args[0] === 'fetch' || args[0] === 'update-ref' || args[0] === 'read-tree' || args[0] === 'update-index') return '';
+    if (args[0] === 'rev-parse') return 'tip0\n';
+    if (args[0] === 'show') return tombstoneMarker('other');
+    if (args[0] === 'hash-object') return 'blobsha\n';
+    if (args[0] === 'write-tree') return 'treesha\n';
+    if (args[0] === 'commit-tree') return 'commit-1\n';
+    if (args[0] === 'push') throw new Error('fatal: unable to access the remote');
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('reason flattened: error text with newlines and control characters is one line in reason and on stderr', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ ...PERM_403, error: 'HTTP 403\nforged line\u0007' }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'HTTP 403 forged line' });
+  assert.equal(io.err.join('').trimEnd().split('\n').length, 1, 'the refusal is exactly one stderr line');
+});
+
+test('reason falls back to permission-denied when the store carries no error text', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ stdout: null, failure: 'permission-denied', status: 403 }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
+});
+
+// The store's real `error` is the failed command's message plus its stderr
+// (defaultGhApi's ghErrorText joins message, stderr and stdout with a space): a
+// `Command failed: gh api ... -f content=<base64 claim>` line, then gh's own
+// stderr, repeated with a leading space, then the stdout JSON body. The reason
+// keeps GitHub's text once.
+const COMMAND_LINE = 'Command failed: gh api --method PUT repos/a/b/contents/claims/issue-720.json -f content=ewogICJydW5JZCI6';
+const GH_REFUSAL = 'gh: Resource not accessible by personal access token (HTTP 403)';
+const GH_BODY = '{"message":"Resource not accessible by personal access token","status":"403"}';
+
+test('real-shape refusal: the Command failed line and the repeated stderr line are dropped from reason and stderr', () => {
+  const error = `${COMMAND_LINE}\n${GH_REFUSAL}\n ${GH_REFUSAL}\n ${GH_BODY}\n`;
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [{ ...PERM_403, error }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: `${GH_REFUSAL} ${GH_BODY}` });
+  for (const text of [JSON.stringify(body), io.err.join('')]) {
+    assert.doesNotMatch(text, /Command failed/);
+    assert.doesNotMatch(text, /ewogICJydW5JZCI6/);
+  }
+});
+
+test('reason falls back to permission-denied when the error is only the Command failed line', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ ...PERM_403, error: `${COMMAND_LINE}\n` }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
+});
+
+test('refused branch lookup: PUT 404, absent re-read, then the branches lookup answers 403 exits 7 operation write with its text', () => {
   const ghApi = (args) => {
-    if (/^repos\/[^/]+\/[^/]+\/contents\/claims\/issue-720\.json\?ref=/.test(args[0])) return readAbsent;
-    if (args[0] === '--method' && args[1] === 'PUT') return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403' };
+    if (isRead(args, '720')) return readAbsent;
+    if (isWrite(args, '720')) return { stdout: null, failure: null, status: 404 };
+    if (args[0] === `repos/${REPO}/branches/claims-registry`) return { ...PERM_403, error: 'HTTP 403: branch lookup refused' };
     throw new Error(`unexpected ghApi ${args.join(' ')}`);
   };
   const { gh } = makeGh({});
@@ -2631,8 +2831,65 @@ test('(perm-write) a permission-403 claim write keeps exit 4, naming permission-
 
   const code = run(['--run-id', 'r1', '--targets', '720'], deps);
 
-  assert.equal(code, 4, io.err.join(''));
-  assert.equal(JSON.parse(io.out[0]).transient[0].error, 'permission-denied');
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: branch lookup refused' });
+});
+
+test('release refused: the earlier claim\'s release read answers 403 — exit stays 7, target in releaseFailed', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, confirmRead(), PERM_403], 721: [PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720,721'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 721, operation: 'read', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.deepEqual(body.released, []);
+  assert.deepEqual(body.releaseFailed, [{ issue: 720, error: 'permission-denied' }]);
+});
+
+test('resume-pr: a stale in-flight claim re-claimed with --resume-pr whose write answers 403 exits 7', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 780: [readOk(staleMarker(RUN), 'sha780')] },
+    writes: { 780: [PERM_403] },
+  });
+  const { gh } = makeGh({ openPrs: [resumeMarkedPr] });
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '780', '--resume-pr', RESUME_PR], deps);
+
+  assertPermissionStop(code, io, { issue: 780, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+});
+
+test('refused re-read: a PUT 404 whose self-write re-read answers 403 exits 7 operation write, never contested', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, PERM_403] },
+    writes: { 720: [{ stdout: null, failure: null, status: 404 }] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: Resource not accessible by integration' });
+  assert.equal(body.contested, undefined);
+});
+
+test('refused read-back: a claim write that succeeded but whose read-back answers 403 keeps exit 5', () => {
+  const { ghApi } = makeGhApi({
+    reads: { 720: [readAbsent, PERM_403] },
+    writes: { 720: [writeOk] },
+  });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assert.equal(code, 5, io.err.join(''));
+  const body = JSON.parse(io.out[0]);
+  assert.deepEqual(body.unverified, [{ issue: 720 }]);
+  assert.equal(body.permissionDenied, undefined);
 });
 
 test('(bm9) write-site second sighting under --keep-going discards the git tip chain: the next target fetches fresh', () => {

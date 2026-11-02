@@ -53,6 +53,36 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.160.3](https://github.com/thn-inc/claude-tweaks/compare/v6.160.2...v6.160.3) (2026-11-02)
+
+
+### Bug Fixes
+
+* Background post-merge summary counts a failed-close run… ([#4897](https://github.com/thn-inc/claude-tweaks/issues/4897)) ([d334af3](https://github.com/thn-inc/claude-tweaks/commit/d334af38e64fa730bc30e99cd8b0ee30a2653ecb))
+* claim-targets: a network blip while bootstrapping the… ([#4756](https://github.com/thn-inc/claude-tweaks/issues/4756)) ([d226f78](https://github.com/thn-inc/claude-tweaks/commit/d226f7857a1428d24c1469a8f3d413a0714cedc3))
+* flow artifact-overwrite check: flags a spec's own review… ([#4593](https://github.com/thn-inc/claude-tweaks/issues/4593)) ([ee19b75](https://github.com/thn-inc/claude-tweaks/commit/ee19b75b6ee990bde21fd9458bcce6eca14a000e))
+* pr-early-open logs "reopened PR" after a gh exit 0… ([#4833](https://github.com/thn-inc/claude-tweaks/issues/4833)) ([1d19076](https://github.com/thn-inc/claude-tweaks/commit/1d190761f5e9f868ca0d6359b901d1a5ff17e99e))
+* Review Console never settles an aggregate reproduction… ([#4581](https://github.com/thn-inc/claude-tweaks/issues/4581)) ([90395fb](https://github.com/thn-inc/claude-tweaks/commit/90395fb9199bf68a998d18a687996c6a78c4e9fa))
+* tidy/SKILL.md: run plan-retention.js through… ([#4803](https://github.com/thn-inc/claude-tweaks/issues/4803)) ([d5c6a1d](https://github.com/thn-inc/claude-tweaks/commit/d5c6a1d709db116506edbdfa26e573a2e93f6081))
+
+### Highlights
+* Settle 5 small deferred findings in wrap-up.
+* Sub-issue lookups now work on GitHub Enterprise Server repositories instead of silently querying github.com.
+* No user-visible change.
+* A hooks.js command that crashes now exits non-zero with the error on stderr, instead of exiting 0 and looking like success; harness hook events still never fail a session.
+* No user-visible change.
+* No user-visible change.
+* No user-visible change — an internal refactor of how the Review Console and the decision-log writer share their finding-location grammar.
+* Projects that rely on a user-scope install of claude-tweaks can now tell /init not to declare it in their committed settings, so re-running /init no longer adds it back.
+* SessionStart no longer reports a background post-merge run as clean when its closes failed, and it names the records that need a hand fix.
+* Settle 7 small deferred findings in review.
+* Tidy's plan-pruning re-check now runs correctly in projects that use the plugin.
+* Review findings can no longer be logged together on one line, so they no longer wait at the end of a run for you to acknowledge them.
+* Stop the early draft-PR step from reporting a reopened PR that GitHub never reopened. It now opens a fresh draft instead.
+* A multi-spec `/claude-tweaks:flow` run no longer stops at the artifact-overwrite gate when a spec's own review fix edits a story or journey file that the same spec added earlier in the run.
+* Settle 3 small deferred findings in _shared.
+* A network blip while the plugin creates the claims branch is now retried on a later run instead of stopping the record as if the branch could never be created.
+
 ## [6.160.2](https://github.com/thn-inc/claude-tweaks/compare/v6.160.1...v6.160.2) (2026-11-02)
 
 
