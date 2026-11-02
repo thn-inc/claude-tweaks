@@ -327,7 +327,10 @@ test('review (#4505): every CLI that pins its explicit --repo host keeps both ha
 // Recall limits: only the argument's own text is read. A local assigned from `remoteUrl()` or
 // `get-url` under another name and parsed on a later line (`url = deps.remoteUrl(); …
 // parseRepo(url)`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
-// gap. Nor is a parse reached through an alias (`const p = parseRepo; p(remote)`).
+// gap. Nor is a parse reached through an alias (`const p = parseRepo; p(remote)`). Nor is a
+// single-expression origin read whose argument avoids the tokens by its naming alone
+// (`parseRepo(remoteOut)`, `parseRepo(originUrl)`, `parseRepo(remoteURL())`): recall rests on
+// the argument being named `remote`, `remoteUrl`, or a `get-url`/`'origin'` literal.
 const ORIGIN_ARG = /\bremote\b|remoteUrl|get-url|['"]origin['"]/;
 
 // -> { verdict, sites: [{ line, text }] } for every origin-reading parseRepo call in `raw`.
@@ -348,7 +351,7 @@ function originReads(raw) {
 // was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
 // lines (the recall gap above), so it has 0 sites, and it stops on any host but github.com anyway.
 const NOT_ORIGIN = {
-  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges" },
+  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges. resolveGhSpec's second parse, `parseRepo(hostPathOf(url))`, names no token and is unmatched; harmless, since this file is the seam" },
   'stale-claim-pr.js': { count: 1, reason: "`deps.parseRepo(remote)` is followed by a stop on any host but github.com ('stale-claim matching supports github.com only'), so no other origin host reaches gh" },
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
   'lib/wrap-up/engine-verify.js': { count: 4, reason: "each `parseRepo(<origin>)` passes only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one" },

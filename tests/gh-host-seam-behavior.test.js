@@ -145,7 +145,7 @@ function argvReachesHost(line, host) {
 // A path does not route (gh sends it to the GH_HOST/github.com default), so this is
 // only for the GH_HOST-exported case, where routing is the user's own value and the
 // check only has to show the spec kept the host. list-claims/claim-store put a
-// host-qualified slug into a REST path, a pre-existing defect tracked separately.
+// host-qualified slug into a REST path, a pre-existing defect tracked in #4988.
 function argvNamesHost(line, host) {
   const args = line.slice(line.indexOf(' ARGS=') + 6);
   return argvReachesHost(line, host) || new RegExp(`^api repos/${host.replace(/\./g, '\\.')}/`).test(args);
@@ -327,7 +327,7 @@ test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every ca
 // --repo, typedRepoLines?: (line) => boolean (AC6.1 asserts host reachability
 // only on the lines it selects; default every network line), canned?: gh answers
 // replacing CANNED entries for the row's cases, hostnameLines?: (line) => boolean
-// (the GH_HOST-exported case requires --hostname only on the `gh api` lines it selects;
+// (every AC4.1 case requires --hostname only on the `gh api` lines it selects;
 // default every `gh api` line -- a CLI whose GraphQL calls thread no host selects its
 // REST calls), printsResolutionNote?: the CLI
 // prints a repoResolutionNote (AC7.2 then requires `{cli}: resolved repo ...
@@ -377,7 +377,8 @@ function describeOriginGate(row) {
   test(`AC2.1 ${title}: refused on an unknown origin host (AC3.1: no bare-slug fallback)`, opts, (t) => {
     const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git` });
     const log = r.lines.join('\n');
-    assert.ok(r.status !== null && r.status !== 0, `expected a non-zero exit, got ${r.status}; stderr:\n${r.stderr}`);
+    // Every gated CLI refuses with exit 2; fetch-sub-issues' exit 4 means "REST fallback" to its callers.
+    assert.equal(r.status, 2, `expected exit 2, got ${r.status}; stderr:\n${r.stderr}`);
     assert.ok(r.stderr.includes(UNKNOWN_HOST), `stderr does not name ${UNKNOWN_HOST}:\n${r.stderr}`);
     assert.ok(r.stderr.includes(`GH_HOST=${UNKNOWN_HOST}`), `stderr does not suggest GH_HOST=${UNKNOWN_HOST}:\n${r.stderr}`);
     assert.deepEqual(networkLines(r.lines), [], `gh was called beyond --version:\n${log}`);
@@ -386,7 +387,10 @@ function describeOriginGate(row) {
   });
 
   // argvOnly: the exported GH_HOST prefixes every log line, so the host must be
-  // proven by the argv (the CLI's host-qualified slug), never by that prefix.
+  // proven by the argv (the CLI's host-qualified slug), never by that prefix. In
+  // every case the `gh api` lines hostnameLines selects carry `--hostname {host}`
+  // (a GH_HOST env prefix does not stand in for it), and any `--hostname` on any
+  // other line names the host too.
   const passThrough = [
     ['an acme.ghe.com origin', 'acme.ghe.com', { origin: 'https://acme.ghe.com/o/r.git' }],
     ['a hosts.yml-key origin', 'ghes.corp.invalid', { origin: 'https://ghes.corp.invalid/o/r.git', hostsYml: 'ghes.corp.invalid:\n' }],
@@ -397,15 +401,19 @@ function describeOriginGate(row) {
       const r = runGated(t, row, caseOpts);
       const log = r.lines.join('\n');
       assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+      const net = networkLines(r.lines);
       if (argvOnly) {
-        const net = networkLines(r.lines);
         assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
         assert.ok(net.some((l) => argvNamesHost(l, host)), `no gh call names ${host} in its argv, log:\n${log}`);
-        for (const line of net.filter((l) => / ARGS=api /.test(l) && (!row.hostnameLines || row.hostnameLines(l)))) {
-          assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
-        }
       } else {
         assertEveryLineReaches(r.lines, host);
+      }
+      for (const line of net.filter((l) => / ARGS=api /.test(l) && (!row.hostnameLines || row.hostnameLines(l)))) {
+        assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
+      }
+      for (const line of net) {
+        const args = line.slice(line.indexOf(' ARGS=') + 6);
+        for (const m of args.matchAll(/(?:^| )--hostname[ =](\S+)/g)) assert.equal(m[1], host, `--hostname value: ${line}`);
       }
       for (const value of repoValues(r.lines)) assert.equal(value, `${host}/o/r`, `--repo value:\n${log}`);
     });
@@ -501,18 +509,21 @@ const CLI_TABLE = [
   { cli: 'link-records.js', argv: ['--parent', '7', '--subs', '8'], acceptsRepo: true },
   // fetch-sub-issues.js: the canned graphql answer serves the schema probe and the
   // batch (parent 7 absent from `repository` -> retry), so --resolve-retries reaches
-  // the REST call that carries --hostname.
-  { cli: 'fetch-sub-issues.js', argv: ['7', '--resolve-retries'], acceptsRepo: true, hostnameLines: (l) => / ARGS=api --paginate /.test(l), canned: { 'api-graphql': FETCH_SUB_ISSUES_GRAPHQL } },
+  // the REST call too. Off github.com every one of the three carries --hostname (the
+  // probe and the batch through withGraphqlHost, #4806), so no hostnameLines narrows it.
+  { cli: 'fetch-sub-issues.js', argv: ['7', '--resolve-retries'], acceptsRepo: true, canned: { 'api-graphql': FETCH_SUB_ISSUES_GRAPHQL } },
   // backlog-grant-gate.js reads origin only under work-links: native. Its typed --repo
   // re-routes the native calls only (nativeRunnerFor); the issue lists keep following
-  // the origin through the seam.
+  // the origin through the seam. It sends no --repo at all, so AC6.1's "--repo as typed"
+  // loop is vacuous for this row: that case's proof rests on the native lines
+  // (typedRepoLines) reaching the typed host.
   { cli: 'backlog-grant-gate.js', argv: [], setup: setupGrantGate, acceptsRepo: true, typedRepoLines: (l) => / ARGS=api (?:graphql|--paginate) /.test(l), hostnameLines: (l) => / ARGS=api --paginate /.test(l), canned: { 'api-graphql': '{"data":{"__type":{"fields":[]}}}', 'issue-list': '[{"number":1,"state":"CLOSED","labels":[]}]' } },
   { cli: 'apply-refine-labels.js', argv: ['actions.json'], setup: writeJsonFile('actions.json', [{ issue: 7, addLabels: ['ready'] }]), acceptsRepo: true },
   // --dry-run keeps file-feedback to its one repo-addressed read (the dedup search).
   { cli: 'file-feedback.js', argv: ['--drafts', 'drafts.json', '--dry-run'], setup: writeJsonFile('drafts.json', [{ title: 'T', body: 'B', fingerprintBasis: { component: 'c', summary: 's' } }]), acceptsRepo: true, canned: { 'issue-list': '[]' } },
   // list-claims.js: its one REST call carries a host-qualified slug in the path
   // (`repos/{host}/o/r/...`) and no --hostname -- list-claims/claim-store's pre-existing
-  // defect, tracked separately -- so the GH_HOST-exported case cannot require --hostname.
+  // defect, tracked in #4988 -- so the AC4.1 cases cannot require --hostname.
   { cli: 'list-claims.js', argv: [], acceptsRepo: true, hostnameLines: () => false },
   // resolve-blockers.js / resolve-linked-prs.js (lib/number-list-cli.js): both print a
   // repoResolutionNote.
