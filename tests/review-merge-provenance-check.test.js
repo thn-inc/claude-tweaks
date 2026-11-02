@@ -7,8 +7,10 @@
 // Reading live prose is the carve-out here (skill-prose-conformance-tests, [IL-80]): the two
 // bash fences in plugin/skills/review/merge-provenance-check.md ARE the shipped procedure.
 // The fixtures below extract those fences from the doc and run the extracted lines through
-// bash and zsh over real git topologies, so the doc is the only source of the executed text
-// and the rule cannot drift from what the test proves. The `firstParentDropped` controls in
+// bash and zsh over real git topologies, so the doc is the only source of the executed commands.
+// The exits and the set difference that combine their output are prose, so `excludedBy`
+// restates them and `assertProse` pins their wording: a change to a rule's logic that keeps
+// the pinned wording is not caught here. The `firstParentDropped` controls in
 // fixtures A, D and E freeze the pre-change rule as a characterization of the defect.
 
 const test = require('node:test');
@@ -41,7 +43,8 @@ function run(shell, dir, line) {
   const args = shell === 'zsh' ? ['-f', '-c', line] : ['--noprofile', '--norc', '-c', line];
   // LC_ALL=C keeps git's messages stable for the `fatal:` and `Not a valid object name` checks.
   const r = spawnSync(shell, args, { cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, env: { ...process.env, LC_ALL: 'C' } });
-  return { status: r.status, stdout: r.stdout, stderr: r.stderr };
+  // r.error (a timeout, ENOENT or signal kill) leaves stdout and stderr null; carry it into stderr so a failure names its cause
+  return { status: r.status, stdout: r.stdout ?? '', stderr: (r.stderr ?? '') + (r.error ? `[spawn error: ${r.error.message}]` : '') };
 }
 
 const HAS_ZSH = spawnSync('zsh', ['-f', '-c', 'exit 0']).status === 0;
@@ -55,6 +58,8 @@ function fill(line, vars) {
 const files = (stdout) => [...new Set(stdout.split('\n').map((l) => l.trim()).filter(Boolean))].sort();
 
 // Runs the live fences' lines against a fixture repo and applies the doc's exclusion rule.
+// `lineExit` and `branchExit` are ablation switches, not input variants: false disables that
+// one exit of the rule, so a fixture can show the exit is what keeps a file in scope.
 function excludedBy(shell, dir, base, branch, { lineExit = true, branchExit = true, integration = 'main' } = {}) {
   const [fence1, fence2] = fences(CHECK);
   const vars = { base, branch, 'integration-branch': integration };
@@ -80,9 +85,9 @@ function excludedBy(shell, dir, base, branch, { lineExit = true, branchExit = tr
   const lineRun = run(shell, dir, fill(fence2[0], withFork)); // grep -Fx exits 1 when the fork is off this branch's line
   assert.ok(!/fatal:/.test(lineRun.stderr), `fence 2 line 1 (first-parent guard) errored: ${lineRun.stderr}`);
   const branchRun = run(shell, dir, fill(fence2[1], withFork));
-  assert.equal(branchRun.status, 0, 'fence 2 line 2 (branch-side) must exit 0');
+  assert.equal(branchRun.status, 0, `fence 2 line 2 (branch-side) must exit 0: ${branchRun.stderr}`);
   const fullRun = run(shell, dir, fill(fence2[2], withFork));
-  assert.equal(fullRun.status, 0, 'fence 2 line 3 (full diff) must exit 0');
+  assert.equal(fullRun.status, 0, `fence 2 line 3 (full diff) must exit 0: ${fullRun.stderr}`);
   const branchSide = files(branchRun.stdout);
   const full = files(fullRun.stdout);
   if (lineExit && lineRun.stdout.trim() !== '') return { full, excluded: [] };

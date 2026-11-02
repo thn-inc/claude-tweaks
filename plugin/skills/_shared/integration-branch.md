@@ -58,7 +58,7 @@ Record which source won — consumers that surface a preview name it.
 
 ## Per-consumer fallback
 
-Rank 6 is deliberately per-consumer, because they degrade differently. In every case the unresolved path reproduces the behavior that consumer had before this fragment existed, so a project that sets nothing sees no change.
+Rank 6 is deliberately per-consumer, because they degrade differently. In every case the unresolved path reproduces the behavior that consumer had before this fragment existed, so a project that sets nothing sees no change. The Merge-Provenance Check row is the one deliberate exception: its pre-fragment rule excluded files on a first-parent walk that dropped shipping work (#4639), so unresolved it excludes nothing.
 
 | Consumer | Uses it for | Fallback when nothing resolved |
 |---|---|---|
