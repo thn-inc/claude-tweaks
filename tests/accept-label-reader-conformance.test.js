@@ -215,7 +215,8 @@ function demoLabelUse(raw) {
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
   // A bare demo: catches a startsWith / concatenation reader; a DEMO_* identifier
   // catches a destructured LABELS member. Any DEMO_* name counts except DEMO_CREDENTIAL_RE
-  // and DEMO_ACCOUNT (candidates-app-store-readiness.js names those and they are not
+  // and DEMO_ACCOUNT (exact names only — DEMO_ACCOUNT_PENDING still counts;
+  // candidates-app-store-readiness.js names those two and they are not
   // labels), so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
   const m = new RegExp(DEMO_LABEL_SOURCE).exec(src);
   return m ? m[0] : null;
@@ -333,6 +334,9 @@ test('guard self-test: the reader walk names a planted mis-parse, not "no label 
   // A new label-shaped name outside the three known ones must be classified too.
   assert.equal(demoLabelUse('const DEMO_PENDING_BATCH = 1;'), 'DEMO_PENDING_BATCH');
   assert.equal(demoLabelUse('const n = LABELS.DEMO_LABEL_BATCH;'), 'DEMO_LABEL_BATCH');
+  // The exclusion is exact: a name that merely starts with an excluded constant still counts.
+  assert.equal(demoLabelUse('const DEMO_ACCOUNT_PENDING = 1;'), 'DEMO_ACCOUNT_PENDING');
+  assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE_BATCH = 1;'), 'DEMO_CREDENTIAL_RE_BATCH');
   // Unrelated DEMO_ names are not label readers.
   assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE = /x/; const DEMO_ACCOUNT = 1;'), null);
   assert.equal(demoLabelUse("// LABELS.DEMO_PENDING and demo:pending in a comment\nconst ok = 1;"), null);
