@@ -11,7 +11,9 @@
 // that never actually matched pre-tool-use.js's real behavior. The directly
 // invoked CLI verbs below (record-worktree, resolve-run-dir, close-run, …)
 // are a separate contract and may exit non-zero on malformed or rejected
-// input.
+// input. A VERBS command's unexpected exception exits 1 with
+// `claude-tweaks: {verb}: {message}` on stderr (#4932), while EVENTS keep exit
+// 0 through the entry catch.
 'use strict';
 // #3074: Bash prefilter fast path. hooks.json registers ONE unconditional
 // Bash handler per tool-use event, so every Bash call spawns this process —
@@ -955,11 +957,11 @@ async function runRecordPr(argv) {
     // Best-effort: a run with no recorded worktree, or a derivation that
     // comes back null, simply records {number, url} as before.
     // Guarded because this is the first external-process call in a verb that
-    // previously had none: main()'s own `.catch(() => process.exit(0))` would
-    // swallow a throw here and skip writeRunState entirely, exiting 0 with no
-    // output — the PR silently never recorded, while every other failure
-    // branch in this verb prints a "not recorded" notice. Degrading to the
-    // pre-#1672 {number, url} write is the correct best-effort outcome.
+    // previously had none: without the guard, a throw here would exit 1 with
+    // `claude-tweaks: record-pr: …` (#4932) and still skip writeRunState — the
+    // PR would not be recorded, while every other failure branch in this verb
+    // prints a "not recorded" notice. Degrading to the pre-#1672 {number, url}
+    // write is the correct best-effort outcome.
     let prBranch = null;
     try {
       prBranch = deriveBranch(repoRootOf(runDir), ctxLib.readRunState(runDir)?.worktree || null);
@@ -1978,7 +1980,18 @@ async function main(argv) {
       return 1;
     }
   }
-  if (verb) return verb.run(argv);
+  // #4932: a VERBS handler's unexpected exception exits 1 here; EVENTS still
+  // fall through to the entry's `.catch(() => process.exit(0))`.
+  if (verb) {
+    try {
+      return await verb.run(argv);
+    } catch (err) {
+      try {
+        fs.writeSync(2, `claude-tweaks: ${cmd}: ${err && err.message ? err.message : String(err)}\n`);
+      } catch { /* stderr unusable — the exit code still carries the failure */ }
+      return 1;
+    }
+  }
   if (!EVENTS.includes(cmd)) {
     // #1586: every table verb already dispatched before this point — reaching
     // here means `cmd` is neither a hook event (EVENTS) nor any of the named
