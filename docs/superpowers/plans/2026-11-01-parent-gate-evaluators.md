@@ -8,12 +8,12 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T113111-record-4805/work/4805-spec.md` (record #4805)
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T214510-record-4805/work/4805-spec.md` (record #4805)
 
 ## Global Constraints
 
-- AC1: `grep -n "sub_issues" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing. That covers comments and error strings too, not only code. Control: run against the pre-change file it printed 4 matches (lines 746, 748, 758, 963).
-- AC2: `grep -F "issues/\$PARENT_NUM/sub_issues" plugin/skills/demo/entry-paths.md` returns nothing. Control: run against the pre-change file it matched line 257 (`` `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, every page, whose ``).
+- AC1: `grep -n "sub_issues" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing. That covers comments and error strings too, not only code. Control: run against the pre-change file it printed 4 matches (lines 747, 749, 759, 975).
+- AC2: `grep -F "issues/\$PARENT_NUM/sub_issues" plugin/skills/demo/entry-paths.md` returns nothing. Control: run against the pre-change file it matched line 274 (`` `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, every page, whose ``).
 - `engine-verify.js` stays read-only and gh-CLI-only. Every gh read goes through `deps.gh(args, cwd)` and every git read through `deps.git(args, cwd)`; no new `execFileSync` (file header).
 - Governing skill `gh-api-module-pattern`, `batching-failure-posture.md`, quoted verbatim: "`engine-verify.js`'s `runVerify` maps its `CHECKS` array that way and maps a throw to `fail`, not `unknown`: for a gate whose whole purpose is to block on doubt, a unit that could not determine its own state is evidence to block rather than to shrug. Pick the direction the module errs and say so beside the `catch` — the two are not interchangeable."
 - Governing skill `gh-api-module-pattern`, `SKILL.md`, quoted verbatim: "**A `--repo` argument is a *slug*, and the slug is host-qualified — never hand-roll `` `${owner}/${repo}` `` at one.**" The core already builds every `--repo` value with `repoSlug({ host, owner, repo })`. `gatherParentFacts` must pass `parseRepo`'s `host` through, never drop it.
@@ -28,6 +28,8 @@
 3. **A gh failure partway through the core's reads.** For example, one sub-issue's `issue view` throws after enumeration succeeded. Expected: the row is `unknown` with a `parent-gate gather failed for parent #P (…)` detail, never `fail` and never a partial gate. Task 1 Step 1 pins this with `a failing sub-issue read renders unknown`.
 4. **A GitHub Enterprise origin.** Expected: the core's `--repo` and `--hostname` arguments carry the origin's host. Task 1 Step 1 pins this with `gatherParentFacts threads the origin host into the core's --repo`.
 5. **A parent shared by two run records under native links.** Expected: the parent is gathered once (one probe and one page call), as before. The existing `counts every run sub-issue of a shared parent as closed, enumerating that parent once` test, migrated, pins it.
+6. **A malformed sub-issue reply (Plan Review Clarification 3).** `state` not a string, `stateReason` present and not a string, or `labels` neither absent nor an array of `{name: string}`. Expected: `readSubIssueFacts` throws `GhFailure`, so the CLI exits 3, the reconciler skips the parent as `gh-failed`, and engine-verify's row is `unknown`. It is never `skip`, because `_shared/acceptance-labeling-landed.md` counts a `skip` as landed, and never `fail` through a `TypeError`. An absent `labels` key stays an unlabeled issue.
+7. **An invalid policy value (Plan Review Clarifications 4 and 5).** `risk-floor: bogus`, `work-links: bogus`, or a `policy.yml` that exists and will not read. Expected: `unknown` naming the problem, with no fallback to the schema default, matching `bin/parent-gate.js`'s exit 2. A missing `policy.yml` is not this case: it still resolves to the schema defaults, as the CLI's does.
 
 ---
 
@@ -37,10 +39,11 @@
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/wrap-up/engine-verify.js`: imports (lines 33-35), replace `enumerateSubIssues` and `enumerateBodyTextSubIssues` (lines 728-794), the `acceptance-labeling` check body (lines 936-1034), and `module.exports` (line 1232).
-- Modify: `plugin/bin/lib/issues/parent-gate.js`: header comment line 10 ("bin/parent-gate.js and below-floor-parent-close.js both compose it") and the `listOmitsSubIssue` comment (lines 115-119). Comment-only edits naming engine-verify.js as a third composer.
+- Modify: `plugin/bin/lib/wrap-up/engine-verify.js`: imports (lines 33-35), replace `enumerateSubIssues` and `enumerateBodyTextSubIssues` (lines 729-795), the policy readers `readRepoPolicyRaw`, `resolveRiskFloor` and `resolveWorkLinks` (lines 797-819), the `acceptance-labeling` comment block (lines 892-902) and check body (lines 911-1046), and `module.exports` (line 1258).
+- Modify: `plugin/bin/lib/issues/parent-gate.js`: harden `readSubIssueFacts` (lines 194-217, Plan Review Clarification 3); header comment line 10 ("bin/parent-gate.js and below-floor-parent-close.js both compose it") and the `listOmitsSubIssue` comment (lines 115-119), both naming engine-verify.js as a third composer.
 - Modify: `docs/plugin-structure.md` line 29: the `parent-gate.js (...; consumed by `bin/parent-gate.js` and `below-floor-parent-close.js`, #4603)` entry gains `wrap-up/engine-verify.js`'s acceptance-labeling check, #4805.
 - Test: `tests/bin-lib/wrap-up/engine-verify.test.js`
+- Test: `tests/bin-lib/issues/parent-gate.test.js`
 
 **Interfaces:**
 - Consumes (all existing, in `plugin/bin/lib/issues/parent-gate.js`):
@@ -62,10 +65,17 @@ In `tests/bin-lib/wrap-up/engine-verify.test.js`, add a fake-gh responder for th
   - `issue view P --repo org/repo --json labels -q [.labels[].name]`
 
   It returns `undefined` for anything else, so each fixture's existing branches (`--version`, the native parent GraphQL, `labels,comments`, engine-verify's own `issue view N --json body`) still answer. Call it before the generic `isGraphqlCall` parent branch: the page query also contains `issue(number:N)`.
-- Migrate `subIssuesGh`/`isSubIssuesCall`, `parentGateRow`, `twoParentRow`, `bodyTextRow`, and the inline fakes in the tests at lines 1770-1815 and 2300-2370 onto `parentGateReply`. Keep every scenario's states, labels, and expected outcome. Lowercase `open`/`closed` inputs become `OPEN`/`CLOSED`. Assertions that counted the old calls now count the core's: one `subIssues(first:100)` page per native parent, and one `issue view P --repo org/repo --json body -q .body` per body-text parent. Assertions that matched the old gather texts now match `/#900: parent-gate gather failed for parent #898/`. The `no sub-issues enumerated for parent #N` text is unchanged.
+- Migrate `subIssuesGh`/`isSubIssuesCall`, `parentGateRow`, `twoParentRow`, `bodyTextRow`, and every inline fake that calls `isSubIssuesCall` (lines 1798, 1821, 2342 and 2625) onto `parentGateReply`. Keep every scenario's states, labels, and expected outcome. Lowercase `open`/`closed` inputs become `OPEN`/`CLOSED`. Assertions that counted the old calls now count the core's: one `subIssues(first:100)` page per native parent, and one `issue view P --repo org/repo --json body -q .body` per body-text parent. Assertions that matched the old gather texts now match `/#900: parent-gate gather failed for parent #898/`. The `no sub-issues enumerated for parent #N` text is unchanged.
 - Rulings on the tests that pinned engine-verify's own parser, which the core now owns:
   - `body-text enumerateSubIssues upper-cases state and reduces labels to names`: rewrite it against `gatherParentFacts(12, deps, repoRoot, 'body-text')`, asserting `ok: true` and `facts.subIssues` holding uppercased `state` and label-name arrays.
-  - Delete `body-text sub-issue with a non-string state is a gather failure`, `body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure`, `body-text sub-issue with a missing or empty labels key still enumerates with labels []`, and `acceptance-labeling renders unknown when a sub-issue line carries no string state`. The core reads state with `String()` and labels with `normalizeLabelNames`, and `tests/bin-lib/issues/parent-gate.test.js` owns that posture. Also delete the `enumerateBodyTextSubIssues` comment at line 2118.
+  - Plan Review Clarification 3 keeps these four tests. Migrate them onto `gatherParentFacts`/`parentGateReply`; none is deleted:
+    - `body-text sub-issue with a non-string state is a gather failure`: `gatherParentFacts(12, …, 'body-text')` is `{ ok: false }` with an error naming `#21`.
+    - `body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure`: keep its table `[[null], ['risk:high'], [{ name: 7 }], [{}], null, 'x']`. Each is `unknown` and matches `/#20: parent-gate gather failed for parent #12/` and `/unexpected output/`. The core's message for a parse failure carries `unexpected output`, and a thrown read does not, so the test still tells the two apart.
+    - `body-text sub-issue with a missing or empty labels key still enumerates with labels []`: assert `facts.subIssues[0].labels` is `[]` and `state` is `'OPEN'`.
+    - `acceptance-labeling renders unknown when a sub-issue line carries no string state`: its native twin, now `unknown` through the core.
+  - Rewrite `acceptance-labeling falls back to the default high floor when policy.yml sets an invalid risk-floor` as `acceptance-labeling renders unknown when policy.yml sets an invalid risk-floor` (Plan Review Clarification 4): same fixture, `unknown`, detail matching `/invalid risk-floor "bogus"/`, and no `labels,comments` call. Also add a call to `require('../../../plugin/bin/parent-gate').run(['--parent','898','--work-links','native'], deps)` with `readPolicyRaw: () => 'risk-floor: bogus\n'`, asserting exit 2, so the test shows engine-verify's row and the CLI agree.
+  - Also rewrite the `enumerateBodyTextSubIssues` comment at line 2138, which names a function this task deletes.
+- New test in `tests/bin-lib/issues/parent-gate.test.js`: `shape 5: a malformed state, stateReason or labels is a GhFailure` (Plan Review Clarification 3). Through `readSubIssueFacts`, table over `{ state: null }`, `{ state: 7 }`, `{ state: 'OPEN', stateReason: 7 }`, and `labels` of `[null]`, `['risk:high']`, `[{ name: 7 }]`, `[{}]`, `null` and `'x'`, each asserting `ghFailure(/unexpected output/)`. Same test: `labels` absent reads `[]`, `stateReason` absent or `null` reads `''`, and `labels: [{ name: 'risk:low' }]` reads `['risk:low']`.
 - New tests, each through `runVerify` unless named otherwise:
   - `AC3.1: engine-verify's verdict for a parent whose sub-issues are all closed not-planned matches bin/parent-gate.js's verdict`. Table-driven over two fixtures crossed with three worlds, all sharing parent 898, run record 900, and siblings 901 and 902, with `stateReason: 'NOT_PLANNED'` on every closed sibling and floor `high`. Plan Review Clarification 2 fixes the two fixtures:
     - Fixture A, AC3 as written: `subs[898] = [901, 902]`, the run record left out of the native list. Under `work-links: native` run record 900 still resolves 898 through its own GraphQL `parent` link.
@@ -88,14 +98,25 @@ In `tests/bin-lib/wrap-up/engine-verify.test.js`, add a fake-gh responder for th
   - `resolved parent is a no-op on either side of the floor` (Review Focus 1): parent labels `['accept:approved']`, table over sibling labels `risk:medium` and `risk:high`, floor `high` → `skip` both times, detail `parent #898 already resolved — acceptance recorded, no-op`, not containing `Step 4.0b` or `below oversight floor`.
   - `a failing sub-issue read renders unknown` (Review Focus 3): `throwWhen` matches `issue view 901 --repo org/repo --json state,stateReason,labels,title,closedByPullRequestsReferences` → `unknown` with `/#900: parent-gate gather failed for parent #898/`, and no `labels,comments` call is made.
   - `gatherParentFacts threads the origin host into the core's --repo` (Review Focus 4): call `gatherParentFacts(12, { git: () => 'https://ghe.example.com/org/repo.git', gh }, cwd, 'body-text')` directly and assert one gh call carries `--repo ghe.example.com/org/repo`.
+  - `gatherParentFacts refuses an origin of . or ..` (Plan Review Clarification 5): `gatherParentFacts(12, { git: () => 'https://github.com/../repo.git', gh }, cwd, 'body-text')` is `{ ok: false }` with `could not resolve owner/repo for parent #12`, and no gh call is made. The CLI's exit 2 on the same origin is pinned in `tests/parent-gate-cli.test.js` already.
+  - `acceptance-labeling renders unknown when policy.yml sets an invalid work-links` (Plan Review Clarification 5, Review Focus 7): `policyRaw: 'work-links: bogus\n'` → `unknown` with `/invalid work-links "bogus"/`, and no gh call beyond the `--version` availability check.
+  - `acceptance-labeling renders unknown when policy.yml will not read` (Plan Review Clarification 5, Review Focus 7): make `.claude-tweaks/policy.yml` a directory in the fixture's `repoRoot`, so the read fails with `EISDIR` → `unknown` with `/cannot read \.claude-tweaks\/policy\.yml/`. A missing file still resolves to the schema defaults: the existing `policyRaw: null` test stays as it is.
 
-- [ ] **Step 2: Run the suite to verify the new and migrated tests fail**
+- [ ] **Step 2: Run the suites to verify the new and migrated tests fail**
 
-Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js 2>&1 | tail -30`
-Expected: FAIL. `gatherParentFacts` is not a function, and the migrated parent-gate rows render `unknown`, because the old code's `gh api --paginate …/sub_issues` call hits a fake that no longer answers it.
+Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/issues/parent-gate.test.js 2>&1 | tail -30`
+Expected: FAIL. `gatherParentFacts` is not a function, the migrated parent-gate rows render `unknown`, because the old code's `gh api --paginate …/sub_issues` call hits a fake that no longer answers it, and `shape 5: a malformed state, stateReason or labels is a GhFailure` fails against the unhardened `readSubIssueFacts`.
 
-- [ ] **Step 3: Implement `gatherParentFacts` and the evaluator switch in `plugin/bin/lib/wrap-up/engine-verify.js`**
+- [ ] **Step 3: Harden `readSubIssueFacts`, then implement `gatherParentFacts` and the evaluator switch**
 
+- In `plugin/bin/lib/issues/parent-gate.js`'s `readSubIssueFacts`, throw `GhFailure` with `gh issue view ${num}: unexpected output (…)`, the wording `gatherIdempotenceFacts` uses, when:
+  - `live.state` is not a string
+  - `live.stateReason` is present, non-null and not a string
+  - `live.labels` is not `undefined` and is not an array whose every entry is an object with a string `name`
+
+  An absent `labels` key is an unlabeled issue and reads `[]`, as `state,labels` did in the code this task deletes. Update the function's comment. The checks run before `normalizeLabelNames`, so a non-array can no longer reach it as a `TypeError`.
+- In `plugin/bin/lib/wrap-up/engine-verify.js`, replace the three policy readers with one `readParentGatePolicy(repoRoot, keys) -> { ok: true, values } | { ok: false, error }`. A read that throws with `ENOENT` or `ENOTDIR` is no policy file (`policyRaw: null`, the schema defaults), as `bin/parent-gate.js`'s `readPolicyRaw` treats it. Any other throw is `{ ok: false, error: `cannot read .claude-tweaks/policy.yml: ${err.message}` }`. A key `resolvePolicyKeys` reports `invalid` (through its `onInvalid` callback) is `{ ok: false, error: `.claude-tweaks/policy.yml: invalid ${key} ${JSON.stringify(raw)}` }`. Keep the "repo root, never the worktree cwd" comment.
+- In the check, read `work-links` once before the gather loop and `risk-floor` once only when a parent target exists, both through `readParentGatePolicy`. An `ok: false` from either returns `{ result: 'unknown', detail: error }`, before any `labels,comments` read. This is Plan Review Clarifications 4 and 5.
 - `gatherParentFacts(parent, deps, cwd, workLinks)`:
   - Resolve `parseRepo(deps.git(['remote','get-url','origin'], cwd))`. A git throw or a null spec is `{ ok: false }` with the existing `could not resolve owner/repo for parent #P` text. An owner or repo of `.` or `..` is the same failure, the guard `bin/parent-gate.js` applies.
   - Call `gatherGateFacts({ parent, owner, repo, host, workLinks, caller: ghCaller((args) => deps.gh(args, cwd)) })`.
@@ -106,24 +127,24 @@ Expected: FAIL. `gatherParentFacts` is not a function, and the migrated parent-g
   - `verdict.state === 'incomplete'` → the existing skip line, with `openCount` counted from `verdict.subIssues` (`state !== 'CLOSED'`).
   - `verdict.state === 'resolved'` → skip with `parent #${target} already resolved — acceptance recorded, no-op`. `verification-brief-parent-gate.md` states this no-op; the detail never cites Step 4.0b.
   - `verdict.exceeds === false` → the existing below-floor skip line, which only `due` can reach. Comment that `exceeds` is `null` on every other state, and that a `null` must never read as below the floor, so a `gated` parent falls through to the label and brief check.
-- Remove the now-unused `parentGateState`, `exceedsOversightFloor`, `maxRiskTier`, `parseRecordFacets`, and `parseSubIssues` imports. Check each with grep before removing, since other checks in this file may still use one; `parseParent` stays for `resolveParent`. Rewrite the comments at lines 728-739 and 940-950 so no line contains `sub_issues` (AC1). Export `gatherParentFacts` in place of `enumerateSubIssues`.
+- Remove the now-unused `parentGateState`, `exceedsOversightFloor`, `maxRiskTier`, `parseRecordFacets`, and `parseSubIssues` imports. Check each with grep before removing, since other checks in this file may still use one; `parseParent` stays for `resolveParent`. Rewrite the comments at lines 690 (it names `resolveWorkLinks`), 729-740, 892-902 and 974-977 so they describe the core and no line contains `sub_issues` (AC1). Line 975's comment is one of AC1's four matches and sits inside the check body, so it needs the rewrite as much as the deleted functions do. Export `gatherParentFacts` in place of `enumerateSubIssues`.
 
 - [ ] **Step 4: Run the suite to verify it passes**
 
-Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/t1.txt" 2>&1; echo exit=$?; tail -8 "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/t1.txt"`
-Expected: `exit=0`, `# fail 0`.
+Run: `node --test tests/bin-lib/wrap-up/engine-verify.test.js tests/parent-gate-cli.test.js tests/bin-lib/issues/parent-gate.test.js tests/bin-lib/issues/below-floor-parent-close.test.js tests/bin-lib/reconcile/post-merge.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/t1.txt" 2>&1; echo exit=$?; tail -8 "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/t1.txt"`
+Expected: `exit=0`, `# fail 0`. Create the `evidence/` directory first with a plain `mkdir -p` call.
 
 Run: `grep -n "sub_issues" plugin/bin/lib/wrap-up/engine-verify.js`
 Expected: no output, exit 1 (AC1).
 
 - [ ] **Step 5: Live probe against a real parent**
 
-Run a scratch node script, never committed. It calls `gatherParentFacts(4571, { git: defaultGit, gh: defaultGh }, process.cwd(), 'native')` from the worktree, prints the sorted `facts.subIssues` numbers and states, and alongside them prints `node plugin/bin/parent-gate.js --parent 4571 --work-links native`'s `subIssues` numbers. For an independent count, also run `gh api repos/thn-inc/claude-tweaks/issues/4571/sub_issues --paginate --jq '.[].number'`. All three number lists must be equal. Write the full output to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/live-probe-4571.txt` (after `mkdir -p`) with a Bash redirect. Then log one `AUTO` `--step "AC evidence"` entry through `log-decision.js --text-file`, naming the three counts and the evidence path.
+Run a scratch node script, never committed. It calls `gatherParentFacts(4571, { git: defaultGit, gh: defaultGh }, process.cwd(), 'native')` from the worktree, prints the sorted `facts.subIssues` numbers and states, and alongside them prints `node plugin/bin/parent-gate.js --parent 4571 --work-links native`'s `subIssues` numbers. For an independent count, also run `gh api repos/thn-inc/claude-tweaks/issues/4571/sub_issues --paginate --jq '.[].number'`. All three number lists must be equal. Write the full output to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/live-probe-4571.txt` (after `mkdir -p`) with a Bash redirect. Then log one `AUTO` `--step "AC evidence"` entry through `log-decision.js --text-file`, naming the three counts and the evidence path.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/wrap-up/engine-verify.js plugin/bin/lib/issues/parent-gate.js docs/plugin-structure.md tests/bin-lib/wrap-up/engine-verify.test.js
+git add plugin/bin/lib/wrap-up/engine-verify.js plugin/bin/lib/issues/parent-gate.js docs/plugin-structure.md tests/bin-lib/wrap-up/engine-verify.test.js tests/bin-lib/issues/parent-gate.test.js
 git commit -m "Route engine-verify's parent gate through the shared core — gatherGateFacts + evaluateParentGate replace its own sub-issue enumeration (refs #4805)"
 ```
 
@@ -132,7 +153,7 @@ git commit -m "Route engine-verify's parent gate through the shared core — gat
 **Role:** integration
 
 **Files:**
-- Modify: `plugin/skills/demo/entry-paths.md` lines 254-274 (Full verification pointer, step 2)
+- Modify: `plugin/skills/demo/entry-paths.md` lines 271-291 and 298-300 (Full verification pointer, step 2 and its closing **Fail open, visibly** paragraph)
 - Modify: `docs/skill-graph.md` line 203 (the `wrap-up/verification-brief-parent-gate.md` row: "but from the sub-issue side rather than the parent side")
 - Test: `tests/demo-full-verification-pointer.test.js`
 - No change: `plugin/skills/_shared/observation-plan.md` lines 38-40 ("`parentGateState` is called with the record in hand included"). That stays true, because the CLI's `--parent` call evaluates the full list with every live state.
@@ -171,13 +192,13 @@ Replace "but from the sub-issue side rather than the parent side" with wording t
 
 - [ ] **Step 5: Run the tests and AC greps**
 
-Run: `node --test tests/demo-full-verification-pointer.test.js tests/try-it-contract-conformance.test.js tests/accept-label-reader-conformance.test.js tests/comment-trust-conformance.test.js tests/pr-run-comments.test.js > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/t2.txt" 2>&1; echo exit=$?; tail -8 "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/t2.txt"`
+Run: `node --test tests/demo-full-verification-pointer.test.js tests/try-it-contract-conformance.test.js tests/accept-label-reader-conformance.test.js tests/comment-trust-conformance.test.js tests/pr-run-comments.test.js > "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/t2.txt" 2>&1; echo exit=$?; tail -8 "/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/t2.txt"`
 Expected: `exit=0`, `# fail 0`.
 
 Run: `grep -F "issues/\$PARENT_NUM/sub_issues" plugin/skills/demo/entry-paths.md`
 Expected: no output, exit 1 (AC2).
 
-Write both AC greps' output, AC1's from Task 1 and AC2's from here, with their exit codes to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T113111-record-4805/evidence/ac-greps.txt`. Log one `AUTO` `--step "AC evidence"` entry through `log-decision.js --text-file`, naming AC1 and AC2, both commands, and `exit=1` for each.
+Write both AC greps' output, AC1's from Task 1 and AC2's from here, with their exit codes to `/Users/thomasholknielsen/Code Workspaces/claude-tweaks/.claude-tweaks/pipelines/2026-11-02T214510-record-4805/evidence/ac-greps.txt`. Log one `AUTO` `--step "AC evidence"` entry through `log-decision.js --text-file`, naming AC1 and AC2, both commands, and `exit=1` for each.
 
 - [ ] **Step 6: Commit**
 
@@ -194,4 +215,7 @@ git commit -m "Point /demo's Full verification pointer at bin/parent-gate.js —
 | Deliverable 2 / AC2.1 (demo calls `bin/parent-gate.js`) | Task 2 Steps 1, 3, 5 |
 | AC3.1 (all-not-planned equivalence unit test, both fixtures, `closeReason` compared) | Task 1 Step 1 |
 | Plan Review Clarification 1 (floor on `due` only; `resolved` a no-op) | Task 1 Steps 1, 3 |
-| Key File `plugin/bin/lib/issues/parent-gate.js` (reuse) | Task 1 (consumed; comment-only edits) |
+| Plan Review Clarification 3 (malformed sub-issue replies stay `unknown`) | Task 1 Steps 1, 3 |
+| Plan Review Clarification 4 (an invalid `risk-floor` renders `unknown`) | Task 1 Steps 1, 3 |
+| Plan Review Clarification 5 (the family rule: invalid `work-links`, an unreadable `policy.yml`, an origin of `.` or `..`) | Task 1 Steps 1, 3 |
+| Key File `plugin/bin/lib/issues/parent-gate.js` (reuse) | Task 1 (consumed; `readSubIssueFacts` hardened per Clarification 3) |
