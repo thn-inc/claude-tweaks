@@ -214,10 +214,9 @@ function demoLabelUse(raw) {
   const verdict = stripperVerdict(raw, src);
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
   // A bare demo: catches a startsWith / concatenation reader; a DEMO_* identifier
-  // catches a destructured LABELS member. Any DEMO_* name counts except DEMO_CREDENTIAL_RE
-  // and DEMO_ACCOUNT (exact names only — DEMO_ACCOUNT_PENDING still counts;
-  // candidates-app-store-readiness.js names those two and they are not
-  // labels), so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
+  // catches a destructured LABELS member. Only the exact names DEMO_CREDENTIAL_RE and
+  // DEMO_ACCOUNT (named in candidates-app-store-readiness.js, not labels) are excluded,
+  // so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
   const m = new RegExp(DEMO_LABEL_SOURCE).exec(src);
   return m ? m[0] : null;
 }
