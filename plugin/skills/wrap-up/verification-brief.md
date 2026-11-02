@@ -116,8 +116,7 @@ Call `exceedsOversightFloor({ risk: facets.risk, size: facets.size }, { riskFloo
   2, 3 and 4: Step 4 posts the packet without `--label` (Decision Q5,
   `_shared/acceptance-packet.md`). The walkthrough is not skipped: the Try it block composed above feeds the packet's Test guide, and the Pipeline Summary renders it. The record closes with no acceptance label and no ceremony (this is the *not required*
   outcome, not a `demo:exempt` marker — see the design's Non-Goals). It stays demoable later on
-  request: `/claude-tweaks:demo #N`'s existing closing-commit-reconstruction fallback already
-  resolves a record carrying no pending acceptance label, unchanged by this gate.
+  request: `/claude-tweaks:demo #N` reads its packet, whatever its labels.
 
   Record the exemption (#2383) so `wrap-up-engine.js verify`'s `acceptance-labeling` check knows
   this record was deliberately skipped, not silently missed: add `N` to

@@ -24,16 +24,17 @@ combined — and it never discovers or lists what's outstanding across the backl
 ```
 
 **`demo:pending` is no longer unconditional (`#367`).** `/claude-tweaks:wrap-up`'s acceptance-labeling
-step only applies the gate — brief plus `demo:pending` — to a record whose `risk:*`/`size:*`
+step only applies the label to a record whose `risk:*`/`size:*`
 facets exceed the configured oversight floor (`exceedsOversightFloor`,
 `bin/lib/issues/oversight-floor.js`; a decomposition parent is gated on the max risk tier across
 its sub-issues, aggregated by `wrap-up/verification-brief.md`'s Parent-Gate Procedure, never on
 size). A record that doesn't clear the floor closes with **no** acceptance label at all — not a new
-`demo:exempt` marker, just the absence of one. It is never unreachable by this skill: the
+`demo:exempt` marker, just the absence of one — and, with no parent, still carries its acceptance
+packet (`_shared/acceptance-packet.md`), which Step 1 reads whatever the labels. It is never
+unreachable by this skill: with no packet either (a record closed before the packet), the
 closing-commit-reconstruction fallback below (previously exercised only for the occasional record
-that closed outside `/wrap-up`'s normal flow) is now also the default discovery path for this
-below-floor population — a `/claude-tweaks:demo #N` on a below-floor record resolves through it
-exactly as it always has for any other unlabeled record, no code change needed for that case.
+that closed outside `/wrap-up`'s normal flow) resolves it
+exactly as it always has for any other unlabeled record.
 
 ## When to Use
 
@@ -48,7 +49,7 @@ Not for: discovering what's outstanding across the backlog (`/claude-tweaks:help
 ## Input
 
 `$ARGUMENTS` — *(none)* resolves this session's own unrecorded work via session-recall (Step 1);
-`#N` resolves that single record's Verification Brief, falling back — when it carries no pending
+`#N` resolves that single record's acceptance packet, else its Verification Brief, falling back — when it carries no pending
 acceptance label (either spelling, `_shared/work-record.md`) — first to the record's closing commit in git history, then to session-recall
 scoped to that `#N` (Step 1); `#N[,#M...]` — grammar (notation, tokenization) is `_shared/record-batch-input.md`'s contract —
 is an explicit human-supplied batch: each ref
@@ -77,6 +78,14 @@ runs — read only the matching branch in `entry-paths.md` in this skill's direc
 
 ## Step 2: Per-item walkthrough
 
+**An acceptance packet renders as a packet.** When Step 1 resolved an acceptance packet
+(`_shared/acceptance-packet.md`), drop its marker line, take its Test guide as the Try it block, hoisted to the top and rendered once,
+then render its remaining sections in order under the packet's title and notes. Never compose a fresh Try it block for a packet: a Test
+guide holding only its one empty line renders that line. The packet's `### Observation plan` appendix is the plan the rest of this step walks,
+show-first, after the design-contract section below when one resolves. A packet with no appendix
+skips Prepare/Validate/Show and goes straight to the Verdict question. The Try it and full-brief paragraphs
+that follow apply to legacy briefs only, and to what Step 1 composed.
+
 **Try it first (#2821).** Before anything else in this step — before the design-contract section
 and before any Prepare/Validate output — render the record's Try it block (`_shared/try-it.md`)
 as Step 1 resolved it: the brief's `### Try it` section (a parent brief's `### Try it — end to
@@ -89,8 +98,8 @@ from the record's Acceptance Criteria and Step 1's entry point, and never render
 
 Then render the rest of this record's full Verification Brief (The ask / What shipped / Confirmed /
 Observation plan — evidence the human can judge, not a checklist to complete), with its Try it
-block hoisted to the top — rendered once, above, never a second time in place. Label-backed entries were
-fetched per `verification-brief.md`'s digest template in Step 1's `#N` lookup; closing-commit
+block hoisted to the top — rendered once, above, never a second time in place. A legacy brief, in the shape of
+the template `wrap-up/verification-brief-parent-gate.md` now holds, was fetched in Step 1's `#N` lookup; closing-commit
 reconstructions and session-recall entries composed their own Observation plan directly, in Step
 1's `#N` and no-arguments paths respectively — all three render identically here, and a
 reconstruction says so in its own `### Confirmed` section rather than being flagged separately at
@@ -109,7 +118,7 @@ first (or, when recall could not name an entry point, the one line saying it was
 ### The design contract this was built against
 
 Run the locate-and-parse procedure in `_shared/design-contract.md` over the changed-path list
-Step 1 already produced — the closing commit's `--name-only` list, the label-backed brief's paths,
+Step 1 already produced — the closing commit's `--name-only` list, the paths the packet or label-backed brief names,
 or session recall's own list. Do not go looking for files beyond it. **When no contract resolves,**
 render nothing — no heading, no empty section, no "not found" note. **When a contract resolves, or
 the parse reports one malformed,** read `design-contract-section.md` in this skill's directory and
@@ -119,7 +128,7 @@ This section never becomes a reason to block.
 
 ### Show-first walkthrough
 
-Applies whenever this record's brief carries a `### Observation plan` section — every **sub-issue**
+Applies whenever this record's packet or brief carries a `### Observation plan` section — every **sub-issue**
 brief composed or posted after this schema shipped. Two populations legitimately carry no such
 section at all even now: a Parent-Gate parent brief (walkthrough lives in its `### Try it — end to end` section
 instead) and a session-recall entry whose recall yielded no confident path list (Step 1's omission
@@ -196,7 +205,7 @@ Option 1 (Approve) — the browser round already ruled it out:
 
 - Option 1 — `label`: `"Approve"`, `description`: `"This does what was asked"`
 - Option 2 — `label`: `"Request changes"`, `description`: `"There's a gap — I'll describe it"`
-- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"`. For a closing-commit reconstruction (never pending — there is nothing to leave): `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is an acceptance label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
+- Option 3 — for a label-backed entry: `label`: `"Skip for now"`, `description`: `"Leave it pending — I'll come back to this"`. For a closing-commit reconstruction, or a packet on a record with no pending label (never pending — there is nothing to leave): `label`: `"Skip for now"`, `description`: `"Nothing is written — it still carries no acceptance disposition, so /claude-tweaks:tidy's acceptance-gap scan will surface it again"` (true on both drivers — the disposition is an acceptance label under `github-issues` and an `acceptance:` facet under `local-files`, and each driver has its own sweep for it). For a session-recall entry: `label`: `"Skip for now"`, `description`: `"Nothing is written — unlike a label-backed record, this won't resurface in a later session"`
 
 ### Compatibility: briefs with no Observation plan
 
@@ -266,7 +275,7 @@ batch action, and it writes its own batch label in the same invocation.
 
 Pass each **only when those labels hold it**, `demo:pending` included: `gh issue edit --remove-label`
 exits 1 with "not found" on a label the repo has never created and fails the whole edit, dropping
-the verdict, while a label the record holds is known to exist. A closing-commit reconstruction needs
+the verdict, while a label the record holds is known to exist. A closing-commit reconstruction, or a packet on a record with no pending label, needs
 no variant: it passes whichever of these it holds, usually none.
 
 **Provenance signal (Approve only).** A single-record verdict and a `#N,#M` batch-list verdict

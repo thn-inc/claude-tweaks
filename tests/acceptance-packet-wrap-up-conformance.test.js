@@ -441,3 +441,132 @@ test('the execution prose describes the packet', () => {
   assert.ok(doc.includes('posting the acceptance packet'), 'the Acceptance labeling bullet');
   assert.ok(!doc.includes('posting the Verification Brief'));
 });
+
+// ---- Task 11: readers find the packet ----
+
+const MARKER = '<!-- acceptance-packet: v1 -->';
+const ENTRY = 'demo/entry-paths.md';
+const DEMO = 'demo/SKILL.md';
+const LANDED = '_shared/acceptance-labeling-landed.md';
+const recordLookup = () => between(read(ENTRY), '## `#N` given: single-record lookup', '### PR run-comment lookup');
+const packetRead = () => flat(paragraphAt(recordLookup(), '**Read the acceptance packet first**'));
+const localFiles = () => flat(between(recordLookup(), '**`work-backend: local-files`:**', 'reconstructs the same way'));
+const demoStep2 = () => section(read(DEMO), '## Step 2: Per-item walkthrough', '### The design contract this was built against');
+const packetRender = () => flat(paragraphAt(demoStep2(), '**An acceptance packet renders as a packet.**'));
+const liveTier = () => flat(section(read(LANDED), '## Live-state tier', '## Outcomes'));
+
+test('demo #N names the packet marker before any legacy brief form and takes the earliest trusted one', () => {
+  const doc = read(ENTRY);
+  assert.ok(recordLookup().includes(MARKER), 'the lookup names the marker');
+  assert.ok(doc.indexOf(MARKER) < doc.indexOf('## Verification Brief'), 'the marker comes first');
+  const paragraph = packetRead();
+  for (const literal of ['earliest trusted comment by `createdAt`', 'first line is exactly', '`_shared/acceptance-packet.md`', 'Trusted authors', 'skip notice']) {
+    assert.ok(paragraph.includes(literal), `names ${literal}`);
+  }
+});
+
+test('the packet stands in for the brief, and the legacy forms are reached only with no trusted packet', () => {
+  const paragraph = packetRead();
+  assert.ok(paragraph.includes('its Test guide stands in for the Try it block'), paragraph);
+  assert.ok(paragraph.includes('its `### Observation plan` appendix is the plan Step 2 walks'), paragraph);
+  assert.ok(paragraph.includes('Only when no trusted packet exists does the lookup fall back'), paragraph);
+});
+
+test('the packet read does not depend on a pending label, so a below-floor packet has a reader (Decision Q5)', () => {
+  const lookup = recordLookup();
+  assert.ok(packetRead().includes("whatever the record's labels"), packetRead());
+  assert.ok(packetRead().includes('carries a packet and no pending label'), packetRead());
+  assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('If the labels just fetched'), 'ahead of the label branch');
+  assert.ok(lookup.indexOf('**Read the acceptance packet first**') < lookup.indexOf('recover that **closing'), 'ahead of the closing-commit recovery');
+  const wrapUp = flat(belowFloor());
+  assert.ok(wrapUp.includes('`/claude-tweaks:demo #N` reads its packet, whatever its labels'), wrapUp);
+  assert.ok(!wrapUp.includes('closing-commit-reconstruction fallback'), wrapUp);
+});
+
+test('an unreadable packet stops the ref and a failed read is stated', () => {
+  const paragraph = packetRead();
+  assert.ok(paragraph.includes('is an `unreadable` packet'), paragraph);
+  assert.ok(paragraph.includes('stop this ref'), paragraph);
+  assert.ok(paragraph.includes('a legacy brief beside it never stands in'), paragraph);
+  assert.ok(paragraph.includes('A failed read states so in one plain line above the verdict'), paragraph);
+});
+
+test('local-files reads the delimited packet first, then the legacy body section', () => {
+  const paragraph = localFiles();
+  const start = paragraph.indexOf('`<!-- acceptance-packet:start -->`');
+  assert.notStrictEqual(start, -1, paragraph);
+  assert.ok(paragraph.includes('`<!-- acceptance-packet:end -->`'), paragraph);
+  assert.ok(paragraph.includes("whatever the record's facets"), paragraph);
+  assert.ok(start < paragraph.indexOf('`## Verification Brief`'), 'the packet comes before the legacy section');
+});
+
+test('demo Step 2 renders a packet, never a fresh Try it block', () => {
+  const step2 = demoStep2();
+  const opener = step2.indexOf('**An acceptance packet renders as a packet.**');
+  assert.notStrictEqual(opener, -1, 'the packet form is stated');
+  assert.ok(opener < step2.indexOf('**Try it first'), 'ahead of the brief rules');
+  assert.ok(opener < step2.indexOf('### Try it'), 'ahead of the first ### Try it mention');
+  const paragraph = packetRender();
+  for (const literal of [
+    '`_shared/acceptance-packet.md`',
+    'take its Test guide as the Try it block, hoisted to the top and rendered once',
+    'render its remaining sections in order',
+    'Never compose a fresh Try it block for a packet',
+    "The packet's `### Observation plan` appendix is the plan the rest of this step walks",
+    'A packet with no appendix',
+    'apply to legacy briefs only',
+  ]) {
+    assert.ok(paragraph.includes(literal), `names ${literal}`);
+  }
+});
+
+test('a packet on a record with no pending label takes the nothing-to-leave Skip wording and the no-variant Step 3 rule', () => {
+  const doc = flat(read(DEMO));
+  assert.ok(doc.includes('For a closing-commit reconstruction, or a packet on a record with no pending label (never pending'), 'Option 3');
+  assert.ok(doc.includes('A closing-commit reconstruction, or a packet on a record with no pending label, needs no variant'), 'Step 3');
+});
+
+test('the landed check drops the stale premise and keeps the label check', () => {
+  const doc = flat(read(LANDED));
+  assert.ok(!doc.includes('issue pointer comment is a plain post'), 'the pointer premise is gone');
+  assert.ok(doc.includes('demo:pending'), 'the label stays named');
+  assert.ok(liveTier().includes('every record in the PR\'s `Fixes` lines carries a pending acceptance label'), liveTier());
+  assert.ok(liveTier().includes('edits it in place'), 'the packet is edited in place on the record');
+});
+
+test('the live tier accepts a trusted packet comment on every Fixes record, wherever it takes a run comment', () => {
+  const live = liveTier();
+  const runComment = live.indexOf('<!-- run-comment: try-it -->');
+  const packet = live.indexOf(`a trusted \`${MARKER}\` comment`);
+  assert.ok(runComment !== -1 && packet > runComment, 'an alternative of the comment check');
+  const clause = live.slice(runComment, live.indexOf('The tier lands'));
+  for (const literal of ['every record in the PR\'s `Fixes` lines', 'at least one record', 'every comment read succeeded', 'an `unreadable` packet does not count', 'Decision Q5']) {
+    assert.ok(clause.includes(literal), `names ${literal}`);
+  }
+});
+
+test('the stale template citations are gone from the demo readers', () => {
+  const skill = flat(read(DEMO));
+  assert.ok(!skill.includes("`verification-brief.md`'s digest template"), 'SKILL.md Step 2');
+  assert.ok(skill.includes('the template `wrap-up/verification-brief-parent-gate.md` now holds'), 'names where it lives');
+  assert.ok(!skill.includes('brief plus `demo:pending`'), 'the floor paragraph');
+  const entry = flat(read(ENTRY));
+  assert.ok(!entry.includes("Step 4's `pr` object present branch"), 'the pointer paragraph');
+  assert.ok(entry.includes('**A legacy brief under `pr-first` lives on the PR**'), entry);
+  assert.ok(!entry.includes('`verification-brief.md` renders'), 'the session-recall shape');
+  assert.ok(entry.includes("the same shape `wrap-up/verification-brief-parent-gate.md`'s template renders"), entry);
+  assert.ok(entry.includes('**No comment anywhere carries the packet, the heading or the pointer**'), entry);
+  assert.ok(entry.includes('a parent-linked sub-issue, or a below-floor record closed before the acceptance packet, had its walkthrough posted alone'), entry);
+});
+
+test('the skill graph states the packet edges and no longer describes the brief as what wrap-up posts', () => {
+  const graph = readText(path.join(__dirname, '..', 'docs', 'skill-graph.md'));
+  const edge = '| `_shared/acceptance-packet.md` |';
+  assert.ok(between(graph, '\n## demo\n', '\n## design-wrapper\n').includes(edge), 'the demo row');
+  const wrapUp = graph.slice(graph.indexOf('\n## wrap-up\n'), graph.indexOf('\n## Provenance'));
+  assert.ok(wrapUp.includes(edge), 'the wrap-up row');
+  assert.ok(wrapUp.includes('`/wrap-up` posts the acceptance packet (`_shared/acceptance-packet.md`) and applies `demo:pending` above the oversight floor'), 'the /demo row');
+  assert.ok(!wrapUp.includes('applies `demo:pending` and posts the Verification Brief'), 'the old /demo row');
+  assert.ok(!wrapUp.includes('embedded in the brief for an above-floor record'), 'the old Try it placement');
+  assert.ok(!graph.includes('`/wrap-up` (brief)'), 'the pr-run-comments row');
+});
