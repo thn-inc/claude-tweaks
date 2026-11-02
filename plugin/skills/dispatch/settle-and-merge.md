@@ -79,12 +79,7 @@ never claimed. When `DISPATCH_HEADLESS=1` was set on this Task call's invocation
 failing-check-name `flow-step-2.8-claim-permission-denied` and the rendered card as the diagnostic body.
 When `DISPATCH_HEADLESS` is unset, skip the self-report — the stop message the Task call already
 produced is sufficient (that is the rendered card, which carries the operation and reason; the first
-call's report lines do not). This stop's card and the claims-branch-missing stop's card both carry
-GitHub's `{reason}`, forge-supplied text that keeps backticks, `$(` and `"`, so it must not reach a
-shell command line. For both stops, write the diagnostic body with the Write tool to the path
-`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {a name}` prints, and pass it with
-`--body-file` instead of the template's `--body`; the file also carries the template's
-`Resolved build:` line and marker comment.
+call's report lines do not).
 
 **Open-linked-PR enrichment for the contested-claim shape (#2402).** For the contested-claim stop
 specifically — never the in-flight stop, whose card already names its PR via `link` — attempt one

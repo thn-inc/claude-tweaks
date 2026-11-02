@@ -445,6 +445,7 @@ test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied sto
   assert.match(paragraph, /every selection form/);
   assert.match(paragraph, /attempt no further group/);
   assert.match(paragraph, /same token/);
+  assert.match(paragraph, /named records after it as not attempted and unclaimed/);
 });
 
 test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays it (#4899)', () => {
@@ -455,8 +456,15 @@ test('firing-exclusion.md and next-ranking.md name the stop; reporting.md relays
   }
   const relayed = read('plugin/skills/dispatch/reporting.md');
   assert.match(relayed, /claim-permission-denied/);
-  assert.match(relayed, /its report block names the record and the stop, says the firing stopped/);
+  assert.match(relayed, /its report block names the record and the stop, says the firing stopped, lists any named records after it as not attempted and unclaimed/);
   assert.doesNotMatch(relayed, /names the record and the refusal/);
+});
+
+test('headless-self-report.md files its diagnostic through --body-file, never a shell-quoted --body (#4899)', () => {
+  const template = read('plugin/skills/_shared/headless-self-report.md');
+  assert.equal(template.match(/--body-file "\{body-file\}"/g)?.length, 2);
+  assert.doesNotMatch(template, /--body "/);
+  assert.doesNotMatch(read('plugin/skills/dispatch/settle-and-merge.md'), /template's `--body`/);
 });
 
 test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () => {

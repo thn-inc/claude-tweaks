@@ -64,24 +64,26 @@ failure is definitionally a defect). The body now carries the marker so future f
 # work-types: native
 gh issue create \
   --title "{Caller} headless self-report: {failing-check-name}" \
-  --body "{the exact diagnostic message this check would otherwise report to a human}
-
-Resolved build: claude-tweaks v{version} @ {resolved CLAUDE_PLUGIN_ROOT}
-
-<!-- {caller}-preflight-marker: {failing-check-name} -->" \
+  --body-file "{body-file}" \
   --type bug \
   --label by:{caller}
 
 # work-types: labels
 gh issue create \
   --title "{Caller} headless self-report: {failing-check-name}" \
-  --body "{the exact diagnostic message this check would otherwise report to a human}
+  --body-file "{body-file}" \
+  --label by:{caller} \
+  --label type:bug
+```
+
+Write `{body-file}` with the Write tool, to the path `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value {a name}` prints, because a diagnostic can carry forge-supplied text with backticks, `$(` and `"` that must not reach a shell command line. It holds:
+
+```
+{the exact diagnostic message this check would otherwise report to a human}
 
 Resolved build: claude-tweaks v{version} @ {resolved CLAUDE_PLUGIN_ROOT}
 
-<!-- {caller}-preflight-marker: {failing-check-name} -->" \
-  --label by:{caller} \
-  --label type:bug
+<!-- {caller}-preflight-marker: {failing-check-name} -->
 ```
 - Otherwise (`canonical` is set — a match was found): if `duplicates` is non-empty (however that happened — this is the hedge, not the expected path), resolve this firing's run dir first — via `_shared/run-dir-resolution.md`'s standalone-auto fallback (the calling skill must be on that fallback's allowlist — dispatch already is; this block runs in Preflight, before Workflow Step 1 would otherwise resolve `$RUN_ID`, so it cannot be assumed already resolved here) — then close every duplicate entry: `gh issue close {n} --reason "not planned"` with a comment `` "Duplicate of #{canonical.number} — same `{caller}-preflight-marker` match, closing to keep one open self-report per failing check." `` — then log one line per closed duplicate to that run dir's `decisions.md`: `AUTO {time} — {caller} headless self-report: closed duplicate issue #{n} (marker match with canonical #{canonical.number}). Reversibility: low (GitHub state; issue can be manually re-opened).` Then, whether or not any duplicates were found, reference `#{canonical.number}` in the stop output and file nothing new — **except** the Resolved build line, under the once-per-build rule below.
 
