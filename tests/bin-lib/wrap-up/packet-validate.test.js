@@ -280,13 +280,27 @@ test('SchemaError carries both documents\' errors, by path', () => {
   );
 });
 
-test('a test-guide claim with credential-shaped text is screened', () => {
+test('a claim with credential-shaped text is screened, whatever its section', () => {
   const c = claim('test-guide', 'Log in with password=hunter2', ['link:settings']);
   const screened = validate([c]);
   assertOnly(screened, 'screened');
   assert.deepEqual(screened.screened[0], { claim: c, key: 'password' });
 
-  assertOnly(validate([claim('what-changed', 'Log in with password=hunter2', ['change:src/a.js'])]), 'kept');
+  for (const [section, refs] of [
+    ['what-changed', ['change:src/a.js']],
+    ['tried-to-break', ['check:lint']],
+    ['least-confident', ['finding:1']],
+    ['risk-proofs', ['flag:r', 'check:unit-tests']],
+  ]) {
+    const other = claim(section, 'Log in with password=hunter2', refs);
+    const result = validate([other]);
+    assertOnly(result, 'screened');
+    assert.deepEqual(result.screened[0], { claim: other, key: 'password' }, section);
+  }
+});
+
+test('an unknown section is dropped ahead of the screen, so a screened section is always a real one', () => {
+  assertDropped(validate([claim('nowhere', 'token=abc', ['change:src/a.js'])]), 'unknown section nowhere');
 });
 
 test('screening runs before every evidence rule', () => {

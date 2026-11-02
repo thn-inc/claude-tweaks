@@ -913,6 +913,29 @@ test('a failed removal of a stale --out is stated, and the exit stays 1', (t) =>
   assert.ok(h.stderr().includes(`could not remove ${ws.file('out.md')}`));
 });
 
+test('a plan line carrying a credential is dropped by the CLI, stated in --dropped-out and never on stdout or the packet', (t) => {
+  const ws = workspace(t);
+  const plan = writeText(ws.file('plan.md'), [
+    '### Observation plan',
+    '- Entry point: http://localhost:3000/settings?token=abc123',
+    '- Prepare:',
+    '  - `npm run seed -- --api-key=sk-live-xyz`',
+  ].join('\n'));
+  const droppedOut = ws.file('dropped.json');
+  const h = harness(ws);
+  assert.equal(run([...renderArgs(ws), '--observation-plan', plan, '--dropped-out', droppedOut], h.deps), 0, h.stderr());
+  const markdown = fs.readFileSync(ws.file('out.md'), 'utf8');
+  const raw = fs.readFileSync(droppedOut, 'utf8');
+  for (const secret of ['abc123', 'sk-live-xyz']) {
+    assert.ok(!markdown.includes(secret), secret);
+    assert.ok(!raw.includes(secret), secret);
+    assert.ok(!h.stdout().includes(secret), secret);
+  }
+  assert.deepEqual(JSON.parse(raw).screened, [{ section: 'observation-plan', key: 'token' }, { section: 'observation-plan', key: 'api_key' }]);
+  assert.match(markdown, /^2 entries omitted for credential-shaped content: Observation plan \(token\); Observation plan \(api_key\)$/m);
+  assert.equal(JSON.parse(h.stdout()).screened, 2);
+});
+
 test('render forwards --observation-plan', (t) => {
   const ws = workspace(t);
   const plan = writeText(ws.file('plan.txt'), 'watch the error rate\n');

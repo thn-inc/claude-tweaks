@@ -144,10 +144,8 @@ function placeClaim(claim, factsById, result) {
   const move = (to, because) => result.moved.push({ claim, to, because });
 
   if (!CLAIM_SECTIONS.includes(section)) return drop(`unknown section ${section}`);
-  if (section === 'test-guide') {
-    const key = findCredentialInText(text);
-    if (key) return result.screened.push({ claim, key });
-  }
+  const key = findCredentialInText(text);
+  if (key) return result.screened.push({ claim, key });
   if (refs.length === 0) return drop('no refs');
   const absent = refs.find((id) => !factsById.has(id));
   if (absent !== undefined) return drop(`absent fact ${absent}`);

@@ -549,7 +549,7 @@ test('note lines in fixed order', () => {
   const lines = markdown.split('\n');
   const at = lines.indexOf('1 claim was dropped for missing evidence');
   assert.notEqual(at, -1);
-  assert.equal(lines[at + 1], '1 Test guide entry omitted for credential-shaped content: password');
+  assert.equal(lines[at + 1], '1 entry omitted for credential-shaped content: Test guide (password)');
   assert.equal(lines[at + 2], `truncated: ${truncated} items omitted`);
 });
 
@@ -579,18 +579,115 @@ test('screened entries render as an omission line, never their text', () => {
     { extra: { refused: [{ id: 'link:deploy', reason: 'credential key in command: token' }] } },
   );
   const { markdown, screened } = result;
-  assert.ok(markdown.includes('1 Test guide entry omitted for credential-shaped content: password'));
+  assert.ok(markdown.includes('1 entry omitted for credential-shaped content: Test guide (password)'));
   assert.ok(markdown.includes('- 1 link(s) refused: link:deploy (credential key in command: token)'));
   assert.ok(!markdown.includes('hunter2'));
   assert.ok(headingsPresent(markdown));
-  assert.equal(screened[0].key, 'password');
+  assert.deepEqual(screened, [{ section: 'test-guide', key: 'password' }]);
 
   const two = render([], [
     claim('test-guide', 'a password=1', []),
-    claim('test-guide', 'b token=2', []),
+    claim('what-changed', 'b token=2', []),
   ]).markdown;
-  assert.ok(two.includes('2 Test guide entries omitted for credential-shaped content: password; token'));
+  assert.ok(two.includes('2 entries omitted for credential-shaped content: Test guide (password); What changed (token)'));
+  assert.ok(!two.includes('b token'));
   assert.ok(!render([]).markdown.includes('omitted for credential-shaped content'));
+});
+
+const SECRET = 'hunter2';
+const WITHHELD_REASON = '(reason withheld: credential-shaped)';
+const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+
+test('a credential-shaped reason is withheld and its row stays', () => {
+  const reason = `expected 401 password=${SECRET}`;
+  const facts = [
+    fact('check:a', 'failed', { reason: `POST https://api.example.com/x?token=${SECRET}` }),
+    fact('story:b', 'failed', { reason }),
+    fact('check:c', 'skipped', { reason }),
+    fact('check:d', 'passed', { reason }),
+    fact('check:plain', 'failed', { reason: '3 failing' }),
+  ];
+  const { markdown } = render(facts);
+  assert.ok(!markdown.includes(SECRET));
+  assert.deepEqual(rowsIn(markdown, 'Tried to break'), [
+    `- \`check:a\` — failed: ${WITHHELD_REASON}`,
+    `- \`story:b\` — failed: ${WITHHELD_REASON}`,
+    '- `check:plain` — failed: 3 failing',
+  ]);
+  assert.deepEqual(rowsIn(markdown, "Couldn't test"), [`- \`check:c\` — skipped: ${WITHHELD_REASON}`]);
+  assert.deepEqual(rowsIn(markdown, 'Test guide'), [`- \`check:d\` — passed: ${WITHHELD_REASON}`]);
+  assert.equal(['Test guide', "Couldn't test", 'Tried to break'].flatMap((h) => rowsIn(markdown, h)).length, facts.length);
+});
+
+test('a moved claim withholds the reason of the fact that moved it', () => {
+  const { markdown } = render(
+    [fact('story:s', 'failed', { reason: `boom token=${SECRET}` })],
+    [claim('test-guide', 'It works', ['story:s'])],
+  );
+  assert.ok(sectionLines(markdown, 'Tried to break').includes(`- It works (moved: cites \`story:s\` — failed: ${WITHHELD_REASON})`));
+  assert.ok(!markdown.includes(SECRET));
+});
+
+test('decision, recording, deploy, refused and partial free text are screened too', () => {
+  const text = `the password=${SECRET}`;
+  const { markdown } = render(
+    [
+      fact('decision:d', 'passed', { text }),
+      fact('recording:r', 'passed', { text, url: 'https://cdn.example/r.gif' }),
+      fact('deploy:status', 'passed', { text }),
+    ],
+    [],
+    { extra: { refused: [{ id: 'link:a', reason: text }], partial: [text, 'verify report not found'] } },
+  );
+  assert.ok(!markdown.includes(SECRET));
+  assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), [`- ${WITHHELD_TEXT}`]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), [`- ${WITHHELD_TEXT}: <https://cdn.example/r.gif>`]);
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), [WITHHELD_TEXT]);
+  assert.ok(sectionLines(markdown, 'Test guide').includes(`- 1 link(s) refused: link:a (${WITHHELD_REASON})`));
+  assert.ok(markdown.includes(`> partial gather: ${WITHHELD_TEXT}; verify report not found`));
+
+  const target = render([fact('deploy:status', 'passed', { target: `dev token=${SECRET}` })]).markdown;
+  assert.deepEqual(sectionLines(target, 'Deploy status'), [`target: ${WITHHELD_TEXT}`]);
+  assert.ok(!target.includes(SECRET));
+});
+
+test('every reason the gather itself refuses with stays readable', () => {
+  const { markdown } = render([], [], {
+    extra: { refused: [
+      { id: 'link:a', reason: 'credential key in command: token' },
+      { id: 'link:b', reason: 'credential key in query: password' },
+      { id: 'link:c', reason: 'credential key in fragment: key' },
+      { id: 'link:d', reason: 'credential in userinfo' },
+      { id: 'link:e', reason: 'host not allowed: evil.example' },
+      { id: 'link:f', reason: 'scheme not http(s)' },
+      { id: 'link:g', reason: 'infra surface lists commands, not links' },
+    ] },
+  });
+  assert.ok(!markdown.includes('withheld'), markdown);
+});
+
+test('a plan line carrying a credential is dropped and stated, never rendered', () => {
+  const plan = [
+    '### Observation plan',
+    '- Entry point: `http://localhost:3000/settings?token=abc123`',
+    '- Prepare:',
+    '  - `npm run seed -- --api-key=sk-live-xyz`',
+    '  - `npm run ok`',
+    '- Inspect: open it',
+  ].join('\n');
+  const { markdown, screened } = render([], [], { options: { observationPlan: plan } });
+  for (const secret of ['abc123', 'sk-live-xyz', 'Entry point', '--api-key']) assert.ok(!markdown.includes(secret), secret);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- Prepare:', '  - `npm run ok`', '- Inspect: open it']);
+  assert.ok(markdown.includes('2 entries omitted for credential-shaped content: Observation plan (token); Observation plan (api_key)'));
+  assert.deepEqual(screened, [
+    { section: 'observation-plan', key: 'token' },
+    { section: 'observation-plan', key: 'api_key' },
+  ]);
+});
+
+test('a plan of only credential lines keeps its heading and states why it is empty', () => {
+  const { markdown } = render([], [], { options: { observationPlan: 'token=abc' } });
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['all lines omitted for credential-shaped content']);
 });
 
 test('several refused links share one inert line', () => {

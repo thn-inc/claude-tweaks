@@ -585,10 +585,9 @@ function renderToFiles(opts, deps) {
   try {
     deps.writeFile(opts.out, markdown);
     if (opts.droppedOut !== undefined) {
-      // Section and key only: a screened claim's text is the thing screened out.
-      const screenedKeys = screened.map(({ claim, key }) => ({ section: claim.section, key }));
+      // `screened` holds section and key only: the text is the thing screened out.
       deps.writeFile(opts.droppedOut, `${JSON.stringify({
-        dropped: dropped.map(droppedEntry), screened: screenedKeys, truncated, chars,
+        dropped: dropped.map(droppedEntry), screened, truncated, chars,
       }, null, 2)}\n`);
     }
   } catch (err) {

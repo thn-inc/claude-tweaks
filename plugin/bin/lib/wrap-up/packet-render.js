@@ -30,7 +30,12 @@ const AUTOLINK_TOKEN_RE = new RegExp([
 const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
+const WITHHELD_REASON = '(reason withheld: credential-shaped)';
+const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+
+const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
+const PLAN_ALL_SCREENED = 'all lines omitted for credential-shaped content';
 const PLAN_HEADING_RE = /^#{1,6}[ \t]+observation plan[ \t]*$/i;
 const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
 // One backtick each side and none inside: a linear scan, since a failed opener reads no
@@ -104,13 +109,17 @@ function codeSpan(s) {
 const liveLink = (url) => `<${new URL(url).href}>`;
 
 const statusWord = (status) => (status === 'not-run' ? 'not run' : status);
-const statusWithReason = (fact) => `${statusWord(fact.status)}: ${inline(fact.reason ?? '') || 'no reason recorded'}`;
+// Verify summaries and QA errors echo URLs and environment values, so free text is
+// screened wherever it renders. The matched text never does; the row or line stays.
+const screenedInline = (text, withheld) => (findCredentialInText(text) ? withheld : inline(text));
+const statusWithReason = (fact) => `${statusWord(fact.status)}: ${screenedInline(fact.reason ?? '', WITHHELD_REASON) || 'no reason recorded'}`;
 const citations = (refs) => refs.map(codeSpan).join(', ');
 const claimText = (claim) => `${inline(claim.text)} (${citations(claim.refs)})`;
 const claimLine = (claim) => `- ${claimText(claim)}`;
 const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites ${codeSpan(because.id)} — ${statusWithReason(because)})`;
-const rowLine = (fact) => `- ${codeSpan(fact.id)} — ${fact.status === 'passed' ? 'passed' : statusWithReason(fact)}`;
-const factText = (fact) => inline(fact.text ?? '') || codeSpan(fact.id);
+// A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
+const rowLine = (fact) => `- ${codeSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
+const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || codeSpan(fact.id);
 
 // Decision Q3's row placement: every check/story fact lands in exactly one place.
 function rowPlace(fact) {
@@ -164,7 +173,7 @@ function testGuideBody(ctx) {
   const body = itemsOr(steps, 'not applicable: no tested stories or links were gathered');
   const refused = facts.refused ?? [];
   if (refused.length > 0) {
-    const entries = refused.map(({ id, reason }) => `${inline(id)} (${inline(reason)})`);
+    const entries = refused.map(({ id, reason }) => `${inline(id)} (${screenedInline(reason, WITHHELD_REASON)})`);
     body.push(note(`- ${refused.length} link(s) refused: ${entries.join('; ')}`));
   }
   const passed = rowsIn('checks-passed');
@@ -202,18 +211,24 @@ const SECTION_BODIES = Object.freeze({
   ),
   // No decisions omits the section, heading included.
   decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}`)),
-  deploy: ({ deploy }) => [note(inline(deploy?.text ?? '') || `target: ${inline(deploy?.target ?? 'local')}`)],
+  deploy: ({ deploy }) => [note(
+    screenedInline(deploy?.text ?? '', WITHHELD_TEXT) || `target: ${screenedInline(deploy?.target ?? 'local', WITHHELD_TEXT)}`,
+  )],
 });
 
 const droppedLine = (n) => (n === 1
   ? '1 claim was dropped for missing evidence'
   : `${n} claims were dropped for missing evidence`);
 
+const screenedHeading = (section) => (section === PLAN_SECTION
+  ? PLAN_HEADING
+  : SECTIONS.find(({ key }) => key === section).heading);
+
 function screenedLines(screened) {
   if (screened.length === 0) return [];
   const noun = screened.length === 1 ? 'entry' : 'entries';
-  const keys = screened.map(({ key }) => inline(key)).join('; ');
-  return [`${screened.length} Test guide ${noun} omitted for credential-shaped content: ${keys}`];
+  const entries = screened.map(({ section, key }) => `${screenedHeading(section)} (${inline(key)})`).join('; ');
+  return [`${screened.length} ${noun} omitted for credential-shaped content: ${entries}`];
 }
 
 // `_shared/observation-plan.md`'s grammar has to survive the trip to `/claude-tweaks:demo`,
@@ -309,7 +324,7 @@ function truncate(doc) {
 }
 
 function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
-  const { kept, moved, dropped, screened } = validatePacket(facts, narrative);
+  const { kept, moved, dropped, screened: screenedClaims } = validatePacket(facts, narrative);
   const ofKind = (kind) => facts.facts.filter((fact) => fact.kind === kind);
   const rows = facts.facts.filter((fact) => ROW_KINDS.includes(fact.kind));
   const ctx = {
@@ -325,14 +340,26 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
   const sections = SECTIONS
     .map(({ key, heading }) => ({ heading, body: SECTION_BODIES[key](ctx) }))
     .filter(({ body }) => body.length > 0);
+  const screened = screenedClaims.map(({ claim, key }) => ({ section: claim.section, key }));
   const planLines = typeof observationPlan === 'string' ? planBody(observationPlan) : [];
   if (planLines.length > 0) {
-    sections.push({ heading: PLAN_HEADING, body: renderPlanLines(planLines).map(note) });
+    // Screened on the raw line, the whole of it: its Prepare commands and Entry point are
+    // the Test guide's, in a section the contract's map files under it (Decision Q2).
+    const shown = planLines.filter((line) => {
+      const key = findCredentialInText(line);
+      if (key) screened.push({ section: PLAN_SECTION, key });
+      return !key;
+    });
+    const body = shown.length > 0 ? renderPlanLines(shown) : [PLAN_ALL_SCREENED];
+    sections.push({ heading: PLAN_HEADING, body: body.map(note) });
   }
 
   const top = [PACKET_MARKER, '', `## Acceptance packet — #${facts.record}`, ''];
   // The blank line ends the blockquote; the next line would otherwise continue it.
-  if (facts.partial.length > 0) top.push(`> partial gather: ${facts.partial.map(inline).join('; ')}`, '');
+  if (facts.partial.length > 0) {
+    const notes = facts.partial.map((text) => screenedInline(text, WITHHELD_TEXT));
+    top.push(`> partial gather: ${notes.join('; ')}`, '');
+  }
   top.push(droppedLine(dropped.length), ...screenedLines(screened));
 
   const bottom = [];
