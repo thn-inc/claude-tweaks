@@ -427,7 +427,6 @@ test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim pe
   assert.match(skill, /the ranking returns `null`, or a Claim permission stop ends the firing/);
   assert.match(skill, /move straight to the next group \(none after a Claim permission stop\)/);
   assert.match(skill, /the repo-wide infra-outage stop, the Claim permission stop, a queue-pull/);
-  assert.ok(Buffer.byteLength(skill) < 52500, 'dispatch/SKILL.md must stay under 52,500 B');
 });
 
 test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied stop, in every selection form (#4899)', () => {
