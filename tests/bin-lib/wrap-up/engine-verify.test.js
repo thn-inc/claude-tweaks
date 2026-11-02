@@ -2039,6 +2039,13 @@ function closedSubs3508(risk) {
     { number: 901, state: 'closed', labels: [risk] },
   ];
 }
+// Sub-issues with an open sibling beside the run's own record: the parent gate is not complete.
+function openSubs3508(risk) {
+  return [
+    { number: 900, state: 'open', labels: [risk] },
+    { number: 901, state: 'open', labels: [risk] },
+  ];
+}
 
 test('AC1.1: #3508 a demo:approved parent with every sibling closed skips as already dispositioned', () => {
   const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
@@ -2064,14 +2071,7 @@ test('#3508 every verdict spelling and an outranked pending label skip as dispos
 });
 
 test('#3508 a reopened sub-issue under a resolved parent reads dispositioned, not not due', () => {
-  const { row } = parentGateRow({
-    records: [900],
-    parentLabels: ['demo:approved'],
-    subIssues: [
-      { number: 900, state: 'open', labels: ['risk:high'] },
-      { number: 901, state: 'open', labels: ['risk:high'] },
-    ],
-  });
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: openSubs3508('risk:high') });
   assert.strictEqual(row.result, 'skip', row.detail);
   assert.match(row.detail, /already dispositioned/);
   assert.doesNotMatch(row.detail, /not due/);
@@ -2095,14 +2095,7 @@ test('#3508 a below-floor gated parent with a brief passes, never skips', () => 
 });
 
 test('#3508 a gated parent with an open sibling still has its brief checked', () => {
-  const { row } = parentGateRow({
-    records: [900],
-    parentLabels: ['demo:pending'],
-    subIssues: [
-      { number: 900, state: 'open', labels: ['risk:medium'] },
-      { number: 901, state: 'open', labels: ['risk:medium'] },
-    ],
-  });
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: openSubs3508('risk:medium') });
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.doesNotMatch(row.detail, /not due/);
   assert.doesNotMatch(row.detail, /below oversight floor/);
@@ -2130,7 +2123,7 @@ const GATE_TABLE_STATES = ['`incomplete`', '`resolved`', '`gated`', '`due`, `exc
 function gateTableFixture3508(state) {
   switch (state) {
     case '`incomplete`':
-      return parentGateRow({ records: [900], subIssues: [{ number: 900, state: 'open', labels: ['risk:high'] }, { number: 901, state: 'open', labels: ['risk:high'] }] });
+      return parentGateRow({ records: [900], subIssues: openSubs3508('risk:high') });
     case '`resolved`':
       return parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
     case '`gated`':
