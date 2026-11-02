@@ -16,6 +16,7 @@ const CLAUSES = {
 };
 const KEPT_OPEN_LINE = '`Kept open (not booked): #a, #b`';
 const REFS_NUMBERS_PHRASE = '`Refs` numbers that nothing else in the range ships';
+const FAILED_REFS_LOOKUP = 'A failed lookup of a `Refs` number nothing else ships stays on `Kept open (not booked)`, marked `(title unavailable: {error})`, and never joins the shipped set.';
 
 function assertShippedSetRule(text, label) {
   for (const [name, clause] of Object.entries(CLAUSES)) {
@@ -28,10 +29,11 @@ function assertShippedSetRule(text, label) {
 function assertKeptOpenRendering(text, label) {
   assert.ok(text.includes(KEPT_OPEN_LINE), `${label}: nested Kept open (not booked) line missing`);
   assert.ok(text.includes(REFS_NUMBERS_PHRASE), `${label}: the unshipped-Refs-numbers phrase missing`);
+  assert.ok(text.includes(FAILED_REFS_LOOKUP), `${label}: the failed-Refs-lookup sentence missing`);
 }
 
-test('AC8.1: console.md states the shipped-set rule, all three cases', () => assertShippedSetRule(CONSOLE, 'console.md'));
-test('AC8.1: bookkeeping.md states the shipped-set rule, all three cases', () => assertShippedSetRule(BOOKKEEPING, 'bookkeeping.md'));
+test('AC8.1: console.md states the shipped-set rule, all four clauses', () => assertShippedSetRule(CONSOLE, 'console.md'));
+test('AC8.1: bookkeeping.md states the shipped-set rule, all four clauses', () => assertShippedSetRule(BOOKKEEPING, 'bookkeeping.md'));
 
 test('AC8.2: console.md renders unbooked Refs numbers on one nested Kept open (not booked) line', () => {
   assertKeptOpenRendering(CONSOLE, 'console.md');
@@ -42,11 +44,14 @@ test('go-red: dropping any one clause, or restoring the suffix-only rule, fails 
     for (const clause of Object.values(CLAUSES)) {
       assert.throws(() => assertShippedSetRule(text.replace(clause, ''), label));
     }
-    assert.throws(() => assertShippedSetRule(`${text}\nOne line per \`(#N)\` suffix`, label));
+    for (const stale of ['One line per `(#N)` suffix', 'one entry per distinct `(#N)` suffix']) {
+      assert.throws(() => assertShippedSetRule(`${text}\n${stale}`, label));
+    }
   }
 });
 
-test('go-red: removing the Kept open line or the unshipped-Refs-numbers phrase fails the AC8.2 assertion', () => {
-  assert.throws(() => assertKeptOpenRendering(CONSOLE.replace(KEPT_OPEN_LINE, ''), 'console.md'));
-  assert.throws(() => assertKeptOpenRendering(CONSOLE.replace(REFS_NUMBERS_PHRASE, ''), 'console.md'));
+test('go-red: removing the Kept open line, the unshipped-Refs-numbers phrase or the failed-Refs-lookup sentence fails the AC8.2 assertion', () => {
+  for (const part of [KEPT_OPEN_LINE, REFS_NUMBERS_PHRASE, FAILED_REFS_LOOKUP]) {
+    assert.throws(() => assertKeptOpenRendering(CONSOLE.replace(part, ''), 'console.md'));
+  }
 });

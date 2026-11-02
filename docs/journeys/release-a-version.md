@@ -29,7 +29,7 @@ files:
 - **Action:** Step 1 runs the preflight fact pack into the run directory; Step 3 runs `/claude-tweaks:review base:v1.2.0` over the first-parent history since the last tag; Step 4 renders the console — records shipped, the driving commit, the review verdict, CI on the tip, whether a publish hook is configured, the overrides — and stops before Step 5.
 - **Should feel:** Like reading the release before it exists — nothing merged, nothing tagged, but every finding the real run would block on is already staged.
 - **Should understand:** The review is not optional and not skippable by `--dry-run`, `--train` or `--allow-blocking`; a Critical or High finding marks the run `review: blocking` and only a human who has read it can override.
-- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with no `(#N)` suffix instead of listing it as unattributed; the console reporting no publish hook on a Windows (CRLF) checkout of a repo whose workflow fires on `release: published` — the verify step would then skip the hook check silently (#3040).
+- **Red flags:** A console row rendered green from a degraded pack field; a `Records shipped` row that silently dropped a commit with neither a `Fixes`/`Refs` line nor a `(#N)` suffix instead of listing it as unattributed; the console reporting no publish hook on a Windows (CRLF) checkout of a repo whose workflow fires on `release: published` — the verify step would then skip the hook check silently (#3040).
 
 ### 2. Nothing to release — a quiet stop
 - **URL:** the same command on a `main` with only `chore:`/`docs:` commits since the tag
