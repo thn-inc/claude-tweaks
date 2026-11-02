@@ -83,5 +83,5 @@ files:
 ## Origin
 - Created during the build of #4933 (origin host gated before reaching gh; refuse, never drop), run 2026-11-02T074712-spec-4933-4951.
 - Updated during the build of #4951 (stuck-open-prs.js moved onto the gate; its refusal surfaces in `/claude-tweaks:backlog attention`), same run; pinned by `tests/bin-lib/dispatch/stuck-open-pr.test.js`.
-- Pinned by `tests/bin-lib/repo-resolve.test.js` (gate unit cases), `tests/gh-host-seam-behavior.test.js` (refusal, pass-through and normalization for each of the 15 CLIs), `tests/gh-host-seam-conformance.test.js` (the `ORIGIN_GATED` roster), `tests/hooks-teardown-run.test.js`, `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile.test.js` and `tests/bin-lib/wrap-up/pack.test.js`.
+- Pinned by `tests/bin-lib/repo-resolve.test.js` (gate unit cases), `tests/gh-host-seam-behavior.test.js` (refusal, pass-through and normalization for each of the 16 CLIs), `tests/gh-host-seam-conformance.test.js` (the `ORIGIN_GATED` roster), `tests/hooks-teardown-run.test.js`, `tests/bin-lib/reconcile/post-merge.test.js`, `tests/reconcile.test.js` and `tests/bin-lib/wrap-up/pack.test.js`.
 - Related: `run-a-pipeline-on-a-ghe-origin-without-gh-host-4505.md` covers the known-host path, where the same origin rules admit the host with no export.

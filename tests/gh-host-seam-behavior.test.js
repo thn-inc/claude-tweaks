@@ -503,6 +503,9 @@ function setupGrantGate(repo) {
 // batch (no `i7` alias, so parent 7 lands in `retry`).
 const FETCH_SUB_ISSUES_GRAPHQL = JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] }, repository: {} } });
 
+// stuck-open-prs.js: candidate #1 (alias `i1`) is open with no closing PR.
+const STUCK_OPEN_PRS_GRAPHQL = JSON.stringify({ data: { repository: { i1: { state: 'OPEN', closedByPullRequestsReferences: { nodes: [] }, timelineItems: { nodes: [] } } } } });
+
 const CLI_TABLE = [
   { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, printsResolutionNote: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
   { cli: 'compose-subject.js', argv: ['7', '--tag', 'human-approved'], acceptsRepo: true },
@@ -535,6 +538,9 @@ const CLI_TABLE = [
   // repoResolutionNote.
   { cli: 'resolve-blockers.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
   { cli: 'resolve-linked-prs.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
+  // stuck-open-prs.js (#4951): one granted candidate whose batched linked-PR read finds no
+  // open PR, so the read is its one network-bound gh call and no per-record read follows.
+  { cli: 'stuck-open-prs.js', argv: ['--records', 'records.json'], setup: writeJsonFile('records.json', [{ number: 1, state: 'OPEN', title: 'R', createdAt: '2026-10-01T08:00:00Z', labels: [{ name: 'auto:build' }] }]), acceptsRepo: false, canned: { 'api-graphql': STUCK_OPEN_PRS_GRAPHQL } },
 ];
 
 for (const row of CLI_TABLE) describeOriginGate(row);
