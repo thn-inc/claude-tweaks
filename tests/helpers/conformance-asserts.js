@@ -43,7 +43,8 @@ const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.
 function sectionOf(text, heading) {
   const padded = `\n${text}\n`;
   const start = padded.indexOf(`\n${heading}\n`);
-  assert.notEqual(start, -1, `heading not found: ${heading} (text opens "${text.split('\n', 1)[0].slice(0, 60)}")`);
+  const opening = text.split('\n', 1)[0].slice(0, 60);
+  assert.notEqual(start, -1, `heading not found: ${heading} (text opens "${opening}")`);
   const next = padded.indexOf('\n## ', start + 1);
   return next === -1 ? text.slice(start) : text.slice(start, next - 1);
 }
