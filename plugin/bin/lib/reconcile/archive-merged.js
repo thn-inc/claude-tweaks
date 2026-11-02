@@ -284,28 +284,30 @@ function readArchiveCommit(root, runId, git = runGit) {
   return { sha, branch };
 }
 
+// #3721: the live HEAD's push state, for `archiveCommitLine`. Any unanswered probe is 'push state unknown'.
+function readPushState(root, git) {
+  const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
+  if (ref.failure) return ref.exitCode === 1 ? 'no upstream configured' : 'push state unknown';
+  if (!ref.stdout) return 'push state unknown';
+
+  const upstream = git(['for-each-ref', '--format=%(upstream:short)', ref.stdout], root);
+  if (upstream.failure) return 'push state unknown';
+  if (!upstream.stdout) return 'no upstream configured';
+
+  const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
+  // A zero count means something pushed between the commit and this probe: not "not pushed".
+  if (!ahead.failure && Number(ahead.stdout) > 0) return `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
+  return 'push state unknown';
+}
+
 // #3721: the one stdout line `archive-run` prints for the commit it made.
 // Informational — it never throws and never fails the verb. The push state is
 // re-derived from the live HEAD ref, not `commit.branch`, so a branch literally
 // named "detached" keeps its real upstream.
 function archiveCommitLine(root, commit, git = runGit) {
-  let state = 'push state unknown';
+  let state;
   try {
-    const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
-    if (!ref.failure && ref.stdout) {
-      const upstream = git(['for-each-ref', '--format=%(upstream:short)', ref.stdout], root);
-      if (!upstream.failure) {
-        if (!upstream.stdout) {
-          state = 'no upstream configured';
-        } else {
-          const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
-          // A zero count means something pushed between the commit and this probe: not "not pushed".
-          if (!ahead.failure && Number(ahead.stdout) > 0) state = `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
-        }
-      }
-    } else if (ref.failure && ref.exitCode === 1) {
-      state = 'no upstream configured';
-    }
+    state = readPushState(root, git);
   } catch {
     state = 'push state unknown';
   }
