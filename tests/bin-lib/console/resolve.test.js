@@ -7,7 +7,8 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'resolve');
-const { FINDING_PATH, classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
+const { FINDING_PATH } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'finding-path'));
+const { classifyStagedItem, resolveAll, renderTable, findingItems, renderStoredTable, parseTiebreakLine, approveAllDefault, readSnapshot, SECTION_STANCES, SECTION_MAP, ENGINE_ROW_SECTIONS, CANONICAL_PREFIXES, nearestCanonicalPrefixes, SDD_RULING_REASONS, sddRulingDeferralReason, STAGING_EXEMPTIONS, stagingExemption } = require(MOD);
 const ROOT = path.join(__dirname, '..', '..', '..');
 const { unresolvedItems, readRunResidue, formatResidueLines } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'residue'));
 const { resolveTiebreak } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'tiebreak'));
@@ -935,7 +936,7 @@ test('#4581: a coincidence line keys both locations whatever its case', () => {
 });
 
 // The writer (log-decision's aggregate detector) exempts a coincidence line exactly when the reader keys both of its
-// locations: both build their regex from console/finding-path.js's COINCIDENCE. The empty quoted lens is where the two
+// locations: both parse it with console/finding-path.js's parseCoincidence. The empty quoted lens is where the two
 // earlier copies split (the writer exempted it, the reader keys no lens from it).
 test('#4581: the aggregate detector exempts exactly the coincidence lines the reader keys on both locations', () => {
   const va = tbVerdict(tbFinding({ line: 4, claim: 'a' }), { verdict: 'confirmed' }).entry;
