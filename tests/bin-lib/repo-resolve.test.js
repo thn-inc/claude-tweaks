@@ -344,6 +344,13 @@ test('#4795: deps.explicitHost scopes the host to one call; _resetGhHostCache cl
   const opts = { cwd: '/d', env: {} };
   assert.strictEqual(ghOptions(['api', 'user'], opts, dotcom), opts);
 });
+test('#4795: deps.explicitHost takes precedence over a recorded pin for that call', () => {
+  _resetGhHostCache();
+  pinExplicitRepoHost({ host: 'pinned.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, dotcom).env.GH_HOST, 'pinned.ghe.com');
+  assert.equal(ghOptions(['api', 'user'], { cwd: '/d', env: {} }, { ...dotcom, explicitHost: 'call.ghe.com' }).env.GH_HOST, 'call.ghe.com');
+  _resetGhHostCache();
+});
 test('#4795: a --repo agreeing with the origin host records nothing, so origin injection continues (Review Focus 4)', () => {
   _resetGhHostCache();
   assert.equal(pinExplicitRepoHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} }), null);

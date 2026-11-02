@@ -313,8 +313,15 @@ test('review (#4505): every CLI that pins its explicit --repo host keeps both ha
 // #4795: an explicit --repo's host reaches gh one way only — ghOptions adds it to a
 // call's own env (repo-resolve.js). A file that builds `GH_HOST: …` into an env or
 // assigns `….GH_HOST = …` has grown a second mechanism. Blank mode, so a GH_HOST
-// named in a message string or comment is not code.
-const GH_HOST_BUILD = /\bGH_HOST\s*:(?!:)|\bGH_HOST\s*=(?!=)/;
+// named in a message string or comment is not code. Matched: `GH_HOST: h`,
+// `GH_HOST = h`, a logical assignment (`||=`, `??=`, `&&=`), and the object shorthand
+// (`{ ...process.env, GH_HOST }`: GH_HOST following `{` or `,` and followed by `,` or
+// `}`, so `f(e.GH_HOST, x)` is a read and stays unflagged).
+//
+// Recall limits: a quoted or computed key (`{ "GH_HOST": h }`, `env["GH_HOST"] = h`) is
+// not seen, since blank mode empties string contents; nor is
+// `Object.defineProperty(env, "GH_HOST", …)`.
+const GH_HOST_BUILD = /\bGH_HOST\s*:(?!:)|\bGH_HOST\s*=(?!=)|\bGH_HOST\s*(?:\|\||\?\?|&&)=|(?:^|[{,])\s*GH_HOST\s*[,}]/;
 function ghHostBuilders(raw) {
   const blank = stripComments(raw, BLANK);
   const verdict = stripperVerdict(raw, blank);
@@ -325,7 +332,12 @@ test('#4795: the matcher flags an env built or assigned with GH_HOST, and not a 
   assert.equal(ghHostBuilders('const e = { ...process.env, GH_HOST: h };').length, 1);
   assert.equal(ghHostBuilders('process.env.GH_HOST = h;').length, 1);
   assert.equal(ghHostBuilders("const { GH_HOST: _p, ...env } = process.env;").length, 1);
+  assert.equal(ghHostBuilders('const e = { ...process.env, GH_HOST };').length, 1); // object shorthand
+  assert.equal(ghHostBuilders('env.GH_HOST ||= h;').length, 1); // logical assignment
+  assert.equal(ghHostBuilders('env.GH_HOST ??= h;').length, 1);
+  assert.equal(ghHostBuilders('env.GH_HOST &&= h;').length, 1);
   assert.deepEqual(ghHostBuilders("if ('GH_HOST' in base) x(); if (e.GH_HOST === h) y(); const m = 'GH_HOST: set';"), []);
+  assert.deepEqual(ghHostBuilders('f(e.GH_HOST, x); g({ a: e.GH_HOST }); if (e.GH_HOST || h) y();'), []);
 });
 test('AC3.1 (#4795): no file under plugin/bin but repo-resolve.js builds or assigns GH_HOST', () => {
   const offenders = [];

@@ -480,11 +480,11 @@ test('computePremise asks checkoutRoot for the injected cwd', () => {
   });
 });
 
-// #4505 final review: materialize pins an explicit --repo's host as GH_HOST for its
-// own gh calls. The record-authored Premise-check: command must not inherit that
-// pin: a remote-inferring gh call inside it would reach the --repo's host, fail,
-// and read as satisfied-at-base, staging a close proposal. A GH_HOST the user
-// exported is theirs, and still reaches the command.
+// #4505 final review, #4795: materialize pins an explicit --repo's host, but the pin
+// lives only in ghOptions's per-call env (process.env is never written). The
+// record-authored Premise-check: command therefore inherits the user's environment
+// as is: a remote-inferring gh call inside it never sees the --repo's host. A GH_HOST
+// the user exported is theirs, and still reaches the command.
 const { pinExplicitRepoHost, _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
 
 function withGhHost(value, fn) {

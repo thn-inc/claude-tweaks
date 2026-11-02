@@ -1,12 +1,14 @@
 // plugin/bin/lib/repo-resolve.js — shared owner/repo resolution for the bin/
 // gh CLIs: the one parseRepo (#1177), the injectable `gh --version` probe, and the
 // gh host seam (#4505). ghOptions(args, opts) returns opts itself when GH_HOST is set,
-// args name -R/--repo/--hostname, or origin's host is not a known GHE host; a known
-// one (*.ghe.com or a gh hosts.yml key) gets a copy whose env adds GH_HOST, memoized
-// per cwd. An explicit --repo's host (pinExplicitRepoHost, or deps.explicitHost for one
-// call) is added the same way, to the call's own env and never to process.env (#4795). An enterprise token alone admits nothing, because gh sends it to whatever
-// GH_HOST names (#4854). It adds no timeout or windowsHide and there is no seam
-// spawn helper: each wrapped site's own `timeout` carries its bound.
+// when args name -R/--repo/--hostname (unless an explicit repo host is recorded, below),
+// or when origin's host is not a known GHE host; a known one (*.ghe.com or a gh
+// hosts.yml key) gets a copy whose env adds GH_HOST, memoized per cwd. An explicit
+// --repo's host (pinExplicitRepoHost, or deps.explicitHost for one call, which takes
+// precedence over the recorded host) is added the same way, to the call's own env and
+// never to process.env (#4795). An enterprise token alone admits nothing, because gh
+// sends it to whatever GH_HOST names (#4854). It adds no timeout or windowsHide and
+// there is no seam spawn helper: each wrapped site's own `timeout` carries its bound.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
