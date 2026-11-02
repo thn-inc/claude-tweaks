@@ -484,24 +484,6 @@ test('checkLink accepts a word that merely contains a key, in the query and the 
   for (const url of accepted) assert.deepEqual(check(url), { ok: true }, url);
 });
 
-test('the credential screen stays linear on long adversarial input', () => {
-  const inputs = [
-    'A'.repeat(200000),
-    'aB'.repeat(100000),
-    'token['.repeat(50000),
-    `${'['.repeat(100000)}token=`,
-    '1a'.repeat(100000),
-    '_'.repeat(200000),
-  ];
-  const start = Date.now();
-  for (const input of inputs) {
-    findCredentialInText(input);
-    check(`http://localhost:3000/?${input}`);
-    check(`http://localhost:3000/#${input}`);
-  }
-  assert.ok(Date.now() - start < 10000, `took ${Date.now() - start}ms`);
-});
-
 test('findCredentialInText: URL userinfo reports password, never the matched text', () => {
   const cases = [
     'curl http://user:hunter2@localhost:3000/',

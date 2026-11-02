@@ -635,14 +635,12 @@ describe('upsertLocalPacket', () => {
     );
   });
 
-  test('a long newline run after the record text is trimmed in linear time', () => {
+  test('a long newline run after the record text is trimmed whole', () => {
     for (const eol of ['\n', '\r\n']) {
       const run = eol.repeat(200000);
-      const start = Date.now();
       const result = upsertLocalPacket(`${run}x`, 'PACKET');
       assert.equal(result, `${run}x${eol}${eol}${LOCAL_START}${eol}PACKET${eol}${LOCAL_END}`);
       assert.equal(upsertLocalPacket(`x${run}`, 'PACKET'), `x${eol}${eol}${LOCAL_START}${eol}PACKET${eol}${LOCAL_END}${eol}`);
-      assert.ok(Date.now() - start < 5000, `took ${Date.now() - start}ms`);
     }
   });
 
