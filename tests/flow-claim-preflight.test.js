@@ -335,13 +335,17 @@ test('settle-and-merge.md Claim-contest special case covers the exit-6 Claims br
   assert.match(section, /no failure comment/);
 });
 
-test('AC6.1: flow/claim-targets.md carries the exit-7 card with no retry and no question (#4899)', () => {
+function readExit7Bullet() {
   const content = read('plugin/skills/flow/claim-targets.md');
   const start = content.indexOf('- **7**');
   assert.ok(start !== -1, 'exit-7 bullet should exist');
   const end = content.indexOf('\n- **2**', start);
   assert.ok(end !== -1, 'exit-7 bullet should end before the exit-2 bullet');
-  const bullet = content.slice(start, end);
+  return { content, bullet: content.slice(start, end) };
+}
+
+test('AC6.1: flow/claim-targets.md carries the exit-7 card with no retry and no question (#4899)', () => {
+  const { content, bullet } = readExit7Bullet();
   assert.match(bullet, /## Flow: Claim permission denied/);
   assert.match(bullet, /\{operation\}/);
   assert.match(bullet, /\{reason\}/);
@@ -387,10 +391,7 @@ test('the express call reports the claim permission denied line (#4899)', () => 
 });
 
 test('flow/claim-targets.md states the MCP claim path is not this stop (#4899)', () => {
-  const content = read('plugin/skills/flow/claim-targets.md');
-  const start = content.indexOf('- **7**');
-  assert.ok(start !== -1, 'exit-7 bullet should exist');
-  const bullet = content.slice(start, content.indexOf('\n- **2**', start));
+  const { bullet } = readExit7Bullet();
   assert.match(bullet, /gh-absent[^\n]*this stop/);
   assert.match(bullet, /MCP[^\n]*transient/);
   assert.match(bullet.replace(/\s+/g, ' '), /OUTCOME: build-test-blocked` \(`OUTCOME: blocked` on a second call\)/);
