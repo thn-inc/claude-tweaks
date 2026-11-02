@@ -289,6 +289,13 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
   return readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
 }
 
+// (#4899) The forge's own refusal text rides on a `permission-denied` result
+// only, so a caller can name why the claim registry refused it. Every other
+// failure keeps its exact shape (no `error` key).
+function permissionErrorField(r) {
+  return r.failure === 'permission-denied' && r.error ? { error: r.error } : {};
+}
+
 // (ghApi, repoSlug, issueNumber) -> { content, sha, failure, absent }
 // The contents-API half of `readClaimBlob`, split out so `writeClaimBlob`'s
 // transport-fallback path can re-derive a contents-API-shaped blob sha
@@ -298,7 +305,7 @@ function readClaimBlob(deps, repoSlug, issueNumber, knownTip = null) {
 function readClaimBlobContentsApi(ghApi, repoSlug, issueNumber) {
   const r = ghApi([`repos/${repoSlug}/contents/${claimPath(issueNumber)}?ref=${CLAIMS_BRANCH}`, '-q', '{content: (.content | @base64d), sha: .sha}']);
   if (r.status === 404) return { content: null, sha: null, failure: null, absent: true };
-  if (r.failure) return { content: null, sha: null, failure: r.failure, absent: false };
+  if (r.failure) return { content: null, sha: null, failure: r.failure, absent: false, ...permissionErrorField(r) };
   try {
     const parsed = JSON.parse(r.stdout);
     return { content: parsed.content, sha: parsed.sha, failure: null, absent: false };
@@ -490,7 +497,7 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // re-derive.
     if (!createOnly) {
       const fresh = readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
-      if (fresh.failure) return { ok: false, failure: fresh.failure };
+      if (fresh.failure) return { ok: false, failure: fresh.failure, ...permissionErrorField(fresh) };
       // This write's own target content is already the live blob — an
       // earlier git-CAS push landed server-side but its local ack was lost
       // to the transport failure that brought us here. Report the success
@@ -528,6 +535,10 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     // earlier attempt whose local ack was lost, not a real contest.
     const fresh = readClaimBlobContentsApi(deps.ghApi, repoSlug, issueNumber);
     if (!fresh.failure && !fresh.absent && fresh.content === content) return { ok: true, failure: null };
+    // (#4899) A refused re-read cannot tell a contest from a refusal, and a
+    // refusal is what it most likely is: report it instead of a manufactured
+    // contest. Any other re-read failure keeps today's `conflict: true`.
+    if (fresh.failure === 'permission-denied') return { ok: false, failure: fresh.failure, ...permissionErrorField(fresh) };
     // (#4495) Nothing there: either a real contest (the claim was released or
     // swept since) or the claims-registry branch itself does not exist, which
     // makes the PUT fail the same way. Only the branch lookup tells them
@@ -537,11 +548,11 @@ function writeClaimBlob(deps, repoSlug, issueNumber, {
     if (!fresh.failure && fresh.absent) {
       const lookup = readClaimsBranch(deps.ghApi, repoSlug);
       if (lookup.exists === false) return { ok: false, branchMissing: true, failure: null };
-      if (lookup.exists === null) return { ok: false, failure: lookup.result.failure };
+      if (lookup.exists === null) return { ok: false, failure: lookup.result.failure, ...permissionErrorField(lookup.result) };
     }
     return { ok: false, conflict: true, failure: null };
   }
-  return { ok: r.failure === null, failure: r.failure };
+  return { ok: r.failure === null, failure: r.failure, ...permissionErrorField(r) };
 }
 
 // (ghApi, repoSlug) -> { exists: true | false | null, result }

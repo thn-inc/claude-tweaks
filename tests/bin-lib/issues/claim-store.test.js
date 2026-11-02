@@ -1345,3 +1345,36 @@ test('writeClaimBlob: a git-CAS rejection whose fresh read finds the claims-regi
   assert.deepEqual(result, { ok: false, branchMissing: true, failure: null });
   assert.equal(state.pushCount, 1, 'no retry against a branch that no longer exists');
 });
+
+// (#4899) A permission refusal carries the forge's own error text on the read
+// and write results so a caller can name WHY the claim registry refused it.
+// Only `permission-denied` carries it: every other failure keeps its exact shape.
+test('readClaimBlob carries error on a permission-denied read only', () => {
+  const answer = (failure) => (args) => {
+    if (isRead(args, 'claims/issue-42.json')) return { stdout: null, failure, status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  assert.deepEqual(
+    readClaimBlob({ ghApi: answer('permission-denied') }, 'acme/w', 42),
+    { content: null, sha: null, failure: 'permission-denied', absent: false, error: 'HTTP 403: Resource not accessible by integration' },
+  );
+  assert.deepEqual(
+    readClaimBlob({ ghApi: answer('network-failure') }, 'acme/w', 42),
+    { content: null, sha: null, failure: 'network-failure', absent: false },
+  );
+});
+
+test('writeClaimBlob carries error on a permission-denied PUT only', () => {
+  const answer = (failure) => (args) => {
+    if (isWrite(args, 'claims/issue-7.json')) return { stdout: null, failure, status: 403, error: 'HTTP 403: Resource not accessible by integration' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  assert.deepEqual(
+    writeClaimBlob({ ghApi: answer('permission-denied') }, 'acme/w', 7, { content: '{}', message: 'x' }),
+    { ok: false, failure: 'permission-denied', error: 'HTTP 403: Resource not accessible by integration' },
+  );
+  assert.deepEqual(
+    writeClaimBlob({ ghApi: answer('network-failure') }, 'acme/w', 7, { content: '{}', message: 'x' }),
+    { ok: false, failure: 'network-failure' },
+  );
+});
