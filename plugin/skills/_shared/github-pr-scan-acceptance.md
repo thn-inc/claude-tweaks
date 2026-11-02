@@ -11,8 +11,9 @@ canonical contract two files deep is worse than one extra `Read` at dispatch tim
 file: subagents cannot read this file directly, the dispatcher inlines the relevant scope section
 whole into the scan agent's prompt.
 
-Every `gh issue list`/`gh pr list` call below carries an explicit `--limit` — see
-`github-pr-scan.md`'s own opening note for why.
+Every `gh issue list`/`gh pr list` call below carries an explicit `--limit`. The `acceptance-gap`
+and `parent-gate` scopes size theirs from `backlog-fetch-limit` (see each scope's Fetch limit
+section); the acceptance-queue fetch's fixed cap is a tracked follow-up.
 
 ## Scope: `acceptance-queue` (consumed by /help Stage 4.7)
 
