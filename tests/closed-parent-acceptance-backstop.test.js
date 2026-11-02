@@ -332,6 +332,10 @@ const PRE_4802_CLOSE = `const { readRecord, writeRecord, closeRecord } = require
   if (!/^## Closed below the oversight floor\\s*$/m.test(parentRecord.body)) {`;
 const SHARED_REQUIRE = "const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');";
 
+function localFilesCloseSection() {
+  return section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
+}
+
 function assertSharedHeadingRe(text, use) {
   assert.ok(!text.includes('/^## Closed below the oversight floor'), 'inline copy of the heading regex');
   assert.ok(text.includes(SHARED_REQUIRE), 'require of the exported regex');
@@ -345,15 +349,13 @@ test('AC1.1: Shape 7 requires the exported heading regex, not a literal', () => 
 });
 
 test('AC1.1: the local-files close requires the exported heading regex, not a literal', () => {
-  const fence = section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
   const use = 'if (!HEADING_LINE_RE.test(parentRecord.body)) {';
-  assertSharedHeadingRe(fence, use);
+  assertSharedHeadingRe(localFilesCloseSection(), use);
   assert.throws(() => assertSharedHeadingRe(PRE_4802_CLOSE, use), /inline copy of the heading regex/);
 });
 
 test('AC1.1: the local-files close fence appends the section once and closes the parent', () => {
-  const fence = section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
-  const m = /```js\r?\n([\s\S]*?)\r?\n```/.exec(fence);
+  const m = /```js\r?\n([\s\S]*?)\r?\n```/.exec(localFilesCloseSection());
   assert.ok(m, 'the local-files close section carries a js fence');
   const commentFile = path.join(mkTmp('cp-close-'), 'comment.md');
   fs.writeFileSync(commentFile, MARKER);
