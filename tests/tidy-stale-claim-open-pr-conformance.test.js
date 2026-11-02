@@ -140,11 +140,18 @@ const DISPOSITION_FACTS = [
   { name: 'resume disposition', pin: 'PR #{prNumber}: resume — /claude-tweaks:dispatch resume #{n}' },
   { name: 'no-pr appends nothing', pin: 'exit 3 with reason `no-pr`, append nothing' },
   { name: 'refused disposition', pin: 'PR #{number}: {disposition} — {remedy}' },
+  { name: 'several PRs on one line', pin: '(ascending, on one line: several PRs render `PR #{a}, #{b}: {disposition} — {remedy}`)' },
   { name: 'disposition vocabulary', pin: '`disposition` (`resume`, `close-out` or `close`)' },
   { name: 'lands in the finding', pin: "end of the `[claim]` row's `{recommendation}`" },
   { name: 'a failed read is stated', pin: /exit 2 or 4[^.]*open linked PR unknown \(dispatch-resume exit \{code\}\)/ },
   { name: 'gh-absent transport citation', pin: '`_shared/github-write-transport.md`' },
-  { name: 'matched Resume row', pin: 'replaces `{resume}` with `{disposition} — {remedy}`' },
+  { name: 'matched row is scoped to the dispatch form', pin: 'runs the verdict only when the printed `resume` is `/claude-tweaks:dispatch resume #{n}`' },
+  { name: 'a PR body resume line stands', pin: "a PR body's own resume line stands, with no verdict run" },
+  { name: 'matched row exit 0 keeps the command', pin: 'exit 0 keeps the printed command' },
+  { name: 'matched row no-pr resolves', pin: 'render `Resolve open PR #{number} ({url}) before any release` instead' },
+  { name: 'matched row replaced rendering', pin: 'renders `PR #{number} ({url}): {disposition} — {remedy}` in place of the Resume rendering' },
+  { name: 'matched row failed read keeps the command', pin: 'on exit 2 or 4 it keeps the command and appends the same unknown note' },
+  { name: 'matched row stays never staged', pin: 'That row stays never staged and its claim never released' },
   { name: 'stale claim reads resumable', pin: 'the same as the `swept: stale claim` tombstone the Release writes' },
 ];
 
@@ -179,28 +186,66 @@ test('AC4.1 control: a section-less file reports every fact missing (#4849)', ()
   assert.deepEqual(missingDispositionFacts(BACKSTOPS.replace(DISPOSITION_HEADING, '### Something else')), DISPOSITION_FACTS.map((f) => f.name));
 });
 
+const HANDOFF = "means Release plus `issue-claims-backstops.md`'s PR disposition.";
+const OLD_HANDOFF = 'means plain Release.';
+
+function handoffProblems(flat) {
+  const problems = [];
+  if (!flat.includes(HANDOFF)) problems.push('hand-off');
+  if (flat.includes(OLD_HANDOFF)) problems.push('old sentence');
+  return problems;
+}
+
 test('AC4.1: the plain-Release sentence hands to the disposition section (#4849)', () => {
+  assert.deepEqual(handoffProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+});
+
+test('AC4.1 control: dropping the hand-off sentence reports only the hand-off (#4849)', () => {
   const flat = claimAuditSection().replace(/\s+/g, ' ');
-  assert.ok(flat.includes("means Release plus `issue-claims-backstops.md`'s PR disposition."));
-  assert.ok(!flat.includes('means plain Release.'), 'the old plain-Release sentence is gone');
-});
-
-test('AC4.1 control: the old plain-Release sentence fails the hand-off pin (#4849)', () => {
-  const flat = claimAuditSection().replace(/\s+/g, ' ').replace("means Release plus `issue-claims-backstops.md`'s PR disposition.", 'means plain Release.');
-  assert.ok(!flat.includes("means Release plus `issue-claims-backstops.md`'s PR disposition."));
-});
-
-const STAGED_ROW_PIN = /`claim-releases`[^.]*`action`[^.]*PR disposition[^.]*verbatim/;
-
-test('AC4.1: a staged claim-releases row carries the disposition into the approval text (#4849)', () => {
-  assert.match(STEP6.replace(/\s+/g, ' '), STAGED_ROW_PIN);
-});
-
-test('AC4.1 control: step-6-auto without the claim-releases sentence fails the pin (#4849)', () => {
-  const flat = STEP6.replace(/\s+/g, ' ');
-  const mutated = flat.replace(STAGED_ROW_PIN, '');
+  const mutated = flat.replace(HANDOFF, '');
   assert.notEqual(mutated, flat);
-  assert.doesNotMatch(mutated, STAGED_ROW_PIN);
+  assert.deepEqual(handoffProblems(mutated), ['hand-off']);
+});
+
+test('AC4.1 control: the old plain-Release sentence alone is reported as the old sentence (#4849)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  const mutated = `${flat} ${OLD_HANDOFF}`;
+  assert.notEqual(mutated, flat);
+  assert.deepEqual(handoffProblems(mutated), ['old sentence']);
+});
+
+// A staged claim-releases row's action stays the short form so the Approve item passes the Width gate;
+// a close remedy never fits a `command` line (its worktree path alone runs past 100 characters).
+const STAGED_FACTS = [
+  { name: 'short form only', pin: "`claim-releases` row's `action` carries only the short form `PR #{number}: {disposition}`" },
+  { name: 'full remedy stays in the finding', pin: "the full remedy stays in the finding's `{recommendation}`" },
+  { name: 'command stays the release mutation', pin: 'which stays the release mutation' },
+];
+const STAGED_BANNED = /`claim-releases`[^.]*verbatim/;
+
+function stagedProblems(flat) {
+  const problems = STAGED_FACTS.filter(({ pin }) => !flat.includes(pin)).map((f) => f.name);
+  if (STAGED_BANNED.test(flat)) problems.push('verbatim');
+  return problems;
+}
+
+test('AC4.1: a staged claim-releases row carries the short disposition and keeps the remedy off command (#4849)', () => {
+  assert.deepEqual(stagedProblems(STEP6.replace(/\s+/g, ' ')), []);
+});
+
+for (const fact of STAGED_FACTS) {
+  test(`AC4.1 control: step-6-auto without "${fact.name}" reports exactly that fact (#4849)`, () => {
+    const flat = STEP6.replace(/\s+/g, ' ');
+    const mutated = flat.replace(fact.pin, '');
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(stagedProblems(mutated), [fact.name]);
+  });
+}
+
+test('AC4.1 control: a claim-releases action that carries the disposition verbatim is reported (#4849)', () => {
+  const flat = STEP6.replace(/\s+/g, ' ');
+  const mutated = `${flat} A \`claim-releases\` row's \`action\` carries the PR disposition verbatim.`;
+  assert.deepEqual(stagedProblems(mutated), ['verbatim']);
 });
 
 // [\s\S] not [^.]: the sentence names `release-claim.js`, whose dot would end a [^.]* window.
