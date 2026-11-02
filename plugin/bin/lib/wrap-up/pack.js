@@ -159,7 +159,8 @@ function toSummary(r) {
 // The frontmatter `record:` line wins over the filename when both exist.
 // `parkedAtShaping` is true when any file for that record carries the flag —
 // read only from the leading frontmatter block, so a body line quoting the key
-// never counts (#3399).
+// never counts (#3399). `record:` is read from that block only too, so a quoted
+// body line never wins over the filename (#4814).
 function headerEntries(deps, dir) {
   const byRecord = new Map();
   for (const name of deps.readdir(dir)) {
@@ -167,9 +168,9 @@ function headerEntries(deps, dir) {
     if (!m) continue;
     let text = '';
     try { text = deps.readFile(path.join(dir, name)); } catch { continue; }
-    const rec = /^record:\s*(\d+)\s*$/m.exec(text);
-    const n = Number(rec ? rec[1] : m[1]);
     const front = /^---\r?\n([\s\S]*?)\r?\n---/.exec(text);
+    const rec = front !== null ? /^record:\s*(\d+)\s*$/m.exec(front[1]) : null;
+    const n = Number(rec ? rec[1] : m[1]);
     const parked = front !== null && /^parked-at-shaping:\s*true\s*$/m.test(front[1]);
     byRecord.set(n, byRecord.get(n) === true || parked);
   }

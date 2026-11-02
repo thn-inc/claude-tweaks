@@ -271,6 +271,7 @@ node -e "
   const { parentGateState, closedParentGap } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/acceptance.js');
   const { exceedsOversightFloor } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/oversight-floor.js');
   const { TIERS } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+  const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
   const [riskFloor] = process.argv.slice(1);
   const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
   const parents = [
@@ -290,7 +291,7 @@ node -e "
       needsDefinition: p.facets.needsDefinition === true,
       closed: p.facets.closed === true,
       notPlanned: p.facets.notPlanned === true,
-      belowFloorClose: /^## Closed below the oversight floor\s*$/m.test(p.body || ''),
+      belowFloorClose: HEADING_LINE_RE.test(p.body || ''),
       parentLabels: p.facets.acceptance ? ['demo:' + p.facets.acceptance] : [],
       subIssues: subIssueRecords.map((r) => ({ number: r.id, state: r.facets.closed ? 'CLOSED' : 'OPEN', risk: r.facets.risk })),
     };
