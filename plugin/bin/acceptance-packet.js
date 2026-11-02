@@ -322,7 +322,7 @@ function runSnapshot(opts, deps) {
   try {
     gitDirPath = deps.gitDir();
   } catch {
-    gitDirPath = null;
+    // No git dir: the git-dir sources below read as absent.
   }
   const verifyReport = gitDirPath ? readSource(deps, path.join(gitDirPath, VERIFY_REPORT_SOURCE)) : { status: 'absent' };
   const qaStamp = stampSource(gitDirPath, head, deps);
@@ -408,7 +408,7 @@ function readStampStories(head, snapshot, deps) {
     const sha = deps.git(['rev-parse', '--verify', '--end-of-options', head]).trim();
     stories = storiesFromQaStamp(readQaStamp(deps.gitDir(), readerOf(deps)), sha);
   } catch {
-    stories = null;
+    // Falls through to the snapshot's copy of the stamp.
   }
   return stories ?? storiesFromQaStamp(snapshot.stamp, snapshot.head);
 }
@@ -606,6 +606,24 @@ function renderToFiles(opts, deps) {
 
 const startsWithMarker = (body) => body.split(/\r?\n/, 1)[0] === PACKET_MARKER;
 
+// { body } when --body-file reads and its first line is the packet marker, else { code }
+// with stderr saying why: 1 for an unreadable file, 2 for a missing marker. The next run
+// finds the comment by that line, so a body without it would become a second packet.
+function readPacketBody(opts, deps) {
+  let body;
+  try {
+    body = deps.readFile(opts.bodyFile);
+  } catch (err) {
+    deps.stderr(`acceptance-packet.js: could not read --body-file ${opts.bodyFile} (${messageOf(err)})\n`);
+    return { code: 1 };
+  }
+  if (!startsWithMarker(body)) {
+    deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
+    return { code: 2 };
+  }
+  return { body };
+}
+
 function runPost(opts, deps) {
   let repoSpec = null;
   if (opts.repo !== undefined) {
@@ -618,18 +636,8 @@ function runPost(opts, deps) {
   }
   // Ahead of every other check: gh reading a missing file would count as a failed post,
   // which clears a pending label, and the MCP path would post from the same missing file.
-  let body;
-  try {
-    body = deps.readFile(opts.bodyFile);
-  } catch (err) {
-    deps.stderr(`acceptance-packet.js: could not read --body-file ${opts.bodyFile} (${messageOf(err)})\n`);
-    return 1;
-  }
-  // The next run finds the comment by this line, so a body without it would become a second packet.
-  if (!startsWithMarker(body)) {
-    deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
-    return 2;
-  }
+  const { code } = readPacketBody(opts, deps);
+  if (code !== undefined) return code;
   if (!deps.ghAvailable()) {
     deps.stderr(`acceptance-packet.js: ${GH_ABSENT}\n`);
     return 4;
@@ -661,17 +669,8 @@ function runPost(opts, deps) {
 
 function runLocal(opts, deps) {
   const pending = opts.pending === true;
-  let packet;
-  try {
-    packet = deps.readFile(opts.bodyFile);
-  } catch (err) {
-    deps.stderr(`acceptance-packet.js: could not read --body-file ${opts.bodyFile} (${messageOf(err)})\n`);
-    return 1;
-  }
-  if (!startsWithMarker(packet)) {
-    deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
-    return 2;
-  }
+  const { body: packet, code } = readPacketBody(opts, deps);
+  if (code !== undefined) return code;
   try {
     const record = deps.readRecord(opts.recordFile);
     deps.writeRecord(opts.recordFile, {
