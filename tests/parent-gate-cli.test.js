@@ -316,6 +316,7 @@ test('a flag override skips the policy check for its own key only', () => {
 
 test('an Enterprise origin puts the host on every gh read; the verdict is the github.com one', () => {
   const GHE = 'ghe.example.com';
+  const leadsHost = (a) => a[0] === 'api' && a[1] === 'graphql' && a[2] === '--hostname' && a[3] === GHE;
   const bodies = { 11: 'Intro\n\nParent: #10\n', 10: '- [ ] #11\n- [x] #12\n' };
   for (const [argv, world] of [[['--sub-issue', '11', '--idempotence'], {}], [['--sub-issue', '11', '--work-links', 'body-text', '--idempotence'], { bodies }]]) {
     const { gh } = makeGh({ parentOf: { 11: 10, 12: 10 }, subs: { 10: [11, 12] }, ...world });
@@ -324,17 +325,18 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
     const runner = (args) => {
       sent.push(args);
       const n = args.length;
-      const plain = args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE
-        ? args.slice(0, -2)
-        : args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a));
-      return gh(plain);
+      // fetch-sub-issues.js sends its GraphQL reads with the host right after `graphql` (#4806).
+      if (leadsHost(args)) return gh(['api', 'graphql', ...args.slice(4)]);
+      if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) return gh(args.slice(0, -2));
+      return gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
     };
     const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner });
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.verdict, go(argv, world).verdict);
     assert.ok(sent.some(isShape8), 'the login read is reached');
     for (const a of sent) {
-      if (a[0] === 'api') assert.deepEqual([a.filter((x) => x === '--hostname').length, a.slice(-2)], [1, ['--hostname', GHE]], a.join(' '));
+      if (leadsHost(a)) assert.equal(a.filter((x) => x === '--hostname').length, 1, a.join(' '));
+      else if (a[0] === 'api') assert.deepEqual([a.filter((x) => x === '--hostname').length, a.slice(-2)], [1, ['--hostname', GHE]], a.join(' '));
       else assert.deepEqual(a.slice(3, 5), ['--repo', `${GHE}/o/r`], a.join(' '));
     }
   }
