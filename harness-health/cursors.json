@@ -57,7 +57,7 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793574873621
+    "lastAuditedMs": 1793593281953
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
@@ -181,7 +181,7 @@
   },
   "skill:merge-shape-landed-proof": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793566710942
+    "lastAuditedMs": 1793590262052
   },
   "skill:test": {
     "lastAuditedSha": null,
@@ -201,7 +201,7 @@
   },
   "skill:mcp-agent-fetch-node-compute": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793574871307
+    "lastAuditedMs": 1793590264128
   },
   "skill:post-merge-workflow-live-probe": {
     "lastAuditedSha": null,
