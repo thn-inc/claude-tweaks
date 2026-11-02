@@ -1,0 +1,252 @@
+// tests/bin-lib/wrap-up/packet-links.test.js
+// Acceptance-packet contract constants and link rules (#4611).
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const {
+  SCHEMA_VERSION,
+  PACKET_MARKER,
+  PACKET_MARKER_RE,
+  LOCAL_START,
+  LOCAL_END,
+  FACT_KINDS,
+  FACT_STATUSES,
+  CLAIM_SECTIONS,
+  SECTION_KINDS,
+  SECTIONS,
+  MAX_PACKET_CHARS,
+  CREDENTIAL_KEYS,
+  FACT_ID_RE,
+  encodeFactKey,
+  VERIFICATION_WORDS,
+  VERIFICATION_CLAIM_RE,
+} = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const {
+  normalizeKey,
+  checkLink,
+  findCredentialInText,
+} = require('../../../plugin/bin/lib/wrap-up/packet-links');
+
+const allowedHosts = ['http://localhost:3000', 'https://dev.example.com'];
+const check = (url) => checkLink(url, { allowedHosts });
+
+test('checkLink accepts an allowed host, and never checks the path', () => {
+  assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
+  assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });
+});
+
+test('checkLink refuses with the exact reason for each rule', () => {
+  const cases = [
+    ['https://evil.example/x', 'host not allowed: evil.example'],
+    ['javascript:alert(1)', 'scheme not http(s)'],
+    ['ftp://localhost:3000/', 'scheme not http(s)'],
+    ['http://localhost:3000/?TOKEN=abc', 'credential key in query: token'],
+    ['http://localhost:3000/?tok%65n=abc', 'credential key in query: token'],
+    ['http://localhost:3000/p#sig=abc', 'credential key in fragment: sig'],
+    ['http://user:pass@localhost:3000/', 'credential in userinfo'],
+    ['http://localhost:3000/?sessionid=1', 'credential key in query: sessionid'],
+    ['http://localhost:3000/?X-Amz-Signature=1', 'credential key in query: x-amz-signature'],
+    ['not a url', 'unparseable url'],
+  ];
+  for (const [url, reason] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason }, url);
+  }
+});
+
+test('checkLink userinfo: a username alone or a password alone is refused', () => {
+  assert.deepEqual(check('http://user@localhost:3000/'), { ok: false, reason: 'credential in userinfo' });
+  assert.deepEqual(check('http://:pass@localhost:3000/'), { ok: false, reason: 'credential in userinfo' });
+});
+
+test('checkLink host match is on the hostname, lowercased, not on a prefix of the URL', () => {
+  assert.deepEqual(check('http://LOCALHOST:3000/'), { ok: true });
+  assert.deepEqual(check('http://localhost:9999/'), { ok: true });
+  assert.deepEqual(check('http://localhost.evil.example/'), { ok: false, reason: 'host not allowed: localhost.evil.example' });
+  assert.deepEqual(check('http://evil.example/#@localhost:3000'), { ok: false, reason: 'host not allowed: evil.example' });
+});
+
+test('checkLink allowedHosts takes base URLs and bare hosts alike, case-insensitively', () => {
+  assert.deepEqual(checkLink('https://dev.example.com/a', { allowedHosts: ['DEV.Example.com'] }), { ok: true });
+  assert.deepEqual(checkLink('https://dev.example.com/a', { allowedHosts: ['https://DEV.example.com/base/'] }), { ok: true });
+});
+
+test('checkLink fails closed on no allowed hosts and on an absent host in the list', () => {
+  assert.deepEqual(checkLink('http://localhost/', { allowedHosts: [] }), { ok: false, reason: 'host not allowed: localhost' });
+  assert.deepEqual(checkLink('http://localhost/'), { ok: false, reason: 'host not allowed: localhost' });
+  assert.deepEqual(checkLink('http://undefined/', { allowedHosts: [undefined, null] }), { ok: false, reason: 'host not allowed: undefined' });
+});
+
+test('checkLink non-string url is unparseable, not a throw', () => {
+  assert.deepEqual(check(undefined), { ok: false, reason: 'unparseable url' });
+});
+
+test('checkLink query keys: a double-encoded key and a valueless key both refuse; a non-key does not', () => {
+  assert.deepEqual(check('http://localhost:3000/?%2574oken=abc'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/?a=1&jwt'), { ok: false, reason: 'credential key in query: jwt' });
+  assert.deepEqual(check('http://localhost:3000/?monkey=1&tokens=2'), { ok: true });
+});
+
+test('checkLink fragment keys: split on &, text before =, decoded and lowercased', () => {
+  assert.deepEqual(check('http://localhost:3000/p#a=1&SIG=abc'), { ok: false, reason: 'credential key in fragment: sig' });
+  assert.deepEqual(check('http://localhost:3000/p#tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
+  assert.deepEqual(check('http://localhost:3000/p#a=1&password'), { ok: false, reason: 'credential key in fragment: password' });
+  assert.deepEqual(check('http://localhost:3000/p#section-2'), { ok: true });
+  assert.deepEqual(check('http://localhost:3000/p#note=token'), { ok: true });
+});
+
+test('every credential key refuses in query and in fragment', () => {
+  for (const key of CREDENTIAL_KEYS) {
+    assert.deepEqual(check(`http://localhost:3000/?${key}=1`), { ok: false, reason: `credential key in query: ${key}` });
+    assert.deepEqual(check(`http://localhost:3000/#${key}=1`), { ok: false, reason: `credential key in fragment: ${key}` });
+  }
+});
+
+test('normalizeKey decodes up to three layers, then lowercases', () => {
+  assert.equal(normalizeKey('TOKEN'), 'token');
+  assert.equal(normalizeKey('tok%65n'), 'token');
+  assert.equal(normalizeKey('%252574oken'), 'token');
+  assert.equal(normalizeKey('%25252574oken'), '%74oken');
+});
+
+test('normalizeKey survives malformed percent escapes', () => {
+  assert.equal(normalizeKey('100%'), '100%');
+  assert.equal(normalizeKey('TOK%ZZ'), 'tok%zz');
+  assert.equal(normalizeKey('%2525ZZ'), '%zz');
+});
+
+test('contract constants hold their exact values', () => {
+  assert.equal(SCHEMA_VERSION, 1);
+  assert.equal(PACKET_MARKER, '<!-- acceptance-packet: v1 -->');
+  assert.equal(LOCAL_START, '<!-- acceptance-packet:start -->');
+  assert.equal(LOCAL_END, '<!-- acceptance-packet:end -->');
+  assert.equal(MAX_PACKET_CHARS, 60000);
+  assert.deepEqual(FACT_KINDS, ['change', 'check', 'story', 'finding', 'link', 'recording', 'flag', 'decision', 'deploy']);
+  assert.deepEqual(FACT_STATUSES, ['passed', 'failed', 'skipped', 'not-run']);
+  assert.deepEqual(CLAIM_SECTIONS, ['what-changed', 'test-guide', 'tried-to-break', 'least-confident', 'risk-proofs']);
+  assert.deepEqual(SECTION_KINDS, {
+    'what-changed': ['change'],
+    'test-guide': ['story', 'link'],
+    'tried-to-break': ['story', 'check'],
+    'least-confident': ['finding'],
+    'risk-proofs': ['flag', 'check', 'story', 'recording', 'link'],
+  });
+  assert.deepEqual(CREDENTIAL_KEYS, [
+    'token', 'access_token', 'password', 'passwd', 'secret', 'session', 'sessionid',
+    'jwt', 'auth', 'key', 'api_key', 'sig', 'signature', 'x-amz-signature',
+  ]);
+  assert.equal(CREDENTIAL_KEYS.length, 14);
+});
+
+test('PACKET_MARKER_RE anchors on the first line and captures the version', () => {
+  assert.equal(PACKET_MARKER_RE.exec(PACKET_MARKER)[1], '1');
+  assert.equal(PACKET_MARKER_RE.exec('<!-- acceptance-packet: v12 -->\nbody')[1], '12');
+  assert.equal(PACKET_MARKER_RE.test(`text\n${PACKET_MARKER}`), false);
+  assert.equal(PACKET_MARKER_RE.test(LOCAL_START), false);
+});
+
+test('SECTIONS render order: keys and headings', () => {
+  assert.deepEqual(SECTIONS.map((s) => s.key), [
+    'what-changed', 'recording', 'test-guide', 'couldnt-test', 'tried-to-break',
+    'least-confident', 'risk-proofs', 'decisions', 'deploy',
+  ]);
+  assert.deepEqual(SECTIONS.map((s) => s.heading), [
+    'What changed', 'Recording', 'Test guide', "Couldn't test", 'Tried to break',
+    'Least confident', 'Risk proofs', 'Decisions left for you', 'Deploy status',
+  ]);
+});
+
+test('every claim section is a rendered section and has a kinds row', () => {
+  const rendered = SECTIONS.map((s) => s.key);
+  for (const section of CLAIM_SECTIONS) {
+    assert.ok(rendered.includes(section), section);
+    assert.ok(Object.hasOwn(SECTION_KINDS, section), section);
+    for (const kind of SECTION_KINDS[section]) assert.ok(FACT_KINDS.includes(kind), kind);
+  }
+});
+
+test('exports are frozen all the way down', () => {
+  const frozen = [FACT_KINDS, FACT_STATUSES, CLAIM_SECTIONS, SECTION_KINDS, SECTIONS, CREDENTIAL_KEYS, VERIFICATION_WORDS];
+  for (const value of frozen) assert.ok(Object.isFrozen(value));
+  for (const row of Object.values(SECTION_KINDS)) assert.ok(Object.isFrozen(row));
+  for (const row of SECTIONS) assert.ok(Object.isFrozen(row));
+  assert.ok(Object.isFrozen(require('../../../plugin/bin/lib/wrap-up/packet-contract')));
+});
+
+test('VERIFICATION_CLAIM_RE is built from VERIFICATION_WORDS and matches whole words', () => {
+  assert.deepEqual(VERIFICATION_WORDS, ['tested', 'verified', 'works']);
+  assert.match('Login Verified', VERIFICATION_CLAIM_RE);
+  assert.match('it works', VERIFICATION_CLAIM_RE);
+  assert.match('I TESTED this', VERIFICATION_CLAIM_RE);
+  assert.doesNotMatch('Open the login page', VERIFICATION_CLAIM_RE);
+  assert.doesNotMatch('networks', VERIFICATION_CLAIM_RE);
+});
+
+test('findCredentialInText returns the matched key', () => {
+  const cases = [
+    ['curl -H "Authorization: Bearer x" http://localhost:3000/', 'authorization'],
+    ['curl -H "authorization : Bearer x"', 'authorization'],
+    ['cli --key abc', 'key'],
+    ['cli --token=abc', 'token'],
+    ['cli --token', 'token'],
+    ['export API_KEY=abc', 'api_key'],
+    ['TOKEN=abc npm start', 'token'],
+    ['tok%65n=abc', 'token'],
+    ['Open settings with password: hunter2', 'password'],
+    ['password = hunter2', 'password'],
+    ['x-amz-signature=1', 'x-amz-signature'],
+    ['first line\nsecret=1', 'secret'],
+    ['--sessionid=1', 'sessionid'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+});
+
+test('findCredentialInText returns null for text that only resembles a credential', () => {
+  const cases = [
+    'node plugin/bin/acceptance-packet.js --help',
+    'see /docs/token-guide',
+    'monkey=1',
+    'Open the session list',
+    'cli --tokens abc',
+    'cli --key-file abc',
+    'cli my--key abc',
+    'my_token=1',
+    '',
+  ];
+  for (const text of cases) assert.equal(findCredentialInText(text), null, text);
+});
+
+test('every credential key is found in flag and assignment shape', () => {
+  for (const key of CREDENTIAL_KEYS) {
+    assert.equal(findCredentialInText(`cli --${key} x`), key);
+    assert.equal(findCredentialInText(`${key}=x`), key);
+    assert.equal(findCredentialInText(`Use ${key.toUpperCase()}: x`), key);
+  }
+});
+
+test('encodeFactKey escapes everything outside the id alphabet', () => {
+  const cases = [
+    ['src/routes/+page.svelte', 'src/routes/%2Bpage.svelte'],
+    ['app/(marketing)/[slug]/page.tsx', 'app/%28marketing%29/%5Bslug%5D/page.tsx'],
+    ['docs/my notes.md', 'docs/my%20notes.md'],
+    ['100%.md', '100%25.md'],
+    ['café.js', 'caf%C3%A9.js'],
+    ['login#negative-2', 'login#negative-2'],
+    ['A_z.0/#:@-', 'A_z.0/#:@-'],
+    ['a😀', 'a%F0%9F%98%80'],
+    ['a\nb', 'a%0Ab'],
+  ];
+  for (const [raw, encoded] of cases) {
+    assert.equal(encodeFactKey(raw), encoded);
+    assert.match(`change:${encoded}`, FACT_ID_RE);
+  }
+});
+
+test('encodeFactKey never throws: a lone surrogate still yields a valid id', () => {
+  assert.match(`change:${encodeFactKey('a\uD800b')}`, FACT_ID_RE);
+});
+
+test('FACT_ID_RE accepts only the escapes encodeFactKey produces', () => {
+  for (const id of ['change:+page.svelte', 'change:100%.md', 'change:%2b', 'change:', 'Change:a', ':a', 'change', 'change:a b', 'change:a\n']) {
+    assert.doesNotMatch(id, FACT_ID_RE, id);
+  }
+  assert.match('deploy-target:a', FACT_ID_RE);
+});
