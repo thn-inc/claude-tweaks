@@ -116,7 +116,7 @@ PIPELINE_RUN_DIR="{run-dir}" CLAIM_RUN_ID="{RUN_ID}" /claude-tweaks:wrap-up {tar
 idempotent overlap section 6 item 2 already describes. This dispatching session's own report for
 the group is a **no-op**, never `pending-review` — the record is closed via the staged Close
 proposal, not shipped via a merge this firing performed. Only once that cleanup call returns does
-this session enter the next group's worktree.
+this session enter the next group's worktree (none after a Claim permission stop: the firing ends, `SKILL.md`).
 
 ## 8. Continuing a handed-off call (#4027)
 

@@ -181,7 +181,7 @@ this skill's directory).
 
 Loop: run the `next` ranking below (`next-ranking.md` verbatim, oversized, neighbour-in-flight, and this-firing-excluded groups excluded via the unified `dispatch-exclusions.json` — maintain per `firing-exclusion.md`, this skill's dir) → dispatch the pick through Steps 4-6 → re-run Step 2's queue pull → repeat until `{budget}` attempts, the ranking returns `null`, or a Claim permission stop ends the firing. Report each iteration as it completes, plus a final line naming groups still eligible but undispatched at budget exhaustion.
 
-**At loop termination (`{budget}` attempts spent, or the ranking returns `null`), close this firing's own bookkeeping (#2430)** — logged, non-interactive, never an `AskUserQuestion` (`CLAUDE.md`'s Auto-Mode Contract):
+**At loop termination (`{budget}` attempts spent, the ranking returns `null`, or a Claim permission stop), close this firing's own bookkeeping (#2430)** — logged, non-interactive, never an `AskUserQuestion` (`CLAUDE.md`'s Auto-Mode Contract):
 
 - **When `express-lane` resolves `true`**, first run `node "${CLAUDE_PLUGIN_ROOT}/bin/express-lane.js" samples` and dispatch `express-prompt.md`'s review call per sampled PR, sequentially.
 - **If Step 1 minted `$RUN_ID`** (never if it adopted an existing directory — see Step 1's note): `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_ID"`. An adopted directory is left alone and the skip is reported in this firing's own end-of-run output — `run dir {basename} adopted from a prior run, not closed by this firing` — since closing it would end a sibling session's own run enforcement and event logging mid-flight, exactly the hazard a still-open run directory's SessionStart notice warns about.

@@ -409,6 +409,17 @@ test('a dispatched first call learns the exact gate value, and teardown skips th
   assert.match(gate, /none after a Claim permission stop/);
   const sectionE = read('plugin/skills/wrap-up/cleanup-procedures-execution.md');
   assert.match(sectionE, /Skip this whole section when the invocation names `claim-permission-denied: skip the claim release`/);
+  assert.match(sectionE, /The skip is noted in the wrap-up summary/);
+  // The receiver: wrap-up's flags.md declares the phrase, so it is not read as a record reference.
+  const flags = read('plugin/skills/wrap-up/flags.md');
+  assert.match(flags, /`\(claim-permission-denied: skip the claim release\)`[^\n]*stripped before input classification[^\n]*never read as a record reference/);
+});
+
+test('the other "move on" sites name the Claim permission stop (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/sequential-execution.md'), /group N\+1 \(none after a Claim permission stop/);
+  assert.match(read('plugin/skills/dispatch/two-call-gate.md'), /next group's worktree \(none after a Claim permission stop: the firing ends, `SKILL\.md`\)\.\n\n## 8\./);
+  assert.match(read('plugin/skills/_shared/express-lane.md'), /on a Claim permission stop, exit 7, Settle skips steps 1-7/);
+  assert.match(read('plugin/skills/dispatch/SKILL.md'), /the ranking returns `null`, or a Claim permission stop\), close/);
 });
 
 test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {
@@ -458,7 +469,7 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
     readText(file).split('\n').forEach((line, i) => {
       if (
         /(claim read( or write)?|claim write|401\/403)[^.\n]{0,80}\bexits? 4\b/i.test(line)
-        || /\bexits? 4\b[^.\n]{0,80}(refused|401\/403)[^.\n]{0,80}claim/i.test(line)
+        || /\bexits? 4\b[^.\n]{0,80}((refused|401\/403)[^.\n]{0,80}claim|claim (read|write)[^.\n]{0,80}(refus|401|403))/i.test(line)
       ) {
         offenders.push(`${path.relative(REPO_ROOT, file)}:${i + 1}`);
       }
