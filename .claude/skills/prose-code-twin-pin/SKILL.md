@@ -285,6 +285,23 @@ its shape owes:
 Walk the procedure section by section, and name the shape each part takes, before you call the
 mirror pinned.
 
+**Template-with-placeholder-shapes instance (#4785):** `plugin/skills/build/stash-guard.md`
+documents the restore line `plugin/bin/stash-guard.js` writes to `decisions.md`: the template
+(`AUTO {time} — Stash guard: {who} removed stash entr{y,ies} {sha subject …}; …`) and, right
+after it, the `{who}` forms in a parenthetical comma-run. The placeholders carry shapes
+(`entr{y,ies}`, a variable subject list), so the composer row's whole-string `strictEqual` cannot
+apply, and the `{who}` list is a closed vocabulary with no table rows to walk.
+`tests/stash-guard.test.js`'s AC3.1 test pins both from the live CLI. It drives the real `run()`
+once per dispatch-id shape (`--label` alone, `--task` with `--label`, `--task` alone) and collects
+the `AUTO` lines from the `decisions.md` it wrote. It compiles the prose template into a regex,
+each placeholder swapped for its shape and every fixed span escaped, and requires every emitted
+line to match. It parses the `{who}` list out of the prose and compares it with the emitted `who`
+values in both directions, after expanding `{k}` and `{role}`. Its go-red controls run through the
+same helper: a reworded template span fails once per shape, and a dropped `{who}` form fails once.
+When a prose template has placeholder shapes, compile it to a regex and run it over the real
+writer's output for every input shape the writer takes; typed-in lines agree with the prose by
+construction.
+
 ## Existing coverage, checked
 
 `skill-prose-conformance-tests` is the closest sibling, but covers the other half of the problem.
