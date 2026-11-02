@@ -38,6 +38,10 @@ const { manifestInit, transitionSpec, readManifest } = require(path.join(__dirna
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
+// An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks the fixture's cwd, which would aim
+// the fixture commits at the checkout running this suite (tests/stash-guard.test.js does the same).
+for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete process.env[name];
+
 function repo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-overwrite-')));
   const git = (...a) => execFileSync('git', a, {
@@ -77,7 +81,10 @@ function commitAt(fx, message, iso, committerIso = iso) {
 function manifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
   const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-manifest-')));
   manifestInit({ runDir, specs: ids, parent: 'p/' });
-  for (const [specId, status, phase, iso] of transitions) transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+  for (const [specId, status, phase, iso] of transitions) {
+    const res = transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+    assert.ok(res.ok, `fixture transition rejected: ${JSON.stringify([specId, status, phase, res.reason])}`);
+  }
   return { runDir, manifest: readManifest(runDir) };
 }
 function checkStories(fx, manifest) {
@@ -1225,6 +1232,14 @@ test('computeSpecWindows: windows are sorted by first transition, not by manifes
     { id: 10, start: Date.parse(T0), end: Date.parse(T1) },
     { id: 11, start: Date.parse(T1), end: Infinity },
   ]);
+});
+
+test('computeSpecWindows: a present startedAt wins over an earlier phases[].at', () => {
+  // Hand-edited shape: the writer sets both from one clock, so they only differ here.
+  const manifest = { multispec: { parent: 'p/', specs: [{ id: 10, status: 'complete', startedAt: T1, phases: [{ phase: 'build', status: 'running', at: T0 }] }] } };
+  const { windows, off } = computeSpecWindows(manifest);
+  assert.strictEqual(off, null);
+  assert.deepStrictEqual(windows, [{ id: 10, start: Date.parse(T1), end: Infinity }]);
 });
 
 test('computeSpecWindows: an empty-string startedAt is absent data, so phases[].at gives the first transition', () => {

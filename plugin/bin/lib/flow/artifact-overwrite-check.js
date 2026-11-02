@@ -25,7 +25,7 @@
 //      start inclusive, up to the next spec's first transition, exclusive, and
 //      the last is open-ended; otherwise nothing. Git author dates carry whole
 //      seconds, so an author date in the same whole second as any later
-//      spec's first transition is ambiguous and stays unattributed (Q10), as
+//      spec's first transition is ambiguous and stays unattributed (#4593 Q10), as
 //      does one inside no window. Windows are off (refs-only) when no manifest
 //      is given, any spec's status is not `complete` or `running`, any spec
 //      has no recorded transition, or spec transitions interleave (a spec has
@@ -84,8 +84,10 @@ const { splitLogZ, parseNameStatusTokens } = require('../git-z');
 
 const GIT_TIMEOUT_MS = 10000;
 
-// Thrown only for an actual git-command failure (unresolvable ref, git not
-// on PATH, a real environment problem) -- never for a bug in this module's
+// Thrown for an actual git-command failure (unresolvable ref, git not on
+// PATH, a real environment problem) or for an unusable manifest.yml handed in
+// (no specs, or an unparseable timestamp -- computeSpecWindows, refs #4593),
+// both of which the CLI reports as exit 3. Never for a bug in this module's
 // own parsing logic, which must propagate as a raw Error/TypeError and
 // crash loud rather than being misreported as "the walk failed" (refs
 // #2014 review). Same shape as plugin/bin/lib/verify/changed-files.js's
@@ -129,7 +131,7 @@ function extractRefs(message) {
 }
 
 // A manifest timestamp is present when it is not undefined, null or '' —
-// absent data (Q8), as opposed to a present value that fails to parse (Q9).
+// absent data (#4593 Q8), as opposed to a present value that fails to parse (#4593 Q9).
 function isPresent(value) {
   return value !== undefined && value !== null && value !== '';
 }
@@ -181,7 +183,7 @@ function computeSpecWindows(manifest) {
   for (const { spec, first } of entries) {
     if (first === null) return { windows: null, off: `spec #${spec.id} has no recorded transition` };
   }
-  // Interleave (Q6): any transition of S at or after a later-or-equal-starting
+  // Interleave (#4593 Q6): any transition of S at or after a later-or-equal-starting
   // T's first transition. Equal first transitions always count.
   for (const s of entries) {
     for (const t of entries) {
@@ -206,7 +208,7 @@ function computeSpecWindows(manifest) {
 
 // The one spec whose window holds the author date (`start <= ms < end`), as a
 // Set; empty for null windows, a non-finite date, no match, or 2+ matches.
-// Q10: git author dates carry whole seconds and manifest transitions carry
+// #4593 Q10: git author dates carry whole seconds and manifest transitions carry
 // milliseconds, so a date in the same whole second as any later window's
 // start (every window but the earliest) is ambiguous and stays unattributed.
 function attributeByWindow(windows, authorDateMs) {

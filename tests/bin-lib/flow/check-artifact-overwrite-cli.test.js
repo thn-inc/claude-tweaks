@@ -119,6 +119,10 @@ test('end-to-end against a real repo (no fake check) — clean walk exits 0', ()
 
 // --- --run <dir>: manifest-window attribution (refs #4593) ---
 
+// An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks the fixture's cwd, which would aim
+// the fixture commits at the checkout running this suite (tests/stash-guard.test.js does the same).
+for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete process.env[name];
+
 const { manifestInit, transitionSpec } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'flow', 'manifest.js'));
 
 function runDirWith(manifestText) {
@@ -131,7 +135,10 @@ function runDirWith(manifestText) {
 function writtenManifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
   const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-manifest-')));
   manifestInit({ runDir, specs: ids, parent: 'p/' });
-  for (const [specId, status, phase, iso] of transitions) transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+  for (const [specId, status, phase, iso] of transitions) {
+    const res = transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });
+    assert.ok(res.ok, `fixture transition rejected: ${JSON.stringify([specId, status, phase, res.reason])}`);
+  }
   return runDir;
 }
 const SEQUENTIAL_TRANSITIONS = [

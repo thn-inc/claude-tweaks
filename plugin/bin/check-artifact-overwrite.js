@@ -32,9 +32,10 @@
 //
 // --run boundary posture: read-only and deliberately unanchored (no
 // $RUN_ROOT resolution). manifest.yml's only writers (hooks.js manifest-init /
-// spec-status) refuse a non-anchored --run, so a worktree-local shadow run dir
-// never holds a manifest.yml; a dir without one exits 3 — loud, never a
-// refs-only or wrong verdict.
+// spec-status) refuse a non-anchored --run, bar resolveRunArg's narrow
+// worktree-local fallback (#280: an initialized run dir with no main-checkout
+// twin), whose manifest.yml is that run's own; a dir without one exits 3 —
+// loud, never a refs-only or wrong verdict.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -105,8 +106,9 @@ function run(argv, deps = {}) {
   try {
     result = check(checkOpts);
   } catch (err) {
-    // Only a walk failure (unresolvable ref, git not on PATH -- an
-    // ArtifactOverwriteCheckError) is this CLI's own exit 3. Anything else
+    // Only an ArtifactOverwriteCheckError -- a walk failure (unresolvable
+    // ref, git not on PATH) or an unusable manifest -- is this CLI's own
+    // exit 3. Anything else
     // is a real bug in the check itself and must crash loud, not be
     // misreported as an environment problem (refs #2014 review).
     if (!(err instanceof ArtifactOverwriteCheckError)) throw err;
