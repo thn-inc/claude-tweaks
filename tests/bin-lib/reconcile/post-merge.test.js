@@ -84,7 +84,7 @@ function run(root, { prs, links, close, dryRun = false, extra = {} } = {}) {
     prStates: fakePrStates(prs),
     dryRun,
     now,
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: close, ...extra },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: close, ...extra },
   });
 }
 
@@ -246,7 +246,7 @@ test('a prStates call that throws is a transient network-failure, never a crash'
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const r = await postMerge({
     cwd: root, now, prStates: { byNumberAsync: async () => { throw new Error('boom'); } },
-    deps: { gh: fakeGh, closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: fakeClosingLinks(ENVELOPE), closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'skipped', reason: 'network-failure' }]);
   assert.deepEqual(r.deferred, [dir]);
@@ -257,7 +257,7 @@ test('a missing or malformed prStates is a caller bug: failure no-pr-states up f
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const links = fakeClosingLinks(ENVELOPE);
   for (const prStates of [undefined, null, {}, { byNumberAsync: 'nope' }]) {
-    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() } });
+    const r = await postMerge({ cwd: root, now, prStates, deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() } });
     assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-pr-states' });
   }
   assert.equal(links.calls.length, 0);
@@ -454,8 +454,8 @@ test('M7: closing-links exit 5 (a gh failure) retries: an attempt line, never a 
   assert.equal(close.calls.length, 0);
 });
 
-test('M7: a deterministic closing-links exit (2, 3) writes the marker at once and is not deferred', async () => {
-  for (const code of [2, 3]) {
+test('M7: a deterministic closing-links exit (3, 4) writes the marker at once and is not deferred', async () => {
+  for (const code of [3, 4]) {
     const root = mainCheckout();
     const dir = addRun(root, '2026-10-30T090000-spec-1');
     const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, code), close: fakeCloseParents() });
@@ -527,7 +527,7 @@ test('M3: a multi-spec run whose Step 4.0b logged its marker in spec-N/decisions
   const links = fakeClosingLinks(ENVELOPE);
   const r = await postMerge({
     cwd: root, now, prStates: { byNumberAsync: async (n) => { looked.push(n); return merged(); } },
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
   });
   assert.deepEqual(r, { entries: [], deferred: [] });
   assert.deepEqual(looked, []);
@@ -575,7 +575,7 @@ test('M4: once the pass budget reads exceeded, every remaining run that would ru
   const r = await postMerge({
     cwd: root, now, budgetExceeded,
     prStates: fakePrStates({ 11: merged(), 12: { number: 12, state: 'OPEN' }, 13: merged(), 14: merged() }),
-    deps: { gh: fakeGh, closingLinksRun: links, closeParents: fakeCloseParents() },
+    deps: { gh: fakeGh, closingLinks: links, closeParents: fakeCloseParents() },
   });
   // The walk order is the run listing's, so which merged run goes first is not pinned: exactly one runs.
   const ran = r.entries.filter((e) => e.action === 'ran').map((e) => e.runDir);
@@ -616,12 +616,13 @@ test('step40Failed marks a non-zero exit, never a readable envelope without a cl
   assert.ok(!('step40Failed' in ok.entries[0]));
 });
 
-test('postMerge without deps.closingLinksRun falls back to the exported closingLinks core', async () => {
+test('postMerge without deps.closingLinks falls back to the exported closingLinks core', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   // Production calls postMerge with no deps, so it reaches the default binding the injected fakes above
   // never do. The real core, with a gh that answers '', cannot parse `gh pr view` and returns exit 5; a
-  // default naming an unbound identifier would instead throw a ReferenceError, surfacing as reason 'error'.
+  // default naming an unbound identifier would instead throw a ReferenceError out of postMerge itself, since
+  // the default is read before the per-run try.
   const r = await postMerge({
     cwd: root, now, prStates: fakePrStates({ 11: merged() }),
     deps: { gh: fakeGh, closeParents: fakeCloseParents() },
@@ -666,7 +667,7 @@ test('R2: the default gh runs through the timed wrapper with cwd at the main che
   const close = (args) => { received = args; args.gh(['issue', 'view', '7'], 'body'); return { closed: [], skipped: [] }; };
   await postMerge({
     cwd: root, now, prStates: fakePrStates({ 11: merged() }),
-    deps: { closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: close },
+    deps: { closingLinks: fakeClosingLinks(ENVELOPE), closeParents: close },
   });
   assert.equal(received.riskFloor, 'medium');
   assert.equal(received.workLinks, 'native');

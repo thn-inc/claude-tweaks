@@ -286,7 +286,7 @@ async function postMerge({
   const timedGh = deps.gh || ((args, input) => execFileSyncTimed('gh', args, ghOptions(args, {
     cwd: root, input, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
   })));
-  const runClosingLinks = deps.closingLinksRun || closingLinks;
+  const runClosingLinks = deps.closingLinks || closingLinks;
   const closeParents = deps.closeParents || closeBelowFloorParents;
   const writeEntries = deps.appendEntries || appendEntries;
 
