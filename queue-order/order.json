@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T09:23:12.291Z",
+  "computedAt": "2026-11-02T09:46:01.824Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -25,7 +25,7 @@
       },
       {
         "number": 4827,
-        "updatedAt": "2026-11-02T09:20:28Z",
+        "updatedAt": "2026-11-02T09:32:49Z",
         "state": "OPEN"
       },
       {
@@ -65,7 +65,7 @@
       },
       {
         "number": 4816,
-        "updatedAt": "2026-11-02T09:13:57Z",
+        "updatedAt": "2026-11-02T09:28:16Z",
         "state": "OPEN"
       },
       {
@@ -235,7 +235,7 @@
       },
       {
         "number": 4618,
-        "updatedAt": "2026-10-30T16:09:12Z",
+        "updatedAt": "2026-11-02T09:45:10Z",
         "state": "OPEN"
       },
       {
@@ -1225,6 +1225,84 @@
         "state": "OPEN",
         "title": "Surface a degraded forge detection in reconcile, the express lane and the flow preflight (follow-up to #4578)",
         "updatedAt": "2026-11-01T18:32:11Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "medium",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n`missingFactsOf` is copied into nine conformance test files and `assertEachPatternGoesRed` into five (`grep -rl \"missingFactsOf\" tests` lists `tests/foreground-execution-instruction.test.js`, `tests/wrap-up-merge-mode-conformance.test.js`, `tests/dispatch-express-routing-prose.test.js`, `tests/release-run-dir-lifecycle-conformance.test.js`, `tests/review-tiebreak-step-conformance.test.js`, `tests/no-dispatch-host-preflight-conformance.test.js`, `tests/review-dispatched-reviewer-degrade-conformance.test.js`, `tests/standalone-run-dir-closeout-conformance.test.js`, `tests/flow-express-entry-prose.test.js`); `lineStartingWith` and `sectionOf` travel with them. #4555 added two more copies. The copies can drift, and `tests/helpers/` already holds the shared-helper convention (`read-skill.js`, `strip-comments.js`). Found by #4555's review tiebreak (ledger row 28).\n\n## Deliverables\n\n- [ ] Add one `tests/helpers/` module exporting the four helpers, taking the behavior of the copy that currently has a go-red control.\n\n- [ ] Replace each file's local copy with a `require` of it, one commit per file, running that file in isolation after each.\n\n## Acceptance Criteria\n\n1. `grep -rlE \"(function|const) missingFactsOf\" tests` lists only the new helper module.\n\n2. Every migrated file passes in isolation (`node --test tests/<file>`), and `npm test` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/helpers/conformance-asserts.js` — new shared module for the four helpers\n- `tests/no-dispatch-host-preflight-conformance.test.js` — require the shared helpers\n- `tests/review-dispatched-reviewer-degrade-conformance.test.js` — require the shared helpers\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "createdAt": "2026-11-01T09:17:24Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4827,
+        "state": "OPEN",
+        "title": "Extract the copied conformance-test helpers (missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf) into tests/helpers",
+        "updatedAt": "2026-11-02T09:32:49Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -2760,7 +2838,7 @@
         "number": 4618,
         "state": "OPEN",
         "title": "Risk flags at intent time",
-        "updatedAt": "2026-10-30T16:09:12Z",
+        "updatedAt": "2026-11-02T09:45:10Z",
         "facets": {
           "origin": null,
           "risk": "medium",
