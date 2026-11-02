@@ -1,7 +1,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
-const path = require('path');
+const path = require('node:path');
 const { readJsonFile, writeJsonFile } = require('../../plugin/bin/lib/json-store');
 
 test('readJsonFile: returns the parsed value when the file exists and is valid JSON', () => {
