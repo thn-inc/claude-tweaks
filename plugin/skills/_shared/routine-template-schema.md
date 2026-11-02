@@ -60,9 +60,10 @@ never a reason to stop.
 
 If all four rungs came up empty (`unresolved`), the plugin cache is genuinely
 empty — do not attempt the kickoff yet. If this checkout's
-`.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false`, this project
-opted out of declaring claude-tweaks, so its Setup script cannot install it
-here: skip the log read and the self-heal, print exactly one line,
+`.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false` (a top-level,
+uncommented, unquoted `false`; any other value, a quoted "false" included, means
+the default), this project opted out of declaring claude-tweaks, so its Setup
+script cannot install it here: skip the log read and the self-heal, print exactly one line,
 `claude-tweaks not installed: this project sets declare-claude-tweaks: false,
 so its Setup script does not install claude-tweaks — supply claude-tweaks to
 this environment another way, or set the key back to true`, and stop.
