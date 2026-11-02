@@ -106,7 +106,8 @@ After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/
 | Result | Action |
 |--------|--------|
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` not `red` | Proceed to Step 2 |
-| `pr-checks.js` reports `red` (`_shared/pr-check-gate.md`) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
+| `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) | Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line |
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |

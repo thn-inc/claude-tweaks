@@ -53,3 +53,8 @@ test("Step 1.5's own Gate table rows key on verifiedHead for both the pipeline p
   assert.match(CODE_MODE_STEPS, /`TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: true` \+ `pr-checks\.js` not `red` \| Proceed to Step 2/, 'Gate table proceed row keys on verifiedHead: true');
   assert.match(CODE_MODE_STEPS, /`TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: false` \| Report it/, 'Gate table re-trigger row keys on verifiedHead: false');
 });
+
+test('#4809: Step 1.5 Gate table splits red on an explicit merge-verification: off, matching pr-check-gate.md', () => {
+  assert.match(CODE_MODE_STEPS, /\| `pr-checks\.js` reports `red` and `merge-verification` is not an explicit `off` \(`_shared\/pr-check-gate\.md`'s `red` bullet\) \| \*\*STOP\*\*/);
+  assert.match(CODE_MODE_STEPS, /\| `TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: true` \+ `pr-checks\.js` reports `red` under an explicit `merge-verification: off` \(same bullet\) \| Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line \|/);
+});
