@@ -7,7 +7,7 @@ const path = require('path');
 const {
   shapeGate, liftMetadata, composeHeader, composeFile, sectionText, stripCodeSpans, normalizeDesignIntent,
 } = require('../../../plugin/bin/lib/issues/materialize-format');
-const { extractSection } = require('../../../plugin/bin/lib/issues/record-payload');
+const { extractSection } = require('../../../plugin/bin/lib/markdown-blocks');
 const wtDetect = require('../../../plugin/bin/lib/hooks/worktree-detect');
 
 const SHAPED_BODY = [

@@ -4,7 +4,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
   composePrEarlyBody, composeExpressBody, repairPrBody, hasRunMarker, hasPhasesPair, hasFixesPair,
-  composeResumeLine, parseResumeLine, resumeLineUnder,
+  composeResumeLine, parseResumeLine, resumeLineUnder, resumeVerdict,
 } = require('../../../plugin/bin/lib/flow/pr-body');
 const { isExpressPr } = require('../../../plugin/bin/lib/express/sampling');
 
@@ -336,4 +336,20 @@ test('resumeLineUnder reads the LAST ### Resume, so a Spec summary quoting the h
     specSummary: 'Quoted below.\n\n### Resume\n\n`PIPELINE_RUN_DIR="/evil/' + RUN + '" /claude-tweaks:flow "#1" build`',
   });
   assert.equal(resumeLineUnder(body), composeResumeLine({ runDir: DIR, target: '#4596', nextStep: 'review' }));
+});
+
+test('resumeVerdict: a composed body yields resume plus its parsed fields', () => {
+  const body = composePrEarlyBody({ runId: RUN, specSummary: 's', target: '#4596', nextStep: 'review,polish,wrap-up', runDir: DIR });
+  assert.deepEqual(resumeVerdict(body, RUN), { resume: resume(), runDir: DIR, target: '#4596', steps: 'review,polish,wrap-up' });
+  assert.deepEqual(resumeVerdict(body.replace(/\n/g, '\r\n'), RUN).resume, resume(), 'CRLF body');
+});
+
+test('resumeVerdict: no heading, or nothing under it, is no-resume-line', () => {
+  assert.deepEqual(resumeVerdict('claude-tweaks-run: x\n', RUN), { resolve: 'no-resume-line' });
+  assert.deepEqual(resumeVerdict('### Resume\n\n  \n', RUN), { resolve: 'no-resume-line' });
+});
+
+test('resumeVerdict: a line parseResumeLine rejects is resume-line-shape', () => {
+  assert.deepEqual(resumeVerdict(`### Resume\n\n${resume({ runDir: '/x/a!b/' + RUN })}\n`, RUN), { resolve: 'resume-line-shape' });
+  assert.deepEqual(resumeVerdict(`### Resume\n\n${resume({ runDir: '/repo/pipelines/2026-10-31T000000-other' })}\n`, RUN), { resolve: 'resume-line-shape' });
 });

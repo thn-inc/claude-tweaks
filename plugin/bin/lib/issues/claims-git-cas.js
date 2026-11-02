@@ -17,11 +17,12 @@
 //   - This module reads/writes ONE raw string blob per issue.
 //     `createNamespacedState` always JSON.parses on read and JSON.stringifies
 //     on write, for a whole namespace's multi-file set.
-//   - This module's failure classification is four-way (`contested` /
-//     `secondary-rate-limit` / `missing-path` / `transport-failure`) — the
-//     `conflict`/`secondaryRateLimit` distinction specifically is consumed by
-//     `claim-store.js`'s contents-API-fallback decision. `createNamespacedState`
-//     collapses every write failure to `{ok, error}` with no such signal.
+//   - This module's failure classification is five-way (`contested` /
+//     `secondary-rate-limit` / `missing-path` / `missing-branch` /
+//     `transport-failure`) — the `conflict`/`secondaryRateLimit` distinction
+//     specifically is consumed by `claim-store.js`'s contents-API-fallback
+//     decision. `createNamespacedState` collapses every write failure to
+//     `{ok, error}` with no such signal.
 //   - This module targets `CLAIMS_BRANCH` (`claims-registry`);
 //     `createNamespacedState` hardcodes `HEALTH_STATE_BRANCH` (`health-state`).
 //   - `createNamespacedState` owns its own CAS retry loop internally
@@ -68,11 +69,18 @@ function timedOutFlag(err) {
 // fetch and this push; `secondary-rate-limit` must never be folded into
 // `contested` (record-697's incident read exactly that way before
 // diagnosis) — checked before the generic rejection match since GitHub's
-// abuse-detection rejection is also a non-fast-forward-shaped push failure.
+// abuse-detection rejection is also a non-fast-forward-shaped push failure;
+// `missing-branch` (#4495) is `git fetch` naming a `claims-registry` the
+// remote never had — a pre-bootstrap state the caller creates the branch for,
+// matched before the generic rules so it can never fall to `transport-failure`
+// (a retried read) or be misread as a lost race (`contested`).
 function classifyGitError(err) {
   const text = errText(err);
   if (/secondary rate limit|abuse detection mechanism|Retry-After/i.test(text)) {
     return { kind: 'secondary-rate-limit' };
+  }
+  if (/couldn't find remote ref/i.test(text)) {
+    return { kind: 'missing-branch' };
   }
   if (/does not exist in|exists on disk, but not in/.test(text)) {
     return { kind: 'missing-path' };
@@ -129,6 +137,12 @@ function readClaimBlobGit({
       runner(['fetch', '-q', remote, `${branch}:${scratchRef}`]);
       tipSha = runner(['rev-parse', scratchRef]).trim();
     } catch (err) {
+      // #4495: a remote with no claims-registry branch yet is a normal
+      // pre-bootstrap state, not a transport failure — name it so the caller
+      // can bootstrap the branch instead of reading it as contested.
+      if (classifyGitError(err).kind === 'missing-branch') {
+        return { content: null, tipSha: null, absent: true, branchMissing: true, failure: null };
+      }
       return { content: null, tipSha: null, absent: false, failure: 'transport-failure', ...timedOutFlag(err) };
     } finally {
       try { runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the read's own outcome */ }
@@ -194,6 +208,38 @@ function writeClaimBlobGit({
     } catch {
       /* best-effort cleanup — never mask the write's own outcome */
     }
+  }
+}
+
+// {remote, branch, runner} -> {ok: true, created: boolean} |
+//   {ok: false, failure: 'transport-failure', reason, timedOut?}
+// Creates the claims branch on a remote that has none (#4495), based on the
+// default branch's tip (the remote's HEAD) — never an orphan commit. The push
+// is create-only: an empty `--force-with-lease=ref:` expectation means the
+// ref must not exist, so a concurrent bootstrapper loses cleanly. A rejected
+// create is a lost race only when `ls-remote` shows the branch now exists
+// (`created: false`, still ok); otherwise, and for every other error, the git
+// text is surfaced verbatim in `reason` — the caller never retries a refusal.
+// `created: true` means the push succeeded, not that this call made the branch:
+// a push of the sha the branch already points at is git's "up to date" no-op and
+// never meets the lease (a real-git probe, #4495). No caller branches on it.
+function bootstrapClaimsBranchGit({ remote = 'origin', branch = CLAIMS_BRANCH, runner = defaultRunner } = {}) {
+  const scratchRef = `refs/claims-cas-bootstrap/${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  try {
+    runner(['fetch', '-q', remote, `HEAD:${scratchRef}`]);
+    const baseSha = runner(['rev-parse', scratchRef]).trim();
+    runner(['push', remote, `${baseSha}:refs/heads/${branch}`, `--force-with-lease=refs/heads/${branch}:`]);
+    return { ok: true, created: true };
+  } catch (err) {
+    if (classifyGitError(err).kind === 'contested') {
+      try {
+        const listed = runner(['ls-remote', '--heads', remote, `refs/heads/${branch}`]);
+        if (String(listed).trim()) return { ok: true, created: false };
+      } catch { /* an unreadable remote leaves the original rejection as the reason */ }
+    }
+    return { ok: false, failure: 'transport-failure', reason: errText(err), ...timedOutFlag(err) };
+  } finally {
+    try { runner(['update-ref', '-d', scratchRef]); } catch { /* best-effort cleanup — never mask the bootstrap's own outcome */ }
   }
 }
 
@@ -345,6 +391,7 @@ module.exports = {
   errText,
   readClaimBlobGit,
   writeClaimBlobGit,
+  bootstrapClaimsBranchGit,
   readClaimBlobsGitBatch,
   defaultRunner,
 };

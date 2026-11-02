@@ -247,7 +247,7 @@ cleanup items `cleanup-procedures.md` marks deferred under that flag.
 
 Generate from: the helper's History ops (every row it reports gets a `History`
 row — that is the whole point of reading them), cleanup actions executed in
-Phase 4, the Verification Brief's evidence PR (when Step 4 opened one),
+Phase 4, the acceptance packet's evidence PR (when Step 4 opened one),
 config/skill updates applied, ledger items resolved in Phase 3, and the
 run dir's `events.jsonl` when present (hook-recorded commit breadcrumbs — the
 hash reflects HEAD at hook time and is NOT verified against commit success —

@@ -9,7 +9,7 @@
 // Step 3 passes the pre-merge `keepOpen` on to compose-subject.js --keep-open.
 //
 //   node bin/closing-links.js --run <run-dir> --mode <pre-merge|post-merge>
-//     [--settle-ms <n>] [--help]
+//     [--settle-ms <n>] [--close-window-ms <n>] [--help]
 //
 // pre-merge: reads the PR, takes the same-repo closingIssuesReferences minus
 // the body's `Fixes #N` span (the unwanted links), inserts `issue ` into every
@@ -28,16 +28,38 @@
 // merge), and reopens it when it closed at or after mergedAt. An unread merge
 // message (or a merge-commit oid that is not a hex sha) makes every candidate
 // will-close. Logs `reopened` (AUTO), `could not read`, `could not reopen` and `still open`
-// (SKIP, degraded). Prints {action, pr, candidates, willClose, reopened,
+// (SKIP, degraded). With --close-window-ms <n> (post-merge only; a late run,
+// e.g. the reconciler's, passes it so a human close hours after the merge is not
+// undone), a record closed later than mergedAt + n is not reopened: it is listed
+// in closedAfterWindow and stays in closingSet (it is closed), with no decisions
+// line; and once the clock is past mergedAt + n, a will-close record still OPEN
+// is settled open, not pending: listed in settledOpen, never in pendingClose,
+// with no re-run SKIP line. Prints {action, pr, candidates, willClose, reopened,
 // failed, stillOpen, pendingClose, closedBefore, closingSet} (plus
+// closedAfterWindow: [...] and settledOpen: [...] when --close-window-ms was given, and
 // messageUnread: true when the merge message could not be read; closingSet is
-// the same-repo closing records minus reopened, failed and pendingClose --
+// the same-repo closing records minus reopened, failed, pendingClose and settledOpen --
 // Step 4.0b's $CLOSING_SUB_ISSUES, skills/_shared/pr-first-merge-post-merge.md),
-// with the worst outcome as the action: reopen-failed > close-pending >
-// reopened > nothing-closed; or not-merged (carries state) | no-fixes-span |
-// no-pr | gh-absent. Callers report failed[] and pendingClose[] whatever the
-// action. A `logFailed: true` key means a decisions.md line could not be
-// appended; the PR/issue work still landed.
+// with the worst outcome as the action: reopen-failed > close-failed >
+// base-unchecked > close-pending > reopened > closed > nothing-closed; or
+// not-merged (carries state) | no-fixes-span | no-pr | gh-absent. Callers
+// report failed[], closeFailed[] and pendingClose[] whatever the action. A
+// `logFailed: true` key means a decisions.md line could not be appended; the
+// PR/issue work still landed.
+//
+// GitHub acts on closing keywords only for a merge into the repo's default
+// branch (#4549). The PR's baseRefName is compared with the default branch
+// (`gh repo view {host}/{owner}/{repo}`, the PR's own host). On a different
+// base nothing the merge carries can close, so there is no will-close polling
+// and no pendingClose, and the CLI closes each still-open `Fixes` record itself
+// (`issue close --reason completed`, logged AUTO): the envelope adds
+// nonDefaultBase: true, closed[] and closeFailed[] ({issue, error, stage?};
+// stage 'read' for a failed state read), and closingSet is closed[] plus the
+// Fixes records read already CLOSED, never a closeFailed one. A base or default
+// branch that cannot be read closes nothing: the envelope adds
+// baseUnchecked: true and unchecked[] (the Fixes records it did not check,
+// sorted -- the numbers a caller names for a hand close) and omits closingSet.
+// The default base keeps the envelope above unchanged.
 //
 // Status is data: exit 0 for every action above, a failed reopen included.
 // 2 malformed invocation.
@@ -65,15 +87,17 @@ const {
 const { firstLineRunId } = require('./lib/flow/pr-checklist');
 const { resolveTarget, appendEntry, formatEntry } = require('./lib/log-decision/append');
 const { readRunStateWithParent } = require('./lib/hooks/context');
-const { ghAvailable } = require('./lib/repo-resolve');
+const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 
-const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--help]\n'
+const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-merge> [--settle-ms <n>] [--close-window-ms <n>] [--help]\n'
   + '  pre-merge: unlinks closing references to records the PR\'s Fixes block does not name\n'
-  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read)\n'
+  + '  post-merge: reopens a keep-open record the merge closed anyway (--settle-ms: poll budget, default 15000, max 60000, 0 = no re-read); on a base other than the default branch, closes each still-open Fixes record itself\n'
+  + '    --close-window-ms: post-merge only; a record closed later than mergedAt + n is a human close, not reopened and listed in closedAfterWindow (default: no bound);\n'
+  + '      past mergedAt + n, a will-close record still open is settled open, listed in settledOpen, never pendingClose\n'
   + '  prints one JSON line; action:\n'
   + '    pre-merge: unlinked | still-linked | clean | no-fixes-span | no-pr | gh-absent\n'
-  + '    post-merge (worst wins): reopen-failed > close-pending > reopened > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
+  + '    post-merge (worst wins): reopen-failed > close-failed > base-unchecked > close-pending > reopened > closed > nothing-closed; or not-merged | no-fixes-span | no-pr | gh-absent\n'
   + '  exit 0 done or status-as-data\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
@@ -82,13 +106,15 @@ const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-me
   + '  gh-absent, 4 and 5 append their own SKIP line to decisions.md (## /wrap-up)\n';
 
 const MODES = ['pre-merge', 'post-merge'];
-const VALUE_FLAGS = { '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs' };
+const VALUE_FLAGS = {
+  '--run': 'run', '--mode': 'mode', '--settle-ms': 'settleMs', '--close-window-ms': 'closeWindowMs',
+};
 const DEFAULT_SETTLE_MS = 15000;
 const MAX_SETTLE_MS = 60000;
 const POLL_STEP_MS = 3000;
 
 function parseArgs(argv) {
-  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, help: false };
+  const o = { run: null, mode: null, settleMs: DEFAULT_SETTLE_MS, closeWindowMs: null, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
@@ -100,11 +126,15 @@ function parseArgs(argv) {
       if (!/^\d+$/.test(v)) return { error: `--settle-ms takes a non-negative integer: ${v}` };
       o.settleMs = Number(v);
       if (o.settleMs > MAX_SETTLE_MS) return { error: `--settle-ms is capped at ${MAX_SETTLE_MS}: ${v}` };
+    } else if (a === '--close-window-ms') {
+      if (!/^\d+$/.test(v)) return { error: `--close-window-ms takes a non-negative integer: ${v}` };
+      o.closeWindowMs = Number(v);
     } else {
       o[VALUE_FLAGS[a]] = v;
     }
   }
   if (o.mode !== null && !MODES.includes(o.mode)) return { error: `--mode must be one of ${MODES.join(', ')}: ${o.mode}` };
+  if (o.mode === 'pre-merge' && o.closeWindowMs !== null) return { error: '--close-window-ms applies to --mode post-merge only' };
   return o;
 }
 
@@ -112,9 +142,9 @@ const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   ghAvailable: () => ghAvailable(),
-  gh: (args, input) => execFileSync('gh', args, {
+  gh: (args, input) => execFileSync('gh', args, ghOptions(args, {
     encoding: 'utf8', input, stdio: ['pipe', 'pipe', 'pipe'], timeout: GH_TIMEOUT_MS, windowsHide: true,
-  }),
+  })),
   readRunState: (runDir) => readRunStateWithParent(runDir, { requireRunIdParent: true }),
   appendDecision: ({ runDir, section, entry }) => appendEntry({ runDir, section, entry }),
   now: () => new Date(),
@@ -124,6 +154,8 @@ const realDeps = {
 };
 
 const ERR_TEXT_MAX = 300;
+// The one exit a caller may retry: `gh` (or its transport) failed. lib/reconcile/post-merge.js keys its bounded retry on it.
+const EXIT_GH_FAILURE = 5;
 
 // Bounded: errText lands in decisions.md, which the Review Console reads line by line.
 function errText(e) {
@@ -196,8 +228,8 @@ function run(argv, overrides = {}) {
   // Exit 5: the stderr line, then a SKIP carrying its first line.
   const ghFailed = (message) => {
     deps.stderr(`closing-links.js: ${message}\n`);
-    unchecked(`exit 5 gh failure: ${message.split('\n')[0]}`);
-    return 5;
+    unchecked(`exit ${EXIT_GH_FAILURE} gh failure: ${message.split('\n')[0]}`);
+    return EXIT_GH_FAILURE;
   };
 
   // 4. No gh: status as data, never a failure.
@@ -228,7 +260,7 @@ function run(argv, overrides = {}) {
   // array, is a read failure -- never an empty answer that licenses a write.
   const fields = o.mode === 'pre-merge'
     ? 'body,closingIssuesReferences,url'
-    : 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit';
+    : 'state,mergedAt,body,closingIssuesReferences,url,mergeCommit,baseRefName';
   let pr;
   try {
     pr = JSON.parse(deps.gh(['pr', 'view', String(n), '--json', fields]));
@@ -320,26 +352,51 @@ function run(argv, overrides = {}) {
   const messageCloses = findClosingRefs(message, scope).map((r) => r.number);
   const candidates = uniqueSorted([...linked, ...keepOpen].filter((x) => !expected.includes(x)));
   const closers = new Set([...linked, ...messageCloses]);
-  const willClose = messageUnread ? candidates : candidates.filter((x) => closers.has(x));
+
+  // 7b'. GitHub acts on closing keywords only for a merge into the repo's
+  // default branch (#4549). Which branch this one landed on is read before the
+  // reopen loop, because a merge elsewhere closes nothing: no will-close
+  // polling, no pendingClose. The default branch comes from `gh repo view` for
+  // the PR's own host (a GitHub Enterprise Cloud PR must not resolve against
+  // github.com). A base or default branch that cannot be read is unchecked,
+  // never assumed non-default.
+  const base = typeof pr.baseRefName === 'string' && pr.baseRefName.trim() ? pr.baseRefName.trim() : null;
+  let defaultBranch = null;
+  let uncheckedReason = 'the PR view carried no base branch';
+  if (base) {
+    try {
+      // Not the integration-branch ladder (`_shared/integration-branch.md`): this
+      // check needs GitHub's own default branch -- where closing keywords fire --
+      // read on the PR's own host, not the project's integration branch.
+      defaultBranch = String(deps.gh(['repo', 'view', `${repo.host}/${repo.owner}/${repo.repo}`, '--json', 'defaultBranchRef', '-q', '.defaultBranchRef.name'])).trim() || null;
+      if (!defaultBranch) uncheckedReason = 'the repository returned no default branch';
+    } catch (e) {
+      uncheckedReason = `the default branch could not be read: ${errText(e)}`;
+    }
+  }
+  const baseUnchecked = !base || !defaultBranch;
+  const nonDefaultBase = !baseUnchecked && base !== defaultBranch;
+  const willClose = nonDefaultBase ? [] : (messageUnread ? candidates : candidates.filter((x) => closers.has(x)));
 
   // 8b. Per candidate: read, re-read while a will-close one still reads OPEN
   // (bounded by re-read count, never by the clock), reopen what closed at or
-  // after the merge.
+  // after the merge -- and, with --close-window-ms, no later than mergedAt + n.
   const maxRereads = Math.floor(o.settleMs / POLL_STEP_MS);
   const mergedAt = Date.parse(pr.mergedAt);
-  const reopened = []; const failed = []; const stillOpen = []; const closedBefore = [];
+  // One issue-state read for both passes: the parsed {state, closedAt}, or a throw.
+  const readIssueState = (issue) => {
+    const j = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
+    if (!j || typeof j.state !== 'string') throw new Error('no state field');
+    return j;
+  };
+  const reopened = []; const failed = []; const stillOpen = []; const closedBefore = []; const closedAfterWindow = [];
   for (const issue of candidates) {
     let state;
     try {
-      const read = () => {
-        const j = JSON.parse(deps.gh(['issue', 'view', String(issue), '--json', 'state,closedAt']));
-        if (!j || typeof j.state !== 'string') throw new Error('no state field');
-        return j;
-      };
-      state = read();
+      state = readIssueState(issue);
       for (let i = 0; i < maxRereads && state.state === 'OPEN' && willClose.includes(issue); i++) {
         deps.sleep(POLL_STEP_MS);
-        state = read();
+        state = readIssueState(issue);
       }
     } catch (e) {
       failed.push({ issue, error: errText(e), stage: 'read' });
@@ -348,6 +405,9 @@ function run(argv, overrides = {}) {
     if (state.state === 'OPEN') { stillOpen.push(issue); continue; }
     // closedAt unparseable compares false: an undatable close is never reopened.
     if (!(Date.parse(state.closedAt) >= mergedAt)) { closedBefore.push(issue); continue; }
+    // --close-window-ms: a close later than the window is a human's, not the merge's;
+    // it stays closed (and in closingSet) and is reported, never reopened.
+    if (o.closeWindowMs !== null && Date.parse(state.closedAt) > mergedAt + o.closeWindowMs) { closedAfterWindow.push(issue); continue; }
     try {
       deps.gh(['issue', 'reopen', String(issue), '--comment',
         `Reopened by claude-tweaks: this record was closed after PR #${n} merged, but the run left it open (not in the PR's Fixes block).`]);
@@ -363,30 +423,87 @@ function run(argv, overrides = {}) {
   }
 
   // A will-close record still OPEN after the poll window may yet close: that
-  // is pending, not clean.
-  const pendingClose = willClose.filter((x) => stillOpen.includes(x));
+  // is pending, not clean -- until the clock is past mergedAt + --close-window-ms
+  // (a late run's own bound): GitHub closes about 2 s after the merge, so a record
+  // still OPEN that late was never closed by it. That is settled open, not pending.
+  const openWillClose = willClose.filter((x) => stillOpen.includes(x));
+  const windowPassed = o.closeWindowMs !== null && Number(deps.now()) > mergedAt + o.closeWindowMs;
+  const settledOpen = windowPassed ? openWillClose : [];
+  const pendingClose = windowPassed ? [] : openWillClose;
   const windowSeconds = maxRereads * (POLL_STEP_MS / 1000);
   for (const issue of pendingClose) {
     degraded(`#${issue} still open ${windowSeconds}s after PR #${n} merged though the merge may close it`, 're-run --mode post-merge, or reopen it by hand if it closes');
   }
-  // Worst outcome wins: a reopen never hides a failure or a pending close.
+  // 9b. The merge landed outside the default branch: its Fixes records stay
+  // open, so close each one still open (#4549). Records already CLOSED are left
+  // alone and count as closed; a failed read or close is reported, never
+  // counted. An unchecked base closes nothing.
+  const fixesRecords = uniqueSorted(expected);
+  const closed = []; const closeFailed = []; const alreadyClosed = [];
+  if (nonDefaultBase) {
+    for (const issue of fixesRecords) {
+      let state;
+      try {
+        state = readIssueState(issue);
+      } catch (e) {
+        closeFailed.push({ issue, error: errText(e), stage: 'read' });
+        continue;
+      }
+      if (state.state !== 'OPEN') { alreadyClosed.push(issue); continue; }
+      try {
+        deps.gh(['issue', 'close', String(issue), '--reason', 'completed', '--comment',
+          `Closed by claude-tweaks: PR #${n} merged into ${base}, which is not the default branch, so GitHub does not act on its closing keywords.`]);
+        closed.push(issue);
+      } catch (e) {
+        closeFailed.push({ issue, error: errText(e) });
+      }
+    }
+    for (const issue of closed) {
+      log(`closed #${issue} after PR #${n} merged into ${base} (not the default branch ${defaultBranch}; GitHub does not act on closing keywords there)`, 'high (gh issue reopen)');
+    }
+    for (const f of closeFailed) {
+      if (f.stage === 'read') degraded(`could not read #${f.issue} after PR #${n} merged into ${base} (${f.error})`, 'check it and close it by hand if it is still open');
+      else degraded(`could not close #${f.issue} after PR #${n} merged into ${base} (${f.error})`, 'close it by hand');
+    }
+  } else if (baseUnchecked) {
+    degraded(`could not tell whether PR #${n} merged into the default branch (${uncheckedReason})`,
+      expected.length
+        ? `Fixes records #${fixesRecords.join(', #')} not checked — close any still open by hand if the base is not the default branch`
+        : 'the PR names no Fixes records, so there is nothing to close by hand');
+  }
+
+  // Worst outcome wins: a reopen never hides a failure or a pending close. An
+  // unchecked base outranks a pending close or a reopen because the Fixes set's
+  // state is unknown and `closingSet` is omitted, whereas those two concern a
+  // known set; it stays below `close-failed`, which names records that
+  // definitely need a hand close.
   let action = 'nothing-closed';
   if (failed.length) action = 'reopen-failed';
+  else if (closeFailed.length) action = 'close-failed';
+  else if (baseUnchecked) action = 'base-unchecked';
   else if (pendingClose.length) action = 'close-pending';
   else if (reopened.length) action = 'reopened';
+  else if (closed.length) action = 'closed';
 
   // The same-repo records the merge closing links name: `linked` minus whatever the
-  // guard reopened, could not settle, or has yet to see close. A Fixes-block record
+  // guard reopened, could not settle, has yet to see close, or saw stay open. A Fixes-block record
   // is never read, and a record closed before the merge stays in -- both count as closed.
-  const unsettled = new Set([...reopened, ...pendingClose, ...failed.map((f) => f.issue)]);
-  const closingSet = linked.filter((x) => !unsettled.has(x));
+  // On a non-default base the merge closes nothing itself: the set is what this pass
+  // closed plus the Fixes records it found already closed (settledOpen is empty there:
+  // no will-close record). Unchecked, there is no set.
+  const unsettled = new Set([...reopened, ...pendingClose, ...settledOpen, ...failed.map((f) => f.issue)]);
+  const closingSet = nonDefaultBase ? uniqueSorted([...closed, ...alreadyClosed]) : linked.filter((x) => !unsettled.has(x));
 
   return done({
-    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore, closingSet,
+    action, pr: n, candidates, willClose, reopened, failed, stillOpen, pendingClose, closedBefore,
+    ...(baseUnchecked ? {} : { closingSet }),
+    ...(o.closeWindowMs !== null ? { closedAfterWindow, settledOpen } : {}),
     ...(messageUnread ? { messageUnread: true } : {}),
+    ...(nonDefaultBase ? { nonDefaultBase: true, closed, closeFailed } : {}),
+    ...(baseUnchecked ? { baseUnchecked: true, unchecked: fixesRecords } : {}),
   });
 }
 
-module.exports = { run, parseArgs };
+module.exports = { run, parseArgs, EXIT_GH_FAILURE, ERR_TEXT_MAX };
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2));

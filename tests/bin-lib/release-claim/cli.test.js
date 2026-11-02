@@ -470,3 +470,26 @@ test('#2090 conformance: scan-procedures.md names the --sweep invocation as the 
   assert.match(actionsGithubIssues, /## Release claim/, 'actions-github-issues.md must name a Release claim action for the [claim] Release rows');
   assert.match(actionsGithubIssues, /--sweep/);
 });
+
+// #4495: end to end through the CLI — a remote with no claims-registry branch
+// is "nothing to release": exit 3 (already-released), the library's note on the
+// envelope, no error, and no git push.
+test('#4495: a branchless claims remote exits 3 with a "nothing to release" note and pushes nothing', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: null, out, mainRoot: rootOf(runDir) });
+  const gitCalls = [];
+  d.gitRunner = (args) => {
+    gitCalls.push(args);
+    if (args[0] === 'fetch') { const e = new Error('x'); e.stderr = "fatal: couldn't find remote ref claims-registry"; throw e; }
+    return '';
+  };
+  assert.equal(run(['7', '--run', runDir, '--reason', 'done', '--repo', 'acme/w'], d), 3);
+  const env = envelope(out);
+  assert.equal(env.outcome, 'already-released');
+  assert.match(env.note, /nothing to release/);
+  assert.equal(env.error, null);
+  assert.equal(gitCalls.some((a) => a[0] === 'push'), false, 'a release never creates the branch');
+  assert.equal(calls.some(isPut), false);
+  assert.equal(calls.some(isComment), false, 'no false "Released by run" comment on a record this run never claimed');
+});

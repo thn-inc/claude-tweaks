@@ -33,7 +33,7 @@
 
 const { execFileSync } = require('child_process');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoResolutionNote,
+  parseRepo, ghAvailable, remoteUrl, repoResolutionNote, ghOptions, pinExplicitRepoHost,
 } = require('./repo-resolve');
 const { LARGE_MAX_BUFFER_BYTES } = require('./shared-primitives');
 
@@ -72,7 +72,10 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
   const realDeps = {
     ghAvailable,
     remoteUrl,
-    runner: (args) => execFileSync('gh', args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
+    // #4505: an explicit --repo's host reaches every fetch call, including the
+    // GraphQL owner/repo queries that thread no --hostname for github.com.
+    pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
+    runner: (args) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: runnerTimeoutMs, maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true })),
     stdout: (s) => process.stdout.write(s),
     stderr: (s) => process.stderr.write(s),
   };
@@ -98,6 +101,7 @@ function makeNumberListCli({ name, usage, fetch, mapResult, ghRequiredNote, runn
       ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
       : parseRepo(remote);
     if (!repoSpec) { deps.stderr(`${name}: could not resolve owner/repo — pass --repo owner/name\n`); return 2; }
+    if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
     const { owner, repo, host } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host;
     // see repoResolutionNote's own comment for why the common case stays silent.

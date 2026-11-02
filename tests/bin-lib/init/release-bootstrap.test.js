@@ -187,15 +187,6 @@ test('seedManifestVersion: newest v* tag by semver precedence, never lexicograph
   assert.equal(rb.seedManifestVersion({ tags: [], manifestVersion: null }), '0.1.0');
 });
 
-test('isValidBranchName: rejects whitespace/control chars, forbidden ref characters, "..", a leading "-", a trailing "/" or ".lock", "//", and non-strings; accepts ordinary names (ledger row 34)', () => {
-  for (const bad of ['main\n  pull_request_target:', '', 'bad branch', '-lead', 'a~b', 'a^b', 'a:b', 'a?b', 'a*b', 'a[b', 'a\\b', 'a..b', 'a/', 'a.lock', 'a//b', null, undefined, 42]) {
-    assert.equal(rb.isValidBranchName(bad), false, `expected ${JSON.stringify(bad)} to be invalid`);
-  }
-  for (const good of ['develop', 'release/2.x', 'feat.v1', 'main']) {
-    assert.equal(rb.isValidBranchName(good), true, `expected ${JSON.stringify(good)} to be valid`);
-  }
-});
-
 test('renderWorkflowYaml: throws on an invalid branch name instead of silently defaulting to main (ledger row 34)', () => {
   assert.throws(() => rb.renderWorkflowYaml({ branch: 'main\n  pull_request_target:' }), /invalid branch name/);
   assert.throws(() => rb.renderWorkflowYaml({ branch: '' }), /invalid branch name/);
@@ -205,6 +196,50 @@ test('renderWorkflowYaml: throws on an invalid branch name instead of silently d
   assert.doesNotThrow(() => rb.renderWorkflowYaml({ branch: 'develop' }));
   assert.doesNotThrow(() => rb.renderWorkflowYaml({ branch: 'release/2.x' }));
   assert.doesNotThrow(() => rb.renderWorkflowYaml({ branch: 'feat.v1' }));
+});
+
+test('renderWorkflowYaml: refuses an Actions expression in the branch, and bootstrapRelease writes no file (#4714)', () => {
+  const expr = '${{secrets.RELEASE_PLEASE_TOKEN}}';
+  assert.throws(() => rb.renderWorkflowYaml({ branch: expr }), /invalid branch name.*Actions expression/);
+  const root = tmp(); write(root, 'package.json', '{"name":"x"}');
+  assert.throws(() => rb.bootstrapRelease({ root, integrationModel: 'pr-first', branch: expr, listTags: () => [] }), /invalid branch name.*Actions expression/);
+  assert.deepEqual(fs.readdirSync(root), ['package.json']);
+});
+
+test('renderWorkflowYaml: always double-quotes the filter and target-branch scalars (#4714)', () => {
+  const lines = rb.renderWorkflowYaml({ branch: 'develop' }).split('\n');
+  assert.ok(lines.includes('      - "develop"'));
+  assert.ok(lines.includes('          target-branch: "develop"'));
+  for (const name of ['#main', '&x', '"x', '{a}', '@x', '|x', '>x', '%x', '1.10', 'true', 'null']) {
+    const target = '          target-branch: ' + JSON.stringify(name);
+    assert.ok(rb.renderWorkflowYaml({ branch: name }).split('\n').includes(target), name);
+  }
+});
+
+test('renderWorkflowYaml: backslash-escapes filter metacharacters in the branches entry only (#4714)', () => {
+  const plus = rb.renderWorkflowYaml({ branch: 'release+1' }).split('\n');
+  assert.ok(plus.includes('      - ' + JSON.stringify('release\\+1')));
+  assert.ok(plus.includes('          target-branch: ' + JSON.stringify('release+1')));
+  const bang = rb.renderWorkflowYaml({ branch: '!x' }).split('\n');
+  assert.ok(bang.includes('      - ' + JSON.stringify('\\!x')));
+  assert.ok(bang.includes('          target-branch: ' + JSON.stringify('!x')));
+});
+
+test('renderWorkflowYaml: filter escaping leaves a mid-name ! alone and escapes every +, plus a leading ! (#4714)', () => {
+  const cases = [['a!b', 'a!b'], ['a++b', 'a\\+\\+b'], ['!a+b', '\\!a\\+b']];
+  for (const [name, escaped] of cases) {
+    const lines = rb.renderWorkflowYaml({ branch: name }).split('\n');
+    assert.ok(lines.includes('      - ' + JSON.stringify(escaped)), name);
+    assert.ok(lines.includes('          target-branch: ' + JSON.stringify(name)), name);
+  }
+});
+
+test('renderWorkflowYaml: escapes C1 control characters as \\uXXXX in both quoted scalars (#4714)', () => {
+  const wf = rb.renderWorkflowYaml({ branch: 'rel\u0085x' });
+  const lines = wf.split('\n');
+  assert.ok(lines.includes('      - "rel\\u0085x"'));
+  assert.ok(lines.includes('          target-branch: "rel\\u0085x"'));
+  assert.equal(/[\x80-\x9f]/.test(wf), false);
 });
 
 test('bootstrapRelease: refuses an invalid branch on the pr-first path before any write; local-merge ignores an invalid branch entirely (ledger row 34)', () => {
@@ -219,12 +254,12 @@ test('bootstrapRelease: refuses an invalid branch on the pr-first path before an
 test('renderers: workflow, config, manifest, policy rows', () => {
   const wf = rb.renderWorkflowYaml({ branch: 'develop' });
   assert.match(wf, /uses: googleapis\/release-please-action@v4/);
-  assert.match(wf, /branches:\n\s+- develop/);
+  assert.match(wf, /branches:\n\s+- "develop"/);
   assert.match(wf, /contents: write/);
   assert.match(wf, /pull-requests: write/);
   assert.match(wf, /config-file: release-please-config\.json/);
   assert.match(wf, /manifest-file: \.release-please-manifest\.json/);
-  assert.match(wf, /target-branch: develop/); // F4
+  assert.match(wf, /target-branch: "develop"/); // F4
   assert.match(wf, /# token: \$\{\{ secrets\.RELEASE_PLEASE_TOKEN \}\}/); // F5
   assert.match(wf, /do not trigger/); // F5
   const cfg = JSON.parse(rb.renderConfig({ releaseType: 'node', extraFiles: [] }));

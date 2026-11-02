@@ -10,6 +10,7 @@ files:
   - plugin/skills/dispatch/neighbour-in-flight-report.md
   - plugin/bin/lib/issues/shipped-candidate.js
   - plugin/bin/lib/issues/linked-prs.js
+  - plugin/bin/dispatch-resume.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -30,10 +31,10 @@ files:
 
 ### 2. Read the reason by name
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N` bullet; `plugin/skills/dispatch/not-spec-shaped-exclusion-report.md`; `plugin/skills/dispatch/blocked-exclusion-report.md`; `plugin/skills/dispatch/open-pr-exclusion-report.md`
-- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section or an unresolved placeholder); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`.
+- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section or an unresolved placeholder); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`. Before printing that open-PR line, dispatch runs `bin/dispatch-resume.js --issue N`; when it exits 0 (the PR is `#N`'s own stalled draft build), the line gains `; it is #N's own stalled build — run /claude-tweaks:dispatch resume #N` (#4588). Any other exit leaves the line exactly as quoted.
 - **Should feel:** Actionable — the next command is on the same line as the reason, so there is nothing to look up.
 - **Should understand:** The reason shown is the one the queue pull recorded, never inferred; a not-spec-shaped record is never described as having an open PR (#3084's fix — before it, only `open-pr` entries were read).
-- **Red flags:** "already has an open PR" for a record with no PR; a `missing:` list that disagrees with the record body; no remedy command.
+- **Red flags:** "already has an open PR" for a record with no PR; a `missing:` list that disagrees with the record body; no remedy command; the `dispatch resume` suffix on a PR another record, a live sibling session or a human owns.
 
 ### 2b. The exclusion list itself can't be read
 - **URL:** `plugin/skills/dispatch/exclusions-unreadable-report.md`
@@ -71,3 +72,4 @@ files:
 - Updated during wrap-up of the #3101-#3104 run: Step 2b names the failed-probe branch (#3104 review); Step 2 names the `blocked` report line and visits `blocked-exclusion-report.md` and `open-pr-exclusion-report.md`
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
 - Updated during build of #4314: Step 2d covers a follow-up record filed during a PR's build, which is no longer read as `shipped` by that PR. `shipped-candidate.js` and `linked-prs.js` added to `files:`
+- Updated during wrap-up of #4588: Step 2 names the open-PR line's `dispatch resume` suffix, appended only when `dispatch-resume.js` exits 0. `dispatch-resume.js` added to `files:`

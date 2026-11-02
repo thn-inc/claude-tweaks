@@ -65,7 +65,7 @@ When a Deliverable adds a new Manifesto policy lever — a new `auto`-mode behav
 
 A criterion that counts something (rows, items, entries) states the count relative to this record's own change ("adds no rows", "adds exactly three items"), never as a file's absolute total, and the count must match what the record's body names. An absolute total breaks as soon as a Related record grows the same file: #2709's "the checklist still has 20 rows" was unsatisfiable once #2706 and #2707 landed beside it, and #2693's "all 20 items" named only 17.
 
-A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named.
+A criterion asserting that a search returns nothing (a grep that "returns nothing", "prints no lines" or "exits 1") names a command its author has run once against a tree that still contains the target and seen match; prefer `grep -F` for literal code text. A search that cannot match its target passes before and after the change, so the criterion can never fail: #3536's AC1.1 was a basic-regex grep whose escapes never matched the literal it named. A returns-nothing search whose scope reaches `.claude-tweaks/pipelines`, `docs/superpowers/plans` or `docs/plans` (a `git grep` with no pathspec or a `.` pathspec, an any-depth glob such as `'*.md'`, or a recursive `grep`/`rg` over the root) excludes the build's own bookkeeping — `':!.claude-tweaks/pipelines'` (the materialized spec), `':!docs/superpowers/plans'` (the plan) and `':!docs/plans/*-ledger.md'` (the open-items ledger) appended to a `git grep` pathspec, or for `rg` the same paths as `-g '!<path>'` globs (`grep -r --exclude-dir` matches a directory's base name only, so use `git grep` instead) — because the build commits its spec, plan and ledger on the feature branch and each can quote the target, so the search matches its own bookkeeping (#4579); the control run applies to the excluded form. A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion. A named path that reaches `docs/superpowers/plans` or `docs/plans` still takes the matching pathspec. Never exclude all of `.claude-tweaks/` (`policy.yml` is real config), all of `docs/`, or all of `docs/plans/` (it can hold real design diagrams); the ledger pathspec is the narrow one.
 
 When `## Current State` names the callers, gates, or user-visible outcome the change exists to fix, at least one criterion is phrased at one of those named consumers ("review Step 1.5 skips re-verification after a fully chunked pass"), not only at the new mechanism's own interface — or `## Gotchas` names the follow-up record that wires the consumers. Criteria that exercise only the mechanism can all pass while the motivating outcome never ships: #3002's Current State named three gates that should stop re-running a chunked suite, every criterion tested `verify.js --stamp-status --scope`, and all three gates still read bare `--stamp-status`.
 
@@ -190,6 +190,16 @@ When a spec's technical approach rests on an assumption about how an external sy
 ## Gate-Authoring Deliverables
 
 When a spec's plan adds a new gate — a PreToolUse/PostToolUse hook check, a permission rule, or a teardown/cleanup guard — read `gate-authoring-deliverables.md` in this skill's directory and write the plan-time caller trace it describes as a deliverable.
+
+## State-Classification Deliverables
+
+When a deliverable classifies inputs into named states — an eligibility verdict, a refusal ladder, a status classifier — write a **Closed rule** bullet beside the state list. It states three parts:
+
+- **Exhaustive** — the listed states are the complete set; no state outside the list is eligible or classified by implication.
+- **Refused with a named remedy** — an unlisted state is refused with one line naming the state and its remedy.
+- **Amendment, not escalation** — a plan review that finds another unlisted state applies this rule as a plan amendment (it adds that state's refusal line), never as a `needs-human` gap.
+
+Without it, every state the list leaves out is a gap whose settlement alters an observable contract, which `build/plan-review.md` classifies `needs-human` — so each review pass finds new ones and stops the build. #4588's eligibility verdict stopped four times on the `plan-review-needs-human` HARD-GATE until its spec added this rule; the next pass applied it to a newly found state and the build proceeded.
 
 ## Why Each Section Matters for `/superpowers:writing-plans`
 

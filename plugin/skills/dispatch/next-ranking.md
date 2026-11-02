@@ -21,10 +21,11 @@ record this same bare-drain firing already dispatched to a terminal outcome shor
 exist yet on a firing's first iteration, and `next`'s single-iteration alias never needs it at all.
 A group with any member excluded under `reason: 'firing'` is excluded from the candidate pool for
 the rest of the firing, exactly like an oversized group — the record's labels alone (`auto:build`
-present, no `bot:blocked`) do not change on a claim-contest/in-flight stop or a pre-retry-ceiling
-build/test failure, so without this the same firing's very next iteration re-selects the identical
-group and reproduces the identical stop. All three reasons are checked together, via one
-`groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call — no separate key derivation for each.
+present, no `bot:blocked`) do not change on a claim-contest/in-flight/claims-branch-missing stop
+or a pre-retry-ceiling build/test failure, so without this the same firing's very next iteration
+re-selects the identical group and reproduces the identical stop. All three reasons are checked
+together, via one `groupIsExcluded(g, entries, ['oversized', 'firing', 'neighbour-in-flight'])` call
+— no separate key derivation for each.
 
 ```bash
 DISPATCH_GROUPS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-groups.json)"

@@ -7,7 +7,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv } = require('../plugin/bin/lib/hooks/git-exec');
+const {
+  runGit, runGitAsync, isIndeterminate, FAILURE, DEFAULT_TIMEOUT_MS, repoPinnedEnv, repoSlugOf, repoSpecOf,
+} = require('../plugin/bin/lib/hooks/git-exec');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { splitNul } = require('../plugin/bin/lib/git-z');
 
@@ -423,4 +425,27 @@ test('#3900 runGit raw:true leaves the failure shape unchanged', () => {
   assert.strictEqual(failure, FAILURE.GIT_ERROR);
   assert.match(stderr, /not a git repository/);
   assert.strictEqual(exitCode, 128);
+});
+
+test('repoSpecOf: the origin remote parsed with its host — github.com and GitHub Enterprise, SSH and HTTPS; repoSlugOf stays host-less', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/w.git']);
+  assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
+  for (const url of ['git@ghe.example.com:acme/w.git', 'https://ghe.example.com/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
+    assert.deepStrictEqual(repoSpecOf(repo), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
+    assert.strictEqual(repoSlugOf(repo), 'acme/w', url);
+  }
+});
+
+test('repoSpecOf: a remote parseRepo does not read (ssh://) still resolves through repoSlugOf\'s parse, host unknown', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@github.com/acme/w.git']);
+  assert.strictEqual(repoSlugOf(repo), 'acme/w');
+  assert.deepStrictEqual(repoSpecOf(repo), { host: null, owner: 'acme', repo: 'w' });
+});
+
+test('repoSpecOf: no origin remote, or a directory outside any repo, is null', () => {
+  assert.strictEqual(repoSpecOf(gitRepo()), null);
+  assert.strictEqual(repoSpecOf(fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'ct-ge-spec-nongit-'))), null);
 });

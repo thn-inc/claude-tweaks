@@ -1,7 +1,7 @@
 # PR Run Comments — the gate, the kinds, and the post-or-update procedure
 
-Canonical for every site that posts a run-lifecycle comment (review verdict, verification
-brief, failure tombstone) to a `pr-first` (`_shared/integration-model.md`) run's draft PR
+Canonical for every site that posts a run-lifecycle comment (review verdict, timing table,
+failure tombstone) to a `pr-first` (`_shared/integration-model.md`) run's draft PR
 instead of — or in addition to — the record issue. Generalizes
 `_shared/pr-early-run-lifecycle.md`'s PR body composition to the comments posted *during* the
 run, after the PR already exists.
@@ -32,18 +32,65 @@ so it skips this gate, and a failed find or write stops the update instead of fa
 | Kind | Posted by | Marker |
 |---|---|---|
 | `verdict` | `/claude-tweaks:review`, on review-gate completion | `<!-- run-comment: verdict -->` single-spec; `<!-- run-comment: verdict:{spec} -->` per spec in a multi-spec run — see "Multi-spec verdict comments" below |
-| `brief` | `/claude-tweaks:wrap-up`, the Verification Brief | `<!-- run-comment: brief -->` single-spec; `<!-- run-comment: brief:{spec} -->` per spec in a multi-spec run — see "Multi-spec brief and timing comments" below |
-| `timing` | `/claude-tweaks:wrap-up`, right after the Verification Brief | `<!-- run-comment: timing -->` single-spec; `<!-- run-comment: timing:{spec} -->` per spec in a multi-spec run — see "Multi-spec brief and timing comments" below |
-| `try-it` | `/claude-tweaks:wrap-up`, a record's Try it block when no brief on the PR carries it | `<!-- run-comment: try-it -->` single-spec; `<!-- run-comment: try-it:{spec} -->` per spec in a multi-spec run, the same qualification as `verdict` |
+| `brief` | Legacy `/claude-tweaks:wrap-up` runs, the Verification Brief. New runs post the acceptance packet on the record instead (**Work-record markers** below), and this kind is read for legacy runs only | `<!-- run-comment: brief -->` single-spec; `<!-- run-comment: brief:{spec} -->` per spec in a multi-spec run — see "Multi-spec brief and timing comments" below |
+| `timing` | `/claude-tweaks:wrap-up`, right after the acceptance packet | `<!-- run-comment: timing -->` single-spec; `<!-- run-comment: timing:{spec} -->` per spec in a multi-spec run — see "Multi-spec brief and timing comments" below |
+| `try-it` | `/claude-tweaks:wrap-up`, a parent-linked sub-issue's Try it block | `<!-- run-comment: try-it -->` single-spec; `<!-- run-comment: try-it:{spec} -->` per spec in a multi-spec run, the same qualification as `verdict` |
 | `failure` | `/claude-tweaks:dispatch`'s Settle step, on HARD-GATE failure | `<!-- run-comment: failure -->` |
 | `release-status` | `_shared/pr-first-merge-post-merge.md` Step 4.1, on outcome `merged` when a CHANGELOG backfill is needed | `<!-- run-comment: release-status -->` |
 | `close-out-update` | `/claude-tweaks:dispatch close-out`, before the call that lands an update (`dispatch/close-out-update.md`'s Update marker) | `<!-- run-comment: close-out-update -->` — one per PR, rewritten `cleared (…)` after the verified merge, a decline, or a landing that landed nothing |
 | `express-review` | `_shared/express-lane.md`'s Post-merge sampling, once per sampled merged express PR, findings or none | `<!-- run-comment: express-review -->` — the review-done marker `express-lane.js samples` reads (trusted authors only), so a reviewed PR is never sampled again |
+| `accept-verdict` | Dispatch, or the human — never the plugin. Registered here so the format has one home; it is not a `run-comment` kind and no skill posts or finds it by the Post-or-update procedure | `<!-- accept-verdict: {"v":1,"verdict":"…"} -->` — one single-line comment alone on its line at column 0, read only against the record's current verdict label; see "The `accept-verdict` comment" below |
 
-Each kind's marker is the **first line** of its comment body, unconditionally — the same
+Each run-comment kind's marker is the **first line** of its comment body, unconditionally — the same
 first-line-marker convention `_shared/pr-early-run-lifecycle.md`'s PR body uses for its own
 `claude-tweaks-run` marker, for the same reason: a reader (or a scan) must be able to identify
-the kind without parsing prose.
+the kind without parsing prose. `accept-verdict` is the one marker outside that rule: it is not
+first-line, it is column 0 and before any code block, for the reason given in its section.
+
+## Work-record markers
+
+A comment marker that lives on the work record rather than the run's PR. It is not a `run-comment`
+kind: the gate above and the Post-or-update procedure below do not apply to it.
+
+| Kind | Posted by | Marker |
+|---|---|---|
+| `acceptance-packet` | `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `<!-- acceptance-packet: v1 -->` on the **work record**, not the PR; find/edit rules live in `_shared/acceptance-packet.md` |
+
+## The `accept-verdict` comment
+
+The human's acceptance verdict as a machine-readable comment. Dispatch (a separate repository)
+and a human both write it, so the format below is a cross-repository contract:
+`bin/lib/issues/accept-verdict.js` parses and renders it, and a marker that breaks any rule is
+rejected with a reason, never half-read.
+
+```
+<!-- accept-verdict: {"v":1,"verdict":"changes-requested","choice":"fix-forward","note":"text"} -->
+```
+
+- **Shape.** One single-line HTML comment, alone on its own line, at column 0, so it must come
+  before any code block in the comment: a run of 3 or more backticks or tildes before the
+  marker is a rejection. This is deliberate; a marker shown as code must never count, and the
+  parser does not model Markdown to tell. One block per comment. A marker that follows an
+  unclosed `<!--` comment earlier in the same comment is also rejected (`verdict marker inside
+  another HTML comment`): close any earlier HTML comment with `-->` before the marker line.
+- **Fields.** `v` is `1`. `verdict` is `approved` or `changes-requested`. `choice` is
+  `fix-forward` or `revert-now`, required with `changes-requested` and rejected with
+  `approved`. `note` is optional, a string of at most 2000 UTF-16 code units (`String.length`).
+  Unknown fields and repeated keys are rejected.
+- **Choice.** `fix-forward` files a follow-up record carrying the original's context, the note
+  and a regression-test requirement. `revert-now` (dev target only) opens and merges a revert PR
+  immediately, then files that follow-up record. #4614 acts on both.
+- **Escaping.** The JSON escapes `<` as `\u003c` and `>` as `\u003e` (a backslash, then `u003c` /
+  `u003e`); a raw `<` or `>` anywhere in the JSON is rejected, so the line can never close its own
+  comment early.
+- **Trust.** Only a comment from an author with an association of `OWNER`, `MEMBER` or
+  `COLLABORATOR` counts (the Trusted authors section below, `bin/lib/issues/comment-trust.js`).
+- **Agreement.** A marker counts only when its `verdict` equals the record's current verdict
+  label (`_shared/work-record.md`, Acceptance semantics). A mismatch yields no action and a
+  visible "verdict label and comment disagree" note.
+- **Trust limit (#3358).** The author-association gate cannot tell the maintainer from an agent
+  running under the maintainer's account. The plugin never authors a verdict marker itself; only
+  Dispatch or the human does. The residual risk is the one `comment-trust.js` documents.
 
 ## Multi-spec verdict comments (#2592)
 
@@ -90,18 +137,21 @@ multi-spec-PR-sharing case this section rules.)
 Fixed the same way as `verdict`: **one `brief` comment per spec** and **one `timing` comment per
 spec**, each keyed by its own spec-qualified marker — `<!-- run-comment: brief:{spec} -->` and
 `<!-- run-comment: timing:{spec} -->` — where `{spec}` is the record id, the same identifier the
-verdict marker uses. `wrap-up/verification-brief.md`'s Step 4 composes these markers instead of
-the plain `brief`/`timing` markers whenever it is running inside a multi-spec context
-(`$MULTISPEC_PARENT_DIR` set); a single-spec run keeps the plain `<!-- run-comment: brief -->` /
-`<!-- run-comment: timing -->` markers unchanged. This reuses the Post-or-update procedure below
-completely unchanged — `{kind}` is simply `brief:{spec}` / `timing:{spec}` instead of the bare
-form for that spec's own find/update/create calls, exactly as `verdict:{spec}` already does.
+verdict marker uses. New runs post no `brief` comment: `wrap-up/verification-brief.md`'s Step 4
+posts the acceptance packet on each record instead (**Work-record markers** above), which a shared
+PR cannot overwrite. The `brief` markers describe what a legacy run left, `brief:{spec}` from a
+multi-spec run and the plain `<!-- run-comment: brief -->` from a single-spec one. Step 4 composes the
+`timing` marker in its spec-qualified form whenever it is running inside a multi-spec context
+(`$MULTISPEC_PARENT_DIR` set); a single-spec run keeps the plain `<!-- run-comment: timing -->` marker
+unchanged. This reuses the Post-or-update procedure below completely unchanged — `{kind}` is simply
+`timing:{spec}` instead of the bare form for that spec's own find/update/create calls, exactly as
+`verdict:{spec}` already does.
 
 **Read side (#3333).** Both readers of a posted brief follow the write side's split: the
 acceptance-labeling check in `bin/lib/wrap-up/engine-verify.js` and `/claude-tweaks:demo`'s PR
 run-comment lookup in `demo/entry-paths.md` read `<!-- run-comment: brief:{n} -->` for the record
 `n` being read first, then fall back to the plain `<!-- run-comment: brief -->`. The fallback keeps
-single-spec runs, which still post the plain marker, and briefs posted before the qualified marker
+single-spec runs, which posted the plain marker, and briefs posted before the qualified marker
 existed resolving as before. A sibling spec's `brief:{m}` never satisfies record `n`; only the plain
 fallback, which a multi-spec run never writes, can be shared.
 
@@ -242,9 +292,9 @@ call — never silently drop the content.
 | Consumer | Kind | Notes |
 |---|---|---|
 | `/claude-tweaks:review` (verdict-rendering step) | `verdict` (`verdict:{spec}` under multi-spec — see above) | Top findings by severity, max 5, reusing review's own findings-table shape |
-| `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `brief` (`brief:{spec}` under multi-spec — see "Multi-spec brief and timing comments" above) | Full brief posts to the PR; the issue gets a one-line pointer comment instead (unmarkered — it is not itself a `run-comment` kind, since nothing ever needs to find-and-update it by marker) |
-| `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4, after the brief) | `timing` (`timing:{spec}` under multi-spec — see "Multi-spec brief and timing comments" above) | The run's Timing table, `bin/phase-timing.js --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` verbatim under the same `pr`-object gate as the brief; find-or-update by marker, so a re-run replaces it (#1928) |
-| `/claude-tweaks:wrap-up` (`verification-brief.md`'s Try it block) | `try-it` | The human walkthrough (`_shared/try-it.md`) for a below-floor record or a parent-linked sub-issue — the cases with no brief on the PR to embed it (#2821); find-or-update by marker. The one exception to the issue-only fallback above: a failed `try-it` post is logged as a retryable failure and never re-routed to the issue — a below-floor record gets no issue comment. Nothing later in the run re-posts it: the Pipeline Summary still carries the block, and a re-run of wrap-up posts it by marker |
+| `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4) | `brief` (`brief:{spec}` under multi-spec — see "Multi-spec brief and timing comments" above) | New runs post the acceptance packet on the record instead, and the PR carries only its `Acceptance packet:` body line (`_shared/acceptance-packet.md`). This kind is read for legacy runs only: a legacy run's full brief is on the PR, and its issue carries a one-line pointer comment (unmarkered — it is not itself a `run-comment` kind, since nothing ever needs to find-and-update it by marker) |
+| `/claude-tweaks:wrap-up` (`verification-brief.md` Step 4, after the packet) | `timing` (`timing:{spec}` under multi-spec — see "Multi-spec brief and timing comments" above) | The run's Timing table, `bin/phase-timing.js --run "$PIPELINE_RUN_DIR" --markdown --auto-transcript` verbatim under the `pr`-object gate; find-or-update by marker, so a re-run replaces it (#1928) |
+| `/claude-tweaks:wrap-up` (`verification-brief.md`'s Try it block) | `try-it` | The human walkthrough (`_shared/try-it.md`) for a parent-linked sub-issue — the one case with no packet of its own to carry it (#2821, #4611); find-or-update by marker. The one exception to the issue-only fallback above: a failed `try-it` post is logged as a retryable failure and never re-routed to the issue — a sub-issue's walkthrough is no issue comment on any path. Nothing later in the run re-posts it: the Pipeline Summary still carries the block, and a re-run of wrap-up posts it by marker |
 | `/claude-tweaks:dispatch` (`settle-and-merge.md` Step 6, step 5) | `failure` | The full comment (`bin/lib/issues/retry.js`'s `attemptFailedCommentBody`, marker included) always posts to the **issue**, regardless of pr-first (`#1963`) — this is what `bin/lib/issues/trust.js`, which reads only the issue's comments and is not modified, already sees. Under pr-first, the PR gets a short pointer comment instead of the full narrative, and is closed. Retry-ceiling **counting** (`countFailedAttempts`) merges the issue's comments with every PR ever linked to the record, open or closed, so an attempt is found regardless of which source it originally posted to |
 | `_shared/pr-first-merge-post-merge.md` (Step 4.1) | `release-status` | Body: the human line, then the `--backfill` section, then one line pointing at `docs/releasing.md` "After the merge"; posted only on the backfill outcome, never on `not yet in a release` or `every record named` |
 | `/claude-tweaks:dispatch close-out` (`close-out-update.md`'s Update marker) | `close-out-update` | A resume marker, not a report: written pending before an update lands, read by `close-out.md` step 2 so a re-run from any checkout re-verifies, cleared only after the verified merge, a decline, or a landing that landed nothing. No `run-state.json` gate and no issue fallback — the gate exception above |

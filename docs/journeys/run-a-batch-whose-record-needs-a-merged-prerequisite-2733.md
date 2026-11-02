@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/preflight-records/merge-gate.js
   - plugin/bin/lib/issues/record-payload.js
+  - plugin/bin/lib/markdown-blocks.js
   - plugin/bin/preflight-records.js
   - plugin/skills/flow/multispec-merge-gate.md
   - plugin/skills/flow/multispec-preflight-failure.md
@@ -19,7 +20,7 @@ files:
 
 ### 1. Pre-flight collects the batch and evaluates the gate in one call — Validation step 3
 - **URL:** `plugin/skills/flow/multi-spec.md` Validation step 3
-- **Action:** `/flow` runs `bin/preflight-records.js {targets in run order} --merge-gate --integration-branch "$INTEGRATION_BRANCH"`, with `$INTEGRATION_BRANCH` resolved per `_shared/integration-branch.md`. One call returns `{records, overlapGroups, directOverlaps, workLinks, mergeGate}`.
+- **Action:** `/flow` runs `bin/preflight-records.js {targets in run order} --merge-gate --blocker-landing --integration-branch "$INTEGRATION_BRANCH"`, with `$INTEGRATION_BRANCH` resolved per `_shared/integration-branch.md`. One call returns `{records, overlapGroups, directOverlaps, workLinks, mergeGate}`, with `blockerLanding` on each record.
 - **Should feel:** Invisible — no extra fetch pass and no question; the gate rides the pre-flight call that already ran.
 - **Should understand:** The gate fires only on a strict demand, on a `## Deliverables` / `## Prerequisites` line that names one of the record's own in-batch `blocked-by` prerequisites. Examples: "#2670 is actually merged", "merged to/into {integration branch}", "lands on main". The generic "must be merged first" phrasing does not fire, because the shared branch already carries that prerequisite's content ahead of the dependent's build. A `## …` line inside a fenced code block is quoted content, not a section boundary: it neither ends the Deliverables scan nor opens a Prerequisites one (#4369).
 - **Red flags:** The flag passed with the claim step's open-queue extras appended; a hardcoded `main` in a repo whose integration branch is something else; a demand after a fenced `## …` line in Deliverables that is not split out.
@@ -50,3 +51,5 @@ files:
 - Related: #2682 (the incident batch whose record demanded #2670/#2681 "actually merged"), `respond-to-multispec-boundary-drift.md` (the later, per-boundary freshness check).
 - Updated during #3351's build (run 2026-10-17T095806-spec-3351): step 4's "proceed unsplit with a SKIP" fallback was replaced by Step 3's failure ruling (`multispec-preflight-failure.md`).
 - Updated during #4369's build (run 2026-10-28T192900-record-4369): the section scan skips heading lines inside fenced blocks (shared `fencedLineMask`, `plugin/bin/lib/issues/record-payload.js`).
+- Updated during #4645's build (run 2026-10-31T221848-record-4645): `fencedLineMask` moved to `plugin/bin/lib/markdown-blocks.js`; `merge-gate.js` imports it from there.
+- Updated during #4553's build (run 2026-10-31T234545-record-4553): step 1's call also passes `--blocker-landing`, judging out-of-run blockers in the same call; see `stop-a-run-whose-closed-blocker-never-landed-4553.md`.

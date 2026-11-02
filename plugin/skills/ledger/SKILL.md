@@ -103,7 +103,7 @@ The critical gate that prevents dropped work — three phases (Phase 1 fix-exhau
 
 ### Delete
 
-Delete the ledger file after all items are resolved — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (#2544; exits 0, and reports `not found` rather than failing when the ledger is already gone). Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step) — except a multi-spec `auto`/`hybrid` run's shared ledger, which `/claude-tweaks:flow` deletes once in `flow/multispec-review-console.md`'s Shared teardown step 0 (#3420).
+Delete the ledger file after all items are resolved — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$PIPELINE_RUN_DIR"` (#2544; exits 0 on every printed report, and reports `not found` rather than failing when the ledger is already gone). Called at `/claude-tweaks:wrap-up`'s Phase 4 execution step (planned in that phase's cleanup-planning step) — except a multi-spec `auto`/`hybrid` run's shared ledger, which `/claude-tweaks:flow` deletes once in `flow/multispec-review-console.md`'s Shared teardown step 0 (#3420).
 
 Only delete when the resolve gate has passed — all items must have terminal statuses (an incomplete deferral — a `deferred` row naming no staged path or record reference — is not terminal).
 
@@ -160,7 +160,7 @@ Render as plain markdown (docs/skill-authoring.md's Skill handoffs convention):
 | Resolving as "accepted" without a reason | Acceptance requires a stated rationale — "it's fine" is not one |
 | Deferring items introduced by the current build | Fix what you introduced — defer is for pre-existing or genuinely larger scope |
 | Creating duplicate ledger entries | Check semantic duplicates before adding — same phase + similar description = skip |
-| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item |
+| Reopening resolved items | Terminal statuses are final — if the fix was wrong, create a new item. The one exception — a `deferred` row returning to `open` when the console refuses its staged proposal — is defined in `_shared/ledger-format.md`'s Resolution-text requirements |
 | Modifying the ledger file format | Multiple skills parse the table — structural changes break them |
 | Using the ledger for feature tracking | The ledger covers one pipeline run. Cross-spec/cross-run tracking belongs on the decomposition's parent record's `## Cross-Spec Promises` section (`_shared/work-record.md`). |
 | Skipping the resolve gate | Non-negotiable — no pipeline completes with open items |

@@ -67,6 +67,7 @@ const { defaultRefExists } = require('./prune-remote');
 const { namedTarget } = require('../issues/named-target');
 const { queryRecords } = require('../issues/local-store');
 const { readWorkBackend } = require('../work-backend');
+const { ghOptions } = require('../repo-resolve');
 
 // Carried in the PR body so a human or later tooling can recognise the PR.
 const LEDGER_RESIDUE_MARKER = '<!-- ledger-residue-pr -->';
@@ -253,9 +254,10 @@ function defaultListOpenRecords(root, exec = execFileSyncTimed) {
   }
   return sharedPrimitives.runClassified(
     () => {
-      const issues = JSON.parse(exec('gh', ['issue', 'list', '--state', 'open', '--limit', '10000', '--json', 'number,body,labels'], {
+      const args = ['issue', 'list', '--state', 'open', '--limit', '10000', '--json', 'number,body,labels'];
+      const issues = JSON.parse(exec('gh', args, ghOptions(args, {
         cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, maxBuffer: sharedPrimitives.LARGE_MAX_BUFFER_BYTES, windowsHide: true,
-      }));
+      })));
       if (!Array.isArray(issues)) throw new Error('gh issue list returned a non-array');
       return issues;
     },
@@ -274,14 +276,16 @@ function defaultListRemovalPrs(root, exec = execFileSyncTimed) {
   const opts = { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true };
   return sharedPrimitives.runClassified(
     () => {
-      const refsOut = exec('gh', ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`, '--jq', '.[].ref'], opts);
+      const refsArgs = ['api', '--paginate', `repos/{owner}/{repo}/git/matching-refs/heads/${BRANCH_PREFIX}`, '--jq', '.[].ref'];
+      const refsOut = exec('gh', refsArgs, ghOptions(refsArgs, opts));
       const heads = [...new Set(String(refsOut).split(/\r?\n/)
         .filter((ref) => ref.startsWith('refs/heads/'))
         .map((ref) => ref.slice('refs/heads/'.length))
         .filter((head) => head.startsWith(BRANCH_PREFIX)))];
       const byNumber = new Map();
       for (const head of heads) {
-        const prs = JSON.parse(exec('gh', ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository'], opts));
+        const prArgs = ['pr', 'list', '--head', head, '--state', 'all', '--json', 'number,state,headRefName,body,isCrossRepository'];
+        const prs = JSON.parse(exec('gh', prArgs, ghOptions(prArgs, opts)));
         if (!Array.isArray(prs)) throw new Error('gh pr list returned a non-array');
         for (const pr of prs) {
           // `--head` matches the branch name alone, so a fork PR that reuses it is not ours: its body is not ours to trust.
@@ -299,10 +303,11 @@ function defaultListRemovalPrs(root, exec = execFileSyncTimed) {
 // timed-out create may still have opened the PR. `exec` is injectable for tests.
 function defaultCreatePr({ root, base, head, title, body }, exec = execFileSyncTimed) {
   try {
+    const args = ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body];
     const stdout = exec(
       'gh',
-      ['pr', 'create', '--base', base, '--head', head, '--title', title, '--body', body],
-      { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true },
+      args,
+      ghOptions(args, { cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: sharedPrimitives.GH_TIMEOUT_MS, windowsHide: true }),
     );
     const url = String(stdout).split('\n').map((l) => l.trim()).filter(Boolean).pop() || '';
     const number = Number(url.split('/').pop());

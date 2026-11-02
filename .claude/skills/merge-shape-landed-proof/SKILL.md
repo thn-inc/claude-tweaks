@@ -108,6 +108,25 @@ evidence for that record, not merge evidence.
   (timeout, spawn failure) resolves to the retryable skip `local-behind-merge`, never to proven;
   an ordinary git error (a git too old for `--show-current`) keeps the fallback.
 
+## Closed is not landed
+
+The reverse of the section above, for a check that gates a build on someone else's work: a
+prerequisite record being `closed` proves its issue was closed, not that its code reached the
+integration branch. A closing PR merged into a different branch (`production`, a release
+branch) closes the issue and leaves the integration branch without the fix.
+
+- **Proof.** Reachability of the closer's candidate commits from `origin/{integration-branch}`,
+  asked per commit through the REST compare API (`behind` or `identical` means reachable), with
+  no local fetch. Candidates are the closing PR's merge commit or closing commit plus every merged
+  `closedByPullRequestsReferences` entry; stop at the first reachable one.
+- **Direction.** Only a positive answer proves landing. A cherry-picked landing has a different
+  sha and reads `unlanded`, so the stop must carry paste-ready escapes (land the commit, or drop
+  the blocker edge by hand). A closing-PR list the API cut short with nothing reachable, or a
+  compare call that failed, reads `undetermined` and proceeds with a logged `SKIP`, never
+  `unlanded`, and each failed compare call's cause is surfaced.
+- **Reuse.** `plugin/bin/lib/preflight-records/blocker-landing.js` (`fetchBlockerLanding`,
+  `classifyBlocker`; #4553).
+
 ## Recurrences this skill exists to stop
 
 - #2251 switched `pr-first` to `--squash`. After that, the `git cherry` checks read every

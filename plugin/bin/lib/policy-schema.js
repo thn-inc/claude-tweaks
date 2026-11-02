@@ -6,10 +6,26 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
+const { parseRiskPathGlobs } = require('./risk-path-globs');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
 
 const POLICY_CATEGORIES = ['autonomy-trust', 'pipeline-behavior', 'merge-safety', 'health-sweeps', 'models', 'housekeeping'];
+
+// Control mode (#4609). The four built-in invisible-risk category slugs, verbatim;
+// `risk-categories` entries are additional slugs beside these.
+const BUILTIN_RISK_CATEGORIES = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
+
+// A `list` row's optional `element` names the rule every comma-separated entry
+// must match (isValidValue). A list row with no `element` accepts any text.
+const LIST_ELEMENT_PATTERNS = {
+  login: /^[A-Za-z0-9][A-Za-z0-9_-]*(\[bot\])?$/, // a GitHub user/org login, bot logins included
+  slug: /^[a-z0-9][a-z0-9-]*$/,
+};
+
+// A `string` row's optional `pattern` the whole value must also match. The
+// authority holds no `@`: policy.yml is committed, so a URL never carries a credential.
+const HTTP_URL = /^https?:\/\/[^\s/?#@]+(?:[/?#]\S*)?$/;
 
 // A `type: 'boolean'` entry's value — in policy.yml examples, routing-table prose, and
 // tests — must use the literal strings 'true'/'false', never 'on'/'off': resolveValue()
@@ -41,7 +57,7 @@ const POLICY_KEYS = [
   // derives it. Tier is `advanced` only because the core tier sits at its
   // enforced cap of 12 (tests/policy-schema-metadata.test.js); by the decision
   // rule it is core-shaped (a merge default).
-  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI verification a merge into the integration branch waits for — merge once green, wait for checks, or none.", category: 'merge-safety', tier: 'advanced' },
+  { key: 'merge-verification', type: 'enum', values: ['merge-when-green', 'wait', 'off'], summary: "Sets how much CI a merge waits for — merge once green, wait for checks, or off (a derived off still waits on and parks on reported checks).", category: 'merge-safety', tier: 'advanced' },
   // merge-authorization (#715): lets a human present at the run (the /flow
   // `pre-authorize-merge` token, #2734, or a Manifesto override) pre-authorize
   // "merge once every HARD-GATE is green" for this run only.
@@ -74,6 +90,10 @@ const POLICY_KEYS = [
   { key: 'auto-merge-max-lines', type: 'integer', default: 40, summary: "Bounds how large a diff an unattended merge will accept before a human is required — a weighted guideline, not a hard cutoff.", category: 'merge-safety', tier: 'core' },
   { key: 'auto-merge-max-files', type: 'integer', default: 2, summary: "Bounds how many changed files an unattended merge will accept before a human is required — the same weighted guideline, by file count.", category: 'merge-safety', tier: 'core' },
   { key: 'merge-sensitive-paths', type: 'list', default: [], summary: "Lists path patterns that always require a human to sign off on a merge, no matter how small the change looks.", category: 'merge-safety', tier: 'advanced' },
+  // risk-categories (#4609): project-added invisible-risk slugs, beside the four BUILTIN_RISK_CATEGORIES. `element: 'slug'` validates each comma-separated entry. policyOnly: risk-path-globs validates against it from policy.yml, so the two can never disagree.
+  { key: 'risk-categories', type: 'list', default: [], element: 'slug', policyOnly: true, summary: "Read only with control mode on: extra risk categories added to the four built-in ones; pairs with risk-path-globs.", category: 'merge-safety', tier: 'advanced' },
+  // risk-path-globs (#4609): the second block-style key. A slug -> glob-list map, read by parseRiskPathGlobs (not parseFlatLines, which ignores indented lines); `keys` names the built-in slugs, and risk-categories adds more at resolve time.
+  { key: 'risk-path-globs', type: 'map', keys: BUILTIN_RISK_CATEGORIES, default: {}, summary: "Read only with control mode on: maps each risk category to its signal path globs, as an indented block; pairs with risk-categories.", category: 'merge-safety', tier: 'advanced' },
   // commit-scope / commit-scope-paths (#3298): the merge-subject scope source bin/compose-subject.js resolves when --scope is absent — explicit flag > a commit-scope-paths match over the changed files > commit-scope > unscoped. Both advanced: the core tier is at its cap.
   { key: 'commit-scope', type: 'string', summary: "Names the one Conventional-Commits scope every merge subject carries, and the fallback when a path rule is ambiguous.", category: 'merge-safety', tier: 'advanced' },
   { key: 'commit-scope-paths', type: 'list', default: [], summary: "Maps changed-path prefixes to the Conventional-Commits scope a merge subject carries when the matched files all agree on one scope.", category: 'merge-safety', tier: 'advanced' },
@@ -145,6 +165,7 @@ const POLICY_KEYS = [
   { key: 'git-timeout-ms', type: 'integer', min: 1000, max: 120000, default: 30000, summary: "Bounds how long one `git` subprocess call on the claims-registry, pr-checks and compose-subject runners may run before it is killed.", category: 'housekeeping', tier: 'advanced' },
   { key: 'depth-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt asking whether recently changed code deserves a deeper architectural pass.", category: 'housekeeping', tier: 'advanced' },
   { key: 'creative-survey', type: 'enum', values: ['off'], summary: "When set, turns off the end-of-run prompt suggesting creative or UX improvement ideas for what was just built.", category: 'housekeeping', tier: 'advanced' },
+  { key: 'declare-claude-tweaks', type: 'boolean', default: true, summary: "When false, /init stops declaring claude-tweaks in committed project settings and the cloud setup script; superpowers stays.", category: 'housekeeping', tier: 'advanced' },
   { key: 'scope-keywords-required', type: 'boolean', default: false, summary: "When on, a build refuses to start over files outside its plan unless the plan names its intended scope; otherwise it is only a warning.", category: 'pipeline-behavior', tier: 'advanced' },
   // Renamed from merge-check in #331 (default-parity: that key also defaulted
   // true) — the old name collided with assess-agent-autonomy's merge-check
@@ -155,6 +176,20 @@ const POLICY_KEYS = [
   // semantics live in _shared/record-batch-input.md, not restated here.
   { key: 'specify-budget', type: 'integer', default: 5, summary: "Caps how many eligible backlog records one bare /specify drain attempts before stopping.", category: 'pipeline-behavior', tier: 'advanced' },
   { key: 'autonomy', type: 'enum', values: ['supervised', 'trusted', 'unattended'], default: 'supervised', summary: "Caps how much the pipeline may do without a human — trust that classes earn can never exceed this ceiling.", category: 'autonomy-trust', tier: 'core' },
+  // Control mode (#4609, human-in-control #4608): twelve inert flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. Nothing reads them yet; later records consume them, always behind isControlModeOn (bin/lib/policy.js). All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
+  { key: 'control-mode', type: 'enum', values: ['off', 'on'], default: 'off', summary: "The single human-in-control switch; implied levers default at skill-default precedence, so any explicitly set lever wins.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'acceptance-target', type: 'enum', values: ['local', 'dev'], default: 'local', summary: "Read only with control mode on: where a human accepts work, locally or on the dev environment; pairs with deploy-reach when dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-reach', type: 'enum', values: ['on-merge', 'command', 'none'], default: 'none', summary: "Read only with control mode on: how a merge reaches the dev environment, if at all; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  // deploy-command is an executed string: consumers read it from the base branch's policy only (never from a PR's own copy). policyOnly (here and on the two trust lists below) — the resolver skips the --run overlay, so a run config can name neither what executes nor who is trusted; the base-branch read stays the consumer's, since the resolver only sees the checkout it runs in. allowWhitespace — it is a shell command, like release-hook. closedQuote on the three allowWhitespace rows below: a quoted value holding a `#` is cut mid-quote by parseFlatLines, so an opening quote that never closes is invalid rather than a malformed command.
+  { key: 'deploy-command', type: 'string', allowWhitespace: true, closedQuote: true, policyOnly: true, summary: "Executed string, read only from the base branch's policy; meaningful only with deploy-reach command and control mode on.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-live-workflow', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: names the CI workflow whose success means dev is live; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-version-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: a URL returning the deployed version; pairs with deploy-reach other than none.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-base-url', type: 'string', pattern: HTTP_URL, summary: "Read only with control mode on: the dev environment's base URL, where acceptance runs; pairs with acceptance-target set to dev.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'dev-test-account', type: 'string', allowWhitespace: true, closedQuote: true, summary: "Read only with control mode on: the vault entry name of the dedicated test account the smoke check signs in with; pairs with dev-base-url.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-wait-seconds', type: 'integer', min: 0, default: 900, summary: "Read only with control mode on: how long to wait for a deploy to go live; 0 skips the wait. Pairs with a live signal.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'deploy-poll-seconds', type: 'integer', min: 1, default: 30, summary: "Read only with control mode on: how often the live signal is polled while waiting; pairs with deploy-wait-seconds.", category: 'pipeline-behavior', tier: 'advanced' },
+  { key: 'owned-owners', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: orgs and users, beside the repo owner, whose repos are owned. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
+  { key: 'trusted-authors', type: 'list', default: [], element: 'login', policyOnly: true, summary: "Read only with control mode on, from base-branch policy: GitHub logins trusted as record roots, beside the repo owner. Pairs with nothing.", category: 'autonomy-trust', tier: 'advanced' },
   { key: 'trust-revert-window-days', type: 'integer', min: 1, default: 14, summary: "Sets how many days a closed record must age before its outcome counts as proven-good evidence toward earned trust.", category: 'autonomy-trust', tier: 'advanced' },
   // The reserved second opt-in named by skills/_shared/autonomy-ceiling.md —
   // read by permittedGrants as grantOriginationEnabled. false by default: the
@@ -361,9 +396,9 @@ function parseFlatLines(raw) {
     // indentation. Dotted names still parse (the RENAMED_KEYS aliases such as
     // harness-health.scoped-rule-budget are dotted inputs), but new keys are
     // flat kebab-case per skills/_shared/policy-key-naming.md.
-    // An indented line belongs to a nested block's own field (today, only
-    // model-profiles' rows) and must never be read as a flat key in its own
-    // right.
+    // An indented line belongs to a nested block's own field (model-profiles'
+    // and risk-path-globs' rows, the two block keys) and must never be read as
+    // a flat key in its own right.
     if (/^\s/.test(rawLine)) continue;
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;
@@ -373,6 +408,27 @@ function parseFlatLines(raw) {
     if (value) result[match[1]] = value;
   }
   return result;
+}
+
+// True when `value` ends inside a quote — what a `#` inside quotes leaves
+// behind once parseFlatLines cuts the line there. Shell-style: a `"` opens
+// anywhere (`-m"fix #12"`, `>"a#b"`); a `'` only at the start of a word (line
+// start, after whitespace, `=`, `(`, `;`, `|`, `&`), so an apostrophe inside a
+// word (`Bob's`) opens none; `\` escapes the next character except inside
+// single quotes.
+function endsInsideQuote(value) {
+  let quote = null;
+  for (let i = 0; i < value.length; i += 1) {
+    const ch = value[i];
+    if (ch === '\\' && quote !== "'") {
+      i += 1;
+    } else if (quote !== null) {
+      if (ch === quote) quote = null;
+    } else if (ch === '"' || (ch === "'" && (i === 0 || /[\s=(;|&]/.test(value[i - 1])))) {
+      quote = ch;
+    }
+  }
+  return quote !== null;
 }
 
 function isValidValue(schemaEntry, value) {
@@ -395,8 +451,25 @@ function isValidValue(schemaEntry, value) {
       // against. allowWhitespace: true opts a command-shaped key (e.g.
       // release-hook) out of the whitespace-free rule, but not out of the
       // non-blank rule — a whitespace-only value is still invalid.
-      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value));
+      // An optional `pattern` (#4609) must also match — e.g. a URL key.
+      // A `closedQuote` key (the #4609 keys only — release-hook's pinned F6/#2253
+      // contract keeps an unbalanced quote as an ordinary value) also rejects an
+      // opening quote that never closes — what a `#` inside the quotes leaves
+      // behind, since parseFlatLines cuts at any `#` — and a blank value inside
+      // its quotes (`""`).
+      if (schemaEntry.closedQuote === true) {
+        const trimmed = value.trim();
+        if (endsInsideQuote(trimmed)) return false;
+        if (stripEnclosingQuotes(trimmed).trim().length === 0) return false;
+      }
+      return value.trim().length > 0 && (schemaEntry.allowWhitespace === true || !/\s/.test(value))
+        && (schemaEntry.pattern === undefined || schemaEntry.pattern.test(value));
     case 'list':
+      // An optional `element` (#4609) names the rule each comma-separated entry
+      // must match; an empty entry (a trailing or doubled comma) never does.
+      // A row with no `element` accepts anything, as before.
+      if (schemaEntry.element === undefined) return true;
+      return value.split(',').every((entry) => LIST_ELEMENT_PATTERNS[schemaEntry.element].test(entry.trim()));
     case 'opaque':
       return true;
     case 'map':
@@ -431,11 +504,31 @@ function stripMatchedQuotes(value) {
   return value;
 }
 
+// A closedQuote row's stripping: the outer pair goes only when it encloses the
+// whole value, meaning the first unescaped same quote is the last character, so
+// `"a" "b"` stays exactly as written. A `\` escapes except inside single quotes,
+// as in endsInsideQuote. Nothing is unescaped.
+function stripEnclosingQuotes(value) {
+  const quote = value[0];
+  if (quote !== '"' && quote !== "'") return value;
+  for (let i = 1; i < value.length; i += 1) {
+    if (value[i] === '\\' && quote === '"') i += 1;
+    else if (value[i] === quote) return i === value.length - 1 ? value.slice(1, -1) : value;
+  }
+  return value;
+}
+
 function resolveValue(key, rawValue) {
   const entry = SCHEMA_BY_KEY.get(key);
   if (!entry) return rawValue;
   if (rawValue === undefined || rawValue === null || rawValue === '') return entry.default;
   let strValue = String(rawValue);
+  // A closedQuote row validates the value as written, then strips: the rule reads
+  // quotes, so judging the stripped text would re-read `"a 'b"` as an unclosed `'`.
+  if (entry.closedQuote === true) {
+    const trimmed = strValue.trim();
+    return isValidValue(entry, trimmed) ? stripEnclosingQuotes(trimmed) : entry.default;
+  }
   // allowWhitespace entries (a shell command, e.g. release-hook) may be
   // quoted for readability in policy.yml — strip one matched pair before
   // validating, so a quoted command validates and resolves unquoted.
@@ -457,13 +550,15 @@ function hasOwn(obj, key) {
 //   { value, source }                      source: "run-config" | "policy" | "default"
 //   { value, source, "renamed-from": k }   value arrived via a RENAMED_KEYS migration
 //   { value: default, source: "default", invalid: true }   present-but-invalid at
-//                                          the winning source (never cascades)
+//                                          the winning source (never cascades;
+//                                          risk-path-globs: null, not its default)
 //   { error: "unknown-key" }               key in neither POLICY_KEYS nor RENAMED_KEYS
-// Precedence per key: run-config (only when runConfigRaw is a string) ->
-// policy -> schema default. Alias normalization happens per source, BEFORE
-// precedence: old key alone -> migrate() contributes under the new name with
-// a renamed-from tag (a null migration contributes nothing, but still tags
-// renamed-from when the final resolution falls to the default); old + new in
+// Precedence per key: run-config (only when runConfigRaw is a string, and never
+// for a policyOnly row) -> policy -> schema default. Alias normalization
+// happens per source, BEFORE precedence: old key alone -> migrate() contributes
+// under the new name with a renamed-from tag (a null migration contributes
+// nothing, but still tags renamed-from when the final resolution falls to the
+// default); old + new in
 // one source -> the new key wins with no tag (the stray old key is
 // auditPolicy's business).
 
@@ -523,11 +618,28 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
   const result = {};
   for (const requested of requestedKeys) {
-    // model-profiles is the one block-style key — invisible to this flat
+    // model-profiles is a block-style key — invisible to this flat
     // resolver by design. Emit its documented absent shape; the CLI overwrites
     // this entry via its parsePolicyModelConfig delegation before printing.
     if (requested === 'model-profiles') {
       result[requested] = { value: null, source: 'default' };
+      continue;
+    }
+    // risk-path-globs is the other block-style key, resolved here from the
+    // policy source only (run configs hold flat lever lines, never blocks) by
+    // its own parser. A rejected block resolves to null, flagged invalid, never
+    // to a partial map or the {} that means unset — the absent shape model-profiles
+    // uses too, unlike the flat keys' schema default.
+    if (requested === 'risk-path-globs') {
+      const parsed = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
+      if (!parsed.present) {
+        result[requested] = { value: {}, source: 'default' };
+      } else if (parsed.ok) {
+        result[requested] = { value: parsed.value, source: 'policy' };
+      } else {
+        result[requested] = { value: null, source: 'default', invalid: true };
+        if (onInvalid) onInvalid(requested, parsed.raw);
+      }
       continue;
     }
     // A request by an alias's old name resolves the replacement key. A
@@ -548,6 +660,7 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
     const defaultValue = schemaEntry.default ?? null;
     let resolved = null;
     for (const source of sources) {
+      if (schemaEntry.policyOnly && source.name === 'run-config') continue;
       if (!hasOwn(source.values, canonical)) continue;
       const raw = source.values[canonical];
       if (isValidValue(schemaEntry, raw)) {
@@ -596,7 +709,8 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 
 // Shallow extractor for a nested `{topKey}:` block's first-level indented key
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
-// value (today, only model-profiles) is otherwise invisible to auditPolicy.
+// value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
+// risk-path-globs, the other block key, has its own parser: bin/lib/risk-path-globs.js.
 // Returns undefined when the block is absent, distinct from an empty map.
 function extractMapEntry(raw, topKey) {
   if (!raw) return undefined;
@@ -620,13 +734,92 @@ function extractMapEntry(raw, topKey) {
   return found ? map : undefined;
 }
 
+// The slugs a risk-path-globs row may name: BUILTIN_RISK_CATEGORIES plus what
+// `risk-categories` adds — only from a value that passes its own validation, so
+// a malformed list can never widen them (#4609).
+function riskAllowedSlugs(policyRaw) {
+  const raw = parseFlatLines(typeof policyRaw === 'string' ? policyRaw : null)['risk-categories'];
+  if (raw === undefined || !isValidValue(SCHEMA_BY_KEY.get('risk-categories'), raw)) return BUILTIN_RISK_CATEGORIES;
+  return [...BUILTIN_RISK_CATEGORIES, ...raw.split(',').map((slug) => slug.trim())];
+}
+
+// Bound on detectIntegrationModel's `git remote get-url origin` probe — local
+// and fixed, never the gh budget (a git remote read is not a network call).
+const GIT_REMOTE_PROBE_TIMEOUT_MS = 5000;
+// How many times detectIntegrationModel runs the `gh repo view` probe before giving up on a
+// timeout (the first attempt plus one retry, record #4578 Decision Q4). The single source for
+// the probe loop, the degrade object's `attempts`, and every worst-case budget derived from
+// it (the hook budget below, phase-exit's resolve-policy.js kill timeout).
+const FORGE_PROBE_ATTEMPTS = 2;
+// The per-attempt `gh` bound both lifecycle hooks (session-start, pre-tool-use)
+// pass as `timeoutMs`. Hook worst case: git 5 s + two 5 s gh attempts = 15 s
+// (record #4578 Decision Q2) — one constant so the two hooks cannot drift.
+const HOOK_FORGE_PROBE_TIMEOUT_MS = 5000;
+// Freshness window of the run-scoped forge degrade memo (#4830). While `gh` stays
+// hung, the PreToolUse PR-stamp gate pays at most one hook-bounded probe per TTL of
+// hooked activity: GIT_REMOTE_PROBE_TIMEOUT_MS + FORGE_PROBE_ATTEMPTS x
+// HOOK_FORGE_PROBE_TIMEOUT_MS = 15 s worst case; the memo then answers for the next
+// TTL. Concurrent hook processes that start with no fresh memo each probe (see
+// resolveRunPinnedIntegrationModel).
+const FORGE_DEGRADE_MEMO_TTL_MS = 60000;
+
+// The `gh` timeout for detectIntegrationModel's `gh repo view` probe. Ladder:
+// explicit positive-integer `opts.timeoutMs` (returns before any file read) >
+// env CLAUDE_TWEAKS_GH_TIMEOUT_MS, when within gh-timeout-ms's bounds (an
+// invalid value falls through, never throws) > `gh-timeout-ms` in
+// {repoRoot}/.claude-tweaks/policy.yml (resolveValue: out of range -> 5000) >
+// 5000. Reads from repoRoot rather than shared-primitives' cwd-anchored
+// GH_TIMEOUT_MS getter: a require cycle, and the wrong root for a caller
+// probing a repo other than the cwd's.
+function resolveForgeProbeTimeoutMs(repoRoot, opts = {}) {
+  const explicit = opts && opts.timeoutMs;
+  if (Number.isInteger(explicit) && explicit > 0) return explicit;
+  const raw = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+  if (raw !== undefined && isValidValue(SCHEMA_BY_KEY.get('gh-timeout-ms'), raw)) return parseInt(raw, 10);
+  // A non-string repoRoot has no policy.yml to read: skip to the default instead of letting
+  // path.join throw, which would break detectIntegrationModel's never-throws contract.
+  const policyRaw = typeof repoRoot === 'string' ? readFileSafe(path.join(repoRoot, '.claude-tweaks', 'policy.yml')) : null;
+  return resolveValue('gh-timeout-ms', parseFlatLines(policyRaw)['gh-timeout-ms']);
+}
+
+// The reason codes of detectIntegrationModel's degrade object — the one
+// producer-side list: the producer below and every consumer that validates a
+// reason code (lib/flow/manifesto-write.js) read it, so they cannot drift.
+const FORGE_DEGRADE_REASON = Object.freeze({ TIMEOUT: 'timeout', TIMEOUT_THEN_EXIT: 'timeout-then-exit' });
+const FORGE_DEGRADE_REASONS = Object.freeze(Object.values(FORGE_DEGRADE_REASON));
+
+// Renders detectIntegrationModel's degrade object for a human: one string per
+// reason, shared by every surface that reports it.
+function formatForgeDegrade(degrade) {
+  if (degrade.reason === FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT) {
+    return `forge detection timed out after ${degrade.timeoutMs} ms, then gh failed on retry`;
+  }
+  return `forge detection timed out after ${degrade.timeoutMs} ms (x2)`;
+}
+
 // Computed default for `integration-model` when absent from every config
 // source (run-config, policy.yml) — bin/resolve-policy.js's code twin of
 // skills/_shared/forge-detection.md's three-check ladder. Impure (shells out),
 // unlike resolvePolicyKeys above; kept separate so that function stays pure.
 // Never throws — fails open to 'local-merge' on any error, including no git
 // remote at all (checked first, so a local-files project with no remote never
-// shells out to gh). Each check runs under a 5s timeout.
+// shells out to gh).
+//
+// Bounds: the `git remote get-url origin` probe has its own fixed bound,
+// GIT_REMOTE_PROBE_TIMEOUT_MS, and never draws on the gh budget. The `gh repo
+// view` probe runs under resolveForgeProbeTimeoutMs's ladder (explicit
+// `opts.timeoutMs` > env CLAUDE_TWEAKS_GH_TIMEOUT_MS > `gh-timeout-ms` in
+// policy.yml > 5000). A gh call that TIMES OUT on the first attempt is retried
+// once with the same timeout; a first attempt that exits non-zero or finds no
+// `gh` binary is definitive — one invocation, no retry. 'local-merge' therefore
+// means two different things: DETECTED (no remote, gh absent, gh exiting
+// non-zero first time — the forge really isn't there) or DEGRADED (a timeout,
+// then a failed retry — the forge was never reached, so the answer is a guess).
+// A degraded fallback is reported through the optional `opts.onDegrade(d)`
+// callback with `d = { reason, timeoutMs, attempts: FORGE_PROBE_ATTEMPTS }` — reason 'timeout'
+// when the retry timed out too, 'timeout-then-exit' when it failed any other
+// way; a callback that throws is swallowed. The return value stays a bare
+// string for every caller.
 //
 // `opts.mcpReachable` (optional, default undefined/falsy) is a caller-supplied
 // override — never resolved inside this function, per docs/incident-log.md
@@ -640,20 +833,52 @@ function extractMapEntry(raw, topKey) {
 // runs with no agent turn active and can never supply it (see
 // resolveRunPinnedIntegrationModel's own comment).
 function detectIntegrationModel(repoRoot, opts = {}) {
-  const { mcpReachable } = opts;
-  const execOpts = { cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000, encoding: 'utf8', windowsHide: true };
+  const { mcpReachable, onDegrade } = opts;
+  // Required here, not at the top: repo-resolve -> shared-primitives lazily requires
+  // policy-schema and policy back, so a load-time edge from this file would close a cycle.
+  const { ghOptions } = require('./repo-resolve');
   try {
-    execFileSync('git', ['remote', 'get-url', 'origin'], execOpts);
+    execFileSync('git', ['remote', 'get-url', 'origin'], {
+      cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: GIT_REMOTE_PROBE_TIMEOUT_MS, encoding: 'utf8', windowsHide: true,
+    });
   } catch {
     return 'local-merge';
   }
   if (mcpReachable === true) return 'pr-first';
-  try {
-    execFileSync('gh', ['repo', 'view', '--json', 'owner,name'], execOpts);
-  } catch {
-    return 'local-merge';
+  const ghTimeoutMs = resolveForgeProbeTimeoutMs(repoRoot, opts);
+  const args = ['repo', 'view', '--json', 'owner,name'];
+  const probe = () => {
+    try {
+      // windowsHide restated in the call: the windows-hide scan reads a bare
+      // options object, never one wrapped in ghOptions (#4505's GH_HOST seam).
+      execFileSync('gh', args, ghOptions(args, {
+        cwd: repoRoot, stdio: ['ignore', 'pipe', 'ignore'], timeout: ghTimeoutMs, encoding: 'utf8', windowsHide: true,
+      }));
+      return 'ok';
+    } catch (err) {
+      // execFileSync's `timeout` kills the child, so a timed-out probe surfaces as ETIMEDOUT or
+      // as the kill signal on err.signal (platform-dependent). Any signal-killed gh counts: it
+      // is retried once and, if it dies again, reported as a degrade, never as a definitive
+      // "not a GitHub repo". Deliberately broader than shared-primitives' isTimeoutError
+      // (spec Technical Approach, record #4578).
+      if (err && (err.code === 'ETIMEDOUT' || err.signal)) return 'timeout';
+      if (err && err.code === 'ENOENT') return 'absent';
+      return 'exit';
+    }
+  };
+  let last = probe();
+  if (last === 'ok') return 'pr-first';
+  if (last !== 'timeout') return 'local-merge'; // definitive: gh absent, or exited non-zero
+  for (let attempt = 1; attempt < FORGE_PROBE_ATTEMPTS && last === 'timeout'; attempt += 1) last = probe();
+  if (last === 'ok') return 'pr-first';
+  if (typeof onDegrade === 'function') {
+    try {
+      onDegrade({ reason: last === 'timeout' ? FORGE_DEGRADE_REASON.TIMEOUT : FORGE_DEGRADE_REASON.TIMEOUT_THEN_EXIT, timeoutMs: ghTimeoutMs, attempts: FORGE_PROBE_ATTEMPTS });
+    } catch {
+      // A reporting callback must never break "never throws".
+    }
   }
-  return 'pr-first';
+  return 'local-merge';
 }
 
 // Full integration-model resolution for a caller that just wants the answer
@@ -707,9 +932,10 @@ function auditPolicy(repoRoot) {
   const claudeMdRaw = readFileSafe(path.join(repoRoot, 'CLAUDE.md'));
   const policyEntries = parseFlatLines(policyRaw);
   const claudeMdEntries = parseFlatLines(claudeMdRaw);
-  // model-profiles is the one block-style (non-flat) key today; parseFlatLines
+  // model-profiles is one of two block-style (non-flat) keys; parseFlatLines
   // can't see it, so it's read separately and merged in under its own name —
-  // this never collides with a flat-line entry of the same key.
+  // this never collides with a flat-line entry of the same key. The other,
+  // risk-path-globs, is checked by parseRiskPathGlobs after the flat loop below.
   const modelProfilesEntry = extractMapEntry(policyRaw, 'model-profiles');
   if (modelProfilesEntry !== undefined) policyEntries['model-profiles'] = modelProfilesEntry;
 
@@ -758,6 +984,12 @@ function auditPolicy(repoRoot) {
       sourceExcludedKeys.push({ key, value });
     }
   }
+  // A rejected risk-path-globs block (an inline value on the key line is also
+  // seen by the flat loop above, which flags it first — report it once).
+  const riskGlobs = parseRiskPathGlobs(policyRaw, riskAllowedSlugs(policyRaw));
+  if (riskGlobs.present && !riskGlobs.ok && !invalidValues.some((row) => row.key === 'risk-path-globs')) {
+    invalidValues.push({ key: 'risk-path-globs', value: riskGlobs.raw, expected: SCHEMA_BY_KEY.get('risk-path-globs') });
+  }
 
   // A recognized key still sitting in CLAUDE.md no longer applies to anything.
   // Its value is not audited — correcting a value nobody reads is not the fix;
@@ -780,6 +1012,8 @@ function auditPolicy(repoRoot) {
 }
 
 module.exports = {
-  POLICY_KEYS, POLICY_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
+  POLICY_KEYS, POLICY_CATEGORIES, BUILTIN_RISK_CATEGORIES, RENAMED_KEYS, auditPolicy, resolveValue, parseFlatLines, resolvePolicyKeys,
   detectIntegrationModel, resolveIntegrationModel, resolvePolicyConfig,
+  GIT_REMOTE_PROBE_TIMEOUT_MS, FORGE_PROBE_ATTEMPTS, HOOK_FORGE_PROBE_TIMEOUT_MS, resolveForgeProbeTimeoutMs, formatForgeDegrade,
+  FORGE_DEGRADE_REASONS, FORGE_DEGRADE_MEMO_TTL_MS,
 };

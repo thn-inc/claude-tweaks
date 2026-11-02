@@ -1,6 +1,6 @@
 # Acceptance Labeling — the Landed check
 
-The one definition of whether a PR's acceptance labeling (`demo:pending`, the Try it walkthrough)
+The one definition of whether a PR's acceptance labeling (`demo:pending`, the acceptance packet, the Try it walkthrough)
 has landed. Consumers cite it and state only what they do on each outcome — including whether they
 run the live-state tier when the run dir does not resolve: `_shared/pr-first-merge.md` Step 1,
 `dispatch/close-out.md` step 3, and tidy's `## Arm ready PR`.
@@ -27,14 +27,21 @@ missing` or `acceptance-labeling: {result}` — and on `no run dir` only for a c
 runs the tier there. An unreadable `verify.json` is not rescued by this tier, and its outcome stays
 `unreadable: verify.json`: a file that could not be read gives no evidence either way about whether
 this run's labeling step ran, while a readable-but-malformed one (`acceptance-labeling: unparseable`)
-shows the run reached verify. `wrap-up/verification-brief.md`'s issue pointer comment is a plain post
-that duplicates on a re-run, so labeling still counts as landed when either holds:
+shows the run reached verify. `wrap-up/verification-brief.md` posts the acceptance packet on the
+record and edits it in place (`_shared/acceptance-packet.md`), so a re-run adds no second one; this
+tier exists because `verify.json` can miss labeling that did land, so labeling still counts as landed
+when either holds:
 
-- every record in the PR's `Fixes` lines carries `demo:pending` — at least one record, and every
+- every record in the PR's `Fixes` lines carries a pending acceptance label
+  (`_shared/work-record.md`) — at least one record, and every
   label read succeeded; an empty `Fixes` set or a failed read shows nothing;
 - the PR carries a trusted `<!-- run-comment: brief -->` or `<!-- run-comment: try-it -->` run
   comment (or its multi-spec `brief:{N}`/`try-it:{N}` form; trusted per
-  `_shared/pr-run-comments.md`'s Trusted authors).
+  `_shared/pr-run-comments.md`'s Trusted authors), or every record in the PR's `Fixes` lines carries
+  a trusted `<!-- acceptance-packet: v1 -->` comment — at least one record, and every comment read
+  succeeded; an `unreadable` packet does not count (`_shared/acceptance-packet.md`'s Reader rules). A
+  below-floor record with no parent carries neither a pending label nor a run comment, so this is its
+  one live signal (Decision Q5).
 
 The tier lands when either check positively holds; a failed read in one check does not cancel the
 other check's success. A live-tier read failure yields `unreadable: {labels | comments}` only when

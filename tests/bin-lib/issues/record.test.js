@@ -4,7 +4,7 @@ const assert = require('node:assert');
 const {
   recordPayload, TYPE_LABELS, CLASSIFICATION_SCORING, LABELS, DEFER_REASONS,
   extractFingerprint, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, parseRecordFacets, parseDependencies, parseDependencyAssumptions, specShapedBody,
-  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery,
+  buildNativeDependencyQuery, hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery,
   buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, extractSection, isRepoRelativeKeyFilePath,
@@ -402,6 +402,25 @@ test('parseRecordFacets: LABELS exposes the three demo:* acceptance label string
   assert.strictEqual(LABELS.DEMO_CHANGES_REQUESTED, 'demo:changes-requested');
 });
 
+test('parseRecordFacets: accept:* labels set acceptance, and LABELS exposes the three accept:* strings', () => {
+  assert.strictEqual(LABELS.ACCEPT_PENDING, 'accept:pending');
+  assert.strictEqual(LABELS.ACCEPT_APPROVED, 'accept:approved');
+  assert.strictEqual(LABELS.ACCEPT_CHANGES_REQUESTED, 'accept:changes-requested');
+  assert.strictEqual(parseRecordFacets(['accept:pending']).acceptance, 'pending');
+  assert.strictEqual(parseRecordFacets(['accept:approved']).acceptance, 'approved');
+  assert.strictEqual(parseRecordFacets(['accept:changes-requested']).acceptance, 'changes-requested');
+});
+
+test('acceptanceOf: changes-requested beats pending beats approved beats null, across both vocabularies', () => {
+  const { acceptanceOf } = require('../../../plugin/bin/lib/issues/record-vocabulary');
+  assert.strictEqual(acceptanceOf([]), null);
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved-batch']), null);
+  assert.strictEqual(acceptanceOf(['demo:approved', 'accept:pending']), 'pending');
+  assert.strictEqual(acceptanceOf(['accept:pending', 'demo:changes-requested', 'accept:approved']), 'changes-requested');
+  // Orthogonal category: an unrelated label alongside does not disturb the verdict.
+  assert.strictEqual(acceptanceOf(['ready', 'accept:approved', 'type:bug']), 'approved');
+});
+
 test('parseRecordFacets: ceremony:fast-lane sets facets.ceremony', () => {
   assert.strictEqual(parseRecordFacets(['ceremony:fast-lane']).ceremony, 'fast-lane');
 });
@@ -623,8 +642,7 @@ test('buildNativeDependencyQuery aliases each number and requests blockedBy stat
   const q = buildNativeDependencyQuery([39, 37]);
   assert.match(q, /i39: issue\(number:39\)/);
   assert.match(q, /i37: issue\(number:37\)/);
-  assert.match(q, /blockedBy\(first:25\)/);
-  assert.match(q, /state/);
+  assert.match(q, /i39: issue\(number:39\)\{ number blockedBy\(first:25\)\{ nodes\{ number state \} \} \}/);
   assert.match(q, /repository\(owner:\$owner,name:\$repo\)/);
 });
 
@@ -783,6 +801,23 @@ test('parseSubIssues returns empty for absent or non-string bodies', () => {
   assert.deepEqual(parseSubIssues(''), []);
   assert.deepEqual(parseSubIssues(undefined), []);
   assert.deepEqual(parseSubIssues('no task list here'), []);
+});
+
+test('AC1.1: parseParent reads a line-anchored Parent line', () => {
+  assert.strictEqual(parseParent('Surface: backend\nParent: #12\n\n## Current State'), 12);
+  assert.strictEqual(parseParent('Parent: #12\r\nSurface: backend'), 12);
+  assert.strictEqual(parseParent('Parent: #12\nParent: #34\n'), 12);
+});
+
+test('AC1.2: parseParent ignores a mid-line mention and a body with no Parent line', () => {
+  assert.strictEqual(parseParent('see Parent: #12'), null);
+  assert.strictEqual(parseParent('Surface: backend\n\n## Current State'), null);
+});
+
+test('AC1.3: parseParent returns null for a null or empty body', () => {
+  assert.strictEqual(parseParent(null), null);
+  assert.strictEqual(parseParent(undefined), null);
+  assert.strictEqual(parseParent(''), null);
 });
 
 test('parseRecordFacets sets isParentIssue from the parent-issue label', () => {
@@ -1425,7 +1460,7 @@ test('extractSection: a fence is closed only by its own character, at least as l
 });
 
 test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines included (#4369)', () => {
-  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask, fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   const lines = ['a', '```md', '## in', '```', 'b', '~~~', 'open-ended', 'c'];
   assert.deepStrictEqual(fencedLineMask(lines), [false, true, true, true, false, true, true, true]);
   assert.deepStrictEqual(fencedLineRanges(lines), [[1, 3], [5, 7]]);
@@ -1434,14 +1469,14 @@ test('fencedLineMask marks exactly the lines inside fenced blocks, fence lines i
 });
 
 test('fencedLineRanges: a backtick line whose info string holds a backtick is an inline span, not a fence (#4369)', () => {
-  const { fencedLineRanges } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineRanges } = require('../../../plugin/bin/lib/markdown-blocks');
   assert.deepStrictEqual(fencedLineRanges(['```a``` inline span', '## Current State']), []);
   assert.deepStrictEqual(fencedLineRanges(['```js', 'x', '```']), [[0, 2]]);
   assert.deepStrictEqual(fencedLineRanges(['~~~a`b', 'x', '~~~']), [[0, 2]]);
 });
 
 test('fencedLineMask unclosedAsText leaves only a trailing unclosed fence out of the mask (#4369)', () => {
-  const { fencedLineMask } = require('../../../plugin/bin/lib/issues/record-payload');
+  const { fencedLineMask } = require('../../../plugin/bin/lib/markdown-blocks');
   const unclosed = ['a', '```', '## h', 'b'];
   assert.deepStrictEqual(fencedLineMask(unclosed), [false, true, true, true]);
   assert.deepStrictEqual(fencedLineMask(unclosed, { unclosedAsText: true }), [false, false, false, false]);

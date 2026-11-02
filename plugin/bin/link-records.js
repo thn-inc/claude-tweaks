@@ -12,7 +12,7 @@
 const { execFileSync } = require('child_process');
 const link = require('./lib/issues/link');
 const { invalidateSnapshot } = require('./lib/issues/record-snapshot');
-const { parseRepo, ghAvailable } = require('./lib/repo-resolve');
+const { parseRepo, ghAvailable, pinExplicitRepoHost } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
 
@@ -48,6 +48,9 @@ function parseArgs(argv) {
 const realDeps = {
   runner: link.defaultRunner,
   ghAvailable,
+  // #4505: an explicit --repo's host reaches the database-id GraphQL batch and
+  // the REST link writes, which thread no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   invalidateSnapshot,
   stdout: (s) => process.stdout.write(s),
@@ -76,6 +79,7 @@ function run(argv, deps = realDeps) {
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
   const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
   if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
   // (#1153 review finding). link.linkSubIssues/linkBlockedBy build a `repos/${owner}/${repo}/

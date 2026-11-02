@@ -69,3 +69,22 @@ post-merge step misses, such as an armed PR that GitHub merges after the session
   behaviour of `Fixes #N` changes on GitHub. Also revisit it if the Parent-Gate evaluation moves
   into a tested CLI (the run's reflect proposal), which would change where the exception's guard
   lives.
+
+## Update (2026-10-31, #4599)
+
+A merge that no session sees land no longer falls straight to tidy. The reconciler's `post-merge`
+check (`plugin/bin/lib/reconcile/post-merge.js`) runs `_shared/pr-first-merge-post-merge.md`'s
+Steps 4.0 and 4.0b once for a run whose recorded PR is `MERGED` and whose `decisions.md` holds no
+Step 4.0b marker. That covers an armed auto-merge GitHub completes after the session ended. Its
+Step 4.0b is a code mirror of the same entry (`plugin/bin/lib/issues/below-floor-parent-close.js`),
+so the close still runs only after the merge has landed, under `work-backend: github-issues` only,
+and with the same comment and the same human restore contract. The check skips a PR merged in the
+last 10 minutes, so it never races the merging session. Tidy's `parent-gate` backstop is unchanged
+and is now the last resort, for whatever the reconciler leaves open (a `gh` failure, no closing
+set, a `gh`-absent environment). The Consequences bullet saying such a merge "leaves the parent
+open" and the Decision's description of tidy as the backstop for an armed merge are superseded to
+that extent. This does not widen the exception: the entry is still Step 4.0b, reached later, keyed
+on the run's own PR. The revisit trigger above has partly fired: the reconciler's mirror is tested
+Node, while the in-session entry is still prose, so the exception's guard now lives in both places
+and a change to one must reach the other. The full rules are in `docs/reconcile-checks.md`'s
+Post-merge closes section.

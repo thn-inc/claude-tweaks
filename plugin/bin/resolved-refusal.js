@@ -16,7 +16,9 @@
 'use strict';
 
 const { evaluateResolvedRefusal, fetchResolvedRefusalEvidence, defaultRunner } = require('./lib/issues/resolved-refusal');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: resolved-refusal.js <n> [--repo owner/name] [--help]\n';
 
@@ -45,6 +47,9 @@ const realDeps = {
   runner: defaultRunner,
   ghAvailable,
   remoteUrl,
+  // #4505: an explicit --repo's host reaches the GraphQL evidence query, which
+  // threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
@@ -65,6 +70,7 @@ function run(argv, deps = realDeps) {
     ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`)
     : parseRepo(remote);
   if (!repoSpec) { deps.stderr('resolved-refusal.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+  if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { owner, repo, host } = repoSpec;
 
   let evidence;

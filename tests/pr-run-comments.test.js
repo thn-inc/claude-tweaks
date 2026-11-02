@@ -98,13 +98,14 @@ test('settle-and-merge.md posts the full comment, trust-negative-evidence marker
   assert.match(SETTLE, /bin\/lib\/issues\/trust\.js.*reads only the record issue's comments and is not modified/s);
 });
 
-test('verification-brief.md routes the full brief to the PR and leaves a one-line pointer on the issue', () => {
-  assert.match(BRIEF, /the full brief moves to the PR; the issue keeps a one-line pointer/);
-  assert.match(BRIEF, /Verification Brief posted to PR #\{pr-number\}: \{pr-url\}/);
+test('verification-brief.md posts the packet on the record and links it from the PR, with no pointer comment', () => {
+  assert.match(BRIEF, /The packet lives on the record whether or not the run has a PR/);
+  assert.match(BRIEF, /`post` appends its `Acceptance packet:` line to the PR's body/);
+  assert.doesNotMatch(BRIEF, /Verification Brief posted to PR #\{pr-number\}/, 'the issue pointer line is no longer posted');
   assert.match(
     BRIEF,
-    /Acceptance labeling\s*\nstays on the issue either way/,
-    'demo:pending must still land on the issue regardless of where the brief content lives',
+    /Acceptance labeling\s+stays on the record either way/,
+    'demo:pending must still land on the record, with or without a PR',
   );
 });
 
@@ -262,18 +263,14 @@ test("pr-run-comments.md's Comment kinds table shows both the single-spec and mu
   assert.match(COMMENTS, /`timing`.*run-comment: timing:\{spec\}/);
 });
 
-test('verification-brief.md composes the spec-qualified brief and timing markers under a multi-spec run', () => {
+test('verification-brief.md composes the spec-qualified timing marker under a multi-spec run, and no brief marker on either', () => {
   assert.match(BRIEF, /MULTISPEC_PARENT_DIR/);
-  assert.match(BRIEF, /run-comment: brief:\{spec\}/);
+  assert.doesNotMatch(BRIEF, /run-comment: brief/, 'new runs post the packet on the record, never a brief on the PR');
   assert.match(BRIEF, /run-comment: timing:\{spec\}/);
   assert.match(
     BRIEF,
     /basename\(\$PIPELINE_RUN_DIR\)/,
     'the spec identifier must be derived from this spec\'s own run-dir subdirectory, not a separately threaded value',
-  );
-  assert.ok(
-    BRIEF.includes('<!-- run-comment: brief -->'),
-    'the single-spec brief marker must still be composed unchanged when $MULTISPEC_PARENT_DIR is unset',
   );
   assert.ok(
     BRIEF.includes('<!-- run-comment: timing -->'),
@@ -460,4 +457,47 @@ test("tidy's tombstone row points at the worktree-safe form", () => {
   assert.ok(rows[0].includes('find-run-comment.js'), 'the tombstone row names bin/find-run-comment.js');
   assert.ok(rows[0].includes('--kind failure'), 'the tombstone row passes --kind failure');
   assert.ok(!PRE_CHANGE_TOMBSTONE_ROW.includes('find-run-comment.js'), 'go-red: the pre-change tombstone row does not name find-run-comment.js');
+});
+
+// ---- accept-verdict registry row and contract (#4610 expand step) ------------------------------
+
+test('the registry names accept-verdict as Dispatch- or human-written, not a run-comment kind', () => {
+  const table = between(COMMENTS, '## Comment kinds', 'marker is the **first line** of its comment body');
+  const row = table.split('\n').find((l) => l.startsWith('| `accept-verdict`'));
+  assert.ok(row, 'the Comment kinds table must carry an accept-verdict row');
+  assert.match(row, /Dispatch/);
+  assert.match(row, /never the plugin/);
+  assert.match(row, /not a `run-comment` kind/);
+  assert.ok(row.includes('<!-- accept-verdict: '), 'the row must show the marker shape');
+  assert.ok(!row.includes('<!-- run-comment: accept-verdict'), 'accept-verdict never takes the run-comment marker');
+});
+
+test('the accept-verdict section states every rule the parser enforces, so a writer can pass it', () => {
+  const s = between(COMMENTS, '## The `accept-verdict` comment', '## Multi-spec verdict comments');
+  const collapsed = collapse(s);
+  // The grammar.
+  assert.ok(s.includes('<!-- accept-verdict: {"v":1,"verdict":"changes-requested","choice":"fix-forward","note":"text"} -->'));
+  assert.match(collapsed, /single-line HTML comment, alone on its own line, at column 0/);
+  assert.match(collapsed, /before any code block/);
+  assert.match(collapsed, /3 or more backticks or tildes/);
+  assert.match(collapsed, /`v` is `1`/);
+  assert.match(collapsed, /`approved` or `changes-requested`/);
+  assert.match(collapsed, /`fix-forward` or `revert-now`/);
+  assert.match(collapsed, /required with `changes-requested` and rejected with `approved`/);
+  assert.match(collapsed, /2000 UTF-16 code units/);
+  assert.match(collapsed, /[Uu]nknown fields and repeated keys are rejected/);
+  assert.match(collapsed, /[Oo]ne block per comment/);
+  assert.match(collapsed, /follows an unclosed `<!--` comment earlier in the same comment is also rejected/);
+  assert.match(collapsed, /verdict marker inside another HTML comment/);
+  // The escapes carry their backslash (they lose it when copied through the Write tool).
+  assert.ok(s.includes('\\u003c') && s.includes('\\u003e'), 'the escapes must keep their backslash');
+  assert.match(collapsed, /raw `<` or `>` anywhere in the JSON is rejected/);
+  // Trust, agreement, and the trust limit.
+  assert.match(collapsed, /`OWNER`, `MEMBER`,? or `COLLABORATOR`/);
+  assert.match(collapsed, /equals the record's current verdict label/);
+  assert.match(collapsed, /verdict label and comment disagree/);
+  assert.match(collapsed, /no action/);
+  assert.match(collapsed, /agent running under the maintainer's account/);
+  assert.match(collapsed, /never authors a verdict marker/);
+  assert.match(collapsed, /#3358/);
 });

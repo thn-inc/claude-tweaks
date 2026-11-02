@@ -4,7 +4,7 @@
 //   node bin/materialize.js <n> --check [--repo owner/name] [--record-json <path>]
 // --check (#4027) runs only Resolution + the Materialization hard gate —
 // /flow Step 1 item 5's pre-flight — with no --run-dir and no write, and
-// prints {record, check: "passed", title, ceremony, surface}; its exit codes
+// prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; its exit codes
 // are the same 0 / 1 (gate failed) / 2 (unresolved, gh absent, malformed —
 // including --check beside --run-dir, --ceremony or --multi-record-slug).
 // Implements skills/flow/materialize.md's Resolution + Materialization hard
@@ -51,7 +51,7 @@ const {
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -62,7 +62,7 @@ const { defaultRunner: runPremiseCommand, PREMISE_SELF_CHECK_TIMEOUT_MS } = requ
 const USAGE = 'usage: materialize.js <n> --run-dir <dir> [--repo owner/name] [--ceremony fast-lane|standard] [--multi-record-slug <n>] [--record-json <path>] [--help]\n'
   + '       materialize.js <n> --check [--repo owner/name] [--record-json <path>]\n'
   + '  --check: Resolution + the Materialization hard gate only (#4027) — no --run-dir, no write;\n'
-  + '           prints {record, check: "passed", title, ceremony, surface}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
+  + '           prints {record, check: "passed", title, ceremony, surface, bodyBlockedBy}; exit 0 passed, 1 gate failed, 2 unresolved/malformed\n';
 
 const isPos = (n) => Number.isInteger(n) && n > 0;
 
@@ -144,9 +144,19 @@ function resolveCheckoutRoot(cwd) {
 // it was read before filing. A non-zero exit is a normal outcome; no exit
 // code at all (ENOENT when no POSIX sh resolves — /bin/sh, or sh from PATH on
 // Windows — or a timeout) re-throws for computePremise's own catch to degrade
-// to null.
-function runPremiseCheckDefault(command, { cwd } = {}) {
-  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS });
+// to null. `env` (optional) is the command's whole environment.
+function runPremiseCheckDefault(command, { cwd, env } = {}) {
+  return runPremiseCommand(command, { cwd, timeoutMs: PREMISE_SELF_CHECK_TIMEOUT_MS, env });
+}
+
+// #4505: the process env minus the GH_HOST this run pinned for an explicit
+// --repo (deps.pinGhHost). The pin is for materialize's own gh calls; the
+// record-authored command gets the env it had before it, where a
+// remote-inferring gh call reaches cwd's host. pinExplicitRepoHost never pins
+// over an exported GH_HOST, so a user's own value is never what is removed.
+function envBeforeGhHostPin() {
+  const { GH_HOST: _pinned, ...env } = process.env;
+  return env;
 }
 
 // command -> { command, exit, satisfiedAtBase } | null. null means "no
@@ -159,14 +169,15 @@ function runPremiseCheckDefault(command, { cwd } = {}) {
 // contract, the command is written to exit 0 while the premise (the
 // record's Current State claim) still holds, so a non-zero exit means the
 // claim no longer holds at this checkout's base — the record's work may
-// already be done.
-function computePremise(command, deps) {
+// already be done. `pinnedGhHost` (the host deps.pinGhHost exported, or null)
+// keeps that pin out of the command's env.
+function computePremise(command, deps, pinnedGhHost = null) {
   if (!command) return null;
   let exit;
   try {
     const cwd = deps.checkoutRoot(deps.cwd());
     if (!cwd) return null;
-    exit = deps.runPremiseCheck(command, { cwd });
+    exit = deps.runPremiseCheck(command, pinnedGhHost ? { cwd, env: envBeforeGhHostPin() } : { cwd });
   } catch {
     return null;
   }
@@ -203,28 +214,34 @@ function parseArgs(argv) {
 }
 
 const realDeps = {
-  ghView: (owner, repo, n, host) => execFileSync('gh', ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'], { encoding: 'utf8', windowsHide: true }),
+  ghView: (owner, repo, n, host) => {
+    const args = ['issue', 'view', String(n), '--repo', repoSlug({ host, owner, repo }), '--json', 'number,title,body,labels,url'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }));
+  },
   // #2590: closed PRs referencing this issue, searched by body text — used
   // to detect a sibling attempt that already reached this record's own
   // "premise disproved" conclusion. Read-only; no author-association gate
   // needed (unlike ghAuthorAssociation/runPremiseCheck, nothing here
   // executes body content — it only searches and pattern-matches it).
-  ghSearchClosedPRs: (owner, repo, n, host) => execFileSync('gh', ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'], { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }),
+  ghSearchClosedPRs: (owner, repo, n, host) => {
+    const args = ['pr', 'list', '--repo', repoSlug({ host, owner, repo }), '--state', 'closed', '--search', `#${n} in:body`, '--json', 'number,url,body'];
+    return execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: SIBLING_PREMISE_SEARCH_TIMEOUT_MS, windowsHide: true }));
+  },
   // Security fix (see TRUSTED_AUTHOR_ASSOCIATIONS above): GitHub's REST API
   // computes author_association from the issue author's *current* repo
   // relationship — not body content, so it can't be spoofed by editing the
   // issue. `gh issue view --json` has no such field to request; the REST
   // endpoint does. Only called when a Premise-check: line is actually
   // present (the uncommon case) — every other record pays no extra call.
-  ghAuthorAssociation: (owner, repo, n, host) => String(
-    execFileSync(
-      'gh',
-      ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
-        .concat(host && host !== 'github.com' ? ['--hostname', host] : []),
-      { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true },
-    ),
-  ).trim(),
+  ghAuthorAssociation: (owner, repo, n, host) => {
+    const args = ['api', `repos/${owner}/${repo}/issues/${n}`, '--jq', '.author_association']
+      .concat(host && host !== 'github.com' ? ['--hostname', host] : []);
+    return String(execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', timeout: AUTHOR_ASSOCIATION_TIMEOUT_MS, windowsHide: true }))).trim();
+  },
   ghAvailable,
+  // #4505: an explicit --repo's host reaches every gh call, including the
+  // author-association lookup that threads no --hostname for github.com.
+  pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   remoteUrl: () => execFileSync('git', ['remote', 'get-url', 'origin'], { encoding: 'utf8', windowsHide: true }),
   // #117: commit distance from a record's Verified-as-of: stamp to current
   // HEAD, and that commit's own date — both scoped to computeDrift above.
@@ -363,6 +380,7 @@ function run(argv, deps = realDeps) {
   // Populated only on the gh-backed path below — carries owner/repo/host for
   // the author-association lookup the premise-check gate needs further down.
   let repoSpec = null;
+  let pinnedGhHost = null;
   if (opts.recordJson) {
     // #1459: the gh-absent path — deps.ghAvailable()/deps.ghView() are never
     // consulted here, and no owner/repo resolution is needed since nothing
@@ -383,6 +401,7 @@ function run(argv, deps = realDeps) {
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
     repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
+    if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
     const { host, owner, repo } = repoSpec;
     // #2538 Deliverable 3 — visible only for a resolved non-github.com host.
     const repoNote = repoResolutionNote(repoSpec);
@@ -420,6 +439,7 @@ function run(argv, deps = realDeps) {
   if (opts.check) {
     deps.stdout(JSON.stringify({
       record: opts.n, check: 'passed', title: record.title, ceremony: parseRecordFacets(record.labels).ceremony || null, surface: meta.surface || null,
+      bodyBlockedBy: parseDependencies(record.body),
     }) + '\n');
     return 0;
   }
@@ -467,7 +487,7 @@ function run(argv, deps = realDeps) {
       association = record.authorAssociation;
     }
     if (association && TRUSTED_AUTHOR_ASSOCIATIONS.has(association)) {
-      premise = computePremise(premiseCommand, deps);
+      premise = computePremise(premiseCommand, deps, pinnedGhHost);
     } else {
       deps.stderr(
         `materialize.js: Record #${opts.n} has a Premise-check: line but its author's repo `
