@@ -192,6 +192,16 @@ test("#3900 AC1.1: git -C '<repo>' push origin --delete feature-x from a non-iso
   assertAllowed(out);
 });
 
+test('#3900 AC1.1: git -C "<repo>" (double-quoted) push origin --delete feature-x from a non-isolated checkout is allowed',
+  { skip: process.platform === 'win32' && 'win32: a native path holds backslashes, which CQ_DOUBLE refuses by design (#4385)' },
+  () => {
+    const repo = gitRepoWithCommit();
+    withPolicy(repo, 'worktree-always: true\n');
+    assert.ok(!/["$`\\]/.test(repo), `fixture path must be double-quote-safe: ${repo}`);
+    const out = pre.run({ input: bashInput(`git -C "${repo}" push origin --delete feature-x`, repo), runDir: null, runState: null, cwd: repo });
+    assertAllowed(out);
+  });
+
 test("#3900 AC1.1: git -C '<repo>' push origin feature-x (a content push) stays denied", () => {
   const repo = gitRepoWithCommit();
   withPolicy(repo, 'worktree-always: true\n');
