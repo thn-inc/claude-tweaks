@@ -38,7 +38,10 @@ function missing({ skill, steps, checklist, ledger }) {
   fact('triage lives in manual-steps.md',
     ['**Auth-gap**', '**Truly manual**', '**Anti-pattern:** Seeding the entire Manual Steps section',
       '(reason-not-auto: user-declined)', '**`ops=confirm` token:**',
-      "If the ledger doesn't exist, create it using the ledger skill's create operation."]
+      "If the ledger doesn't exist, create it using the ledger skill's create operation.",
+      '**No Manual Steps section, but every `## Deliverables` item is operational (#2554).**',
+      'writing **one consolidated** `SKIP` entry',
+      'record is wholly operational (Deliverables triaged as Manual Steps, no code change)']
       .every((s) => steps.includes(s)));
   fact('ledger cites manual-steps.md',
     /`build\/manual-steps\.md`'s "If the ledger doesn't exist, create it"/.test(ledger));
@@ -70,6 +73,15 @@ test('go-red (b): manual-steps.md without the Auth-gap bullet fails', () => {
   const mutated = { ...t, steps: t.steps.replace('**Auth-gap**', 'Auth gap') };
   assert.notStrictEqual(mutated.steps, t.steps);
   assert.ok(missing(mutated).length > 0);
+});
+
+test('go-red (b2): manual-steps.md without the #2554 consolidated SKIP fails', () => {
+  const t = load();
+  const phrase = 'writing **one consolidated** `SKIP` entry';
+  assert.ok(t.steps.includes(phrase));
+  const mutated = { ...t, steps: t.steps.replace(phrase, 'writing one `SKIP` per step') };
+  assert.notStrictEqual(mutated.steps, t.steps);
+  assert.deepStrictEqual(missing(mutated), ['triage lives in manual-steps.md']);
 });
 
 test('go-red (c): operational-checklist.md reverted to the Step 2.5 triage phrase fails', () => {
