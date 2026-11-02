@@ -4,6 +4,7 @@ files:
   - plugin/skills/help/SKILL.md
   - plugin/bin/resolve-policy.js
   - plugin/bin/lib/policy-schema.js
+  - plugin/bin/lib/model-profiles/policy-fragment.js
   - plugin/skills/init/policy-review.md
   - plugin/bin/lib/hooks/pre-tool-use.js
 ---

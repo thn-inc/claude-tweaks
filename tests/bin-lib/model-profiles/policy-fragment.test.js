@@ -71,4 +71,5 @@ test('stripComment cuts at the first # anywhere and drops a CRLF \\r (#4816)', (
   assert.strictEqual(stripComment('  standard:  # x\r'), '  standard:');
   assert.strictEqual(stripComment('    model: opus#note'), '    model: opus');
   assert.strictEqual(stripComment('    effort: low'), '    effort: low');
+  assert.strictEqual(stripComment('    effort: low\r'), '    effort: low');
 });
