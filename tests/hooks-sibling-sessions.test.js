@@ -260,6 +260,24 @@ test('findSessionOnWorktree: a null branch never matches a detached worktree els
   assert.strictEqual(onWorktree({ branch: null, worktreePath: WT_FIX }, porcelainOf({ path: '/elsewhere/wt', branch: null })), null);
 });
 
+test('findSessionOnWorktree: a path match survives a symlink on either side (git canonicalizes, path.resolve does not)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sib-'));
+  try {
+    const real = path.join(root, 'real');
+    fs.mkdirSync(path.join(real, 'wt'), { recursive: true });
+    const linkDir = path.join(root, 'link');
+    fs.symlinkSync(real, linkDir);
+    const viaSymlink = path.join(linkDir, 'wt');
+    const canonical = fs.realpathSync(viaSymlink);
+    assert.notStrictEqual(canonical, viaSymlink, 'the two forms must actually differ for this test to mean anything');
+    // The real shape: a symlinked stamp against git's canonical porcelain. The reverse is what pins the entry side.
+    assert.strictEqual(onWorktree({ branch: null, worktreePath: viaSymlink }, porcelainOf({ path: canonical, branch: 'other' })).path, canonical);
+    assert.strictEqual(onWorktree({ branch: null, worktreePath: canonical }, porcelainOf({ path: viaSymlink, branch: 'other' })).path, viaSymlink);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('findSessionOnWorktree: a stale lock, an unparseable lock and no lock are null', () => {
   for (const lock of [`locked claude session x (pid ${DEAD_PID} start Fri Aug  7 09:00:00 2026)`, 'locked being edited by hand', null]) {
     const porcelain = porcelainOf({ path: WT_FIX, branch: 'worktree-fix', lock });

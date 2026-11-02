@@ -1607,10 +1607,12 @@ test('--bound-run refused by resolveTarget (not anchored / missing) -> exit 2', 
 // ---- the real wiring ----
 
 test('realDeps carries the production seams the CLI needs', () => {
-  for (const key of ['ghAvailable', 'gh', 'git', 'mainRoot', 'readClaim', 'exists', 'readdir', 'readFile', 'findSibling',
-    'findSiblingOnWorktree', 'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
+  for (const key of ['ghAvailable', 'gh', 'git', 'mainRoot', 'readClaim', 'exists', 'readdir', 'readFile',
+    'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
     assert.ok(realDeps[key] !== undefined, key);
   }
+  assert.strictEqual(realDeps.findSibling, findConflictingSession);
+  assert.strictEqual(realDeps.findSiblingOnWorktree, findSessionOnWorktree);
   assert.equal(typeof realDeps.probes.pidAlive, 'function');
   assert.equal(typeof realDeps.probes.hostname, 'function');
 });
