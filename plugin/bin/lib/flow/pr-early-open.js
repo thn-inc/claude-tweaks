@@ -296,8 +296,10 @@ async function openPrEarly(opts, deps) {
   }
   // #4833: a picked CLOSED PR that a look found OPEN is this run's reopened PR
   // after all (its reopen landed despite the unconfirmed read). Rebind its body
-  // like the reopened path does, before it is recorded. A PR created here is
-  // never compared: only a landed-look adoption sets landedRow.
+  // like the reopened path does, before it is recorded. Unlike that path, this
+  // runs after the push: the create path has already pushed by the time a
+  // landed PR is known. A PR created here is never compared: only a
+  // landed-look adoption sets landedRow.
   if (landedRow !== null && created.number === closedPick && namesOtherRun(landedRow.body)) {
     rebind(created.number, 'reopened');
   }
