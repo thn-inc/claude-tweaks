@@ -512,7 +512,8 @@ function processRun({
   // envelope, a JSON object with no `action` included, which gets empty lists) or when the envelope's word is
   // not clean, so the background summary can name the records a failed close left (#4897); omitted with no
   // envelope (a non-zero exit or unparseable output).
-  const recordsOf = (env) => (env && (includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action))) ? {
+  const wantsRecords = (env) => includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action));
+  const recordsOf = (env) => (env && wantsRecords(env) ? {
     records: {
       failed: issuesOf(env.failed),
       closeFailed: issuesOf(env.closeFailed),
