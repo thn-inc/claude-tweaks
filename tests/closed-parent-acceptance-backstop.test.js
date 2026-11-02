@@ -324,6 +324,33 @@ test('AC2.1: Shape 7 prints no row for a #4466-closed or below-floor local paren
   assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
 });
 
+// #4802: a local-files reader of the close heading requires the one exported regex. The excerpts
+// are the bytes each fence carried before the change, so a green pin is proven able to go red.
+const PRE_4802_SHAPE_7 = `  const { TIERS } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      belowFloorClose: /^## Closed below the oversight floor\\s*$/m.test(p.body || ''),`;
+const PRE_4802_CLOSE = `const { readRecord, writeRecord, closeRecord } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+  if (!/^## Closed below the oversight floor\\s*$/m.test(parentRecord.body)) {`;
+const SHARED_REQUIRE = "const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');";
+
+function assertSharedHeadingRe(text, use) {
+  assert.ok(!text.includes('/^## Closed below the oversight floor'), 'inline copy of the heading regex');
+  assert.ok(text.includes(SHARED_REQUIRE), 'require of the exported regex');
+  assert.ok(text.includes(use), 'the fence tests through the exported regex');
+}
+
+test('AC1.1: Shape 7 requires the exported heading regex, not a literal', () => {
+  const use = "belowFloorClose: HEADING_LINE_RE.test(p.body || ''),";
+  assertSharedHeadingRe(LOCAL, use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_SHAPE_7, use), /inline copy of the heading regex/);
+});
+
+test('AC1.1: the local-files close requires the exported heading regex, not a literal', () => {
+  const fence = section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
+  const use = 'if (!HEADING_LINE_RE.test(parentRecord.body)) {';
+  assertSharedHeadingRe(fence, use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_CLOSE, use), /inline copy of the heading regex/);
+});
+
 test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning line', () => {
   const t = localFixture();
   t.parent(10, 'No subs A', { closed: true });
