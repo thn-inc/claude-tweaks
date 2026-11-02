@@ -259,7 +259,7 @@ for (const shell of ['bash', 'zsh']) {
 
 // The cross-check yields no count, so neither the WARNING nor the floor clause of the Fetch limit rule fires for it:
 // a list that reached the cap says so with one `[pr]` info row, or older merged/closed branches go unchecked silently.
-const ITEM4_CAP_SENTENCE = 'When either list returns `{resolved-limit}` rows, merged/closed branches older than the oldest row fetched went unchecked — emit one `[pr]` info row saying so, naming the state and the cap.';
+const ITEM4_CAP_SENTENCE = 'When either list returns `{resolved-limit}` rows, merged/closed branches older than the oldest row fetched went unchecked — emit `[pr] {state} PR list: {resolved-limit} rows (the cap) — older {state} branches unchecked — raise backlog-fetch-limit to check them`, once per capped state.';
 
 test('item 4 says a merged/closed list that reached the cap leaves older branches unchecked', () => {
   const start = REPO_WIDE.indexOf('4. **Merged/closed PRs with local remnants**');
@@ -272,8 +272,8 @@ test('item 4 says a merged/closed list that reached the cap leaves older branche
   const mutated = item4.replace(ITEM4_CAP_SENTENCE, '');
   assert.notEqual(mutated, item4);
   assert.throws(() => assertCapRow(mutated), { message: /item 4: the cap-reached/ });
-  // A sentence that drops the state-and-cap naming is not the pinned one.
-  const vague = item4.replace(', naming the state and the cap.', '.');
+  // A row template that drops the state-and-cap naming is not the pinned one.
+  const vague = item4.replace('`[pr] {state} PR list: {resolved-limit} rows (the cap)', '`[pr] PR list capped');
   assert.notEqual(vague, item4);
   assert.throws(() => assertCapRow(vague), { message: /item 4: the cap-reached/ });
 });
