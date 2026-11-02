@@ -34,6 +34,10 @@ function lineMatches(re, lines) {
   return lines.map((line) => re.exec(line)).filter(Boolean);
 }
 
+function issueNumbers(re, lines) {
+  return lineMatches(re, lines).map((match) => Number(match[1]));
+}
+
 // The highest v* tag reachable as an ancestor of `ref` (`git tag --merged`,
 // full-reachability — not `git describe --first-parent`). A prior version
 // used `describe --first-parent`, which walks the strict first-parent spine
@@ -90,8 +94,8 @@ function parseCommit({ sha, subject, body = '' }) {
     description,
     unconventional: m === null,
     releaseNotes,
-    fixes: lineMatches(FIXES_RE, lines).map((m) => Number(m[1])),
-    refs: lineMatches(REFS_RE, lines).map((m) => Number(m[1])),
+    fixes: issueNumbers(FIXES_RE, lines),
+    refs: issueNumbers(REFS_RE, lines),
   };
 }
 
