@@ -68,7 +68,7 @@ test('bundle run reads every spec-{id}/decisions.md and unions them', () => {
   const deps = fakeDeps({
     [path.join(RD, 'spec-1', 'decisions.md')]: REV,
     [path.join(RD, 'spec-2', 'decisions.md')]: '- AUTO 10:00:00 — spec #2 — Spec Step 3: premise reversed: C → D. Reversibility: high.',
-    DECISIONS: '- AUTO 10:00:00 — x: premise reversed: parent → ignored. Reversibility: high.',
+    [DECISIONS]: '- AUTO 10:00:00 — x: premise reversed: parent → ignored. Reversibility: high.',
     '/b.md': BODY,
   }, { multispec: { specs: [{ id: 1 }, { id: 2 }, { id: 3 }] } });
   assert.equal(run(['--run-dir', '/rd', '--body-file', '/b.md'], deps), 0);
