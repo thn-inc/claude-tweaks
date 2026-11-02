@@ -9,7 +9,7 @@ files:
 **Persona:** a maintainer cutting a release whose range holds PRs that reached `main` through `--no-ff` merge commits, relying on `/claude-tweaks:release`'s whole-branch review as the gate before the bump.
 **Goal:** every path that ships in the release is reviewed, and a branch review names an exclusion only for content that really arrived from the integration branch.
 **Entry point:** `/claude-tweaks:review base:{ref}`, which `/claude-tweaks:release` Step 3 invokes; or `/claude-tweaks:review #{n}` on a branch that merged the integration branch mid-history.
-**Success state:** a `base:{ref}` review's scope is the whole `git diff {base}..{branch}` file list with no exclusion section, and a branch review's "arrived via merge" count lists only files whose content matches the integration branch at the fork point.
+**Success state:** a `base:{ref}` review's scope is the whole `git diff {base}...{branch}` file list with no exclusion section, and a branch review's "arrived via merge" count lists only files whose content matches the integration branch at the fork point.
 
 ## Steps
 
@@ -18,7 +18,7 @@ files:
 - **Action:** the maintainer runs `/claude-tweaks:review base:v1.2.0`. The range holds merge commits, and the check counts it as no merge commits detected, in every later step that asks.
 - **Should feel:** uneventful. Nothing to reason about, and no exclusion count to audit in the summary.
 - **Should understand:** `{ref}` is a fixed point on the integration branch, so a merge in the range is how a PR shipped. `merge-provenance-check.md` is never read on this scope.
-- **Red flags:** a Step 7 line reading "arrived via merge from v1.2.0"; a lens scope smaller than `git diff {base}..{branch} --name-only`; a PR merged with `--no-ff` missing from the review.
+- **Red flags:** a Step 7 line reading "arrived via merge from v1.2.0"; a lens scope smaller than `git diff {base}...{branch} --name-only`; a PR merged with `--no-ff` missing from the review.
 
 ### 2. Review a caught-up branch — only integration content is set aside
 - **URL:** Step 2, `merge-provenance-check.md`'s Excluded files bullet
