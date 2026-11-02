@@ -26,7 +26,7 @@
 
 ## Review Focus
 
-1. `gh-timeout-ms` raised above 30 s (e.g. 45000): the batched calls must then use 45000, not 30000. Pinned in Task 1's `GH_BATCH_TIMEOUT_MS` tests and Task 2's runner test.
+1. `gh-timeout-ms` raised above 30 s (e.g. 45000): the batched calls must then use 45000, not 30000. Pinned in Task 1's `GH_BATCH_TIMEOUT_MS` tests and Task 2's two runner tests (`number-list-cli.js` and `dispatch-resume.js`'s `nativeGh`).
 2. A require-time read of `GH_BATCH_TIMEOUT_MS` in `number-list-cli.js` would pin the bound before a caller's env or cwd is set, and would pay the policy read in every test that requires `resolve-blockers.js`. The getter is read inside the runner arrow only. Pinned by Task 2's "read at call time" test: the env is set after the factory call.
 3. A `git status -z` stream with a 3-character record after a valid header must still exit 4 with `shorter than "XY path"` and must not be skipped. Pinned by the existing `dispatch-resume-cli.test.js` test `a status record shorter than "XY path" -> exit 4 …` (line 1190), kept green in Task 4, plus the new strict git-z test.
 4. Non-strict `parseStatusPorcelainZ` callers must not change behavior: a short record is still skipped. Pinned by the existing git-z test at line 150, which stays unmodified.
@@ -63,7 +63,7 @@ Expected: FAIL (`GH_BATCH_TIMEOUT_MS` is `undefined`).
 - [ ] **Step 3: Implement the getter.** The comment beside `DEFAULT_GH_BATCH_TIMEOUT_MS` gives the reason. One aliased GraphQL call carries a whole batch (a comma-list can span the ~200-record queues `--limit 200` builds), so it gets fetch-sub-issues.js's 30 s batched precedent as a floor. `max` with `GH_TIMEOUT_MS` means a raised `gh-timeout-ms` (a GitHub Enterprise Server project) widens batched calls too (#4815). The header bullet says the same in one sentence.
 
 - [ ] **Step 4: Update the policy text.**
-  - `policy-schema.js:154` `summary` becomes exactly: ``"Bounds how long a single `gh` subprocess call may run before it is killed and retried once, and sets the floor for a batched `gh` call, which runs for max(30000, this value)."``
+  - `policy-schema.js:154` `summary` becomes exactly: ``"Bounds how long one `gh` call may run before it is killed and retried once; a batched call gets max(30000, this value)."``, which is 119 characters. `tests/policy-schema-metadata.test.js:20` caps every summary at 140 characters.
   - `_shared/policy-schema.md:263`: replace the whole row with exactly this line (measured at +155 B, file 52,353 B < 52,500):
 
     ```
@@ -81,6 +81,7 @@ Expected: PASS. Then `wc -c plugin/skills/_shared/policy-schema.md` prints `5235
 ### Task 2: The three batched call sites read `GH_BATCH_TIMEOUT_MS`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/number-list-cli.js`. Drop the `runnerTimeoutMs` option, its header lines 9 and 25-31, and the line-52 destructure. The line-78 runner reads `sharedPrimitives.GH_BATCH_TIMEOUT_MS` per call.
@@ -88,7 +89,7 @@ Expected: PASS. Then `wc -c plugin/skills/_shared/policy-schema.md` prints `5235
 - Modify: `plugin/bin/resolve-linked-prs.js:42-46` (the same deletion)
 - Modify: `plugin/bin/dispatch-resume.js`. Delete line 88 `NATIVE_TIMEOUT_MS`. `nativeGh` (line 110-115) passes `timeout: GH_BATCH_TIMEOUT_MS`, which is added to the line-68 shared-primitives destructure.
 - Modify: `.claude/skills/gh-api-module-pattern/SKILL.md:30`. After the sentence ending `rather than carrying 5000 over by copy.`, insert: ``The comma-list CLIs' runner (`plugin/bin/lib/number-list-cli.js`) and `plugin/bin/dispatch-resume.js`'s native-dependency runner import `shared-primitives.js`'s `GH_BATCH_TIMEOUT_MS` instead — `max(30000, GH_TIMEOUT_MS)`, so a raised `gh-timeout-ms` widens a batch too (#4815).``
-- Test: `tests/bin-lib/number-list-cli.test.js`
+- Test: `tests/bin-lib/number-list-cli.test.js`, `tests/bin-lib/dispatch/dispatch-resume-cli.test.js`
 
 **Interfaces:**
 - Consumes: Task 1's `GH_BATCH_TIMEOUT_MS` getter.
@@ -101,10 +102,17 @@ Expected: PASS. Then `wc -c plugin/skills/_shared/policy-schema.md` prints `5235
   - Call `cli.realDeps.runner(['api'])` and assert `seen === 45000`.
   - In `finally`, restore `cp.execFileSync`, the env var (delete it when it was unset), and evict both cache entries again.
 
+  In `tests/bin-lib/dispatch/dispatch-resume-cli.test.js`, add `AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS`.
+  - `dispatch-resume.js` reads the getter at require time, so set `process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = '45000'` and install the same `child_process.execFileSync` capture stub first (record `opts.timeout` for `cmd === 'gh'`, return `'{}'`).
+  - Then evict and re-require `plugin/bin/dispatch-resume.js` and `plugin/bin/lib/shared-primitives.js`.
+  - Call `realDeps.fetchNative({ numbers: [1], owner: 'o', repo: 'r' })` inside a `try/catch` that ignores the parse failure the `'{}'` reply causes.
+  - Assert the captured `gh` timeout `=== 45000`.
+  - Restore everything in `finally`.
+
 - [ ] **Step 2: Run, verify it fails**
 
 Run: `node --test tests/bin-lib/number-list-cli.test.js`
-Expected: FAIL (`30000 !== 45000`).
+Expected: FAIL (`30000 !== 45000`). Then `node --test tests/bin-lib/dispatch/dispatch-resume-cli.test.js` is also expected to FAIL on the new test, because `NATIVE_TIMEOUT_MS` is still 30000.
 
 - [ ] **Step 3: Implement as listed in Files.** In `number-list-cli.js`, import the module object (`const sharedPrimitives = require('./shared-primitives')`, keeping `LARGE_MAX_BUFFER_BYTES` reachable). Read `sharedPrimitives.GH_BATCH_TIMEOUT_MS` inside the runner arrow, keeping the `ghOptions(args, { encoding, timeout, maxBuffer, windowsHide: true })` literal. Replace the deleted header paragraph with one line: `realDeps.runner's timeout is shared-primitives' GH_BATCH_TIMEOUT_MS, read per call.` In `dispatch-resume.js`, the shared-primitives destructure already reads `GH_TIMEOUT_MS` at require time, so adding `GH_BATCH_TIMEOUT_MS` there matches the file's own style. Keep a one-line comment on `nativeGh` saying it is one aliased GraphQL call, so it gets the batched bound.
 
@@ -115,11 +123,12 @@ Expected: PASS.
 
 Then confirm no stray literal is left: `git grep -n -e 'NATIVE_TIMEOUT_MS' -e 'runnerTimeoutMs' -- plugin tests docs .claude/skills ':!docs/superpowers/plans' ':!docs/plans/*-ledger.md'`. Expected: no output. Control: the same command run on this branch's tip at plan time matches 8 lines (`dispatch-resume.js:88,112`, `number-list-cli.js:9,25,52,78`, `resolve-blockers.js:54`, `resolve-linked-prs.js:46`). The ledger and plans exclusions were added per #4579.
 
-- [ ] **Step 5: Commit.** `git add` the five source/skill files and the test by path. Message: `Route the batched gh calls through GH_BATCH_TIMEOUT_MS — three 30s literals retired, refs #4815`.
+- [ ] **Step 5: Commit.** `git add` the five source/skill files and the two tests by path. Message: `Route the batched gh calls through GH_BATCH_TIMEOUT_MS — three 30s literals retired, refs #4815`.
 
 ### Task 3: One home for the stalled-worktree path and the two primitives
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/dispatch/resume-eligibility.js`:
@@ -170,6 +179,7 @@ Then confirm one home:
 ### Task 4: `parseStatus` delegates to `parseStatusPorcelainZ` (strict)
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/git-z.js:106-128`. The signature becomes `parseStatusPorcelainZ(raw, { strict = false } = {})`. Under strict, a token shorter than 4 characters throws; otherwise behavior is unchanged. Extend the comment above it by one sentence.
@@ -243,7 +253,9 @@ Run: `node --test tests/bin-lib/dispatch/dispatch-resume-cli.test.js tests/bin-l
 
 ### Task 6 (controller, not dispatched): record the close-outs
 
-- [ ] AC2.1: re-read #1426's comments (`gh api repos/thn-inc/claude-tweaks/issues/1426/comments --paginate`). Confirm each of the 12 `[dispatch]` lines whose text matches a #4815 deliverable carries `#4815`. Log the count with `log-decision.js --step "AC evidence"`.
+- [ ] AC2.1: re-read #1426's comments (`gh api repos/thn-inc/claude-tweaks/issues/1426/comments --paginate`). Confirm that each of the 12 `[dispatch]` lines whose text matches a #4815 deliverable ends in the promotion marker `→ #4815` (`_shared/materiality-floor.md`'s promotion marking).
+  - If any line lacks it, append the marker to that line by editing its #1426 comment, using `tidy/digest-sweep.md`'s promotion procedure, then re-read.
+  - Log the count with `log-decision.js --step "AC evidence"` only once it reads 12/12. A count short of 12 that cannot be fixed is an `open` ledger row, never a logged pass.
 - [ ] AC1.1: post one comment on #4815 that maps each of the 12 deliverables to its outcome:
   - Fixed: D1 (Tasks 1-2).
   - D2/D10/D3 (Task 3). The inline `dispatch-record-${n}` builders were already gone after #4849, and the remaining duplicated worktree path join now has one home on `HARNESS_WORKTREE_DIR`.
