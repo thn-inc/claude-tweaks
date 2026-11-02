@@ -2,7 +2,10 @@
 // control-mode policy keys, the `element` list validation they introduced,
 // isControlModeOn, and the `risk-path-globs` block key. JSON-shape checks run
 // resolvePolicyKeys in-process (json(), pinned equal to the CLI by the parity
-// test); --values output, stderr warnings and invocation errors still build a
+// test; json() is for single-name keys other than integration-model,
+// merge-verification and model-profiles, which the CLI derives or
+// special-cases after resolvePolicyKeys, so tests of those keys must use
+// cliJson()); --values output, stderr warnings and invocation errors still build a
 // throwaway fixture repo under os.tmpdir() (never inside this repo — IL-80),
 // write policy.yml into it, and spawn bin/resolve-policy.js with cwd set
 // there. The keys are inert: nothing reads them yet, so this file pins only
@@ -51,7 +54,10 @@ function cliJson(policy, ...keys) {
 
 // In-process twin of cliJson. The JSON round-trip mirrors the CLI's
 // JSON.stringify(result): it drops an `undefined` value, which the release-hook
-// test's `{ source: 'policy' }` expectation relies on.
+// test's `{ source: 'policy' }` expectation relies on. Use it for single-name
+// keys other than integration-model, merge-verification and model-profiles,
+// which the CLI derives or special-cases after resolvePolicyKeys, so tests of
+// those keys must use cliJson().
 function json(policy, ...keys) {
   return JSON.parse(JSON.stringify(resolvePolicyKeys(keys, { policyRaw: policy === undefined ? null : policy, runConfigRaw: null })));
 }
