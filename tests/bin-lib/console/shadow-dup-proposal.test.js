@@ -341,6 +341,43 @@ test('readNoFollow fallback: a leaf swapped back to a fresh regular file before 
   assert.equal(fs.readFileSync(victim, 'utf8'), 'VICTIM-BYTES');
 });
 
+test('readNoFollow fallback: a symlinked leaf is never opened, so the pre-open lstat refusal keeps the link unfollowed', { skip: SYMLINK_SKIP }, () => {
+  const { leaf, victim } = victimPair();
+  const link = path.join(path.dirname(leaf), 'link.md');
+  fs.symlinkSync(victim, link);
+  const realOpen = fs.openSync;
+  const opened = [];
+  try {
+    fs.openSync = (p, ...rest) => { opened.push(p); return realOpen(p, ...rest); };
+    assert.throws(() => readNoFollow(link, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
+  } finally {
+    fs.openSync = realOpen;
+  }
+  assert.ok(!opened.includes(link), 'the symlink was opened (and so followed) before the refusal');
+});
+
+test('readNoFollow fallback: an unreadable leaf fails closed and is never opened', () => {
+  const leaf = leafFile('leaf bytes');
+  const realLstat = fs.lstatSync;
+  const realOpen = fs.openSync;
+  const opened = [];
+  try {
+    // One-shot: lstatType's lstat fails with EPERM, so the leaf is unreadable.
+    fs.lstatSync = () => {
+      fs.lstatSync = realLstat;
+      const err = new Error('EPERM: operation not permitted');
+      err.code = 'EPERM';
+      throw err;
+    };
+    fs.openSync = (p, ...rest) => { opened.push(p); return realOpen(p, ...rest); };
+    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: cannot inspect it \(EPERM\)/);
+  } finally {
+    fs.lstatSync = realLstat;
+    fs.openSync = realOpen;
+  }
+  assert.deepEqual(opened, []);
+});
+
 test('cli: under the no-O_NOFOLLOW fallback a symlinked copy is refused as copy-unreadable and its target is never quoted', { skip: SYMLINK_SKIP }, () => {
   const f = fixture();
   const secret = path.join(f.root, 'outside-secret.txt');
@@ -354,6 +391,7 @@ test('cli: under the no-O_NOFOLLOW fallback a symlinked copy is refused as copy-
   assert.equal(fs.existsSync(f.out), false);
 });
 
+// Green at base on POSIX: the base ignores the injected constants and the kernel's O_NOFOLLOW refuses the link; it discriminates only when the fallback is removed.
 test('cli: under the no-O_NOFOLLOW fallback a symlinked anchor reads as missing — the copy composes as a collision with no anchor quote', { skip: SYMLINK_SKIP }, () => {
   const f = fixture();
   const secret = path.join(f.root, 'outside-secret.txt');
