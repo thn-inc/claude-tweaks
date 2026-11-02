@@ -346,10 +346,11 @@ test('F3c: Step 14 states the Opt-out paragraph before the Detect paragraph', ()
 // the kernel names the opt-out and stops, never reading the setup log or running the script.
 const SCHEMA = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'routine-template-schema.md'));
 const KERNEL_OPT_OUT_IF = "If this checkout's `.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false`";
-// The condition must read as strictly as the resolver (resolve-policy.js returns false only for a
-// bare top-level uncommented false): a sandbox model applies the same rule or the two disagree.
-const KERNEL_OPT_OUT_STRICT = '(a top-level, uncommented, unquoted `false`; any other value, a quoted "false" included, means the default)';
-const KERNEL_OPT_OUT_LINE ='`claude-tweaks not installed: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — supply claude-tweaks to this environment another way, or set the key back to true`';
+// The condition must read exactly as the resolver does (policy-schema.js parseFlatLines): a
+// top-level unquoted false resolves false even with a trailing `# comment`; a commented-out line,
+// an indented key or any other value is the default. A sandbox model applies the same rule.
+const KERNEL_OPT_OUT_STRICT = '(a top-level, unquoted `false`, optionally followed by a `# comment`; a commented-out line, or any other value, a quoted "false" included, means the default)';
+const KERNEL_OPT_OUT_LINE = '`claude-tweaks not installed: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — supply claude-tweaks to this environment another way, or set the key back to true`';
 const KERNEL_DEFAULT_READ = 'Otherwise, read `$HOME/claude-cloud-setup.log`';
 const KERNEL_DEFAULT_HEAL = 'run `bash scripts/claude-cloud-setup.sh` to self-heal, and re-run the resolved-build line once before proceeding to the kickoff.';
 
@@ -409,6 +410,8 @@ test('kernel opt-out go-red controls', () => {
     ['strip the default self-heal', original.replace(KERNEL_DEFAULT_HEAL, ''), assertKernelDefault, /kernel default path lost/],
     ['strip the strictness clause', original.replace(KERNEL_OPT_OUT_STRICT, ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
     ['loosen the strictness clause', original.replace('unquoted ', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['strip the trailing-comment allowance', original.replace(', optionally followed by a `# comment`', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
+    ['strip the commented-out-line exclusion', original.replace('a commented-out line, or ', ''), assertKernelOptOut, /kernel opt-out strictness clause missing/],
     ['strip the default log-read anchor', original.replace(KERNEL_DEFAULT_READ, ''), assertKernelOptOut, /kernel opt-out segment anchors missing/],
   ];
   for (const [name, mutated, check, message] of cases) {
