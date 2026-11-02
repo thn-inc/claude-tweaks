@@ -3,7 +3,6 @@ files:
   - plugin/skills/_shared/subagent-dispatch-core.md
   - plugin/skills/_shared/subagent-output-contract.md
   - plugin/skills/review/step3-lens-dispatch.md
-  - plugin/skills/review/step3-fanout-sweep.md
   - plugin/skills/review/step3-debate-and-refutation.md
   - plugin/skills/review/step3-tiebreak.md
   - plugin/skills/review/review-summary-template.md

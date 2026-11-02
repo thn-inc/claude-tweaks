@@ -11,7 +11,7 @@ When **all** of the following hold, render the compact block below instead of th
 - Zero tradeoffs accepted, zero autonomous actions performed (no fixes, no simplifier changes, no ledger resolutions)
 - No manual steps required
 - No `/build` plan step left not run (the full template's "Not run by /build" section would be omitted)
-- Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-fanout-sweep.md`)
+- Zero untracked files and zero new listeners reported by the post-fan-out sweep (`step3-lens-dispatch.md`)
 - Step 3.7's tiebreak (`step3-tiebreak.md`) had nothing to judge, or every verdict was `confirmed` or `drop`, and no Tiebreak caveat applies
 
 ```markdown
@@ -102,7 +102,7 @@ Possible QA statuses (the four canonical values from qa-reporting.md's Status de
 ### Fan-out leftovers
 {None | N untracked file(s) left by the review fan-out, reported (not deleted) by the post-fan-out sweep: {paths}; N new local listener(s) since the pre-dispatch snapshot, reported (not killed; ownership unattributed): {command}:{port}, …}
 
-> Findings whose only evidence is one of these paths are downgraded to `unconfirmed` above, per `step3-fanout-sweep.md`'s post-fan-out sweep.
+> Findings whose only evidence is one of these paths are downgraded to `unconfirmed` above, per `step3-lens-dispatch.md`'s post-fan-out sweep.
 
 ### Implementation Hindsight
 - {finding} → {change now / capture / accept as-is — not an improvement because {reason}}

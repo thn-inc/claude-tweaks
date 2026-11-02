@@ -16,7 +16,6 @@ const ROOT = path.join(__dirname, '..', '..', '..');
 
 const EFFORT_DERIVATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'review-effort-derivation.md'));
 const LENS_DISPATCH = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-lens-dispatch.md'));
-const FANOUT_SWEEP = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-fanout-sweep.md'));
 const DEBATE_AND_REFUTATION = readText(path.join(ROOT, 'plugin', 'skills', 'review', 'step3-debate-and-refutation.md'));
 
 test('review-effort-derivation.md names the JSON shape mint prints by default', () => {
@@ -100,7 +99,7 @@ test('2956: step3-lens-dispatch.md defines {ctx-id} from the {ctx-dir} basename 
 });
 
 test('2956: the Agent-scratch cleanup check no longer excludes lens-*.json or findings-by-lens.json', () => {
-  const cleanup = FANOUT_SWEEP.split('\n').find((line) => line.includes('**Agent-scratch cleanup check.**'));
+  const cleanup = LENS_DISPATCH.split('\n').find((line) => line.includes('**Agent-scratch cleanup check.**'));
   assert.ok(cleanup, 'Agent-scratch cleanup check paragraph must exist');
   assert.ok(!cleanup.includes('lens-*.json'), 'cleanup check must not name lens-*.json');
   assert.ok(!cleanup.includes('findings-by-lens.json'), 'cleanup check must not name findings-by-lens.json');
