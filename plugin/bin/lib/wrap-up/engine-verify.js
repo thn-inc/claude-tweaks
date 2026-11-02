@@ -1056,9 +1056,13 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // Skip notes for this target's untrusted marker comments; appended to its
     // failing line, or to `passedNotes` when the target passes.
     const ignored = [];
+    // One untrusted comment can hold more than one marker, and is named once.
+    const noteIgnored = (notes) => {
+      for (const note of notes) if (!ignored.includes(note)) ignored.push(note);
+    };
     const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
     const packet = readPacket(comments);
-    ignored.push(...packet.skipped);
+    noteIgnored(packet.skipped);
     if (packet.status === 'found') {
       if (ignored.length) passedNotes.push({ target, ignored });
       continue;
@@ -1071,7 +1075,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
       comments,
       (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
     );
-    ignored.push(...fullBrief.ignored);
+    noteIgnored(fullBrief.ignored);
     if (fullBrief.trusted) {
       if (ignored.length) passedNotes.push({ target, ignored });
       continue;
@@ -1085,7 +1089,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // _shared/pr-run-comments.md's "Multi-spec brief and timing comments" read side.
     if (prNumber) {
       const pointer = scanMarkerComments(comments, (c) => c.body && c.body.includes('Verification Brief posted to PR #'));
-      ignored.push(...pointer.ignored);
+      noteIgnored(pointer.ignored);
       if (pointer.trusted) {
         let prCommentsRaw;
         try {
@@ -1102,7 +1106,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
           continue;
         }
         const prBrief = scanPrBrief(prComments, target);
-        ignored.push(...prBrief.ignored);
+        noteIgnored(prBrief.ignored);
         if (prBrief.trusted) {
           if (ignored.length) passedNotes.push({ target, ignored });
           continue;
@@ -1111,7 +1115,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         continue;
       }
     }
-    fail(`#${target}: no comment carries a confirmed Verification Brief`);
+    fail(`#${target}: no comment carries a confirmed Verification Brief or an acceptance packet`);
   }
   // Notes are never dropped: a failing row carries each passing target's skipped
   // comments after the failing lines; an all-pass row's detail is the notes.

@@ -2572,6 +2572,59 @@ test('#4611: the marker counts only as the whole first line', () => {
   }
 });
 
+test('#4611: the none failure names both forms it looked for', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief or an acceptance packet/);
+});
+
+test('#4611: an untrusted comment holding the marker and the brief is named once', () => {
+  const both = `${PACKET_BODY}\n${TRUST_BRIEF_BODY}`;
+  const note = 'skipped marker comment https://x/ap1 by eve (NONE)';
+  const failing = acceptanceTrustRow({ issueComments: [packetComment(both, 'NONE')] }).row;
+  assert.strictEqual(failing.result, 'fail');
+  assert.strictEqual(failing.detail.split(note).length - 1, 1, failing.detail);
+
+  const passing = acceptanceTrustRow({
+    issueComments: [packetComment(both, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  }).row;
+  assert.strictEqual(passing.result, 'pass');
+  assert.strictEqual(passing.detail.split(note).length - 1, 1, passing.detail);
+});
+
+// Decision Q1's parent gate posts a legacy brief, and a record with sub-issues and no
+// parent takes the no-parent path with a packet, so a resolved parent reads both forms.
+function parentTargetRow(comments) {
+  const runDir = makeTmpDir('verify-acceptance-parent-target-');
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (isSubIssuesCall(args)) return subIssuesGh([{ number: 900, state: 'closed', labels: ['risk:high'] }]);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('#4611: a parent target passes on a v1 packet with no legacy brief', () => {
+  const row = parentTargetRow([packetComment(PACKET_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#4611: a parent target with a v2 packet beside a legacy brief fails as unreadable', () => {
+  const row = parentTargetRow([packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#898: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a parent target still passes on a legacy brief alone', () => {
+  assert.strictEqual(parentTargetRow([packetComment(TRUST_BRIEF_BODY, 'MEMBER')]).result, 'pass');
+});
+
 test('#4611: a packet does not stand in for the pending label', () => {
   const runDir = makeTmpDir('verify-acceptance-packet-nolabel-');
   writeSpecFile(runDir, '900', 900);
