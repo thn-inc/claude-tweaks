@@ -50,6 +50,8 @@ function cliJson(policy, ...keys) {
   return JSON.parse(res.stdout);
 }
 
+const CLI_SPECIAL_KEYS = ['integration-model', 'merge-verification', 'model-profiles'];
+
 // In-process twin of cliJson. The JSON round-trip mirrors the CLI's
 // JSON.stringify(result): it drops an `undefined` value, which the release-hook
 // test's `{ source: 'policy' }` expectation relies on. Use it for single-name
@@ -57,7 +59,6 @@ function cliJson(policy, ...keys) {
 // resolvePolicyKeys, so tests of those keys must use cliJson(). The parity test
 // below runs every other schema key through both paths, so a key the CLI starts
 // special-casing turns it red instead of drifting silently.
-const CLI_SPECIAL_KEYS = ['integration-model', 'merge-verification', 'model-profiles'];
 function json(policy, ...keys) {
   if (keys.length === 0) throw new Error('json() needs at least one key, as the CLI does: use cliJson() to exercise the usage error');
   for (const key of keys) {
