@@ -12,7 +12,7 @@
 // frozen excerpt to use as a control); the one behaviour change to existing text (item 8) has its
 // pre-change fence frozen below and run, so the silent-truncation symptom is reproduced.
 //
-// Known pre-existing defect, out of scope for #4820 and captured separately: item 10's second fence
+// Known pre-existing defect, out of scope for #4820 and fixed in flight by #4818 (PR #4883): item 10's second fence
 // reads `process.env.UNSETTLED_AGE`, but its first fence sets `UNSETTLED_AGE` as an unexported shell
 // variable in a separate Bash call, so a literal run of the two fences sees it unset. The item-10 test
 // sets `UNSETTLED_AGE` in the spawn env instead of relying on the fences to pass it along.
@@ -119,6 +119,11 @@ function limitSites(text) {
   return [...joined.matchAll(/gh (?:issue|pr) list\b[^`\n]*?--limit[\s=]+([^\s`]+)/g)].map((m) => m[1]);
 }
 const fixedLimitSites = (text) => limitSites(text).filter((t) => /^\d+$/.test(t));
+// Every `gh issue|pr list … --json` call, sized or not: `limitSites` only sees a call that already carries a `--limit`,
+// so a call added with none (gh's implicit 30) is visible only here. Prose that names a call without `--json` is no match.
+function jsonListCalls(text) {
+  return [...text.replace(/\\\n\s*/g, ' ').matchAll(/gh (?:issue|pr) list\b[^`\n]*?--json/g)];
+}
 
 function assertRule(scopeText) {
   assert.ok(scopeText.includes(RULE), 'the scope must carry the Fetch limit paragraph verbatim');
@@ -165,6 +170,10 @@ test('every gh list call in github-pr-scan.md is sized from {resolved-limit}', (
   // current-pr item 4; repo-wide items 1, 3, 4 (x2), 5, 6, 7, 8, 9, 10 (x2).
   assert.equal(sites.length, 12, `expected 12 --limit sites, found: ${sites.join(' ')}`);
   assert.equal(sites.filter((t) => t === '{resolved-limit}').length, 12);
+  // A call added with no --limit is one more `--json` call than sized site.
+  assert.equal(jsonListCalls(LIVE).length, sites.length, 'every gh list call must carry --limit {resolved-limit}');
+  assert.equal(jsonListCalls(`${LIVE}\n\ngh issue list --state open --json number`).length, sites.length + 1);
+  assert.equal(jsonListCalls('the `gh issue list --state open` query already fetched').length, 0);
   // Prove the counter on a synthetic minimal pair.
   const sized = '`gh pr list --state merged --limit {resolved-limit}` AND `gh pr list --state closed --limit {resolved-limit}`';
   assert.equal(limitSites(sized).filter((t) => t === '{resolved-limit}').length, 2);
@@ -262,26 +271,64 @@ for (const shell of ['bash', 'zsh']) {
 
 // ---- item 4: the merged/closed branch cross-check ----------------------------------------------------
 
-// The cross-check yields no count, so neither the WARNING nor the floor clause of the Fetch limit rule fires for it:
-// a list that reached the cap says so with one `[pr]` info row, or older merged/closed branches go unchecked silently.
-const ITEM4_CAP_SENTENCE = 'When either list returns `{resolved-limit}` rows, merged/closed branches older than the oldest row fetched went unchecked — emit `[pr] {state} PR list: {resolved-limit} rows (the cap) — older {state} branches unchecked — raise backlog-fetch-limit to check them`, once per capped state.';
+// The fence writes each PR list to a file and prints only the remnants, so up to `{resolved-limit}` rows per
+// state never reach a Bash result; a list that reached the limit gets the `[pr]` cap row, printed by the block
+// itself (the cross-check yields no count, so neither the WARNING nor the floor clause of the Fetch limit rule fires).
+const ITEM4_LABEL = '4. **Merged/closed PRs with local remnants**';
+const prRows = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, headRefName: `branch-${i + 1}` }));
+const capRow = (state, n) => `[pr] ${state} PR list: ${n} rows (the cap) — older ${state} branches unchecked — raise backlog-fetch-limit to check them`;
 
-test('item 4 says a merged/closed list that reached the cap leaves older branches unchecked', () => {
-  const start = REPO_WIDE.indexOf('4. **Merged/closed PRs with local remnants**');
-  assert.ok(start !== -1, 'item 4 not found');
-  const end = REPO_WIDE.indexOf('\n5. ', start);
-  assert.ok(end !== -1, 'item 5 not found');
-  const item4 = REPO_WIDE.slice(start, end);
-  const assertCapRow = (t) => assert.ok(t.includes(ITEM4_CAP_SENTENCE), 'item 4: the cap-reached `[pr]` info row sentence must be present');
-  assertCapRow(item4);
-  const mutated = item4.replace(ITEM4_CAP_SENTENCE, '');
-  assert.notEqual(mutated, item4);
-  assert.throws(() => assertCapRow(mutated), { message: /item 4: the cap-reached/ });
-  // A row template that drops the state-and-cap naming is not the pinned one.
-  const vague = item4.replace('`[pr] {state} PR list: {resolved-limit} rows (the cap)', '`[pr] PR list capped');
-  assert.notEqual(vague, item4);
-  assert.throws(() => assertCapRow(vague), { message: /item 4: the cap-reached/ });
-});
+// A throwaway git repo carrying the named local branches, so the fence's `git branch --list` is the real one.
+function repoWithBranches(names) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-scan-repo-'));
+  const env = { ...process.env, GIT_AUTHOR_NAME: 't', GIT_AUTHOR_EMAIL: 't@example.test', GIT_COMMITTER_NAME: 't', GIT_COMMITTER_EMAIL: 't@example.test' };
+  const git = (...args) => {
+    const r = spawnSync('git', ['-C', forwardSlashes(dir), ...args], { encoding: 'utf8', env });
+    assert.equal(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
+  };
+  git('init', '--quiet');
+  git('-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '--quiet', '-m', 'init');
+  for (const n of names) git('branch', n);
+  return dir;
+}
+
+for (const shell of ['bash', 'zsh']) {
+  test(`item 4 prints only the local remnants and a cap row for each state whose list reached the limit (${shell})`, shellTestOptions(shell), () => {
+    const fence = fenceAfter(REPO_WIDE, ITEM4_LABEL);
+    const repo = repoWithBranches(['branch-2', 'branch-4', 'unrelated']);
+    try {
+      const run = (limit, rows, text = fence) => runFence(text.replaceAll('{REPO_ROOT}', forwardSlashes(repo)), { limit, ghRows: prRows(rows), shell });
+      const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4', 'closed PR #2 branch-2', 'closed PR #4 branch-4'];
+      // A limit above the list: the remnants of both states, no cap row.
+      const whole = run(1000, 5);
+      assert.equal(whole.status, 0, `item 4: the high-limit run must exit 0: ${whole.stderr}`);
+      assert.deepEqual(whole.stdout.trim().split('\n'), remnants);
+      // The list truncated at the limit: both states say their older branches went unchecked, once each.
+      const capped = run(5, 8);
+      assert.equal(capped.status, 0, `item 4: the capped run must exit 0: ${capped.stderr}`);
+      assert.deepEqual(capped.stdout.trim().split('\n'), [remnants[0], remnants[1], capRow('merged', 5), remnants[2], remnants[3], capRow('closed', 5)]);
+      // A list exactly the size of the limit cannot be told from a truncated one: it says so too.
+      assert.ok(run(5, 5).stdout.includes(capRow('merged', 5)), 'item 4: the exact-limit run must print the cap row');
+      // One row under the limit is a whole list: no cap row.
+      assert.ok(!run(6, 5).stdout.includes('(the cap)'), 'item 4: the under-limit run must not print the cap row');
+      // 1000 rows per state stay out of the Bash result: only the remnants and the cap rows are printed.
+      const big = run(1000, 1000);
+      assert.equal(big.status, 0, `item 4: the 1000-row run must exit 0: ${big.stderr}`);
+      assert.ok(big.stdout.length < 1000, `item 4: the 1000-row run printed ${big.stdout.length} chars`);
+      assert.ok(big.stdout.includes(capRow('merged', 1000)) && big.stdout.includes(capRow('closed', 1000)));
+      if (shell !== 'bash') return;
+      // Go-red: a block without the comparison, or one that needs strictly more rows than the limit, fails the pinned cases.
+      const noCheck = fence.replace(/^ +if \(prs\.length >= \{resolved-limit\}\).*\n/m, '');
+      assert.notEqual(noCheck, fence, 'item 4: the cap comparison must be present to remove');
+      assert.ok(!run(5, 8, noCheck).stdout.includes('(the cap)'));
+      const strict = fence.replace('prs.length >= {resolved-limit}', 'prs.length > {resolved-limit}');
+      assert.notEqual(strict, fence);
+      assert.ok(!run(5, 5, strict).stdout.includes('(the cap)'));
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
+  });
+}
 
 // ---- item 10: the unsettled-run join ---------------------------------------------------------------
 
@@ -293,17 +340,19 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   const fence = fenceAfter(REPO_WIDE, '10. **Unsettled run**', 1);
   const labelled = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, updatedAt: hoursAgo(48) }));
   // `gh pr list` returns newest first: every row but the last was created 1h ago, the last (the oldest fetched) `oldestHours` ago.
-  // The labelled rows are claimed 48h ago, so the default 1h oldest row postdates the claim and 72h predates it.
+  // The labelled rows were last updated 48h ago and a claim entry is dated 48h ago, so the default 1h oldest row postdates both and 72h predates both.
   const prs = (n, oldestHours) => Array.from({ length: n }, (_, i) => ({ number: 9000 + i, url: `https://example.test/pull/${9000 + i}`, createdAt: hoursAgo(i === n - 1 ? oldestHours : 1), closingIssuesReferences: [] }));
-  const run = (limit, labelledCount, prCount, fenceText = fence, oldestHours = 1) => runFence(fenceText, {
+  const run = (limit, labelledCount, prCount, fenceText = fence, oldestHours = 1, claimedCount = 0) => runFence(fenceText, {
     limit,
     env: { UNSETTLED_AGE: '24' },
     files: {
-      'pr-scan-unsettled-claims.jsonl': '',
+      'pr-scan-unsettled-claims.jsonl': Array.from({ length: claimedCount }, (_, i) => JSON.stringify({ number: 500 + i, claimedAt: hoursAgo(48), source: 'claim' })).join('\n'),
       'pr-scan-unsettled-labelled.json': labelled(labelledCount),
       'pr-scan-unsettled-prs.json': prs(prCount, oldestHours),
     },
   });
+  // One claim-sourced candidate and no labelled rows: its claimedAt is the real claim time.
+  const runClaim = (limit, prCount, fenceText = fence, oldestHours = 1) => run(limit, 0, prCount, fenceText, oldestHours, 1);
 
   // Both fetches at the limit: the label cap warns and each no-PR row says the PR join may be incomplete.
   const capped = run(2, 2, 2);
@@ -337,15 +386,28 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   };
   assertPrOnlyCapped(run(3, 1, 3));
 
-  // A capped PR fetch whose oldest row predates the claim already reached back past it, so a PR for the claim would
-  // have been fetched: the no-PR row is a real result, with no qualifier. Computed per candidate against its own claimedAt.
+  // A capped PR fetch whose oldest row predates a claim already reached back past it, so a PR for the claim would
+  // have been fetched: the no-PR row is a real result, with no qualifier. Computed per claim against its own claimedAt.
   const assertCappedPredatesClaim = (r) => {
     assert.equal(r.status, 0, r.stderr);
     assert.ok(!r.stderr.includes('WARNING:'), `predates-claim: the labelled fetch is under the limit, so no warning: ${r.stderr}`);
     assert.match(r.stdout, /no PR found \d+h after claim — resume:/, `predates-claim: the no-PR row must be unqualified: ${r.stdout}`);
     assert.ok(!r.stdout.includes('(the PR fetch hit'), `predates-claim: a capped fetch reaching back past the claim carries no qualifier: ${r.stdout}`);
   };
-  assertCappedPredatesClaim(run(3, 1, 3, fence, 72));
+  assertCappedPredatesClaim(runClaim(3, 3, fence, 72));
+  // A claim whose PR fetch is capped and whose oldest row postdates it is qualified.
+  const assertClaimPrOnlyCapped = (r) => {
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(PR_QUALIFIER), `claim PR-only cap: the no-PR row must carry the PR-fetch qualifier: ${r.stdout}`);
+  };
+  assertClaimPrOnlyCapped(runClaim(3, 3));
+  // A label's claimedAt is its issue's updatedAt, an upper bound on the real claim time: an oldest row that predates it
+  // proves nothing about the real claim, so a capped fetch always qualifies a label-sourced no-PR row.
+  const assertLabelQualified = (r) => {
+    assert.equal(r.status, 0, r.stderr);
+    assert.ok(r.stdout.includes(PR_QUALIFIER), `label-sourced: a capped fetch must qualify the no-PR row even when its oldest row predates updatedAt: ${r.stdout}`);
+  };
+  assertLabelQualified(run(3, 1, 3, fence, 72));
 
   // Go-red: a qualifier keyed on any count other than the PR count comes out wrong on that case.
   const PR_CAPPED_LINE = 'const PR_CAPPED = prs.length >= LIMIT;';
@@ -357,19 +419,23 @@ test('item 10 warns at the bot:in-progress cap and qualifies no-PR rows at the P
   }
 
   // Go-red: the qualifier must also depend on the oldest fetched PR's createdAt against the candidate's claimedAt.
-  const GATE = 'PR_CAPPED && OLDEST_PR > Date.parse(claimedAt) ?';
+  const GATE = "PR_CAPPED && (source === 'label' || OLDEST_PR > Date.parse(claimedAt)) ?";
   assert.ok(fence.includes(GATE), 'the createdAt/claimedAt gate must be present to mutate');
   const noDate = fence.replace(GATE, 'PR_CAPPED ?');
   assert.notEqual(noDate, fence);
-  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, noDate, 72)), { message: /predates-claim/ }, 'a qualifier with no createdAt check must fail the predates-claim case');
-  const reversed = fence.replace(GATE, 'PR_CAPPED && OLDEST_PR < Date.parse(claimedAt) ?');
+  assert.throws(() => assertCappedPredatesClaim(runClaim(3, 3, noDate, 72)), { message: /predates-claim/ }, 'a qualifier with no createdAt check must fail the predates-claim case');
+  const reversed = fence.replace(GATE, "PR_CAPPED && (source === 'label' || OLDEST_PR < Date.parse(claimedAt)) ?");
   assert.notEqual(reversed, fence);
-  assert.throws(() => assertPrOnlyCapped(run(3, 1, 3, reversed)), { message: /PR-only cap/ }, 'a reversed createdAt comparison must fail the PR-only case');
-  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, reversed, 72)), { message: /predates-claim/ }, 'a reversed createdAt comparison must fail the predates-claim case');
+  assert.throws(() => assertClaimPrOnlyCapped(runClaim(3, 3, reversed)), { message: /claim PR-only cap/ }, 'a reversed createdAt comparison must fail the claim PR-only case');
+  assert.throws(() => assertCappedPredatesClaim(runClaim(3, 3, reversed, 72)), { message: /predates-claim/ }, 'a reversed createdAt comparison must fail the predates-claim case');
+  // A gate that trusts a label's updatedAt as the claim time drops the qualifier from a label-sourced row.
+  const noLabelBranch = fence.replace(GATE, 'PR_CAPPED && OLDEST_PR > Date.parse(claimedAt) ?');
+  assert.notEqual(noLabelBranch, fence);
+  assert.throws(() => assertLabelQualified(run(3, 1, 3, noLabelBranch, 72)), { message: /label-sourced/ }, 'a gate with no label branch must fail the label-sourced case');
   // The oldest row is the minimum createdAt, not the first or last row's: a fence reading the first (newest) row sees 1h ago.
   const firstRow = fence.replace('Math.min(...prs.map((pr) => Date.parse(pr.createdAt)))', 'Date.parse(prs[0].createdAt)');
   assert.notEqual(firstRow, fence);
-  assert.throws(() => assertCappedPredatesClaim(run(3, 1, 3, firstRow, 72)), { message: /predates-claim/ }, 'reading the newest row instead of the oldest must fail the predates-claim case');
+  assert.throws(() => assertCappedPredatesClaim(runClaim(3, 3, firstRow, 72)), { message: /predates-claim/ }, 'reading the newest row instead of the oldest must fail the predates-claim case');
 });
 
 // ---- the gh stub itself ----------------------------------------------------------------------------
@@ -394,6 +460,7 @@ test('no gh list call in github-pr-scan-triage.md carries a fixed --limit', () =
   assert.deepEqual(fixedLimitSites(TRIAGE), []);
   // Items 1 (ready) and 2 (blocked) are the two sized fetches; item 3 is a commits-endpoint call with no --limit.
   assert.deepEqual(limitSites(TRIAGE), ['{resolved-limit}', '{resolved-limit}']);
+  assert.equal(jsonListCalls(TRIAGE).length, 2, 'every gh list call in the triage scope must carry --limit {resolved-limit}');
 });
 
 test('triage-queue carries the Fetch limit rule and the floor render', () => {

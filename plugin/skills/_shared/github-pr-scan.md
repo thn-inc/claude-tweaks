@@ -88,7 +88,23 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
    Then classify each per the Staleness Thresholds. A PR that is simultaneously not draft, not yet `Stale` (< 4 weeks since `updatedAt` — spans both the `Fresh` and `Review` bands, since neither currently has its own finding for a PR with nothing wrong), has zero unresolved review threads (item 2 below), and has CI `passing` gets its own finding, carrying a per-PR command rather than landing as summary-only: `[pr] PR #{n}: {title} — awaiting review — last updated {age} ago, CI {status}, 0 unresolved threads — gh pr view {n} --web`. This is informational only — see the Severity mapping and `tidy/SKILL.md`'s Step 6 routing below — but "informational" describes the *severity*, not whether the row carries a command: the trailing `gh pr view {n} --web` is what a human runs to actually look at the PR, and its absence was a confirmed gap (a bare summary sentence with zero per-PR follow-up), not a deliberate no-command finding. A PR with CI `failing` or `pending`, or `reviewDecision: CHANGES_REQUESTED`, instead gets its own finding, regardless of staleness (a PR with CI `unavailable` gets neither, since CI is never called passing or failing): `[pr] PR #{n}: {title} — CI failing/pending or changes requested — CI {status}, review {reviewDecision}`. This is `high` severity per the Severity mapping below, not informational — see the Findings and recommendations table below.
 2. **Unresolved threads per open PR** — the same GraphQL query as `current-pr` item 2, once per open PR.
 3. **Code-health issues** — `gh issue list --label by:code-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
-4. **Merged/closed PRs with local remnants** — `gh pr list --state merged --limit {resolved-limit} --json number,headRefName` AND `gh pr list --state closed --limit {resolved-limit} --json number,headRefName` (GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`; both queries are needed to cover "merged or closed without merging"); cross-check each `headRefName` from either result against `git -C "{REPO_ROOT}" branch --list` output. When either list returns `{resolved-limit}` rows, merged/closed branches older than the oldest row fetched went unchecked — emit `[pr] {state} PR list: {resolved-limit} rows (the cap) — older {state} branches unchecked — raise backlog-fetch-limit to check them`, once per capped state.
+4. **Merged/closed PRs with local remnants** — cross-check each merged or closed PR's `headRefName` against the local branches. GitHub's PR `state` is `OPEN`/`CLOSED`/`MERGED` — mutually exclusive — so `--state closed` never overlaps `--state merged`; both queries are needed to cover "merged or closed without merging". Each list goes to a session-scoped file (`_shared/session-tmp-root.md`) because `{resolved-limit}` rows per state overrun one Bash result. The block prints one `{state} PR #{n} {headRefName}` line per local remnant (a `[pr]` finding, per the Output Contract's merged/closed row) and, for a state whose list returned `{resolved-limit}` rows — older branches went unchecked — the `[pr]` cap row, which you report verbatim:
+
+   ```bash
+   PR_SCAN_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-merged.json)"
+   PR_SCAN_CLOSED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value pr-scan-closed.json)"
+   gh pr list --state merged --limit {resolved-limit} --json number,headRefName > "$PR_SCAN_MERGED"
+   gh pr list --state closed --limit {resolved-limit} --json number,headRefName > "$PR_SCAN_CLOSED"
+   REPO_ROOT="{REPO_ROOT}" node -e "
+     const { execFileSync } = require('child_process');
+     const local = new Set(execFileSync('git', ['-C', process.env.REPO_ROOT, 'branch', '--list', '--format=%(refname:short)'], { encoding: 'utf8' }).split(/\r?\n/).filter(Boolean));
+     [['merged', require('$PR_SCAN_MERGED')], ['closed', require('$PR_SCAN_CLOSED')]].forEach(([state, prs]) => {
+       prs.filter((pr) => local.has(pr.headRefName)).forEach((pr) => console.log(state + ' PR #' + pr.number + ' ' + pr.headRefName));
+       if (prs.length >= {resolved-limit}) console.log('[pr] ' + state + ' PR list: {resolved-limit} rows (the cap) — older ' + state + ' branches unchecked — raise backlog-fetch-limit to check them');
+     });
+   "
+   ```
+
 5. **Harness-health issues** — `gh issue list --label by:harness-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
 6. **Journey-health issues** — `gh issue list --label by:journey-health --state open --json number,title,updatedAt,url --limit {resolved-limit}`.
 7. **Docs-health issues** — `gh issue list --label by:docs-health --state open --json number,title,labels,updatedAt,url --limit {resolved-limit}`.
@@ -268,7 +284,7 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
     #    GitHub computes from a PR's own `Fixes #{n}` line — no marker regex
     #    needed here, unlike item 9's plugin-created detection). `comments`/
     #    `commits` are excluded here — each costs ~10,000 GraphQL nodes per PR,
-    #    and both together across `--state all --limit 200` exceed GitHub's
+    #    and both together across `--state all` exceed GitHub's
     #    500,000-node ceiling above ~50 PRs (reproduced live). Progress is
     #    fetched per matched candidate only, below.
     gh pr list --state all --json number,url,createdAt,closingIssuesReferences --limit {resolved-limit} \
@@ -320,13 +336,14 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         const all = commitDates.concat(commentDates);
         return all.length ? all.sort().pop() : null;
       }
-      candidates.forEach(({ number, claimedAt }) => {
+      candidates.forEach(({ number, claimedAt, source }) => {
         const ageHours = (now - Date.parse(claimedAt)) / 3600000;
         if (ageHours < AGE_HOURS) return;
         const pr = matchedPr(number);
         if (!pr) {
-          // A capped fetch only hides an older PR when its oldest row postdates this candidate's claim.
-          const PR_NOTE = PR_CAPPED && OLDEST_PR > Date.parse(claimedAt) ? ' (the PR fetch hit backlog-fetch-limit — an older PR may exist)' : '';
+          // A capped fetch only hides an older PR when its oldest row postdates this candidate's claim. A label's claimedAt
+          // is its issue's updatedAt, an upper bound on the real claim time, so that comparison proves nothing for it.
+          const PR_NOTE = PR_CAPPED && (source === 'label' || OLDEST_PR > Date.parse(claimedAt)) ? ' (the PR fetch hit backlog-fetch-limit — an older PR may exist)' : '';
           console.log('[unsettled] #' + number + ': no PR found ' + Math.round(ageHours) + 'h after claim' + PR_NOTE + ' — resume: node \"\${CLAUDE_PLUGIN_ROOT}/bin/hooks.js\" reconcile, then re-run /claude-tweaks:dispatch or /claude-tweaks:flow #' + number);
           return;
         }

@@ -61,7 +61,7 @@ test('the precondition gate is the same one condition pr-run-comments.md already
 
 test('the tag mapping preserves both pre-#411 tags plus #715\'s manifesto-authorized tag for /help\'s metric', () => {
   assert.match(MERGE, /`\{tag\}` is `auto-merge`.*`fast-lane`.*`manifesto-authorized`/s);
-  assert.match(MERGE, /github-pr-scan\.md.*triage-queue.*item 3/s);
+  assert.match(MERGE, /github-pr-scan-triage\.md.*triage-queue.*item 3/s);
 });
 
 test('an unrecognized gh pr merge error always takes the conservative ready+comment branch, never a guessed one', () => {
