@@ -1,0 +1,314 @@
+# Acceptance Recording Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Fill the acceptance packet's Recording section automatically from the pipeline's own happy-path step screenshots, and keep secret-shaped text out of it.
+
+**Architecture:** `acceptance-packet.js snapshot` (wrap-up Phase 1, the last moment the QA screenshots are guaranteed on disk) plans and encodes a GIF into `{run}/packet-inputs/walkthrough.gif` and records the outcome in the manifest. `gather` turns the manifest's outcome into a `recording` fact. `renderRecordingSection` in `packet-render.js` is the one choke point that redacts every string the section shows. `decideExposure` is the one place the embed/link decision is made.
+
+**Tech Stack:** Node 18+ CommonJS, `node --test`, no new dependencies.
+
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T141744-record-4612/work/4612-spec.md`
+
+**Scope keywords:** recording url refused, renderRecordingSection, decideExposure
+
+## Global Constraints
+
+- Redaction placeholder: exactly `[redacted]`; the whole value goes, the key name stays (`api_key=[redacted]`, `sk_live_abc` becomes `[redacted]`). No prefix or length leaks.
+- Exposure values: `local-only` (v1 default; any unreachable or unprobed store), `linked-private` (a remote store that passed the probe), `withheld` (a link refused by the credential rule).
+- The packet never embeds the recording or any screenshot (no markdown image syntax, no `img` tag) in any repository visibility.
+- Visibility read from `gh repo view --json isPrivate`; an unreadable or unexpected answer is **public**.
+- A bearer-shaped path segment: 20 or more characters from `[A-Za-z0-9_-]` with at least one digit and one letter (positive `/a/Xk3j9f8s7d6f5g4h3j2k1/b`, negative `/docs/token-guide`).
+- Not-recorded fact: `{ id, kind: 'recording', status: 'not-run', reason }`, `reason` one of `no-story`, `no-local-base-url`, `no-happy-path-screenshots`, `encoder-failed`; the last three also appear under Couldn't test; `no-story` renders plain `not recorded` only.
+- Local hosts: `localhost`, `127.0.0.1`, `::1`.
+- Withheld line, exact: `recording withheld: link contained a credential-shaped value`.
+- Never modify `plugin/bin/lib/walkthrough/encode.js` or `plugin/bin/walkthrough-encode.js`; the standalone path applies no redaction.
+- Shell: one plain command per Bash call; no `git stash`. Commit messages say `refs #4612`, never `closes`/`fixes`.
+- Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
+- Characterization (project maturity `established` when resolved so): for a task modifying pre-existing behavior, cover its edge cases in the existing suite before changing it.
+
+Governing project-skill rules, verbatim:
+
+- `bin-source-scan-conformance`: "A scan reports `misparsed` and `unparseable` as an offender, with `STRIPPER_VERDICT_MESSAGES[verdict]` as the text." "`assert.deepEqual(offenders, [])` over the walk also passes when the matcher matches nothing." "A new suite that imports the stripper is itself a caller, and two hand-written lists must name it by test-file stem: the header comment of `tests/helpers/strip-comments.js` and `parse-signal-discipline` item 15." "If the suite reads a source file as text, read it through `readText` from `tests/helpers/read-skill.js`, not a raw `fs.readFileSync`." Use the manual `withFileTypes` walk, never `{ recursive: true }`.
+- `regex-scan-linearity`: "Wall-clock budgets live in `perf/{name}-linearity.test.js`, run by `npm run test:perf`, never by `npm test`." "Assert the verdict as well as the time". "a left-boundary lookbehind of the class" is the fix for "An unanchored global regex restarting inside every long token."
+- `fact-validated-narration`: the Recording section renders facts directly and is never narrated; no rule beyond that applies here.
+- `gh-api-module-pattern`: every `gh` spawn goes through the CLI's existing `deps.gh` (already `ghOptions`-wrapped); a new lib module takes an injected runner.
+- `run-directory-fact-packs`, `review-console-section-addition`, `shared-contract-extraction`, `parse-signal-discipline`, `windows-checkout-test-parity`, `transcript-payload-verification`, `post-merge-workflow-live-probe`, `skill-prose-conformance-tests`: mention packet files without a rule binding this change, except `skill-prose-conformance-tests`: a prose pin must be able to go red.
+
+Source-scan lint: under `plugin/bin/` use no bare `fs.existsSync`/`fs.realpathSync` (`tests/path-guard-conformance.test.js`); every spawn passes `windowsHide`; list directories through `deps.listDir`.
+
+Waived `plugin/bin/lib/wrap-up/engine-render.js`: the spec's Key File is stale; the packet renders in `packet-render.js`, which Task 3 modifies (logged as premise reversed). The "wrap-up engine" step is `snapshot`, Task 4.
+Waived `plugin/bin/walkthrough-encode.js`: read-only; the spec says confirm it needs no change, and Task 1's AC3a.2 and AC6 test keep its suites untouched.
+Waived `plugin/bin/lib/walkthrough/encode.js`: consumed through `encodeWalkthrough`; Task 1 pins `captionList` byte-identical.
+
+**Known spec interactions the tasks resolve:**
+- The spec's "no prefix leaks" vs `checkLink`'s new bearer rule on `verification-brief.md`'s raw evidence URLs: a 40-hex commit SHA is a bearer-shaped segment. Task 2 exempts exactly the third path segment on a `raw.` host when it is 40 lowercase hex, so that route keeps working.
+- AC5's "`not recorded` with the reason" vs the contract decision's `no-story` plain line: the contract decision is the specific rule and wins.
+- `inline()` escapes both brackets. The section post-processes `\[redacted\]` to `\[redacted]`: it renders `[redacted]`, the raw comment still contains the fixed token, and the escaped opener means a `[redacted]: x` line can never become a link reference definition.
+- The local path renders relative to the checkout root, so a public comment leaks no home directory.
+
+## Review Focus
+
+1. A report whose `stories_dir` will not read: a tag-only negative story cannot be told apart, so nothing is recorded (`no-happy-path-screenshots`), never a GIF with an error screen. Pinned in Task 4.
+2. A secret shape the redactor misses but the screen catches (`tok%65n=abc`): the text is withheld whole, never rendered. Pinned in Task 3.
+3. `snapshot` re-run from the main checkout after the merge: the earlier GIF and manifest stay. Pinned in Task 4.
+4. A GIF write or encode failure never fails `snapshot`: it becomes `encoder-failed`, exit 0. Pinned in Task 4.
+5. A long unterminated token through the redactor stays linear. Pinned in Task 1's perf file.
+
+---
+
+### Task 1: Redaction module
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Create: `plugin/bin/lib/walkthrough/redact.js`
+- Create: `perf/recording-redact-linearity.test.js`
+- Test: `tests/bin-lib/walkthrough/redact.test.js`
+- Modify: `tests/bin-lib/walkthrough/encode.test.js` (one pin test)
+
+**Interfaces:**
+- Produces: `redactText(raw: string) -> { text: string, count: number, residual: string }`; `REDACTED = '[redacted]'`. `residual` is the input with every whole match (key, separator and value) removed; the caller screens it.
+- Consumes: `findCredentialInText` from `../wrap-up/packet-links`.
+
+- [ ] **Step 1: Write the failing tests** in `tests/bin-lib/walkthrough/redact.test.js`:
+
+```js
+const CASES = [
+  ['Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', 'Authorization: [redacted]'],
+  ['api_key=sk_live_123abc', 'api_key=[redacted]'],
+  ['sk_live_abc', '[redacted]'],
+  ['ghp_abc123def', '[redacted]'],
+  ['gho_abc123def', '[redacted]'],
+  ['bearer abc.def', '[redacted]'],
+  ['eyJhbGciOiJIUzI1NiJ9.e30.abc', '[redacted]'],
+  ['password=hunter2 next', 'password=[redacted] next'],
+  ['"token": "abc"', '"token": [redacted]'],
+  ['GITHUB_TOKEN=abc', 'GITHUB_TOKEN=[redacted]'],
+  ['--api-key abc', '--api-key [redacted]'],
+  ['--client-secret=abc', '--client-secret=[redacted]'],
+  ['https://user:pass@example.com/x', 'https://[redacted]@example.com/x'],
+  ['mail bob.smith+a@example.co.uk now', 'mail [redacted] now'],
+];
+```
+`test('redacts each shape, whole value, key kept', ...)` loops: `text` equals the expected, `count === 1`, `findCredentialInText(residual) === null`, and no fragment of the value survives. `test('benign text is untouched')`: `monkey=1`, `/docs/token-guide`, `acceptance-packet.js --help`, `keyboard: x`, each returns `text === raw`, `count === 0`. `test('a percent-encoded key is left for the screen')`: `tok%65n=abc` → `findCredentialInText(residual)` is non-null. `test('counts each replacement')`: `a=1 token=x password=y` → `count === 2`. In `encode.test.js`, `test('AC3a.1: captionList output is byte-identical', ...)` asserts `captionList([{ caption: 'api_key=sk_live_1' }, { action: 'click', locator: { role: 'button', name: 'Go' } }]) === '1. api_key=sk_live_1\n2. click role=button "Go"\n'`.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `node --test tests/bin-lib/walkthrough/redact.test.js`
+Expected: FAIL with `Cannot find module`.
+
+- [ ] **Step 3: Implement `redactText` in `plugin/bin/lib/walkthrough/redact.js`**
+
+A rule list, applied in this order, run twice over the input: once with a replacement that keeps key and separator plus `REDACTED` (giving `text`, counting replacements), once replacing the whole match with one space (giving `residual`). Rules: (1) `Authorization` header with optional `bearer|basic|token` scheme; (2) URL userinfo `://x@` → `://[redacted]@`; (3) `--flag` then `=` or whitespace then a value, kept only when `findCredentialInText(flag)` is non-null; (4) a name token, optional closing quote, `\s*[=:]\s*`, then a quoted or bare value (`[^\s,;&"'`)]+`), kept only when `findCredentialInText(`${name}=`)` is non-null; (5) JWT `eyJ…\.…(\.…)?`; (6) `bearer\s+\S+`; (7) `sk[-_]`, `ghp_`, `gho_` prefixes; (8) e-mail with a `{1,64}` local part. Every token-class rule starts with a left-boundary lookbehind of its own class. Header comment: best-effort text defense, never scans pixels; its reader is `renderRecordingSection`.
+
+- [ ] **Step 4: Add `perf/recording-redact-linearity.test.js`** (header per `regex-scan-linearity`): `'a'.repeat(200000)`, `'a-'.repeat(100000)`, `` `a${' '.repeat(200000)}b` ``, `'a=' .repeat(50000)`, `'--a '.repeat(50000)`, each under a 1000 ms budget, each asserting the verdict (`count`).
+
+- [ ] **Step 5: Run to verify**
+
+Run: `node --test tests/bin-lib/walkthrough/redact.test.js tests/bin-lib/walkthrough/encode.test.js tests/bin-lib/walkthrough/encode-cli.test.js perf/recording-redact-linearity.test.js`
+Expected: PASS, `fail 0`.
+
+- [ ] **Step 6: Commit** `Add walkthrough text redaction — refs #4612`, staging the four files by path.
+
+### Task 2: Link rule and `decideExposure`
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/wrap-up/packet-links.js` (`checkLink`, one new export)
+- Modify: `plugin/bin/lib/wrap-up/packet-contract.js` (`EXPOSURES`)
+- Create: `plugin/bin/lib/walkthrough/exposure.js`
+- Test: `tests/bin-lib/wrap-up/packet-links.test.js`, `tests/bin-lib/walkthrough/exposure.test.js`
+
+**Interfaces:**
+- Produces: `isCredentialRefusal(reason: string) -> boolean` (true for `checkLink` reasons starting `credential`); `checkLink` reason `credential in path segment`; `EXPOSURES = ['local-only', 'linked-private', 'withheld']`; `decideExposure({ repoVisibility, storeProbe }) -> exposure`; `readRepoVisibility(gh) -> 'public' | 'private'`.
+- `storeProbe` shape: `null` or `{ anonymousFetch: 'refused' | 'allowed' | 'unreachable', url: string, store?: string }`.
+
+- [ ] **Step 1: Write the failing tests.** In `packet-links.test.js`, with `const ok = (url) => checkLink(url, { allowedHosts: ['host', 'raw.githubusercontent.com'] })`:
+
+```js
+test('AC4.2: credential query shapes are refused after normalizing', () => {
+  for (const url of ['https://host/?TOKEN=abc', 'https://host/?tok%65n=abc', 'https://host/?%74oken=abc', 'https://host/#token=abc',
+    'https://user:pass@host/', 'HTTPS://host/?token=abc', 'https://host/x/?token=abc', 'https://host/a/../b?token=abc',
+    'https://host/?access_token=a', 'https://host/?password=a', 'https://host/?session=a']) {
+    const r = ok(url); assert.equal(r.ok, false, url); assert.ok(isCredentialRefusal(r.reason), url);
+  }
+});
+test('AC4.3: a benign path naming the word is not withheld', () => assert.equal(ok('https://host/docs/token-guide').ok, true));
+test('a bearer-shaped path segment is refused', () => assert.equal(ok('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b').reason, 'credential in path segment'));
+test('a 20-character segment with no digit, or no letter, is not bearer-shaped', ...); // 'abcdefghijklmnopqrst', '12345678901234567890'
+test('a 19-character segment is not bearer-shaped', ...);
+test('a commit sha third segment on a raw host stays allowed', () => assert.equal(ok(`https://raw.githubusercontent.com/o/r/${'a1'.repeat(20)}/docs/x.png`).ok, true));
+test('the sha exemption is that segment on that host only', ...); // same 40-hex as segment 2, and same path on 'host': refused
+```
+In `exposure.test.js`, one test per branch of the list in Step 3, plus `AC2.3`: `for v of ['public','private','unknown', undefined, null]: decideExposure({ repoVisibility: v, storeProbe: null }) === 'local-only'`. `readRepoVisibility`: `{"isPrivate":true}` → private; `{"isPrivate":false}`, `{}`, `{"isPrivate":"yes"}`, `not json`, a throwing runner → public; the runner receives `['repo','view','--json','isPrivate']`.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `node --test tests/bin-lib/walkthrough/exposure.test.js`
+Expected: FAIL with `Cannot find module`.
+
+- [ ] **Step 3: Implement.** `checkLink`: after the userinfo check, split `parsed.pathname` on `/`, `decodeText` each segment, refuse a bearer-shaped one; the exemption is index 3 of the split (third segment), `/^[0-9a-f]{40}$/`, hostname starting `raw.`. `decideExposure`, in order: no probe, or `anonymousFetch !== 'refused'` → `local-only`; url refused with `isCredentialRefusal` (checked with its own hostname allowed) → `withheld`; a url that fails any other way → `local-only`; pathname ending `.gif|.png|.jpg|.jpeg|.webp|.svg|.avif|.bmp` (non-image landing page rule) → `local-only`; `store === 'secret-gist'` → `local-only`; `store === 'actions-artifact'` with visibility not exactly `private` → `local-only`; otherwise `linked-private`. Fail closed: any visibility other than `private` counts as public.
+
+- [ ] **Step 4: Run** `node --test tests/bin-lib/walkthrough/exposure.test.js tests/bin-lib/wrap-up/packet-links.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/acceptance-packet-contract-conformance.test.js`. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Commit** `Refuse bearer-shaped link segments and add decideExposure — refs #4612`.
+
+### Task 3: Recording fact shape and `renderRecordingSection`
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/wrap-up/packet-validate.js` (`checkFact`)
+- Modify: `plugin/bin/lib/wrap-up/packet-render.js`
+- Modify: `plugin/skills/_shared/acceptance-packet.md`
+- Create: `tests/bin-lib/wrap-up/packet-recording.test.js` (the new render tests)
+- Test: `tests/bin-lib/wrap-up/packet-render.test.js` (two re-pointed pins), `tests/bin-lib/wrap-up/packet-validate.test.js`, `tests/acceptance-packet-contract-conformance.test.js`
+
+**Interfaces:**
+- Consumes: `redactText`, `isCredentialRefusal`, `EXPOSURES`.
+- Produces: exported `renderRecordingSection(recordingFacts: Fact[]) -> Array<{ text, droppable }>`. Passed fact: `{ id, kind: 'recording', status: 'passed', source, text, url_or_path, captions: string[], label?, redactions: int, exposure }`. Not-recorded fact: `{ id, kind: 'recording', status: 'not-run', source, reason, failure? }`. Legacy `--recordings` facts keep `{ text, url }`.
+
+- [ ] **Step 1: Write the failing tests** in the new `packet-recording.test.js`, with `fact`, `render` and `sectionLines` helpers shaped like `packet-render.test.js`'s:
+
+```js
+const REC = 'recording:walkthrough';
+const passed = (extra) => fact(REC, 'passed', { text: 'Walkthrough of Sign in', url_or_path: '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif', captions: ['sign-in'], exposure: 'local-only', redactions: 0, ...extra });
+test('AC1.1: a recording links the encoded path, never an image', ...);
+// lines: ['- Walkthrough of Sign in: `.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif` (local-only)', '  1. sign-in']
+test('AC2.1: no image syntax for any exposure', ...); // for each of local-only/linked-private/withheld plus a legacy .png url: markdown has no `![` and no `<img`
+test('AC3.1: every secret shape is replaced in all four channels', ...);
+// SHAPES = the six from Task 1 incl. the e-mail; channels: text, captions[0], label on a linked-private fact, failure on a not-run fact.
+// For each: the value is absent from the whole section, section contains '[redacted]'.
+test('AC3.2: key names are kept', ...); // includes 'api_key=\\[redacted]'
+test('a shape the redactor misses is withheld whole', ...); // text 'tok%65n=abc' -> WITHHELD_TEXT, 'abc' absent
+test('a non-zero redaction count is reported and does not change exposure', ...); // line 'redacted values: 1', '(local-only)' stays
+test('AC4.1: a credential recording link states why', ...); // five urls from the old test -> '- Rec: recording withheld: link contained a credential-shaped value'
+test('a non-credential refusal keeps its own line', ...); // keeps the existing '(recording url refused)' rows
+test('exposure withheld renders the withheld line', ...);
+test('AC5.1: no-story reads plain not recorded', ...); // ['not recorded'], and Couldn't test holds no recording row
+test('AC5.2: each impossible recording states its reason twice', ...);
+// for each of the three: Recording ['not recorded: {reason}'], Couldn't test includes '- `recording:walkthrough` — not run: {reason}'
+test('a legacy recording beside no-story drops the placeholder', ...);
+```
+Re-point the two existing pins: line 631's test keeps decision/deploy/refused/partial screening, and its recording row becomes `- the password=\\[redacted]: <https://cdn.example/r.gif>`; line 948's test now expects the withheld line and still asserts `cdn.example` absent. In `packet-validate.test.js`: a `recording` fact with `exposure: 'bogus'`, `redactions: -1`, `redactions: 1.5`, `captions: 'x'`, `captions: [1]`, `url_or_path: 3`, `failure: 3` each fails `validateFactsShape`. In the contract conformance test add pins: the contract names `renderRecordingSection`, the four reasons, the three exposure values read from `EXPOSURES`, and `recording withheld: link contained a credential-shaped value`, each proven red by a `body.replace` control that calls the same assertion function.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `node --test tests/bin-lib/wrap-up/packet-recording.test.js`
+Expected: FAIL (`renderRecordingSection` is not exported, and the rows differ).
+
+- [ ] **Step 3: Implement.** In `checkFact`, add `url_or_path` and `failure` to `OPTIONAL_TEXT_FIELDS` and the three checks above, with `exposure` against `EXPOSURES`. In `packet-render.js`: `recordingText(raw)` = `redactText`, then `findCredentialInText(residual) ? WITHHELD_TEXT : inline(text)` with `\[redacted\]` → `\[redacted]`; the empty case keeps `factText`'s `idSpan` fallback. `recordingHref` returns the withheld line when `isCredentialRefusal(checkLink(...).reason)`, else today's refused text. `renderRecordingSection` makes one droppable item per fact (a multi-line text: head line, numbered caption lines at two spaces, a `  redacted values: {n}` line when the count it computed is above 0). A `no-story` fact renders nothing; no items at all gives `note('not recorded')`. Replace `SECTION_BODIES.recording` with a call to it and `rowPlace`'s caller so a `recording` fact with `status: 'not-run'` and `reason !== 'no-story'` joins `rowsIn('couldnt-test')`: keep `ROW_KINDS` for check/story and add the recording rows explicitly to the `couldnt-test` body. The path line screens `findCredentialInText(url_or_path)` to the withheld line. Export `renderRecordingSection`.
+
+Contract edits in `acceptance-packet.md`: section 2's line; fact render-field list adds `url_or_path`, `captions`, `failure`, `redactions`, `exposure`; `## Pipeline` says `snapshot` also encodes the recording; a new `## Recording` section states source of frames, local base URL, storage and exposure, redaction (including that it cannot scan pixels, the stored GIF is unredacted and local-only, and stories must run against seed data and throwaway credentials), the not-recorded fact, and the link rule; `**In text.**`'s list drops "recording" ("decision and deploy text"), with a sentence that the Recording section redacts instead; `## Links and credentials`'s refused-recording sentence gains the withheld line and the bearer-segment rule; Row placement notes the recording row. Measure `wc -c` first: rail is 52,500 B.
+
+- [ ] **Step 4: Run** `node --test tests/bin-lib/wrap-up/packet-recording.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js`. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Commit** `Render the Recording section through one redacting choke point — refs #4612`.
+
+### Task 4: Encode at snapshot, read at gather
+
+**Role:** judgment
+**Review risk:** high
+
+**Files:**
+- Create: `plugin/bin/lib/walkthrough/record.js`
+- Modify: `plugin/bin/acceptance-packet.js` (`realDeps`, `runSnapshot`, `readSnapshot`, `gatherToFile`)
+- Modify: `plugin/bin/lib/wrap-up/packet-gather.js` (`gatherPacketFacts`)
+- Modify: `plugin/bin/lib/qa-report/compose.js` (`base_url`)
+- Modify: `plugin/skills/test/qa-reporting.md` (both payload samples and the metadata sentence)
+- Test: `tests/bin-lib/walkthrough/record.test.js`, `tests/acceptance-packet-cli.test.js`, `tests/bin-lib/wrap-up/packet-gather.test.js`, `tests/bin-lib/qa-report/compose.test.js`
+
+**Interfaces:**
+- Consumes: `encodeWalkthrough`, `planFrames` (`encode.js`); `decideExposure`, `readRepoVisibility` (Task 2); `redactText` (Task 1).
+- Produces: `planRecording({ report, storyIndexLost, storyIndex, listFrames }) -> { status:'not-run', reason } | { status:'ready', text, frames: string[], captions: string[] }`; `isLocalBaseUrl(url) -> boolean`; manifest key `recording: { status:'passed', file:'walkthrough.gif', text, captions, exposure, frames } | { status:'not-run', reason, failure? }`; gather input `recording` + `recordingPath`; fact id `recording:walkthrough`.
+
+- [ ] **Step 1: Write the failing tests** in `record.test.js` (pure, fake `listFrames`):
+
+```js
+const report = (stories, base_url = 'http://localhost:3000') => ({ base_url, stories });
+const happy = { id: 'sign-in', name: 'Sign in', status: 'PASS', screenshot_dir: '/q/sign-in' };
+const neg = { id: 'neg-bad', name: 'Bad', status: 'PASS', screenshot_dir: '/q/neg-bad' };
+const tagged = { id: 'tagged', name: 'T', status: 'PASS', screenshot_dir: '/q/tagged' };
+const listFrames = (dir) => ({ '/q/sign-in': ['00_open.png', '01_submit.png', '01_submit-raw.png', 'notes.txt'], '/q/neg-bad': ['00_err.png'], '/q/tagged': ['00_err.png'] })[dir];
+test('AC2a.1: frames come from happy-path stories only', ...); // frames ['/q/sign-in/00_open.png','/q/sign-in/01_submit.png'], captions ['open','submit']; raw and non-png excluded
+test('AC2a.2: a tag-only negative story is excluded', ...); // storyIndex [{id:'tagged',negative:true}]
+test('no report, or only negative stories, is no-story', ...);
+test('a failed or skipped happy story contributes no frames', ...); // only one and FAIL -> no-happy-path-screenshots
+test('no-local-base-url', ...); // for 'https://dev.example', undefined, 'not a url'
+test('local hosts', ...); // localhost, 127.0.0.1, [::1] with ports
+test('a lost story index records nothing', ...); // storyIndexLost: true -> no-happy-path-screenshots
+test('a missing screenshot dir is no-happy-path-screenshots', ...); // listFrames throws
+```
+In `tests/acceptance-packet-cli.test.js`, extending its existing `snapshot` fixture with `deps.encodeWalkthrough` stub returning `{ buffer: Buffer.from('GIF') }`, `deps.gh` and a QA report with `base_url`/`screenshot_dir`: `AC1.2: snapshot encodes and gather links the path` (the stub's `framePaths` count equals the happy steps; `packet-inputs/walkthrough.gif` holds its bytes; the gather facts hold `recording:walkthrough` with `url_or_path` relative to the checkout root ending `packet-inputs/walkthrough.gif`, `exposure: 'local-only'`, integer `redactions`; `render` shows it); `AC2.2: public, private and failed visibility` (`deps.gh` answering each of the three; rendered Recording section holds no `![`, no `<img`, manifest `exposure` is `local-only` in all three); `the stub throwing gives encoder-failed and exit 0` (fact status `not-run`, `failure` is the message); `a failed GIF write gives encoder-failed and exit 0`; `no QA report gives no-story`; `re-run from the main checkout keeps the GIF` (existing skip path, bytes unchanged); `a manifest with no recording key adds no fact` (an older run dir); `a run archived after the snapshot links the archive path` (gather `--run` on an `archive/{id}` dir). In `packet-gather.test.js`: `redactions` counts text, captions and failure. In `compose.test.js`: `base_url` passes through, and absent is `null`. One repo-only test, `the GIF path is gitignored live and archived`: `git check-ignore --no-index -q` exits 0 on both `.claude-tweaks/pipelines/x/packet-inputs/walkthrough.gif` and `.claude-tweaks/pipelines/archive/x/packet-inputs/walkthrough.gif`.
+
+- [ ] **Step 2: Run to verify they fail**
+
+Run: `node --test tests/bin-lib/walkthrough/record.test.js`
+Expected: FAIL with `Cannot find module`.
+
+- [ ] **Step 3: Implement.** `record.js`: reason order is no happy-path story (no report, or none non-negative) → `no-story`; base url not local → `no-local-base-url`; lost index, or no frames from `PASS`/`PASS_WITH_CAVEATS` stories → `no-happy-path-screenshots`. Frame names match `/^\d+_(.+)\.png$/`, excluding `-raw.png`, sorted; the caption is the name part; `text` is `Walkthrough of {names joined ', '}`. Use `FRAME_WIDTH = 960` and `BUDGET_BYTES = 8 * 1024 * 1024`. `runSnapshot`, after the two skip branches and after `qaReport` is read: resolves `report.stories_dir` (else `stories`) against `deps.cwd()` through `readStoryIndex`, and `screenshot_dir` the same way; never starts a server or a browser. It encodes through `deps.encodeWalkthrough`, whose real value reads frames with `fs.readFileSync` (a Buffer: `deps.readFile` is utf8), writes with `deps.writeAtomic`, calls `decideExposure({ repoVisibility: readRepoVisibility(deps.gh), storeProbe: null })` only once a GIF exists, and turns any encoder or write throw into `{ status:'not-run', reason:'encoder-failed', failure: messageOf(err) }`. The manifest gains `recording`. `readSnapshot` returns `recording`. `gatherToFile` passes `recording` and `recordingPath = path.relative(findGitRoot(runDir).dir, path.join(runDir, PACKET_INPUTS, file))` with forward slashes. `gatherPacketFacts` builds the fact with `source: 'walkthrough'` and `redactions` summed through `redactText` over `text`, `captions`, `failure`; `recording` absent adds no fact. `compose.js` adds `base_url: orNull(input.base_url)`. `qa-reporting.md`: payload and report samples gain `"base_url": "{APP_URL}"`, and the metadata sentence names it.
+
+- [ ] **Step 4: Run** `node --test tests/bin-lib/walkthrough/record.test.js tests/acceptance-packet-cli.test.js tests/bin-lib/wrap-up/packet-gather.test.js tests/bin-lib/qa-report/compose.test.js`, plus each file `git grep -l composeQaReport tests` names. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Real-input probe.** Build a temp dir with two real 1×1 PNGs (write via the tests' PNG helper in `tests/bin-lib/walkthrough/encode.test.js`) and a report.json, run the real CLI `snapshot` then `gather` from a scratch repo with no stubs, and record the printed manifest in the task report: the `.gif` starts with `GIF89a`, frame count 2 (independent count: `node -e` over the file's graphic control extension bytes).
+
+- [ ] **Step 6: Commit** `Encode the walkthrough at snapshot and gather it as a fact — refs #4612`.
+
+### Task 5: No-embed conformance scan
+
+**Role:** integration
+
+**Files:**
+- Create: `tests/recording-no-embed-conformance.test.js`
+- Modify: `tests/helpers/strip-comments.js` (header list), `.claude/skills/parse-signal-discipline/SKILL.md` (item 15 list)
+
+**Interfaces:**
+- Consumes: `stripComments`, `stripperVerdict`, `STRIPPER_VERDICT_MESSAGES`; `readText`.
+
+- [ ] **Step 1: Write the test.** Exports nothing; `offendersIn(source) -> [{ line, what }]` matches `/!\[[^\]\n]*\]\(/` and `/<img\b/i` on `stripComments(source)` (literals kept, so a string that would emit it counts) and pushes the verdict message when `stripperVerdict(raw, stripped) !== 'ok'`. Tests: `AC2.4: no module under wrap-up or walkthrough emits an image` walks both directories with `withFileTypes`, `assert.deepEqual(offenders, [])`, floor `files >= 10` with a message saying a low count means the walk went blind; `AC2.5: a planted emission goes red`: `const s = '![a](b)';` on line 1 and `` `<img src="x">` `` on line 2 flag exact line numbers `[1, 2]`; a comment holding each flags nothing; a planted line after `'/*'` is still flagged; a planted mis-parse (`if (b) /'/.test(b); const c = 'x';`) is reported as an offender. Header states the limit: an emission assembled from fragments is invisible, and the render test in Task 3 covers the output.
+
+- [ ] **Step 2: Run** `node --test tests/recording-no-embed-conformance.test.js tests/strip-comments-callers-twin.test.js`. Expected: PASS, `fail 0`. The planted self-tests are the go-red proof; never mutate a tracked plugin file for it.
+
+- [ ] **Step 3: Commit** `Add the recording no-embed conformance scan — refs #4612`.
+
+### Task 6: Skill prose and docs
+
+**Role:** integration
+
+**Files:**
+- Modify: `plugin/skills/walkthrough/SKILL.md`, `plugin/skills/wrap-up/verification-brief.md`, `plugin/skills/wrap-up/SKILL.md`, `docs/plugin-structure.md`
+- Test: `tests/walkthrough-conformance.test.js`, `tests/acceptance-packet-wrap-up-conformance.test.js`
+
+**Interfaces:**
+- Consumes: the contract's `## Recording` section from Task 3.
+
+- [ ] **Step 1: Write failing pins.** `walkthrough-conformance.test.js`: `the skill names the automatic path and leaves standalone unredacted`: contains `_shared/acceptance-packet.md`, `## Recording`-citing sentence, "applies no redaction", "never uploaded". `acceptance-packet-wrap-up-conformance.test.js`: `snapshot encodes the recording`: the Phase 1 paragraph names the recording; `gather reads the recording from the snapshot`: the `--recordings` bullet says the automatic recording needs no flag. Keep the existing `only when the embeds survive the route above` pin.
+
+- [ ] **Step 2: Run** `node --test tests/walkthrough-conformance.test.js tests/acceptance-packet-wrap-up-conformance.test.js`. Expected: FAIL on the new tests.
+
+- [ ] **Step 3: Edit the prose.** `walkthrough/SKILL.md`, after the When to Use section: a short `## Automatic path` paragraph (wrap-up's `snapshot` builds a GIF from the pipeline's own happy-path screenshots through `encodeWalkthrough`, never this skill and never a browser run; exposure and redaction rules live in `_shared/acceptance-packet.md`'s `## Recording`; this standalone path applies no redaction, and the human choosing the destination owns what it shows). The Component-Skill Contract stays: no lifecycle skill invokes this skill. `verification-brief.md`'s `--recordings` bullet gains: the automatic recording arrives through the snapshot with no flag. `wrap-up/SKILL.md`'s snapshot paragraph gains one clause: it also encodes the recording while the QA screenshots are on disk. `docs/plugin-structure.md`'s CLI row: `snapshot` also encodes the recording. Then `docs/skill-graph.md` only if `tests` require an edge (no skill edge changes).
+
+- [ ] **Step 4: Run** the Step 2 command plus `node --test tests/try-it-contract-conformance.test.js tests/verification-brief-evidence-routing.test.js`. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Commit** `Document the automatic recording path — refs #4612`.
+
+## Spec coverage map
+
+| Clause | Test |
+|---|---|
+| AC1.1 | Task 3 `AC1.1` |
+| AC1.2 | Task 4 `AC1.2` |
+| AC2.1-AC2.3 | Task 3 `AC2.1`, Task 4 `AC2.2`, Task 2 `AC2.3` |
+| AC2.4, AC2.5 | Task 5 |
+| AC2a | Task 4 `AC2a.1`, `AC2a.2` |
+| AC3 | Task 3 `AC3.1`, `AC3.2`, over Task 1's shapes |
+| AC3.3 (the spec's 3a) | Task 1 `AC3a.1`; `tests/bin-lib/walkthrough/encode-cli.test.js` untouched |
+| AC4 | Task 2 `AC4.2`, `AC4.3`; Task 3 `AC4.1` |
+| AC5 | Task 3 `AC5.1`, `AC5.2`; Task 4 `no QA report gives no-story` |
+| AC6.1 | `tests/bin-lib/walkthrough/encode-cli.test.js` passes untouched |
+| AC7.1 | Common Step 5's full run |
