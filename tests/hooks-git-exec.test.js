@@ -25,7 +25,7 @@ test('runGit: success returns trimmed stdout and a null failure', () => {
   const dir = gitRepo();
   const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.ok(!stdout.endsWith('\n'), 'stdout must be trimmed');
 });
 
@@ -126,7 +126,7 @@ test('runGitAsync: success returns trimmed stdout and a null failure', async () 
   const dir = gitRepo();
   const { stdout, failure, stderr } = await runGitAsync(['rev-parse', '--show-toplevel'], dir);
   assert.strictEqual(failure, null);
-  assert.strictEqual(stdout, fs.realpathSync(dir));
+  assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
   assert.strictEqual(stderr, null, 'runGitAsync must match runGit\'s success shape: stderr is null, not omitted');
 });
 
@@ -280,7 +280,7 @@ test('runGit: a non-numeric or non-positive CT_HOOKS_GIT_TIMEOUT_MS falls back t
     try {
       const { stdout, failure } = runGit(['rev-parse', '--show-toplevel'], dir);
       assert.strictEqual(failure, null, `bad override ${JSON.stringify(bad)} must not break a normal call`);
-      assert.strictEqual(stdout, fs.realpathSync(dir));
+      assert.strictEqual(stdout, gitRevParse(dir, '--show-toplevel'));
     } finally {
       if (prior === undefined) delete process.env.CT_HOOKS_GIT_TIMEOUT_MS;
       else process.env.CT_HOOKS_GIT_TIMEOUT_MS = prior;

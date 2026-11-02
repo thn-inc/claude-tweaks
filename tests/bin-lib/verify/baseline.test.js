@@ -927,9 +927,14 @@ test('realGit.listWorktrees reads real `git worktree list` output, and findStale
   const rg = realGit(repo);
   const all = rg.listWorktrees();
   assert.strictEqual(all.length, 3, 'the main worktree plus both added ones');
-  assert.ok(all.includes(normalWt));
-  assert.ok(all.includes(staleWt));
-  assert.deepStrictEqual(findStaleBaselineWorktrees(() => all), [staleWt]);
+  // The expected paths come from git's own listing, spelled the way git prints them
+  // (forward slashes on Git for Windows), so they match listWorktrees on every platform.
+  const fwd = (p) => p.replace(/\\/g, '/');
+  const listedNormal = all.find((p) => fwd(p).endsWith(`/${path.basename(normalWt)}`));
+  const listedStale = all.find((p) => fwd(p).endsWith(`/${path.basename(staleParent)}/wt`));
+  assert.ok(listedNormal, JSON.stringify(all));
+  assert.ok(listedStale, JSON.stringify(all));
+  assert.deepStrictEqual(findStaleBaselineWorktrees(() => all), [listedStale]);
 });
 
 test('realGit.listWorktrees returns an empty list rather than throwing outside a git repository (#3064)', () => {
