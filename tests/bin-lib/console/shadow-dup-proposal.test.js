@@ -261,13 +261,16 @@ function leafFile(body) {
 }
 
 function victimPair() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rnf-'));
-  fixtureRoots.push(dir);
-  const victim = path.join(dir, 'victim.md');
-  const leaf = path.join(dir, 'leaf.md');
+  const leaf = leafFile('leaf bytes');
+  const victim = path.join(path.dirname(leaf), 'victim.md');
   fs.writeFileSync(victim, 'VICTIM-BYTES');
-  fs.writeFileSync(leaf, 'leaf bytes');
   return { leaf, victim };
+}
+
+function symlinkToVictim({ leaf, victim }) {
+  const link = path.join(path.dirname(leaf), 'link.md');
+  fs.symlinkSync(victim, link);
+  return link;
 }
 
 test('readNoFollow characterization: a regular file reads and a missing leaf surfaces ENOENT on the platform\'s own constants', () => {
@@ -277,9 +280,7 @@ test('readNoFollow characterization: a regular file reads and a missing leaf sur
 });
 
 test('readNoFollow characterization: with O_NOFOLLOW a symlinked leaf is refused by the kernel (ELOOP), never read through', { skip: SYMLINK_SKIP }, () => {
-  const { leaf, victim } = victimPair();
-  const link = path.join(path.dirname(leaf), 'link.md');
-  fs.symlinkSync(victim, link);
+  const link = symlinkToVictim(victimPair());
   assert.throws(() => readNoFollow(link), { code: 'ELOOP' });
 });
 
@@ -290,9 +291,7 @@ test('readNoFollow fallback: a regular file reads and a missing leaf still surfa
 });
 
 test('readNoFollow fallback: a symlinked leaf throws and the target bytes are never returned', { skip: SYMLINK_SKIP }, () => {
-  const { leaf, victim } = victimPair();
-  const link = path.join(path.dirname(leaf), 'link.md');
-  fs.symlinkSync(victim, link);
+  const link = symlinkToVictim(victimPair());
   assert.throws(() => readNoFollow(link, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
 });
 
@@ -342,9 +341,7 @@ test('readNoFollow fallback: a leaf swapped back to a fresh regular file before 
 });
 
 test('readNoFollow fallback: a symlinked leaf is never opened, so the pre-open lstat refusal keeps the link unfollowed', { skip: SYMLINK_SKIP }, () => {
-  const { leaf, victim } = victimPair();
-  const link = path.join(path.dirname(leaf), 'link.md');
-  fs.symlinkSync(victim, link);
+  const link = symlinkToVictim(victimPair());
   const realOpen = fs.openSync;
   const opened = [];
   try {
