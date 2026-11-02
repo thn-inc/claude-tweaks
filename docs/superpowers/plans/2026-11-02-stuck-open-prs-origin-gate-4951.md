@@ -24,16 +24,16 @@
   - AC9.2's `matched >= 9` floor (line ~425) is the NOT_ORIGIN site total. Removing this entry lowers the true total to 8, so set the floor to 8 and amend its comment to say #4951 moved one site onto the gate. This is a deliberate removal, not the matcher losing recall.
 
 - [ ] **Step 1: Failing test.** In `tests/bin-lib/dispatch/stuck-open-pr.test.js`, add cases that drive `run()` with `deps.repo = () => repoFromOrigin(<origin>, { env, readFile })`. `deps.linked` should call the real `fetchLinkedPRs` with a recording fake `runner`, so the gh argv is asserted, not assumed. Give it one candidate record (`auto:build`, OPEN) so the linked-PR read actually runs. The cases:
-  - **AC1.** Origin `https://git.corp.invalid/o/r.git`, `env: { GH_ENTERPRISE_TOKEN: 'x' }`, hosts.yml without that key (`readFile` returns `''` or another key). Expect a non-zero exit (2), and the runner never called: no argv names `git.corp.invalid`, and no bare `o/r` call either. stderr must contain `git.corp.invalid` and `GH_HOST=git.corp.invalid`.
-  - **AC2.** Each of these carries `--hostname {host}` on the linked-PR read:
+  - **AC1.1.** Origin `https://git.corp.invalid/o/r.git`, `env: { GH_ENTERPRISE_TOKEN: 'x' }`, hosts.yml without that key (`readFile` returns `''` or another key). Expect a non-zero exit (2), and the runner never called: no argv names `git.corp.invalid`, and no bare `o/r` call either. stderr must contain `git.corp.invalid` and `GH_HOST=git.corp.invalid`.
+  - **AC2.1.** Each of these carries `--hostname {host}` on the linked-PR read:
     - `https://acme.ghe.com/o/r.git`
     - a hosts.yml-key origin (`readFile` returns `ghes.corp.invalid:\n    user: x\n` with origin `https://ghes.corp.invalid/o/r.git`)
     - `https://git.corp.invalid/o/r.git` with `env: { GH_HOST: 'git.corp.invalid' }`
-  - **AC3.** Origin `https://github.com./o/r.git` carries no `--hostname`.
+  - **AC3.1.** Origin `https://github.com./o/r.git` carries no `--hostname`.
 
-  Run the new tests against the unmodified CLI and see them fail, since `repoFromOrigin` does not exist yet. If a case would pass at base, add an assertion that goes red.
+  Run the new tests against the unmodified CLI and see them fail, since `repoFromOrigin` does not exist yet. If a case would pass at base, add an assertion that goes red. AC4.1 means these two files pass: `tests/bin-lib/dispatch/stuck-open-pr.test.js` and `tests/gh-host-seam-conformance.test.js`. Step 3 runs both.
 - [ ] **Step 2: Implement.** Make the `plugin/bin/stuck-open-prs.js` changes in the Notes: `repoFromOrigin`, `realDeps.repo`/`realDeps.gateDeps`, the refusal branch in `run()` placed before the owner/repo check, and the header comment's exit-2 line gaining "an origin host that is not a known GitHub host (refused before any gh call, #4933; `GH_HOST={host}` opts in)". Make the `tests/gh-host-seam-conformance.test.js` roster and floor edits.
-- [ ] **Step 3: Run.** `node --test tests/bin-lib/dispatch/stuck-open-pr.test.js tests/gh-host-seam-conformance.test.js` — PASS.
+- [ ] **Step 3: Run (AC4.1).** `node --test tests/bin-lib/dispatch/stuck-open-pr.test.js tests/gh-host-seam-conformance.test.js` — PASS.
 - [ ] **Step 4: Commit.** One commit, `Gate stuck-open-prs.js's origin host through gateOriginRepo — refuse an unknown host before gh`, body `refs #4951`.
 
 ---
@@ -44,5 +44,6 @@
   - Deliverable 1 (gate-derived owner/repo/host, no `parseRepo` on the raw origin, no github.com fallback) and Deliverable 2 (refusal to stderr, exit 2 before any gh call) are covered by Step 2.
   - Deliverable 3 (ORIGIN_GATED) is covered by Step 2's conformance edits.
   - Deliverable 4 (fake-runner regression tests) is covered by Step 1.
-  - AC1-AC3 are covered by Step 1's cases. AC4 is Step 3's command.
+  - AC1.1 (unknown host refused, no argv names it, no bare-slug call, stderr names host and `GH_HOST=`), AC2.1 (`*.ghe.com`, hosts.yml-key and matching-`GH_HOST` origins keep `--hostname {host}`) and AC3.1 (`github.com.` origin carries no `--hostname`) are covered by Step 1's cases.
+  - AC4.1 is Step 3's command.
 - **Placeholders:** none.
