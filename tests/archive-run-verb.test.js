@@ -696,11 +696,13 @@ test('#3721 a tag named like the branch keeps the plain name and push state', ()
 
 test('#3721 invoked from a linked worktree names the main checkout\'s branch', () => {
   const { root, runDir } = trackedRunFixture();
+  addBareOrigin(root);
   const holder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-wt-')));
   const wt = path.join(holder, 'wt');
   git(['worktree', 'add', '-q', '-b', 'other', wt], root);
   const result = runHook(['archive-run', '--run', runDir], { cwd: wt });
-  assert.match(result.stdout, / on main \(/m);
+  // Pins that hooks.js probes from mainRoot: probing from the linked worktree would name `other` and no upstream.
+  assert.match(result.stdout, / on main \(not pushed — 1 ahead of origin\/main\)$/m);
 });
 
 test('#3721 a refusal after the commit prints the refusal and the committed line', () => {

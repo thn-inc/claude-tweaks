@@ -267,9 +267,16 @@ const commitGit = withIndexLockRetry(runGit);
 // went unanswered — never a stand-in value. `branch` is 'detached' only when
 // `symbolic-ref` answers exit 1 (HEAD is not a symbolic ref); a timeout or any
 // other exit code is an unanswered probe, not a detached HEAD.
-function readArchiveCommit(root, git = runGit) {
-  const head = git(['rev-parse', '--short', 'HEAD'], root);
-  const sha = !head.failure && head.stdout ? head.stdout : null;
+// The sha and subject come from one spawn; a subject that is not this run's own
+// archive commit means a sibling session committed in the window, so the sha is
+// not ours to report.
+function readArchiveCommit(root, runId, git = runGit) {
+  const head = git(['log', '-1', '--format=%h%n%s'], root);
+  let sha = null;
+  if (!head.failure && head.stdout) {
+    const [short, subject] = head.stdout.split('\n');
+    if (short && subject === `[reconcile] archive run ${runId}`) sha = short;
+  }
   const ref = git(['symbolic-ref', '--quiet', 'HEAD'], root);
   let branch = null;
   if (!ref.failure && ref.stdout) branch = ref.stdout.replace(/^refs\/heads\//, '');
@@ -292,7 +299,8 @@ function archiveCommitLine(root, commit, git = runGit) {
           state = 'no upstream configured';
         } else {
           const ahead = git(['rev-list', '--count', '@{upstream}..HEAD'], root);
-          if (!ahead.failure) state = `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
+          // A zero count means something pushed between the commit and this probe: not "not pushed".
+          if (!ahead.failure && Number(ahead.stdout) > 0) state = `not pushed — ${ahead.stdout} ahead of ${upstream.stdout}`;
         }
       }
     } else if (ref.failure && ref.exitCode === 1) {
@@ -303,8 +311,9 @@ function archiveCommitLine(root, commit, git = runGit) {
   }
   const { sha, branch } = commit;
   if (sha && branch) return `claude-tweaks: committed ${sha} on ${branch} (${state})`;
-  const missing = !sha && !branch ? 'sha and branch' : !sha ? 'sha' : 'branch';
-  return `claude-tweaks: committed the archive move but could not read its ${missing} (${state})`;
+  if (sha) return `claude-tweaks: committed ${sha} but could not read its branch (${state})`;
+  if (branch) return `claude-tweaks: committed the archive move on ${branch} but could not read its sha (${state})`;
+  return `claude-tweaks: committed the archive move but could not read its sha and branch (${state})`;
 }
 
 // An orphaned mint that reaches this function has nothing to git-mv and
@@ -1606,7 +1615,7 @@ function archiveRunDir(root, runDir) {
       const fullyReverted = revertStagedOps(root, stagedOps);
       return refuseAfterMarker(fullyReverted ? 'commit-failed' : 'commit-failed-partial-revert');
     }
-    archiveCommit = readArchiveCommit(root);
+    archiveCommit = readArchiveCommit(root, runId);
   }
 
   // Tracked-entry guard: a git-tracked file in the run dir outside work/
@@ -2226,7 +2235,7 @@ function resolveRunPrState(root, state, branch, prStates) {
 // runs (#3668, #3740), the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
-  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates, archive = archiveRunDir,
+  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates, archive,
 }) {
   const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
