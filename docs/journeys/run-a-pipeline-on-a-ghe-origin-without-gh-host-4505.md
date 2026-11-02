@@ -59,5 +59,5 @@ files:
 - Steps 1-4 built in this session: the `ghOptions` seam, its migration across every `plugin/bin` `gh` spawn, the explicit-`--repo` pin, and `tests/gh-host-seam-behavior.test.js` / `tests/gh-host-seam-conformance.test.js`
 - Step 5 added during build of #4806 (fetch-sub-issues.js's schema probe and GraphQL pages pass `--hostname` off github.com; parent-gate.js drops its `onHost` wrap of the fetcher), pinned by `tests/fetch-sub-issues-cli.test.js`'s #4806 test and the Enterprise-host tests in `tests/bin-lib/issues/parent-gate.test.js` and `tests/parent-gate-cli.test.js`
 - Updated during build of #4854 (an enterprise token alone admits no host; hosts compared lower-cased with trailing dots stripped): Steps 1 and 4
-- Updated during build of #4795 (one explicit `--repo` host mechanism: the pin rides each `gh` call's own env and never touches the process env, so materialize no longer restores an environment for the Premise-check command): Step 4
+- Updated during build of #4795 (one explicit `--repo` host mechanism: the pin rides each `gh` call's own env and never touches the process env, so materialize no longer restores an environment for the Premise-check command): Steps 2 and 4
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
