@@ -47,6 +47,26 @@ test("claim-targets.md's documented argv produces a line isClaimLogEntry accepts
   }
 });
 
+// #4588: `claim-targets.js --resume-pr` names the adopted PR on the claim line.
+// The widened shape must stay a canonical claim line for every reader of this module.
+test('claimLogText with a resumePr appends ", resume-pr: {url}" and the line stays a canonical claim entry (#4588)', () => {
+  const url = 'https://github.com/o/r/pull/7';
+  assert.strictEqual(claimLogText(5, 'git', url), `claimed #5 (bin/claim-targets.js, transport: git, resume-pr: ${url})`);
+  assert.strictEqual(claimLogText(5, 'git'), 'claimed #5 (bin/claim-targets.js, transport: git)', 'no third argument: the existing text, byte for byte');
+  for (const transport of ['git', 'contents-api', 'mcp']) {
+    const line = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(5, transport, url), reversibility: 'high' });
+    assert.strictEqual(isClaimLogEntry(line), true, line);
+  }
+  const line = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: claimLogText(5, 'git', url), reversibility: 'high' });
+  assert.strictEqual(classifyDecisions(`## /flow\n${line}\n`), 'claim-log-only');
+  assert.strictEqual(hasCanonicalClaimLogFor(line, 5), true);
+  assert.strictEqual(hasCanonicalClaimLogFor(line, 50), false, 'word boundary still holds');
+  for (const bad of ['not-a-url', 'http://github.com/o/r/pull/7', 'https://github.com/o/r/issues/7', 'https://github.com/o/r/pull/7/files', 'https://github.com/o/r/pull/x']) {
+    const wrong = formatEntry({ status: 'AUTO', now: NOW, step: CLAIM_LOG_STEP, text: `claimed #5 (bin/claim-targets.js, transport: git, resume-pr: ${bad})`, reversibility: 'high' });
+    assert.strictEqual(isClaimLogEntry(wrong), false, wrong);
+  }
+});
+
 test('isClaimLogEntry: single and batch forms, with or without a spec prefix; unparseable, foreign, truncated or tail-carrying lines are not claim lines (#2861)', () => {
   for (const yes of [
     '- AUTO 18:42:06 — Step 2.8: claimed #2861 (bin/claim-targets.js, transport: git). Reversibility: high.',

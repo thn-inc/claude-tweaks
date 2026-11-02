@@ -87,7 +87,12 @@ procedure — no row is left unrouted:
   composes a born-ready record proposal exactly as
   `_shared/ledger-format.md`'s Phase 3 `Keep` does (`specShapedBody`; Current State = the
   ruling and the finding it ruled on; Deliverables = the reversal;
-  `Origin: SDD ruling reversed at Review Console`; `Defer-reason: genuinely-larger`),
+  `Origin: SDD ruling reversed at Review Console`; `Defer-reason:` derived, never a constant:
+  run `_shared/deferral-gate.md`'s Fix-now criteria against the reversed ruling's finding and
+  stamp per that file's Deriving the value from the criteria — the closed fix wave is what
+  makes a reversal whose criteria all hold that section's all-hold case, and a staged ruling
+  with no finding text, or one that settled a design choice rather than a defect, carries too
+  little to judge a criterion; a reversal files the fix the ruling declined, not a new idea),
   stages it as `staged/ledger-record-sdd-ruling-{N}.md`,
   routes it through step 7 in the same pass, and — once step 7 has created the record —
   writes the row back to `deferred`, Resolution `reversed → #{new record}`; when step 7

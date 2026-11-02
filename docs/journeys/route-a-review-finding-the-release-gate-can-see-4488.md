@@ -42,7 +42,7 @@ files:
     3. It reads `{n}` from the first stdout line.
     4. It logs `review-routing-line.js --route staged … --stage-path staged/review-followup-{n}.md`.
 - **Should feel:** Like the patch path with a different payload. The name is fixed, so there is nothing to invent.
-- **Should understand:** Nothing is filed here: the Review Console's Queue writes step files the record on approval. The ledger row is written `deferred`, naming the staged file. `--id review-{n}.md` is refused as `unmapped-prefix`, and a literal `{n}` in `--id` exits 2.
+- **Should understand:** Nothing is filed here: the Review Console's Queue writes step files the record on approval. The ledger row is written `deferred`, naming the staged file: `spec-{N}/staged/review-followup-{n}.md` in a multi-spec run, so one path names one proposal. If the console refuses the proposal for want of a valid `Defer-reason:`, that row returns to `open` and the staged file is removed (`settle-a-refused-staged-proposal-in-the-ledger-4772.md`). `--id review-{n}.md` is refused as `unmapped-prefix`, and a literal `{n}` in `--id` exits 2.
 - **Red flags:** A record proposal staged as `review-{n}.md`, a STAGED line naming a different `{n}` than the file `--allocate` wrote, a low/low/low finding filed as a backlog record, or a `high` finding digested with no `high-severity finding` line.
 
 ### 4. A hand-typed prefix is refused — `log-decision.js`
@@ -63,10 +63,11 @@ files:
 - **URL:** `plugin/skills/release/disposition.md`'s Review staging roster and Routing table
 - **Action:** **The release agent** inventories `staged/`. It matches `review-3.patch` to the `review-{n}` row (`confirmed`) and `review-followup-2.md` to the `review-followup-` row (`proposal`). It reads each file's severity from its `Finding:` line and pre-fills one Recommended disposition per row.
 - **Should feel:** Mechanical. Every file the review staged has a row, and none needs a hand-written disposal note.
-- **Should understand:** `review-{n}` covers only `.patch`. The roster↔SECTION_MAP test in `tests/release-run-dir-lifecycle-conformance.test.js` fails if a roster example cannot be staged, or if a `review-*` console prefix has no roster row.
+- **Should understand:** `review-{n}` covers only `.patch`. The roster↔SECTION_MAP test in `tests/release-run-dir-lifecycle-conformance.test.js` fails if a roster example cannot be staged, if a row's Example names no `staged/` file (the example check would pass over it), or if a `review-*` console prefix has no roster row (#4647).
 - **Red flags:** A `review-followup-` file reported as `unrecognised staged file, no route`, or a high record proposal floor-tested as medium because its `Finding:` line is missing.
 
 ## Origin
 - Created during build of #4488 (review routing line composer + `--step` prefix refusal)
 - Steps 1-2 and 4-5 built in #4488; steps 3 and 6 added in the build of #4484 (the `review-followup-{n}.md` staging name, its roster row, and the auto-mode materiality floor)
+- Updated during the wrap-up of #4772: step 3 notes the spec-qualified Resolution path in a multi-spec run, and that a refused record proposal reopens its ledger row.
 - Related: #4481 (the run whose hand-typed lines carried the doubled prefix and the mis-ordered token), #3792 (git/user text never double-quoted)

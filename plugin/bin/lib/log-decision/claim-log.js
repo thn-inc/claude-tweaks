@@ -21,7 +21,9 @@ const BATCH_LOG_RE = new RegExp(`${STEP_SRC}: ${BATCH_ACTION_SRC}`);
 // isClaimLogEntry matches the WHOLE action, end-anchored, including the
 // `Reversibility:` suffix formatEntry always appends: a truncated line, or a
 // claim prefix with anything else riding behind it, is not a claim entry.
-const SINGLE_FULL_SRC = 'claimed #\\d+ \\(bin/claim-targets\\.js, transport: [a-z-]+\\)';
+// The optional `, resume-pr: {url}` suffix (#4588) is `claim-targets.js
+// --resume-pr`'s adopted PR, exactly as `gh pr list --json url` prints it.
+const SINGLE_FULL_SRC = 'claimed #\\d+ \\(bin/claim-targets\\.js, transport: [a-z-]+(?:, resume-pr: https://github\\.com/[^\\s/()]+/[^\\s/()]+/pull/\\d+)?\\)';
 const BATCH_FULL_SRC = `${BATCH_ACTION_SRC} \\S+ \\([^()]*\\)`;
 const ACTION_RE = new RegExp(`^(?:${SINGLE_FULL_SRC}|${BATCH_FULL_SRC})\\. Reversibility: [^.\\s][^.]*\\.$`);
 const SECTION_HEADING = `## ${CLAIM_LOG_SECTION}`;
@@ -43,9 +45,11 @@ const FORWARD_RE = new RegExp(`${NEGATED_SRC}\\bclaimed\\s+(?:(?:both|group|the)
 // "<#list> [were|was|both|all|each|successfully] claimed" — never "claimed by"
 const BACKWARD_RE = new RegExp(`(${HASH_LIST_SRC})${LIST_END_SRC}\\s+(?:(?:were|was|both|all|each|successfully)\\s+)*claimed\\b(?!\\s+by\\b)`, 'gi');
 
-// The --text value claim-targets.md dictates for one claimed target.
-function claimLogText(n, transport) {
-  return `claimed #${n} (bin/claim-targets.js, transport: ${transport})`;
+// The --text value claim-targets.md dictates for one claimed target; with a
+// `resumePr` (#4588) it also names the PR `--resume-pr` adopted.
+function claimLogText(n, transport, resumePr) {
+  const resume = resumePr ? `, resume-pr: ${resumePr}` : '';
+  return `claimed #${n} (bin/claim-targets.js, transport: ${transport}${resume})`;
 }
 
 function isClaimLogEntry(line) {

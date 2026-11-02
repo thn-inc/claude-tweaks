@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const {
   listClaimNames, readClaimBlob, writeClaimBlob, defaultGhApi, classifyGhApiError, tombstoneInFlightPr,
   isWellFormedClaimContent, createClaimReader, resolveRepoSlug, resolveRepoSlugOrThrow,
+  ensureClaimsBranch, claimsBranchExists,
 } = require('../../../plugin/bin/lib/issues/claim-store');
 
 // Fake ghApi functions mirror release-merged.js's own ghApi shape: a
@@ -367,9 +368,30 @@ test('classifyGhApiError: Retry-After signature also reads as secondary rate lim
   assert.deepEqual(classifyGhApiError(err), { failure: 'secondary-rate-limit', status: 403 });
 });
 
-test('classifyGhApiError: a plain 403 with no rate-limit text still falls to network-failure', () => {
+test('AC1.1: classifyGhApiError: a plain HTTP 403 (no rate-limit text) -> permission-denied, never network-failure', () => {
   const err = new Error('gh: Resource not accessible by integration (HTTP 403)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 403 });
+});
+
+test('AC1.1: classifyGhApiError: HTTP 401 -> permission-denied', () => {
+  const err = new Error('gh: Bad credentials (HTTP 401)');
+  assert.deepEqual(classifyGhApiError(err), { failure: 'permission-denied', status: 401 });
+});
+
+test('AC6.1: classifyGhApiError: a primary rate-limit 403 ("API rate limit exceeded", no Retry-After) is network-failure, never permission-denied', () => {
+  const err = new Error('gh: API rate limit exceeded for installation ID 4242. (HTTP 403)');
   assert.deepEqual(classifyGhApiError(err), { failure: 'network-failure', status: null });
+});
+
+test('AC6.1: classifyGhApiError: a 403/429 carrying X-RateLimit-Remaining: 0 is network-failure', () => {
+  const e403 = new Error('gh: HTTP 403'); e403.stderr = 'HTTP 403\nX-RateLimit-Remaining: 0';
+  const e429 = new Error('gh: HTTP 429'); e429.stderr = 'HTTP 429\nX-RateLimit-Remaining: 0';
+  assert.deepEqual(classifyGhApiError(e403), { failure: 'network-failure', status: null });
+  assert.deepEqual(classifyGhApiError(e429), { failure: 'network-failure', status: null });
+});
+
+test('classifyGhApiError: a transport error with no HTTP status stays network-failure', () => {
+  assert.deepEqual(classifyGhApiError(new Error('connect ETIMEDOUT 140.82.112.6:443')), { failure: 'network-failure', status: null });
 });
 
 // Git-CAS-first, contents-API-fallback behavior (#787's amendment). These
@@ -1017,4 +1039,309 @@ test('staleClaimInFlightPr: a null-body same-repo PR before the marked one is sk
   ];
   assert.deepEqual(staleClaimInFlightPr(claim, () => JSON.stringify(listing), 'acme', 'w', (e) => errors.push(e)), { link: SC_URL });
   assert.deepEqual(errors, []);
+});
+
+// ---- #4495: a remote with no claims-registry branch ------------------------
+// The fake ghApi never throws and answers by argv, like every other fake in
+// this file; the fake gitRunner throws git-shaped errors (message + stderr).
+
+const BRANCHES_ARGS = ['repos/acme/w/branches/claims-registry', '-q', '.name'];
+const DEFAULT_BRANCH_ARGS = ['repos/acme/w', '-q', '.default_branch'];
+const MAIN_TIP_ARGS = ['repos/acme/w/git/ref/heads/main', '-q', '.object.sha'];
+const POST_REFS_ARGS = ['--method', 'POST', 'repos/acme/w/git/refs', '-f', 'ref=refs/heads/claims-registry', '-f', 'sha=abc123'];
+const sameArgs = (a, b) => a.length === b.length && a.every((x, i) => x === b[i]);
+
+function gitError(stderr) {
+  const e = new Error('Command failed');
+  e.stderr = stderr;
+  return e;
+}
+
+// A contents-API leg that resolves main -> abc123, then answers the POST with `post`
+// and the claims-registry branches read with `branches`; records every call.
+function bootstrapGhApi(calls, { post, branches }) {
+  return (args) => {
+    calls.push(args);
+    if (sameArgs(args, DEFAULT_BRANCH_ARGS)) return { stdout: 'main\n', failure: null, status: null };
+    if (sameArgs(args, MAIN_TIP_ARGS)) return { stdout: 'abc123\n', failure: null, status: null };
+    if (sameArgs(args, POST_REFS_ARGS)) return post;
+    if (sameArgs(args, BRANCHES_ARGS)) return branches;
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+}
+
+test('readClaimBlob: a git read reporting branchMissing passes it through as absent, no contents-API call', () => {
+  const ghCalls = [];
+  const gitRunner = (args) => { if (args[0] === 'fetch') { throw gitError("fatal: couldn't find remote ref claims-registry"); } return ''; };
+  const r = readClaimBlob({ ghApi: (a) => { ghCalls.push(a); return { stdout: null, failure: null, status: 404 }; }, gitRunner }, 'acme/w', 7);
+  assert.equal(r.absent, true);
+  assert.equal(r.branchMissing, true);
+  assert.equal(r.failure, null);
+  assert.equal(r.sha, null);
+  assert.equal(r.via, 'git');
+  assert.equal(ghCalls.length, 0);
+});
+
+test('writeClaimBlob: create-only PUT 404 + absent re-read + branches 404 → branchMissing, not conflict', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (String(args[0]).startsWith('repos/acme/w/branches/claims-registry')) return { stdout: null, failure: null, status: 404 };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, branchMissing: true, failure: null });
+});
+
+test('writeClaimBlob: create-only PUT 422 + absent re-read on an EXISTING branch stays a conflict (no bootstrap signal)', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 422 };
+    if (String(args[0]).startsWith('repos/acme/w/branches/claims-registry')) return { stdout: 'claims-registry\n', failure: null, status: null };
+    return { stdout: null, failure: null, status: 404 };
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, conflict: true, failure: null });
+});
+
+test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read fails (cannot tell) → network-failure, never conflict', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'network-failure', status: null };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'network-failure' });
+});
+
+test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read denied (403) → permission-denied, the lookup\'s own failure kind', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'permission-denied', status: 403 };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'permission-denied' });
+});
+
+test('writeClaimBlob: a rejected PUT whose re-read shows ANOTHER holder\'s blob never consults the branches endpoint', () => {
+  const calls = [];
+  const ghApi = (args) => {
+    calls.push(args);
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 422 };
+    if (isRead(args, 'claims/issue-7.json')) return { stdout: JSON.stringify({ content: '{"other":1}', sha: 's1' }), failure: null, status: null };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, conflict: true, failure: null });
+  assert.equal(calls.some((a) => sameArgs(a, BRANCHES_ARGS)), false);
+});
+
+test('defaultGhApi: a failed call carries the thrown error text as `error` (gh absent from PATH → ENOENT, no real gh runs)', () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const emptyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'claim-store-nogh-'));
+  const savedPath = process.env.PATH;
+  process.env.PATH = emptyDir;
+  let r;
+  try {
+    r = defaultGhApi(['repos/acme/w']);
+  } finally {
+    process.env.PATH = savedPath;
+    fs.rmSync(emptyDir, { recursive: true, force: true });
+  }
+  assert.equal(r.stdout, null);
+  assert.equal(r.failure, 'gh-absent');
+  assert.equal(r.status, null);
+  assert.equal(typeof r.error, 'string');
+  assert.match(r.error, /ENOENT/);
+});
+
+test('claimsBranchExists: 404 → false, any failure → null, a name → true', () => {
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: null, status: 404 }), 'acme/w'), false);
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'network-failure', status: null }), 'acme/w'), null);
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'gh-absent', status: null }), 'acme/w'), null);
+  assert.equal(claimsBranchExists(() => ({ stdout: null, failure: 'permission-denied', status: 403 }), 'acme/w'), null);
+  assert.equal(claimsBranchExists((args) => { assert.deepEqual(args, BRANCHES_ARGS); return { stdout: 'claims-registry\n', failure: null, status: null }; }, 'acme/w'), true);
+});
+
+test('ensureClaimsBranch: git leg succeeds → ok via git, no gh call', () => {
+  const ghCalls = [];
+  const gitRunner = (args) => (args[0] === 'rev-parse' ? 'abc\n' : '');
+  const r = ensureClaimsBranch({ ghApi: (a) => { ghCalls.push(a); return { stdout: null, failure: null, status: null }; }, gitRunner }, 'acme/w');
+  assert.deepEqual(r, { ok: true, created: true, via: 'git' });
+  assert.equal(ghCalls.length, 0);
+});
+
+test('ensureClaimsBranch: git leg fails → contents-API leg reads default_branch, its tip sha, POSTs git/refs → ok via contents-api', () => {
+  const calls = [];
+  const gitRunner = (args) => { if (args[0] === 'push') throw gitError('remote: Permission to acme/w.git denied'); return args[0] === 'rev-parse' ? 'abc\n' : ''; };
+  const ghApi = bootstrapGhApi(calls, { post: { stdout: '{}', failure: null, status: null } });
+  const r = ensureClaimsBranch({ ghApi, gitRunner }, 'acme/w');
+  assert.deepEqual(r, { ok: true, created: true, via: 'contents-api' });
+  assert.deepEqual(calls, [DEFAULT_BRANCH_ARGS, MAIN_TIP_ARGS, POST_REFS_ARGS]);
+});
+
+test('ensureClaimsBranch: no gitRunner → straight to the contents-API leg', () => {
+  const calls = [];
+  const ghApi = bootstrapGhApi(calls, { post: { stdout: '{}', failure: null, status: null } });
+  assert.deepEqual(ensureClaimsBranch({ ghApi }, 'acme/w'), { ok: true, created: true, via: 'contents-api' });
+  assert.equal(calls.length, 3);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 whose branches/claims-registry read now succeeds is a lost race → ok, created:false', () => {
+  const ghApi = bootstrapGhApi([], {
+    post: { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' },
+    branches: { stdout: 'claims-registry\n', failure: null, status: null },
+  });
+  assert.deepEqual(ensureClaimsBranch({ ghApi }, 'acme/w'), { ok: true, created: false, via: 'contents-api' });
+});
+
+test('ensureClaimsBranch: POST git/refs 422 from a ruleset while the branch is still absent is a refusal, reason verbatim', () => {
+  const ghApi = bootstrapGhApi([], {
+    post: { stdout: null, failure: null, status: 422, error: 'HTTP 422: Repository rule violations found\n\nCannot create ref due to creations being restricted.' },
+    branches: { stdout: null, failure: null, status: 404 },
+  });
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Repository rule violations found/);
+  assert.match(r.reason, /Cannot create ref/);
+  assert.doesNotMatch(r.reason, /branch re-read:/);
+});
+
+const POST_422 = { stdout: null, failure: null, status: 422, error: 'HTTP 422: Reference already exists' };
+const reread422 = (branches) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post: POST_422, branches }) }, 'acme/w');
+
+test('AC7.1: POST git/refs 422 + a network-failure branch re-read is transient, POST reason kept', () => {
+  const r = reread422({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.match(r.reason, /Reference already exists/);
+  assert.match(r.reason, /ETIMEDOUT/);
+});
+
+test('AC8.1: POST git/refs 422 + a permission-403 branch re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('AC11.1: POST git/refs 422 + a primary-rate-limit branch re-read is transient network-failure', () => {
+  const e = new Error('gh: API rate limit exceeded for user ID 1. (HTTP 403)');
+  const r = reread422({ stdout: null, ...classifyGhApiError(e), error: e.message });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a secondary-rate-limit re-read is transient secondary-rate-limit', () => {
+  const r = reread422({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' });
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'secondary-rate-limit');
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a gh-absent re-read is a refusal', () => {
+  const r = reread422({ stdout: null, failure: 'gh-absent', status: null, error: 'spawn gh ENOENT' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.equal('failure' in r, false);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 409 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 409, error: 'HTTP 409: Conflict' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.match(r.reason, /Reference already exists/);
+});
+
+test('ensureClaimsBranch: POST git/refs 422 + a re-read answering 422 with failure null is a refusal, never a lost race', () => {
+  const r = reread422({ stdout: null, failure: null, status: 422, error: 'HTTP 422: Unprocessable' });
+  assert.equal(r.ok, false);
+  assert.equal('transient' in r, false);
+  assert.match(r.reason, /Reference already exists/);
+});
+
+test('ensureClaimsBranch: POST git/refs 404 (no access) is a refusal, never success', () => {
+  const ghApi = bootstrapGhApi([], {
+    post: { stdout: null, failure: null, status: 404, error: 'gh: Not Found (HTTP 404)' },
+    branches: { stdout: 'claims-registry\n', failure: null, status: null },
+  });
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /HTTP 404/);
+});
+
+test('ensureClaimsBranch: a POST result with no error text falls back to the failure, then the status', () => {
+  const noText = (post) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post, branches: { stdout: null, failure: null, status: 404 } }) }, 'acme/w');
+  assert.match(noText({ stdout: null, failure: 'secondary-rate-limit', status: 403 }).reason, /secondary-rate-limit/);
+  assert.match(noText({ stdout: null, failure: null, status: 409 }).reason, /HTTP 409/);
+});
+
+test('ensureClaimsBranch: a network-failure default-branch read is transient, no POST', () => {
+  const calls = [];
+  const ghApi = (args) => { calls.push(args); return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 502: Bad Gateway' }; };
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /HTTP 502/);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.equal(calls.length, 1);
+});
+
+test('ensureClaimsBranch: a network-failure tip-sha read is transient, no POST', () => {
+  const calls = [];
+  const ghApi = (args) => {
+    calls.push(args);
+    if (sameArgs(args, DEFAULT_BRANCH_ARGS)) return { stdout: 'main\n', failure: null, status: null };
+    if (sameArgs(args, MAIN_TIP_ARGS)) return { stdout: null, failure: 'network-failure', status: null, error: 'HTTP 503' };
+    throw new Error(`unexpected ${args.join(' ')}`);
+  };
+  const r = ensureClaimsBranch({ ghApi }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.equal(r.transient, true);
+  assert.equal(r.failure, 'network-failure');
+  assert.equal(calls.some((a) => sameArgs(a, POST_REFS_ARGS)), false);
+});
+
+test('ensureClaimsBranch: both legs refused → ok:false with both reasons verbatim', () => {
+  const gitRunner = (args) => { if (args[0] === 'push') throw gitError('remote: Permission to acme/w.git denied'); return args[0] === 'rev-parse' ? 'abc\n' : ''; };
+  const ghApi = bootstrapGhApi([], {
+    post: { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Resource not accessible by integration' },
+  });
+  const r = ensureClaimsBranch({ ghApi, gitRunner }, 'acme/w');
+  assert.equal(r.ok, false);
+  assert.match(r.reason, /Permission to acme\/w\.git denied/);
+  assert.match(r.reason, /HTTP 403: Resource not accessible/);
+  assert.match(r.reason, /^git: .*; contents-api: /s);
+  assert.equal('transient' in r, false, 'a non-rate-limit refusal carries no transient key');
+});
+
+test('AC2.1/AC4.1: POST classified secondary-rate-limit / network-failure is transient with its kind; permission-denied is a refusal', () => {
+  const run = (post) => ensureClaimsBranch({ ghApi: bootstrapGhApi([], { post }) }, 'acme/w');
+  assert.deepEqual(run({ stdout: null, failure: 'secondary-rate-limit', status: 403, error: 'HTTP 403: secondary rate limit' }),
+    { ok: false, reason: 'contents-api: HTTP 403: secondary rate limit', transient: true, failure: 'secondary-rate-limit' });
+  assert.deepEqual(run({ stdout: null, failure: 'network-failure', status: null, error: 'connect ETIMEDOUT' }),
+    { ok: false, reason: 'contents-api: connect ETIMEDOUT', transient: true, failure: 'network-failure' });
+  assert.deepEqual(run({ stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: Forbidden' }),
+    { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
+});
+
+// (#4495) A git-CAS rejection whose verification read finds the claims-registry
+// branch itself gone. That is not a claim someone else took, so it must surface
+// as a missing branch (the caller bootstraps it), never as a contest with no
+// holder.
+test('writeClaimBlob: a git-CAS rejection whose fresh read finds the claims-registry branch gone is branchMissing, never a contest', () => {
+  const { runner, state } = fakeGitCasRunner({ pushes: ['reject'], reads: [] });
+  const gitRunner = (args) => {
+    if (args[0] === 'fetch' && state.pushCount > 0) { const e = new Error("fatal: couldn't find remote ref claims-registry"); e.stderr = e.message; throw e; }
+    return runner(args);
+  };
+  const ghApi = () => { throw new Error('contents-API must not be called — the git re-read already named the missing branch'); };
+  const result = writeClaimBlob({ ghApi, gitRunner }, 'acme/w', 42, {
+    content: '{"runId":"me"}', message: 'Claim #42', sha: 'a'.repeat(40), expectedContent: HELD_BY_STALE,
+  });
+  assert.deepEqual(result, { ok: false, branchMissing: true, failure: null });
+  assert.equal(state.pushCount, 1, 'no retry against a branch that no longer exists');
 });

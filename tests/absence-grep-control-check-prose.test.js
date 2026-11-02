@@ -49,6 +49,36 @@ test('the AC template asks for a matching run before any returns-nothing criteri
   assert.ok(ac.includes('prefer `grep -F` for literal code text'));
 });
 
+const EXCLUDED_PATHSPECS = [
+  [':!.claude-tweaks/pipelines', 'run-directory'],
+  [':!docs/superpowers/plans', 'plan'],
+  [':!docs/plans/*-ledger.md', 'ledger'],
+];
+const NAMED_PATHS_NEED_NO_EXCLUSION = 'A search already scoped to named paths outside `.claude-tweaks/` needs no exclusion.';
+
+test('the AC template excludes the run directory from a repo-root absence search (#4579)', () => {
+  const ac = acSection();
+  for (const [pathspec, name] of EXCLUDED_PATHSPECS) {
+    assert.ok(ac.includes(pathspec), `the AC section must name the ${name} pathspec`);
+  }
+  assert.ok(ac.includes('#4579'), 'the AC section must cite #4579');
+  assert.ok(ac.includes('the control run applies to the excluded form'), 'the excluded search still gets the control run');
+  assert.ok(ac.includes(NAMED_PATHS_NEED_NO_EXCLUSION), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
+});
+
+test('the control check adds the run-directory exclusion as a plan correction (#4579)', () => {
+  const start = CHECKS.indexOf('**Absence-grep control check');
+  const paragraph = CHECKS.slice(start, CHECKS.indexOf('\n\n', start));
+  for (const [pathspec, name] of EXCLUDED_PATHSPECS) {
+    assert.ok(paragraph.includes(pathspec), `the paragraph must name the ${name} pathspec`);
+  }
+  assert.ok(paragraph.includes('#4579'), 'the paragraph must cite #4579');
+  assert.ok(paragraph.includes('run the control on the excluded form'), 'the control run applies to the excluded form');
+  assert.ok(paragraph.includes('that the exclusion was added per #4579'), 'the match note must say the exclusion was added per #4579');
+  assert.ok(paragraph.includes('a plan correction, never an SDD ruling'), 'the exclusion is a plan correction, not an SDD ruling');
+  assert.ok(paragraph.includes(NAMED_PATHS_NEED_NO_EXCLUSION), 'a search scoped to named paths outside .claude-tweaks/ needs no exclusion');
+});
+
 test('the tombstone section treats its scoped grep as an absence grep', () => {
   assert.ok(tombstoneSection().includes('Either way the grep, scoped or bare, is an absence grep: run it once against the pre-deletion tree and confirm it matches the symbol'));
 });

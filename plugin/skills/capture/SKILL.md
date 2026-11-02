@@ -81,7 +81,7 @@ round-trip on a record that structurally cannot be born-ready is wasted work, no
 bug. File plain (no chain) and proceed straight to Backend Selection's filing step.
 
 Resolve it as a **single decision, before filing**, and only under `work-backend: github-issues`
-(the trust table reads `demo:*` labels, which do not exist on the `local-files` driver). Resolve
+(the trust table reads acceptance labels, which do not exist on the `local-files` driver). Resolve
 both policy values in ONE call — `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values autonomy trust-revert-window-days`
 (one value per line, in request order) — and substitute the first line's literal value for
 `{resolved-ceiling}`. When it resolves to `supervised`, skip

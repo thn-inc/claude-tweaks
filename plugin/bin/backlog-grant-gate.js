@@ -37,7 +37,9 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
-const { parseRepo, ghAvailable, remoteUrl } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost,
+} = require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
@@ -98,7 +100,14 @@ const realDeps = {
   // `unattended` ceiling this runs with no human to retry, so a spurious
   // timeout-kill is worse than the slow-but-eventually-successful unbounded
   // call it would replace.
-  runner: (args) => execFileSync('gh', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
+  runner: (args, o = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true })),
+  // #4505: an explicit --repo's host for the native owner/repo calls only, as
+  // GH_HOST on their env. The issue lists read cwd's own repo, so they keep
+  // `runner`: a GH_HOST that matches none of cwd's remotes would break them.
+  nativeRunnerFor: (repoSpec) => {
+    const host = explicitRepoGhHost(repoSpec);
+    return host ? (args) => realDeps.runner(args, { env: { ...process.env, GH_HOST: host } }) : null;
+  },
   // maxBuffer widened for the same reason: fetchGitLog dumps every commit
   // message on the integration branch in one call.
   gitRunner: (args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, windowsHide: true }),
@@ -142,6 +151,7 @@ function run(argv, deps = realDeps) {
   let owner = null;
   let repo = null;
   let host = null;
+  let nativeRunner = deps.runner;
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
@@ -159,6 +169,7 @@ function run(argv, deps = realDeps) {
       return 2;
     }
     owner = repoSpec.owner; repo = repoSpec.repo; host = repoSpec.host;
+    if (opts.repo && deps.nativeRunnerFor) nativeRunner = deps.nativeRunnerFor(repoSpec) || deps.runner;
   }
 
   let integrationBranch = resolved['integration-branch'].value;
@@ -184,6 +195,7 @@ function run(argv, deps = realDeps) {
       repo,
       host,
       runner: deps.runner,
+      nativeRunner,
       gitRunner: deps.gitRunner,
       sessionId: process.env.CLAUDE_CODE_SESSION_ID,
       ttlSeconds: resolved['record-snapshot-ttl-seconds'].value,

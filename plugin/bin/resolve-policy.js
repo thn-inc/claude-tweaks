@@ -5,14 +5,15 @@
 // config.yml overlays (#329). A thin shell — argument parsing plus file
 // reads over two library calls: bin/lib/policy-schema.js#resolvePolicyKeys
 // (all precedence/alias/validation logic) and
-// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the one
-// nested-block key). No resolution logic lives here. Zero runtime npm deps.
+// bin/lib/model-profiles/policy-fragment.js#parsePolicyModelConfig (the
+// model-profiles nested-block key; risk-path-globs, the other, resolves inside
+// resolvePolicyKeys). No resolution logic lives here. Zero runtime npm deps.
 //
 // Usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]
 // Output: one JSON object on stdout keyed by requested name — or, with
 // --values, one plain value per line in request order (scalar mode for shell
 // captures; empty line for unset-no-default and error entries; not valid for
-// model-profiles). --values also writes one stderr warning per requested key
+// model-profiles or risk-path-globs). --values also writes one stderr warning per requested key
 // holding a present-but-invalid value (`resolve-policy: warning: {key} has
 // invalid value "{raw}" — using default "{value}"`); stdout and the exit code
 // are unchanged, and JSON and --all modes write no warning. --all emits
@@ -22,7 +23,19 @@
 // (exit 0). Invocation failures — zero keys, a --run dir that does not exist,
 // or a --run path that resolves inside a checkout other than the main
 // checkout (#1065's anchored-or-outside guard) — exit 1 with a stderr message
-// and no JSON. Repo root comes from `git rev-parse --show-toplevel` at the
+// and no JSON. A degraded forge detection (#4578 — `gh` timed out, then failed
+// its retry, so the 'local-merge' answer is a guess rather than a detection)
+// writes one stderr line per affected key, in every output mode (stdout and the
+// exit code unchanged): `resolve-policy: degraded — {key}: {reason text};
+// resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or
+// raise gh-timeout-ms`. It applies to integration-model and to a merge-
+// verification request that runs its own detection (a merge-verification that
+// reuses a degraded integration-model from the same call carries the field
+// only — no second line); JSON entries gain the
+// additive `degraded: 'timeout' | 'timeout-then-exit'` reason code, and a
+// non-degraded entry keeps exactly { value, source }. merge-verification's
+// own detection honours a valid --run config.yml integration-model pin first.
+// Repo root comes from `git rev-parse --show-toplevel` at the
 // process cwd (cwd itself outside a git repo) — never from CLAUDE_PLUGIN_ROOT
 // (observed unset in Bash tool environments, #170) and never from a
 // positional path argument.
@@ -35,10 +48,13 @@
 'use strict';
 const fs = require('fs');
 const { execFileSync } = require('child_process');
-const { POLICY_KEYS, resolvePolicyConfig } = require('./lib/policy-schema');
+const { POLICY_KEYS, resolvePolicyConfig, formatForgeDegrade } = require('./lib/policy-schema');
 const { computeDerivedDefaults } = require('./lib/policy-derived-defaults');
 const { parsePolicyModelConfig } = require('./lib/model-profiles/policy-fragment');
 const { anchoredOrOutsideMessage } = require('./lib/run-dir-guard');
+
+// The nested-block keys: no scalar form under --values.
+const BLOCK_KEYS = POLICY_KEYS.filter((row) => row.type === 'map').map((row) => row.key);
 
 function fail(msg) {
   process.stderr.write(`resolve-policy: ${msg}\n`);
@@ -109,9 +125,10 @@ function main(argv) {
     fail('usage: resolve-policy.js [--values | --all] [--mcp-reachable] [--run <dir>] <key> [<key>…]');
     return;
   }
-  if (valuesMode && keys.includes('model-profiles')) {
-    // The one nested-block key has no scalar form.
-    fail('--values does not support model-profiles (no scalar form) — use the JSON output');
+  const blockKey = BLOCK_KEYS.find((key) => keys.includes(key));
+  if (valuesMode && blockKey) {
+    // A nested-block key has no scalar form.
+    fail(`--values does not support ${blockKey} (no scalar form) — use the JSON output`);
     return;
   }
   // #1065: anchored-or-outside guard — runs after the flag-conflict checks
@@ -141,7 +158,7 @@ function main(argv) {
   // #4141: the rejected raw value rides a side channel, so the entry shape
   // stays exactly as the JSON output documents it.
   const invalidRaw = new Map();
-  const { root, policyRaw, result } = resolvePolicyConfig({
+  const { root, policyRaw, runConfigRaw, result } = resolvePolicyConfig({
     git: gitRoot,
     readFile: readFileSafe,
     runDir,
@@ -159,13 +176,26 @@ function main(argv) {
   // defaults.js (#604) so the dedup is unit-testable via an injectable deps
   // map — see that module for the full block. mcpReachable forwards through
   // so both keys' forge detection can skip the `gh` probe within this call
-  // (--mcp-reachable, #1421).
-  computeDerivedDefaults(result, keys, root, { mcpReachable });
+  // (--mcp-reachable, #1421). #4578: runConfigRaw lets merge-verification's own
+  // detection honour the run's integration-model pin first, and the degrade
+  // collector (a Map, so a key requested twice reports once) carries the full
+  // degrade object the entry's bare `degraded` reason code cannot.
+  const degrades = new Map();
+  computeDerivedDefaults(result, keys, root, {
+    mcpReachable,
+    runConfigRaw,
+    onDegrade: (key, degrade) => degrades.set(key, degrade),
+  });
+  // One stderr line per degraded key, in every output mode; stdout is unchanged.
+  for (const key of ['integration-model', 'merge-verification']) {
+    if (!degrades.has(key)) continue;
+    process.stderr.write(`resolve-policy: degraded — ${key}: ${formatForgeDegrade(degrades.get(key))}; resolved local-merge — pin integration-model in .claude-tweaks/policy.yml or raise gh-timeout-ms\n`);
+  }
 
-  // model-profiles is the one block-style key — policy-only (the --run
+  // model-profiles is a block-style key — policy-only (the --run
   // overlay never applies; run configs hold flat lever lines, not nested
-  // blocks). Overwrite the flat resolver's placeholder entry via the
-  // dedicated fragment reader.
+  // blocks; risk-path-globs is policy-only the same way). Overwrite the flat
+  // resolver's placeholder entry via the dedicated fragment reader.
   if (keys.includes('model-profiles')) {
     try {
       const parsed = parsePolicyModelConfig(policyRaw);
@@ -187,8 +217,7 @@ function main(argv) {
     // name each rejected key on stderr — the caller otherwise cannot tell a
     // typo from an intentional default. Every `invalid` entry reaching here
     // came through resolvePolicyKeys's invalid branch, so its raw value is
-    // recorded (model-profiles, the only key set elsewhere, is rejected above
-    // in --values mode).
+    // recorded (the block keys are rejected above in --values mode).
     for (const key of keys) {
       const entry = result[key];
       if (!entry || !entry.invalid) continue;

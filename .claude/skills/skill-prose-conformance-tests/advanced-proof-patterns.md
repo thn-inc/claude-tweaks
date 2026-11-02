@@ -1,6 +1,6 @@
 # Advanced Proof Patterns — skill-prose-conformance-tests
 
-Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, or a new detection signal needs corpus validation before it's trusted.
+Lazy-loaded from `SKILL.md` (this skill's directory). Read this file when a go-red proof needs zero-mutation verification, a change adds or removes an Anti-Patterns row, a new detection signal needs corpus validation before it's trusted, a sweep ships with an exemption list, or a suite builds throwaway git repos.
 
 ## Proving discrimination without editing the tree
 
@@ -50,6 +50,23 @@ Rows *reworded in place* change no count and need no bump — but they still bel
 
 When a test or a skill procedure must *detect* a document class (a heading, a marker, a body shape), run a corpus scan over the live population before committing to the signal: count exactly which documents each candidate signal matches, and reject any candidate that matches a document it must not. Record #1071's scan of all 234 open records proved the line-anchored `## Leaves` heading matched exactly the four real legacy parents — while the plausible alternatives ("decomposition parent" phrase, "(parent)" title/body match) false-positived on the very bug report describing the defect. The scan result belongs in the record/spec as evidence, so the accepted residual risk is grounded rather than guessed.
 
+## An allowlist entry owes a stale-check of its own
+
+A sweep with an exemption list has a failure mode `SKILL.md`'s empty-extraction rule does not
+cover: the exemptions rot. The condition that justified an entry goes away — the gap gets closed,
+the citation moves, the prose is reworded — and the entry silently starts covering something new,
+or covers nothing at all while reading as a live carve-out. `tests/dispatch-prompt-bundle-citations.test.js`
+(#1995) is the shape to copy. Its `GAPS` array names two `_shared/` citations with no compose step
+behind them yet; alongside the offender sweep it ships a `gapStatus(text, gap)` returning
+`ok` | `fallback-shaped` | `missing`, one test asserting every gap is still `ok`, and — the part
+that makes it discriminate — a proof that doctors each gap **both** ways in memory and asserts the
+status flips: rewrite the citation line into a fallback clause and it must read `fallback-shaped`;
+replace the path with a composed-bundle path and it must read `missing`. Write the stale-check in
+the same change as the allowlist, and make its failure message say *shrink the list*, not *fix the
+sweep* — the entry going stale is the success case for the work the exemption was waiting on.
+
+When the list holds both permanent carve-outs and offenders left for a follow-up record, split it into `exempt` and `ratchet` classes, each entry keyed by a content anchor that must match exactly one offender — "Two-class allowlists: exempt and ratchet" below.
+
 ## Two-class allowlists: exempt and ratchet
 
 A corpus sweep that lands while known offenders remain (the convention is new, and migrating every site is a record of its own) carries two kinds of carve-out that rot differently. `tests/skill-fence-guard-shapes.test.js` (#4028) is the instance:
@@ -58,12 +75,19 @@ A corpus sweep that lands while known offenders remain (the convention is new, a
 - **`ratchet`** is migration debt. Every entry cites one module-level `FOLLOW_UP` constant (`'#4217'`) through the `ratchet()` builder, never its own copy of the record number, and `badEntries()` fails an entry whose follow-up differs. Ratchet entries are allowed only under the detectors the change itself added (`NEW_SHAPE_IDS`, plus a named `RATCHET_ORIGINAL_EXCEPTIONS` list), so debt can never quietly re-admit a shape the convention already banned.
 - **Key each entry by file, detector and a content anchor** (a distinctive substring of the offending fence), never a line number, and require exactly one match. Zero matches fails with "remove this entry" (the site was migrated, so the list only shrinks); two or more fails as an ambiguous anchor, never a free pass for the second offender. `applyAllowlist()` reports both as `stale`, and the live test asserts every entry covered one hit.
 - **Name the unit's blind spot.** An entry covers one hit, and a hit is one fence × one detector (`detectShapes` returns each id once per fence), so a second offense of the same shape inside an already-allowlisted fence is invisible. State that in the test's header comment, or narrow the unit.
+- **A ratchet entry is debt, never a template.** Its anchor matches only the fence it was written for, so a new fence copied from a ratcheted site is a new offender and fails the sweep. #4600's plan put the shape of `_shared/github-pr-scan.md`'s ratcheted `SINCE=$(node -e …)` date line into the parent-gate fetch block, feeding `gh issue list … --search "closed:>=$SINCE"`, and `gh-computed-input` refused it at build. The sweep accepts the value computed inside gh's own argument (`--search "closed:>=$(node -p "…")"`). `gh-computed-input` is gh *reading* a runtime variable: one gh writes for node (`gh api user --jq .login > "$PARENTS.login"`, or a `LOGIN="$(gh api user …)"` that only node reads) passes. Run a planned fence through `detectShapes` from `tools/guard-refusals/shapes.js` before the plan fixes its text.
 
 Prove each class rule with go-red inputs to `badEntries()` (a ratchet under an original detector, one with its own follow-up text, an exempt without a reason), and the matcher with a synthetic stale, a new and an ambiguous case. `tests/log-decision-text-file-sites-conformance.test.js` (below) is a one-class sibling keyed on a finer unit.
 
 ## Negative-exclusion tests for a resolver's source-exclusion special case
 
 When a resolver has a deliberate special case that excludes one source from precedence entirely (a config layer that must never win even though it normally would — `merge-authorization`'s exclusion of `.claude-tweaks/policy.yml`, `bin/lib/policy-schema.js`), assert the excluded source is actually ignored, not just what the resolver ultimately returns. `tests/resolve-policy-lib.test.js`'s four `merge-authorization` tests are the instance: unset resolves to default, run-config wins over an unset policy value, a set policy.yml value is discarded (falls to default, not `source: 'policy'`), and run-config still wins even when policy.yml is also set. The third case is the one a same-final-value assertion alone would miss — a resolver that merely deprioritized policy.yml instead of excluding it could pass every other assertion while silently letting policy.yml win whenever run-config is absent.
+
+## Fixture repos come from the shared helper
+
+`tests/helpers/git-fixtures.js` exports `gitRepo`, `linkedWorktreeOf`, `harnessWorktreeOf`, `fixtureGit`, and `FIXTURE_TIMEOUT_MS`. Adoption is partial, not universal — many suites under `tests/` still build their throwaway repo from a local `git init` ladder of their own (`tests/bin-lib/reconcile/archive-merged.test.js`'s `makeRepo()` among them), so never assume the suite you are editing already imports the helper: read its requires first, and when you factor a fixture helper out inside such a suite, build it on `gitRepo` rather than on the local ladder you found there. Build throwaway repos from the helper rather than hand-rolling another `spawnSync('git', ['init'])` ladder, and take `FIXTURE_TIMEOUT_MS` from it too so one machine-speed knob governs the suite.
+
+A named base branch or a suite-owned scratch directory is not a reason to hand-roll the ladder: `gitRepo({ parent, branch })` creates the repo's temp dir under `parent` (default `os.tmpdir()`) and runs `git init -b {branch}` when `branch` is given (default: git's own initial branch). `tests/local-merge-close-run-ordering.test.js`'s `makeRepo()` builds on `gitRepo({ parent: SCRATCH, branch: 'main' })`, so every fixture lands under the one `SCRATCH` dir its `process.on('exit')` removes; commit identity for its later commits still comes from a suite-local wrapper that passes `-c user.email=… -c user.name=…` to `fixtureGit` (#3762).
 
 ## Reference instances
 

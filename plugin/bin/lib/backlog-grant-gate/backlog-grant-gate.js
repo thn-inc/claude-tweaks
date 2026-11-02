@@ -83,20 +83,24 @@ function fetchAllRecords({ limit, runner, sessionId, ttlSeconds, now = Date.now(
 // REST retry's `gh api` call — #2240, the same GitHub Enterprise Server
 // pattern fetch-sub-issues.js's own REST retry loop already applies; the
 // batched GraphQL probe above is unchanged, matching that file's scope.
+// `nativeRunner` (default `runner`) makes the owner/repo-addressed calls (the
+// schema probe, the batch, the REST retry); the parent-issue list stays on
+// `runner`, which reads cwd's own repo (#4505: the CLI pins an explicit
+// --repo's host onto nativeRunner only).
 function resolveSubIssueNumbers({
-  workLinks, limit, runner, owner, repo, host, probeFn = probeSchemaStrict,
+  workLinks, limit, runner, nativeRunner = runner, owner, repo, host, probeFn = probeSchemaStrict,
 }) {
   if (workLinks === 'native') {
     const parents = jsonOut(runner, ['issue', 'list', '--label', 'parent-issue', '--state', 'all', '--json', 'number', '--limit', String(limit)]);
     const numbers = parents.map((p) => p.number);
     if (numbers.length === 0) return new Set();
-    const schema = probeFn(runner);
+    const schema = probeFn(nativeRunner);
     const all = new Set();
     const retryParents = [];
     if (schema.subIssues) {
       for (let i = 0; i < numbers.length; i += 50) {
         const chunk = numbers.slice(i, i + 50);
-        const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner });
+        const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner: nativeRunner });
         for (const subs of res.byParent.values()) subs.forEach((n) => all.add(n));
         retryParents.push(...res.retry);
       }
@@ -106,7 +110,7 @@ function resolveSubIssueNumbers({
     for (const parentNumber of retryParents) {
       const apiArgs = ['api', '--paginate', `repos/${owner}/${repo}/issues/${parentNumber}/sub_issues`, '--jq', '.[].number'];
       if (host && host !== 'github.com') apiArgs.push('--hostname', host);
-      const out = runner(apiArgs);
+      const out = nativeRunner(apiArgs);
       out.trim().split('\n').filter(Boolean).forEach((n) => all.add(Number(n)));
     }
     return all;
@@ -147,10 +151,11 @@ function computePhaseA({ candidates, policy, trustRowsArray }) {
 // already resolved by the caller (the CLI resolves it from
 // .claude-tweaks/policy.yml before calling in). `fetch` bundles every
 // injectable I/O dependency: { limit, workLinks, integrationBranch, owner,
-//   repo, runner, gitRunner, probeFn?, sessionId?, ttlSeconds? } — the last
-//   two feed the session-scoped record-snapshot cache (fetchAllRecords
-//   above); omitted or unresolvable, the cache is simply never fresh and
-//   every call fetches live, same as before this cache existed.
+//   repo, runner, nativeRunner?, gitRunner, probeFn?, sessionId?, ttlSeconds? }
+//   — the last two feed the session-scoped record-snapshot cache
+//   (fetchAllRecords above); omitted or unresolvable, the cache is simply
+//   never fresh and every call fetches live, same as before this cache
+//   existed. nativeRunner: see resolveSubIssueNumbers.
 //
 // Returns the full envelope the CLI prints, and the exact shape
 // skills/backlog/refine-headless.md's Step 1 / Step 2 Phase A tmp files need
@@ -178,7 +183,7 @@ function computeOutlook(policy, fetch) {
   }
 
   const {
-    limit, workLinks, integrationBranch, owner, repo, host, runner, gitRunner, probeFn, sessionId, ttlSeconds,
+    limit, workLinks, integrationBranch, owner, repo, host, runner, nativeRunner, gitRunner, probeFn, sessionId, ttlSeconds,
   } = fetch;
 
   // One `--state all` fetch (session-cached) supplies both this run's
@@ -193,7 +198,7 @@ function computeOutlook(policy, fetch) {
   const candidates = filterCandidates(readyIssues, openNumbers);
 
   const subIssueNumbers = resolveSubIssueNumbers({
-    workLinks, limit, runner, owner, repo, host, probeFn,
+    workLinks, limit, runner, nativeRunner: nativeRunner || runner, owner, repo, host, probeFn,
   });
   const gitLog = fetchGitLog({ integrationBranch, gitRunner });
   const records = allRecords.map((r) => ({

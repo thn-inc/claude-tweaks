@@ -478,3 +478,52 @@ test('computePremise asks checkoutRoot for the injected cwd', () => {
     assert.deepStrictEqual(seen, [deps.cwd()]);
   });
 });
+
+// #4505 final review: materialize pins an explicit --repo's host as GH_HOST for its
+// own gh calls. The record-authored Premise-check: command must not inherit that
+// pin: a remote-inferring gh call inside it would reach the --repo's host, fail,
+// and read as satisfied-at-base, staging a close proposal. A GH_HOST the user
+// exported is theirs, and still reaches the command.
+const { pinExplicitRepoHost, _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
+
+function withGhHost(value, fn) {
+  const had = Object.prototype.hasOwnProperty.call(process.env, 'GH_HOST');
+  const saved = process.env.GH_HOST;
+  if (value === undefined) delete process.env.GH_HOST;
+  else process.env.GH_HOST = value;
+  _resetGhHostCache();
+  try { return fn(); } finally {
+    if (had) process.env.GH_HOST = saved;
+    else delete process.env.GH_HOST;
+    _resetGhHostCache();
+  }
+}
+
+function runWithRealPin(repo, command, runDir) {
+  const deps = fakeDeps(repo, { body: shapedBodyWithPremiseCheck(command), runPremiseCheck: runPremiseCheckDefault });
+  deps.pinGhHost = (repoSpec) => pinExplicitRepoHost(repoSpec);
+  const exitCode = run(['1829', '--run-dir', runDir, '--repo', 'acme.ghe.com/owner/repo'], deps);
+  assert.strictEqual(exitCode, 0, deps.calls.stderr.join(''));
+  return JSON.parse(deps.calls.stdout.join('')).premise;
+}
+
+test('#4505: the GH_HOST materialize pinned for --repo does not reach the Premise-check command', () => {
+  const repo = gitRepo();
+  withCwd(repo, () => withGhHost(undefined, () => {
+    const command = '[ -z "${GH_HOST+x}" ]';
+    const premise = runWithRealPin(repo, command, runDirFor(repo));
+    assert.strictEqual(process.env.GH_HOST, 'acme.ghe.com', "the pin still lands for materialize's own gh calls");
+    assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
+    assert.ok(!fs.existsSync(path.join(runDirFor(repo), 'staged')), 'no close proposal is staged');
+  }));
+});
+
+test("#4505: a user's own exported GH_HOST is never stripped from the Premise-check command", () => {
+  const repo = gitRepo();
+  withCwd(repo, () => withGhHost('mine.example', () => {
+    const command = '[ "$GH_HOST" = mine.example ]';
+    const premise = runWithRealPin(repo, command, runDirFor(repo));
+    assert.strictEqual(process.env.GH_HOST, 'mine.example');
+    assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
+  }));
+});

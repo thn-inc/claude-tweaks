@@ -33,7 +33,7 @@ function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
     const stdout = execFileSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...env } });
     return { code: 0, stdout };
   } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
+    return { code: e.status, stdout: e.stdout || '', stderr: e.stderr || '' };
   }
 }
 
@@ -600,4 +600,22 @@ test('archive-run: a Review Console terminal decision line turns the can\'t-tell
   assert.doesNotMatch(result.stdout, /cant-tell-unfiled/);
   assert.ok(!fs.existsSync(runDir), 'run dir must be moved');
   assert.ok(fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId, 'config.yml')));
+});
+
+test('#4773 #4834: archive-run refuses an undeclared flag (--dry-run) on stderr with exit 1, before any move or commit', () => {
+  const argOrders = [
+    (runDir) => ['--run', runDir, '--dry-run'],
+    (runDir) => ['--dry-run', '--run', runDir],
+  ];
+  for (const buildArgs of argOrders) {
+    const { root, runDir, runId } = runDirFixture('clean');
+    const headBefore = git(['rev-parse', 'HEAD'], root);
+    const result = runHook(['archive-run', ...buildArgs(runDir)], { cwd: root });
+    assert.strictEqual(result.code, 1);
+    assert.strictEqual(result.stdout, '');
+    assert.strictEqual(result.stderr, "claude-tweaks: archive-run: unknown flag '--dry-run'\nclaude-tweaks: usage: archive-run [--run <dir>]\n");
+    assert.ok(fs.existsSync(path.join(runDir, 'config.yml')), 'run dir must stay in place');
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'pipelines', 'archive', runId)), 'nothing archived');
+    assert.strictEqual(git(['rev-parse', 'HEAD'], root), headBefore, 'no commit');
+  }
 });

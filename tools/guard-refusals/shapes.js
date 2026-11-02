@@ -456,6 +456,11 @@ const DETECTORS = [
     test: keyword('eval'),
   },
   {
+    id: 'source-token',
+    row: '`echo source`; `grep -n "source" file.md`',
+    test: wholeWord('source'),
+  },
+  {
     id: 'gh-computed-input',
     row: "`cat > \"$TMPDIR/x.md\" <<'EOF' … EOF` then `gh pr comment N --body-file \"$TMPDIR/x.md\"`; `A=\"$(node \"/lit/bin/session-tmp-resolve.js\" --value a.txt)\"` then `gh issue view \"$A\" --repo o/r --json number`, or `gh issue view N --repo o/r --json number < \"$A\"`",
     test: ghComputedInput,

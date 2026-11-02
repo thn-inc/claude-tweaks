@@ -1,6 +1,6 @@
 # Observation Plan — Schema and Authoring Rules
 
-Canonical definition of the `### Observation plan` section of a Verification Brief. The
+Canonical definition of the `### Observation plan` section of an acceptance packet (`_shared/acceptance-packet.md`), or of a legacy Verification Brief. The
 producer (`skills/wrap-up/verification-brief.md` Step 2) authors one per record at wrap-up
 time; `/claude-tweaks:demo` Step 2 executes it show-first; demo's session-recall path
 composes one directly from recall. Both cite this file — the schema and per-kind semantics

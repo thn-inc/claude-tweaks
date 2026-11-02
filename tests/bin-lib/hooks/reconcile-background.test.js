@@ -241,6 +241,113 @@ test('reconcile-background summary: counts each check\'s taken entries (characte
   assert.deepEqual(summary.skipped, [{ check: 'release', reason: 'x' }]);
 });
 
+test('reconcile-background summary: counts post-merge runs and the parents they closed, a marker-write-failed entry\'s parents included (#4599)', async () => {
+  const summary = await backgroundSummaryFor({
+    postMerge: [
+      { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 2 },
+      { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'reopened', parentsClosed: 0 },
+      { runDir: '/r/c', pr: 3, action: 'skipped', reason: 'merge-grace' },
+      { runDir: '/r/d', pr: 4, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 5 },
+      { runDir: '/r/e', pr: 5, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/f', pr: 6, action: 'ran', closingLinks: 'an unreadable envelope', parentsClosed: 0, step40Failed: true },
+      { runDir: '/r/g', pr: 7, action: 'skipped', reason: 'error', detail: 'boom' },
+    ],
+  });
+  assert.equal(summary.postMergeRan, 2, 'a Step 4.0 failure is not a run that ran');
+  assert.equal(summary.postMergeFailed, 3, 'a thrown check counts as failed too');
+  assert.equal(summary.postMergeParentsClosed, 2, 'only the runs that wrote their marker');
+  // The marker write failed for /r/d, but its 5 parents are closed on GitHub, so they are counted, apart from the 2.
+  assert.equal(summary.postMergeUnmarkedParentsClosed, 5);
+  for (const result of [{}, { postMerge: [] }, { postMerge: null }]) {
+    const none = await backgroundSummaryFor(result);
+    assert.equal(none.postMergeRan, 0);
+    assert.equal(none.postMergeFailed, 0);
+    assert.deepEqual(none.postMergeFailedRecords, []);
+    assert.equal(none.postMergeParentsClosed, 0);
+    assert.equal(none.postMergeUnmarkedParentsClosed, 0);
+  }
+});
+
+test('AC1.1 AC1.2 AC1.3: a close-failed ran entry counts as failed and names its records (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, [101]);
+});
+
+test('AC2.1 AC2.2: a clean word with parentFailures counts as failed (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, parentFailures: [{ parent: 9, reason: 'gh-failed' }] },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, []);
+});
+
+test('AC3.1: transient-failure and marker-write-failed stay out of both counts (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'skipped', reason: 'transient-failure' },
+    { runDir: '/r/b', pr: 2, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 1 },
+  ] });
+  assert.equal(summary.postMergeFailed, 0);
+  assert.equal(summary.postMergeRan, 0);
+});
+
+test('a failed run with no record list still counts as failed and names nothing (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.deepEqual(summary.postMergeFailedRecords, []);
+});
+
+test('a closing-links word added later reads as failed, not clean (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'a-word-added-later', parentsClosed: 0 },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+});
+
+test('a record two failed runs name is listed once, sorted (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/c', pr: 3, action: 'ran', closingLinks: 'reopen-failed', parentsClosed: 0, records: { failed: [7], closeFailed: [], pendingClose: [3], unchecked: [] } },
+    { runDir: '/r/d', pr: 4, action: 'ran', closingLinks: 'close-pending', parentsClosed: 0, records: { failed: [], closeFailed: [], pendingClose: [3], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 2);
+  assert.deepEqual(summary.postMergeFailedRecords, [3, 7]);
+});
+
+test('a base-unchecked run names its unchecked records (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'base-unchecked', parentsClosed: 0, step40Failed: true, records: { failed: [], closeFailed: [], pendingClose: [], unchecked: [5, 6] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.deepEqual(summary.postMergeFailedRecords, [5, 6]);
+});
+
+test('a failed run still reports the parents its Step 4.0b closed (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 2, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeRan, 0);
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeParentsClosed, 2);
+});
+
+test('a failed run whose decisions.md append failed flags the missing log; a clean logFailed run does not (#4897)', async () => {
+  const failed = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, logFailed: true, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(failed.postMergeFailedLogMissing, true);
+  const logged = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(logged.postMergeFailedLogMissing, false);
+});
+
 test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {
   const summary = await backgroundSummaryFor({
     ledgerResidue: [
@@ -299,6 +406,18 @@ test('FAST_CHECKS (session-start.js) + BACKGROUND_CHECKS (bin/hooks.js) partitio
     [...ALL_CHECKS].sort(),
     'FAST_CHECKS + BACKGROUND_CHECKS must partition ALL_CHECKS exactly — nothing dropped, nothing duplicated',
   );
+});
+
+// #4599: post-merge writes GitHub comments and a decisions.md marker, so it is a background (write)
+// check, never an inline SessionStart one. It is deliberately not CLI-deferred: it must run in the
+// same pass as archive, ahead of it, so the unscoped CLI keeps it inline beside archive.
+test('post-merge is a BACKGROUND_CHECKS member, not a FAST_CHECKS or CLI_DEFERRED_CHECKS one, and sits before archive (#4599)', () => {
+  const { FAST_CHECKS } = require('../../../plugin/bin/lib/hooks/session-start');
+  const { BACKGROUND_CHECKS, CLI_DEFERRED_CHECKS } = require('../../../plugin/bin/hooks');
+  assert.ok(BACKGROUND_CHECKS.includes('post-merge'));
+  assert.ok(!FAST_CHECKS.includes('post-merge'));
+  assert.ok(!CLI_DEFERRED_CHECKS.includes('post-merge'));
+  assert.ok(BACKGROUND_CHECKS.indexOf('post-merge') < BACKGROUND_CHECKS.indexOf('archive'), 'post-merge precedes archive in the background list too');
 });
 
 // #4032: the unscoped `reconcile` CLI hands CLI_DEFERRED_CHECKS to the

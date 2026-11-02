@@ -1,6 +1,7 @@
 ---
 files:
   - plugin/skills/_shared/local-merge-auto-finish.md
+  - plugin/skills/_shared/local-merge-sequence.md
   - plugin/bin/compose-subject.js
   - plugin/bin/lib/commit-scope.js
   - plugin/skills/wrap-up/cleanup-procedures-execution.md
@@ -26,7 +27,7 @@ files:
 - **Red flags:** An interactive `AskUserQuestion`-shaped menu appearing here for a run whose `config.yml` exists — that would mean the precondition check was skipped.
 
 ### 2a. The branch merges itself — terminal, no interaction
-- **URL:** none — `_shared/local-merge-auto-finish.md`'s Procedure runs from inside the worktree/main checkout
+- **URL:** none — `_shared/local-merge-auto-finish.md`'s Procedure runs from inside the worktree/main checkout, driving `_shared/local-merge-sequence.md`'s guard, `close-run`, merge and push steps
 - **Action:** The default policy (merge locally) resolves the integration branch and reads the run's worktree from `run-state.json`, then runs every check that can fail without touching the tree — the branch guard, `bin/compose-subject.js` for the merge message (`--tag auto-finish --range {base-branch}...{feature-branch}`), and a `git merge-tree --write-tree` conflict pre-check — before `hooks.js close-run` clears the worktree assignment. Only then does it merge the feature branch with `--no-ff -F "{subject-dir}/message.txt"`, run verification on the merged result, and — on green — push and log the `merged` outcome.
 - **Should feel:** Invisible — the maintainer notices only that the branch is already merged when they check back.
 - **Should understand:** Discard and keep-as-is are never chosen automatically — merging locally is the only default this path can produce, matching `finishing-a-development-branch`'s own rule that discard requires an explicit human ask. The merge commit's subject is Conventional-Commits shaped (`feat|fix|chore[(scope)][!]: {title} (#N)`, #2251) and its body carries the `Fixes #N` line plus an `[auto-finish]` paragraph, so the record still auto-closes and `/help`'s auto-merged metric still counts it. The `(scope)` is present only when the project sets the `commit-scope` or `commit-scope-paths` policy key — the composer resolves it from the `--range` diff's changed paths (#3298).
@@ -34,10 +35,10 @@ files:
 
 ### 2b. The merge can't complete cleanly — parks instead
 - **URL:** none — the Park branch inside `_shared/local-merge-auto-finish.md`'s Procedure
-- **Action:** A branch-guard mismatch, a composer failure, or a conflict `git merge-tree` predicts parks before `close-run` runs, so the run's `worktree` and `status` are untouched. A failure that can only show up after `close-run` (a guard race, a merge `merge-tree` didn't predict, a failed verification or push) re-stamps the run with `hooks.js record-worktree --run`, restoring its worktree assignment and `active` status. A guard race or failed merge aborts the merge and a red verification resets it, but a failed push keeps the local merge commit and logs it as unpushed, so a human resuming the run can push it. Either way it logs an `AUTO … [outcome: pending-review]` line naming the reason, and the worktree, branch, and issue claim are left as they were.
+- **Action:** A branch-guard mismatch, a composer failure, or a conflict `git merge-tree` predicts parks before `close-run` runs, so the run's `worktree` and `status` are untouched. A failure that can only show up after `close-run` (a merge-guard abort — the checkout moved, or another session's merge is in progress — a merge `merge-tree` didn't predict, a failed verification or push) re-stamps the run with `hooks.js record-worktree --run`, restoring its worktree assignment and `active` status. A failed merge aborts the merge it started and a red verification resets it; a merge-guard abort touches nothing, since no merge of this run started and the checkout is not this run's to undo; a failed push keeps the local merge commit and logs it as unpushed, so a human resuming the run can push it. Either way it logs an `AUTO … [outcome: pending-review]` line naming the reason, and the worktree, branch, and issue claim are left as they were.
 - **Should feel:** A clear stop, not a silent failure — the next session picking this up sees precisely why it parked, and finds the run still assigned to its worktree.
 - **Should understand:** This is the one decision `_shared/auto-mode-contract.md` reserves for a human — conflict resolution is never attempted automatically, regardless of mode. A `CONFLICT` line from the pre-check is a predicted conflict; a stderr error with none (git older than 2.38, an unknown ref) is logged as `pre-check failed`.
-- **Red flags:** A worktree left half-merged; a park with no log entry naming the reason; a parked run whose `run-state.json` has no `worktree` (the reconciler could then treat a run that still needs a human as finished); a failed push that undid the local merge commit or retried the push automatically.
+- **Red flags:** A worktree left half-merged; a park with no log entry naming the reason; a parked run whose `run-state.json` has no `worktree` (the reconciler could then treat a run that still needs a human as finished); a failed push that undid the local merge commit or retried the push automatically; a merge-guard abort followed by `git merge --abort`, which would undo another session's in-progress merge.
 
 ### 3. Interactive mode is unaffected
 - **URL:** `/superpowers:finishing-a-development-branch`'s own menu, reached only when `local-merge-auto-finish.md`'s Precondition fails
@@ -52,3 +53,4 @@ files:
 - Related: #688, #689, #693 (the `pr-first` sibling behavior this journey mirrors)
 - Updated during build of #3522 (guard-safe --out-dir merge fences): the composed message is read from `{subject-dir}/message.txt` via `git merge -F`, not an `eval`d `-m`
 - Updated during build of #3762 (close-run ordering): the guard, composer and `git merge-tree` conflict pre-check run before `close-run`, and a park after `close-run` re-stamps the run via `record-worktree`
+- Updated during wrap-up of #4073 (shared local-merge sequence): the guard, merge and push now come from `_shared/local-merge-sequence.md`; its merge guard also refuses when another session's merge is in progress, and a guard abort never runs `git merge --abort`

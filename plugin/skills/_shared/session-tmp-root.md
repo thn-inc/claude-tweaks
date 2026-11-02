@@ -135,7 +135,7 @@ record-suffixed-caller case above), `skills/journey-health/SKILL.md`,
 `skills/wrap-up/docs-health-integration.md`, `skills/wrap-up/leftover-routing.md`,
 `skills/wrap-up/verification-brief-parent-gate.md`, `skills/_shared/label-bootstrap.md`,
 `skills/_shared/github-pr-scan.md`, `skills/_shared/github-pr-scan-acceptance.md`,
-`skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
+`skills/_shared/github-pr-scan-unsettled-resume.md`, `skills/_shared/harness-health-analysis.md`, `skills/wrap-up/verification-brief.md`,
 `skills/flow/summary-template.md`, and `skills/flow/multispec-summary.md` (#2821 — the three share
 one session file, `try-it-{N}.md`: wrap-up writes it and flow's Pipeline Summary reads it back).
 
@@ -149,3 +149,5 @@ in step 1.
 **Extended (#4173):** `skills/_shared/pr-first-merge.md`'s Step 2.5, which resolves its checks capture
 (`pr-checks-{n}.txt`), head-runs capture (`pr-runs-{n}.json`) and park-comment body (`park-comment-{n}.md`)
 in one CLI call at the state read.
+
+**Extended (#4559):** `skills/build/dispatch.md`'s stash guard (`stash-guard-{id}.json`, the standalone /build snapshot path; `stash-guard-{id}-note.txt`, the dirty-tree note's `--text-file`).

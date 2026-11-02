@@ -11,6 +11,7 @@ The single home of the rule every exhaust channel applies before anything become
 - `skills/build/SKILL.md` (Common Steps 2 and 4 — Scope and edit discipline's reported follow-ups; review findings carried to the ledger)
 - `skills/build/dispatch.md` (the SDD invocation's review-finding rule)
 - `skills/_shared/ledger-format.md` (the ledger resolve gate's Phase 1 / 2 / 3)
+- `skills/wrap-up/review-console-appendix.md` (an SDD ruling's reversal record — Deriving the value from the criteria)
 
 The code twins are `clearsFloor` (`bin/lib/issues/autonomy.js`) and `recordPayload`'s `deferReason` option (`bin/lib/issues/record.js`); `DEFER_REASONS` in `record.js` is the vocabulary's only code home, and `tests/deferral-gate-conformance.test.js` pins this file and that export equal.
 
@@ -66,6 +67,10 @@ blocked-dependency — the fix waits on functionality not yet built
 | `genuinely-larger` | yes |
 | `tangential` | no |
 | `pre-existing-outside-diff` | no |
+
+### Deriving the value from the criteria
+
+A producer that derives the value from the Fix-now criteria, rather than judging it directly, stamps the value of the first criterion that fails, in the list order above: not localized → `genuinely-larger`; needs functionality not yet built → `blocked-dependency`; needs a product/design decision → `needs-human-decision`; needs external state → `blocked-external`; materially expands scope → `genuinely-larger`. The derivation never reaches `tangential` or `pre-existing-outside-diff`, since neither is a criterion's value. When every criterion holds — the item would have been fix-now, and only a closed fix wave stops it — stamp `needs-human-decision`: scheduling work no fix wave can take any more is a human call. When the item carries too little to judge a criterion, stamp `needs-human-decision` too, and say in the proposal's Current State that the criteria could not be evaluated: the all-hold stamp is never a silent fallthrough.
 
 ## The hard gate
 

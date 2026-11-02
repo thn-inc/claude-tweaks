@@ -35,6 +35,7 @@ const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust
 const { resolvePolicyConfig } = require('../policy-schema');
 const { sddRulingDeferralReason, SDD_RULING_REASONS } = require('../console/sdd-ruling');
 const { canonicalRealpath, resolveLeaf, isAncestorOrSelf } = require('../path-guard');
+const { ghOptions } = require('../repo-resolve');
 
 const FETCH_TIMEOUT_MS = 5000;
 // _shared/console-execution.md's Pre-execution claim section — a claim older
@@ -144,7 +145,7 @@ async function ghJson(repoRoot, args) {
     ({ stdout } = await execFileAsyncTimed(
       'gh',
       args,
-      { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true },
+      ghOptions(args, { cwd: repoRoot, encoding: 'utf8', timeout: FETCH_TIMEOUT_MS, windowsHide: true }),
     ));
   } catch (e) {
     if (e && e.code === 'ENOENT') return { ok: false, reason: 'gh-absent' };
@@ -667,10 +668,11 @@ async function resolveConsoleExecution(runDir, {
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
-  // here would propagate to hooks.js's main()'s top-level
-  // `.catch(() => process.exit(0))` and exit silently successful — this
-  // module's own header names that exact hazard as one a sibling code path
-  // was already patched to avoid.
+  // here would propagate to hooks.js's main() and surface only as the
+  // generic `claude-tweaks: resolve-console: {message}` exit 1 (#4932), not
+  // the distinguishable console-write-failed status, so the caller could not
+  // tell that both gh writes already landed — this module's own header names
+  // that exact hazard as one a sibling code path was already patched to avoid.
   const nextConsoleJson = {
     ...consoleJson,
     ...(Array.isArray(consoleJson.items) ? {

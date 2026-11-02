@@ -188,3 +188,42 @@ test('AC1.1: an unreadable claim is reported on the output and the happy path st
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('shaping-mode.md names deepOverlapHits candidates as likely duplicates before stamping ready (#4701)', () => {
+  const start = SHAPING_MODE.indexOf('Near-duplicate candidate check (#1944)');
+  const end = SHAPING_MODE.indexOf('### Dependency-narration check', start);
+  assert.ok(start !== -1 && end !== -1, 'near-duplicate section anchors must exist');
+  const section = SHAPING_MODE.slice(start, end);
+  assert.match(section, /`deepOverlapHits`/);
+  assert.match(refusalFenceBody().fence, /deepOverlapHits\(hits\)/);
+  assert.match(section, /likely\s+duplicate/);
+  assert.match(section, /before\s+stamping\s+`ready`/);
+  assert.match(section, /at\s+least\s+3\s+shared\s+Current\s+State\s+anchors\s+\(`DEEP_OVERLAP_MIN`/);
+  assert.strictEqual(require('../plugin/bin/lib/issues/near-duplicate').DEEP_OVERLAP_MIN, 3);
+  assert.match(section, /surface-only/);
+  assert.match(section, /never\s+refuses/);
+});
+
+test('the shaping-mode.md refusal fence prints a hit at DEEP_OVERLAP_MIN shared anchors as deep, and one below it not (#4701)', () => {
+  const { execFileSync } = require('node:child_process');
+  const os = require('node:os');
+  const code = refusalFenceBody().fence.split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_DIR);
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'near-dup-fence-'));
+  const hits = path.join(dir, 'hits.json');
+  const snapshot = path.join(dir, 'snapshot.json');
+  // No hit is title-similar, so the fence makes no claim or GraphQL read — this runs offline.
+  fs.writeFileSync(hits, JSON.stringify([
+    { number: 4093, title: 'Deep', signals: ['body-anchor-overlap'], sharedAnchors: ['a.js', 'b.js', 'c.js'] },
+    { number: 3508, title: 'Shallow', signals: ['body-anchor-overlap'], sharedAnchors: ['a.js', 'b.js'] },
+  ]));
+  fs.writeFileSync(snapshot, JSON.stringify([
+    { number: 4093, labels: ['ready'] },
+    { number: 3508, labels: ['ready'] },
+  ]));
+  try {
+    const out = execFileSync(process.execPath, ['-e', code, hits, snapshot], { encoding: 'utf8' });
+    assert.deepStrictEqual(JSON.parse(out.trim()), { refuse: false, deep: [{ number: 4093, sharedAnchors: 3 }] });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});

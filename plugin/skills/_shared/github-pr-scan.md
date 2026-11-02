@@ -321,12 +321,12 @@ Full sweep of open PRs, `by:code-health`-labelled issues, `by:harness-health`-la
         }
         const progress = progressOf(pr.number);
         if (progress && Date.parse(progress) > Date.parse(claimedAt)) return;
-        console.log('[unsettled] #' + number + ': PR #' + pr.number + ' silent ' + Math.round(ageHours) + 'h after claim — resume: read the Resume line in ' + pr.url + \"'s body (PIPELINE_RUN_DIR=... /claude-tweaks:flow ...), per _shared/pr-early-run-lifecycle.md\");
+        console.log('[unsettled] #' + number + ': PR #' + pr.number + ' silent ' + Math.round(ageHours) + 'h after claim — resume: read the Resume line in ' + pr.url + \"'s body (via bin/pr-resume-line.js), per _shared/pr-early-run-lifecycle.md\");
       });
     "
     ```
 
-    `gh pr view`'s `commits`/`comments` fields are bounded per-PR (recent-first) — a PR whose activity list is long enough to truncate before reaching its true latest entry is not the failure mode this check guards against (truncation drops the *oldest* entries, and this check only ever needs the *newest* one), so no `--limit`-exhaustion warning applies here the way it does for the `acceptance-gap`/`parent-gate` scopes' parent-fetch truncations. The resume command comes from the PR body's own Resume line (`_shared/pr-early-run-lifecycle.md`'s `PIPELINE_RUN_DIR="{run-dir}" /claude-tweaks:flow "{target}" {next-step}`) when a PR exists — read and report it verbatim rather than reconstructing it, since only the PR body carries `{next-step}`. When no PR exists, the claim blob's own `runId` is all that is known — the reconstructed command above starts from `reconcile` rather than a specific `{next-step}`, since a claim with no PR is exactly the state `_shared/pr-early-run-lifecycle.md`'s reopen-or-create step is designed to repair on its own the next time anything touches that run.
+    `gh pr view`'s `commits`/`comments` fields are bounded per-PR (recent-first) — a PR whose activity list is long enough to truncate before reaching its true latest entry is not the failure mode this check guards against (truncation drops the *oldest* entries, and this check only ever needs the *newest* one), so no `--limit`-exhaustion warning applies here the way it does for the `acceptance-gap`/`parent-gate` scopes' parent-fetch truncations. The resume command for an `[unsettled]` row is not defined here: whoever reports one reads `_shared/github-pr-scan-unsettled-resume.md` before reporting its resume command, whether or not a PR exists — which says when the PR body's Resume line is reported and when the reconstructed `reconcile` command is.
 
 11. **Stale pending-review PR** (#2367) — a `pending-review` PR (`dispatch/reporting.md`'s parking outcome: an open, non-draft, plugin-created PR — the same `claude-tweaks-run` marker item 9 detects, housekeeping-marker PRs excluded since those are mechanical, never a parked record — that has never been armed, `autoMergeRequest` absent) has no proactive mergeability re-check while it waits for a human; it can go from clean to conflicting purely from *other* records merging into the integration branch, discovered only at merge time. This scope's own schedule (independent of any single dispatch firing) is what re-checks it.
 
@@ -467,7 +467,7 @@ issue-backed (`gh issue list`, `gh api .../sub_issues`), so on `gh`-absent they 
 
 ## Output Contract
 
-Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope only), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
+Two collection prefixes for PR/code-health/harness-health/journey-health/docs-health findings, one grant-queue-metrics prefix (`repo-wide` scope only, unconditional — the grant-queue counts exist regardless of which driver stores records), one un-dispositioned-closed-record prefix (`acceptance-gap` scope, and `parent-gate`'s hand-closed-parent branch), and one un-gated-parent prefix (`parent-gate` scope only) — all emitted as standard Template A rows (`_shared/subagent-dispatch-core.md`) so existing dispatchers consume them unchanged:
 
 - `[pr]` — pull-request findings: `[pr] PR #{n}: {title} — {issue} — {recommendation}`
 - `[gh-issue]` — code-health/harness-health/journey-health/docs-health issue findings: `[gh-issue] #{n}: {title} — {issue} — {recommendation}`
