@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T21:33:29.161Z",
+  "computedAt": "2026-11-02T21:45:01.389Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -695,7 +695,7 @@
       },
       {
         "number": 4265,
-        "updatedAt": "2026-10-31T09:59:11Z",
+        "updatedAt": "2026-11-02T21:44:39Z",
         "state": "OPEN"
       },
       {
@@ -8416,7 +8416,7 @@
         "number": 4265,
         "state": "OPEN",
         "title": "claim-targets release-on-abort can tombstone a competing run's live claim: add a runId check",
-        "updatedAt": "2026-10-31T09:59:11Z",
+        "updatedAt": "2026-11-02T21:44:39Z",
         "facets": {
           "origin": null,
           "risk": "medium",
