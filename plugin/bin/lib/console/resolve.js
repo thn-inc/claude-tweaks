@@ -13,6 +13,7 @@ const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
+const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
@@ -500,7 +501,7 @@ function approveAllDefault(recommendation) {
 }
 
 // A STAGED line's finding keys: its first location's, plus the second location of a
-// two-finding coincidence line (step3-lens-dispatch.md: `lens "L" findings P:A / P:B share a location …`).
+// two-finding coincidence line (finding-path.js parseCoincidence, the clause the aggregate detector exempts).
 // Each location takes its longest candidate (locationCandidates) a settler's key names, else the
 // FINDING_PATH match (#4632). The second location's candidates start after the ` / `. A second
 // location FINDING_PATH cannot read keys as its raw text, which no settler names, so the line stays open.
@@ -510,27 +511,22 @@ function lineKeys(line, known = new Set()) {
   const lens = FINDING_LENS_RE.exec(line);
   const loc = FINDING_LOC_RE.exec(line);
   if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
-  const co = COINCIDENCE_RE.exec(line);
-  const second = co && FINDING_LOC_RE.exec(co[2]);
-  if (second) keys.push(namedCandidate(locationCandidates(co[2], second, co[1]), known));
-  else if (co) keys.push(`${co[1]}|${co[2]}`);
+  const co = parseCoincidence(line);
+  const second = co && FINDING_LOC_RE.exec(co.second);
+  if (second) keys.push(namedCandidate(locationCandidates(co.second, second, co.lens), known));
+  else if (co) keys.push(`${co.lens}|${co.second}`);
   return keys;
 }
 
 // A converged-positive cross-lens debate (review step 3: `AUTO … Debate: cross-lens disagreement on P:N
 // converged positive after R round(s) (lens "L" finding P:N; lens "M" finding P:M — both confirmed)`) settles
 // every finding its lens list names (#4563). A list entry's path defaults to the region path P (the
-// as-recorded `lens 3a :5` shape). A line with no lens list, or any other debate outcome, names nothing.
+// as-recorded `lens 3a :5` shape); a quoted multi-word lens keys on its first token (FINDING_LENS, #4581).
+// A line with no lens list, or any other debate outcome, names nothing.
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
-// The path of a finding key `{lens}|{path}:{line}` (#4582): `@ + ~ % $` join the plain class, and `[id]` / `(group)` count only as a
-// closed group inside one segment, so a citation wrapped in them (`[src/a.ts:4]`) still keys the bare path. A space, `=` and `,` stay out.
-const FINDING_PATH_CLASS = String.raw`A-Za-z0-9_./@+~%$-`; // the plain class, also locationCandidates' boundary test (#4632)
-const FINDING_LENS_CLASS = String.raw`A-Za-z0-9_-`; // a lens token, on STAGED and verdict lines alike (#4632)
-const FINDING_PATH = String.raw`(?:[${FINDING_PATH_CLASS}]|\[{1,2}[A-Za-z0-9_.@+~%$-]+\]{1,2}|\([A-Za-z0-9_.@+~%$-]+\))+\.[A-Za-z0-9]+`;
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
-const DEBATE_ENTRY_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
-const COINCIDENCE_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?\s+findings\s+.+?:\d+\s+\/\s+(.+?:\d+\s+share a location)`);
-const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+const DEBATE_ENTRY_RE = new RegExp(String.raw`\b${FINDING_LENS}\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
+const FINDING_LOC_RE = new RegExp(FINDING_LOCATION);
 const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
 const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
 const FINDING_PATH_CHAR = new RegExp(`[${FINDING_PATH_CLASS}]`);
@@ -559,7 +555,7 @@ function namedCandidate(candidates, known) {
 function debateConvergedKeys(line) {
   const m = DEBATE_CONVERGED_RE.exec(line);
   if (!m) return [];
-  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1]}|${e[2] || m[1]}:${e[3]}`);
+  return Array.from(m[3].matchAll(DEBATE_ENTRY_RE), (e) => `${e[1] ?? e[2]}|${e[3] || m[1]}:${e[4]}`);
 }
 
 const FINDING_SECTIONS = [SECTIONS.LOW, SECTIONS.CONTESTED];
@@ -964,4 +960,4 @@ function resolveAll({ runDir, policy, deps }) {
   return result;
 }
 
-module.exports = { FINDING_PATH, SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };
+module.exports = { SECTIONS, SECTION_MAP, SHADOW_DUP_RE, SHADOW_DUP_OUTCOMES, CANONICAL_PREFIXES, STAGING_EXEMPTIONS, stagingExemption, nearestCanonicalPrefixes, SECTION_STANCES, ENGINE_ROW_SECTIONS, SDD_RULING_REASONS, sddRulingDeferralReason, classifyStagedItem, readSnapshot, resolveAll, findingItems, refusedStagedNames, runIdOf, cell, renderDroppedBlock, parseTiebreakLine, approveAllDefault, renderTable, renderStoredTable, drainOverlapHoldPrs };

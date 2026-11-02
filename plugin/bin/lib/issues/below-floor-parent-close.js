@@ -33,6 +33,14 @@
 // `closeFailed[]` entry's issue — and any parent whose sub-issues include one
 // is skipped (`sibling-unsettled`).
 //
+// Read order (#4799: the REST core limit was exhausted on 2026-10-31 by sibling reads
+// of parents the gate then skipped): the parent's labels (shape 6) are read first and
+// the parent-level skips (`not-parent-issue-labeled`, `needs-label`) decided over them
+// alone; only then is the parent's sub-issue list enumerated (shapes 3/4), and
+// `sibling-unsettled` decided over its numbers alone. Only a parent that survives all
+// three gets the per-sibling reads (shape 5), ascending, and the full gate. A skipped
+// parent therefore costs no per-sibling read.
+//
 // Every gh call goes through the injected `gh(args, input?)`, which returns
 // stdout and throws on failure. Both writes carry `--repo`, as the gate's reads
 // do, so a parent is written in the repository it was read from. `host` is the
@@ -47,12 +55,15 @@
 // not gate the close: a failed or blank read closes with trusted-only marker
 // matching and puts parent-gate.js's IDENTITY_PROBE_FAILED_NOTE in the closed
 // entry's `notes` (#4770). It is read once per call, success or failure, and
-// replayed to every later parent.
+// replayed to every later parent. The skip reasons this module emits are pinned
+// against Step 4.0b's prose and the gate's no-op states by the #4800 block of
+// tests/below-floor-parent-close-conformance.test.js.
 'use strict';
 
 const {
   CLOSE_HEADING, VALID_RISK_FLOORS, isCloseMarkerComment, GhFailure, ghCaller, numberSet, resolveParent,
-  gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence, readLogin,
+  enumerateSubIssues, readParentLabels, readSubIssueFacts,
+  gatherIdempotenceFacts, evaluateParentGate, evaluateIdempotence, readLogin,
 } = require('./parent-gate');
 const { repoSlug } = require('../repo-resolve');
 
@@ -68,12 +79,31 @@ function composeCloseComment({ maxTier, riskFloor, notPlanned, lines } = {}) {
   return `${parts.join('\n\n')}\n`;
 }
 
-// A gate verdict -> the reason this parent is skipped, or null when it is due
-// below the floor. The checks run in the order the prose routes them.
-function skipReason(verdict) {
+// Every skip reason this module emits as a deliberate gate outcome, never a failure: skipReason's own
+// reasons, the parentGateState verdicts it passes through (`resolved`, `gated`, `incomplete` —
+// lib/issues/acceptance.js), and the close loop's idempotence skips. `gh-failed`, `internal-error` and
+// the step-wide `invalid-risk-floor` are failures and stay out, so a caller reading this list in the
+// deny direction reports any reason not named here — one added later included — as a failure.
+const DELIBERATE_SKIP_REASONS = Object.freeze([
+  'not-parent-issue-labeled', 'needs-label', 'sibling-unsettled', 'resolved', 'gated', 'incomplete',
+  'above-floor', 'already-closed', 'reopened-by-human',
+]);
+
+// A gate verdict -> the parent-level reason this parent is skipped, or null. These
+// need only the parent's labels (parentIssue, needs) and the sub-issue numbers (held),
+// so the caller runs them before any per-sibling read. In the order the prose routes them.
+function parentLevelSkip(verdict) {
   if (!verdict.parentIssue) return 'not-parent-issue-labeled';
   if (verdict.needs.length) return 'needs-label';
   if (verdict.held.length) return 'sibling-unsettled';
+  return null;
+}
+
+// A gate verdict -> the reason this parent is skipped, or null when it is due
+// below the floor. The checks run in the order the prose routes them.
+function skipReason(verdict) {
+  const parentLevel = parentLevelSkip(verdict);
+  if (parentLevel) return parentLevel;
   if (verdict.state !== 'due') return verdict.state;
   if (verdict.exceeds) return 'above-floor';
   return null;
@@ -122,9 +152,26 @@ function closeBelowFloorParents({
         if (handled.has(parent)) continue; // each parent is evaluated once
         handled.add(parent);
 
-        const facts = gatherGateFacts({ parent, owner, repo, host, workLinks, caller });
+        // The parent-level screens, before any sub-issue is enumerated or read (#4799).
+        const parentLabels = readParentLabels({ parent, slug, caller });
+        const screen = (subIssues) => parentLevelSkip(evaluateParentGate({
+          parent, parentLabels, subIssues, held: [...unsettledSet], riskFloor,
+        }));
+        const labelsReason = screen([]);
+        if (labelsReason) {
+          skipped.push({ parent, reason: labelsReason });
+          continue;
+        }
+        const numbers = enumerateSubIssues({ parent, owner, repo, host, workLinks, caller });
+        const numbersReason = screen(numbers.map((number) => ({ number })));
+        if (numbersReason) {
+          skipped.push({ parent, reason: numbersReason });
+          continue;
+        }
+
+        const subIssues = numbers.map((num) => readSubIssueFacts({ num, slug, caller }));
         const verdict = evaluateParentGate({
-          ...facts, closingSet: [...closing], selfInclude, held: [...unsettledSet], mergingPr, riskFloor,
+          parent, parentLabels, subIssues, closingSet: [...closing], selfInclude, held: [...unsettledSet], mergingPr, riskFloor,
         });
         const reason = skipReason(verdict);
         if (reason) {
@@ -165,4 +212,6 @@ function closeBelowFloorParents({
   return { closed, skipped };
 }
 
-module.exports = { CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment };
+module.exports = {
+  CLOSE_HEADING, DELIBERATE_SKIP_REASONS, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
+};
