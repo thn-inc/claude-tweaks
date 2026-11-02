@@ -493,21 +493,21 @@ function gatedWorld(origin, gateDeps) {
   return world;
 }
 
-test('AC1.1: an origin host the gate does not know is refused before any gh call, with stderr naming it and GH_HOST and no usage', () => {
+test('#4951 AC1.1: an origin host the gate does not know is refused before any gh call, with stderr naming it and GH_HOST and no usage', () => {
   const origin = 'https://git.corp.invalid/o/r.git';
   const gateDeps = { env: { GH_ENTERPRISE_TOKEN: 'x' }, readFile: () => '' };
   const refusal = repoFromOrigin(origin, gateDeps).refusal;
   const world = gatedWorld(origin, gateDeps);
   assert.equal(run(['--records', RECORDS_PATH], world.deps), 2);
   assert.deepStrictEqual(world.gh, [], 'no gh call: neither --hostname git.corp.invalid nor the bare o/r slug');
-  assert.equal(world.names().includes('linked'), false);
+  assert.deepStrictEqual(world.names(), ['readFile']);
   assert.equal(world.err.join(''), `stuck-open-prs.js: ${refusal}\n`);
   assert.match(world.err.join(''), /git\.corp\.invalid/);
   assert.match(world.err.join(''), /GH_HOST=git\.corp\.invalid/);
   assert.deepStrictEqual(world.out.map((line) => JSON.parse(line)), [{ failed: { code: 2, message: refusal } }]);
 });
 
-test('AC2.1: a *.ghe.com origin, a hosts.yml-key origin and a matching GH_HOST origin each carry --hostname on the linked-PR read', () => {
+test('#4951 AC2.1: a *.ghe.com origin, a hosts.yml-key origin and a matching GH_HOST origin each carry --hostname on the linked-PR read', () => {
   const cases = [
     ['https://acme.ghe.com/o/r.git', { env: {}, readFile: () => '' }, 'acme.ghe.com'],
     ['https://ghes.corp.invalid/o/r.git', { env: {}, readFile: () => 'ghes.corp.invalid:\n    user: x\n' }, 'ghes.corp.invalid'],
@@ -520,7 +520,7 @@ test('AC2.1: a *.ghe.com origin, a hosts.yml-key origin and a matching GH_HOST o
   }
 });
 
-test('AC3.1: a github.com. origin carries no --hostname on the linked-PR read', () => {
+test('#4951 AC3.1: a github.com. origin carries no --hostname on the linked-PR read', () => {
   const world = gatedWorld('https://github.com./o/r.git', { env: {}, readFile: () => '' });
   assert.equal(run(['--records', RECORDS_PATH], world.deps), 0);
   assert.equal(world.gh.length, 1);

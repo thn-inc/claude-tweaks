@@ -76,8 +76,7 @@ function repoFromOrigin(remote, gateDeps) {
 const realDeps = {
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   ghAvailable: () => ghAvailable(),
-  repo: () => repoFromOrigin(remoteUrl(), realDeps.gateDeps),
-  gateDeps: undefined,
+  repo: () => repoFromOrigin(remoteUrl()),
   mainRoot: () => mainCheckoutRoot(process.cwd()),
   linked: ({
     numbers, owner, repo, host,
