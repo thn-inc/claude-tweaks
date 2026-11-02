@@ -1495,6 +1495,13 @@ test('#3399: a parked-at-shaping line in the record body below the frontmatter d
   assert.strictEqual(inputs.parkedAtShaping[1930], false);
 });
 
+test('#4814 AC1.1: a record: line below the frontmatter never beats the filename', () => {
+  for (const header of ['---\norigin: capture\n---\n# 1930\n\nrecord: 999\n', '# 1930\n\nrecord: 999\n']) {
+    const inputs = resolveInputs({ runDir: mirrorWithHeader(header), cwd: '/nowhere', deps: okDeps() });
+    assert.deepStrictEqual(inputs.records, [1930], header);
+  }
+});
+
 test('#3399: parkedAtShaping is true for a record when any of its header files carries the flag, one entry per record', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wrap-up-pack-closing-dup-'));
   fs.mkdirSync(path.join(dir, 'work'));
