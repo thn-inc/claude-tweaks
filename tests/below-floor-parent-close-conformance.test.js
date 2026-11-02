@@ -11,6 +11,7 @@ const os = require('os');
 const path = require('path');
 const { execFileSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
+const { escapeRegExp } = require('../plugin/bin/lib/shared-primitives');
 
 const ROOT = path.join(__dirname, '..');
 const PLUGIN_ROOT = path.join(ROOT, 'plugin');
@@ -1250,8 +1251,7 @@ const withoutLiteral4770 = (gate, tidy, name) => {
   const [, region, lit] = FACTS_4770.find(([n]) => n === name);
   const raw = region(gate, tidy);
   assert.equal(collapse(raw).split(lit).length - 1, 1, `${name}: the literal occurs exactly once in its region`);
-  const wrapped = new RegExp(lit.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/ /g, '\\s+'));
-  const doctored = raw.replace(wrapped, '');
+  const doctored = raw.replace(wrapRe(lit), '');
   assert.notEqual(doctored, raw, `${name}: the literal was found in the raw region`);
   const inGate = gate.includes(raw);
   assert.ok(inGate || tidy.includes(raw), `${name}: the region is a slice of the gate or tidy text`);
@@ -1299,6 +1299,10 @@ test('#4770: the prose note matches the code constant', () => {
 
 // ---- #4800: the Step 4.0b skip rules are pinned across the prose and the module ----
 //
+// [IL-80] warns against reading live production prose in a test. It is acceptable here because
+// Step 4.0b's skip rules are the contract the module mirrors: a rule added to one side is meant to
+// make this test fail, and the maintainer's update to the table or the module is the intended action.
+//
 // Three enumerators read the live prose and name each deliberate skip reason it states; the module's
 // source names the reasons it emits. Two pins: the prose's reasons equal DELIBERATE_SKIP_REASONS, and
 // the prose's reasons less the gate's pass-through states equal the source's literals (the module
@@ -1306,8 +1310,10 @@ test('#4770: the prose note matches the code constant', () => {
 // states a skip (a skip word), or when it sits in the routing paragraph, from "Route a `no-parent`
 // verdict first" through "Every other outcome is a no-op": there every sentence must match a row
 // whatever its wording. The remaining limit: a rule stated outside the routing paragraph without a
-// skip word is not detected. The enumerators and the comparison take text and sets as parameters, so
-// the go-red controls below run the same functions on doctored in-memory text.
+// skip word is not detected, and neither is a reason added as a clause inside a sentence a row already
+// matches (the row is found by its opening words, so the sentence still classifies). The enumerators
+// and the comparison take text and sets as parameters, so the go-red controls below run the same
+// functions on doctored in-memory text.
 
 const BELOW_FLOOR_MODULE = path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'below-floor-parent-close.js');
 const FAILURE_REASONS = ['gh-failed', 'internal-error', 'invalid-risk-floor'];
@@ -1354,8 +1360,8 @@ function step40bInScope(sentences) {
   return sentences.filter((s, i) => (i >= start && i <= end) || /\b(skips?|skipped|no-op)\b/i.test(s));
 }
 
-// A sentence as a regex that tolerates the file's line wrapping.
-const wrapRe = (s) => new RegExp(s.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
+// A literal as a regex that tolerates the file's line wrapping.
+const wrapRe = (s) => new RegExp(s.split(/\s+/).map((w) => escapeRegExp(w)).join('\\s+'));
 
 // Each bullet of `text` that starts with `opener`, through its continuation lines and up to the
 // blank line that ends its paragraph.
@@ -1410,8 +1416,10 @@ function proseSkipSets({ step40b, gate, step1 }) {
 
 // The module's skip reasons, two ways. `deliberate` is DELIBERATE_SKIP_REASONS. `literals` is every
 // quoted literal in a `reason:` expression (up to its `,`, `}` or newline, so both arms of a ternary
-// count) and every `return '...'` literal, less the failure literals. The array's own entries are not
-// scanned, so the list cannot mask a deleted branch. `failures` are the failure literals the source names.
+// count), in a `reason = ...` assignment (up to `;` or newline), and in a `return` statement (up to
+// `;` or newline), less the failure literals. A reason named through a constant, not a literal, is
+// not seen. The array's own entries are not scanned, so the list cannot mask a deleted branch.
+// `failures` are the failure literals the source names.
 function codeSkipSets(raw) {
   const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
   const { DELIBERATE_SKIP_REASONS } = require('../plugin/bin/lib/issues/below-floor-parent-close');
@@ -1420,8 +1428,9 @@ function codeSkipSets(raw) {
   assert.ok(verdict === 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
   const quoted = (text) => [...text.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
   const expressions = [...src.matchAll(/\breason:([^,}\n]*)/g)].flatMap((m) => quoted(m[1]));
-  const returns = [...src.matchAll(/\breturn '([a-z-]+)'/g)].map((m) => m[1]);
-  const all = [...expressions, ...returns];
+  const assigned = [...src.matchAll(/\breason\s*=(?!=)([^;\n]*)/g)].flatMap((m) => quoted(m[1]));
+  const returns = [...src.matchAll(/\breturn\b([^;\n]*)/g)].flatMap((m) => quoted(m[1]));
+  const all = [...expressions, ...assigned, ...returns];
   return {
     deliberate: [...DELIBERATE_SKIP_REASONS].sort(),
     literals: [...new Set(all.filter((r) => !FAILURE_REASONS.includes(r)))].sort(),
@@ -1496,6 +1505,21 @@ test('#4800 go-red: a ternary-shaped reason added to the module fails the source
   assert.ok(live.moduleRaw.includes(anchor), 'the close-loop anchor is in the live module');
   const added = "skipped.push({ parent, reason: parent === -1 ? 'new-rule' : 'already-closed' });\n        ";
   assert.throws(() => assertSkipSetsPinned(live, live.moduleRaw.replace(anchor, () => `${added}${anchor}`)), /new-rule/);
+});
+
+test('#4800 go-red: a ternary return added to the module fails the source-literal pin', () => {
+  const live = liveSkipTexts();
+  const anchor = "if (verdict.exceeds) return 'above-floor';";
+  assert.ok(live.moduleRaw.includes(anchor), 'the above-floor branch is in the live module');
+  const added = "if (verdict.blocked) return verdict.held ? 'new-rule' : null;\n  ";
+  assert.throws(() => assertSkipSetsPinned(live, live.moduleRaw.replace(anchor, () => `${added}${anchor}`)), /new-rule/);
+});
+
+test('#4800 go-red: a reason assigned from a literal fails the source-literal pin', () => {
+  const live = liveSkipTexts();
+  const anchor = 'const reason = skipReason(verdict);';
+  assert.ok(live.moduleRaw.includes(anchor), 'the reason assignment is in the live module');
+  assert.throws(() => assertSkipSetsPinned(live, live.moduleRaw.replace(anchor, () => "const reason = skipReason(verdict) || 'new-rule';")), /new-rule/);
 });
 
 test('#4800 go-red: a stripper mis-parse fails the pin rather than reading as no reason', () => {
