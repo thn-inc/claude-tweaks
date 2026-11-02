@@ -64,14 +64,14 @@ function renderTemplate(template, { optedOut }) {
   const out = [];
   let inNote = false;
   for (const l of lines) {
-    if (!inNote && l.startsWith('# (authoring:')) inNote = !l.trimEnd().endsWith(')');
-    else if (inNote) inNote = !l.trimEnd().endsWith(')');
+    if (inNote || l.startsWith('# (authoring:')) inNote = !l.trimEnd().endsWith(')');
     else out.push(optedOut && l.startsWith('PLUGIN_SPECS=') ? l.replace('claude-tweaks@claude-tweaks-marketplace ', '') : l);
   }
   return out.join('\n');
 }
 
 const TEMPLATE = extractTemplate(STEP14);
+const STEP14_PARAGRAPHS = STEP14.split(/\r?\n\r?\n/);
 
 function assertDefaultRender(render) {
   const lines = render.split('\n');
@@ -156,7 +156,7 @@ test('Present follow-up reads superpowers alone under the opt-out', () => {
 });
 
 test('AC4.1 / Review Focus 1: Opt-out keeps superpowers and excludes claude-tweaks from mirrors', () => {
-  const paragraphs = STEP14.split(/\r?\n\r?\n/).filter((p) => p.startsWith('**Opt-out.**'));
+  const paragraphs = STEP14_PARAGRAPHS.filter((p) => p.startsWith('**Opt-out.**'));
   assert.strictEqual(paragraphs.length, 1);
   const para = collapse(paragraphs[0]);
   assert.ok(para.includes('is then this step\'s only hard requirement'));
@@ -325,7 +325,7 @@ const step14OptOutOrder = (text) => requireOrder(collapse(text), [OPT_OUT_PARAGR
 
 test('F3c: Step 14 states the Opt-out paragraph before the Detect paragraph', () => {
   step14OptOutOrder(STEP14);
-  const paragraphs = STEP14.split(/\r?\n\r?\n/);
+  const paragraphs = STEP14_PARAGRAPHS;
   const optIdx = paragraphs.findIndex((p) => p.startsWith('**Opt-out.**'));
   const detIdx = paragraphs.findIndex((p) => p.startsWith('**Detect.**'));
   assert.ok(optIdx !== -1 && detIdx > optIdx, 'Opt-out/Detect paragraphs not found in live order');
