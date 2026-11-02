@@ -1654,17 +1654,23 @@ test('AC1.1: accept:pending satisfies the pending-label check', () => {
 // precedence), not the mere presence of one pending label.
 function acceptanceLabelingRow(labelNames, dirPrefix) {
   const runDir = makeTmpDir(dirPrefix);
-  writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
-    }
-    return '';
-  };
-  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
-  return result.rows.find((r) => r.check === 'acceptance-labeling');
+  const repoRoot = makeNativeRepoRoot();
+  try {
+    writeSpecFile(runDir, '900', 900);
+    const fakeGh = (args) => {
+      if (args[0] === '--version') return 'gh version 2.0.0';
+      if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+      if (args.includes('labels,comments')) {
+        return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
+      }
+      return '';
+    };
+    const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+    return result.rows.find((r) => r.check === 'acceptance-labeling');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 }
 
 test('AC3.1: engine-verify agrees on mixed labels', () => {

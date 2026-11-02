@@ -11,7 +11,7 @@
 // proving the gate fires only on the overwrite shape, not merely that the
 // parsers agree with themselves.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -35,8 +35,14 @@ const {
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
+const fixtureDirs = [];
+after(() => {
+  for (const d of fixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+
 function repo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-overwrite-')));
+  fixtureDirs.push(dir);
   const git = (...a) => execFileSync('git', a, {
     cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
   });
