@@ -6,6 +6,7 @@
 // release-gate token.
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
@@ -203,6 +204,66 @@ for (const o of STACKED_OUTCOMES) {
     assert.ok(text.includes(o.logged), `the line carries the ${o.flag} outcome: ${text}`);
   });
 }
+
+// #4637: --stack-stderr carries raw git stderr, which can quote a repo-controlled path. The composer rule must
+// single-quote it like --category and --at, so a `'` in the value cannot close the quote and run the rest as shell.
+function composerRuleParagraph() {
+  const paragraph = md.split('\n').find((l) => l.startsWith('The composer writes each'));
+  assert.ok(paragraph, 'step3-routing.md must carry a paragraph starting "The composer writes each"');
+  return paragraph;
+}
+
+test('#4637: the composer rule single-quotes --stack-stderr alongside --category and --at, escapes `\'` as `\'\\\'\'`, and gives the reason', () => {
+  const paragraph = composerRuleParagraph();
+  assert.ok(paragraph.includes('`--category`, `--at` and `--stack-stderr` single-quoted'), `the rule must single-quote --stack-stderr with --category and --at: ${paragraph}`);
+  assert.ok(paragraph.includes("`'\\''`"), `the rule must write each ' as '\\'': ${paragraph}`);
+  assert.ok(paragraph.includes('raw git stderr can quote a repo-controlled path'), `the rule must give the reason: ${paragraph}`);
+});
+
+const hasPosixSh = spawnSync('sh', ['-c', 'exit 0'], { windowsHide: true }).status === 0;
+const SH_SKIP = process.platform === 'win32' && !hasPosixSh ? 'no POSIX sh on win32, so the shell round trip cannot run' : false;
+
+function markerDir() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rrl-stderr-'));
+  roots.push(dir);
+  return dir;
+}
+
+// A stderr line that closes the quote and runs a command substitution, which would create the marker file.
+// The shell sees the marker path, so a Windows path goes in with forward slashes (its backslashes would be escapes).
+const rawStderr = (marker) => `x'$(touch ${marker.split(path.sep).join('/')})'y`;
+// The rule's escaping: each ' becomes '\'', the whole value wrapped in single quotes.
+const shellSingleQuote = (value) => `'${value.split("'").join("'\\''")}'`;
+
+test('#4637: a --stack-stderr value escaped by the rule round-trips a POSIX shell byte-identical and runs nothing', { skip: SH_SKIP }, () => {
+  const dir = markerDir();
+  const marker = path.join(dir, 'marker');
+  const raw = rawStderr(marker);
+  const out = spawnSync('sh', ['-c', `printf '%s' ${shellSingleQuote(raw)}`], { encoding: 'utf8', windowsHide: true });
+  assert.equal(out.status, 0, out.stderr);
+  assert.equal(out.stdout, raw);
+  assert.equal(fs.existsSync(marker), false, 'the escaped value must not run the command substitution');
+});
+
+test('#4637 go-red: the same value left unescaped inside single quotes does not round-trip, and its substitution runs', { skip: SH_SKIP }, () => {
+  const dir = markerDir();
+  const marker = path.join(dir, 'marker');
+  const raw = rawStderr(marker);
+  const out = spawnSync('sh', ['-c', `printf '%s' '${raw}'`], { encoding: 'utf8', windowsHide: true });
+  assert.notEqual(out.stdout, raw, 'the unescaped value must not round-trip');
+  assert.equal(fs.existsSync(marker), true, 'the unescaped substitution must run, so the escaped case above is a real discrimination');
+});
+
+test('#4637: the raw --stack-stderr value reaches the logged STAGED line verbatim through run()', () => {
+  const { main, runDir } = fixture();
+  const out = [];
+  const raw = rawStderr(path.join(main, 'marker'));
+  const argv = [...instantiate(citedCommand('STAGED'), 'high', runDir), '--stack-exit', '2', '--stack-stderr', raw];
+  assert.equal(run(argv, deps(main, out)), 0, `exit 0 for: ${argv.join(' ')}`);
+  const text = fs.readFileSync(path.join(runDir, 'decisions.md'), 'utf8');
+  assert.ok(text.includes('high-severity finding'), `the line keeps the release token: ${text}`);
+  assert.ok(text.includes(`(${raw})`), `the raw stderr must be logged verbatim: ${text}`);
+});
 
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
   assert.doesNotMatch(md, /`[^`\n]*\{time\} — Step 3 Routing:/);
