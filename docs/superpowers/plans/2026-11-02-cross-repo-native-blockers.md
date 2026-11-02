@@ -222,7 +222,7 @@ Tests, each `assert.equal(run(…, deps), 0)` first:
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/preflight-records/blocker-landing.test.js tests/bin-lib/preflight-records/preflight-records.test.js`
-Expected: FAIL (`classifyCrossRepository is not a function`; `b5: issue(number:5)` queried)
+Expected: FAIL after Step 1 (`classifyCrossRepository is not a function`; `b5: issue(number:5)` queried)
 
 - [ ] **Step 3: Implement**
 
@@ -272,7 +272,7 @@ From the worktree run `node plugin/bin/preflight-records.js 4909 4735 --blocker-
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/wrap-up/pack.test.js tests/wrap-up-pack-conformance.test.js`
-Expected: FAIL (the foreign-only dependent is reported; the snippet lacks the helper)
+Expected: FAIL after Step 1 (the foreign-only dependent is reported; the snippet lacks the helper)
 
 - [ ] **Step 3: Implement**
 
@@ -332,7 +332,7 @@ test('a CLOSED foreign native blocker does not block resume', () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `node --test tests/bin-lib/dispatch/dispatch-resume-cli.test.js tests/bin-lib/dispatch/resume-eligibility.test.js`
-Expected: FAIL (line reads `open #5 —` / `#other/repo#5`)
+Expected: FAIL after Step 1 (line reads `open #5 —` / `#other/repo#5`)
 
 - [ ] **Step 3: Implement**
 
@@ -370,7 +370,7 @@ In `flow-blocker-landing-conformance.test.js`, add `assertCrossRepositoryNaming(
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/flow-blocker-landing-conformance.test.js`
-Expected: FAIL (the section has no cross-repository paragraph)
+Expected: FAIL after Step 1 (the section has no cross-repository paragraph)
 
 - [ ] **Step 3: Write the prose**
 
