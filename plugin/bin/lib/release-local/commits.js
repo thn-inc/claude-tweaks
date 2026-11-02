@@ -9,7 +9,7 @@
 // whose PRs land as plain (unconventional-subject) --no-ff merges — the
 // default stays first-parent for this module's other caller,
 // bin/release-local.js, which still depends on it.
-const { RELEASE_NOTE_FOOTER_RE } = require('../release-notes');
+const { extractReleaseNotes } = require('../release-notes');
 const { compareVersions } = require('../changelog.js');
 
 const HEADER_RE = /^(\w+)(\([^)]*\))?(!)?: (.+)$/;
@@ -52,10 +52,10 @@ function lastTag(git, ref = 'HEAD') {
 function parseCommit({ sha, subject, body = '' }) {
   const m = HEADER_RE.exec(subject);
   const footer = BREAKING_FOOTER_RE.exec(body);
-  // Single-line by construction (#2580/#2581) — a multi-line `Release-Note:` section
-  // is truncated to its first line here, mirroring `footer`'s own extraction shape.
-  const releaseNoteFooter = RELEASE_NOTE_FOOTER_RE.exec(body);
-  const releaseNote = releaseNoteFooter ? releaseNoteFooter[1].trim() : null;
+  // Each `Release-Note:` line is single-line by construction (#2580/#2581); a
+  // bundled merge commit carries one per bundled record (#4634), so every line
+  // is read, not the first.
+  const releaseNotes = extractReleaseNotes(body);
   // An unconventional subject IS its own description — which is also what an
   // empty `BREAKING CHANGE:` footer (no description of its own) falls back to,
   // on both paths.
@@ -73,7 +73,7 @@ function parseCommit({ sha, subject, body = '' }) {
     breakingNote,
     description,
     unconventional: m === null,
-    releaseNote,
+    releaseNotes,
   };
 }
 

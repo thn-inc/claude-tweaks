@@ -9,8 +9,8 @@
 // sentence for shaping-mode/specShapedBody records, which carry no ##
 // Overview; migrationNote = the ## Breaking Change section; releaseNote =
 // every record's own ## Release Note section, one per record, lowest number
-// first (#4634 — replacing the old "never aggregated across a bundle" rule;
-// every record in the bundle must carry a non-empty section), and prints
+// first (#4634 — formerly only the lowest-numbered record's note reached the
+// commit; every record in the bundle must carry a non-empty section), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
