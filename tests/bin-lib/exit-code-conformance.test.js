@@ -22,7 +22,10 @@ const ROOT = path.join(__dirname, '..', '..');
 // The two exceptions #1535's final whole-branch review verified safe:
 // hooks.js's own stdout goes through a synchronous fs.writeSync(1, ...) with
 // nothing pending to flush, and statusline-wrapper-source.js deliberately
-// hard-stops on a child process's own exit code.
+// hard-stops on a child process's own exit code. hooks.js's entry
+// `.catch(() => process.exit(0))` now only catches harness EVENTS failures
+// (the never-break-a-session invariant): main() turns a VERBS command's
+// unexpected exception into exit 1 itself (#4932).
 const ALLOWLIST = new Set([
   path.join('plugin', 'bin', 'hooks.js'),
   path.join('plugin', 'bin', 'lib', 'statusline-wrapper-source.js'),

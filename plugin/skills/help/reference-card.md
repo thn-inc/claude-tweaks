@@ -145,7 +145,7 @@ Backlog record → Design Doc → Ready record(s) → Code → Stories → TEST_
 | `/claude-tweaks:stories` | Story YAML files | — |
 | `/claude-tweaks:test` | TEST_PASSED flag | — |
 | `/claude-tweaks:review` | Review summary | — |
-| `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), Verification Brief | Spec, plans, ledger |
+| `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), acceptance packet (a parent's gate: Verification Brief) | Spec, plans, ledger |
 | `/claude-tweaks:release` | Tag + Release (or a staged `release-held.md` on a HARD-GATE) | — |
 | `/claude-tweaks:demo` | Follow-up record (on changes-requested) | — |
 

@@ -96,6 +96,32 @@ quote parser can also fail the other way: a backtick-led source line quoted as a
 was mangled by the wrapper strip, so a correct refutation became can't-tell (#3947). Pin both
 directions in `tests/bin-lib/tiebreak.test.js`.
 
+## Third instance: the acceptance packet (#4611)
+
+`plugin/bin/acceptance-packet.js` runs `gather`, then narration, then `render`, over
+`plugin/bin/lib/wrap-up/packet-gather.js`, `packet-validate.js` and `packet-render.js`
+(contract: `plugin/skills/_shared/acceptance-packet.md`). The narrative's `refs[]` is the citation
+channel, and the output is a comment on the record. It adds four things to the rules above:
+
+- **A ref can resolve and still contradict its claim.** `placeClaim` in `packet-validate.js` moves a
+  claim whose wording asserts verification (`VERIFICATION_CLAIM_RE`), and any `risk-proofs` claim,
+  when a check or story it cites failed or never ran. It lands in Tried to break or Couldn't test,
+  and `movedLine` renders the fact's status beside it. Checking only that the id exists would publish
+  "tests pass" citing a failed test.
+- **Check what Markdown and the forge make live, not only what the text says.** `inline` in
+  `packet-render.js` neutralizes block starts, character references and every autolink shape
+  (`#12`, `GH-12`, `@mention`, `owner/repo#12`). Once again these were found a round at a time:
+  `GH-12` reached the whole-branch review after two hardening commits.
+- **Credentials are a channel too.** `findCredentialInText` screens claims, reasons, ids and plan
+  lines, and the matched text never renders. Its key forms also grew by review round, ending with
+  `apiKey` and `config[token]`.
+- **Side files and stale outputs count.** `--dropped-out` could carry an interpolated reason until it
+  wrote only the validator's fixed `reasonKind`. `gather` removes an earlier `--out` and `render` an
+  earlier `--out` and `--dropped-out`, so a failed run cannot leave an old file that reads as this one.
+
+Pins: `tests/bin-lib/wrap-up/packet-validate.test.js`, `tests/bin-lib/wrap-up/packet-render.test.js`,
+`tests/acceptance-packet-cli.test.js`.
+
 ## When to use
 
 - Adding or reviewing a skill whose output is model-written prose over facts gathered from outside
@@ -128,3 +154,4 @@ Console under the Skill updates section's Approve-all default.
 (#3945, above), so the fold-into-`run-directory-fact-packs` fallback this file was created with no
 longer applies. The complexity criterion was met from the start: each instance's channel list was
 discovered one channel at a time across fix rounds and a whole-branch review.
+The acceptance packet (#4611, above) is a third.

@@ -212,6 +212,16 @@ planned, and give each one a test fixture that holds its output (`tests/bin-lib/
   the pack reads the header while the worktree mirror still exists, so Section E's late restore
   reads no file. `tests/wrap-up-record-resolution-conformance.test.js` pins that no
   `plugin/skills/wrap-up/*.md` file restates the gate.
+- **A header field is read from the leading frontmatter block, by every reader.** A whole-file
+  `/^record:\s*(\d+)\s*$/m` also matches a body line quoting the key, so a spec body holding
+  `record: 999` names the wrong record. `pack.js`'s `headerEntries` scoped `parked-at-shaping` to
+  the block (#3399) while `record:` beside it stayed whole-file until #4814, which also fixed the
+  pack-absent fallback fence in `cleanup-procedures-execution.md`'s Section C step 2, because both
+  read the same header. Give each reader two fixtures with the key below the header: a frontmatter
+  without it, and a file with no frontmatter (`tests/bin-lib/wrap-up/pack.test.js`,
+  `tests/wrap-up-closing-records-array-fill.test.js`). Do not copy
+  `plugin/bin/lib/dispatch/first-call-artifact-check.js` or
+  `plugin/skills/tidy/issue-claims-backstops.md`; both still read `record:` from the whole file.
 
 ## When to use
 

@@ -252,6 +252,13 @@ test('SKILL.md Action Vocabulary defines Prune plan execution and re-verify (#44
   assert.match(row, /An entirely excluded `Prune plan \(archive\)` item records its decline per Step 4's Plan retention/);
 });
 
+test('SKILL.md Prune plan row re-runs plan-retention.js through CLAUDE_PLUGIN_ROOT, not a bare path (#4803)', () => {
+  const row = findRow(TIDY_SKILL, '| **Prune plan**');
+  assert.ok(row, 'Prune plan Action Vocabulary row is present');
+  assert.match(row, /re-run `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/plan-retention\.js"` on the listed plans/);
+  assert.doesNotMatch(row, /`bin\/plan-retention\.js`/);
+});
+
 test('policy-schema.md names tidy Step 4 as a superpowers-plans-retention consumer and describes its routing (#4465)', () => {
   const row = findRow(POLICY_SCHEMA, '| `superpowers-plans-retention`');
   assert.ok(row);
