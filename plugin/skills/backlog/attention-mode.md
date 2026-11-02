@@ -2,7 +2,8 @@
 
 Read-only, like `overview` mode — no writes, no grants. Unifies discovery of every open record
 carrying any `needs:*` label, `solution:unjustified`, `ready` + `shaped:headless` with no
-`auto:build` grant, `bot:blocked`, or `bot:parked` into one ranked list with a per-row, type-differentiated
+`auto:build` grant, `bot:blocked`, `bot:parked`, or a granted record stuck behind an open PR
+(`stuck:open-pr`) into one ranked list with a per-row, type-differentiated
 recommended action, plus two non-record rows — a merge-lane circuit-breaker banner and a
 tidy-residue row, rendered above the ranked table independently of it. This is the "what does the
 backlog need from me today"
@@ -78,6 +79,25 @@ excluded, done in Step 2's merge script (below) rather than via a `gh` query fla
 list --label` only ANDs, it has no exclusion flag, matching this file's own established idiom of
 doing set logic in the `node -e` merge step rather than the `gh` query.
 
+The `stuck:open-pr` set is not a label: it is a granted (`auto:build`), open record with no `bot:*`
+label whose claim was released while an open PR still closes it, so nothing else surfaces it.
+`bin/stuck-open-prs.js` finds it over the raw snapshot above (one batched linked-PR read, then the
+claim, sibling-session and `dispatch-resume.js` verdict reads per record with an open PR) and prints
+`{rows:[{number, pr, remedy, title, createdAt, labels}]}`:
+
+```bash
+ST_BACKLOG_ATTENTION_SNAPSHOT_RAW="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-snapshot-raw.json)"
+ST_BACKLOG_ATTENTION_STUCK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-stuck.json)"
+node "${CLAUDE_PLUGIN_ROOT}/bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW" > "$ST_BACKLOG_ATTENTION_STUCK"
+```
+
+A non-zero exit means the check could not run, so the render carries one note saying so above the
+table (`Note: the stuck:open-pr check could not run (exit {code}) — records stuck behind an open PR
+are not shown`) and never an empty section; the merge below then treats the file as no rows. Exit 2
+is a missing `gh` (the MCP-transport case of `_shared/github-write-transport.md`, where this CLI has
+no path), an unresolved repo or main checkout, or an unreadable snapshot; exit 4 is a failed
+linked-PR read.
+
 ## Step 2: Merge and dedupe
 
 Merge by issue number. A record's number appearing in more than one of these sets is not assumed
@@ -91,8 +111,8 @@ semicolon-separated. A record can in principle carry every classification at onc
 `bot:blocked` + `bot:parked` — the same one-row-per-number, concatenated-action convention applies
 regardless of how many match; `types` is always rendered in fetch order (the matched `needs:*`
 label name(s) first, in the order they appear on the record's own `labels` array, then
-`solution:unjustified`, then `shaped:headless (no grant)`, then `bot:blocked`, then `bot:parked`)
-for a deterministic Type column.
+`solution:unjustified`, then `shaped:headless (no grant)`, then `bot:blocked`, then `bot:parked`,
+then `stuck:open-pr`) for a deterministic Type column.
 
 A record whose types include `needs:decision` also needs the live proposal text for Step 4: read
 its newest comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors; each
@@ -109,6 +129,7 @@ comment-query shape.
 ST_BACKLOG_ATTENTION_SNAPSHOT_FILTERED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-snapshot-filtered.json)"
 ST_BACKLOG_ATTENTION_SOLUTION_UNJUSTIFIED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-solution-unjustified.json)"
 ST_BACKLOG_ATTENTION_SHAPED_HEADLESS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-shaped-headless.json)"
+ST_BACKLOG_ATTENTION_STUCK="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-stuck.json)"
 ST_BACKLOG_ATTENTION_MERGED="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value backlog-attention-merged.json)"
 node -e "
   const { execFileSync } = require('child_process');
@@ -141,6 +162,14 @@ node -e "
     const existing = byNumber.get(r.number);
     if (existing) existing.types.push('bot:parked');
     else byNumber.set(r.number, { ...r, types: ['bot:parked'] });
+  }
+  // The stuck file is empty or absent when the CLI could not run (Step 1's note): no rows then.
+  let stuckRows = [];
+  try { stuckRows = require('$ST_BACKLOG_ATTENTION_STUCK').rows; } catch { /* no rows */ }
+  for (const r of stuckRows) {
+    const existing = byNumber.get(r.number);
+    if (existing) { existing.types.push('stuck:open-pr'); existing.stuckRemedy = r.remedy; }
+    else byNumber.set(r.number, { number: r.number, title: r.title, createdAt: r.createdAt, labels: r.labels, types: ['stuck:open-pr'], stuckRemedy: r.remedy });
   }
   function getComments(r) {
     if (Array.isArray(r.comments)) return r.comments;
@@ -266,6 +295,7 @@ omitted when its own condition doesn't hold; the ranked table follows:
 | #{n} | shaped:headless (no grant) | {createdAt, relative} | run /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped — no human has reviewed it) |
 | #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure — or, for a plan-review question awaiting an answer (`<!-- plan-review-question -->` comment), answer it on the record body first |
 | #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
+| #{n} | stuck:open-pr | {createdAt, relative} | {remedy} |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 
 ### Batch launchers
@@ -302,7 +332,12 @@ to that one record — this row still recommends the bare form because it covers
 /claude-tweaks:backlog refine #{n} to re-authorize after the failure`; `bot:parked` says `run
 /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its
 checks are green` — unlike `bot:blocked`, a merge-verification park never revokes `auto:*` grants
-(`_shared/work-record.md`), so this row is a status check, not a re-authorization. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
+(`_shared/work-record.md`), so this row is a status check, not a re-authorization. A `stuck:open-pr`
+row's recommended action is the `remedy` Step 1's CLI printed, verbatim: it is
+`dispatch-resume.js`'s own verdict for the record, so it names resume, close-out or
+close-and-redispatch according to that verdict, and never a step the next command refuses. The
+`remedy` of a record whose state the CLI could not read says so and points at `dispatch resume #{n}`
+to see why. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
 marker — a new marker earns a dedicated launcher only by a later record's own explicit decision,
 never by default. The trailing "Pick up next" line names the single oldest/highest-priority
 record across all types — the same shape `overview` mode's own "what to build next" recommendation
@@ -331,7 +366,11 @@ facts specific to attention's row types, on top of that shared rule:
   design (`specify/SKILL.md`'s batch branch) — this group always closes with a paste block, one
   `/claude-tweaks:specify #{n}` line per record, never a comma-joined batch line.
   `solution:unjustified` rows key on `/claude-tweaks:challenge #{n}`, single-ref only by its
-  `argument-hint` — same paste-block treatment. Every other type (`needs:decision`, `bot:blocked`,
+  `argument-hint` — same paste-block treatment.
+- **`stuck:open-pr` rows are never batched:** each remedy differs by the record's verdict (resume,
+  close-out, or close-and-redispatch) and is not always a single command, so each goes in a paste
+  block, one line per record, verbatim.
+- Every other type except `stuck:open-pr` (`needs:decision`, `bot:blocked`,
   `bot:parked`, and any other `needs:*` catch-all) keys on the targeted `/claude-tweaks:backlog refine` form,
   whose `argument-hint` accepts a comma list — that group closes with one batch line,
   `/claude-tweaks:backlog refine #{a},#{b},…`, naming every matched record.
@@ -343,7 +382,7 @@ ranked table is empty (see below); a group with zero rows this render never appe
 
 When the merged list is empty, render `Nothing needs attention — no open record carries a
 needs:* marker, solution:unjustified, an ungranted shaped:headless spec, bot:blocked, or
-bot:parked.` instead of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
+bot:parked. No granted record is stuck behind an open PR.` instead of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
 breaker banner and tidy row still render independently above this message when their own
 conditions hold — an empty table is not an empty mode output.
 

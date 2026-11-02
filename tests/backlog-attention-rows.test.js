@@ -343,3 +343,19 @@ test('work-record-permission-matrix.md: /backlog refine row Adds parked and Remo
     'the Removes-specific needs:decision rationale must not also appear in Adds',
   );
 });
+
+// --- #4849: the stuck:open-pr row (a granted record stuck behind an open PR) ---
+
+function assertStuckRow(source) {
+  assert.ok(source.includes('bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW"'), 'Step 1 runs the CLI over the snapshot');
+  assert.ok(source.includes('| #{n} | stuck:open-pr | {createdAt, relative} | {remedy} |'), 'the rendered row');
+  assert.match(source, /`stuck:open-pr` rows are never batched/);
+  assert.match(source, /could not run[^.]*note/, 'a failed CLI is a note, never an empty section');
+}
+
+test('AC3.1: attention-mode.md renders the stuck:open-pr row', () => assertStuckRow(read(SKILL_DIR, 'attention-mode.md')));
+
+test('AC3.1 control: removing the row goes red', () => {
+  const source = read(SKILL_DIR, 'attention-mode.md').replace('| #{n} | stuck:open-pr | {createdAt, relative} | {remedy} |', '');
+  assert.throws(() => assertStuckRow(source), /the rendered row/);
+});
