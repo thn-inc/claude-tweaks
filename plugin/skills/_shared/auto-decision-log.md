@@ -89,7 +89,7 @@ drop the leading slash (`--section reflect`) — the CLI adds it back internally
 Each entry follows this shape:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}.
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}.
 ```
 
 | Field | Required | Format |
@@ -99,7 +99,7 @@ Each entry follows this shape:
 | Step or location | yes | Skill step name OR file:line if relevant |
 | Short action | yes | One sentence: what was decided |
 | Detail line | optional | Wraps to second line if needed; explain rationale |
-| Reversibility | yes | `high` / `med` / `low` — drives Review Console sort order (SCANNED, REFUSED, SKIP, and FAILED entries: N/A — nothing to revert) |
+| Reversibility | yes | `high` / `med` / `low` / `n/a` — drives Review Console sort order. `n/a` means nothing to revert: always on SCANNED, REFUSED, SKIP, and FAILED entries, and on an AUTO entry that changed nothing revertible (a detection, a dispatch-time model selection, a ledger creation). It is `log-decision.js`'s default when `--reversibility` is omitted |
 | Commit ref / stage path | when reversible | `commit abc1234` or `stage path: staged/...` |
 
 ## Failure-cause completeness (test-gate entries)
@@ -116,7 +116,7 @@ Never write a partial named list (e.g. "8 fail: {6 named categories}") with no s
 A decision that consulted a policy/config lever may name it at the end of its entry:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}. [lever: {key}={value} ({source})]
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}. [lever: {key}={value} ({source})]
 ```
 
 The bracketed field is **always last** — after the existing optional `{; commit ref or stage path}` element when that is present. Multiple levers are semicolon-separated inside one bracket pair. The lever field is optional; absence is valid and no reader may require its presence. Absence means "not lever-governed or not yet adopted" — never an error.
@@ -239,7 +239,7 @@ invocation and a second invocation clobbered the first's findings) — a collisi
 to the next free `{kind}-{n}` in that run dir's `staged/` instead of clobbering. See
 `bin/lib/stage-item/write.js`'s `writeStagedItem` for the full contract.
 
-**CLIs that log their own entries.** A bin CLI given `--run` appends the entry for a decision it reports as data itself, through `lib/log-decision/append.js` — #4026 moved these ones there: `phase-exit.js`, `pr-merge-state.js`, `pr-checklist.js`, `pr-checks.js`, `set-config.js --set`, `closing-links.js`, `verify-run-bookends.js`, `console-filings.js`, `reflect-apply.js`, `review-coordination.js resolve-tiebreak`, `hooks.js delete-ledger`. #4025's `express-lane.js check` and `express-lane.js escalate` append the same way. #4304's `pre-review-catchup.js` appends the same way. #4559's `stash-guard.js compare` appends the same way. A skill never re-logs an entry a CLI already wrote, and hand-logs it with `log-decision.js` only when the CLI reports the append failed — in its envelope (`logged: false` on a state that logs, `logFailed: true`, a `logFailures` element) or in a stderr line naming the failed `decisions.md` append (`could not append the decisions.md entry`, or `hooks.js delete-ledger`'s `decisions.md append failed … hand-log …`). `express-lane.js escalate` reports a failed append as a failed invocation instead — exit 3 with a `could not write decisions.md` stderr line — so its caller owes the rule-(a) entry below, not a re-log of the escalation. These stay with the caller, by rule:
+**CLIs that log their own entries.** A bin CLI given `--run` appends the entry for a decision it reports as data itself, through `lib/log-decision/append.js` — #4026 moved these ones there: `phase-exit.js`, `pr-merge-state.js`, `pr-checklist.js`, `pr-checks.js`, `set-config.js --set`, `closing-links.js`, `verify-run-bookends.js`, `console-filings.js`, `reflect-apply.js`, `review-coordination.js resolve-tiebreak`, `hooks.js delete-ledger`. #4025's `express-lane.js check` and `express-lane.js escalate` append the same way. #4304's `pre-review-catchup.js` appends the same way. #4559's `stash-guard.js compare` appends the same way. #4692's `post-merge-run.js` appends the same way. A skill never re-logs an entry a CLI already wrote, and hand-logs it with `log-decision.js` only when the CLI reports the append failed — in its envelope (`logged: false` on a state that logs, `logFailed: true`, a `logFailures` element) or in a stderr line naming the failed `decisions.md` append (`could not append the decisions.md entry`, or `hooks.js delete-ledger`'s `decisions.md append failed … hand-log …`). `express-lane.js escalate` reports a failed append as a failed invocation instead — exit 3 with a `could not write decisions.md` stderr line — so its caller owes the rule-(a) entry below, not a re-log of the escalation. These stay with the caller, by rule:
 
 - (a) an entry reporting a CLI's own failed invocation (`compose-subject.js` failing, a non-zero exit from `diff-facts.js`, `shadow-dup-proposal.js` or `phase-timing.js --check-budgets`, `record-worktree` not printing `worktree recorded`, `review-coordination.js write-findings` exit 3, `release-local.js`'s per-subprocess log) — a failing process cannot be trusted to have logged;
 - (b) a CLI that runs before the run directory exists (`preflight-records.js`) — its caller logs once the run directory exists;

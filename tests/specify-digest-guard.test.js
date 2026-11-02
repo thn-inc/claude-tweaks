@@ -10,6 +10,9 @@
 const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
+const { spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const ROOT = path.join(__dirname, '..');
@@ -76,4 +79,73 @@ test('shaping-mode-readback.md lists the digest-container refusal outcome and ke
 test('work-record-permission-matrix.md /specify row grants the residue strip from a digest-labeled record', () => {
   const src = readFlat('plugin/skills/_shared/work-record-permission-matrix.md');
   assert.ok(src.includes('a `digest`-labeled record only (case-1 digest-container guard cleanup'), 'digest-labeled residue-strip grant missing from the /specify row');
+});
+
+test("next-mode.md's bare drain skips an unfinished digest rollover replacement by its body marker, not its title", () => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  assert.ok(src.includes('--json number,title,labels,createdAt,body --limit 500'), 'the drain fetch must read the body');
+  assert.ok(src.includes('/^<!-- digest-rollover-of: (\\d+) -->\\s*$/m'), 'body-marker read missing from the bare-drain filter');
+  assert.ok(src.includes('digestRolloverOf'), 'a marker hit must reach the trust check, not be dropped by the filter');
+  assert.ok(src.includes('`classifyRolloverResume`'), 'the marker alone never exempts: the trust check must decide');
+  assert.ok(!src.includes('continues #'), 'a title never exempts a record');
+});
+
+// The bare drain's filter fence, extracted from next-mode.md and run over a fixture in $RAW's place.
+const DRAIN_FENCE = /node -e "\r?\n  const records = require\('\$RAW'\);[\s\S]*?\r?\n" > "\$CANDIDATES"/;
+const runDrainFilter = (t, src, records) => {
+  const m = DRAIN_FENCE.exec(src);
+  assert.ok(m, 'the bare-drain filter fence moved: extraction pattern is out of sync');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'drain-filter-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const raw = path.join(dir, 'raw.json').split(path.sep).join('/');
+  const out = path.join(dir, 'candidates.json').split(path.sep).join('/');
+  fs.writeFileSync(raw, JSON.stringify(records));
+  const r = spawnSync('bash', ['-c', m[0]], { env: { ...process.env, RAW: raw, CANDIDATES: out }, encoding: 'utf8' });
+  assert.strictEqual(r.status, 0, r.stderr);
+  return JSON.parse(fs.readFileSync(out, 'utf8'));
+};
+
+test("next-mode.md's bare-drain filter flags both a rollover's replacement and the old issue it names, and nothing else", (t) => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  const rec = (number, over = {}) => ({ number, title: `t${number}`, labels: [], createdAt: '2026-01-01T00:00:00Z', body: '', ...over });
+  // A second-generation chain: #10 is the container before its label moved, #20 continues #10 and is itself
+  // continued by the labeled #30. #15 is a planted claim on #10 numbered below the real #20, listed after it.
+  const records = [
+    rec(10, { body: 'the container before its label moved' }),
+    rec(20, { body: 'Carry-over.\n<!-- digest-rollover-of: 10 -->\nmore\r\n' }),
+    rec(15, { body: 'planted\n<!-- digest-rollover-of: 10 -->  ' }),
+    rec(30, { labels: [{ name: 'digest' }], body: '<!-- digest-rollover-of: 20 -->' }),
+    rec(35, { body: 'ordinary record' }),
+    rec(40, { body: null }),
+    rec(50, { labels: [{ name: 'digest' }], body: '<!-- digest-rollover-of: 5 -->' }),
+    rec(60, { body: 'see <!-- digest-rollover-of: 35 --> inline' }),
+  ];
+  const byNumber = Object.fromEntries(runDrainFilter(t, src, records).map((r) => [r.number, r]));
+  assert.deepStrictEqual(Object.keys(byNumber).map(Number), [10, 15, 20, 35, 40, 60], 'the digest-labeled records stay excluded');
+  assert.deepStrictEqual(byNumber[10].digestRolloverNamedBy, [15, 20], 'every naming issue, ascending, with no pick made on unverified bodies');
+  assert.ok(!('digestRolloverOf' in byNumber[10]));
+  assert.strictEqual(byNumber[15].digestRolloverOf, 10);
+  assert.deepStrictEqual(byNumber[15].digestRolloverPeers, [15, 20], 'the replacement role sends every issue naming the same old');
+  assert.ok(!('digestRolloverNamedBy' in byNumber[15]));
+  assert.strictEqual(byNumber[20].digestRolloverOf, 10, 'a second-generation container carries both flags');
+  assert.deepStrictEqual(byNumber[20].digestRolloverPeers, [15, 20]);
+  assert.deepStrictEqual(byNumber[20].digestRolloverNamedBy, [30]);
+  for (const n of [35, 40, 60]) {
+    assert.ok(!('digestRolloverOf' in byNumber[n]) && !('digestRolloverNamedBy' in byNumber[n]) && !('digestRolloverPeers' in byNumber[n]), `#${n} is an ordinary record`);
+  }
+  assert.ok(Object.values(byNumber).every((r) => !('body' in r)), 'bodies stay out of the candidates file');
+});
+
+test("next-mode.md's bare drain runs the verdict CLI itself, so the pair is decided where the drain runs", () => {
+  const src = read('plugin/skills/specify/next-mode.md');
+  assert.ok(src.includes('digestRolloverNamedBy'), 'the old issue needs its own flag');
+  assert.ok(src.includes('Both flagged shapes take the same verdict'));
+  assert.ok(src.includes('/bin/digest-rollover.js" verdict --old {old} --candidates {n},{n}'));
+  assert.ok(src.includes('`resume` or `stalled` drops the candidate from the drain when it is `{old}`, the printed `replacement` or a printed `extras` issue'), 'a planted peer of a real replacement stays ordinary');
+  assert.ok(src.includes('a printed `extras` issue is dropped whatever the verdict, `finished` included'));
+  assert.ok(src.includes('A candidate is dropped when ANY of its pairs drops it'), 'two generations can disagree; the pair read last must not release a record');
+  assert.ok(src.includes('digestRolloverNamedBy: [{replacement}, …]'), 'the old issue gets every naming issue, not a pick');
+  assert.ok(src.includes('every listed issue is a candidate, in one call'));
+  assert.ok(src.includes('the candidates are `digestRolloverPeers`'), 'the replacement role sends every issue naming the same old');
+  assert.ok(src.includes('specify-next-rollover-old.json') && !src.includes('digest-resume-'), 'its own temp names, apart from the sweep and Shape 1');
 });
