@@ -14,15 +14,25 @@ const ESCAPE_CHARS = 3;
 const MAX_UTF8_BYTES = 4;
 const CREDENTIAL_KEY_SET = new Set(CREDENTIAL_KEYS);
 
+// `_` and `-` count as boundaries, so `GITHUB_TOKEN=` and `--client-secret` match.
+// A miss posts a secret publicly; a false positive only drops one entry visibly.
+const LEFT_BOUNDARY = '(?:^|[^a-z0-9])';
+const CLOSING_QUOTE = '["\'`]?';
+const AUTHORIZATION_HEADER_RE = new RegExp(`${LEFT_BOUNDARY}authorization${CLOSING_QUOTE}\\s*:`);
+const URL_USERINFO_RE = /:\/\/[^\s/?#]+@/;
+const LEFTOVER_ESCAPE_RE = /%[0-9a-f]{2}/g;
+
 // Longest first, so `x-amz-signature=1` reports its own key, not `signature`.
-const CREDENTIAL_TEXT_SHAPES = [...CREDENTIAL_KEYS]
+// `-` and `_` are interchangeable inside a key: `--api-key` is `api_key`.
+const CREDENTIAL_SHAPES = [...CREDENTIAL_KEYS]
   .sort((a, b) => b.length - a.length)
   .map((key) => {
-    const escaped = escapeRegExp(key);
+    const spelled = key.split(/[-_]/).map(escapeRegExp).join('[-_]');
     return {
       key,
-      flag: new RegExp(`(^|[^a-z0-9_])--${escaped}(?=$|[\\s=])`),
-      assignment: new RegExp(`(^|[^a-z0-9_])${escaped}\\s*[=:]`),
+      flag: new RegExp(`${LEFT_BOUNDARY}--(?:[a-z0-9]+[-_])*${spelled}(?=$|[\\s=])`),
+      assignment: new RegExp(`${LEFT_BOUNDARY}${spelled}${CLOSING_QUOTE}\\s*[=:]`),
+      nestedAssignment: new RegExp(`${LEFT_BOUNDARY}${spelled}\\s*=`),
     };
   });
 
@@ -68,15 +78,38 @@ function normalizeKey(raw) {
   return value.toLowerCase();
 }
 
+// Normalized text for the shape regexes. An escape left after decoding (an invalid
+// byte) becomes a space, so `%FF%74oken=` still has a boundary before the key.
+function screenText(raw) {
+  return normalizeKey(raw).replace(LEFTOVER_ESCAPE_RE, ' ');
+}
+
+// An entry is a base URL or a bare host, port and IPv6 included. `new URL` alone
+// reads `localhost:3000` as scheme `localhost:` and rejects `::1`, so a schemeless
+// entry parses as http. An unparseable entry matches no host.
 function allowedHostname(entry) {
+  const isBareIpv6 = !entry.includes('[') && entry.split(':').length > 2;
+  const hostPart = isBareIpv6 ? `[${entry}]` : entry;
+  const candidate = /^[a-z][a-z0-9+.-]*:\/\//i.test(entry) ? entry : `http://${hostPart}`;
   try {
-    return new URL(entry).hostname;
+    return new URL(candidate).hostname;
   } catch {
-    return entry.toLowerCase();
+    return null;
   }
 }
 
-function checkLink(url, { allowedHosts = [] } = {}) {
+// The first credential key among the exact keys, else a nested `{key}=` anywhere
+// in the text: `?next=/cb?token=abc`, `?a=1;token=abc`, `#/cb/token=abc`.
+function refusedKey(exactKeys, text) {
+  const exact = exactKeys.find((key) => CREDENTIAL_KEY_SET.has(key));
+  if (exact) return exact;
+  const screened = screenText(text);
+  const nested = CREDENTIAL_SHAPES.find(({ nestedAssignment }) => nestedAssignment.test(screened));
+  return nested ? nested.key : null;
+}
+
+function checkLink(url, options) {
+  const allowedHosts = Array.isArray(options?.allowedHosts) ? options.allowedHosts : [];
   let parsed;
   try {
     parsed = new URL(url);
@@ -94,28 +127,25 @@ function checkLink(url, { allowedHosts = [] } = {}) {
   if (parsed.username || parsed.password) {
     return { ok: false, reason: 'credential in userinfo' };
   }
-  for (const rawKey of parsed.searchParams.keys()) {
-    const key = normalizeKey(rawKey);
-    if (CREDENTIAL_KEY_SET.has(key)) {
-      return { ok: false, reason: `credential key in query: ${key}` };
-    }
-  }
+  const query = parsed.search.slice(1);
+  const queryKey = refusedKey([...parsed.searchParams.keys()].map(normalizeKey), query);
+  if (queryKey) return { ok: false, reason: `credential key in query: ${queryKey}` };
   // Decoded before splitting, and split on `?` as well as `&`: a hash-router URL
   // carries its own query in the fragment (`#/cb?token=abc`, `#/cb%3Ftoken=abc`).
-  for (const part of normalizeKey(parsed.hash.slice(1)).split(/[?&]/)) {
-    const key = part.split('=', 1)[0];
-    if (CREDENTIAL_KEY_SET.has(key)) {
-      return { ok: false, reason: `credential key in fragment: ${key}` };
-    }
-  }
+  const fragment = parsed.hash.slice(1);
+  const fragmentKeys = normalizeKey(fragment).split(/[?&]/).map((part) => part.split('=', 1)[0]);
+  const fragmentKey = refusedKey(fragmentKeys, fragment);
+  if (fragmentKey) return { ok: false, reason: `credential key in fragment: ${fragmentKey}` };
   return { ok: true };
 }
 
 function findCredentialInText(text) {
-  const normalized = normalizeKey(text);
-  if (/authorization\s*:/.test(normalized)) return 'authorization';
-  for (const { key, flag, assignment } of CREDENTIAL_TEXT_SHAPES) {
-    if (flag.test(normalized) || assignment.test(normalized)) return key;
+  const screened = screenText(text);
+  if (AUTHORIZATION_HEADER_RE.test(screened)) return 'authorization';
+  // Raw as well as decoded: decoding `%2F` in a password would end the userinfo early.
+  if (URL_USERINFO_RE.test(String(text)) || URL_USERINFO_RE.test(screened)) return 'password';
+  for (const { key, flag, assignment } of CREDENTIAL_SHAPES) {
+    if (flag.test(screened) || assignment.test(screened)) return key;
   }
   return null;
 }

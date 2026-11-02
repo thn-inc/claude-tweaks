@@ -85,7 +85,7 @@ test('checkLink query keys: a double-encoded key and a valueless key both refuse
   assert.deepEqual(check('http://localhost:3000/?monkey=1&tokens=2'), { ok: true });
 });
 
-test('checkLink fragment keys: split on &, text before =, decoded and lowercased', () => {
+test('checkLink fragment keys: split on & and ?, text before =, decoded and lowercased', () => {
   assert.deepEqual(check('http://localhost:3000/p#a=1&SIG=abc'), { ok: false, reason: 'credential key in fragment: sig' });
   assert.deepEqual(check('http://localhost:3000/p#tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
   assert.deepEqual(check('http://localhost:3000/p#a=1&password'), { ok: false, reason: 'credential key in fragment: password' });
@@ -115,6 +115,81 @@ test('checkLink keeps accepting a benign fragment that only mentions a key', () 
 test('checkLink: a stray % elsewhere in the fragment does not hide an encoded key', () => {
   assert.deepEqual(check('http://localhost:3000/#100%&tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
   assert.deepEqual(check('http://localhost:3000/#100%?tok%65n=abc'), { ok: false, reason: 'credential key in fragment: token' });
+});
+
+test('checkLink refuses a nested key in the normalized query', () => {
+  const cases = [
+    ['http://localhost:3000/?next=/cb?token=abc', 'token'],
+    ['http://localhost:3000/?next=%2Fcb%3Ftoken%3Dabc', 'token'],
+    ['http://localhost:3000/?a=1;token=abc', 'token'],
+    ['http://localhost:3000/?a%26token=abc', 'token'],
+    ['http://localhost:3000/?tok%65n%3Dabc', 'token'],
+    ['http://localhost:3000/?GITHUB_TOKEN=abc', 'token'],
+    ['http://localhost:3000/?api-key=abc', 'api_key'],
+    ['http://localhost:3000/?a=%FF%74oken=abc', 'token'],
+    ['http://localhost:3000/?a=token%20=abc', 'token'],
+  ];
+  for (const [url, key] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason: `credential key in query: ${key}` }, url);
+  }
+});
+
+test('checkLink refuses a nested key in the normalized fragment', () => {
+  const cases = [
+    ['http://localhost:3000/#/cb;token=abc', 'token'],
+    ['http://localhost:3000/#/cb/token=abc', 'token'],
+    ['http://localhost:3000/#/cb/x_secret=abc', 'secret'],
+  ];
+  for (const [url, key] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason: `credential key in fragment: ${key}` }, url);
+  }
+});
+
+test('checkLink keeps accepting a query or fragment that only mentions a key', () => {
+  const accepted = [
+    'http://localhost:3000/#note=token',
+    'http://localhost:3000/?note=token',
+    'http://localhost:3000/docs/token-guide',
+    'http://localhost:3000/?next=/docs/token-guide',
+    'http://localhost:3000/?next=/x?monkey=1',
+    'http://localhost:3000/#/x;tokens=1',
+    'http://localhost:3000/#/session:list',
+  ];
+  for (const url of accepted) assert.deepEqual(check(url), { ok: true }, url);
+});
+
+test('checkLink exact keys: a valueless key is decoded and lowercased, and the first exact key is the one reported', () => {
+  assert.deepEqual(check('http://localhost:3000/?TOK%65N'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/#TOK%65N'), { ok: false, reason: 'credential key in fragment: token' });
+  assert.deepEqual(check('http://localhost:3000/#token=1&password=2'), { ok: false, reason: 'credential key in fragment: token' });
+});
+
+test('checkLink keeps refusing a bare fragment anchor that is a credential key', () => {
+  assert.deepEqual(check('http://localhost:3000/#auth'), { ok: false, reason: 'credential key in fragment: auth' });
+});
+
+test('checkLink allowedHosts accepts a bare host:port or IPv6 entry; the port still does not count', () => {
+  const allowed = [
+    ['http://localhost:3000/', 'localhost:3000'],
+    ['http://localhost:9999/', 'localhost:3000'],
+    ['https://dev.example.com:8080/', 'dev.example.com:8080'],
+    ['https://dev.example.com/', 'DEV.example.com:8080'],
+    ['http://[::1]:3000/', '::1'],
+    ['http://[::1]:3000/', '[::1]:3000'],
+    ['http://[::1]/', '0:0:0:0:0:0:0:1'],
+  ];
+  for (const [url, entry] of allowed) {
+    assert.deepEqual(checkLink(url, { allowedHosts: [entry] }), { ok: true }, `${url} vs ${entry}`);
+  }
+  assert.deepEqual(checkLink('http://evil.example:3000/', { allowedHosts: ['localhost:3000'] }), { ok: false, reason: 'host not allowed: evil.example' });
+  assert.deepEqual(checkLink('http://localhost/', { allowedHosts: ['not a host'] }), { ok: false, reason: 'host not allowed: localhost' });
+});
+
+test('checkLink fails closed on null options or null allowedHosts', () => {
+  const refused = { ok: false, reason: 'host not allowed: localhost' };
+  assert.deepEqual(checkLink('http://localhost/', null), refused);
+  assert.deepEqual(checkLink('http://localhost/', { allowedHosts: null }), refused);
+  assert.deepEqual(checkLink('http://localhost/', { allowedHosts: 'localhost' }), refused);
 });
 
 test('every credential key refuses in query and in fragment', () => {
@@ -251,10 +326,62 @@ test('findCredentialInText returns null for text that only resembles a credentia
     'cli --tokens abc',
     'cli --key-file abc',
     'cli my--key abc',
-    'my_token=1',
+    'tokenize the input',
+    '/docs/token-guide',
+    'keyboard: us',
+    'noauthorization: x',
+    'authorization=abc',
+    'mail user@example.com',
+    'http://localhost:3000/a@b',
+    'http://localhost:3000/?x=a@b',
+    'http://localhost:3000?x=a@b',
     '',
   ];
   for (const text of cases) assert.equal(findCredentialInText(text), null, text);
+});
+
+test('findCredentialInText: _ and - are left boundaries, and a closing quote may precede = or :', () => {
+  const cases = [
+    ['GITHUB_TOKEN=ghp_abc npm start', 'token'],
+    ['DB_PASSWORD=hunter2 npm start', 'password'],
+    ['client_secret=abc', 'secret'],
+    ['my_token=1', 'token'],
+    ['x-session: abc', 'session'],
+    [`curl -d '{"password":"hunter2"}' http://localhost:3000/`, 'password'],
+    [`{'token' : 'x'}`, 'token'],
+    ['`secret`=x', 'secret'],
+    ['%FF%74oken=abc', 'token'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+});
+
+test('findCredentialInText: - and _ are equivalent in flags and keys', () => {
+  const cases = [
+    ['cli --api-key abc', 'api_key'],
+    ['cli --access-token abc', 'access_token'],
+    ['cli --client-secret abc', 'secret'],
+    ['cli --my_api_key=abc', 'api_key'],
+    ['api-key=abc', 'api_key'],
+    ['ACCESS-TOKEN: abc', 'access_token'],
+    ['x_amz_signature=1', 'x-amz-signature'],
+    ['cli --x_amz_signature 1', 'x-amz-signature'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+});
+
+test('findCredentialInText: authorization takes a left boundary and a closing quote', () => {
+  assert.equal(findCredentialInText(`curl -H '{"Authorization":"Bearer x"}'`), 'authorization');
+  assert.equal(findCredentialInText('Proxy-Authorization: x'), 'authorization');
+});
+
+test('findCredentialInText: URL userinfo reports password, never the matched text', () => {
+  const cases = [
+    'curl http://user:hunter2@localhost:3000/',
+    'curl https://ghp_abc@github.com/x',
+    'http%3A%2F%2Fuser%3Apw%40localhost',
+    'curl http://user:a%2Fb@localhost/',
+  ];
+  for (const text of cases) assert.equal(findCredentialInText(text), 'password', text);
 });
 
 test('every credential key is found in flag and assignment shape', () => {
@@ -285,6 +412,10 @@ test('encodeFactKey escapes everything outside the id alphabet', () => {
 
 test('encodeFactKey never throws: a lone surrogate still yields a valid id', () => {
   assert.match(`change:${encodeFactKey('a\uD800b')}`, FACT_ID_RE);
+});
+
+test('encodeFactKey throws on a non-string rather than minting an "undefined" key', () => {
+  assert.throws(() => encodeFactKey(undefined), TypeError);
 });
 
 test('FACT_ID_RE accepts only the escapes encodeFactKey produces', () => {
