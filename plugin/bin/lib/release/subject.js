@@ -74,7 +74,9 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   }
 
   // releaseNote is one note (string) or one note per bundled record (array, lowest number first, #4634).
-  const noteList = typeof releaseNote === 'string' ? [releaseNote] : Array.isArray(releaseNote) ? releaseNote : [];
+  let noteList = [];
+  if (typeof releaseNote === 'string') noteList = [releaseNote];
+  else if (Array.isArray(releaseNote)) noteList = releaseNote;
   const trimmedNotes = noteList.map((n) => (typeof n === 'string' ? n.trim() : ''));
   if (trimmedNotes.length === 0 || trimmedNotes.some((n) => !n)) throw usage(`releaseNote must be a non-empty string for #${number}`);
   // A single note is written verbatim (multi-line included); a bundle's notes each collapse to one line so
