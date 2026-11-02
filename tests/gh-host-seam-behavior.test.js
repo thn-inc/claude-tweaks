@@ -133,14 +133,22 @@ function networkLines(lines) {
   return lines.filter((l) => !/ ARGS=--version$/.test(l));
 }
 
-// The argv alone names the host (a host-qualified --repo, a --hostname, or a REST
-// path `repos/{host}/…` -- list-claims.js's one call), whatever GH_HOST the call was
-// spawned with.
+// The argv alone routes the call to the host (a host-qualified --repo or a --hostname),
+// whatever GH_HOST the call was spawned with.
 function argvReachesHost(line, host) {
   const args = line.slice(line.indexOf(' ARGS=') + 6);
   const h = host.replace(/\./g, '\\.');
-  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args)
-    || new RegExp(`^api repos/${h}/`).test(args);
+  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args);
+}
+
+// The argv merely names the host: argvReachesHost, or a REST path `repos/{host}/…`.
+// A path does not route (gh sends it to the GH_HOST/github.com default), so this is
+// only for the GH_HOST-exported case, where routing is the user's own value and the
+// check only has to show the spec kept the host. list-claims/claim-store put a
+// host-qualified slug into a REST path, a pre-existing defect tracked separately.
+function argvNamesHost(line, host) {
+  const args = line.slice(line.indexOf(' ARGS=') + 6);
+  return argvReachesHost(line, host) || new RegExp(`^api repos/${host.replace(/\./g, '\\.')}/`).test(args);
 }
 
 function reachesHost(line, host) {
@@ -392,7 +400,7 @@ function describeOriginGate(row) {
       if (argvOnly) {
         const net = networkLines(r.lines);
         assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
-        assert.ok(net.some((l) => argvReachesHost(l, host)), `no gh call names ${host} in its argv, log:\n${log}`);
+        assert.ok(net.some((l) => argvNamesHost(l, host)), `no gh call names ${host} in its argv, log:\n${log}`);
         for (const line of net.filter((l) => / ARGS=api /.test(l) && (!row.hostnameLines || row.hostnameLines(l)))) {
           assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
         }
@@ -502,8 +510,9 @@ const CLI_TABLE = [
   { cli: 'apply-refine-labels.js', argv: ['actions.json'], setup: writeJsonFile('actions.json', [{ issue: 7, addLabels: ['ready'] }]), acceptsRepo: true },
   // --dry-run keeps file-feedback to its one repo-addressed read (the dedup search).
   { cli: 'file-feedback.js', argv: ['--drafts', 'drafts.json', '--dry-run'], setup: writeJsonFile('drafts.json', [{ title: 'T', body: 'B', fingerprintBasis: { component: 'c', summary: 's' } }]), acceptsRepo: true, canned: { 'issue-list': '[]' } },
-  // list-claims.js: its one REST call carries the host in the path and no --hostname by
-  // design (the seam's GH_HOST reaches it), so the GH_HOST-exported case requires none.
+  // list-claims.js: its one REST call carries a host-qualified slug in the path
+  // (`repos/{host}/o/r/...`) and no --hostname -- list-claims/claim-store's pre-existing
+  // defect, tracked separately -- so the GH_HOST-exported case cannot require --hostname.
   { cli: 'list-claims.js', argv: [], acceptsRepo: true, hostnameLines: () => false },
   // resolve-blockers.js / resolve-linked-prs.js (lib/number-list-cli.js): both print a
   // repoResolutionNote.
