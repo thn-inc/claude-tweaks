@@ -29,8 +29,9 @@
 //   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
-//   4  a read failed transiently, or the pipelines dir is unlistable (PR list, label or blocker read, claim read, stalled-worktree
-//      `git status`, branch reads, run-dir listing); no failed read is taken as clean, with two
+//   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
+//      `git status`, branch reads, run-dir listing) or the pipelines dir is unlistable; no failed
+//      read is taken as clean, with two
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
 //      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
