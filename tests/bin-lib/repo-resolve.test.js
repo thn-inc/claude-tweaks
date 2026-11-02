@@ -458,6 +458,19 @@ test('gate isolates the hosts.yml branch: no GH_HOST, the host not *.ghe.com', (
   assert.equal(isKnownGhHost('ghes.corp.invalid', hostsYml('ghes.corp.invalid:\n')), true);
   assert.equal(isKnownGhHost('ghes.corp.invalid', noHosts), false);
 });
+test('gate refuses an origin host that is only a substring, prefix or value of a hosts.yml entry', () => {
+  const cases = [
+    ['https://corp.invalid/o/r.git', 'corp.invalid', 'ghes.corp.invalid:\n    user: x\n'], // key contains the host
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'git.corp.invalid.evil:\n    user: x\n'], // host is a key prefix
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'github.com:\n    user: git.corp.invalid\n'], // host only in a value line
+  ];
+  for (const [remote, host, text] of cases) {
+    const out = gateOriginRepo(remote, hostsYml(text));
+    assert.equal(out.spec, null, remote + ' / ' + JSON.stringify(text));
+    assert.equal(out.refusal, refusalOf(host), remote + ' / ' + JSON.stringify(text));
+    assert.equal(isKnownGhHost(host, hostsYml(text)), false, host + ' / ' + JSON.stringify(text));
+  }
+});
 test('gate isolates the GH_HOST branch: readFile throwing, the host not *.ghe.com', () => {
   assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'ghes.corp.invalid' } }).spec.host, 'ghes.corp.invalid');
 });

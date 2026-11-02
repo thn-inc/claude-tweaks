@@ -12,7 +12,8 @@
 // release-claim.js and the acquire path). Exit 0 repaired; 3 CAS rejection (sha changed
 // between read and write — re-read and reassess, never retried blind); 4 refused (blob
 // does not classify 'unreadable' on the fresh read); 1 failed — any other error;
-// 2 malformed invocation or `gh` absent — the MCP path in _shared/issue-claims.md's
+// 2 malformed invocation, an origin host that is not a known GitHub host (refused before
+// any gh call, #4933; `GH_HOST={host}` opts in), or `gh` absent — the MCP path in _shared/issue-claims.md's
 // subsection stays the documented fallback, deliberately not grown into this CLI.
 // The overwrite destroys content that may encode a real holder's identity, so the
 // override is logged (AUTO line in <run-dir>/decisions.md via resolveTarget — a

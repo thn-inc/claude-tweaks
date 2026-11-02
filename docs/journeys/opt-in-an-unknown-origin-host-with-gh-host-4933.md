@@ -7,6 +7,20 @@ files:
   - plugin/bin/lib/reconcile/post-merge.js
   - plugin/bin/lib/reconcile/format-summary.js
   - plugin/bin/lib/wrap-up/pack.js
+  - plugin/bin/post-merge-run.js
+  - plugin/bin/lib/compose-subject.js
+  - plugin/bin/release-claim.js
+  - plugin/bin/repair-claim.js
+  - plugin/bin/preflight-records.js
+  - plugin/bin/parent-gate.js
+  - plugin/bin/resolved-refusal.js
+  - plugin/bin/link-records.js
+  - plugin/bin/fetch-sub-issues.js
+  - plugin/bin/backlog-grant-gate.js
+  - plugin/bin/apply-refine-labels.js
+  - plugin/bin/file-feedback.js
+  - plugin/bin/list-claims.js
+  - plugin/bin/lib/number-list-cli.js
 ---
 
 # Opt an Unknown Origin Host Into gh With GH_HOST
