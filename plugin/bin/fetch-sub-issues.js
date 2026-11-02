@@ -71,8 +71,8 @@ function parseArgs(argv) {
 const realDeps = {
   ghAvailable,
   remoteUrl,
-  // #4505: an explicit --repo's host reaches the schema probe and GraphQL batch,
-  // which thread no host, and the REST retry's github.com case.
+  // #4505: an explicit --repo's host reaches the github.com case of the schema probe, GraphQL
+  // batch and REST retry; off github.com the probe and batch carry their own --hostname (#4806).
   pinGhHost: (repoSpec) => pinExplicitRepoHost(repoSpec),
   // 30s bound: a 50-alias GraphQL batch outweighs the 5s single-call convention
   // (gh-api-module-pattern's "bound every remote-contacting call" rule).
@@ -80,6 +80,18 @@ const realDeps = {
   stdout: (s) => process.stdout.write(s),
   stderr: (s) => process.stderr.write(s),
 };
+
+// The probe and the batch (#4806) build their `gh api graphql` argv without a host, so off
+// github.com the host goes in right after `graphql`; a dropped flag silently queries github.com.
+function withGraphqlHost(runner, host) {
+  if (host === 'github.com') return runner;
+  return (args) => {
+    if (args[0] === 'api' && args[1] === 'graphql') {
+      return runner(['api', 'graphql', '--hostname', host, ...args.slice(2)]);
+    }
+    return runner(args);
+  };
+}
 
 // argv -> exit code. All I/O through deps so tests never touch gh or git —
 // same seam as bin/resolve-blockers.js's run(argv, deps).
@@ -112,9 +124,11 @@ function run(argv, deps = realDeps) {
     return 2;
   }
 
+  const runner = withGraphqlHost(deps.runner, host);
+
   let schema;
   try {
-    schema = probeSchemaStrict(deps.runner);
+    schema = probeSchemaStrict(runner);
   } catch (err) {
     deps.stderr(`fetch-sub-issues.js: subIssues capability probe failed — ${err && err.message ? err.message : String(err)}\n`);
     return 3;
@@ -128,7 +142,7 @@ function run(argv, deps = realDeps) {
   try {
     for (let i = 0; i < opts.numbers.length; i += 50) {
       const chunk = opts.numbers.slice(i, i + 50);
-      const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner: deps.runner });
+      const res = fetchNativeSubIssues({ numbers: chunk, owner, repo, runner });
       for (const [n, subs] of res.byParent) byParent[n] = subs;
       retry.push(...res.retry);
     }
