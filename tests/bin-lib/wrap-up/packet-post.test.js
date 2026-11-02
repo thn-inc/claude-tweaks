@@ -95,7 +95,6 @@ function publish(gh, overrides = {}) {
     issue: 7,
     bodyFile: '/f/packet.md',
     runner: gh.runner,
-    readFile: (file) => gh.state.files[file],
     writeFile: (file, content) => { gh.state.files[file] = content; },
     tmpPath: TMP_PATH,
     ...overrides,
@@ -427,13 +426,50 @@ describe('publishPacket: the PR link', () => {
   test('the link is matched as a whole line', () => {
     const url = commentFixture(1).url;
     const longerUrl = fakeGh({ prBody: `Acceptance packet: ${url}9`, files: { '/f/packet.md': FIRST_BODY } });
-    assert.equal(publish(longerUrl, { prNumber: 12 }).prLink.action, 'appended');
+    const replaced = publish(longerUrl, { prNumber: 12 });
+    assert.equal(replaced.prLink.action, 'replaced', 'a differing url of this record is the same line, not a second one');
+    assert.equal(longerUrl.state.prBody, `Acceptance packet: ${url}`);
 
     const inProse = fakeGh({ prBody: `See Acceptance packet: ${url} above`, files: { '/f/packet.md': FIRST_BODY } });
     assert.equal(publish(inProse, { prNumber: 12 }).prLink.action, 'appended');
 
+    const trailingProse = fakeGh({ prBody: `Acceptance packet: ${url} is above`, files: { '/f/packet.md': FIRST_BODY } });
+    assert.equal(publish(trailingProse, { prNumber: 12 }).prLink.action, 'appended');
+
     const crlf = fakeGh({ prBody: `Summary\r\nAcceptance packet: ${url}\r\nMore`, files: { '/f/packet.md': FIRST_BODY } });
     assert.equal(publish(crlf, { prNumber: 12 }).prLink.action, 'present');
+  });
+
+  test('a stale link of this record is replaced in place, its line ending kept', () => {
+    const stale = 'https://github.com/o/r/issues/7#issuecomment-old';
+    const url = commentFixture(1).url;
+    const gh = fakeGh({ prBody: `Summary\r\nAcceptance packet: ${stale}\r\nMore`, files: { '/f/packet.md': FIRST_BODY } });
+    assert.deepEqual(publish(gh, { prNumber: 12 }).prLink, { ok: true, action: 'replaced' });
+    assert.equal(gh.state.prBody, `Summary\r\nAcceptance packet: ${url}\r\nMore`);
+    assert.equal(gh.state.files[TMP_PATH], gh.state.prBody);
+  });
+
+  test('repeats of this record\'s link collapse to one line', () => {
+    const url = commentFixture(1).url;
+    const gh = fakeGh({
+      prBody: `Acceptance packet: ${url}\nMiddle\nAcceptance packet: https://github.com/o/r/issues/7#issuecomment-old\n`,
+      files: { '/f/packet.md': FIRST_BODY },
+    });
+    assert.equal(publish(gh, { prNumber: 12 }).prLink.action, 'replaced');
+    assert.equal(gh.state.prBody, `Acceptance packet: ${url}\nMiddle\n`);
+  });
+
+  test('a shared PR keeps one link per record: another record\'s line stays', () => {
+    const other = 'https://github.com/o/r/issues/8#issuecomment-5';
+    const url = commentFixture(1).url;
+    const gh = fakeGh({ prBody: `Summary\n\nAcceptance packet: ${other}\n`, files: { '/f/packet.md': FIRST_BODY } });
+    assert.deepEqual(publish(gh, { prNumber: 12 }).prLink, { ok: true, action: 'appended' });
+    assert.ok(gh.state.prBody.includes(`Acceptance packet: ${other}\n`), 'the other record\'s link survives');
+    assert.ok(gh.state.prBody.includes(`Acceptance packet: ${url}\n`), 'this record has its own');
+
+    // A prefix of this record's number is another record too.
+    const prefix = fakeGh({ prBody: 'Acceptance packet: https://github.com/o/r/issues/77#issuecomment-5', files: { '/f/packet.md': FIRST_BODY } });
+    assert.equal(publish(prefix, { prNumber: 12 }).prLink.action, 'appended');
   });
 
   test('no PR number means no PR calls', () => {
@@ -587,11 +623,37 @@ describe('upsertLocalPacket', () => {
     assert.equal(upsertLocalPacket('# Record\r\n', 'A\nB'), `# Record\r\n\r\n${crlfBlock('A\r\nB')}\r\n`);
   });
 
-  test('a stray start delimiter never swallows the text after it', () => {
+  test('an orphan start is the block start, and never swallows the text after it', () => {
     const stray = `${LOCAL_START}\nhuman notes\n`;
-    const appended = upsertLocalPacket(stray, 'ONE');
-    assert.equal(appended, `${LOCAL_START}\nhuman notes\n\n${block('ONE')}\n`);
-    assert.equal(upsertLocalPacket(appended, 'TWO'), `${LOCAL_START}\nhuman notes\n\n${block('TWO')}\n`);
+    const first = upsertLocalPacket(stray, 'ONE');
+    assert.equal(first, `${block('ONE')}\nhuman notes\n`);
+    assert.equal(first.split(LOCAL_START).length - 1, 1, 'one packet, no stray delimiter left');
+    assert.equal(upsertLocalPacket(first, 'TWO'), `${block('TWO')}\nhuman notes\n`);
+  });
+
+  test('an orphan start below a lone end delimiter is still the block start', () => {
+    assert.equal(
+      upsertLocalPacket(`${LOCAL_END}\nnotes\n${LOCAL_START}\nmore\n`, 'NEW'),
+      `${LOCAL_END}\nnotes\n${block('NEW')}\nmore\n`,
+    );
+  });
+
+  test('near-delimiter lines are delimiters, so a re-run never leaves two packets', () => {
+    for (const body of [
+      `${LOCAL_START} \nOLD\n${LOCAL_END}  `,
+      `  ${LOCAL_START}\nOLD\n    ${LOCAL_END}`,
+      `\t${LOCAL_START}\t\nOLD\n${LOCAL_END}`,
+    ]) {
+      const result = upsertLocalPacket(body, 'NEW');
+      assert.equal(result, block('NEW'), JSON.stringify(body));
+    }
+  });
+
+  test('two complete blocks collapse from the first start through the last end', () => {
+    const result = upsertLocalPacket(`intro\n${block('A')}\nbetween\n${block('B')}\ntail\n`, 'NEW');
+    assert.equal(result, `intro\n${block('NEW')}\ntail\n`);
+    const crlf = upsertLocalPacket(`${LOCAL_START}\r\nA\r\n${LOCAL_END}\r\n${LOCAL_START}\r\nB\r\n${LOCAL_END}\r\ntail\r\n`, 'NEW');
+    assert.equal(crlf, `${LOCAL_START}\r\nNEW\r\n${LOCAL_END}\r\ntail\r\n`);
   });
 
   test('an end delimiter ahead of the block is not an anchor', () => {

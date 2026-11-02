@@ -3,9 +3,8 @@
 // and clear a pending label when it did not, so a stale packet never sits under one.
 //
 // `runner(args)` runs gh and throws on non-zero; the CLI injects it and the file
-// writer, so this module holds no fs or child_process. `readFile` is part of the
-// call's interface for that same CLI; no step of the sequence reads a file itself,
-// because gh reads the body file directly and the body must reach it unaltered.
+// writer, so this module holds no fs or child_process. No step of the sequence reads
+// a file itself: gh reads the body file directly, and the body must reach it unaltered.
 'use strict';
 
 const { LOCAL_START, LOCAL_END } = require('./packet-contract');
@@ -14,6 +13,7 @@ const { LABELS } = require('../issues/record-vocabulary');
 
 const EDIT_COMMENT_QUERY = 'query=mutation($id:ID!,$body:String!){updateIssueComment(input:{id:$id,body:$body}){issueComment{id url}}}';
 const PENDING_LABELS = Object.freeze([LABELS.DEMO_PENDING, LABELS.ACCEPT_PENDING]);
+const PR_LINK_PREFIX = 'Acceptance packet: ';
 
 const messageOf = (err) => (err && err.message ? err.message : String(err));
 
@@ -60,16 +60,37 @@ function clearPendingLabels(gh, issue) {
   return { labelRemoval: failures.length === 0 ? 'removed' : 'failed', failures };
 }
 
-function linkPullRequest({ gh, prNumber, url, writeFile, tmpPath }) {
+// The body with this record's link line reading `line`, or null when it has none. Only
+// a line on the same `/issues/{N}#` is this record's: a multi-spec run shares one PR, so
+// another record's line beside it stays. Repeats of this record's line collapse to one.
+function replacePacketLine(body, issue, line) {
+  const issuePath = `/issues/${issue}#`;
+  let replaced = false;
+  const lines = [];
+  for (const raw of body.split('\n')) {
+    const eol = raw.endsWith('\r') ? '\r' : '';
+    const text = eol ? raw.slice(0, -1) : raw;
+    if (!text.startsWith(PR_LINK_PREFIX) || !text.includes(issuePath) || /\s/.test(text.slice(PR_LINK_PREFIX.length))) {
+      lines.push(raw);
+    } else if (!replaced) {
+      replaced = true;
+      lines.push(`${line}${eol}`);
+    }
+  }
+  return replaced ? lines.join('\n') : null;
+}
+
+function linkPullRequest({ gh, prNumber, issue, url, writeFile, tmpPath }) {
   try {
     if (url === null) throw new Error('the post printed no comment url');
     const { body } = JSON.parse(gh(['pr', 'view', String(prNumber), '--json', 'body']));
     if (typeof body !== 'string') throw new Error('the pull request view has no body');
-    const line = `Acceptance packet: ${url}`;
-    if (body.split(/\r?\n/).includes(line)) return { ok: true, action: 'present' };
-    writeFile(tmpPath, `${body}\n\n${line}\n`);
+    const line = `${PR_LINK_PREFIX}${url}`;
+    const replaced = replacePacketLine(body, issue, line);
+    if (replaced === body) return { ok: true, action: 'present' };
+    writeFile(tmpPath, replaced ?? `${body}\n\n${line}\n`);
     gh(['pr', 'edit', String(prNumber), '--body-file', tmpPath]);
-    return { ok: true, action: 'appended' };
+    return { ok: true, action: replaced === null ? 'appended' : 'replaced' };
   } catch (err) {
     return { ok: false, action: null, error: messageOf(err) };
   }
@@ -138,21 +159,20 @@ function publishPacket({ issue, bodyFile, repo, prNumber = null, label = null, r
   }
 
   result.ok = true;
-  if (prNumber) result.prLink = linkPullRequest({ gh, prNumber, url: result.url, writeFile, tmpPath });
+  if (prNumber) result.prLink = linkPullRequest({ gh, prNumber, issue, url: result.url, writeFile, tmpPath });
   return result;
 }
 
-// Delimiters count only as whole lines, so prose naming one in a code span is not an
-// anchor. The block opens at the last start line before its end, so a stray start
-// line above it never pulls the text between them into the replacement.
+// Delimiters count only as whole lines, whatever surrounds them on the line, so prose
+// naming one in a code span is not an anchor but an indented one is. The block runs from
+// the first start through the last end, so near-delimiter shapes and a repeated block
+// all collapse into one packet. An orphan start, with no end below it, is the block's
+// start alone: nothing marks where its text stops, and what follows may be a human's.
 function findLocalBlock(lines) {
-  let start = -1;
-  for (const [index, raw] of lines.entries()) {
-    const line = raw.endsWith('\r') ? raw.slice(0, -1) : raw;
-    if (line === LOCAL_START) start = index;
-    else if (line === LOCAL_END && start !== -1) return { start, end: index };
-  }
-  return null;
+  const start = lines.findIndex((line) => line.trim() === LOCAL_START);
+  if (start === -1) return null;
+  const end = lines.findLastIndex((line) => line.trim() === LOCAL_END);
+  return { start, end: end > start ? end : start };
 }
 
 function renderLocalBlock(packetMarkdown, eol) {
