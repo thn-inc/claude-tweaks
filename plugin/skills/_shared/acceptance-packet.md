@@ -24,10 +24,17 @@ it lands, the section's empty line stands in.
 8. **Decisions left for you** — owner: the control-mode records. One line per `decision` fact, omitted when empty, heading included.
 9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`.
 
-Any other section left empty states why in its one line; a heading is never empty. Above the
+Any other section left empty states why in its one line; a heading is never empty. Recording,
+Decisions left for you and Deploy status render facts directly and are never narrated claims. Above the
 sections sit the marker, the `## Acceptance packet — #{N}` title, the partial-gather note when the
-gather has one, the dropped line, and the screened line when an entry was screened. The observation
-plan, when given, follows Deploy status as a `### Observation plan` appendix.
+gather has one, the dropped line, and the screened line when an entry was screened.
+
+**The observation plan**, when given in `_shared/observation-plan.md`'s grammar, follows Deploy status
+as a `### Observation plan` appendix and survives the trip to `/claude-tweaks:demo`: a first-line plan
+heading is dropped so it is not doubled, each line keeps its list marker and its whole backtick spans,
+and each keeps its indentation up to three columns past the open list item's content, so a sub-bullet
+stays under its parent and no line becomes an indented code block. What follows the marker is free text
+(`## Untrusted content`).
 
 **Row placement (Decision Q3).** Every `check`/`story` fact renders exactly one row, placed by the
 first rule that matches: status `skipped` or `not-run` → Couldn't test; status `failed` → Tried to
@@ -39,19 +46,25 @@ negative stories and failures only, and a routine pass never renders there.
 ## Canonical copy and lookup
 
 - **The marker.** The canonical comment's first line is `<!-- acceptance-packet: v1 -->`. The first
-  line must equal the marker exactly: trailing text or a padded version is prose, not a packet.
+  line must equal the marker exactly: trailing text or a padded version is prose, not a packet. A
+  same-shaped line naming another version is a packet too, and reads as `unreadable` (`## Reader rules`).
 - **Trust.** Only a comment from a trusted author counts (`bin/lib/issues/comment-trust.js`, stated
   in `_shared/pr-run-comments.md`'s Trusted authors). An untrusted marker comment is skipped and named.
 - **Which comment.** The canonical copy is the earliest trusted comment by `createdAt`, not by comment
-  id, because real ids are opaque node ids. It is then edited in place through its own id; extras are
+  id, because real ids are opaque node ids. When any candidate's `createdAt` will not parse, the order
+  the comments were given in stands. It is then edited in place through its own id; extras are
   reported, never edited or deleted. A re-run never adds a second packet: a comment it cannot edit is
   reported and nothing is posted (`## Failure contract`).
 - **The PR.** `Acceptance packet: {comment url}` is appended to the PR body idempotently, a line
-  already there being left alone. No PR, no link. A failed link is reported in the result's `prLink` and
+  already there being left alone. A line with another url on the same `/issues/{N}#` is replaced in
+  place. A line on another record's `/issues/{N}#` stays, since a multi-spec run shares one PR across
+  records. No PR, no link. A failed link is reported in the result's `prLink` and
   does not fail the publish, since the packet landed.
 - **`local-files`.** The packet sits between the whole-line delimiters `<!-- acceptance-packet:start -->` and
   `<!-- acceptance-packet:end -->` in the record body, replaced in place, and is appended at the end
-  of the body when no such block exists.
+  of the body when no such block exists. Whitespace around a delimiter does not change what it is. The
+  block runs from the first start through the last end, so repeated blocks collapse into one. A start
+  with no end below it is the block's start alone, and the text after it stays.
 - **How many.** One packet per work item. A legacy brief comment is left untouched, and "exactly one"
   counts packet comments only.
 - **Parents.** Decomposed work: the packet lives on the parent and a sub-issue's wrap-up posts none.
@@ -108,6 +121,9 @@ A claim drops with one fixed reason: `unknown section`, `no refs`, `absent fact`
 `tried-to-break claim cites no negative or failed fact`. The dropped list lives in the working copy
 (`render --dropped-out`): each entry's section and fixed reason, never the claim's text, section value or refs.
 
+An unknown section drops first. Any other claim whose text shows a credential shape goes to `screened`
+ahead of every evidence rule below, whatever its section (`## Links and credentials`).
+
 **Verification words:** `tested`, `verified`, `works`.
 
 Routing by status applies only for a claim asserting verification, one whose text contains a
@@ -131,9 +147,14 @@ proof routes to Tried to break or Couldn't test whatever its wording, because a 
 no expected verify checks and no partial note (Decision Q11). A present but unreadable or invalid one is
 a partial gather with the note `verify-scope declaration not read — expected checks not derived`.
 
+**Adjudicated runs.** A check's status follows verify's verdict, not its raw exit code. With
+`effectivePass: true` in the `report.json`, a check that exited non-zero is `passed` and states why:
+`baseline-adjudicated vs {baseRef}`, `declared pre-existing failure`, or `adjudicated by verify`.
+
 **Acceptance criteria.** The spec's criteria are parsed from its `## Acceptance Criteria` section in
 numbered (`1.`), `1)`, bold-number (`**1.**`), bulleted and checkbox forms, with positional ids `AC1`,
-`AC2` for the unnumbered ones. Each is a `check:ac-{id}` fact. A spec with none gets a partial note.
+`AC2` for the unnumbered ones. A checkbox with no text is no criterion and takes no id. Each is a
+`check:ac-{id}` fact. A spec with none gets a partial note.
 
 **Stories (Decision Q13).** Only the stories `/test` selected for this diff are expected: the QA
 `report.json`'s `stories[]` plus, when the QA pass stamp's `sha` is the current commit, the stamp's
@@ -187,6 +208,8 @@ Exit codes:
 - `post` exits 4 when gh is absent, the MCP path. `post` exits 2 on a malformed invocation, a body file
   with no marker on its first line included: nothing runs, and the MCP path is never taken. `post` exits
   1 on a failure, its result JSON naming what happened (`## Failure contract`).
+- `local` exits 2 on the same marker check, leaving the record unchanged, and 1 on an unreadable record
+  or body file or a failed write.
 
 ## Reader rules
 
@@ -202,10 +225,15 @@ as a landed signal (`_shared/acceptance-labeling-landed.md`).
 ## Untrusted content
 
 Narrative and fact free text are prose only: newlines collapsed, link brackets and `<` escaped, leading
-`#` escaped, as are a backslash, a backtick, a leading `~`, and a line of only `=` or `-`. A URL in free
+`#` escaped, as are a backslash, a backtick, a leading `~`, and a line of only `=` or `-`. A leading
+block marker is escaped too, `>`, a list marker, `1.` or `1)`, so `- ## Couldn't test` forges no nested
+heading, and so is a character reference's `&`, since `&#35;12` and `&commat;octocat` would decode into a
+live reference and a live mention. A URL in free
 text renders as a code span, as does every other shape GitHub would link or notify: any `scheme://` URL,
-`mailto:`, a bare email, `@mention`, `#12` and `owner/repo#12`. A `command` renders in a backtick-safe
-code span. Links render only from `link` facts and a `recording` fact's `url`.
+`mailto:`, a bare email, `@mention`, `#12` and `owner/repo#12`, tokens that touch sharing one span. A `command` renders in a backtick-safe
+code span. Links render only from `link` facts and a `recording` fact's `url`. An evidence screenshot is
+therefore a plain link and not an embedded image: only a screened fact produces a live link, and media
+belongs to the recording record.
 
 ## Links and credentials
 
@@ -221,19 +249,30 @@ percent-decoding, so `?TOKEN=` and `?tok%65n=` both refuse. Decoding is per esca
 `%`. A query inside a fragment (`#/cb?token=abc`) and nested keys in a query (`?next=/cb?token=abc`) are
 screened. A benign path such as `/docs/token-guide` is not.
 
-**In text.** The same constant screens Test-guide `command` strings and Test-guide claim text, also
+**In text.** The same constant screens every `command` string, every claim's text in any section, each
+observation-plan line, and all other free text that renders: a `reason`, decision, recording and deploy
+text, a refused reason and a partial note. Decision Q2 sets a minimum, and a secret on this public
+surface is the spec's anti-goal. Matching is also
 case-insensitive after percent-decoding: `tok%65n=`, or `100% tok%65n=` with a stray `%` beside it. The shapes:
 
 - `{key}=` or `{key}:`, with `-` and `_` ignored in the key and counting as a boundary before it:
   `session_id=`, `apikey=`, `GITHUB_TOKEN=`.
 - A quoted JSON key: `"token":`.
-- The flag `--{key}`, followed by end, whitespace or `=`, the same way: `--api-key`.
+- The flag `--{key}`, followed by end, whitespace or `=`, the same way and behind a hyphenated prefix:
+  `--api-key`, `--client-secret`.
 - The header `Authorization:`.
 - URL userinfo in text: `https://user:pass@example.com`.
 
 `monkey=1`, `/docs/token-guide` and `acceptance-packet.js --help` are not matches. A match
-drops that entry, and its omission is stated by id or key, never its text, and the packet still posts: a
-command link goes to `refused` with the reason `credential key in command: {key}`, a claim to `screened`.
+drops that entry, and its omission is stated by id or key, never its text, and the packet still posts:
+
+- A command link goes to `refused` with the reason `credential key in command: {key}`.
+- A claim goes to `screened`, whatever its section, and so does an observation-plan line, dropped alone.
+  The screened line names each by section and key:
+  `{N} entries omitted for credential-shaped content: Test guide (password); Observation plan (token)`,
+  or `1 entry omitted` in the singular. `render --dropped-out` holds the same section and key.
+- A `reason` renders `(reason withheld: credential-shaped)` and its row stays, so the row count holds.
+- Any other free text renders `(text withheld: credential-shaped)`.
 
 **Credentials in the Test guide** appear only as vault entry names: a step that needs a login names the
 entry to use, never its value.
@@ -256,7 +295,8 @@ gather could not read, and nothing is filled in by guesswork.
 
 The packet is capped at 60,000 characters. Truncation omits whole items, from the longest section first,
 and states `truncated: N items omitted`. Notes are never omitted, so a section can end on
-`all items omitted by truncation`. A packet still over the cap is not posted (`## Pipeline`).
+`all items omitted by truncation`. When the notes alone exceed the cap no drop can meet it, so every item
+stays. A packet still over the cap is not posted (`## Pipeline`).
 
 ## Old brief section map
 

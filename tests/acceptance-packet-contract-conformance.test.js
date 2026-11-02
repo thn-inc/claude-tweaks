@@ -34,7 +34,8 @@ const {
 const { checkLink, findCredentialInText } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { validatePacket } = require('../plugin/bin/lib/wrap-up/packet-validate');
 const { renderPacket, inline, codeSpan } = require('../plugin/bin/lib/wrap-up/packet-render');
-const { gatherPacketFacts, parseAcceptanceCriteria } = require('../plugin/bin/lib/wrap-up/packet-gather');
+const { gatherPacketFacts, parseAcceptanceCriteria, readPacket } = require('../plugin/bin/lib/wrap-up/packet-gather');
+const { upsertLocalPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 const { LABELS } = require('../plugin/bin/lib/issues/record-vocabulary');
 const { run } = require('../plugin/bin/acceptance-packet');
 
@@ -146,6 +147,28 @@ for (const [heading, owner] of [
   });
 }
 
+test('a section that renders facts directly takes no claim: its narrated claim has nowhere to land', () => {
+  const body = inSection('## Sections');
+  assert.match(body, /Recording, Decisions left for you and Deploy status render facts directly and are never narrated claims/);
+  for (const section of ['recording', 'decisions', 'deploy']) {
+    assert.ok(!CLAIM_SECTIONS.includes(section), section);
+    const { dropped } = validatePacket(facts([]), narrative([{ section, text: 'x', refs: ['change:a'] }]));
+    assert.match(dropped[0].reason, /^unknown section/);
+  }
+});
+
+test('the plan appendix keeps what the Sections paragraph says it keeps', () => {
+  const body = inSection('## Sections');
+  assert.match(body, /a first-line plan heading is dropped so it is not doubled/);
+  assert.match(body, /each line keeps its list marker and its whole backtick spans/);
+  assert.match(body, /up to three columns past the open list item's content/);
+  const { markdown } = renderPacket(facts([]), narrative([]), {
+    observationPlan: '### Observation plan\n- Prepare:\n  - `a [b]`\n        over',
+  });
+  const plan = markdown.split('\n').slice(markdown.split('\n').indexOf('### Observation plan') + 1);
+  assert.deepStrictEqual(plan, ['- Prepare:', '  - `a [b]`', '       over']);
+});
+
 test('Risk proofs always renders (Decision Q10)', () => {
   const item = sectionItems().find(({ heading }) => heading === 'Risk proofs');
   assert.match(item.text, /always renders, its placeholder standing in when no risk flag was kept/);
@@ -192,6 +215,34 @@ const LOOKUP_FACTS = [
 for (const [label, pattern] of LOOKUP_FACTS) {
   test(`Canonical copy and lookup states: ${label}`, () => assert.match(inSection('## Canonical copy and lookup'), pattern));
 }
+
+test('the lookup rules stated are what the code does', () => {
+  const body = inSection('## Canonical copy and lookup');
+  assert.match(body, /When any candidate's `createdAt` will not parse, the order the comments were given in stands/);
+  const trusted = (id, createdAt) => ({ id, url: id, body: PACKET_MARKER, authorAssociation: 'OWNER', createdAt });
+  const unparseable = readPacket([trusted('b', 'not a date'), trusted('a', '2020-01-01T00:00:00Z')]);
+  assert.strictEqual(unparseable.comment.id, 'b', 'given order');
+  const parsed = readPacket([trusted('b', '2021-01-01T00:00:00Z'), trusted('a', '2020-01-01T00:00:00Z')]);
+  assert.strictEqual(parsed.comment.id, 'a', 'earliest');
+
+  assert.match(body, /A same-shaped line naming another version is a packet too, and reads as `unreadable`/);
+  const other = readPacket([{ ...trusted('a', '2020-01-01T00:00:00Z'), body: '<!-- acceptance-packet: v2 -->' }]);
+  assert.strictEqual(other.status, 'unreadable');
+
+  assert.match(body, /A line with another url on the same `\/issues\/\{N\}#` is replaced in place/);
+  assert.match(body, /A line on another record's `\/issues\/\{N\}#` stays, since a multi-spec run shares one PR/);
+});
+
+test('the local-files block rules stated are what the code does', () => {
+  const body = inSection('## Canonical copy and lookup');
+  assert.match(body, /Whitespace around a delimiter does not change what it is/);
+  assert.match(body, /The block runs from the first start through the last end, so repeated blocks collapse into one/);
+  assert.match(body, /A start with no end below it is the block's start alone, and the text after it stays/);
+  const block = (text) => `${LOCAL_START}\n${text}\n${LOCAL_END}`;
+  assert.strictEqual(upsertLocalPacket(`  ${LOCAL_START} \nA\n${LOCAL_END}\t`, 'N'), block('N'));
+  assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${block('B')}`, 'N'), block('N'));
+  assert.strictEqual(upsertLocalPacket(`${LOCAL_START}\nnotes`, 'N'), `${block('N')}\nnotes`);
+});
 
 // ---- ## Facts and claims ----
 
@@ -274,6 +325,7 @@ const VALIDATION_FACTS = [
   ['the exemption is Test-guide only', /plain-wording exemption covers Test-guide manual steps only/],
   ['a risk proof routes whatever its wording', /A risk proof citing a failed or skipped `check` or `story` proof routes to Tried to break or Couldn't test whatever its wording/],
   ['the dropped list is in the working copy', /The dropped list lives in the working copy/],
+  ['the screen runs ahead of the evidence rules', /goes to `screened` ahead of every evidence rule below, whatever its section/],
 ];
 for (const [label, pattern] of VALIDATION_FACTS) {
   test(`Validation policy states: ${label}`, () => assert.match(inSection('## Validation policy'), pattern));
@@ -299,9 +351,25 @@ for (const [label, pattern] of EXPECTED_SECTION_FACTS) {
 
 test('the acceptance-criteria forms stated are the forms the parser reads', () => {
   const spec = [
-    '## Acceptance Criteria', '1. numbered', '2) paren', '**3.** bold', '- bullet', '- [ ] box', '- [x] done',
+    '## Acceptance Criteria', '1. numbered', '2) paren', '**3.** bold', '- bullet', '- [ ]', '- [ ] box', '- [x] done',
   ].join('\n');
   assert.deepStrictEqual(parseAcceptanceCriteria(spec).map(({ id }) => id), ['1', '2', '3', 'AC1', 'AC2', 'AC3']);
+  assert.match(inSection('## The expected check set'), /A checkbox with no text is no criterion and takes no id/);
+});
+
+test('each adjudicated reason the gather states is in the contract', () => {
+  const checks = { tests: { command: 'x', exitCode: 1, summary: '1 failing' } };
+  const reasonOf = (report) => gatherPacketFacts({ record: 1, specText: null, changes: null, report: { checks, ...report } }).facts.find(({ id }) => id === 'check:tests');
+  const body = inSection('## The expected check set');
+  assert.match(body, /With `effectivePass: true` in the `report\.json`, a check that exited non-zero is `passed` and states why/);
+  const baseline = reasonOf({ effectivePass: true, baselineAdjudicated: { verdict: 'pass', baseRef: '{baseRef}' } });
+  const preExisting = reasonOf({ effectivePass: true, preExistingAdjudicated: {} });
+  const other = reasonOf({ effectivePass: true });
+  for (const entry of [baseline, preExisting, other]) {
+    assert.strictEqual(entry.status, 'passed');
+    assert.ok(body.includes(`\`${entry.reason}\``), `the contract must state: ${entry.reason}`);
+  }
+  assert.strictEqual(reasonOf({ effectivePass: false }).status, 'failed');
 });
 
 test('every partial note the gather can state is in the contract', () => {
@@ -375,6 +443,9 @@ test('the exit codes the Pipeline states are the ones the CLI returns', () => {
   assert.match(body, /`post` exits 2 on a malformed invocation/);
   assert.match(body, /`post` exits 1 on a failure/);
   assert.match(body, /`render` exits 1 and nothing is posted when `chars` still exceeds the cap after truncation/);
+  assert.match(body, /`local` exits 2 on the same marker check, leaving the record unchanged/);
+  const local = ['local', '--record-file', 'r', '--body-file', 'body'];
+  assert.strictEqual(run(local, { ...quiet, readFile: () => 'no marker\n' }), 2, 'local, no marker');
 });
 
 const PIPELINE_FACTS = [
@@ -409,6 +480,10 @@ const UNTRUSTED_FACTS = [
   ['a command renders in a code span', /A `command` renders in a backtick-safe code span/],
   ['links come only from facts', /Links render only from `link` facts and a `recording` fact's `url`/],
   ['the autolink forms', /any `scheme:\/\/` URL, `mailto:`, a bare email, `@mention`, `#12` and `owner\/repo#12`/],
+  ['a leading block marker escapes', /A leading block marker is escaped too, `>`, a list marker, `1\.` or `1\)`/],
+  ['a character reference escapes', /a character reference's `&`/],
+  ['touching tokens share a span', /tokens that touch sharing one span/],
+  ['a screenshot is a plain link', /An evidence screenshot is therefore a plain link and not an embedded image/],
 ];
 for (const [label, pattern] of UNTRUSTED_FACTS) {
   test(`Untrusted content states: ${label}`, () => assert.match(inSection('## Untrusted content'), pattern));
@@ -424,6 +499,20 @@ test('inline() escapes what the contract says it escapes', () => {
   assert.strictEqual(inline('a\nb'), 'a b');
   assert.strictEqual(inline('[x](y) <z'), '\\[x\\](y) \\<z');
   assert.strictEqual(inline('# h'), '\\# h');
+  assert.strictEqual(inline('> ## h'), '\\> ## h');
+  assert.strictEqual(inline('- ## h'), '\\- ## h');
+  assert.strictEqual(inline('1. ## h'), '1\\. ## h');
+  assert.strictEqual(inline('1) ## h'), '1\\) ## h');
+  assert.strictEqual(inline('&#35;12'), '\\&#35;12');
+  assert.strictEqual(inline('&commat;octocat'), '\\&commat;octocat');
+  assert.strictEqual(inline('#12@octocat'), codeSpan('#12@octocat'));
+});
+
+test('an evidence screenshot renders as a plain link, from a recording fact', () => {
+  const url = 'https://raw.githubusercontent.com/o/r/abc/docs/demo-evidence/1/01-a.png';
+  const { markdown } = renderPacket(facts([fact('recording:a', 'recording', 'passed', { text: 'a', url })]), narrative([]));
+  assert.ok(markdown.includes(`- a: <${url}>`), markdown);
+  assert.ok(!markdown.includes('!['), markdown);
 });
 
 // ---- ## Links and credentials ----
@@ -456,13 +545,14 @@ test('each URL shape the contract names is refused', () => {
     'https://example.com/#/cb?token=a',
     'https://example.com/?next=/cb?token=a',
     'https://example.com/?a=100%&token=a',
+    'https://example.com/?sessionid=a',
   ]) {
     assert.strictEqual(checkLink(url, { allowedHosts }).ok, false, url);
   }
   assert.strictEqual(checkLink('https://example.com/docs/token-guide', { allowedHosts }).ok, true);
   const body = inSection('## Links and credentials');
   assert.match(body, /matched in the query, the fragment and the userinfo, case-insensitive after percent-decoding/);
-  assert.match(body, /Test-guide claim text, also case-insensitive after percent-decoding/);
+  assert.match(body, /Matching is also case-insensitive after percent-decoding/);
   assert.match(body, /per escape run, tolerating a stray `%`/);
   assert.match(body, /query inside a fragment \(`#\/cb\?token=abc`\) and nested keys in a query \(`\?next=\/cb\?token=abc`\) are screened/);
 });
@@ -470,7 +560,7 @@ test('each URL shape the contract names is refused', () => {
 test('each text shape the contract names is screened, and the benign ones are not', () => {
   const body = inSection('## Links and credentials');
   for (const shape of [
-    'session_id=', 'apikey=', '--api-key', 'GITHUB_TOKEN=', '"token":', 'https://user:pass@example.com',
+    'session_id=', 'apikey=', '--api-key', '--client-secret', 'GITHUB_TOKEN=', '"token":', 'https://user:pass@example.com',
     'Authorization:', 'tok%65n=', '100% tok%65n=',
   ]) {
     assert.ok(findCredentialInText(shape), `${shape} is screened`);
@@ -482,9 +572,46 @@ test('each text shape the contract names is screened, and the benign ones are no
   }
 });
 
+test('each screening outcome the contract quotes is what the renderer prints', () => {
+  const body = inSection('## Links and credentials');
+  const secret = 'hunter2';
+  const text = `password=${secret}`;
+  const { markdown, screened } = renderPacket(
+    facts(
+      [
+        fact('check:c', 'check', 'failed', { reason: text }),
+        fact('decision:d', 'decision', 'passed', { text }),
+        fact('change:a', 'change'),
+      ],
+      { refused: [{ id: 'link:x', reason: text }], partial: [text] },
+    ),
+    narrative([
+      { section: 'what-changed', text, refs: ['change:a'] },
+      { section: 'test-guide', text, refs: ['change:a'] },
+    ]),
+    { observationPlan: `- token=${secret}\n- ok` },
+  );
+  assert.ok(!markdown.includes(secret), markdown);
+  assert.deepStrictEqual(screened, [
+    { section: 'what-changed', key: 'password' },
+    { section: 'test-guide', key: 'password' },
+    { section: 'observation-plan', key: 'token' },
+  ]);
+  assert.ok(markdown.includes('3 entries omitted for credential-shaped content: What changed (password); Test guide (password); Observation plan (token)'), markdown);
+  const single = renderPacket(facts([]), narrative([{ section: 'test-guide', text, refs: [] }])).markdown;
+  assert.ok(single.includes('1 entry omitted for credential-shaped content: Test guide (password)'), single);
+  for (const quoted of ['(reason withheld: credential-shaped)', '(text withheld: credential-shaped)']) {
+    assert.ok(markdown.includes(quoted), `rendered: ${quoted}`);
+    assert.ok(body.includes(`\`${quoted}\``), `stated: ${quoted}`);
+  }
+  assert.ok(body.includes('`{N} entries omitted for credential-shaped content: Test guide (password); Observation plan (token)`'));
+  assert.ok(body.includes('`1 entry omitted`'));
+});
+
 const LINKS_FACTS = [
-  ['commands and claims are screened (Decision Q2)', /screens Test-guide `command` strings and Test-guide claim text/],
+  ['every free-text surface is screened', /screens every `command` string, every claim's text in any section, each observation-plan line, and all other free text that renders/],
   ['the omission is by id or key, never text', /its omission is stated by id or key, never its text, and the packet still posts/],
+  ['a row stays when its reason is withheld', /its row stays, so the row count holds/],
   ['vault entry name', /only as vault entry names/],
   ['the suffix is dev-only (Decision Q7)', /`\(link unverified: deploy not confirmed live\)`[^.]*only when the deploy target is `dev` and the feature is not confirmed live/],
   ['a local target carries none (Decision Q7)', /a `local` target's links carry none/],
@@ -512,6 +639,18 @@ test('the commands-only surfaces are the constant, with no links rendered', () =
   const body = sectionOf(CONTRACT, '## Facts-poor and infra items');
   assert.deepStrictEqual(listAfter(body, '**Commands-only surfaces:**'), [...COMMANDS_ONLY_SURFACES]);
   assert.match(collapse(body), /Test guide lists commands and renders no links/);
+  for (const surface of COMMANDS_ONLY_SURFACES) {
+    const url = 'http://localhost:3000/settings';
+    const { markdown } = renderPacket(
+      facts(
+        [fact('link:web', 'link', 'passed', { url }), fact('link:cli', 'link', 'passed', { command: 'npm run demo' })],
+        { surface, allowedHosts: ['http://localhost:3000'] },
+      ),
+      narrative([{ section: 'test-guide', text: 'Open it', refs: ['link:web', 'link:cli'] }]),
+    );
+    assert.ok(!markdown.includes(url), `${surface} renders no link`);
+    assert.ok(markdown.includes('`npm run demo`'), `${surface} lists the command`);
+  }
 });
 
 test('the refusal a url link gets on a commands-only surface is stated', () => {
@@ -534,6 +673,10 @@ test('the cap and the truncated line are what the renderer does', () => {
   const body = inSection('## Size');
   assert.match(body, /60,000/);
   assert.ok(body.includes('`truncated: N items omitted`'), 'the line is stated');
+  assert.match(body, /When the notes alone exceed the cap no drop can meet it, so every item stays/);
+  const over = renderPacket(facts(rows.slice(0, 5), { partial: ['x'.repeat(MAX_PACKET_CHARS + 1)] }), narrative([]));
+  assert.strictEqual(over.truncated, 0);
+  assert.ok(over.markdown.includes('`check:suite-with-a-long-name-4`'), 'the row stayed');
 });
 
 // ---- ## Old brief section map ----
