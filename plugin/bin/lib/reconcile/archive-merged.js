@@ -264,7 +264,9 @@ const commitGit = withIndexLockRetry(runGit);
 
 // #3721: the archive commit's subject, written once so the commit and
 // `readArchiveCommit`'s own-commit check cannot drift apart.
-const archiveCommitSubject = (runId) => `[reconcile] archive run ${runId}`;
+function archiveCommitSubject(runId) {
+  return `[reconcile] archive run ${runId}`;
+}
 
 // #3721: what the archive commit landed as, read straight after it so
 // `archive-run` can say where it went. `null` in either field means that probe
@@ -2371,11 +2373,11 @@ function archiveMerged({
   const skipped = [];
   // #3721: the commit an archive attempt made, keyed by run dir — recorded whether the attempt then archived or refused.
   const archiveCommits = {};
-  const archive = (r, d) => {
-    const res = archiveRunDir(r, d);
-    if (res.commit) archiveCommits[d] = res.commit;
-    return res;
-  };
+  function archive(archiveRoot, runDir) {
+    const result = archiveRunDir(archiveRoot, runDir);
+    if (result.commit) archiveCommits[runDir] = result.commit;
+    return result;
+  }
   const postMergePending = new Set((Array.isArray(postMergeDeferred) ? postMergeDeferred : []).map((d) => path.resolve(d)));
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start);
