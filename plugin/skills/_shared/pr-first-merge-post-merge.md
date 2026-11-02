@@ -91,7 +91,7 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
   Otherwise, use `closingSet[]` as printed; never re-read the PR's links here.
 
   After a no-PR local merge, read the bare same-repo `Fixes #{n}` lines of the pushed merge commit's message —
-  a `Fixes {owner}/{repo}#{n}` line names another repository's record and is not in the set
+  a `Fixes {owner}/{repo}#{n}` line naming any repository is not in the set
   (the merge-message composer `bin/compose-subject.js` renders only the bare form, in `bin/lib/release/subject.js`) —
   taking the union across every merge commit when a call site pushes several:
 

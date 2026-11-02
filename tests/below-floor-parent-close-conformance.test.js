@@ -975,7 +975,7 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
 
 test('#4809: Step 4.0b reads only bare same-repo Fixes lines after a no-PR local merge', () => {
   const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
-  assert.ok(step40b.includes('a `Fixes {owner}/{repo}#{n}` line names another repository\'s record and is not in the set'));
+  assert.ok(step40b.includes('a `Fixes {owner}/{repo}#{n}` line naming any repository is not in the set'));
   assert.ok(step40b.includes('the merge-message composer `bin/compose-subject.js` renders only the bare form, in `bin/lib/release/subject.js`'));
 });
 

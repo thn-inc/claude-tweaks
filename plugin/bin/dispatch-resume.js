@@ -29,7 +29,7 @@
 //   2  malformed invocation (including a --bound-run outside the main checkout's pipelines dir),
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
-//   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
+//   4  a read failed transiently, or the pipelines dir is unlistable (PR list, label or blocker read, claim read, stalled-worktree
 //      `git status`, branch reads, run-dir listing); no failed read is taken as clean, with two
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
 //      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
@@ -66,7 +66,7 @@ const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--
   + '  prints one JSON line: {eligible:true,…} (exit 0) or {eligible:false, issue, reason, line} (exit 3)\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
   + '                     or {concurrent:true, reason, line} (exit 3)\n'
-  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 transient read failure\n';
+  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 read failure (transient, or an unlistable pipelines dir)\n';
 
 const PR_FIELDS = 'url,number,headRefName,headRefOid,body,isDraft,isCrossRepository';
 const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
