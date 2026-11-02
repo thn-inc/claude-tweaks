@@ -34,32 +34,35 @@
 ### Task 1: Move build Spec Step 2.5's triage into `manual-steps.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/build/manual-steps.md`
 - Modify: `plugin/skills/build/SKILL.md:96-117` (Spec Step 2.5 body)
 - Modify: `plugin/skills/ledger/SKILL.md:54` (Create's caller list cites `build/SKILL.md` Spec Step 2.5's "If the ledger doesn't exist, create it")
+- Modify: `plugin/skills/build/operational-checklist.md:42` (Common Step 5.5 says "apply the Step 2.5 triage (auto-executable / auth-gap / truly manual)" — a second reader of the moved triage, reached by builds that took the skip line)
 - Modify: `docs/plugin-structure.md:106` (build row: file list + one description clause)
 - Test: `tests/build-manual-steps-split-conformance.test.js` (new)
 - No change (classified): `plugin/skills/build/build-options.md` line 39's "(Step 2.5 auto-executable-command confirmation)" and `plugin/skills/specify/spec-template.md` line 217's "Classified at build start (Step 2.5)" still name the step correctly.
 
-**Moved-prose pins (grep `tests/` and `plugin/` for the moved block's phrases — `Auth-gap`, `Truly manual`, `wholly operational`, `CLI/API check`, `user-declined`, `If the ledger doesn't exist, create it`):** no test pins any of them; the one plugin hit outside the moved file is `ledger/SKILL.md:54` (listed above). `tests/build-skip-degrade-trace-adoption.test.js` pins only the skip line, which stays in SKILL.md.
+**Moved-prose pins (grep `tests/` and `plugin/` for the moved block's phrases — `Auth-gap`, `Truly manual`, `wholly operational`, `CLI/API check`, `user-declined`, `If the ledger doesn't exist, create it`):** no test pins any of them; the plugin hits outside the moved file are `ledger/SKILL.md:54` and `operational-checklist.md:42`'s "the Step 2.5 triage" (both listed above — `operational-checklist.md:58-59`'s own `**Auth-gap items**`/`**Truly manual items**` bullets are its ledger-format rules, not a citation, and stay). `tests/build-skip-degrade-trace-adoption.test.js` pins only the skip line, which stays in SKILL.md.
 
 **Interfaces:**
-- Produces: `plugin/skills/build/manual-steps.md`, heading `# Spec Step 2.5 — Classify and Seed Manual Steps`, holding (verbatim from SKILL.md) the "If the spec has a "Manual Steps" section…" paragraph, the `**No Manual Steps section, but every \`## Deliverables\` item is operational (#2554).**` paragraph, the Parallel execution note, the three-step probe list with the Auto-executable / Auth-gap / Truly manual triage bullets (incl. the `ops=confirm` token rule), "If the ledger doesn't exist, create it using the ledger skill's create operation.", and the `**Anti-pattern:**` paragraph. A two-sentence header under the title states who reads it: `/build` Spec Step 2.5, when the spec has a `## Manual Steps` section or every `## Deliverables` item is operational; the skip path stays in SKILL.md.
+- Produces: `plugin/skills/build/manual-steps.md`, heading `# Spec Step 2.5 — Classify and Seed Manual Steps`, holding (verbatim from SKILL.md) the "If the spec has a "Manual Steps" section…" paragraph, the `**No Manual Steps section, but every \`## Deliverables\` item is operational (#2554).**` paragraph, the Parallel execution note, the three-step probe list with the Auto-executable / Auth-gap / Truly manual triage bullets (incl. the `ops=confirm` token rule), "If the ledger doesn't exist, create it using the ledger skill's create operation.", and the `**Anti-pattern:**` paragraph. A short header under the title states who reads it: `/build` Spec Step 2.5, when the spec has a `## Manual Steps` section or every `## Deliverables` item is operational (the skip path stays in SKILL.md); and Common Step 5.5 (`operational-checklist.md`), which applies the same triage to its operational findings on every build that reaches it.
 
 - [ ] **Step 1: Write the failing test** `tests/build-manual-steps-split-conformance.test.js`, style of `tests/build-already-shipped-exit.test.js` (`readText` from `./helpers/read-skill`). One factored `missing(texts)` function returns the list of failed facts; the positive test asserts it is `[]`, and go-red controls run the same function on mutated text.
-  - `AC2.1: stub routes the Manual Steps case` — the `### Spec Step 2.5` section of SKILL.md (slice to `### Spec Step 3`) matches /Read `manual-steps\.md` in this skill's directory/ and /## Manual Steps/.
+  - `AC2.1: stub routes the Manual Steps case` — the `### Spec Step 2.5` section of SKILL.md (slice to `### Spec Step 3`) matches /read `manual-steps\.md` in this skill's directory/ (lowercase `read`, as the stub is written) and /## Manual Steps/.
+  - `Step 5.5 cites manual-steps.md` — `operational-checklist.md` matches /read `manual-steps\.md` in this skill's directory and apply its triage/ and no longer includes `apply the Step 2.5 triage`.
   - `stub routes the wholly operational case` — the same section matches /every `## Deliverables` item is operational/ and /\(#2554\)/.
   - `skip line stays` — the same section matches /\*\*No Manual Steps section \(skip\):\*\* write one `SKIP` entry/.
   - `triage moved` — the same section does not include `**Auth-gap**`, `**Truly manual**`, or `**Anti-pattern:** Seeding the entire Manual Steps section`; `manual-steps.md` includes all three, plus `(reason-not-auto: user-declined)`, `**\`ops=confirm\` token:**`, and `If the ledger doesn't exist, create it using the ledger skill's create operation.`
   - `ledger cites manual-steps.md` — `plugin/skills/ledger/SKILL.md` matches /`build\/manual-steps\.md`'s "If the ledger doesn't exist, create it"/.
-  - Go-red controls: (a) SKILL.md text with the `Read \`manual-steps.md\` in this skill's directory` sentence removed → `missing()` non-empty; (b) `manual-steps.md` text with the `**Auth-gap**` bullet removed → `missing()` non-empty. Each control first asserts the replacement changed the text.
+  - Go-red controls: (a) SKILL.md text with the `read \`manual-steps.md\` in this skill's directory` phrase removed → `missing()` non-empty; (b) `manual-steps.md` text with the `**Auth-gap**` bullet removed → `missing()` non-empty; (c) `operational-checklist.md` text with its `read \`manual-steps.md\` in this skill's directory and apply its triage` phrase reverted to `apply the Step 2.5 triage` → `missing()` non-empty. Each control first asserts the replacement changed the text.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/build-manual-steps-split-conformance.test.js`
-Expected: FAIL (manual-steps.md does not exist; ENOENT or the "Read `manual-steps.md`" match fails)
+Expected: FAIL (manual-steps.md does not exist; ENOENT or the "read `manual-steps.md`" match fails)
 
 - [ ] **Step 3: Make the split**
   - Create `manual-steps.md` per Interfaces, the moved paragraphs byte-for-byte. Deictic fixes in the moved text: "the same probe-then-triage procedure below" stays (the procedure still follows it in the new file); "fall through to the ordinary per-step SKIP/execute behavior below instead" → "fall through to the ordinary per-step SKIP/execute behavior in `SKILL.md` instead".
@@ -68,6 +71,7 @@ Expected: FAIL (manual-steps.md does not exist; ENOENT or the "Read `manual-step
     ```markdown
     When the spec has a `## Manual Steps` section, or has none but every `## Deliverables` item is operational (#2554) — dispatching a deploy workflow, triggering a job through an API, applying infrastructure, verifying a live result, with no source file changes — read `manual-steps.md` in this skill's directory and follow it: it probes each item for a CLI and credentials, then executes, seeds, or escalates it. Otherwise — no Manual Steps section, and at least one Deliverable touches the codebase — take the skip line below.
     ```
+  - `operational-checklist.md:42`: "Then, for each finding below, apply the Step 2.5 triage (auto-executable / auth-gap / truly manual):" → "Then, for each finding below, read `manual-steps.md` in this skill's directory and apply its triage (auto-executable / auth-gap / truly manual):".
   - `ledger/SKILL.md:54`: replace `` `build/SKILL.md` Spec Step 2.5's "If the ledger doesn't exist, create it" still does `` with `` `build/manual-steps.md`'s "If the ledger doesn't exist, create it" still does — Spec Step 2.5's triage ``.
   - `docs/plugin-structure.md:106` build row: append `, manual-steps.md` to the file list (after `plan-review.md`) and append to the description `; manual-steps.md holds Spec Step 2.5's Manual Steps probe-and-triage procedure (CLI/credential probes, auto-executable / auth-gap / truly-manual triage, the `ops=confirm` rule, the #2554 wholly-operational case), read only when the spec has a Manual Steps section or wholly operational Deliverables — SKILL.md keeps the read condition and the skip line, moved out for Read-rail headroom (#4826)`.
 
@@ -82,7 +86,7 @@ Expected: ≤ 50,500 (≈ 48,900 B)
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/build/manual-steps.md plugin/skills/build/SKILL.md plugin/skills/ledger/SKILL.md docs/plugin-structure.md tests/build-manual-steps-split-conformance.test.js
+git add plugin/skills/build/manual-steps.md plugin/skills/build/SKILL.md plugin/skills/build/operational-checklist.md plugin/skills/ledger/SKILL.md docs/plugin-structure.md tests/build-manual-steps-split-conformance.test.js
 git commit -m "Move build Spec Step 2.5 triage into manual-steps.md — Read-rail headroom" -m "refs #4826"
 ```
 
@@ -91,6 +95,7 @@ git commit -m "Move build Spec Step 2.5 triage into manual-steps.md — Read-rai
 ### Task 2: Move review's post-fan-out sweep into `step3-fanout-sweep.md`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Create: `plugin/skills/review/step3-fanout-sweep.md`
@@ -111,7 +116,7 @@ git commit -m "Move build Spec Step 2.5 triage into manual-steps.md — Read-rai
 
 **Interfaces:**
 - Produces: `plugin/skills/review/step3-fanout-sweep.md`, heading `# Post-fan-out untracked-file sweep — /claude-tweaks:review`, holding the moved section's four parts verbatim (the when-to-run paragraph, the Procedure paragraph with its three bullets and the never-delete paragraph, `**Leftover-listener check.**` with its bullets and never-kill paragraph, `**Agent-scratch cleanup check.**`). A header paragraph under the title names its three readers (the paths that used to reach the inline section): `step3-lens-dispatch.md`'s stub, before Step 3 Routing at every tier; `step3-debate-and-refutation.md`'s closing step at `high`+; `step3-tiebreak.md`'s re-run after its last wave.
-- The heading `## Post-fan-out untracked-file sweep` no longer exists anywhere; the new file's H1 title starts `# Post-fan-out untracked-file sweep`.
+- The `## Post-fan-out untracked-file sweep` heading survives only as the stub heading in `step3-lens-dispatch.md`; the new file's H1 title starts `# Post-fan-out untracked-file sweep`.
 
 - [ ] **Step 1: Write the failing test** `tests/review-fanout-sweep-split-conformance.test.js`, same style as Task 1's test, one factored `missing(texts)` function:
   - `AC2.1: stub read condition` — `step3-lens-dispatch.md` has a line starting `## Post-fan-out untracked-file sweep` followed by a paragraph matching /Before returning to Step 3 Routing/ and /read `step3-fanout-sweep\.md` in this skill's directory/; the file no longer includes `**Leftover-listener check.**` or `**Agent-scratch cleanup check.**`.
