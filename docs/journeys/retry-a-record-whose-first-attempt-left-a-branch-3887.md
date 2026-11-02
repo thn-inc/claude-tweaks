@@ -5,6 +5,7 @@ files:
   - plugin/skills/build/adopted-branch-collision-check.md
   - plugin/skills/build/already-shipped-assessment.md
   - plugin/skills/_shared/pr-early-run-lifecycle.md
+  - plugin/bin/lib/flow/pr-early-open.js
   - plugin/skills/dispatch/settle-and-merge.md
 ---
 
@@ -35,8 +36,8 @@ files:
 - **URL:** `https://github.com/{owner}/{repo}/pull/{pr}`
 - **Action:** Step 1 finds the CLOSED PR for the branch and reopens it (`reopened PR #{pr} for {branch} (retry)`); because this run adopted a prior attempt, it recomposes the body for the new run and writes it with `gh pr edit {pr} --body-file` (`rebound reopened PR #{pr} to run {run-id}`), then pushes.
 - **Should feel:** Continuous — attempt 2's progress and comments land in the same thread as attempt 1's failure.
-- **Should understand:** The rebind is what lets `bin/pr-checklist.js` flip this run's phase rows; a body still naming the old run is refused (exit 4).
-- **Red flags:** Phase-exit checklist updates failing with "run marker mismatch" (a failed rebind is logged as a `SKIP` degrade, not a stop); a second PR opened for the same branch.
+- **Should understand:** The rebind is what lets `bin/pr-checklist.js` flip this run's phase rows; a body still naming the old run is refused (exit 4). A `gh pr reopen` that exits 0 is not proof: a re-list must read the PR `state: OPEN` before the `reopened PR` line is logged. A PR still reading otherwise (`exited 0 but the PR still reads {state}; creating`), or a re-list that cannot run (`could not confirm reopen of closed PR #{pr}`), opens a fresh draft PR in the same call, so attempt 2's thread is then a new PR.
+- **Red flags:** Phase-exit checklist updates failing with "run marker mismatch" (a failed rebind is logged as a `SKIP` degrade, not a stop); a second PR opened for the same branch with neither cause line in `decisions.md`; a `reopened PR` line for a PR GitHub shows as CLOSED.
 
 ### 4. The build resumes instead of re-closing — `build/SKILL.md` Spec Step 2
 - **URL:** —
@@ -49,4 +50,5 @@ files:
 - Created during build of #3887 (Dispatch retry collides with the remote branch its own failed first attempt left behind)
 - Steps 1-4 built in this session
 - Updated during build of #4648. `classifyRemoteBranch` now uses the shared `isValidBranchName` (`plugin/bin/lib/branch-name.js`) instead of the looser `isSafeBranchName`. A name ending in `/` or `.lock`, or containing `//`, now degrades to `unreachable` with reason `invalid-branch-name` before git runs. Git refuses such names anyway, so the steps are unchanged.
+- Updated during build of #4833. Step 3 now requires a re-list to read the PR OPEN after a non-throwing `gh pr reopen`.
 - Related: #2844 (adopted-branch collision check, `foreign`/`mine`), #3093 (unknown-relation card), #3915 (MCP-fed lookup for gh-absent firings), `keep-a-live-run-whose-reused-branch-backed-a-merged-pr-3416.md` (reused branch names, reconcile side)
