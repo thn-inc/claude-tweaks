@@ -90,8 +90,8 @@ function runBlock(shell, block, records) {
   }
 }
 
-// #4740 — fallback mode: no wrap-up-pack.json, and the block's MIRROR literal points at a
-// temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
+// #4740 — fallback mode: no wrap-up-pack.json (unless `pack` supplies one), and the block's
+// MIRROR literal points at a temp mirror. `specs` maps each file name in the mirror's work/ to its contents; null means
 // no work/ directory at all. Returns status, stderr and the probe's output without asserting,
 // so the go-red control can read a failure. `workMode` chmods the mirror's work/ after
 // its files are written; it is restored in the finally so the temp dir can be removed.
@@ -157,7 +157,12 @@ for (const shell of SHELLS) {
   }
 }
 
-const NON_ARRAY_PACKS = { string: { inputs: { closingRecords: '909' } }, object: { inputs: { closingRecords: { 0: 909 } } }, null: { inputs: { closingRecords: null } }, absent: { inputs: {} } };
+const NON_ARRAY_PACKS = {
+  string: { inputs: { closingRecords: '909' } },
+  object: { inputs: { closingRecords: { 0: 909 } } },
+  null: { inputs: { closingRecords: null } },
+  absent: { inputs: {} },
+};
 
 for (const shell of SHELLS) {
   const skip = skipFor(shell);
