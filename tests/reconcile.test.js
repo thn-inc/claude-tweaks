@@ -685,7 +685,7 @@ const OWN_SUBJECT = `[reconcile] archive run ${ARCHIVE_RUN_ID}`;
 test('#3721 readArchiveCommit: a failed sha probe stores null', () => {
   const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
   const fake = fakeGit({
-    log: { stdout: null, failure: 'timeout', exitCode: null },
+    show: { stdout: null, failure: 'timeout', exitCode: null },
     'symbolic-ref': OK('refs/heads/main'),
   });
   assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: null, branch: 'main' });
@@ -696,17 +696,17 @@ test('#3721 readArchiveCommit: reads the sha and subject in one spawn', () => {
   const calls = [];
   const fake = (args) => {
     calls.push(args);
-    return args[0] === 'log' ? OK(`abc1234\n${OWN_SUBJECT}`) : OK('refs/heads/main');
+    return args[0] === 'show' ? OK(`abc1234\n${OWN_SUBJECT}`) : OK('refs/heads/main');
   };
   assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: 'abc1234', branch: 'main' });
-  assert.deepStrictEqual(calls.filter((a) => a[0] === 'log'), [['log', '-1', '--format=%h%n%s']]);
+  assert.deepStrictEqual(calls.filter((a) => a[0] === 'show'), [['show', '-s', '--format=%h%n%s', 'HEAD']]);
   assert.ok(!calls.some((a) => a[0] === 'rev-parse'));
 });
 
 test('#3721 readArchiveCommit: a foreign HEAD subject stores a null sha', () => {
   const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
   const fake = fakeGit({
-    log: OK('abc1234\nsomebody else committed in the window'),
+    show: OK('abc1234\nsomebody else committed in the window'),
     'symbolic-ref': OK('refs/heads/main'),
   });
   assert.deepStrictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake), { sha: null, branch: 'main' });
@@ -715,7 +715,7 @@ test('#3721 readArchiveCommit: a foreign HEAD subject stores a null sha', () => 
 test('#3721 readArchiveCommit: symbolic-ref exit 1 is detached', () => {
   const { readArchiveCommit } = require('../plugin/bin/lib/reconcile/archive-merged');
   const fake = fakeGit({
-    log: OK(`abc1234\n${OWN_SUBJECT}`),
+    show: OK(`abc1234\n${OWN_SUBJECT}`),
     'symbolic-ref': { stdout: null, failure: 'git-error', exitCode: 1 },
   });
   assert.strictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake).branch, 'detached');
@@ -727,7 +727,7 @@ test('#3721 readArchiveCommit: an unanswered symbolic-ref is not detached', () =
     { stdout: null, failure: 'timeout', exitCode: null },
     { stdout: null, failure: 'git-error', exitCode: 128 },
   ]) {
-    const fake = fakeGit({ log: OK(`abc1234\n${OWN_SUBJECT}`), 'symbolic-ref': failed });
+    const fake = fakeGit({ show: OK(`abc1234\n${OWN_SUBJECT}`), 'symbolic-ref': failed });
     assert.strictEqual(readArchiveCommit('/x', ARCHIVE_RUN_ID, fake).branch, null);
   }
 });

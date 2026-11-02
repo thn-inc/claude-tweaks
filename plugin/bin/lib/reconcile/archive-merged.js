@@ -271,7 +271,7 @@ const commitGit = withIndexLockRetry(runGit);
 // archive commit means a sibling session committed in the window, so the sha is
 // not ours to report.
 function readArchiveCommit(root, runId, git = runGit) {
-  const head = git(['log', '-1', '--format=%h%n%s'], root);
+  const head = git(['show', '-s', '--format=%h%n%s', 'HEAD'], root);
   let sha = null;
   if (!head.failure && head.stdout) {
     const [short, subject] = head.stdout.split('\n');
