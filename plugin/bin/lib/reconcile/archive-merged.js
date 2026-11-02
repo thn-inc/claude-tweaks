@@ -2226,7 +2226,7 @@ function resolveRunPrState(root, state, branch, prStates) {
 // runs (#3668, #3740), the two tiebreak reasons (#3945) and cant-tell-unfiled (#4171) — see
 // iterCleanRunDirs' comment for why that subset, and why the rest stay untracked.
 function archiveMergedRun({
-  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates,
+  root, repoSlug, dir, branch, state, dryRun, onSkip, runner, cacheTarget = root, integration, recordCheck, prStates, archive = archiveRunDir,
 }) {
   const prState = resolveRunPrState(root, state, branch, prStates);
   const consoleState = readConsoleState(dir);
@@ -2254,7 +2254,7 @@ function archiveMergedRun({
   }
   if (dryRun) return { outcome: 'archived' };
 
-  const result = archiveRunDir(root, dir);
+  const result = archive(root, dir);
   trackArchiveResult(cacheTarget, repoSlug, dir, result, { runner });
   if (!result.ok) return { outcome: 'skipped', reason: result.reason };
   return { outcome: 'archived' };
@@ -2354,10 +2354,17 @@ function archiveMerged({
 } = {}) {
   const archived = [];
   const skipped = [];
+  // #3721: the commit an archive attempt made, keyed by run dir — recorded whether the attempt then archived or refused.
+  const archiveCommits = {};
+  const archive = (r, d) => {
+    const res = archiveRunDir(r, d);
+    if (res.commit) archiveCommits[d] = res.commit;
+    return res;
+  };
   const postMergePending = new Set((Array.isArray(postMergeDeferred) ? postMergeDeferred : []).map((d) => path.resolve(d)));
   const start = cwd || process.cwd();
   const root = mainCheckoutRoot(start);
-  if (!root) return { archived, skipped, residuePlan: dryRun ? [] : null, residueErrors: [] };
+  if (!root) return { archived, skipped, archiveCommits, residuePlan: dryRun ? [] : null, residueErrors: [] };
   const repoSlug = repoSlugOf(root);
   // #3503: `work-backend: local-files` records are not GitHub issues, so a PR's
   // closingIssuesReferences can never attest them: the record check stays off.
@@ -2414,7 +2421,7 @@ function archiveMerged({
         });
         continue;
       }
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2430,7 +2437,7 @@ function archiveMerged({
     // escalation on success (trackArchiveResult's own success branch clears
     // both).
     if (isClosedSlugStuck(root, dir, state)) {
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2470,7 +2477,7 @@ function archiveMerged({
       // so the result handling below is shared. A bare mint with nothing
       // tracked keeps the fs-only move; see hasTrackedContent above.
       finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => (
-        hasTrackedContent(root, dir) ? archiveRunDir(root, dir) : archiveOrphanedMint(root, dir)
+        hasTrackedContent(root, dir) ? archive(root, dir) : archiveOrphanedMint(root, dir)
       ));
       continue;
     }
@@ -2497,7 +2504,7 @@ function archiveMerged({
       // run non-terminal (still 'interrupted') and retryable next pass, which
       // is the whole point — and only close it once the move has actually
       // landed.
-      const archiveResult = archiveRunDir(root, dir);
+      const archiveResult = archive(root, dir);
       trackArchiveResult(cacheBatch, repoSlug, dir, archiveResult, { runner });
       if (!archiveResult.ok) {
         // Non-'move-failed' reasons (mkdir-failed, git-mv-failed,
@@ -2577,7 +2584,7 @@ function archiveMerged({
       // orphaned-mint branch above makes the same choice per-dir via
       // hasTrackedContent (#2227) — this branch is unconditional because an
       // ad-hoc dir is always a real session, tracked spec or not.
-      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+      finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
       continue;
     }
 
@@ -2654,7 +2661,7 @@ function archiveMerged({
                 track(dir, guard.reason);
                 continue;
               }
-              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+              finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
               continue;
             }
             // #2231: a CLOSED (never-merged) PR's console will never
@@ -2682,7 +2689,7 @@ function archiveMerged({
               continue;
             }
           }
-          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archiveRunDir(root, dir));
+          finishArchiveAttempt(cacheBatch, repoSlug, dir, dryRun, runner, archived, skipped, () => archive(root, dir));
           continue;
         }
       }
@@ -2693,7 +2700,7 @@ function archiveMerged({
 
     const runResult = archiveMergedRun({
       root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration,
-      recordCheck: { records, repoSlug }, prStates,
+      recordCheck: { records, repoSlug }, prStates, archive,
       onSkip: (reason) => track(dir, reason),
     });
     if (runResult.outcome === 'archived') { archived.push(dir); continue; }
@@ -2723,7 +2730,7 @@ function archiveMerged({
     if (!branch) { skipped.push({ runDir: dir, reason: 'no-branch' }); continue; }
 
     const runResult = archiveMergedRun({
-      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates,
+      root, repoSlug, dir, branch, state, dryRun, runner, cacheTarget: cacheBatch, integration, prStates, archive,
       onSkip: (reason) => {
         if (reason === 'console-never-rendered-staged-pending' && consoleReplacedByAutoMerge(dir)) track(dir, reason);
         if (reason === 'tiebreak-coverage-missing' || reason === 'tiebreak-artifact-invalid' || reason === 'cant-tell-unfiled') track(dir, reason);
@@ -2754,7 +2761,7 @@ function archiveMerged({
   // #4421: counted after every archival above, so a dir this pass archived is not in it. Absent
   // (never 0) on a dry run — nothing moved, the count would overstate — and when the dir is unreadable.
   const ownerlessNonClean = dryRun ? null : countOwnerlessNonClean(root);
-  return { archived, skipped, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
+  return { archived, skipped, archiveCommits, residuePlan, residueErrors, ...(ownerlessNonClean === null ? {} : { ownerlessNonClean }) };
 }
 
 module.exports = {

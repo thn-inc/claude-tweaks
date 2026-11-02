@@ -1819,6 +1819,14 @@ async function archiveAsyncMergedRun(checks, extra = {}) {
   writePolicyViaSeedAndPull(seedDir, mainDir, 'integration-model: pr-first\nintegration-branch: main\n');
   fs.writeFileSync(path.join(seedDir, 'merged.txt'), 'merged\n');
   git(['add', 'merged.txt'], seedDir);
+  // extra.trackedWork / extra.trackedStray (#3721): git-track a work/ spec / a stray file under the run dir, so mainDir receives them through the fast-forward.
+  const trackedRel = '.claude-tweaks/pipelines/2026-10-17T062549-spec-3630';
+  for (const [flag, rel] of [[extra.trackedWork, 'work/3630-spec.md'], [extra.trackedStray, 'tracked-stray.md']]) {
+    if (!flag) continue;
+    fs.mkdirSync(path.dirname(path.join(seedDir, trackedRel, rel)), { recursive: true });
+    fs.writeFileSync(path.join(seedDir, trackedRel, rel), '# 3630\n');
+    git(['add', '-f', `${trackedRel}/${rel}`], seedDir);
+  }
   git(['commit', '-q', '-m', 'async merge'], seedDir);
   git(['push', '-q', 'origin', 'main'], seedDir);
   const NEW = git(['rev-parse', 'HEAD'], seedDir).trim();
@@ -1888,6 +1896,46 @@ test('AC2 end to end (#3630): reconcile checks archive archives a PR GitHub merg
   assert.ok(!(r.runs || []).some((x) => x.reason === 'local-behind-merge'), JSON.stringify(r.runs));
   // basename, not the path: reconcile reports the realpath of the temp dir (/private/var on macOS).
   assert.deepEqual((r.runs || []).map((x) => ({ run: path.basename(x.runDir), action: x.action })), [{ run: path.basename(runDir), action: 'archived' }]);
+});
+
+test('#3721 AC4.1: a reconcile run entry for an archived tracked-work run includes the commit', { skip: STUB_SKIP }, async () => {
+  const { r, mainDir } = await archiveAsyncMergedRun(['archive'], { trackedWork: true });
+  const [entry] = r.runs;
+  assert.strictEqual(entry.action, 'archived');
+  assert.deepStrictEqual(entry.commit, { sha: git(['rev-parse', '--short', 'HEAD'], mainDir).trim(), branch: 'main' });
+});
+
+test('#3721 an archived run with nothing tracked has no commit in its reconcile entry', { skip: STUB_SKIP }, async () => {
+  const { r } = await archiveAsyncMergedRun(['archive']);
+  assert.strictEqual(r.runs[0].action, 'archived');
+  assert.ok(!('commit' in r.runs[0]));
+});
+
+test('#3721 a skipped reconcile entry carries the commit its refused attempt made', { skip: STUB_SKIP }, async () => {
+  const { r, mainDir } = await archiveAsyncMergedRun(['archive'], { trackedWork: true, trackedStray: true });
+  const [entry] = r.runs;
+  assert.strictEqual(entry.action, 'skipped');
+  assert.strictEqual(entry.reason, 'tracked-entry');
+  assert.deepStrictEqual(entry.commit, { sha: git(['rev-parse', '--short', 'HEAD'], mainDir).trim(), branch: 'main' });
+});
+
+test('#3721 a mixed pass names only the tracked run', () => {
+  const { archiveMerged, ORPHAN_MINT_TTL_MS } = require('../plugin/bin/lib/reconcile/archive-merged');
+  const root = bareRepoRoot();
+  const trackedId = '2026-08-01T120000-record-3721-tracked';
+  const trackedDir = mintEmptyRunDir(root, trackedId);
+  fs.mkdirSync(path.join(trackedDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(trackedDir, 'work', '3721-spec.md'), '# 3721\n');
+  git(['add', '-f', `.claude-tweaks/pipelines/${trackedId}/work/3721-spec.md`], root);
+  git(['commit', '-q', '-m', 'track spec'], root);
+  const bareDir = mintEmptyRunDir(root, '2026-08-01T120100-record-3721-bare');
+  const old = new Date(Date.now() - ORPHAN_MINT_TTL_MS * 2);
+  for (const d of [trackedDir, bareDir]) fs.utimesSync(d, old, old);
+
+  const result = archiveMerged({ cwd: root });
+
+  assert.strictEqual(result.archived.length, 2, JSON.stringify(result));
+  assert.deepStrictEqual(Object.keys(result.archiveCommits), [trackedDir]);
 });
 
 test('#4599 end to end: a run post-merge deferred in the same pass is not archived — it is skipped post-merge-pending and stays at its top-level path', { skip: STUB_SKIP }, async () => {
