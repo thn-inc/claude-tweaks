@@ -352,7 +352,7 @@ const ROW = '| #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |';
 const NOTE = 'Note: the stuck:open-pr check could not run (exit {failed.code}) — records stuck behind an open PR are not shown';
 const EMPTY_SENTENCE = 'No granted record is stuck behind an open PR.';
 const CLI_CALL = 'bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW" > "$ST_BACKLOG_ATTENTION_STUCK"';
-const STEP4_CONDITION = "only when Step 1's file shows the stuck check did not run";
+const STEP4_CONDITION = "only when Step 1's file shows the stuck check did not run, one note line";
 
 // One assertion function for every prose pin of the row; each has a go-red control below.
 function assertStuckRow(source) {
@@ -384,6 +384,7 @@ test('AC3.1 controls: removing any stuck:open-pr pin goes red on that pin', () =
     [CLI_CALL, /runs the CLI over the snapshot/],
     [`bot:parked. ${EMPTY_SENTENCE}\``, /names a clear stuck check/, 'bot:parked.`'],
     ["only when Step 1's file shows", /renders only when Step 1's file shows the check did not run/, "whenever Step 1's file shows"],
+    ['one note line', /renders only when Step 1's file shows the check did not run/, 'no note line'],
     ['`stuck:open-pr` rows are never batched', /stuck rows are never batched/],
     ['the check could not run, so the render carries one note', /a failed CLI is a note/],
     ['prints `{"failed":{"code":…,"message":…}}`', /keeps the could-not-run state in the stuck file/],

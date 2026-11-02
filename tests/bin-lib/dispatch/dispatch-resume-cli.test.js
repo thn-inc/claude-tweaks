@@ -351,6 +351,74 @@ test('prior-run-live: a live owner sets liveRun on the refusal, an unknown one d
   assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
 });
 
+test('a refusal fired before the prior-run rule still carries liveRun when the owner is provably live', () => {
+  // An absent claim refuses claim-not-resumable, with a close remedy, ahead of the prior-run rule.
+  const env = makeEnv();
+  env.cfg.claim = null;
+  setRunState(env, { status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.json.reason, 'claim-not-resumable');
+  assert.equal(r.json.disposition, 'close');
+  assert.equal(r.json.liveRun, true);
+  // A selection refusal too, whichever disposition: a draft bundle marked for this record.
+  const bundle = makeEnv();
+  bundle.cfg.prs = [prEntry({ closingRecords: 2 })];
+  setRunState(bundle, { status: 'active', owner: OWNER });
+  const b = exec(bundle);
+  assert.equal(b.json.reason, 'multi-record-pr');
+  assert.equal(b.json.liveRun, true);
+  // Not a proven-live owner: no key.
+  const dead = makeEnv();
+  dead.cfg.claim = null;
+  assert.equal(Object.hasOwn(exec(dead).json, 'liveRun'), false);
+});
+
+const NO_RUN_LINE = `#${N}'s PR #${PR} names run ${RUN}, which left no run directory for close-out to verify — review and merge it by hand`;
+
+test('with the marker\'s run in neither root nor archive, a close-out remedy reads by hand, through the real classification', () => {
+  const shapes = [
+    ['not-draft', (env) => { env.cfg.prs = [prEntry({ isDraft: false })]; }],
+    ['pr-opened', (env) => { env.cfg.claim = tombstone(`pr-opened: ${URL}`); }],
+    ['multi-record-pr', (env) => { env.cfg.prs = [prEntry({ isDraft: false, closingRecords: 2 })]; }],
+  ];
+  for (const [reason, arrange] of shapes) {
+    const env = makeEnv();
+    arrange(env);
+    delete env.cfg.dirs[ARCH];
+    delete env.cfg.files[ARCH_STATE];
+    const r = exec(env);
+    assert.equal(r.code, 3, reason);
+    assert.equal(r.json.reason, reason);
+    assert.equal(r.json.line, NO_RUN_LINE, reason);
+    assert.equal(r.json.remedy, NO_RUN_LINE, reason);
+    assert.equal(r.json.disposition, 'close-out', reason);
+    // The archive still holds the run: the same shape names the command.
+    const kept = makeEnv();
+    arrange(kept);
+    assert.match(exec(kept).json.remedy, new RegExp(`/claude-tweaks:dispatch close-out #${N}$`), reason);
+  }
+});
+
+test('a residue root dir keeps the close-out command: the path still resolves', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ isDraft: false })];
+  setRunState(env, undefined, { files: ['work'] });
+  const r = exec(env);
+  assert.equal(r.json.reason, 'not-draft');
+  assert.match(r.json.remedy, new RegExp(`/claude-tweaks:dispatch close-out #${N}$`));
+});
+
+test('the prune remedy reads the main checkout from the gatherer, not from the worktree path', () => {
+  const env = makeEnv();
+  const wt = path.join(MAIN, '.claude', 'worktrees', 'fix', 'thing');
+  env.cfg.prs = [prEntry({ headRefName: 'fix/thing' })];
+  delete env.cfg.dirs[WT];
+  env.cfg.porcelain = `worktree ${MAIN}\nHEAD ${OID}\nbranch refs/heads/main\n\nworktree ${wt}\nHEAD ${OID}\nbranch refs/heads/fix/thing\n\n`;
+  const r = exec(env);
+  assert.equal(r.json.reason, 'branch-checked-out');
+  assert.ok(r.json.line.includes(`git -C "${MAIN}" worktree prune`), r.json.line);
+});
+
 test('context is read from the archived decisions.md', () => {
   const env = makeEnv();
   env.cfg.files[ARCH_DECISIONS] = readText(DECISIONS);
@@ -1302,6 +1370,7 @@ function verdictInput(over = {}) {
     openBlockers: [],
     localBranchSha: null,
     branchCheckedOutAt: null,
+    mainRoot: MAIN,
     ...over,
   };
 }

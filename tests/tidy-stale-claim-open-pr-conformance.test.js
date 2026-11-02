@@ -9,8 +9,12 @@ const assert = require('node:assert/strict');
 const path = require('path');
 
 const { readText } = require('./helpers/read-skill');
+const { lintReport } = require('../plugin/bin/lib/tidy-report-lint/rules');
 
 const REPO_ROOT = path.join(__dirname, '..');
+const RESUME_ROW = 'Resume open PR {number} — {resume}';
+const RESOLVE_ROW = 'Resolve open PR {number} before release';
+const REPLACED_ROW = '{disposition}: dispatch-resume {n}';
 
 function read(rel) {
   return readText(path.join(REPO_ROOT, rel));
@@ -67,8 +71,8 @@ test('a matching PR routes as the Yours Unsettled run no-op, never staged and ne
   const s = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
   assert.match(s, /`resume`/);
   assert.match(s, /`resolve`/);
-  assert.ok(s.includes('Resume open PR #{number} ({url})'), 'the Resume rendering names the PR');
-  assert.ok(s.includes('Resolve open PR #{number} ({url})'), 'the Resolve fallback names the PR');
+  assert.ok(s.includes(RESUME_ROW), 'the Resume rendering names the PR');
+  assert.ok(s.includes(RESOLVE_ROW), 'the Resolve fallback names the PR');
   // Step 4.7's table rows already say "Manual review", so a bare match proves nothing: pin the
   // failed-listing sentence itself.
   assert.match(s, /failed listing[^.]*Manual review[^.]*never an unchecked Release/);
@@ -84,7 +88,7 @@ test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes t
   const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
   assert.ok(flat.includes('--resume --issue {n}'), 'the call hands the claim number to the CLI');
   // The dispatch literal sits in the Resume row's own sentence, not merely somewhere in the section.
-  const rowAt = flat.indexOf('Resume open PR #{number} ({url}) — {resume}');
+  const rowAt = flat.indexOf(RESUME_ROW);
   assert.notEqual(rowAt, -1, 'the Resume row is present');
   const archivedAt = flat.indexOf('absent or archived', rowAt);
   assert.notEqual(archivedAt, -1, 'the Resume row names the absent-or-archived condition');
@@ -96,8 +100,82 @@ test('AC1.1: the stale-claim call passes --issue {n} so a gone run dir resumes t
 
 test('AC2.1: a present run dir still renders the PR body\'s resume line (#4673)', () => {
   const flat = claimAuditSection().replace(/\s+/g, ' '); // prose wraps at ~98 columns
-  assert.ok(flat.includes('Resume open PR #{number} ({url}) — {resume}'), 'the Resume row keeps its rendering');
+  assert.ok(flat.includes(RESUME_ROW), 'the Resume row keeps its rendering');
   assert.ok(flat.includes('the PR body\'s resume line'), 'the PR body stays the resume source for a present run dir');
+});
+
+// #4849: the two rows cannot carry a `#` ref beside the record's own (One record per row), and the url
+// never fit the Width gate, so neither renders any more.
+function rowFormProblems(flat) {
+  const problems = [];
+  if (!flat.includes(RESUME_ROW)) problems.push('resume row');
+  if (!flat.includes(RESOLVE_ROW)) problems.push('resolve row');
+  if (!flat.includes('`{resume}` takes its own command line')) problems.push('command alone');
+  if (!flat.includes("`{number}` is `link`'s trailing `/pull/` number")) problems.push('number source');
+  if (/open PR #\{number\}|\{url\}/.test(flat)) problems.push('retired form');
+  return problems;
+}
+
+test('the Resume and Resolve rows name the PR with no # and no url (#4849)', () => {
+  assert.deepEqual(rowFormProblems(claimAuditSection().replace(/\s+/g, ' ')), []);
+  assert.doesNotMatch(read('plugin/skills/tidy/issue-claims-backstops.md').replace(/\s+/g, ' '), /open PR #\{number\}|\{url\}/);
+});
+
+for (const [name, from, to] of [
+  ['resume row', RESUME_ROW, 'Resume it'],
+  ['resolve row', RESOLVE_ROW, 'Resolve it'],
+  ['command alone', '`{resume}` takes its own command line', 'and'],
+  ['number source', "`{number}` is `link`'s trailing `/pull/` number", 'and so on'],
+  ['retired form', RESOLVE_ROW, `${RESOLVE_ROW} Resolve open PR #{number} ({url})`],
+]) {
+  test(`control: mutating the Yours rows reports exactly "${name}" (#4849)`, () => {
+    const flat = claimAuditSection().replace(/\s+/g, ' ');
+    const mutated = flat.replace(from, to);
+    assert.notEqual(mutated, flat);
+    assert.deepEqual(rowFormProblems(mutated), [name]);
+  });
+}
+
+// The rows run through the real linter on both surfaces, at the widest title the Report rules allow. The
+// trailing columns are built from the pinned rows, so a wider row goes red here on Width.
+const TITLE_50 = `${'x'.repeat(49)}…`;
+const fill = (row) => row.replace('{number}', '4901').replace(' — {resume}', '').replace(/\{disposition\}/, 'close-out').replace('{n}', '4849');
+function yoursFixture({ resumeRow = RESUME_ROW, resolveRow = RESOLVE_ROW } = {}) {
+  const row = (trailing, n) => `   #${n}  ${TITLE_50}  ${fill(trailing)}`;
+  return [
+    '**Yours (3)**',
+    '```text',
+    '/claude-tweaks:dispatch resume (1)',
+    row(resumeRow, 4849),
+    '   /claude-tweaks:dispatch resume #4849',
+    'node (1)',
+    row(REPLACED_ROW, 4850),
+    '   node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue 4850',
+    'review (1)',
+    row(resolveRow, 4851),
+    '```',
+    '',
+    '**Clean:**',
+    '```text',
+    'claims             3 checked',
+    '```',
+    '',
+    'Full decision log: x/decisions.md',
+  ].join('\n');
+}
+
+for (const surface of ['condensed', 'full']) {
+  test(`a Yours fixture with 50-column titles passes tidy-report-lint on the ${surface} surface (#4849)`, () => {
+    assert.deepEqual(lintReport(yoursFixture(), { surface }), []);
+  });
+}
+
+test('control: the retired rows fail tidy-report-lint on Width and One record per row (#4849)', () => {
+  const oldRow = 'Resolve open PR #{number} (https://github.com/o/r/pull/4901) before any release';
+  const text = yoursFixture({ resolveRow: oldRow });
+  assert.ok(lintReport(text, { surface: 'condensed' }).some((i) => i.startsWith('Width:')));
+  assert.ok(lintReport(yoursFixture({ resolveRow: 'Resolve open PR #{number} now' }), { surface: 'full' }).some((i) => i.startsWith('One record per row:')));
+  assert.ok(lintReport(yoursFixture({ resolveRow: 'Resolve open PR {number} before any release' }), { surface: 'condensed' }).some((i) => i.startsWith('Width:')));
 });
 
 test('the Collect line carries the PR number and resume command for a Resume recommendation (#4423)', () => {
@@ -136,7 +214,7 @@ function dispositionSection(text) {
 // One entry per fact the section must state; a string is an exact literal, a RegExp a window claim.
 const DISPOSITION_FACTS = [
   { name: 'section', pin: DISPOSITION_HEADING, strip: ' (#4849)' },
-  { name: 'runs the verdict', pin: 'bin/dispatch-resume.js" --issue {n}' },
+  { name: 'runs the verdict', pin: 'run `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}`' },
   { name: 'resume disposition', pin: 'PR #{prNumber}: resume — /claude-tweaks:dispatch resume #{n}' },
   { name: 'no-pr appends nothing', pin: 'exit 3 with reason `no-pr`, append nothing' },
   { name: 'refused disposition', pin: 'PR #{number}: {disposition} — {remedy}' },
@@ -149,8 +227,9 @@ const DISPOSITION_FACTS = [
   { name: 'a PR body resume line stands', pin: "a PR body's own resume line stands, with no verdict run" },
   { name: 'matched row exit 0 keeps the command', pin: 'exit 0 keeps the printed command' },
   { name: 'dispatch form runs the same command', pin: 'For the dispatch form, run the same command' },
-  { name: 'matched row no-pr resolves', pin: 'on exit 3 with reason `no-pr` render `Resolve open PR #{number} ({url}) before any release` instead' },
+  { name: 'matched row no-pr resolves', pin: 'on exit 3 with reason `no-pr` render `Resolve open PR {number} before release` instead' },
   { name: 'matched row replaced rendering', pin: 'any other exit 3 renders `{disposition}: dispatch-resume {n}` in place of the Resume rendering (the verdict CLI, `dispatch-resume.js --issue {n}`, prints the steps)' },
+  { name: 'replaced row group and closing command', pin: 'that row keys under `node` and closes with one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per row' },
   { name: 'intro scopes the matched rows to the dispatch form', pin: 'for each one `stale-claim-pr.js` matched with the dispatch-resume command printed as `resume`' },
   { name: 'matched row failed read keeps the command', pin: 'on exit 2 or 4 it keeps the command and appends the same unknown note' },
   { name: 'matched row stays never staged', pin: 'That row stays never staged and its claim never released' },
@@ -194,6 +273,8 @@ const DISPOSITION_REWRITES = [
   { fact: 'matched row replaced rendering', from: '`{disposition}: dispatch-resume {n}`', to: '`PR #{number}: {disposition} — dispatch-resume.js --issue {n} prints the steps`' },
   { fact: 'dispatch form runs the same command', from: 'For the dispatch form, run', to: 'For either form, run' },
   { fact: 'intro scopes the matched rows to the dispatch form', from: 'the dispatch-resume command printed as `resume`', to: 'a printed resume command' },
+  { fact: 'replaced row group and closing command', from: 'keys under `node`', to: 'keys under `gh`' },
+  { fact: 'replaced row group and closing command', from: 'one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per row', to: 'one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per group' },
   { fact: 'matched row exit 0 keeps the command', from: 'exit 0 keeps the printed command', to: 'exit 3 keeps the printed command' },
   { fact: 'matched row failed read keeps the command', from: 'it keeps the command and appends', to: 'it drops the command and appends' },
 ];
@@ -242,7 +323,7 @@ test('AC4.1 control: the old plain-Release sentence alone is reported as the old
 });
 
 // A staged claim-releases row's action states the disposition in a short form so the Approve item passes
-// the Width gate; the whole remedy runs about 360 characters, past the 100-character gate on one `command`
+// the Width gate; a close remedy runs about 490 characters, past the 100-character gate on one `command`
 // line. The four forms are the rulings of the #4849 fix round.
 const STAGED_FACTS = [
   { name: 'one-PR action', pin: "`claim-releases` row's `action` reads `Release claim; PR #{number} disposition: {disposition}` for one open PR" },

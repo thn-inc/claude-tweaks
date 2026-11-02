@@ -100,17 +100,40 @@ function splitListing(prs) {
   return { kept: rows.filter((p) => p.isCrossRepository === false), forks: rows.filter((p) => p.isCrossRepository !== false) };
 }
 
+// Can close-out resolve this prior run? `_shared/acceptance-labeling-landed.md` stops it `no run dir`
+// only when neither the root nor the archive dir exists, which is classifyPriorRun's `absent` and no
+// other class: `residue` and `stateless` are a root dir with no run-state.json, still a path that
+// resolves, so close-out goes on to its live-state tier.
+const closeOutCannotResolve = (priorRunDir) => priorRunDir === 'absent';
+
+// A `close-out` remedy whose command would stop on `no run dir`: the disposition stands, a human takes it.
+function noRunByHand(issue, prNumber, runId) {
+  return `#${issue}'s PR #${prNumber} names run ${runId}, which left no run directory for close-out to verify — review and merge it by hand`;
+}
+
 // A foreign or bundled PR: `close` only for a draft. A non-draft PR may await review, so it is never
-// told to close -- close-out takes it when its marker names this record, a human otherwise.
-function closeUnlessReviewable(reason, issue, pr, draftLine) {
+// told to close -- close-out takes it when its marker names this record and its run dir exists, a
+// human otherwise.
+function closeUnlessReviewable(reason, issue, pr, draftLine, runGone) {
   if (pr.isDraft === true) return noPick(reason, draftLine, 'close');
-  const line = markerNamesRecord(pr, issue)
-    ? `#${issue}'s PR #${pr.number} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #${issue}`
-    : `#${issue}'s PR #${pr.number} is not a draft and carries no claude-tweaks-run marker for this record, which close-out needs — review and merge it by hand`;
-  return noPick(reason, line, 'close-out');
+  if (!markerNamesRecord(pr, issue)) {
+    return noPick(reason, `#${issue}'s PR #${pr.number} is not a draft and carries no claude-tweaks-run marker for this record, which close-out needs — review and merge it by hand`, 'close-out');
+  }
+  const runId = runIdFromPrBody(pr.body);
+  if (runGone(runId)) return noPick(reason, noRunByHand(issue, pr.number, runId), 'close-out');
+  return noPick(reason, `#${issue}'s PR #${pr.number} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #${issue}`, 'close-out');
 }
 
 const isPositiveInteger = (v) => Number.isInteger(v) && v > 0;
+
+// The last step of a close remedy. The queue's open-pr exclusion reads the first open node, forks
+// included, so a fresh dispatch stays refused while a fork PR is open beside the closed one.
+function redispatchStep(issue, forks) {
+  const numbers = forks.map((p) => p.number).filter(isPositiveInteger).sort((a, b) => a - b).map((n) => `#${n}`);
+  if (numbers.length === 0) return `then run /claude-tweaks:dispatch #${issue}`;
+  const until = numbers.length === 1 ? `fork PR ${numbers[0]} also closes` : `fork PRs ${numbers.join(', ')} also close`;
+  return `then #${issue} stays excluded until ${until}`;
+}
 
 function invalidPick(issue, what, value) {
   const bad = invalidInput(issue, what, value);
@@ -131,8 +154,8 @@ function crossRepoRefusal(issue, forks) {
 
 // Which of the record's open closing PRs is its own stalled build, whatever its head is named: one
 // same-repo PR closing this record alone, on a head a worktree could hold, whose marker's slug names
-// this record exactly.
-function selectResumePr(issue, prs) {
+// this record exactly. `runGone(runId)` says a marker's run dir is absent, so close-out cannot take the PR.
+function selectResumePr(issue, prs, { runGone = () => false } = {}) {
   const { kept, forks } = splitListing(prs);
   const unnumbered = [...kept, ...forks].find((p) => !isPositiveInteger(p.number));
   if (unnumbered !== undefined) return invalidPick(issue, 'PR number', unnumbered.number);
@@ -150,23 +173,33 @@ function selectResumePr(issue, prs) {
   const pr = kept[0];
   if (!isPositiveInteger(pr.closingRecords)) return invalidPick(issue, 'PR closing-record count', pr.closingRecords);
   if (pr.closingRecords > 1) {
-    return closeUnlessReviewable('multi-record-pr', issue, pr, `#${issue}'s PR #${pr.number} closes ${pr.closingRecords} records — dispatch resume restarts one record's build, never a bundle; merge or close PR #${pr.number} by hand, then run /claude-tweaks:dispatch #${issue}`);
+    return closeUnlessReviewable('multi-record-pr', issue, pr, `#${issue}'s PR #${pr.number} closes ${pr.closingRecords} records — dispatch resume restarts one record's build, never a bundle; merge or close PR #${pr.number} by hand, ${redispatchStep(issue, forks)}`, runGone);
   }
   if (worktreeNameForHead(pr.headRefName) === null || !markerNamesRecord(pr, issue)) {
-    return closeUnlessReviewable('foreign-pr', issue, pr, openPrLine(issue, pr.number));
+    return closeUnlessReviewable('foreign-pr', issue, pr, openPrLine(issue, pr.number), runGone);
   }
   return { ok: true, pr, runId: runIdFromPrBody(pr.body) };
 }
 
+// The run id a listing's one kept PR marks for this record, null otherwise: the one prior run a
+// verdict on this listing can be about, whichever way the PR is then refused.
+function ownMarkerRunId(issue, prs) {
+  const { kept } = splitListing(prs);
+  return kept.length === 1 && markerNamesRecord(kept[0], issue) ? runIdFromPrBody(kept[0].body) : null;
+}
+
 // Every step a fresh dispatch of the record needs: its open-pr exclusion goes with the PR, and a kept
-// worktree or branch blocks the new one. A head no worktree could hold is unsafe to paste into a command.
-function closeRedispatchRemedy({ issue, prNumber, headRefName, mainRoot }) {
+// worktree or branch blocks the new one (a locked worktree refuses `remove`, and `branch -D` then fails).
+// A head no worktree could hold is unsafe to paste into a command.
+function closeRedispatchRemedy({
+  issue, prNumber, headRefName, mainRoot, forks = [],
+}) {
   const name = worktreeNameForHead(headRefName);
   const closePr = `close PR #${prNumber} (gh pr close ${prNumber})`;
-  const redispatch = `then run /claude-tweaks:dispatch #${issue}`;
+  const redispatch = redispatchStep(issue, forks);
   if (name === null) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
   const worktree = path.join(mainRoot, '.claude', 'worktrees', ...name.split('/'));
-  return `${closePr}, remove its worktree if one exists (git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
+  return `${closePr}, unlock and remove its worktree if one exists (git worktree unlock "${worktree}"; git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
 
 // Refusals whose own line fits better than the close steps: a closed record needs no fresh dispatch, a
@@ -183,7 +216,9 @@ function refusalDetail({ issue, verdict, prs, mainRoot }) {
   let remedy = verdict.line;
   if (verdict.reason === 'no-pr') remedy = null;
   else if (verdict.disposition === 'close' && !NO_CLOSE_STEPS.has(verdict.reason) && only !== null && markerNamesRecord(only, issue)) {
-    remedy = closeRedispatchRemedy({ issue, prNumber: only.number, headRefName: only.headRefName, mainRoot });
+    remedy = closeRedispatchRemedy({
+      issue, prNumber: only.number, headRefName: only.headRefName, mainRoot, forks,
+    });
   }
   return {
     prNumbers: subject.map((p) => p.number).filter(isPositiveInteger).sort((a, b) => a - b),
@@ -225,17 +260,20 @@ function resumableTombstoneReason(reason) {
 function resumeEligibility(input) {
   const {
     issue: n, prs, claimContent, labels, now, priorRunDir, priorRunOpen, priorRunOwnerHost, siblingLive,
-    worktreePath, worktreeDirty, worktreeBranch, issueState, openBlockers, localBranchSha, branchCheckedOutAt,
+    worktreePath, worktreeDirty, worktreeBranch, issueState, openBlockers, localBranchSha, branchCheckedOutAt, mainRoot,
   } = input;
 
-  const selected = selectResumePr(n, prs);
+  const runGone = closeOutCannotResolve(priorRunDir);
+  const selected = selectResumePr(n, prs, { runGone: () => runGone });
   if (!selected.ok) return refuse(selected.reason, selected.line, selected.disposition);
   const { pr, runId } = selected;
   const prNo = pr.number;
   const resumeCmd = `/claude-tweaks:dispatch resume #${n}`;
 
   if (pr.isDraft !== true) {
-    return refuse('not-draft', `#${n}'s PR #${prNo} is not a draft — dispatch resume only restarts a stalled build's draft PR; if it awaits review, run /claude-tweaks:dispatch close-out #${n}`, 'close-out');
+    return refuse('not-draft', runGone
+      ? noRunByHand(n, prNo, runId)
+      : `#${n}'s PR #${prNo} is not a draft — dispatch resume only restarts a stalled build's draft PR; if it awaits review, run /claude-tweaks:dispatch close-out #${n}`, 'close-out');
   }
   if (typeof siblingLive !== 'boolean') return invalidInput(n, 'sibling-session check', siblingLive);
   if (siblingLive) return refuse('live-sibling', openPrLine(n, prNo));
@@ -245,7 +283,9 @@ function resumeEligibility(input) {
   const tombReason = claimState === 'tombstone' && typeof blob.reason === 'string' ? blob.reason : '';
 
   if (claimState === 'tombstone' && tombReason.startsWith('pr-opened:')) {
-    return refuse('pr-opened', `#${n}'s PR #${prNo} finished its build and awaits review — run /claude-tweaks:dispatch close-out #${n}`, 'close-out');
+    return refuse('pr-opened', runGone
+      ? noRunByHand(n, prNo, runId)
+      : `#${n}'s PR #${prNo} finished its build and awaits review — run /claude-tweaks:dispatch close-out #${n}`, 'close-out');
   }
   if (claimState === 'live') {
     return refuse('live-claim', `#${n} is already claimed by a live run — not resumable; wait for that run to finish or its claim to expire, then run ${resumeCmd}`);
@@ -316,8 +356,7 @@ function resumeEligibility(input) {
   if (worktreeMissing && nonEmptyString(branchCheckedOutAt) !== null) {
     // Still registered at the stalled path itself: the directory is gone, so prune, not remove.
     if (typeof worktreePath === 'string' && path.resolve(branchCheckedOutAt) === path.resolve(worktreePath)) {
-      const main = path.dirname(path.dirname(path.dirname(worktreePath))); // {main}/.claude/worktrees/{name}
-      return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is still registered to the missing worktree ${worktreePath} — prune it with git -C ${main} worktree prune, then run ${resumeCmd}`);
+      return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is still registered to the missing worktree ${worktreePath} — prune it with git -C "${mainRoot}" worktree prune, then run ${resumeCmd}`);
     }
     return refuse('branch-checked-out', `#${n}'s branch ${pr.headRefName} is checked out at ${branchCheckedOutAt} — remove that worktree (or resume from it), then run ${resumeCmd}`);
   }
@@ -384,5 +423,5 @@ function resumeContext(decisionsText) {
 
 module.exports = {
   REFUSAL_REASONS, RUN_ID_PREFIX_LENGTH, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
-  worktreeNameForHead, closeRedispatchRemedy, refusalDetail,
+  worktreeNameForHead, closeRedispatchRemedy, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
 };

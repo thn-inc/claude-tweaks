@@ -102,7 +102,7 @@ for one open PR, `Release claim; {k} open PRs, disposition: {disposition}` for s
 refs), `Release claim; open linked PR unknown (dispatch-resume exit {code})` after exit 2 or 4,
 and the plain release action for `no-pr`, so the staged-action line the Approve item renders stays
 inside the Width gate. The full remedy stays in the finding's `{recommendation}` and in the staged
-`.md` body, never in `command`, which stays the release mutation (the whole remedy runs about 360
+`.md` body, never in `command`, which stays the release mutation (a close remedy runs about 490
 characters, past the 100-character Width gate).
 
 Nothing enforces that the sidecar's fields stay in sync with the `.md` file's own prose — both

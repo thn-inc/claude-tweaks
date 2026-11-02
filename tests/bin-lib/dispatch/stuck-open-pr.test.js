@@ -36,6 +36,11 @@ test('AC3.1: an eligible verdict renders the resume remedy', () => {
     { number: 7, pr: 70, remedy: 'run /claude-tweaks:dispatch resume #7 — restarts its stalled PR #70' });
 });
 
+test('eligible is read as a boolean true only: a truthy non-true value reads as unreadable, never the resume remedy', () => {
+  assert.deepStrictEqual(stuckRow({ number: 7, pr: 70, failed: 'dispatch-resume exit 0', verdict: { eligible: 1, prNumber: 71 } }),
+    { number: 7, pr: 70, remedy: "could not read #7's state (dispatch-resume exit 0) — re-run /claude-tweaks:backlog attention" });
+});
+
 const refused = (reason, over = {}) => ({
   eligible: false, reason, line: 'x', disposition: 'resume', remedy: `remedy for ${reason}`, ...over,
 });
@@ -257,12 +262,37 @@ test('a stale or released claim does not hide the record: the verdict decides', 
   }
 });
 
+const SIBLING = { path: '/repo/.claude/worktrees/record-1', branch: 'worktree-record-1', pid: 9 };
+
 test('AC3.1: a live sibling session renders no row on an early-refusal path', () => {
-  // findSibling returns an entry for #1; the resume fake would refuse foreign-pr, so a row would show if the read were skipped.
-  const env = makeEnv({ sibling: { path: '/repo/.claude/worktrees/record-1', branch: 'worktree-record-1', pid: 9 }, verdicts: { 1: { code: 3, json: refusedJson(1, 'foreign-pr') } } });
+  // findSibling returns an entry for #1; the verdict refuses foreign-pr before its own sibling read, so a row would show if the hit were dropped.
+  const env = makeEnv({ sibling: SIBLING, verdicts: { 1: { code: 3, json: refusedJson(1, 'foreign-pr', { headRefName: 'fix/thing' }) } } });
   assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
   assert.deepStrictEqual(rows(env), []);
-  assert.equal(env.names().includes('resume'), false, 'the verdict never ran');
+  assert.equal(env.names().includes('resume'), true, 'the verdict always runs');
+  assert.equal(env.names().includes('findSiblingOnWorktree'), false, 'the held hit already ended a refusal');
+});
+
+test('a sibling hit with an eligible verdict still renders the row: the verdict excluded this session\'s own lock', () => {
+  // The session that dispatched the build holds its archived run's kept lock, which both CLI reads see as a sibling.
+  for (const patch of [{ sibling: SIBLING }, { exact: SIBLING }, { sibling: SIBLING, exact: SIBLING }]) {
+    const env = makeEnv(patch);
+    assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+    assert.equal(rows(env).length, 1, JSON.stringify(Object.keys(patch)));
+    assert.equal(rows(env)[0].remedy, 'run /claude-tweaks:dispatch resume #1 — restarts its stalled PR #10');
+  }
+});
+
+test('a sibling hit with no verdict stays a visible row, since a failed read proves nothing', () => {
+  const env = makeEnv({ sibling: SIBLING, verdicts: { 1: { code: 4 } } });
+  assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+  assert.equal(rows(env)[0].remedy, "could not read #1's state (dispatch-resume exit 4) — re-run /claude-tweaks:backlog attention");
+});
+
+test('a sibling hit with a truthy non-true eligible is no eligible verdict: never the resume remedy', () => {
+  const env = makeEnv({ sibling: SIBLING, verdicts: { 1: { code: 0, json: { eligible: 1, prNumber: 10 } } } });
+  assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+  assert.equal(rows(env)[0].remedy, "could not read #1's state (dispatch-resume exit 0) — re-run /claude-tweaks:backlog attention");
 });
 
 test('a live exact sibling on the PR head renders no row (a head carrying no record number)', () => {

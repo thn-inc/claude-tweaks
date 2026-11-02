@@ -13,14 +13,15 @@
 // when it names one, else the linked-PR read's. When the check cannot run (exit 2 or 4 once the invocation
 // parsed) stdout is `{failed:{code, message}}` instead, so a caller that redirects it keeps the could-not-run
 // state in its file: a file without a `rows` array is a check that did not run, never an empty answer. A record renders no row
-// when it has no open closing PR, when a live claim or a live sibling session holds it, or when the
-// verdict says a provably live run does; a read that failed is a row whose remedy says so, never an
-// absent one. Per record with an open PR, in this order, because the verdict can refuse a PR it cannot
-// resume (foreign, bundled, a fork's, not a draft) before it reads either:
+// when it has no open closing PR, when a live claim holds it, when a live sibling session holds a record
+// the verdict refused, or when the verdict says a provably live run does; a read that failed is a row
+// whose remedy says so, never an absent one. Per record with an open PR, in this order, because the verdict
+// can refuse a PR it cannot resume (foreign, bundled, a fork's, not a draft) before it reads either:
 //   1. the claim (a live one skips the record; a failed read is an unreadable row and the verdict never runs)
-//   2. the sibling session by `#N` token (a hit skips the record)
-//   3. the verdict, `dispatch-resume.js --issue N`, run in process
-//   4. the sibling session on the verdict's head, the exact read (a hit skips the record)
+//   2. the sibling session by `#N` token (the hit is held for step 3)
+//   3. the verdict, `dispatch-resume.js --issue N`, run in process: eligible is a row whatever the hit said,
+//      since its own sibling reads exclude this session's kept lock; a refusal with a hit is no row
+//   4. a refusal only: the sibling session on the verdict's head, the exact read (a hit skips the record)
 // A verdict is dispatch-resume.js's stdout JSON object under its exit 0 (eligible) or 3 (refused) only; any
 // other exit, or output that is not a JSON object, is no verdict and renders an unreadable row.
 // Exit codes (a CLI-specific vocabulary — a row is data on stdout, so there is no exit 1 or 3):
@@ -208,7 +209,7 @@ function stuckRowFor(deps, {
     if (!claim || claim.failure) return unreadable();
     if (classifyClaimBlob(claim.absent ? null : claim.content, deps.now()).state === 'live') return null;
     step = 'sibling session check';
-    if (deps.findSibling(`#${n}`, { cwd: mainRoot }) !== null) return null;
+    const tokenHit = deps.findSibling(`#${n}`, { cwd: mainRoot }) !== null;
 
     const { code, verdict, errors } = readVerdict(deps, n);
     if (errors.trim() !== '') deps.stderr(`stuck-open-prs.js: #${n}: ${errors.trim()}\n`);
@@ -216,7 +217,12 @@ function stuckRowFor(deps, {
       number: n, pr, failed: `dispatch-resume exit ${code}`, verdict,
     });
     if (row === null) return null;
-    const head = verdict && typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
+    // These two reads do not know the prior run, so an archived run's own kept lock reads as a sibling
+    // here. An eligible verdict already read that correctly, and a missing one proves nothing: only a
+    // refusal is hidden by a hit.
+    if (verdict === null || verdict.eligible !== false) return row;
+    if (tokenHit) return null;
+    const head =verdict && typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
     if (head !== null && deps.findSiblingOnWorktree({ branch: head }, { cwd: mainRoot }) !== null) return null;
     return row;
   } catch {

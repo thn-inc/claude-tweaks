@@ -61,6 +61,7 @@ function input(over = {}) {
     openBlockers: [],
     localBranchSha: null,
     branchCheckedOutAt: null,
+    mainRoot: '/repo',
     ...over,
   };
 }
@@ -341,7 +342,7 @@ const REFUSALS = [
   ['branch checked out elsewhere', { worktreeBranch: null, branchCheckedOutAt: '/repo/.claude/worktrees/other' }, 'branch-checked-out',
     "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['branch still registered to the missing stalled worktree', { worktreeBranch: null, branchCheckedOutAt: WT }, 'branch-checked-out',
-    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C /repo worktree prune, then run /claude-tweaks:dispatch resume #4589", 'resume'],
+    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C \"/repo\" worktree prune, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['local branch diverged', { worktreeBranch: null, localBranchSha: 'b'.repeat(40) }, 'branch-diverged',
     "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   // A guard input the gatherer forgot or mistyped is a refusal, never "nothing to refuse" (Closed rule).
@@ -579,8 +580,83 @@ test('closeRedispatchRemedy lists every step a fresh dispatch needs', () => {
   const wt = path.join('/repo', '.claude', 'worktrees', 'record-7');
   assert.equal(
     closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-record-7', mainRoot: '/repo' }),
-    `close PR #70 (gh pr close 70), remove its worktree if one exists (git worktree remove "${wt}"), delete the local and remote branch (git branch -D worktree-record-7; git push origin --delete worktree-record-7), then run /claude-tweaks:dispatch #7`,
+    `close PR #70 (gh pr close 70), unlock and remove its worktree if one exists (git worktree unlock "${wt}"; git worktree remove "${wt}"), delete the local and remote branch (git branch -D worktree-record-7; git push origin --delete worktree-record-7), then run /claude-tweaks:dispatch #7`,
   );
+});
+test('the prune remedy names the given main checkout, quoted, for a head with a slash', () => {
+  const main = '/Code Workspaces/repo';
+  const wt = path.join(main, '.claude', 'worktrees', 'fix', 'thing');
+  const v = verdict({
+    prs: [prEntry({ headRefName: 'fix/thing' })], mainRoot: main, worktreePath: wt, worktreeBranch: null, branchCheckedOutAt: wt,
+  });
+  assert.equal(v.reason, 'branch-checked-out');
+  assert.equal(v.line, `#${N}'s branch fix/thing is still registered to the missing worktree ${wt} — prune it with git -C "${main}" worktree prune, then run /claude-tweaks:dispatch resume #${N}`);
+});
+const FORK = { number: 4611, isCrossRepository: true };
+test('a fork PR beside the kept PR ends the close remedy by naming it, never the dispatch it would refuse', () => {
+  const prs = [prEntry(), prEntry(FORK)];
+  const v = verdict({ prs, claimContent: tombstone('merged: x') });
+  assert.equal(v.disposition, 'close');
+  const { remedy } = refusalDetail({ issue: N, verdict: v, prs, mainRoot: '/repo' });
+  assert.match(remedy, /gh pr close 4604/);
+  assert.ok(remedy.endsWith(`, then #${N} stays excluded until fork PR #4611 also closes`), remedy);
+  assert.doesNotMatch(remedy, /run \/claude-tweaks:dispatch/);
+  const unsafe = closeRedispatchRemedy({
+    issue: 7, prNumber: 70, headRefName: 'a$(x)', mainRoot: '/repo', forks: [{ number: 9 }, { number: 8 }],
+  });
+  assert.ok(unsafe.endsWith(', then #7 stays excluded until fork PRs #8, #9 also close'), unsafe);
+});
+test('a draft bundle beside a fork PR names the fork too, not a dispatch it would refuse', () => {
+  const r = selectResumePr(N, [prEntry({ closingRecords: 2 }), prEntry(FORK)]);
+  assert.equal(r.reason, 'multi-record-pr');
+  assert.ok(r.line.endsWith(`by hand, then #${N} stays excluded until fork PR #4611 also closes`), r.line);
+});
+// F1: close-out stops `no run dir` when the marker's run has neither a root nor an archive dir.
+const NO_RUN_BY_HAND = `#${N}'s PR #${PR} names run ${RUN}, which left no run directory for close-out to verify — review and merge it by hand`;
+const NO_RUN_SHAPES = [
+  ['not-draft', { prs: [prEntry({ isDraft: false })] }],
+  ['pr-opened', { claimContent: tombstone(`pr-opened: ${URL}`) }],
+  ['multi-record-pr', { prs: [prEntry({ isDraft: false, closingRecords: 2 })] }],
+  ['foreign-pr', { prs: [prEntry({ isDraft: false, headRefName: 'a$(x)' })] }],
+];
+for (const [reason, over] of NO_RUN_SHAPES) {
+  test(`a close-out remedy with no run dir left reads by hand, disposition still close-out: ${reason}`, () => {
+    const gone = verdict({ ...over, priorRunDir: 'absent' });
+    assert.deepStrictEqual(gone, {
+      eligible: false, reason, line: NO_RUN_BY_HAND, disposition: 'close-out',
+    });
+    const prs = over.prs || [prEntry()];
+    assert.equal(refusalDetail({ issue: N, verdict: gone, prs, mainRoot: '/repo' }).remedy, NO_RUN_BY_HAND);
+    assert.doesNotMatch(gone.line, /dispatch close-out/);
+    // A dir close-out can still resolve keeps the command: residue and stateless have a root dir.
+    for (const priorRunDir of ['archived', 'residue', 'stateless', 'dead-owner']) {
+      const kept = verdict({ ...over, priorRunDir });
+      assert.equal(kept.reason, reason, priorRunDir);
+      assert.match(kept.line, new RegExp(`/claude-tweaks:dispatch close-out #${N}$`), priorRunDir);
+    }
+  });
+}
+test('selectResumePr: runGone gets the marker\'s run id and defaults to never gone', () => {
+  const prs = [prEntry({ isDraft: false, closingRecords: 2 })];
+  const asked = [];
+  const r = selectResumePr(N, prs, { runGone: (id) => { asked.push(id); return true; } });
+  assert.deepStrictEqual(asked, [RUN]);
+  assert.equal(r.line, NO_RUN_BY_HAND);
+  assert.equal(r.disposition, 'close-out');
+  assert.match(selectResumePr(N, prs).line, /run \/claude-tweaks:dispatch close-out/);
+});
+test('runGone is never asked about a PR with no marker for this record, and a draft stays close', () => {
+  const never = { runGone: () => { throw new Error('asked'); } };
+  assert.equal(selectResumePr(N, [prEntry({ isDraft: false, closingRecords: 2, body: 'none' })], never).disposition, 'close-out');
+  assert.equal(selectResumePr(N, [prEntry({ closingRecords: 2 })], { runGone: () => true }).disposition, 'close');
+});
+test('an absent isDraft in a multiple-prs listing reads as non-draft', () => {
+  const unstated = prEntry({ number: 4610 });
+  delete unstated.isDraft;
+  const v = verdict({ prs: [unstated, prEntry()] });
+  assert.equal(v.reason, 'multiple-prs');
+  assert.equal(v.disposition, 'close-out');
+  assert.ok(v.line.endsWith('and #4610 is not a draft — review and merge it by hand'), v.line);
 });
 test('closeRedispatchRemedy prints no command for a head that is unsafe to paste', () => {
   const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'a$(x)', mainRoot: '/repo' });

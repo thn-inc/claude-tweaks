@@ -250,12 +250,12 @@ With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__lis
 prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure`
 means Release plus `issue-claims-backstops.md`'s PR disposition.
 `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row:
-Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) —
-{resume}" when the output carries `resume` (the PR body's resume line, already validated as a
+Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR {number} — {resume}" when
+the output carries `resume` (the PR body's resume line, already validated as a
 paste-safe command naming this same run — or, for a dispatched run (`record-{n}`),
-`/claude-tweaks:dispatch resume #{n}` when its directory is absent or archived), otherwise — it carries `resolve` — "Resolve open PR
-#{number} ({url}) before any release"; `{url}` is `link` and `{number}` its trailing `/pull/`
-number. It is never staged, so it gets no needs-decision comment, and the claim is never released.
+`/claude-tweaks:dispatch resume #{n}` when its directory is absent or archived; `{resume}` takes its
+own command line), otherwise — it carries `resolve` — "Resolve open PR {number} before
+release"; `{number}` is `link`'s trailing `/pull/` number. It is never staged, so it gets no needs-decision comment, and the claim is never released.
 A non-null `failure` — a failed listing (on whichever transport ran — the MCP listing applies only
 when `gh` is absent, never after a `gh` failure) or a 1000-entry listing with no match, which may
 have cut the PR off — degrades to **Manual review** with one SKIP note, never an unchecked

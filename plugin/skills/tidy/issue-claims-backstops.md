@@ -79,10 +79,12 @@ The text goes at the end of the `[claim]` row's `{recommendation}`.
 **A matched Resume row** (the **Unsettled run** no-op) runs the verdict only when the printed
 `resume` is `/claude-tweaks:dispatch resume #{n}`; a PR body's own resume line stands, with no
 verdict run. For the dispatch form, run the same command: exit 0 keeps the printed command; on
-exit 3 with reason `no-pr` render `Resolve open PR #{number} ({url}) before any release` instead;
+exit 3 with reason `no-pr` render `Resolve open PR {number} before release` instead;
 any other exit 3 renders `{disposition}: dispatch-resume {n}` in place of the Resume rendering (the
-verdict CLI, `dispatch-resume.js --issue {n}`, prints the steps); on exit 2 or 4 it keeps the command and appends the same unknown note. That row stays
-never staged and its claim never released. This is a read only: nothing here closes or touches a PR.
+verdict CLI, `dispatch-resume.js --issue {n}`, prints the steps), and that row keys under `node` and
+closes with one `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` line per row; on
+exit 2 or 4 it keeps the command and appends the same unknown note. That row stays never staged and
+its claim never released. This is a read only: nothing here closes or touches a PR.
 
 ### Backstop: missed `parked` restoration
 

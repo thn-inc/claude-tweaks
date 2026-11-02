@@ -12,7 +12,8 @@
 //                 context:{lastPhase, openDefects}}
 //     refused  → {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName}
 //                (`line` is the verdict's, printed verbatim; the rest is refusalDetail's: [], null,
-//                null, null for no-pr), plus liveRun:true when a provably live owner refused it.
+//                null, null for no-pr), plus liveRun:true when a provably live owner holds the run,
+//                whatever the refusal's reason.
 //     An eligible verdict then runs the run-dir scan below with the prior run's own root dir
 //     excluded, so a run left bound to the stalled worktree refuses before anything is archived.
 //   --bound-run  resume step 6a, after `record-worktree --dispatch` bound the new run: skips the
@@ -44,10 +45,10 @@
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
 //      unreadable policy.yml resolves the `body-text` default and skips the native-blocker gate,
 //      exactly as resolve-policy.js (and so Step 2's queue) reads it
-// Order: read the closing PRs, then selectResumePr — a refusal there prints and exits 3 before any
-// run-dir, sibling, claim or worktree read (the prior run id comes from the chosen PR's marker, the
-// worktree from its head). The only git call against the stalled worktree is the --no-optional-locks
-// `status`.
+// Order: read the closing PRs, classify the run a sole kept PR's marker names, then selectResumePr — a
+// refusal there prints and exits 3 before any sibling, claim or worktree read, and before any run-dir
+// read when no marker names this record (the worktree comes from the chosen PR's head). The only git
+// call against the stalled worktree is the --no-optional-locks `status`.
 'use strict';
 
 const fs = require('fs');
@@ -70,7 +71,7 @@ const { MAX_PID, probeOwnerPid } = require('./lib/run-liveness/owner-pid-probe')
 const { resolveTarget } = require('./lib/stage-item/write');
 const { lstatType } = require('./lib/path-guard');
 const {
-  selectResumePr, resumeEligibility, resumeContext, worktreeNameForHead, refusalDetail,
+  selectResumePr, resumeEligibility, resumeContext, worktreeNameForHead, refusalDetail, closeOutCannotResolve, ownMarkerRunId,
 } = require('./lib/dispatch/resume-eligibility');
 
 const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
@@ -521,16 +522,18 @@ function emit(ctx, obj) {
 }
 
 // Every verdict-mode refusal: the verdict's reason and line, what a caller reports about them, and
-// liveRun only when a provably live owner refused it.
-function refusal(ctx, prs, verdict) {
+// liveRun only when a provably live owner holds the run: the verdict says so, or `prior` (the PR marker's
+// classified run, null when no marker names this record) does, whichever refusal fired first.
+function refusal(ctx, prs, verdict, prior = null) {
   const { issue, mainRoot } = ctx;
+  const liveRun = verdict.liveRun === true || (prior !== null && prior.priorRunDir === 'live-owner');
   emit(ctx, {
     eligible: false,
     issue,
     reason: verdict.reason,
     line: verdict.line,
     ...refusalDetail({ issue, verdict, prs, mainRoot }),
-    ...(verdict.liveRun === true ? { liveRun: true } : {}),
+    ...(liveRun ? { liveRun: true } : {}),
   });
   return EXIT_REFUSED;
 }
@@ -552,9 +555,13 @@ function runVerdict(ctx) {
   if (!ctx.slug) throw new Exit(2, 'could not resolve the repo slug (gh repo view returned nothing)');
 
   const prs = listPrs(ctx);
-  const selected = selectResumePr(issue, prs);
-  if (!selected.ok) return refusal(ctx, prs, selected);
-  const { pr, runId } = selected;
+  const markedRun = ownMarkerRunId(issue, prs);
+  const prior = markedRun === null ? null : classifyPriorRun(ctx, markedRun);
+  const selected = selectResumePr(issue, prs, {
+    runGone: () => prior !== null && closeOutCannotResolve(prior.priorRunDir),
+  });
+  if (!selected.ok) return refusal(ctx, prs, selected, prior);
+  const { pr } = selected;
   ctx.worktreePath = path.join(ctx.mainRoot, '.claude', 'worktrees', ...worktreeNameForHead(pr.headRefName).split('/'));
 
   const record = readRecord(ctx);
@@ -562,7 +569,6 @@ function runVerdict(ctx) {
   const claim = read('claim read', () => deps.readClaim(ctx.slug, issue));
   if (!claim || claim.failure) throw new Exit(4, `claim read: ${claim && claim.failure ? claim.failure : 'no result'}`);
 
-  const prior = classifyPriorRun(ctx, runId);
   const priorListing = listingWithPriorRun(ctx, prior);
   const siblingLive = siblingConflict(ctx, priorListing) !== null
     || siblingOnWorktree(ctx, priorListing, pr.headRefName, ctx.worktreePath) !== null;
@@ -586,8 +592,9 @@ function runVerdict(ctx) {
     openBlockers,
     localBranchSha: local.localBranchSha,
     branchCheckedOutAt: local.branchCheckedOutAt,
+    mainRoot: ctx.mainRoot,
   });
-  if (!verdict.eligible) return refusal(ctx, prs, verdict);
+  if (!verdict.eligible) return refusal(ctx, prs, verdict, prior);
   // The --bound-run scan, run here too so a run left bound to the worktree refuses at Step 2, before
   // Step 3 archives anything. Only an eligible verdict reaches it, so every verdict refusal keeps
   // its precedence; the prior run's own root dir is the run being resumed, never a rival. Each hit's
