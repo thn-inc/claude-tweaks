@@ -12,7 +12,9 @@
 // reported success but the post-write read-back did not confirm it
 // ({unverified:[{issue}]}); 6 = the claims-registry branch is missing on origin
 // and creating it was refused ({branchMissing:{branch,reason}}, with or without
-// --keep-going). See bin/lib/claim-targets/claim-targets.js for
+// --keep-going); 7 = GitHub refused a claim read or write
+// ({permissionDenied:{issue,operation,reason}}, with or without --keep-going).
+// See bin/lib/claim-targets/claim-targets.js for
 // the full contract and skills/_shared/issue-claims.md for the protocol.
 'use strict';
 

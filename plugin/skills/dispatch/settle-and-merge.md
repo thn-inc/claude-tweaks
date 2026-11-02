@@ -47,14 +47,17 @@ call's terminal output), or its "Claims branch missing" stop (`claim-targets.js`
 during the bootstrap is exit 4, never this stop) — no build or test ever ran, the pipeline stopped
 before the Config Manifesto, this record was never claimed by this run at all, so step 1 below's
 ownership check will correctly find no claim to release (skip is the right outcome there, not an
-error). The one thing this case adds: **when `DISPATCH_HEADLESS=1` was set on this Task call's
+error). The "Claim permission denied" stop (`claim-targets.js` exit 7) is not covered by that premise
+and has its own paragraph after this one. The one thing this case adds: **when `DISPATCH_HEADLESS=1` was set on this Task call's
 invocation** (`dispatch/task-prompt.md`'s first template — set only for a Routine-fired headless
 firing (bare drain or its `next` alias), where nobody is present to read the stop directly), read
 `_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`),
 using failing-check-name `flow-step-2.8-claim-contest` for the contested-claim stop,
 `flow-step-2.8-claim-in-flight` for the in-flight stop, or `flow-step-2.8-claims-branch-missing` for
-the claims-branch-missing stop — distinct names, since the three are different stop shapes and must
-dedup separately — and that stop's own card text as the diagnostic body. This is the one Settle
+the claims-branch-missing stop (the fourth stop shape, claim permission denied, has its own
+paragraph below) — distinct names, since the four are different stop shapes and must
+dedup separately — and that stop's own card text as the diagnostic body (the claims-branch-missing
+body goes in by file, see the Claim permission denied paragraph below). This is the one Settle
 branch that runs *before* any release/classification logic, since there is nothing to release or
 classify — it is a pre-flight stop, not a build/test failure. When `DISPATCH_HEADLESS` is unset (a
 human-present dispatch form), skip this — the stop message the Task call already produced is
@@ -62,6 +65,21 @@ sufficient; nobody headless needs a durable trace of it. For the
 claims-branch-missing stop, skip steps 3-7 below: no `failure-check` classification, no attempt
 counted against `dispatch-retry-ceiling`, and no failure comment — a repository whose claims branch
 cannot be created would otherwise exhaust the ceiling on a record that was never at fault.
+
+**Claim permission denied (#4899).** This stop is `claim-targets.js` exit 7: GitHub refused a claim
+read or write for permissions, and the first call reports `ISSUE #{n}: failed:claim-permission-denied`.
+For the claim-permission-denied stop, skip steps 1-7 below: no release, no `failure-check`
+classification, no attempt counted against `dispatch-retry-ceiling`, no failure comment,
+no `bot:blocked`, grants untouched — the token, not the record, is at fault. Unlike the stops
+above, the claim-permission-denied stop is the exception to the never-claimed premise: a bundle's
+earlier member may have been claimed, and the CLI already attempted the release of any claim this run
+took. A release here under the same token would post a false release comment on a record this run
+never claimed. When `DISPATCH_HEADLESS=1` was set on this Task call's invocation, read
+`_shared/headless-self-report.md` and follow its dedup-and-file procedure (caller = `dispatch`) with
+failing-check-name `flow-step-2.8-claim-permission-denied` and the rendered card as the diagnostic body.
+When `DISPATCH_HEADLESS` is unset, skip the self-report — the stop message the Task call already
+produced is sufficient (that is the rendered card, which carries the operation and reason; the first
+call's report lines do not).
 
 **Open-linked-PR enrichment for the contested-claim shape (#2402).** For the contested-claim stop
 specifically — never the in-flight stop, whose card already names its PR via `link` — attempt one
