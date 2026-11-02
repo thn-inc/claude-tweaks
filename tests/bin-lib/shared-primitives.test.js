@@ -372,67 +372,51 @@ function freshBatchTimeoutMs() {
   return require('../../plugin/bin/lib/shared-primitives').GH_BATCH_TIMEOUT_MS;
 }
 
+// freshBatchTimeoutMs() with CLAUDE_TWEAKS_GH_TIMEOUT_MS set to `envValue` (unset when
+// undefined), the prior value restored afterwards.
+function freshBatchTimeoutMsWithEnv(envValue) {
+  const key = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
+  const prior = process.env[key];
+  if (envValue === undefined) delete process.env[key];
+  else process.env[key] = envValue;
+  try {
+    return freshBatchTimeoutMs();
+  } finally {
+    if (prior === undefined) delete process.env[key];
+    else process.env[key] = prior;
+  }
+}
+
 test('AC1.1: GH_BATCH_TIMEOUT_MS: no override -> the 30000 floor', () => {
   withTempCwd(() => {
-    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    try {
-      assert.strictEqual(freshBatchTimeoutMs(), 30000);
-    } finally {
-      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
-    }
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
   });
 });
 
 test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms above the floor wins', () => {
   withTempCwd((dir) => {
     writePolicyFile(dir, 'gh-timeout-ms: 45000\n');
-    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    try {
-      assert.strictEqual(freshBatchTimeoutMs(), 45000);
-    } finally {
-      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
-    }
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 45000);
   });
 });
 
 test('AC1.1: GH_BATCH_TIMEOUT_MS: gh-timeout-ms below the floor keeps 30000', () => {
   withTempCwd((dir) => {
     writePolicyFile(dir, 'gh-timeout-ms: 8000\n');
-    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    try {
-      assert.strictEqual(freshBatchTimeoutMs(), 30000);
-    } finally {
-      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
-    }
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
   });
 });
 
 test('AC1.1: GH_BATCH_TIMEOUT_MS: CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor wins', () => {
   withTempCwd(() => {
-    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = '50000';
-    try {
-      assert.strictEqual(freshBatchTimeoutMs(), 50000);
-    } finally {
-      if (prior === undefined) delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-      else process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
-    }
+    assert.strictEqual(freshBatchTimeoutMsWithEnv('50000'), 50000);
   });
 });
 
 test('AC1.1: GH_BATCH_TIMEOUT_MS: a malformed gh-timeout-ms falls back to the 30000 floor', () => {
   withTempCwd((dir) => {
     writePolicyFile(dir, 'gh-timeout-ms: 999999\n'); // over the schema's 60000 max
-    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
-    try {
-      assert.strictEqual(freshBatchTimeoutMs(), 30000);
-    } finally {
-      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
-    }
+    assert.strictEqual(freshBatchTimeoutMsWithEnv(undefined), 30000);
   });
 });
 
