@@ -21,7 +21,8 @@ const CLAIM_SECTIONS = Object.freeze([
 ]);
 
 // The kinds a claim in each section may cite. risk-proofs also needs at least
-// one `flag` among its refs; that rule belongs to the validator.
+// one `flag` and at least one proof fact among its refs; those rules belong to the
+// validator.
 const SECTION_KINDS = Object.freeze({
   'what-changed': Object.freeze(['change']),
   'test-guide': Object.freeze(['story', 'link']),

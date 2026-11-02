@@ -41,7 +41,8 @@ function checkFact(fact, at, seenIds, errors) {
     errors.push({ path: at, message: 'not an object' });
     return;
   }
-  if (typeof fact.id !== 'string' || !FACT_ID_RE.test(fact.id) || !fact.id.startsWith(`${fact.kind}:`)) {
+  // `typeof fact.kind` first: `{ toString: 1 }` throws in the template below.
+  if (typeof fact.id !== 'string' || typeof fact.kind !== 'string' || !FACT_ID_RE.test(fact.id) || !fact.id.startsWith(`${fact.kind}:`)) {
     errors.push({ path: `${at}.id`, message: 'must be {kind}:{key} with the fact\'s own kind and an encoded key' });
   } else if (seenIds.has(fact.id)) {
     errors.push({ path: `${at}.id`, message: 'repeats an earlier fact id' });

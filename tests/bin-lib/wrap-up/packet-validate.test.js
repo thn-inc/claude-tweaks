@@ -455,6 +455,14 @@ test('validateFactsShape names each fact field', () => {
   assert.deepEqual(one({ ...good, id: 'story-x:login' }), ['facts.facts[0].id']);
   assert.deepEqual(one({ ...good, status: 'PASS' }), ['facts.facts[0].status']);
   assert.deepEqual(one({ ...good, source: 3 }), ['facts.facts[0].source']);
+  for (const kind of [{ toString: 1 }, 7, null]) {
+    assert.deepEqual(one({ ...good, kind }), ['facts.facts[0].id', 'facts.facts[0].kind'], JSON.stringify(kind));
+  }
+});
+
+test('a malformed kind is a SchemaError, never a TypeError', () => {
+  const doc = { ...factsDoc(), facts: [{ ...fact('story:login', 'passed'), kind: { toString: 1 } }] };
+  assert.throws(() => validatePacket(doc, { schemaVersion: 1, claims: [] }), SchemaError);
 });
 
 test('validateFactsShape refuses an optional text field that is not a string', () => {
