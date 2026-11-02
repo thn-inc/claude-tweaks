@@ -18,7 +18,7 @@ files:
 
 **Success state:**
 - A parent closed in the last 30 days that has no acceptance label (or `acceptance` facet) and no #4466 close marker, and whose sub-issue risk exceeds `risk-floor`, appears exactly once: `[acceptance-gap] #{n}: {title} — closed with no acceptance disposition — recommend /claude-tweaks:demo #{n}`. Local-files rows use `{id}` instead of `#{n}`.
-- A parent that #4466 closed below the floor does not appear, even after its floor or a sub-issue's `risk:*` label changes.
+- A parent that #4466 closed below the floor does not appear, even after its floor or a sub-issue's `risk:*` label changes. The one exception is step 1's empty-login case on GitHub.
 
 ## Steps
 
@@ -33,7 +33,7 @@ files:
 - **Should understand:**
   - The marker, not today's floor, is what proves #4466 closed a parent.
   - A marker comment from anyone else counts as no marker, so a forged comment can never hide a gap.
-  - On GitHub, a failed or empty `gh api user` login no longer stops the scope. Close markers are matched against trusted authors only, so a marker the current `gh` identity posted under an untrusted association reads as absent. The open-parent rows are kept, and one `WARNING` line carrying the identity-probe-failed note (`parent-gate.js`'s `IDENTITY_PROBE_FAILED_NOTE`) is reported beside them.
+  - On GitHub, a failed or empty `gh api user` login no longer stops the scope. Close markers are matched against trusted authors only, so a marker the current `gh` identity posted under an untrusted association reads as absent. If that parent's sub-issue risk now exceeds `risk-floor`, it prints a false-positive `[acceptance-gap]` row, which the `WARNING` says can happen. The open-parent rows are kept, and one `WARNING` line carrying the identity-probe-failed note (`parent-gate.js`'s `IDENTITY_PROBE_FAILED_NOTE`) is reported beside them.
 - **Red flags:**
   - A parent closed more than 30 days ago that reappears.
   - A parent listed twice because it carries both labels.
