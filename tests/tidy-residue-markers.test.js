@@ -366,8 +366,6 @@ test('#1494 review fix: Step 7.5\'s copy+add also lands in a *-sweep-standalone*
   git('commit', '-q', '-m', 'Tidy: housekeeping');
 
   const staged = git('diff', 'HEAD~1', 'HEAD', '--name-only').trim().split('\n').filter(Boolean).sort();
-  // git prints repo-relative paths with forward slashes on every platform, so the expected
-  // IDs are built with path.posix (runRel stays native for the git add above).
   assert.deepStrictEqual(staged, [
     path.posix.join('.claude-tweaks', 'pipelines', runId, 'decisions.md'),
     path.posix.join('.claude-tweaks', 'pipelines', runId, 'report.md'),
