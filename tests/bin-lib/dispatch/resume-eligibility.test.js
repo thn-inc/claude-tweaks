@@ -8,6 +8,7 @@ const path = require('node:path');
 const { readText, crlfCheckoutRead } = require('../../helpers/read-skill');
 const {
   REFUSAL_REASONS, runIdFromPrBody, claimRunId, openPrLine, selectResumePr, resumeEligibility, resumeContext,
+  worktreeNameForHead, closeRedispatchRemedy, refusalDetail,
 } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 
@@ -25,7 +26,7 @@ const BODY = `## Summary\n\nclaude-tweaks-run: ${RUN}\n<!-- claude-tweaks-run: $
 
 function prEntry(over = {}) {
   return {
-    url: URL, number: PR, headRefName: HEAD, headRefOid: OID, body: BODY, isDraft: true, isCrossRepository: false, ...over,
+    url: URL, number: PR, headRefName: HEAD, headRefOid: OID, body: BODY, isDraft: true, isCrossRepository: false, closingRecords: 1, ...over,
   };
 }
 
@@ -234,15 +235,15 @@ test('selectResumePr and resumeEligibility agree on the three listing refusals',
     empty: [],
     forkOnly: [prEntry({ isCrossRepository: true })],
     multi: [prEntry(), prEntry({ number: 4610 })],
-    foreign: [prEntry({ headRefName: 'worktree-dispatch-record-9999' })],
+    foreign: [prEntry({ headRefName: 'worktree-dispatch-record-9999', body: 'claude-tweaks-run: 2026-10-30T101632-record-999\n' })],
   };
-  const reasons = { empty: 'no-pr', forkOnly: 'no-pr', multi: 'multiple-prs', foreign: 'foreign-pr' };
+  const reasons = { empty: 'no-pr', forkOnly: 'cross-repo-pr', multi: 'multiple-prs', foreign: 'foreign-pr' };
   for (const [name, prs] of Object.entries(listings)) {
     const sel = selectResumePr(N, prs);
     const full = verdict({ prs });
     assert.equal(sel.ok, false, name);
     assert.equal(sel.reason, reasons[name], name);
-    assert.deepStrictEqual({ eligible: false, reason: sel.reason, line: sel.line }, full, name);
+    assert.deepStrictEqual({ eligible: false, reason: sel.reason, line: sel.line, disposition: sel.disposition }, full, name);
   }
 });
 
@@ -258,7 +259,7 @@ test('multiple-prs lists the PR numbers in ascending order whatever order the li
 test('foreign-pr and live-sibling lines equal openPrLine and never name dispatch resume', () => {
   const base = openPrLine(N, PR);
   for (const v of [
-    verdict({ prs: [prEntry({ headRefName: 'worktree-dispatch-record-9999' })] }),
+    verdict({ prs: [prEntry({ headRefName: 'a$(x)' })] }),
     verdict({ prs: [prEntry({ body: 'claude-tweaks-run: 2026-10-30T101632-record-12\n' })] }),
     verdict({ prs: [prEntry({ body: 'no marker here' })] }),
     verdict({ siblingLive: true }),
@@ -276,12 +277,14 @@ test('foreign-pr and live-sibling lines equal openPrLine and never name dispatch
 const invalidLine = (what, kind) => `#4589's ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #4589 again, and report it if it repeats`;
 const REFUSALS = [
   ['no PR', { prs: [] }, 'no-pr',
-    '#4589 has no open PR on worktree-dispatch-record-4589 — nothing to resume; run /claude-tweaks:dispatch #4589'],
-  ['fork-only listing', { prs: [prEntry({ isCrossRepository: true })] }, 'no-pr',
-    '#4589 has no open PR on worktree-dispatch-record-4589 — nothing to resume; run /claude-tweaks:dispatch #4589'],
+    '#4589 has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #4589'],
+  ['fork-only listing', { prs: [prEntry({ isCrossRepository: true })] }, 'cross-repo-pr',
+    "#4589's open closing PR #4604 (https://github.com/o/r/pull/4604) comes from a fork or another repository — dispatch resume only restarts a build on this repository's own branch; merge or close it, then run /claude-tweaks:dispatch #4589"],
   ['two same-repo PRs', { prs: [prEntry(), prEntry({ number: 4610 })] }, 'multiple-prs',
-    '#4589 has 2 open PRs on worktree-dispatch-record-4589 (#4604, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #4589'],
-  ['foreign head', { prs: [prEntry({ headRefName: 'worktree-dispatch-record-9999' })] }, 'foreign-pr', openPrLine(N, PR)],
+    '#4589 has 2 open PRs that close it (#4604, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #4589'],
+  ['PR closing several records', { prs: [prEntry({ closingRecords: 2 })] }, 'multi-record-pr',
+    "#4589's PR #4604 closes 2 records — dispatch resume restarts one record's build, never a bundle; merge or close PR #4604 by hand, then run /claude-tweaks:dispatch #4589"],
+  ['foreign head', { prs: [prEntry({ headRefName: 'a$(x)' })] }, 'foreign-pr', openPrLine(N, PR)],
   ['foreign marker record', { prs: [prEntry({ body: 'claude-tweaks-run: 2026-10-30T101632-record-12\n' })] }, 'foreign-pr', openPrLine(N, PR)],
   ['malformed marker', { prs: [prEntry({ body: 'claude-tweaks-run: nope\n' })] }, 'foreign-pr', openPrLine(N, PR)],
   ['non-draft PR', { prs: [prEntry({ isDraft: false })] }, 'not-draft',
@@ -354,7 +357,9 @@ const REFUSALS = [
 for (const [name, over, reason, line] of REFUSALS) {
   test(`refusal: ${name} -> ${reason}`, () => {
     const v = verdict(over);
-    assert.deepStrictEqual(v, { eligible: false, reason, line });
+    assert.equal(v.eligible, false);
+    assert.equal(v.reason, reason);
+    assert.equal(v.line, line);
     assert.ok(v.line.includes('#4589'), v.line);
     assert.match(v.line, REMEDY);
     assert.ok(REFUSAL_REASONS.includes(v.reason), v.reason);
@@ -368,7 +373,7 @@ test('every refusal reason except the run-dir scan\'s two is produced by the tab
   assert.deepStrictEqual(missing, []);
   for (const r of scanOnly) assert.ok(REFUSAL_REASONS.includes(r), r);
   assert.equal(new Set(REFUSAL_REASONS).size, REFUSAL_REASONS.length);
-  assert.equal(REFUSAL_REASONS.length, 24);
+  assert.equal(REFUSAL_REASONS.length, 26);
   assert.ok(Object.isFrozen(REFUSAL_REASONS));
 });
 
@@ -417,7 +422,7 @@ test('an omitted or mistyped worktreeBranch refuses invalid-input; only an expli
   const omitted = input();
   delete omitted.worktreeBranch;
   assert.deepStrictEqual(resumeEligibility(omitted), {
-    eligible: false, reason: 'invalid-input', line: invalidLine('stalled-worktree branch', 'undefined'),
+    eligible: false, reason: 'invalid-input', line: invalidLine('stalled-worktree branch', 'undefined'), disposition: 'resume',
   });
   assert.equal(verdict({ worktreeBranch: 7 }).line, invalidLine('stalled-worktree branch', 'number'));
   assert.equal(verdict({ worktreeBranch: null }).eligible, true);
@@ -439,7 +444,7 @@ test('a closed issue whose state is lower-case or unknown is still refused, name
   assert.equal(verdict({ issueState: 'open' }).reason, 'record-closed');
   assert.equal(verdict({ issueState: 'MERGED' }).reason, 'record-closed');
   assert.deepStrictEqual(verdict({ issueState: undefined }), {
-    eligible: false, reason: 'invalid-input', line: invalidLine('issue state', 'undefined'),
+    eligible: false, reason: 'invalid-input', line: invalidLine('issue state', 'undefined'), disposition: 'resume',
   });
   assert.equal(verdict({ issueState: null }).line, invalidLine('issue state', 'null'));
 });
@@ -465,6 +470,174 @@ test('refusals evaluate in the listed order', () => {
   order({ priorRunDir: 'other-host-owner', priorRunOwnerHost: 'h', worktreeDirty: ['x'] }, 'prior-run-other-host');
   order({ worktreeDirty: ['x'], worktreeBranch: 'main' }, 'dirty-worktree');
   order({ worktreeBranch: null, branchCheckedOutAt: '/w', localBranchSha: 'b'.repeat(40) }, 'branch-checked-out');
+});
+
+// ---- any head, bundles, forks and the refusal's disposition (#4849) ----
+
+test('AC1.1: selectResumePr accepts an open closing PR on a non-dispatch head', () => {
+  const pr = prEntry({ headRefName: 'worktree-record-4589' });
+  const r = selectResumePr(N, [pr]);
+  assert.equal(r.ok, true);
+  assert.equal(r.pr.headRefName, 'worktree-record-4589');
+  assert.equal(r.runId, RUN);
+});
+test('AC2.1: no-pr line names no head and offers the plain dispatch', () => {
+  const r = selectResumePr(N, []);
+  assert.equal(r.reason, 'no-pr');
+  assert.equal(r.line, `#${N} has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #${N}`);
+  assert.equal(r.disposition, null);
+});
+test('a PR closing more than one record refuses multi-record-pr naming the count', () => {
+  const r = selectResumePr(N, [prEntry({ closingRecords: 3 })]);
+  assert.equal(r.reason, 'multi-record-pr');
+  assert.equal(r.line, `#${N}'s PR #${PR} closes 3 records — dispatch resume restarts one record's build, never a bundle; merge or close PR #${PR} by hand, then run /claude-tweaks:dispatch #${N}`);
+  assert.equal(r.disposition, 'close');
+});
+test('AC6.1: an open fork or other-repository closing PR refuses by naming that PR, never no-pr', () => {
+  const r = selectResumePr(N, [prEntry({ isCrossRepository: true })]);
+  assert.equal(r.reason, 'cross-repo-pr');
+  assert.equal(r.line, `#${N}'s open closing PR #${PR} (${URL}) comes from a fork or another repository — dispatch resume only restarts a build on this repository's own branch; merge or close it, then run /claude-tweaks:dispatch #${N}`);
+  assert.equal(r.disposition, 'close');
+});
+test('several fork PRs are named ascending, in the plural', () => {
+  const r = selectResumePr(N, [prEntry({ number: 4610, url: 'u2', isCrossRepository: true }), prEntry({ url: 'u1', isCrossRepository: true })]);
+  assert.equal(r.reason, 'cross-repo-pr');
+  assert.equal(r.line, `#${N}'s open closing PRs #${PR} (u1), #4610 (u2) come from a fork or another repository — dispatch resume only restarts a build on this repository's own branch; merge or close them, then run /claude-tweaks:dispatch #${N}`);
+  assert.equal(r.disposition, 'close');
+});
+test('an own PR beside a fork PR still selects the own PR', () => {
+  const fork = prEntry({ number: 4610, isCrossRepository: true });
+  assert.equal(selectResumePr(N, [prEntry(), fork]).ok, true);
+});
+test('a missing closingRecords is invalid-input, never read as one record', () => {
+  const pr = prEntry();
+  delete pr.closingRecords;
+  assert.equal(selectResumePr(N, [pr]).reason, 'invalid-input');
+  for (const bad of [0, -1, 1.5, '1', null]) {
+    const r = selectResumePr(N, [prEntry({ closingRecords: bad })]);
+    assert.equal(r.reason, 'invalid-input', String(bad));
+    assert.equal(r.disposition, 'resume', String(bad));
+  }
+});
+test('a head outside the worktree-name character set refuses foreign-pr', () => {
+  for (const head of ['a$(touch x)', '-rf', 'worktree-', 'a b', 'a/../b']) {
+    assert.equal(selectResumePr(N, [prEntry({ headRefName: head })]).reason, 'foreign-pr', head);
+  }
+});
+test('a marker naming another record still refuses foreign-pr on any head', () => {
+  const other = '2026-10-30T101632-record-999';
+  const r = selectResumePr(N, [prEntry({ headRefName: 'worktree-record-4589', body: `claude-tweaks-run: ${other}\n` })]);
+  assert.equal(r.reason, 'foreign-pr');
+  assert.equal(r.disposition, 'close');
+});
+test('worktreeNameForHead strips the worktree- prefix and passes a plain head through', () => {
+  assert.equal(worktreeNameForHead('worktree-record-3942'), 'record-3942');
+  assert.equal(worktreeNameForHead('worktree-dispatch-record-3977'), 'dispatch-record-3977');
+  assert.equal(worktreeNameForHead('fix/thing'), 'fix/thing');
+  for (const bad of ['a$(x)', '-rf', 'worktree-', 'a/../b', '.hidden', 'a//b', 'a/.b', undefined, null, 7]) assert.equal(worktreeNameForHead(bad), null, String(bad));
+});
+test('each refusal disposition follows what its line tells the human to do', () => {
+  assert.equal(verdict({ prs: [prEntry({ isDraft: false })] }).disposition, 'close-out');
+  assert.equal(verdict({ claimContent: tombstone(`pr-opened: ${URL}`) }).disposition, 'close-out');
+  assert.equal(verdict({ claimContent: tombstone('merged: x') }).disposition, 'close'); // claim-not-resumable
+  assert.equal(verdict({ claimContent: JSON.stringify({ released: true, reason: 'abandoned: x' }) }).disposition, 'close'); // run-mismatch, no run id
+  assert.equal(verdict({ claimContent: STALE('2026-10-30T101632-record-999') }).disposition, 'resume'); // run-mismatch, rebind
+  assert.equal(verdict({ worktreeDirty: ['a.js'] }).disposition, 'resume');
+  assert.equal(verdict({ issueState: 'CLOSED' }).disposition, 'close');
+  assert.equal(verdict({ prs: [] }).disposition, null);
+});
+test('only a provably live prior run carries liveRun', () => {
+  const live = verdict({ priorRunDir: 'live-owner' });
+  assert.equal(live.reason, 'prior-run-live');
+  assert.equal(live.liveRun, true);
+  const unknown = verdict({ priorRunDir: 'unknown-owner' });
+  assert.equal(unknown.reason, 'prior-run-live');
+  assert.equal('liveRun' in unknown, false);
+});
+test('closeRedispatchRemedy lists every step a fresh dispatch needs', () => {
+  const wt = path.join('/repo', '.claude', 'worktrees', 'record-7');
+  assert.equal(
+    closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-record-7', mainRoot: '/repo' }),
+    `close PR #70 (gh pr close 70), remove its worktree if one exists (git worktree remove "${wt}"), delete the local and remote branch (git branch -D worktree-record-7; git push origin --delete worktree-record-7), then run /claude-tweaks:dispatch #7`,
+  );
+});
+test('closeRedispatchRemedy prints no command for a head that is unsafe to paste', () => {
+  const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'a$(x)', mainRoot: '/repo' });
+  assert.ok(!s.includes('a$(x)'));
+  assert.match(s, /by hand/);
+  assert.match(s, /close PR #70 \(gh pr close 70\)/);
+  assert.match(s, /then run \/claude-tweaks:dispatch #7$/);
+});
+test('AC5.1: a non-draft or pr-opened refusal names close-out and never a close instruction', () => {
+  for (const over of [{ prs: [prEntry({ isDraft: false })] }, { claimContent: tombstone(`pr-opened: ${URL}`) }]) {
+    const d = refusalDetail({ issue: N, verdict: verdict(over), prs: over.prs || [prEntry()], mainRoot: '/repo' });
+    assert.equal(d.disposition, 'close-out');
+    assert.ok(d.remedy.includes(`/claude-tweaks:dispatch close-out #${N}`));
+    assert.doesNotMatch(d.remedy, /gh pr close|close PR/);
+  }
+});
+const OTHER_MARKER = 'claude-tweaks-run: 2026-10-30T101632-record-999\n';
+const NOT_DRAFT_MARKED = `#${N}'s PR #${PR} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #${N}`;
+const NOT_DRAFT_UNMARKED = `#${N}'s PR #${PR} is not a draft and carries no claude-tweaks-run marker, which close-out needs — review and merge it by hand`;
+const NON_DRAFT_SHAPES = [
+  ['foreign marker', { body: OTHER_MARKER }, 'foreign-pr', NOT_DRAFT_MARKED],
+  ['unsafe head, own marker', { headRefName: 'a$(x)' }, 'foreign-pr', NOT_DRAFT_MARKED],
+  ['no marker', { body: 'no marker here' }, 'foreign-pr', NOT_DRAFT_UNMARKED],
+  ['bundle with a marker', { closingRecords: 2 }, 'multi-record-pr', NOT_DRAFT_MARKED],
+  ['bundle with no marker', { closingRecords: 2, body: 'no marker here' }, 'multi-record-pr', NOT_DRAFT_UNMARKED],
+  ['fork', { isCrossRepository: true }, 'cross-repo-pr',
+    `#${N}'s open closing PR #${PR} (${URL}) comes from a fork or another repository and is not a draft — review and merge it by hand`],
+];
+for (const [name, over, reason, line] of NON_DRAFT_SHAPES) {
+  test(`a non-draft PR never takes close: ${name}`, () => {
+    const prs = [prEntry({ isDraft: false, ...over })];
+    const r = selectResumePr(N, prs);
+    assert.equal(r.reason, reason);
+    assert.equal(r.line, line);
+    assert.equal(r.disposition, 'close-out');
+    const d = refusalDetail({ issue: N, verdict: verdict({ prs }), prs, mainRoot: '/repo' });
+    assert.equal(d.disposition, 'close-out');
+    assert.equal(d.remedy, line);
+    assert.doesNotMatch(d.remedy, /gh pr close|close PR/);
+  });
+}
+test('a fork listing holding any non-draft PR takes close-out, never a close instruction', () => {
+  const prs = [prEntry({ isCrossRepository: true, url: 'u1' }), prEntry({ number: 4610, url: 'u2', isCrossRepository: true, isDraft: false })];
+  const r = selectResumePr(N, prs);
+  assert.equal(r.reason, 'cross-repo-pr');
+  assert.equal(r.disposition, 'close-out');
+  assert.equal(r.line, `#${N}'s open closing PRs #${PR} (u1), #4610 (u2) come from a fork or another repository and not all are drafts — review and merge them by hand`);
+});
+test('refusalDetail: close uses the steps, except a closed record and a fork, whose lines fit', () => {
+  const closing = refusalDetail({ issue: N, verdict: selectResumePr(N, [prEntry({ closingRecords: 2 })]), prs: [prEntry({ closingRecords: 2 })], mainRoot: '/repo' });
+  assert.deepStrictEqual(closing.prNumbers, [PR]);
+  assert.match(closing.remedy, /gh pr close 4604/);
+  const closed = verdict({ issueState: 'CLOSED' });
+  assert.equal(refusalDetail({ issue: N, verdict: closed, prs: [prEntry()], mainRoot: '/repo' }).remedy, closed.line);
+  const forkPrs = [prEntry({ isCrossRepository: true })];
+  const fork = selectResumePr(N, forkPrs);
+  const d = refusalDetail({ issue: N, verdict: fork, prs: forkPrs, mainRoot: '/repo' });
+  assert.equal(d.remedy, fork.line);
+  assert.deepStrictEqual(d.prNumbers, [PR]);
+});
+test('refusalDetail: no-pr carries no PR, no disposition, no remedy and no head', () => {
+  assert.deepStrictEqual(
+    refusalDetail({ issue: N, verdict: selectResumePr(N, []), prs: [], mainRoot: '/repo' }),
+    { prNumbers: [], disposition: null, remedy: null, headRefName: null },
+  );
+});
+test('refusalDetail: headRefName is the one kept PR\'s head, null for a fork or several kept PRs', () => {
+  const one = [prEntry({ isDraft: false, headRefName: 'fix/thing' })];
+  assert.equal(refusalDetail({ issue: N, verdict: verdict({ prs: one }), prs: one, mainRoot: '/repo' }).headRefName, 'fix/thing');
+  const beside = [prEntry({ headRefName: 'fix/thing', isDraft: false }), prEntry({ number: 4610, isCrossRepository: true })];
+  assert.equal(refusalDetail({ issue: N, verdict: verdict({ prs: beside }), prs: beside, mainRoot: '/repo' }).headRefName, 'fix/thing');
+  const fork = [prEntry({ isCrossRepository: true })];
+  assert.equal(refusalDetail({ issue: N, verdict: verdict({ prs: fork }), prs: fork, mainRoot: '/repo' }).headRefName, null);
+  const many = [prEntry({ number: 4610 }), prEntry()];
+  const d = refusalDetail({ issue: N, verdict: verdict({ prs: many }), prs: many, mainRoot: '/repo' });
+  assert.equal(d.headRefName, null);
+  assert.deepStrictEqual(d.prNumbers, [PR, 4610]);
+  assert.equal(d.remedy, verdict({ prs: many }).line);
 });
 
 // ---- resumeContext ----
