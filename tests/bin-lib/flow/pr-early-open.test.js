@@ -11,6 +11,7 @@ const { composePrEarlyBody } = require('../../../plugin/bin/lib/flow/pr-body');
 const { hasPrEarlyStep1LineFor, hasLoggedPrDegrade } = require('../../../plugin/bin/lib/hooks/pre-tool-use');
 const logDecision = require('../../../plugin/bin/log-decision');
 const { gitRepo } = require('../../helpers/git-fixtures');
+const { readText } = require('../../helpers/read-skill');
 
 const RUN_ID = '2026-10-25T000001-record-4027';
 const BRANCH = 'worktree-dispatch-record-4027';
@@ -248,6 +249,72 @@ test('AC4.1: a failing gh pr edit on a reused PR logs the SKIP degrade and still
   const recorded = harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body: bodyFor(OTHER_RUN) }, edit: new Error('HTTP 422') });
   assert.deepEqual(await openPrEarly(OPTS, recorded.deps), { outcome: 'reused', number: 9, url: URL7 });
   assert.ok(recorded.lines.some((l) => l.startsWith('- SKIP ') && l.includes('rebind of reused PR #9 failed (HTTP 422)')));
+});
+
+test('AC1.1: a reused-PR rebind whose body write fails its first-line check is a logged SKIP, never a stop, on either reuse path', async () => {
+  const mismatchBody = (h) => {
+    h.deps.writeBodyFile = (name, text) => {
+      const p = path.join(h.bodyDir, name);
+      fs.writeFileSync(p, text.replace(RUN_ID, '2026-01-01T000000-record-9'));
+      return p;
+    };
+  };
+  const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] });
+  mismatchBody(listed);
+  assert.deepEqual(await openPrEarly(OPTS, listed.deps), { outcome: 'reused', number: 7, url: URL7 });
+  const recorded = harness({ runState: { pr: { number: 9, url: URL7 } }, view: { state: 'OPEN', url: URL7, body: bodyFor(OTHER_RUN) } });
+  mismatchBody(recorded);
+  assert.deepEqual(await openPrEarly(OPTS, recorded.deps), { outcome: 'reused', number: 9, url: URL7 });
+  for (const [h, n] of [[listed, 7], [recorded, 9]]) {
+    assert.equal(h.calls.find((c) => c[0] === 'gh' && c[2] === 'edit'), undefined, 'a refused body is never written to the PR');
+    assert.ok(h.lines.some((l) => l.startsWith('- SKIP ') && l.includes(`rebind of reused PR #${n} failed (PR body first line is`)
+      && l.includes(`until its body names run ${RUN_ID}`)), `SKIP line for #${n}`);
+  }
+  assert.equal(recorded.calls.find(isPush), undefined, 'the recorded path never pushes');
+  assert.deepEqual(listed.records, [{ number: 7, url: URL7 }]);
+  assert.ok(idx(listed.calls, (c) => c[0] === 'record') < idx(listed.calls, isPush), 'the listed path still records, then pushes');
+});
+
+const LIFECYCLE_DOC = path.join(__dirname, '../../../plugin/skills/_shared/pr-early-run-lifecycle.md');
+const collapse = (text) => text.replace(/\s+/g, ' ');
+const REBIND_TEMPLATE = /`((?:AUTO|SKIP) \{time\} — PR-early run lifecycle: (?:rebound|rebind of) (?:reused|reopened) PR [^`]*)`/g;
+
+function assertRebindTwins(collapsedDoc, emitted) {
+  const templates = [...collapsedDoc.matchAll(REBIND_TEMPLATE)].map((m) => m[1]);
+  assert.equal(templates.length, 4, 'expected 4 rebind templates in pr-early-run-lifecycle.md');
+  assert.deepEqual([...emitted].sort(), [...templates].sort(), 'rebind log lines drift between pr-early-open.js and pr-early-run-lifecycle.md');
+}
+
+test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-run-lifecycle.md\'s templates', async () => {
+  const closedDecisions = `- AUTO 10:00:00 — x: adopted prior attempt abc1234 from closed PR #7 for ${BRANCH}. Reversibility: high.\n`;
+  const runs = [
+    { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] },
+    { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') },
+    { list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: closedDecisions },
+    { list: [{ number: 7, url: URL7, state: 'CLOSED' }], decisions: closedDecisions, edit: new Error('HTTP 422') },
+  ];
+  const emitted = [];
+  for (const script of runs) {
+    const h = harness(script);
+    await openPrEarly(OPTS, h.deps);
+    for (const l of h.lines.filter((x) => x.includes('rebound ') || x.includes('rebind of '))) {
+      emitted.push(l
+        .replace(/^- (AUTO|SKIP) \d\d:\d\d:\d\d — log-decision: /, '$1 {time} — ')
+        .split('#7').join('#{number}')
+        .split(RUN_ID).join('{run-id}')
+        .split('HTTP 422').join('{error}'));
+    }
+  }
+  const liveDoc = collapse(readText(LIFECYCLE_DOC));
+  assertRebindTwins(liveDoc, emitted);
+
+  const reworded = liveDoc.replace('phase-checklist updates will exit 4 until its body names run {run-id}. Reversibility: n/a.', 'phase-checklist updates will exit 4. Reversibility: n/a.');
+  assert.notEqual(reworded, liveDoc);
+  assert.throws(() => assertRebindTwins(reworded, emitted), { message: /^rebind log lines drift between pr-early-open\.js and pr-early-run-lifecycle\.md(?:\n|$)/ });
+
+  const dropped = liveDoc.replace('`AUTO {time} — PR-early run lifecycle: rebound reused PR #{number} to run {run-id}. Reversibility: high.`', '');
+  assert.notEqual(dropped, liveDoc);
+  assert.throws(() => assertRebindTwins(dropped, emitted), { message: /^expected 4 rebind templates in pr-early-run-lifecycle\.md(?:\n|$)/ });
 });
 
 test('a rejected reopen falls through to creation with its own Step 1 line', async () => {
