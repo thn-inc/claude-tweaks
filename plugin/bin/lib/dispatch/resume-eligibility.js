@@ -6,7 +6,7 @@
 // the record's own stalled build and may be restarted. No I/O here -- bin/dispatch-resume.js
 // gathers the PR listing, claim blob, labels and run-dir/worktree state and passes them in.
 //
-// The Closed rule (spec D1): the eligible states are exhaustive. Every other state returns one
+// The Closed rule: the eligible states are exhaustive. Every other state returns one
 // `line` naming the state and a manual remedy, evaluated in the order resumeEligibility lists, and
 // a `disposition` saying what that line tells the human to do with the PR: `resume` (fix or wait,
 // then resume), `close-out` (it awaits review), `close` (rebuild it fresh, or take it by hand), or
@@ -270,7 +270,11 @@ function sha7(sha) {
   return typeof sha === 'string' && sha !== '' ? sha.slice(0, 7) : 'unknown';
 }
 
-// `reason` is a claim tombstone's release reason, '' when it carries none.
+// `reason` is a claim tombstone's release reason, '' when it carries none. These three end a build
+// without finishing it while its PR stays open: `failed:` (a gate stopped the run), `abandoned:` (the
+// run was discarded unmerged) and `swept: stale claim` (/tidy cleared a dead run's claim). `merged:`
+// and `pr-opened:` finished the build, `shaped:`/`routed:` ran none, and `swept: issue closed` closed
+// the record, so none of those is a resumable stall (_shared/issue-claims.md's Release triggers).
 function resumableTombstoneReason(reason) {
   return reason.startsWith('failed:') || reason.startsWith('abandoned:') || reason.startsWith('swept: stale claim');
 }
@@ -396,7 +400,7 @@ function resumeEligibility(input) {
   };
 }
 
-// ---- resume context (deliverable 4) ----
+// ---- resume context ----
 
 // /dispatch and /wrap-up record settle/teardown, not build progress.
 const PIPELINE_SECTIONS = new Set(['/flow', '/build', '/test', '/review', '/design-wrapper']);

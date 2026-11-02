@@ -257,6 +257,7 @@ function readRecord(ctx) {
 // native only, exactly as the queue gates it — the native openBlockerIds. Ascending, deduplicated.
 function readOpenBlockers(ctx, body) {
   const open = new Set();
+  // One gh issue view per body-declared blocker, serially: a record's Blocked-by list is a handful of entries and this runs once per manual resume, so batching them into one aliased query would add a second query shape and its partial-result handling for no measured cost (#4815 closed this out).
   for (const m of parseDependencies(body)) {
     const dep = issueView(ctx, m, 'state');
     if (typeof dep.state !== 'string') throw new Exit(4, `gh issue view #${m}: state unreadable`);
@@ -301,7 +302,7 @@ function readJsonFile(deps, file) {
 // mkdirs archive/{runId} and writes `status: 'archiving'` there before moving anything, so a failed
 // attempt leaves the marker beside the real root dir. It wins when archive/{runId}/run-state.json parses
 // as an object whose status is not 'archiving' (archive-merged.js's own real-prior-archive test), or when
-// the root dir is absent or holds no run-state.json (a late-write `work/` stub, Review Focus 6). Any other
+// the root dir is absent or holds no run-state.json (a late-write `work/` stub that recreated the root after archiving). Any other
 // state falls through to the root classification, so a live root owner is still probed.
 function classifyPriorRun(ctx, runId) {
   const { deps } = ctx;
@@ -630,6 +631,7 @@ function runBound(ctx, boundRun) {
   const target = read('--bound-run', () => deps.resolveTarget({ runDir: boundRun, mainRoot: ctx.mainRoot }));
   if (!target || !target.ok) throw new Exit(2, `--bound-run ${boundRun} is not a run dir under the main checkout (${target && target.reason})`);
   const bound = path.resolve(target.dir);
+  // resolveTarget returns the realpath'd dir while ctx.root keeps mainCheckoutRoot's spelling (a symlinked checkout, macOS /var -> /private/var), so either spelling names the main checkout's pipelines dir.
   const pipelines = [ctx.root, normalizePath(ctx.root)];
   if (!pipelines.includes(path.dirname(bound))) {
     throw new Exit(2, `--bound-run ${boundRun} is not a top-level run dir of ${ctx.root}`);

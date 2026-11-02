@@ -793,7 +793,7 @@ test('a stale claim with no bot:in-progress label is eligible; a live-claim -> e
 
 // ---- prior run directory ----
 
-test('archive-first: archive/{runId} plus a work/-only root dir reads archived (Review Focus 6)', () => {
+test('archive-first: archive/{runId} plus a work/-only root dir reads archived', () => {
   const env = makeEnv();
   env.cfg.dirs[RUNDIR] = ['work'];
   const r = exec(env);
@@ -963,7 +963,7 @@ test('run-state.json with no owner block -> dead-owner (archive, close when non-
   assert.equal(r.json.priorRunPath, RUNDIR);
 });
 
-test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock (Review Focus 8)', () => {
+test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock', () => {
   const env = makeEnv();
   setRunState(env, { status: 'active', owner: OWNER, heartbeatAt: new Date(NOW).toISOString(), worktree: WT });
   env.cfg.alive = () => false;
@@ -1331,7 +1331,7 @@ test('a throwing sibling check -> exit 4', () => {
   assert.equal(exec(env).code, 4);
 });
 
-test('own kept lock (Review Focus 18): the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
+test('own kept lock: the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
   const env = makeEnv();
   env.cfg.files[ARCH_STATE] = JSON.stringify({
     status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT,
