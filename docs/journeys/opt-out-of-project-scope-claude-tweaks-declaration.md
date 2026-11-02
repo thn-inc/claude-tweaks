@@ -11,9 +11,9 @@ files:
 # Opt Out of the Project-Scope claude-tweaks Declaration
 
 **Persona:** Maintainer of a repo that runs claude-tweaks from a user-scope install. They deliberately took `claude-tweaks@claude-tweaks-marketplace` out of the committed `.claude/settings.json` (and its marketplace entry and setup-script lines), as #4841 did across six repos, and want `/init` to stop putting it back.
-**Goal:** Make the removal stick: re-running `/claude-tweaks:init` leaves claude-tweaks undeclared, and `/claude-tweaks:routine fleet on` reports the consequence instead of treating the absence as a fault.
+**Goal:** Make the removal stick: re-running `/claude-tweaks:init` leaves claude-tweaks undeclared, and `/claude-tweaks:routine fleet on` reports the consequence instead of treating the absence as a fault. The routine side says the same: `/init` Step 15 and `/claude-tweaks:routine create` name the cost before a routine exists, and a firing that finds no claude-tweaks stops and names the opt-out.
 **Entry point:** `.claude-tweaks/policy.yml`, then `/claude-tweaks:init` (Step 14, Cloud/Routine Parity Setup)
-**Success state:** `/init` adds no claude-tweaks line to the committed settings (an entry already there is left as it is) and the generated `scripts/claude-cloud-setup.sh` carries none, while superpowers is still declared. The maintainer knows exactly what cloud sessions and Routines will and won't get.
+**Success state:** `/init` adds no claude-tweaks line to the committed settings (an entry already there is left as it is) and the generated `scripts/claude-cloud-setup.sh` carries none, while superpowers is still declared. The maintainer knows exactly what cloud sessions and Routines will and won't get. On the routine side, `/init` Step 15 prints its notice once, a standalone `create` preview carries one `claude-tweaks: not declared` line, and an opted-out firing with an empty plugin cache stops on one `claude-tweaks not installed` line instead of running the setup script.
 
 ## Steps
 
