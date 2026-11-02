@@ -53,6 +53,17 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.160.2](https://github.com/thn-inc/claude-tweaks/compare/v6.160.1...v6.160.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* Digest rollover drops live entries from clustering… ([#4848](https://github.com/thn-inc/claude-tweaks/issues/4848)) ([57b2c1d](https://github.com/thn-inc/claude-tweaks/commit/57b2c1d6a4dd0719e3603c7128036605770d7e32))
+* Gate the gh host seam's GH_HOST injection on a positive… ([#4854](https://github.com/thn-inc/claude-tweaks/issues/4854)) ([dd67916](https://github.com/thn-inc/claude-tweaks/commit/dd6791663e532beefea55083d1232d0e64cbac09))
+* Granted records with a stale open PR are stuck: resume… ([#4849](https://github.com/thn-inc/claude-tweaks/issues/4849)) ([cb2bb53](https://github.com/thn-inc/claude-tweaks/commit/cb2bb53a750afe0fcb7b08785398f708ac755fa9))
+* Keep tidy's open-parent [parent-gate] rows when the gh… ([#4801](https://github.com/thn-inc/claude-tweaks/issues/4801)) ([7ab8660](https://github.com/thn-inc/claude-tweaks/commit/7ab86605b7aeec8638d5e00ac5a2834d72b6c3d1))
+* Merge mode's MERGED-PR next step may dead-end: does… ([#4692](https://github.com/thn-inc/claude-tweaks/issues/4692)) ([d8aa771](https://github.com/thn-inc/claude-tweaks/commit/d8aa7716bc7dac3e2e6fb8bbf67c7e61e29dd656))
+
 ## [6.160.1](https://github.com/thn-inc/claude-tweaks/compare/v6.160.0...v6.160.1) (2026-11-01)
 
 
