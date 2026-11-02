@@ -476,7 +476,8 @@ test('AC (Step 15 + /routine create): each carries the opt-out notice, once', ()
     assert.ok(occursOnce(slice, literal), `${name}: literal must occur exactly once in its slice`);
     const doctored = slice.replace(literal, () => '');
     assert.notEqual(doctored, slice, name);
-    assert.deepStrictEqual(missingFacts(ROUTINE_NOTICE_FACTS.map((f) => (f[0] === name ? [name, doctored, literal] : f))), [name]);
+    const withDoctoredSlice = ROUTINE_NOTICE_FACTS.map((fact) => (fact[0] === name ? [name, doctored, literal] : fact));
+    assert.deepStrictEqual(missingFacts(withDoctoredSlice), [name]);
   }
 });
 
