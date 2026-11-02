@@ -12,6 +12,8 @@ const test = require('node:test');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
+const os = require('node:os');
+const { execSync, spawnSync } = require('node:child_process');
 const { readText } = require('./helpers/read-skill');
 
 const SKILL_DIR = path.join(__dirname, '..', 'plugin', 'skills', 'backlog');
@@ -342,4 +344,165 @@ test('work-record-permission-matrix.md: /backlog refine row Adds parked and Remo
     /the `#N` batch-apply, gated on zero unresolved `needs-decision:\*` comments/,
     'the Removes-specific needs:decision rationale must not also appear in Adds',
   );
+});
+
+// --- #4849: the stuck:open-pr row (a granted record stuck behind an open PR) ---
+
+const ROW = '| #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |';
+const NOTE = 'Note: the stuck:open-pr check could not run (exit {failed.code}) — records stuck behind an open PR are not shown';
+const EMPTY_SENTENCE = 'No granted record is stuck behind an open PR.';
+const CLI_CALL = 'bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW" > "$ST_BACKLOG_ATTENTION_STUCK"';
+const STEP4_CONDITION = "only when Step 1's file shows the stuck check did not run, one note line";
+
+// One assertion function for every prose pin of the row; each has a go-red control below.
+function assertStuckRow(source) {
+  assert.ok(source.includes('bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW"'), 'Step 1 runs the CLI over the snapshot');
+  assert.ok(source.includes(CLI_CALL), 'Step 1 redirects the CLI into the stuck file');
+  const stuckNames = [...source.matchAll(/ST_BACKLOG_ATTENTION_STUCK="\$\(node [^)]*--value ([\w.-]+)\)"/g)].map((m) => m[1]);
+  assert.ok(stuckNames.length >= 2 && new Set(stuckNames).size === 1, 'Steps 1 and 2 resolve the same stuck filename');
+  assert.ok(source.includes(ROW), 'the rendered row');
+  assert.match(source, /`stuck:open-pr` rows are never batched/, 'stuck rows are never batched');
+  assert.match(source, /could not run[^.]*note/, 'a failed CLI is a note, never an empty section');
+  assert.ok(source.includes('prints `{"failed":{"code":…,"message":…}}` where a run prints `{"rows":…}`'), 'Step 1 keeps the could-not-run state in the stuck file');
+  assert.ok(source.includes('The check ran only when that file parses to an object with a `rows` array'), 'the check-ran test is stated once, on the file');
+  const step4 = source.slice(source.indexOf('## Step 4: Render'));
+  assert.ok(step4.includes(NOTE), 'Step 4 template has a slot for the could-not-run note');
+  assert.ok(step4.replace(/\s+/g, ' ').includes(STEP4_CONDITION), 'the note renders only when Step 1\'s file shows the check did not run');
+  assert.ok(step4.indexOf(NOTE) < step4.indexOf('## Backlog — Needs Attention'), 'the note renders above the table');
+  assert.ok(source.includes(`bot:parked. ${EMPTY_SENTENCE}\``), 'the empty-state message names a clear stuck check');
+  assert.ok(source.includes(`When the stuck check could not run, drop the sentence \`${EMPTY_SENTENCE}\``), 'the sentence renders only when the check ran');
+  assert.ok(step4.includes('row\'s recommended action is its `stuckRemedy`'), 'Step 4 names the ranked file\'s field, stuckRemedy');
+}
+
+test('AC3.1: attention-mode.md renders the stuck:open-pr row', () => assertStuckRow(read(SKILL_DIR, 'attention-mode.md')));
+
+test('AC3.1 controls: removing any stuck:open-pr pin goes red on that pin', () => {
+  const source = read(SKILL_DIR, 'attention-mode.md');
+  const controls = [
+    [ROW, /the rendered row/],
+    [' > "$ST_BACKLOG_ATTENTION_STUCK"\n```', /redirects the CLI into the stuck file/, '\n```'],
+    [CLI_CALL, /runs the CLI over the snapshot/],
+    [`bot:parked. ${EMPTY_SENTENCE}\``, /names a clear stuck check/, 'bot:parked.`'],
+    ["only when Step 1's file shows", /renders only when Step 1's file shows the check did not run/, "whenever Step 1's file shows"],
+    ['one note line', /renders only when Step 1's file shows the check did not run/, 'no note line'],
+    ['`stuck:open-pr` rows are never batched', /stuck rows are never batched/],
+    ['the check could not run, so the render carries one note', /a failed CLI is a note/],
+    ['prints `{"failed":{"code":…,"message":…}}`', /keeps the could-not-run state in the stuck file/],
+    ['The check ran only when that file parses to an object with a `rows` array', /check-ran test/],
+    [NOTE, /slot for the could-not-run note/],
+    [`When the stuck check could not run, drop the sentence \`${EMPTY_SENTENCE}\``, /renders only when the check ran/],
+    ['row\'s recommended action is its `stuckRemedy`', /names the ranked file/],
+  ];
+  for (const [from, message, to = ''] of controls) {
+    assert.ok(source.includes(from), `control target exists: ${from.slice(0, 40)}`);
+    assert.throws(() => assertStuckRow(source.replace(from, to)), message, from.slice(0, 40));
+  }
+  // The two sides of the stuck filename must agree: changing one goes red.
+  assert.throws(() => assertStuckRow(source.replace('--value backlog-attention-stuck.json', '--value backlog-attention-stuck-x.json')), /same stuck filename/);
+  // The note slot must sit above the table, not just exist somewhere in Step 4.
+  const moved = source.replace(`${NOTE}\n\n`, '').replace('## Backlog — Needs Attention\n\n| Record', `## Backlog — Needs Attention\n\n${NOTE}\n\n| Record`);
+  assert.throws(() => assertStuckRow(moved), /above the table/);
+});
+
+// --- the merge that makes the row render, run the way a reader runs it (extract-and-run) ---
+
+const PLUGIN_ROOT = path.join(__dirname, '..', 'plugin').split(path.sep).join('/');
+const SKIP_NO_BASH = spawnSync('bash', ['--version'], { stdio: 'ignore' }).status === 0 ? false : 'bash not available';
+
+function fences(source) {
+  return [...source.matchAll(/```bash\n([\s\S]*?)\n```/g)].map((m) => m[1]);
+}
+function stuckSnippets() {
+  const all = fences(read(SKILL_DIR, 'attention-mode.md'));
+  const merge = all.find((f) => f.includes('isTrustedComment') && f.includes('backlog-attention-stuck.json'));
+  const rank = all.find((f) => f.includes('BAND_ORDER'));
+  assert.ok(merge && rank, 'extraction is out of sync with attention-mode.md — update this test');
+  return { merge, rank };
+}
+
+const labelsOf = (...names) => names.map((name) => ({ name }));
+const STUCK_ROW = {
+  number: 7, pr: 70, remedy: 'R7: run /claude-tweaks:dispatch resume #7', title: 'Stuck seven', createdAt: '2026-10-10T00:00:00Z', labels: labelsOf('auto:build', 'priority:high'),
+};
+// Two same-band records, the older filed first by the age key alone; #7 is high-band but the youngest, so the
+// band key alone must put it first; #8 has no band and is older than #7, so a ranker that ignores the band fails.
+const MEDIUM_OLD = {
+  number: 9, pr: 90, remedy: 'R9', title: 'Medium old', createdAt: '2026-10-03T00:00:00Z', labels: labelsOf('auto:build', 'priority:medium'),
+};
+const MEDIUM_NEW = {
+  number: 10, pr: 100, remedy: 'R10', title: 'Medium new', createdAt: '2026-10-05T00:00:00Z', labels: labelsOf('auto:build', 'priority:medium'),
+};
+const OVERLAP_ROW = {
+  number: 8, pr: 80, remedy: 'R8', title: 'Overlap eight', createdAt: '2026-10-02T00:00:00Z', labels: labelsOf('auto:build', 'needs:definition'),
+};
+
+// Seeds a session dir like refine-mode's fold-in test, runs the merge and rank fences over it, and
+// returns the ranked records. The stuck file content is the variable.
+function runMergeAndRank({ merge, rank }, stuckFileText) {
+  const sessionId = `attention-stuck-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const dir = path.join(os.tmpdir(), `ct-session-${sessionId}`);
+  fs.rmSync(dir, { recursive: true, force: true });
+  fs.mkdirSync(dir, { recursive: true });
+  const needs = { ...OVERLAP_ROW, state: 'OPEN' };
+  fs.writeFileSync(path.join(dir, 'backlog-attention-snapshot-filtered.json'), JSON.stringify({ needsRecords: [needs], botBlockedRecords: [], botParkedRecords: [] }));
+  fs.writeFileSync(path.join(dir, 'backlog-attention-solution-unjustified.json'), '[]');
+  fs.writeFileSync(path.join(dir, 'backlog-attention-shaped-headless.json'), '[]');
+  fs.writeFileSync(path.join(dir, 'backlog-attention-stuck.json'), stuckFileText);
+  const env = { ...process.env, CLAUDE_PLUGIN_ROOT: PLUGIN_ROOT, CLAUDE_CODE_SESSION_ID: sessionId };
+  try {
+    execSync(merge, { encoding: 'utf8', shell: 'bash', stdio: ['ignore', 'pipe', 'pipe'], env });
+    execSync(rank, { encoding: 'utf8', shell: 'bash', stdio: ['ignore', 'pipe', 'pipe'], env });
+    return JSON.parse(fs.readFileSync(path.join(dir, 'backlog-attention-ranked.json'), 'utf8'));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// The merge + rank behavior in one assertion function: rows join the records, carry stuckRemedy, and a
+// file that is not a check that ran contributes nothing and breaks nothing.
+function assertStuckMerge(snippets) {
+  const ranked = runMergeAndRank(snippets, JSON.stringify({ rows: [MEDIUM_NEW, OVERLAP_ROW, STUCK_ROW, MEDIUM_OLD] }));
+  const seven = ranked.find((r) => r.number === 7);
+  assert.ok(seven, 'a stuck-only record gets its own row');
+  assert.deepStrictEqual(seven.types, ['stuck:open-pr']);
+  assert.strictEqual(seven.stuckRemedy, STUCK_ROW.remedy, 'the merged row carries stuckRemedy');
+  assert.strictEqual(seven.title, 'Stuck seven');
+  assert.strictEqual(seven.createdAt, STUCK_ROW.createdAt);
+  assert.strictEqual(seven.priority, 'high', 'Step 3 ranks it by the copied labels');
+  const eight = ranked.find((r) => r.number === 8);
+  assert.deepStrictEqual(eight.types, ['needs:definition', 'stuck:open-pr'], 'a record in two sets is one row with both types');
+  assert.strictEqual(eight.stuckRemedy, 'R8', 'a record in two sets keeps its stuckRemedy');
+  assert.strictEqual(ranked.filter((r) => r.number === 8).length, 1);
+  assert.deepStrictEqual(ranked.map((r) => r.number), [7, 9, 10, 8], 'band first (high, medium, none), then oldest first within a band');
+
+  for (const text of ['{"failed":{"code":4,"message":"x"}}', '{}', '', 'not json', 'null', '{"rows":"x"}']) {
+    const after = runMergeAndRank(snippets, text);
+    assert.deepStrictEqual(after.map((r) => r.number), [8], `a check that did not run (${JSON.stringify(text)}) adds no row`);
+    assert.deepStrictEqual(after[0].types, ['needs:definition']);
+    assert.strictEqual(after[0].stuckRemedy, undefined);
+  }
+}
+
+test('AC3.1: Step 2 and Step 3 turn the CLI\'s rows into ranked stuck:open-pr rows, and a failed check into none', { skip: SKIP_NO_BASH }, () => {
+  assertStuckMerge(stuckSnippets());
+});
+
+test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy, the rows guard, the band key or the age key is removed', { skip: SKIP_NO_BASH }, () => {
+  const snippets = stuckSnippets();
+  // Each control names the assertion (or the fence's own crash) it must trip, so a mutant that dies for an unrelated reason stays red.
+  const mutations = [
+    ['merge', 'for (const r of stuckRows)', 'for (const r of [])', /a stuck-only record gets its own row/],
+    ['merge', 'stuckRemedy: r.remedy', 'stuckRemedy: undefined', /the merged row carries stuckRemedy/],
+    ['merge', 'existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined', /a record in two sets keeps its stuckRemedy/],
+    // the unguarded read: a check that did not run leaves stuckRows undefined, and the loop over it crashes the fence
+    ['merge', 'if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;', /Command failed[\s\S]*is not iterable/],
+    // rank ignores the priority band: only the age key orders, so the older no-band record beats the younger high one
+    ['rank', 'if (bandA !== bandB) return bandA - bandB;', '', /band first \(high, medium, none\), then oldest first within a band/],
+    // age key inverted: the band key still orders, but the same-band pair comes out youngest first
+    ['rank', 'return new Date(a.createdAt) - new Date(b.createdAt);', 'return new Date(b.createdAt) - new Date(a.createdAt);', /band first \(high, medium, none\), then oldest first within a band/],
+  ];
+  for (const [which, from, to, intended] of mutations) {
+    assert.ok(snippets[which].includes(from), `control target exists: ${from}`);
+    assert.throws(() => assertStuckMerge({ ...snippets, [which]: snippets[which].replace(from, to) }), intended, from);
+  }
 });

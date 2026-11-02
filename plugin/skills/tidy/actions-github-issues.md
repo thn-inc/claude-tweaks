@@ -139,6 +139,8 @@ Executor for a `[claim]` Release row from Step 4.7's claim audit (`scan-procedur
 the `Blob classified 'stale'` and the `Issue closed (any claim state)` recommendation rows. A
 `'stale'` row carrying an open marked PR (`scan-procedures.md` Step 4.7's Stale claim with an open
 PR) is never a Release row: it is a Yours no-op, so this executor never receives it.
+A row's PR disposition, appended by the open-linked-PR backstop, is the human's to act on:
+`release-claim.js` never closes or touches the PR.
 `node "${CLAUDE_PLUGIN_ROOT}/bin/release-claim.js" <n> --run <tidy-run-dir> --sweep --reason
 "swept: stale claim"` (or `"swept: issue closed"`). `--sweep` is required — this run's `--run`
 basename is never the crashed dispatcher's `runId`, so without it `release-claim.js`'s ordinary

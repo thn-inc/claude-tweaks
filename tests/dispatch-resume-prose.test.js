@@ -212,7 +212,7 @@ const STEP_CLAIMS = [
   // Step 6a: the stop path closes the bound run and covers every non-zero exit.
   ['6a', 'a stop closes the new run via close-run on $GROUP_RUN_DIR', /hooks\.js" close-run --run "\$GROUP_RUN_DIR"/],
   ['6a', 'exit 2 stops', /exit 2 \(`--bound-run` outside/],
-  ['6a', 'exit 4 stops', /exit 4 \(the run-dir listing failed\)/],
+  ['6a', 'exit 4 stops, the missing worktree stamp included', /exit 4 \(the run-dir listing failed, or the bound run carries no worktree stamp\)/],
   ['6a', 'exits fail closed', /Fail closed: exit 3, exit 2/],
   ['6a', 'a stop prints the stderr for exit 2/4', /the stderr for exit 2\/4/],
   // Step 4: only the mint runs.
@@ -366,6 +366,97 @@ for (const [label, re] of OPEN_PR_CLAIMS) {
     assertPinned(afterBase(OPEN_PR), re, label);
   });
 }
+
+test('open-pr report: an excluded record never reads no-pr', () => {
+  assertPinned(afterBase(OPEN_PR), /same closing-reference connection[\s\S]{0,120}never `no-pr`/, 'shared connection');
+});
+
+// ---- #4849: the PR is found through the closing-reference connection, on any head -----------------
+
+const CLOSE_OUT = read('close-out.md');
+
+const CLOSING_REFERENCE_CLAIMS = [
+  [RESUME, 'the closing-reference rule', /The PR is always found through the record's closing-reference connection \(`closedByPullRequestsReferences`, the one the queue's exclusion reads\), so any head name resolves/],
+  [RESUME, 'the worktree derives from the PR head', /`worktreePath` derives from the PR's head/],
+];
+const STEP_2_CLAIMS = [
+  ['multi-record refusal', /a PR closing more than one record \(`multi-record-pr`\)/],
+  ['cross-repo refusal', /a PR from a fork or another repository \(`cross-repo-pr`\)/],
+  ['a fork names the PR', /each naming the PR, never `no-pr`/],
+  ['disposition values', /`disposition` \(`resume`, `close-out` or `close`; null for `no-pr`\)/],
+  ['refusal shape', /\{eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName\}/],
+  ['liveRun on a refusal', /\(plus `liveRun: true` when a run's owner is provably live, the prior run's or another run's bound to the stalled worktree, whatever the refusal's reason\)/],
+  ['a close refusal prints remedy in place of line', /print `line` verbatim as the whole refusal and stop, or `remedy` verbatim in its place when `disposition` is `close` or `liveRun` is true, since `remedy` carries the full steps, names a fork PR that keeps the record excluded, and for a live run says to leave the PR and worktree alone and wait/],
+  ['a non-draft PR never takes close', /a non-draft PR is never told to close, so a foreign, multi-record or cross-repo one reads `close-out` or review-by-hand/],
+  ['a non-draft among several PRs reads review by hand', /more than one open PR closes it \(close the extra one; a non-draft among them reads review by hand\)/],
+  ['no-pr keeps the plain dispatch remedy', /no open PR closes it \(a plain dispatch applies\)/],
+  ['exact head and worktree sibling read', /an exact match on the PR's head and worktree \(`findSessionOnWorktree`\)/],
+];
+const STEP_6A_CLAIMS = [
+  ['the worktree comes from the bound run stamp', /It reads the worktree from the bound run's own stamp \(what Step 6 wrote\)/],
+  ['liveRun changes nothing', /a provably live owner adds `liveRun: true`, which changes nothing here — every exit 3 stops the same way/],
+];
+// A rewrite of the condition, not a deletion: the pin must not survive either branch being reversed.
+test('resume.md Step 2 control: rewriting which refusal prints remedy, or the printed field, goes red', () => {
+  const [, closePrintsRemedy] = STEP_2_CLAIMS.find(([label]) => label === 'a close refusal prints remedy in place of line');
+  const step = stepParagraph(RESUME, '2');
+  for (const [from, to] of [['when `disposition` is `close`', 'when `disposition` is `resume`'], ['or `remedy` verbatim in its place', 'or `line` verbatim in its place']]) {
+    const mutated = step.replace(from, to);
+    assert.notStrictEqual(mutated, step, from);
+    assert.doesNotMatch(mutated, closePrintsRemedy, from);
+  }
+});
+
+for (const [text, label, re] of CLOSING_REFERENCE_CLAIMS) test(`resume.md states ${label}`, () => assertPinned(text, re, label));
+for (const [label, re] of STEP_2_CLAIMS) test(`resume.md Step 2 states ${label}`, () => assertPinned(stepParagraph(RESUME, '2'), re, label));
+for (const [label, re] of STEP_6A_CLAIMS) test(`resume.md Step 6a states ${label}`, () => assertPinned(stepParagraph(RESUME, '6a'), re, label));
+
+// The retired wording, named once: the fixed head the PR was once found from, and the old no-pr clause.
+const RETIRED = ['worktree-dispatch-record-', 'no PR on the head branch'];
+const retiredHits = (text) => RETIRED.filter((s) => text.includes(s));
+
+test('resume.md no longer finds the PR from the fixed head', () => {
+  assert.ok(RESUME.includes('## Claim cases and invariants'), 'retired-wording sweep needs a non-empty haystack');
+  assert.deepStrictEqual(retiredHits(RESUME), []);
+  for (const s of RETIRED) {
+    assert.deepStrictEqual(retiredHits(`${RESUME}\nthe head branch \`${s}{N}\`\n`), [s], `control: ${s} is detected when planted`);
+  }
+});
+
+const closeOutRow = (text) => {
+  const rows = text.split(/\r?\n/).filter((l) => l.startsWith('| `close-out #N[,#M,...]` |'));
+  assert.strictEqual(rows.length, 1, 'expected exactly one `close-out #N` table row');
+  return rows[0];
+};
+// The no-claim route (amendment 6, narrowed by the fix-round-1 ruling): one pin per clause.
+const NO_CLAIM_CLAIMS = [
+  ['the held-claim route is kept', /from its still-held claim/],
+  ['the no-claim route takes the PR from the verdict', /with no claim held \(a stuck record's released claim\), take the PR from `bin\/dispatch-resume\.js --issue \{N\}` — `prNumber` when eligible, else its single `prNumbers` entry/],
+  ['a refused verdict is accepted only when its remedy names close-out', /only when the refused verdict's `remedy` names `\/claude-tweaks:dispatch close-out #\{N\}`/],
+  ['any other verdict prints its remedy, its line only when remedy is null, and stops', /any other verdict \(several PRs, a by-hand or close remedy, no PR, a failed read\) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record/],
+  ['the whole-list search stays ruled out', /rather than searching the whole open-PR list: from its still-held claim/],
+];
+for (const [label, re] of NO_CLAIM_CLAIMS) {
+  test(`close-out.md close-out #N: ${label}`, () => assertPinned(closeOutRow(CLOSE_OUT), re, label));
+}
+
+test('close-out.md close-out #N: dropping the remedy condition or the stop goes red with its own message', () => {
+  const row = closeOutRow(CLOSE_OUT);
+  const drop = (clause) => {
+    const mutated = row.replace(clause, '');
+    assert.notStrictEqual(mutated, row, 'control: the clause must be present to be dropped');
+    return mutated;
+  };
+  const [, , [, conditionRe], [, stopRe]] = NO_CLAIM_CLAIMS;
+  const condition = row.match(/ only when the refused verdict's `remedy` names `[^`]+`/)[0];
+  const stop = row.match(/; any other verdict \([^)]*\) prints the verdict's `remedy`, or its `line` when `remedy` is null, and stops for that record/)[0];
+  assert.throws(() => assertPinned(drop(condition), conditionRe, 'remedy condition'), /remedy condition: missing/);
+  assert.throws(() => assertPinned(drop(stop), stopRe, 'stop'), /stop: missing/);
+  // The old either-order wording reads as a free choice: reinstating it goes red on the same pin.
+  const either = row.replace("`remedy`, or its `line` when `remedy` is null,", '`remedy` or `line`');
+  assert.notStrictEqual(either, row);
+  assert.throws(() => assertPinned(either, stopRe, 'prefers remedy'), /prefers remedy: missing/);
+});
 
 // ---- task-prompt.md ---------------------------------------------------------------------------
 
