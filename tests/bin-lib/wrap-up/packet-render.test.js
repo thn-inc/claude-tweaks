@@ -834,6 +834,18 @@ test('a link that fails the recheck renders its refusal, not its url', () => {
   assert.ok(!markdown.includes('https://evil.example'));
 });
 
+test('a link with a bearer-shaped path segment renders its refusal, never the url (#4612)', () => {
+  const { markdown } = render(
+    [fact('link:b', 'passed', { url: 'http://localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1/b' })],
+    [claim('test-guide', 'Open', ['link:b'])],
+  );
+  assert.equal(
+    sectionLines(markdown, 'Test guide')[0],
+    '1. Open (`link:b`): (link refused: credential in path segment)',
+  );
+  assert.ok(!markdown.includes('Xk3j9f8s7d6f5g4h3j2k1'));
+});
+
 test('a command carrying a credential is refused at render too, never shown', () => {
   const { markdown } = render(
     [fact('link:cmd', 'passed', { command: 'curl --token hunter2 http://localhost' })],

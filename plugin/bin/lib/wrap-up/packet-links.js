@@ -1,6 +1,7 @@
 // bin/lib/wrap-up/packet-links.js — which links and text the acceptance packet may
 // carry (#4611): a link must be http(s), on an allowed host, and free of credential
-// keys; a command or Test-guide claim must not show a credential shape.
+// keys and bearer-shaped path segments (#4612); a command or Test-guide claim must
+// not show a credential shape.
 //
 // Pure: no git, gh or fs.
 'use strict';
@@ -175,8 +176,30 @@ function isCredentialRefusal(reason) {
   return typeof reason === 'string' && reason.startsWith('credential');
 }
 
+// Hand loops, not a regex: a long run of slashes or spaces is unbounded input.
+function trimTrailing(text, isDropped) {
+  let end = text.length;
+  while (end > 0 && isDropped(text[end - 1])) end -= 1;
+  return text.slice(0, end);
+}
+const isSlashOrSpace = (char) => char === '/' || /\s/.test(char);
+
+// What a server serves the last segment as: trailing slashes and whitespace gone, and a
+// `;` parameter (`r.gif;x=1`) dropped from the final segment only.
+function servedPath(pathname) {
+  let path = pathname;
+  for (;;) {
+    let next = trimTrailing(path, isSlashOrSpace);
+    const semi = next.indexOf(';', next.lastIndexOf('/') + 1);
+    if (semi !== -1) next = next.slice(0, semi);
+    if (next === path) return path;
+    path = next;
+  }
+}
+
 // The pathname only, raw or decoded: `?f=r.png` and `/r.gif/landing` are not images, and
-// `r%2Egif` is one. An unparseable url is false, since checkLink already refuses it.
+// `r%2Egif`, `r.gif/`, `r.gif;x=1` and `r.gif%20` are. An unparseable url is false, since
+// checkLink already refuses it.
 function isImageUrl(url) {
   let pathname;
   try {
@@ -184,7 +207,7 @@ function isImageUrl(url) {
   } catch {
     return false;
   }
-  return IMAGE_PATH_RE.test(pathname) || IMAGE_PATH_RE.test(decodeText(pathname));
+  return [pathname, decodeText(pathname)].some((path) => IMAGE_PATH_RE.test(servedPath(path)));
 }
 
 function checkLink(url, options) {
@@ -206,7 +229,8 @@ function checkLink(url, options) {
   if (parsed.username || parsed.password) {
     return { ok: false, reason: 'credential in userinfo' };
   }
-  if (parsed.pathname.split('/').some((segment) => isBearerSegment(decodeText(segment)))) {
+  // Decoded before splitting: an encoded slash (`/a%2FXk3...`) is a segment boundary too.
+  if (decodeText(parsed.pathname).split('/').some(isBearerSegment)) {
     return { ok: false, reason: 'credential in path segment' };
   }
   // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before

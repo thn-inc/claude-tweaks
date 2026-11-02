@@ -139,7 +139,7 @@ function rowPlace(fact) {
 }
 
 // A recording may live on any host, so its own hostname is the allowed one: checkLink
-// then screens the scheme, userinfo, query and fragment with no host rule.
+// then screens the scheme, userinfo, path segments, query and fragment with no host rule.
 function recordingHref(url) {
   let hostname;
   try {

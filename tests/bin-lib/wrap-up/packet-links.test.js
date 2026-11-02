@@ -31,7 +31,7 @@ const {
 const allowedHosts = ['http://localhost:3000', 'https://dev.example.com'];
 const check = (url) => checkLink(url, { allowedHosts });
 
-test('checkLink accepts an allowed host, and never checks the path', () => {
+test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
   assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });
 });
@@ -56,11 +56,13 @@ test('checkLink refuses with the exact reason for each rule', () => {
 
 // Characterization (#4612): the order checkLink applies its rules in, and what it has
 // always let through in a path, pinned before the bearer-segment rule joins them.
-test('checkLink reports the first rule that fails: url, scheme, host, userinfo, query, fragment', () => {
+test('checkLink reports the first rule that fails: url, scheme, host, userinfo, path, query, fragment', () => {
   const cases = [
     ['ftp://user:pass@evil.example/?token=1#sig=1', 'scheme not http(s)'],
     ['http://user:pass@evil.example/?token=1#sig=1', 'host not allowed: evil.example'],
     ['http://user:pass@localhost:3000/?token=1#sig=1', 'credential in userinfo'],
+    ['http://user:pass@localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1?token=1', 'credential in userinfo'],
+    ['http://localhost:3000/a/Xk3j9f8s7d6f5g4h3j2k1?token=1#sig=1', 'credential in path segment'],
     ['http://localhost:3000/?token=1#sig=1', 'credential key in query: token'],
     ['http://localhost:3000/#sig=1', 'credential key in fragment: sig'],
   ];
@@ -278,6 +280,12 @@ test('a bearer-shaped segment is found when it is encoded, last, or the only seg
   }
 });
 
+test('an encoded slash is a segment boundary: the bearer value behind it is found', () => {
+  for (const path of ['/a%2FXk3j9f8s7d6f5g4h3j2k1', '/Xk3j9f8s7d6f5g4h3j2k1%2Fb', '/a%2fXk3j9f8s7d6f5g4h3j2k1%2fb', '/a%252FXk3j9f8s7d6f5g4h3j2k1']) {
+    assert.equal(okRaw(`https://host${path}`).reason, 'credential in path segment', path);
+  }
+});
+
 test('a 20-character segment with no digit, or no letter, is not bearer-shaped', () => {
   assert.equal(okRaw('https://host/abcdefghijklmnopqrst').ok, true);
   assert.equal(okRaw('https://host/12345678901234567890').ok, true);
@@ -314,6 +322,16 @@ test('isImageUrl reads the pathname only', () => {
   }
   for (const url of ['https://h/r.gif/landing', 'https://h/landing?f=r.png', 'https://h/landing#r.png', 'https://h/', 'not a url', undefined, null]) {
     assert.equal(isImageUrl(url), false, String(url));
+  }
+});
+
+test('isImageUrl sees through a trailing slash, a ; parameter and trailing whitespace', () => {
+  for (const url of ['https://store.example/r.gif/', 'https://store.example/r.gif///', 'https://store.example/r.gif;x=1', 'https://store.example/r.gif;a=1;b=2',
+    'https://store.example/r.gif%20', 'https://store.example/r.gif%20%0A', 'https://store.example/r.gif;x=1/', 'https://store.example/r.gif%20/;x', 'https://store.example/r.gif%2F']) {
+    assert.equal(isImageUrl(url), true, url);
+  }
+  for (const url of ['https://h/r.gif/landing', 'https://h/r.gif;x=1/landing', 'https://h/r.gif%20/landing', 'https://h/landing;r.gif', 'https://h/;r.gif/', 'https://h/%20/']) {
+    assert.equal(isImageUrl(url), false, url);
   }
 });
 

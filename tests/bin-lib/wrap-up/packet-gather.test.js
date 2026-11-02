@@ -907,6 +907,13 @@ test('a link with a repeated id keeps the first; a link with a url fails on its 
   assert.deepEqual(result.refused, [{ id: 'link:b', reason: 'credential key in query: token' }]);
 });
 
+test('a link with a bearer-shaped path segment is refused, never a fact (#4612)', () => {
+  const result = gather({ links: [{ id: 'b', label: 'b', url: `${LOCAL}/a/Xk3j9f8s7d6f5g4h3j2k1/b` }] });
+  assert.deepEqual(result.refused, [{ id: 'link:b', reason: 'credential in path segment' }]);
+  assert.equal(factOf(result, 'link:b'), undefined);
+  assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'));
+});
+
 // deploy and pass-through kinds
 
 test('deploy defaults to local and states the dev confirmation', () => {
