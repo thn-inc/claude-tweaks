@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-01T191934-record-4795/work/4795-spec.md` (record #4795)
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T105113-record-4795/work/4795-spec.md` (record #4795; resumed run — the body now carries `## Decisions`: Reading A, the choice this plan already made)
 
 **Scope keywords:** envBeforeGhHostPin, pinnedGhHost, nativeRunnerFor
 
@@ -23,7 +23,7 @@ The 11 `PIN_WIRED` CLIs keep their wiring lines byte-identical (`pinGhHost: (rep
 ## Global Constraints
 
 - Release note: "No user-visible change."
-- Commit style: `{Verb} {what} — {detail}` (imperative, no conventional prefix), body line `refs #4795` (never `closes`/`fixes`), ending with `Claude-Session: https://claude.ai/code/session_016yg3zoN7tBVHYZNM7N7Wbd`.
+- Commit style: `{Verb} {what} — {detail}` (imperative, no conventional prefix), body line `refs #4795` (never `closes`/`fixes`), ending with `Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim`.
 - Quoted from `.claude/skills/gh-api-module-pattern/SKILL.md` (governs every file under `plugin/bin` this plan touches):
   - "**Every `gh` spawn wraps its options in `plugin/bin/lib/repo-resolve.js`'s `ghOptions(args, …)`.** The seam injects `GH_HOST` for a GitHub Enterprise origin, so a spawn that skips it sends its call to github.com (#4505). Wrap the site's own options object and keep its `timeout`, `stdio`, `maxBuffer` and `windowsHide` literal inside it — `execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', windowsHide: true }))` — so the windows-hide scan still sees the flag."
   - "The module takes `runner(args)`, invoked as if `gh ${args.join(' ')}`, returning stdout; a throw is a failed call. … always an argv array, never a shell string (no injection surface, no quoting bugs)."
@@ -49,8 +49,8 @@ The 11 `PIN_WIRED` CLIs keep their wiring lines byte-identical (`pinGhHost: (rep
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/repo-resolve.js:208-257` (`ghOptions`, `pinExplicitRepoHost`, `_resetGhHostCache`, their comments)
-- Test: `tests/bin-lib/repo-resolve.test.js:283-299` (replace the `pinExplicitRepoHost: exports the pinned host on deps.env…` test)
+- Modify: `plugin/bin/lib/repo-resolve.js:192-236` (`ghOptions`, `pinExplicitRepoHost`, `_resetGhHostCache`, their comments)
+- Test: `tests/bin-lib/repo-resolve.test.js:315-332` (replace the `pinExplicitRepoHost: exports the pinned host on deps.env…` test)
 - Test: `tests/materialize-premise-check.test.js:507-516` (flip one assertion — see Step 5)
 
 **Interfaces:**
@@ -128,7 +128,7 @@ git commit -m "Move the explicit --repo host pin onto ghOptions's per-call env �
 
 refs #4795
 
-Claude-Session: https://claude.ai/code/session_016yg3zoN7tBVHYZNM7N7Wbd"
+Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim"
 ```
 
 ### Task 2: Delete materialize's env restore and the `env` option plumbed for it
@@ -176,7 +176,7 @@ git commit -m "Delete materialize's GH_HOST env restore — the Premise-check co
 
 refs #4795
 
-Claude-Session: https://claude.ai/code/session_016yg3zoN7tBVHYZNM7N7Wbd"
+Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim"
 ```
 
 ### Task 3: Grant gate onto `ghOptions`'s `explicitHost`; pin one mechanism in the conformance suite
@@ -248,7 +248,7 @@ git commit -m "Route backlog-grant-gate's native host through ghOptions's explic
 
 refs #4795
 
-Claude-Session: https://claude.ai/code/session_016yg3zoN7tBVHYZNM7N7Wbd"
+Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim"
 ```
 
 ### Task 4: Describe the one mechanism in the skill and structure doc
@@ -281,7 +281,7 @@ git commit -m "Describe the one explicit --repo host seam — gh-api-module-patt
 
 refs #4795
 
-Claude-Session: https://claude.ai/code/session_016yg3zoN7tBVHYZNM7N7Wbd"
+Claude-Session: https://claude.ai/code/session_01X7gPFDPBeut8Tyt6Zo6aim"
 ```
 
 ## Spec coverage
