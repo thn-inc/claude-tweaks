@@ -1483,6 +1483,32 @@ function isBareOrAbsoluteProgram(tok) {
 // Fd digits may follow the `)` (`(ls)2>x` is a subshell with a `2>` redirect).
 const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 
+// #4294: a prefix whose LAST escaped blank (`\ ` or an escaped tab, kind `e`) follows only closed
+// expansions. Before that blank: no bare `(` or `$[`, no stray (`x`) character, every bare `${` closed by a
+// bare `}` (counted, so `${M:-${N}}` closes) and every bare backtick paired. After it: the plain-word
+// rule below (no stray, no bare `$`, backtick or `(`), so `$M\ $N>x` stays out as `$N>x` does (#4328).
+function escapedBlankPrefixOk(raw, kinds, k) {
+  let blank = -1;
+  for (let j = 0; j < k; j += 1) if (kinds[j] === 'e' && (raw[j] === ' ' || raw[j] === '\t')) blank = j;
+  // No blank (-1): the after-part is the whole prefix, which the caller already found not plain.
+  for (let j = blank + 1; j < k; j += 1) {
+    if (kinds[j] === 'x' || (kinds[j] === 'b' && '$`('.includes(raw[j]))) return false;
+  }
+  let braces = 0;
+  let tick = false;
+  for (let j = 0; j < blank; j += 1) {
+    if (kinds[j] === 'x') return false;
+    if (kinds[j] !== 'b') continue;
+    const c = raw[j];
+    if (c === '(') return false;
+    if (c === '`') tick = !tick;
+    else if (c === '$' && raw[j + 1] === '[' && kinds[j + 1] === 'b') return false;
+    else if (c === '$' && raw[j + 1] === '{' && kinds[j + 1] === 'b') { braces += 1; j += 1; }
+    else if (c === '}' && braces > 0) braces -= 1;
+  }
+  return braces === 0 && !tick;
+}
+
 // #4015/#4210: bash ends a word at an unquoted `>`, so `echo foo>x` redirects exactly
 // like `echo foo > x`, and the word before it may hold quoted spans (`echo "hi">x`).
 // `kinds` is the token's per-character span mask (tokenize): only a BARE `>` is an
@@ -1496,8 +1522,9 @@ const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 // `$(`, `<(` or extglob syntax. A stray character in the prefix rejects it; ambiguity
 // resolves to no target. A leading `>` (k === 0) is leadingRedirectOpEnd's case.
 //
-// The one exception is a prefix that is exactly one all-bare, un-nested group: it ends
-// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE).
+// One exception is a prefix that is exactly one all-bare, un-nested group: it ends
+// at its `)`, so the `>` after it is a redirect (BALANCED_GROUP_RE). The other is a prefix
+// whose expansions close before an escaped blank, which ends them (escapedBlankPrefixOk, #4294).
 //
 // `nest` is the nesting state at the token's start (advanceNesting); a `>` reached
 // inside a nested context is quoted in bash, so it yields null.
@@ -1513,7 +1540,7 @@ function gluedRedirectOpEnd(raw, kinds, nest) {
     plain = false;
     break;
   }
-  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k)))) return null;
+  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k))) && !escapedBlankPrefixOk(raw, kinds, k)) return null;
   const second = raw[k + 1];
   const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
   return k + (twoChar ? 2 : 1);

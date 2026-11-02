@@ -1058,26 +1058,79 @@ for (const [command, actual, expected] of [
   });
 }
 
-// #4294 AC2, #4212's carried-over expectations as amended at plan review (Q1): an escaped quote is a
-// literal path character, so bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c;
-// `echo "a\" b>c "` and `echo foo\>x` write nothing; `echo foo\\>x` writes x. `echo $M>x` writes x
-// too, a known miss #4328 owns.
-test('AC2.1 #4294: #4212\'s carried-over redirect expectations hold', () => {
-  const at = (f) => [{ action: 'write', file: path.resolve('/r', f) }];
-  assert.deepStrictEqual(fileWriteTargets('echo "a\\" b>c "', '/r'), []);
-  assert.deepStrictEqual(fileWriteTargets('echo foo>x', '/r'), at('x'));
-  assert.deepStrictEqual(fileWriteTargets('echo foo\\\\>x', '/r'), at('x'));
-  assert.deepStrictEqual(fileWriteTargets('echo foo\\>x', '/r'), []);
-  assert.deepStrictEqual(fileWriteTargets('echo $M>x', '/r'), []);
-  assert.deepStrictEqual(fileWriteTargets('echo a\\"b>c', '/r'), at('c'));
-  assert.deepStrictEqual(gitTargets("cd \\'/wt\\' && git commit -m x", '/r'), [{ action: 'commit', dir: path.resolve('/r', "'/wt'") }]);
-  assert.deepStrictEqual(fileWriteTargets("echo x > \\'/abs/f\\'", '/r'), at("'/abs/f'"));
-});
+// #4294 AC2, #4212's carried-over expectations: an escaped quote is a literal path character, so
+// bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c; `echo "a\" b>c "` and
+// `echo foo\>x` write nothing; `echo foo\\>x` writes x. `echo $M>x` writes x too, a known miss #4328
+// owns.
+const at4294Cwd = (f) => [{ action: 'write', file: path.resolve('/r', f) }];
+for (const [command, actual, expected] of [
+  ['echo "a\\" b>c "', fileWriteTargets, []],
+  ['echo foo>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\\\>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\>x', fileWriteTargets, []],
+  ['echo $M>x', fileWriteTargets, []],
+  ['echo a\\"b>c', fileWriteTargets, at4294Cwd('c')],
+  ["cd \\'/wt\\' && git commit -m x", gitTargets, [{ action: 'commit', dir: path.resolve('/r', "'/wt'") }]],
+  ["echo x > \\'/abs/f\\'", fileWriteTargets, at4294Cwd("'/abs/f'")],
+]) {
+  test(`AC2.1 #4294: ${JSON.stringify(command)} keeps #4212's carried-over redirect expectation`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
 
 // #4294 AC3: #4210's cases still resolve. bash 3.2, bash 5 and zsh write x and out.
 test('AC3.1 #4294: #4210\'s quoted-span and one-word-group redirects still resolve', () => {
   assert.deepStrictEqual(fileWriteTargets('echo "hi">x', '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
   assert.deepStrictEqual(fileWriteTargets('(ls)>out', '/r'), [{ action: 'write', file: path.resolve('/r', 'out') }]);
+});
+
+// #4294 class 3: an escaped blank ends a `$NAME`, `${ … }` or backtick word part, so a glued `>` after
+// it is a redirect. bash 3.2, bash 5 and zsh write x for each.
+for (const command of [
+  'echo $M\\ >x', 'echo ${M}\\ >x', 'echo `d`\\ >x', 'echo $M\\ bar>x', 'M=a; echo $M\\ >x', 'echo $1\\ >x',
+  'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
+  'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
+  'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
+  // An escaped or quoted `{`, `[`, backtick, `(` or `$` is text, so it opens nothing.
+  'echo $\\{M\\ >x', 'echo $\\[$M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves its glued redirect after closed expansions and an escaped blank`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  });
+}
+
+// bash 3.2, bash 5 and zsh write nothing for each: a bad substitution, a syntax error, an unterminated
+// backtick or quote, an escaped `>`, a comparison, an fd dup or a sink.
+test('AC1.1 #4294: an escaped blank inside an open expansion or before a non-operator `>` resolves no target', () => {
+  for (const command of [
+    'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
+    'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
+  }
+});
+
+// Known misses: bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x`
+// is the documented gap; a bare `$`, backtick or non-blank escape after the last escaped blank is the same
+// shape, owned by #4328. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))` or a
+// backtick holding a blank before the escaped blank is not read as closed. A `$VAR` target behind a second
+// `$` or a backtick is one substituteVars skips: those two write y/x.
+test('#4294: known misses stay without a target', () => {
+  for (const command of [
+    'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
+    'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
+    'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
+  }
+});
+
+// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment, because one
+// token cannot see the expansion an earlier token opened. Base reads the plain word the same way
+// (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
+test('#4294: an expansion opened in an earlier token reads as a false deny, as the plain word does', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
 });
 
 // #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
