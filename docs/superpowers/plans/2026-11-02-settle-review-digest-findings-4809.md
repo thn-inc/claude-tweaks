@@ -55,6 +55,8 @@ Deliverable 5 and AC 2 are already satisfied on the base and are only recorded (
 
 ### Task 2: Same-repo clause in Step 4.0b's no-PR path and a go-red self-test for brokenSpanLines (Deliverables 3, 4)
 
+**Review risk:** high (it narrows which `Fixes` records count toward the below-floor parent-close eligibility set)
+
 **Files:**
 - Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md:93-94`
 - Test: `tests/below-floor-parent-close-conformance.test.js` (add after the `#4602 AC2.1` test that calls `brokenSpanLines`, around :947)
@@ -93,6 +95,8 @@ Expected: FAIL after Step 1. The clause is not in Step 4.0b yet.
 
 ### Task 3: Explicit `merge-verification: off` carve-out in /review's Step 1.5 Gate table (Deliverable 6)
 
+**Review risk:** high (a STOP/proceed gate that branches on an explicit-versus-derived `off` crossed with the PR-check state)
+
 **Files:**
 - Modify: `plugin/skills/review/code-mode-steps.md:109`
 - Test: `tests/review-step1-5-verifiedhead-gate.test.js` (one new test after the Gate-table test at :51)
@@ -106,7 +110,7 @@ Expected: FAIL after Step 1. The clause is not in Step 4.0b yet.
 ```js
 test('#4809: Step 1.5 Gate table splits red on an explicit merge-verification: off, matching pr-check-gate.md', () => {
   assert.match(CODE_MODE_STEPS, /\| `pr-checks\.js` reports `red` and `merge-verification` is not an explicit `off` \(`_shared\/pr-check-gate\.md`'s `red` bullet\) \| \*\*STOP\*\*/);
-  assert.match(CODE_MODE_STEPS, /\| `pr-checks\.js` reports `red` under an explicit `merge-verification: off` \(same bullet\) \| Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line \|/);
+  assert.match(CODE_MODE_STEPS, /\| `TEST_PASSED=true` \(pipeline\) \+ runner stamp `verifiedHead: true` \+ `pr-checks\.js` reports `red` under an explicit `merge-verification: off` \(same bullet\) \| Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line \|/);
 });
 ```
 
@@ -115,13 +119,15 @@ test('#4809: Step 1.5 Gate table splits red on an explicit merge-verification: o
 Run: `node --test --test-name-pattern="explicit merge-verification: off" tests/review-step1-5-verifiedhead-gate.test.js`
 Expected: FAIL after Step 1. The row has not been split yet.
 
-- [ ] **Step 3: Split the row.** Change row 2's first cell to `` `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) `` and keep its action cell unchanged. Directly below it, add a row with first cell `` `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) `` and action cell ``Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line``. Leave row 1 untouched.
+- [ ] **Step 3: Split the row.** Change row 2's first cell to `` `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) `` and keep its action cell unchanged. Directly below it, add a row with first cell `` `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) `` and action cell. The stamp conditions mirror row 1, so `verifiedHead: false` still routes to the re-trigger row. The action cell is ``Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line``. Leave row 1 untouched.
 - [ ] **Step 4: Run** `node --test tests/review-step1-5-verifiedhead-gate.test.js`, then run every suite that reads this file: `git grep -l "code-mode-steps.md" -- tests`, one `node --test {file}` per hit. Expected: PASS, 0 failures.
 - [ ] **Step 5: Commit** both files: `Carve explicit merge-verification off out of /review's red PR-check STOP — refs #4809`.
 
 ---
 
 ### Task 4: Fail closed on an unlistable pipelines dir in dispatch-resume, and the real-dependency test rule (Deliverable 7)
+
+**Review risk:** high (it changes the listing behind the concurrent-resume and sibling-session detection, with an errno-based fail-closed branch)
 
 **Files:**
 - Modify: `plugin/bin/dispatch-resume.js` (the `realDeps.listRunDirsWithState` entry, around :127, plus one new helper above `realDeps`)
@@ -169,7 +175,8 @@ Run: `node --test --test-name-pattern="unlistable" tests/bin-lib/dispatch/dispat
 Expected: FAIL after Step 1. The shared listing swallows ENOTDIR, so the first test's `assert.throws` fails and the second exits 0 instead of 4.
 
 - [ ] **Step 3: Implement `listRunDirsFailClosed(cwd, opts) -> Array<{dir, state}>` in `plugin/bin/dispatch-resume.js`.** Compute `base = path.join(mainCheckoutRoot(cwd) || cwd, '.claude-tweaks', 'pipelines')`, the same anchor `iterRunDirsWithState` uses. Call `fs.readdirSync(base)`. On an error with `code === 'ENOENT'`, return `[]`. On any other error, rethrow. Otherwise return `listRunDirsWithState(cwd, opts)`. Set `realDeps.listRunDirsWithState: listRunDirsFailClosed`. Confirm that `mainCheckoutRoot` in this file is the same main-checkout resolver `context.js` uses (`wtDetect.mainCheckoutRoot`). If it is not, import that one. Give the helper a two-line comment saying why it exists: the shared listing reads an unlistable dir as "no runs", which would pass the bound-run scan as clean. Do not change `plugin/bin/lib/hooks/context.js`.
-- [ ] **Step 4: Run** `node --test tests/bin-lib/dispatch/dispatch-resume-cli.test.js`. Expected: PASS, 0 failures, including the existing `verdict mode: a failing run-dir listing -> exit 4` and `realDeps carries the production seams` tests.
+- [ ] **Step 4: Sibling-check path.** `realDeps.listRunDirsWithState` also feeds `findConflictingSession`, through `listingWithPriorRun` in verdict mode and `siblingConflict(ctx, deps.listRunDirsWithState)` in `--bound-run` mode. When an in-use worktree lock matches the record and a session id is set, that function calls the listing with no catch. An unlistable pipelines dir now throws there, and `siblingConflict`'s `read('sibling-session check', …)` maps it to exit 4. That outcome is intended. dispatch-resume already exits 4 on a throwing sibling check (`a throwing sibling check -> exit 4`). Before this change, the swallowed listing emptied the own-session exclusion and reported this session's own lock as a false `live-sibling`. Add one `--bound-run` test (unlistable sibling-check path) that wires the real `findConflictingSession`, following the pattern the existing tests around :1031-1044 use: `env.deps.findSibling = (ref, opts) => findConflictingSession(ref, { ...opts, run: () => {porcelain with one locked in-use worktree matching #N} })`, with `env.deps.listRunDirsWithState` pointed at the unlistable tmp root as in Step 1. Assert `code === 4` and `err` matching `/sibling-session check/`. It must fail before Step 3. Name it so `--test-name-pattern="unlistable"` selects it too.
+- [ ] **Step 4b: Run** `node --test tests/bin-lib/dispatch/dispatch-resume-cli.test.js`, plus `tests/path-guard-conformance.test.js` and `tests/windows-hide-spawn-conformance.test.js`. Expected: PASS, 0 failures, including the existing `verdict mode: a failing run-dir listing -> exit 4` and `realDeps carries the production seams` tests.
 - [ ] **Step 5: Add the contract bullet** to `cli-wrapper-contract.md`, directly after the first bullet. Content: a fail-closed branch around an injected dependency needs one test of the real dependency's failure shape, not only a stub that throws. A stub proves the wrapper catches a throw, not that the real dependency ever throws. Cite `plugin/bin/dispatch-resume.js`'s run-dir listing as the example: `read('run dir listing', …)` at :342 mapped a throw to exit 4, but the real `listRunDirsWithState` swallows a `readdirSync` failure into an empty listing, so the branch was unreachable. #4809 added `listRunDirsFailClosed` and the tests that drive the real dependency. Keep it to one bullet, matching the house style of the neighboring bullets: a bold lead sentence, then the incident.
 - [ ] **Step 6: Commit** all three files: `Fail closed on an unlistable pipelines dir in dispatch-resume and require real-dependency failure tests — refs #4809`.
 
@@ -177,7 +184,7 @@ Expected: FAIL after Step 1. The shared listing swallows ENOTDIR, so the first t
 
 ### Task 5: Record the close-outs (orchestrator only, no implementer)
 
-- [ ] **Step 1:** In draft PR #4917's body, under a `## Close-outs` heading, write:
+- [ ] **Step 1:** Post one comment on issue #4809 (the record, per AC1.1's "recorded on this record"), and mirror it under a `## Close-outs` heading in draft PR #4917's body. The text:
   - Deliverable 5 (hooks-js-verb-registration covering a flag on an existing verb) is already shipped. `.claude/skills/hooks-js-verb-registration/SKILL.md`'s `## Adding a flag to an existing verb` section landed in 273a29a92 (#4677). Since 7fff4f768 (#4777), every verb is flag-strict, so "a non-flag-strict verb" no longer exists. No change needed.
   - AC 2 holds. All seven promoted entries on #1426 end `→ #4809`: comments 6536261010, 6538582537, 6541542322, 6542640259, 6545541673 and 6545562270.
   - Deliverables 1, 2, 3, 4, 6 and 7 are fixed by Tasks 1-4.
@@ -188,7 +195,7 @@ Expected: FAIL after Step 1. The shared listing swallows ENOTDIR, so the first t
 
 - **Spec coverage:** D1 and D2 → Task 1. D3 and D4 → Task 2. D5 → Task 5 (already shipped, verified above). D6 → Task 3. D7 → Task 4. AC1.1 (each deliverable fixed or closed out with its reason recorded) → Tasks 1-5. AC2.1 (each promoted #1426 entry carries this record's ref) → Task 5 (verified on #1426).
 - **Spec-named paths left unchanged on purpose:** `.claude/skills/hooks-js-verb-registration/SKILL.md` already covers D5 (Task 5 records it). `plugin/skills/_shared/pr-check-gate.md`'s `red` bullet is already the correct rule for D6, and Task 3 brings `/review`'s table into line with it rather than editing the bullet.
-Waived AC1.1: settled per deliverable by Tasks 1-4's own tests and Task 5's PR-body close-out, not by one test.
+Waived AC1.1: settled per deliverable by Tasks 1-4's own tests and Task 5's close-out comment on issue #4809, not by one test.
 Waived AC2.1: a forge-state fact verified by reading #1426's comments (Task 5), not a repo test.
 Waived .claude/skills/hooks-js-verb-registration/SKILL.md: read only. D5 is already shipped there.
 Waived plugin/skills/_shared/pr-check-gate.md: read only. Its `red` bullet is the rule Task 3 aligns `/review` to.
@@ -196,4 +203,4 @@ Waived plugin/skills/_shared/pr-check-gate.md: read only. Its `red` bullet is th
 - **Probe-only path:** `plugin/bin/lib/flow/artifact-overwrite-check.js` is touched only by Task 1 Step 4's reverted mutation. It is never committed.
 - **Headroom:** `plugin/skills/review/code-mode-steps.md` is 1395 bytes under the rail. Task 3 adds about 200 bytes, so no remedy is needed.
 - **Placeholders:** none. Every probe is reverted, and each task's Step lists its revert check.
-- **Type consistency:** `listRunDirsFailClosed(cwd, opts)` keeps `listRunDirsWithState`'s signature and return shape, so `boundRunConflict`, `listingWithPriorRun` and `findConflictingSession` are unaffected.
+- **Type consistency:** `listRunDirsFailClosed(cwd, opts)` keeps `listRunDirsWithState`'s signature and return shape. The only behavioural change for `boundRunConflict`, `listingWithPriorRun` and `findConflictingSession` is that an unlistable (not missing) pipelines dir now throws. That surfaces as exit 4, through `run dir listing` or `sibling-session check`, and Task 4 Steps 1 and 4 pin both.
