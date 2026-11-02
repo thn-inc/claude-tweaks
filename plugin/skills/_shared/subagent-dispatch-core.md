@@ -281,7 +281,7 @@ API error: You've hit your session limit` will not succeed on an immediate retry
 transient 5xx/timeout might — the caller's account-level limit, not the agent's own work, caused
 the termination. A dispatch site handling a reproduction-pair partner's death this way retries
 once (to rule out a spurious one-off) and, on a second failure, degrades rather than retrying
-again in a loop — see `review/step3-lens-dispatch.md`'s reproduction-pair section for the
+again in a loop — see `review/step3-tier-variants.md`'s partner-died paragraph for the
 degrade procedure this classification feeds.
 
 **A subagent whose *parent* session was terminated leaves a 0-byte output file — not a readable

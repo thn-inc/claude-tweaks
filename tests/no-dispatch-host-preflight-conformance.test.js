@@ -292,7 +292,8 @@ test('AC7.1: the headings the cwd-pinned pointer cites exist', () => {
 // --- merge-check's Independence: degraded floor (Task 5) ---
 
 const MERGE_CHECK = path.join(SKILLS, 'assess-agent-autonomy', 'merge-check.md');
-const REVIEW_STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
+// #4826: review's run-level SKIP line lives in step3-tier-variants.md (read only when the probe finds no Agent tool).
+const REVIEW_STEP3 = path.join(SKILLS, 'review', 'step3-tier-variants.md');
 const MERGE_FLOOR_PREFIX = '- **An `Independence: degraded` review is a hard floor (#4555)**';
 const REVIEW_SKIP_PREFIX = '> **No `Agent` tool in this host (run-level, #4555).**';
 const SKIP_TEXT = /condition: no Agent tool in this host → fallback: [^"`]+/;
