@@ -12,7 +12,10 @@ const flat = (s) => s.replace(/\s+/g, ' ');
 // This file keys its fact lists by name; the shared helpers take [pattern, fact] pairs.
 const factPairs = (facts) => Object.entries(facts).map(([name, re]) => [re, name]);
 const factsMissingFrom = (text, facts) => missingFactsOf(factPairs(facts))(text);
-const assertEachFactGoesRed = (text, facts) => assertEachPatternGoesRed(text, factPairs(facts), missingFactsOf(factPairs(facts)));
+const assertEachFactGoesRed = (text, facts) => {
+  const pairs = factPairs(facts);
+  assertEachPatternGoesRed(text, pairs, missingFactsOf(pairs));
+};
 
 const HINT = '[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]';
 
