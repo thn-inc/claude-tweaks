@@ -423,6 +423,19 @@ test('AC1.1: GH_BATCH_TIMEOUT_MS: CLAUDE_TWEAKS_GH_TIMEOUT_MS above the floor wi
   });
 });
 
+test('AC1.1: GH_BATCH_TIMEOUT_MS: a malformed gh-timeout-ms falls back to the 30000 floor', () => {
+  withTempCwd((dir) => {
+    writePolicyFile(dir, 'gh-timeout-ms: 999999\n'); // over the schema's 60000 max
+    const prior = process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    delete process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS;
+    try {
+      assert.strictEqual(freshBatchTimeoutMs(), 30000);
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_TWEAKS_GH_TIMEOUT_MS = prior;
+    }
+  });
+});
+
 test('GH_BATCH_TIMEOUT_MS is an enumerable export', () => {
   assert.ok(Object.keys(require('../../plugin/bin/lib/shared-primitives')).includes('GH_BATCH_TIMEOUT_MS'));
 });
