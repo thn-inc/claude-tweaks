@@ -43,9 +43,10 @@ files:
 - **Action:** The run logs the refusal (and does not also write a fabricated `assess-agent-autonomy verdict needs-human` line), skips acceptance labeling, ledger deletion, and the merge, and renders the Review Console normally.
 - **Should feel:** Safe and legible — the record is exactly where a real `needs-human` would have left it, and the refusal line says why.
 - **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`. `{detail}` is `, error: {error}` when `decisions.md` was unreadable, `, snippet exited {code} with no output` when the check crashed, and empty otherwise — so the morning reader can tell a broken path or a crash from a Layer 2 that never ran.
-- **Red flags:** A posted Verification Brief or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
+- **Red flags:** A posted acceptance packet or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
 
 ## Origin
+- Step 3b's red flag updated during build of #4611 (acceptance labeling now posts the acceptance packet in place of the Verification Brief)
 - Created during build of #2941
 - Steps 1-3b built in this session
 - Related specs: #2429 (bundle-path backstop this ports), #2853 / PR #2938 (the incident)
