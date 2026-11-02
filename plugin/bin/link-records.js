@@ -12,7 +12,9 @@
 const { execFileSync } = require('child_process');
 const link = require('./lib/issues/link');
 const { invalidateSnapshot } = require('./lib/issues/record-snapshot');
-const { parseRepo, ghAvailable, pinExplicitRepoHost } = require('./lib/repo-resolve');
+const {
+  parseRepo, ghAvailable, pinExplicitRepoHost, gateOriginRepo,
+} = require('./lib/repo-resolve');
 
 const USAGE = 'usage: link-records.js [--parent <n> --subs <n,n,...>] [--blocked-by "<dependent:blocker>,..."] [--repo owner/name] [--help]\n       at least one of --parent+--subs or --blocked-by is required\n';
 
@@ -77,7 +79,14 @@ function run(argv, deps = realDeps) {
   // instead of an uncaught stack trace colliding with the exit-1 contract.
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  // #4933: an origin-derived host with no GitHub signal is refused before any gh call.
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`link-records.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('link-records.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (opts.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   const { host, owner, repo } = repoSpec;

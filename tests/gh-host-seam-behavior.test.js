@@ -318,7 +318,8 @@ test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every ca
 // only on the lines it selects; default every network line), canned?: gh answers
 // replacing CANNED entries for the row's cases, printsResolutionNote?: the CLI
 // prints a repoResolutionNote (AC7.2 then requires `{cli}: resolved repo ...
-// acme.ghe.com` on stderr) }. describeOriginGate(row)
+// acme.ghe.com` on stderr), variant?: a suffix on the test titles when one CLI has
+// several rows }. describeOriginGate(row)
 // registers every case for one row, so a later task adds a CLI by adding a row.
 const UNKNOWN_HOST = 'git.corp.invalid';
 const NOT_KNOWN_MSG = 'is not a known GitHub host';
@@ -356,9 +357,10 @@ function repoValues(lines) {
 
 function describeOriginGate(row) {
   const name = row.cli;
+  const title = row.variant ? `${name} [${row.variant}]` : name;
   const opts = { skip: STUB_SKIP };
 
-  test(`AC2.1 ${name}: refused on an unknown origin host (AC3.1: no bare-slug fallback)`, opts, (t) => {
+  test(`AC2.1 ${title}: refused on an unknown origin host (AC3.1: no bare-slug fallback)`, opts, (t) => {
     const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git` });
     const log = r.lines.join('\n');
     assert.ok(r.status !== null && r.status !== 0, `expected a non-zero exit, got ${r.status}; stderr:\n${r.stderr}`);
@@ -377,7 +379,7 @@ function describeOriginGate(row) {
     [`a ${UNKNOWN_HOST} origin with GH_HOST exported`, UNKNOWN_HOST, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST }, true],
   ];
   for (const [label, host, caseOpts, argvOnly] of passThrough) {
-    test(`AC4.1 ${name}: ${label} keeps the host-qualified repo`, opts, (t) => {
+    test(`AC4.1 ${title}: ${label} keeps the host-qualified repo`, opts, (t) => {
       const r = runGated(t, row, caseOpts);
       const log = r.lines.join('\n');
       assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
@@ -395,7 +397,7 @@ function describeOriginGate(row) {
     });
   }
 
-  test(`AC5.1 ${name}: an exported GH_HOST naming another host is not refused and the slug is bare`, opts, (t) => {
+  test(`AC5.1 ${title}: an exported GH_HOST naming another host is not refused and the slug is bare`, opts, (t) => {
     const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: 'github.com' });
     const log = r.lines.join('\n');
     assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
@@ -405,7 +407,7 @@ function describeOriginGate(row) {
   });
 
   if (row.acceptsRepo) {
-    test(`AC6.1 ${name}: a typed --repo ${UNKNOWN_HOST}/o/r is not refused and goes to ${UNKNOWN_HOST} as typed`, opts, (t) => {
+    test(`AC6.1 ${title}: a typed --repo ${UNKNOWN_HOST}/o/r is not refused and goes to ${UNKNOWN_HOST} as typed`, opts, (t) => {
       const typed = `${UNKNOWN_HOST}/o/r`;
       const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git`, extraArgs: ['--repo', typed] });
       assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
@@ -418,7 +420,7 @@ function describeOriginGate(row) {
     });
   }
 
-  test(`AC7.1 ${name}: a github.com. origin normalizes to the bare slug`, opts, (t) => {
+  test(`AC7.1 ${title}: a github.com. origin normalizes to the bare slug`, opts, (t) => {
     const r = runGated(t, row, { origin: 'https://github.com./o/r.git' });
     const log = r.lines.join('\n');
     assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
@@ -429,7 +431,7 @@ function describeOriginGate(row) {
     for (const line of r.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST set on github.com: ${line}`);
   });
 
-  test(`AC7.2 ${name}: an ACME.ghe.com. origin normalizes to acme.ghe.com`, opts, (t) => {
+  test(`AC7.2 ${title}: an ACME.ghe.com. origin normalizes to acme.ghe.com`, opts, (t) => {
     const r = runGated(t, row, { origin: 'https://ACME.ghe.com./o/r.git' });
     const log = r.lines.join('\n');
     assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
@@ -452,11 +454,21 @@ function describeOriginGate(row) {
   });
 }
 
+// preflight-records.js reads work-links from the project policy when no flag gives it.
+function writeWorkLinksPolicy(value) {
+  return (repo) => fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), `work-links: ${value}\n`);
+}
+
 const CLI_TABLE = [
   { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, printsResolutionNote: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
   { cli: 'compose-subject.js', argv: ['7', '--tag', 'human-approved'], acceptsRepo: true },
   { cli: 'release-claim.js', argv: ['7', '--run', '{runDir}', '--reason', 'done'], acceptsRepo: true },
   { cli: 'repair-claim.js', argv: ['7', '--run', '{runDir}', '--mode', 'release', '--reason', 'unreadable'], acceptsRepo: true },
+  { cli: 'preflight-records.js', variant: 'work-links: body-text', argv: ['7'], setup: writeWorkLinksPolicy('body-text'), acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'preflight-records.js', variant: 'work-links: native', argv: ['7'], setup: writeWorkLinksPolicy('native'), acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'parent-gate.js', argv: ['--sub-issue', '7', '--work-links', 'body-text', '--risk-floor', 'high'], acceptsRepo: false },
+  { cli: 'resolved-refusal.js', argv: ['7'], acceptsRepo: true },
+  { cli: 'link-records.js', argv: ['--parent', '7', '--subs', '8'], acceptsRepo: true },
 ];
 
 for (const row of CLI_TABLE) describeOriginGate(row);
