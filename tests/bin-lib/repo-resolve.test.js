@@ -361,7 +361,7 @@ test('#4795: a --repo agreeing with the origin host records nothing, so origin i
   // acme.ghe.com would be added to it)
   const plain = { cwd: '/d', env: {} };
   assert.strictEqual(ghOptions(['api', 'user'], plain, dotcom), plain);
-  const mine ={ GH_HOST: 'mine.example' };
+  const mine = { GH_HOST: 'mine.example' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
   assert.deepEqual(mine, { GH_HOST: 'mine.example' });
   _resetGhHostCache();
