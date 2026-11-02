@@ -90,7 +90,9 @@ This step is the Parent-Gate Procedure's post-merge sub-issue-side entry
 
   Otherwise, use `closingSet[]` as printed; never re-read the PR's links here.
 
-  After a no-PR local merge, read the `Fixes #{n}` lines of the pushed merge commit's message,
+  After a no-PR local merge, read the bare same-repo `Fixes #{n}` lines of the pushed merge commit's message —
+  a `Fixes {owner}/{repo}#{n}` line names another repository's record and is not in the set
+  (`bin/lib/compose-subject.js` writes only the bare form) —
   taking the union across every merge commit when a call site pushes several:
 
   ```bash
