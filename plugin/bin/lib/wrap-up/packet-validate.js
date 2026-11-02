@@ -73,6 +73,26 @@ function checkStringArray(value, at, errors) {
   });
 }
 
+// Optional: an absent list means no refusals. Anything else must be well formed, or
+// a malformed entry would read as no refusal, or throw a TypeError at render.
+function checkRefused(refused, errors) {
+  if (refused === undefined) return;
+  if (!Array.isArray(refused)) {
+    errors.push({ path: 'facts.refused', message: 'must be an array' });
+    return;
+  }
+  refused.forEach((entry, index) => {
+    const at = `facts.refused[${index}]`;
+    if (!isObject(entry)) {
+      errors.push({ path: at, message: 'not an object' });
+      return;
+    }
+    for (const field of ['id', 'reason']) {
+      if (typeof entry[field] !== 'string') errors.push({ path: `${at}.${field}`, message: 'must be a string' });
+    }
+  });
+}
+
 function validateFactsShape(facts) {
   if (!isObject(facts)) return shapeResult([{ path: 'facts', message: 'not an object' }]);
   const errors = [];
@@ -84,6 +104,7 @@ function validateFactsShape(facts) {
     errors.push({ path: 'facts.facts', message: 'must be an array' });
   }
   checkStringArray(facts.partial, 'facts.partial', errors);
+  checkRefused(facts.refused, errors);
   if (!Number.isInteger(facts.record)) errors.push({ path: 'facts.record', message: 'must be an integer' });
   return shapeResult(errors);
 }

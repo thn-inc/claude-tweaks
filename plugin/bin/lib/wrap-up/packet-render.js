@@ -9,14 +9,29 @@ const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS } = require('./packet-contract
 const { checkLink, findCredentialInText } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
 
-const LINE_BREAK_RE = /\s*[\r\n]+\s*/g;
-const URL_TOKEN_RE = /(?:https?:\/\/|www\.)[^\s`<>]+/gi;
-const LIST_ITEM_RE = /^(?:- |\d+\. )/;
+// Every shape GitHub can turn into a link or a notification. A plain `word:value` is
+// not one: `link:deploy`, `localhost:3000` and `C:\temp` stay prose, so only the
+// schemes with no `//` that make a real link are named. Each repeat before an anchor
+// is bounded, which keeps the scan linear on a long run of word characters.
+const URL_TAIL = '[^\\s`<>]+';
+const NOT_AFTER_WORD = '(?<![a-z0-9_])';
+const NOT_BEFORE_WORD = '(?![a-z0-9_])';
+const AUTOLINK_TOKEN_RE = new RegExp([
+  `(?:https?:\\/\\/|www\\.)${URL_TAIL}`,
+  `[a-z][a-z0-9+.-]{1,31}:\\/\\/${URL_TAIL}`,
+  `(?:mailto|xmpp|tel|sms):${URL_TAIL}`,
+  '[a-z0-9._%+-]{1,64}@[a-z0-9_-]+(?:\\.[a-z0-9_-]+)+',
+  `(?<![a-z0-9_/])[a-z0-9][a-z0-9-]{0,38}(?:\\/[a-z0-9._-]{1,100})?#\\d+${NOT_BEFORE_WORD}`,
+  `${NOT_AFTER_WORD}@[a-z0-9][a-z0-9-]*(?:\\/[a-z0-9_-]+)?`,
+  `${NOT_AFTER_WORD}#\\d+${NOT_BEFORE_WORD}`,
+].join('|'), 'gi');
 const CHECKS_PASSED_LABEL = 'Checks that passed:';
 const COMMANDS_ONLY_SURFACES = Object.freeze(['infra', 'backend']);
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
-const collapseLines = (s) => String(s).replace(LINE_BREAK_RE, ' ');
+// A whitespace run holding a line break becomes one space. Matching the run first
+// keeps this linear; `\s*[\r\n]+\s*` is quadratic on a long run of spaces.
+const collapseLines = (s) => String(s).replace(/\s+/g, (run) => (/[\r\n]/.test(run) ? ' ' : run));
 
 // Beyond `[`, `]` and `<`: a backslash, or it would cancel the escape added after it
 // (`\[` to `\\[`); a backtick, or it would pair with a URL's code span and leave the
@@ -27,13 +42,14 @@ function inline(s) {
   const text = collapseLines(s).trim();
   let out = '';
   let at = 0;
-  for (const match of text.matchAll(URL_TOKEN_RE)) {
+  for (const match of text.matchAll(AUTOLINK_TOKEN_RE)) {
     out += escapeText(text.slice(at, match.index)) + codeSpan(match[0]);
     at = match.index + match[0].length;
   }
   out += escapeText(text.slice(at));
-  // A leading `~~~` would open a fence that runs to the end of the comment.
-  return out.replace(/^[#~]/, '\\$&');
+  // A leading `~~~` would open a fence that runs to the end of the comment, and a
+  // line of only `=` or `-` would underline the line above it into a heading.
+  return out.replace(/^[#~]/, '\\$&').replace(/^(?:=+|-+)$/, '\\$&');
 }
 
 function codeSpan(s) {
@@ -65,15 +81,19 @@ function rowPlace(fact) {
   return 'checks-passed';
 }
 
-function recordingLine(fact) {
-  let href = '(recording url refused)';
+// A recording may live on any host, so its own hostname is the allowed one: checkLink
+// then screens the scheme, userinfo, query and fragment with no host rule.
+function recordingHref(url) {
+  let hostname;
   try {
-    if (/^https?:$/.test(new URL(fact.url).protocol)) href = liveLink(fact.url);
+    ({ hostname } = new URL(url));
   } catch {
-    // An unparseable url stays refused.
+    return '(recording url refused)';
   }
-  return `- ${factText(fact)}: ${href}`;
+  return checkLink(url, { allowedHosts: [hostname] }).ok ? liveLink(url) : '(recording url refused)';
 }
+
+const recordingLine = (fact) => `- ${factText(fact)}: ${recordingHref(fact.url)}`;
 
 function renderLinkFact(fact, facts, deploy) {
   if (fact.command) {
@@ -87,9 +107,15 @@ function renderLinkFact(fact, facts, deploy) {
   return `${liveLink(fact.url)}${unverified ? ' (link unverified: deploy not confirmed live)' : ''}`;
 }
 
+// A body holds only these two. Truncation may drop an item and never a note, whatever
+// the text of either looks like.
+const item = (text) => ({ text, droppable: true });
+const note = (text) => ({ text, droppable: false });
+const itemsOr = (lines, reason) => (lines.length > 0 ? lines.map(item) : [note(reason)]);
+
 function testGuideBody(ctx) {
   const { facts, deploy, factsById, keptIn, rowsIn } = ctx;
-  const lines = keptIn('test-guide').map((claim, index) => {
+  const steps = keptIn('test-guide').map((claim, index) => {
     const links = claim.refs
       .map((id) => factsById.get(id))
       .filter((fact) => fact.kind === 'link')
@@ -97,32 +123,30 @@ function testGuideBody(ctx) {
       .filter(Boolean);
     return `${index + 1}. ${claimText(claim)}${links.length > 0 ? `: ${links.join('; ')}` : ''}`;
   });
-  if (lines.length === 0) lines.push('not applicable: no tested stories or links were gathered');
-  const refused = Array.isArray(facts.refused) ? facts.refused : [];
+  const body = itemsOr(steps, 'not applicable: no tested stories or links were gathered');
+  const refused = facts.refused ?? [];
   if (refused.length > 0) {
     const entries = refused.map(({ id, reason }) => `${inline(id)} (${inline(reason)})`);
-    lines.push(`- ${refused.length} link(s) refused: ${entries.join('; ')}`);
+    body.push(note(`- ${refused.length} link(s) refused: ${entries.join('; ')}`));
   }
   const passed = rowsIn('checks-passed');
   // The blank line keeps the label out of the numbered list above it.
-  if (passed.length > 0) lines.push('', CHECKS_PASSED_LABEL, ...passed.map(rowLine));
-  return lines;
+  if (passed.length > 0) body.push(note(''), note(CHECKS_PASSED_LABEL), ...passed.map(rowLine).map(item));
+  return body;
 }
 
-const orElse = (lines, reason) => (lines.length > 0 ? lines : [reason]);
-
 const SECTION_BODIES = Object.freeze({
-  'what-changed': ({ keptIn }) => orElse(
+  'what-changed': ({ keptIn }) => itemsOr(
     keptIn('what-changed').map(claimLine),
     'not applicable: no change facts were gathered',
   ),
-  recording: ({ ofKind }) => orElse(ofKind('recording').map(recordingLine), 'not recorded'),
+  recording: ({ ofKind }) => itemsOr(ofKind('recording').map(recordingLine), 'not recorded'),
   'test-guide': testGuideBody,
-  'couldnt-test': ({ rowsIn, movedTo }) => orElse(
+  'couldnt-test': ({ rowsIn, movedTo }) => itemsOr(
     [...rowsIn('couldnt-test').map(rowLine), ...movedTo('couldnt-test').map(movedLine)],
     'not applicable: every expected check ran',
   ),
-  'tried-to-break': ({ keptIn, movedTo, rowsIn }) => orElse(
+  'tried-to-break': ({ keptIn, movedTo, rowsIn }) => itemsOr(
     [
       ...keptIn('tried-to-break').map(claimLine),
       ...movedTo('tried-to-break').map(movedLine),
@@ -130,17 +154,17 @@ const SECTION_BODIES = Object.freeze({
     ],
     'not applicable: no negative stories or failures ran',
   ),
-  'least-confident': ({ keptIn }) => orElse(
+  'least-confident': ({ keptIn }) => itemsOr(
     keptIn('least-confident').map(claimLine),
     'not applicable: no low-confidence review findings',
   ),
-  'risk-proofs': ({ keptIn }) => orElse(
+  'risk-proofs': ({ keptIn }) => itemsOr(
     keptIn('risk-proofs').map(claimLine),
     'not applicable: no kept risk flags',
   ),
   // No decisions omits the section, heading included.
-  decisions: ({ ofKind }) => ofKind('decision').map((fact) => `- ${factText(fact)}`),
-  deploy: ({ deploy }) => [inline(deploy?.text ?? '') || `target: ${inline(deploy?.target ?? 'local')}`],
+  decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}`)),
+  deploy: ({ deploy }) => [note(inline(deploy?.text ?? '') || `target: ${inline(deploy?.target ?? 'local')}`)],
 });
 
 const droppedLine = (n) => (n === 1
@@ -158,20 +182,22 @@ const truncatedLines = (n) => (n > 0 ? [`truncated: ${n} items omitted`] : []);
 
 function compose(doc, omitted) {
   const lines = [...doc.top, ...truncatedLines(omitted)];
-  for (const { heading, body } of doc.sections) lines.push('', `### ${heading}`, ...body);
+  for (const { heading, body } of doc.sections) {
+    lines.push('', `### ${heading}`, ...body.map(({ text }) => text));
+  }
   lines.push(...doc.bottom);
   return lines.join('\n');
 }
 
-const bodyChars = (body) => body.reduce((sum, line) => sum + line.length + 1, 0);
+const bodyChars = (body) => body.reduce((sum, { text }) => sum + text.length + 1, 0);
 
 // Drops one item, then repairs what the drop could leave behind: a label with no
 // rows, or a heading with no line under it.
 function dropLastItem(section) {
   const { body } = section;
-  body.splice(body.findLastIndex((line) => LIST_ITEM_RE.test(line)), 1);
-  if (body.at(-1) === CHECKS_PASSED_LABEL) body.splice(-2, 2);
-  if (body.length === 0) body.push('all items omitted by truncation');
+  body.splice(body.findLastIndex(({ droppable }) => droppable), 1);
+  if (body.at(-1)?.text === CHECKS_PASSED_LABEL) body.splice(-2, 2);
+  if (body.length === 0) body.push(note('all items omitted by truncation'));
   section.chars = bodyChars(body);
 }
 
@@ -184,7 +210,7 @@ function truncate(doc) {
   let size = compose(doc, 0).length;
   let omitted = 0;
   while (size + noteChars(omitted) > MAX_PACKET_CHARS) {
-    const candidates = sections.filter(({ body }) => body.some((line) => LIST_ITEM_RE.test(line)));
+    const candidates = sections.filter(({ body }) => body.some(({ droppable }) => droppable));
     if (candidates.length === 0) break;
     const longest = candidates.reduce((a, b) => (b.chars > a.chars ? b : a));
     const before = longest.chars;
@@ -213,7 +239,8 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
     .map(({ key, heading }) => ({ heading, body: SECTION_BODIES[key](ctx) }))
     .filter(({ body }) => body.length > 0);
   if (typeof observationPlan === 'string' && observationPlan.trim() !== '') {
-    sections.push({ heading: 'Observation plan', body: observationPlan.split(/\r\n|\r|\n/).map(inline) });
+    const lines = observationPlan.split(/\r\n|\r|\n/);
+    sections.push({ heading: 'Observation plan', body: lines.map((line) => note(inline(line))) });
   }
 
   const top = [PACKET_MARKER, '', `## Acceptance packet — #${facts.record}`, ''];

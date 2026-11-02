@@ -415,6 +415,20 @@ test('validateFactsShape names each top-level field', () => {
   assert.deepEqual(factsErrorPaths({ ...factsDoc(), record: 1.5 }), ['facts.record']);
 });
 
+test('validateFactsShape refuses a malformed refused list, and an absent one is fine', () => {
+  const paths = (refused) => factsErrorPaths({ ...factsDoc(), refused });
+  assert.deepEqual(paths(undefined), []);
+  assert.deepEqual(paths([]), []);
+  assert.deepEqual(paths([{ id: 'link:a', reason: 'r' }]), []);
+  assert.deepEqual(paths(null), ['facts.refused']);
+  assert.deepEqual(paths('link:a'), ['facts.refused']);
+  assert.deepEqual(paths({}), ['facts.refused']);
+  assert.deepEqual(paths([null]), ['facts.refused[0]']);
+  assert.deepEqual(paths(['link:a']), ['facts.refused[0]']);
+  assert.deepEqual(paths([{ id: 'link:a', reason: 'r' }, { reason: 'r' }]), ['facts.refused[1].id']);
+  assert.deepEqual(paths([{ id: 'link:a', reason: 3 }]), ['facts.refused[0].reason']);
+});
+
 test('validateFactsShape names each fact field', () => {
   const one = (entry) => factsErrorPaths({ ...factsDoc(), facts: [entry] });
   const good = fact('story:login', 'passed');

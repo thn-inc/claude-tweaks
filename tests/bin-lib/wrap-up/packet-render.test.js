@@ -729,8 +729,203 @@ test('the poster closes the packet, inline', () => {
   assert.ok(!render([], [], { options: { poster: '  ' } }).markdown.includes('Posted by'));
 });
 
+test('a plan line of only = or - cannot underline the line above into a heading', () => {
+  const { markdown } = render([], [], { options: { observationPlan: "Couldn't test\n---\nReal\n===\n-\n=" } });
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), [
+    "Couldn't test",
+    '\\---',
+    'Real',
+    '\\===',
+    '\\-',
+    '\\=',
+  ]);
+});
+
+test('an underline escape is whole-line only, on every path through inline', () => {
+  assert.equal(inline('- item'), '- item');
+  assert.equal(inline('--- x'), '--- x');
+  assert.equal(inline('a ---'), 'a ---');
+  assert.equal(inline('=-='), '=-=');
+  assert.equal(inline('  ---  '), '\\---');
+  const { markdown } = render([
+    fact('deploy:status', 'passed', { text: '===' }),
+    fact('decision:a', 'passed', { text: '---' }),
+  ]);
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), ['\\===']);
+  assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), ['- \\---']);
+});
+
+test('a recording url carrying a credential is refused, never shown', () => {
+  const urls = [
+    'https://u:p@cdn.example/a.gif?X-Amz-Signature=abc&token=def',
+    'https://u@cdn.example/a.gif',
+    'https://cdn.example/a.gif?X-Amz-Signature=abc',
+    'https://cdn.example/a.gif?token=def',
+    'https://cdn.example/a.gif#sig=abc',
+  ];
+  for (const url of urls) {
+    const { markdown } = render([fact('recording:a', 'passed', { text: 'Rec', url })]);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Rec: (recording url refused)'], url);
+    assert.ok(!markdown.includes('cdn.example'), url);
+  }
+});
+
+test('a recording url needs no allowed host', () => {
+  const { markdown } = render(
+    [
+      fact('recording:a', 'passed', { text: 'A', url: 'https://cdn.example/a.gif?t=1#start' }),
+      fact('recording:b', 'passed', { text: 'B', url: 'http://[::1]:3000/b.webm' }),
+    ],
+    [],
+    { extra: { allowedHosts: [] } },
+  );
+  assert.deepEqual(sectionLines(markdown, 'Recording'), [
+    '- A: <https://cdn.example/a.gif?t=1#start>',
+    '- B: <http://[::1]:3000/b.webm>',
+  ]);
+});
+
+const manyClaims = () => Array.from({ length: 3000 }, () => claim('what-changed', 'x'.repeat(40), ['change:a']));
+
+test('deploy text shaped like a list item is never dropped', () => {
+  const text = `- target: ${'d'.repeat(70000)}`;
+  const { markdown, truncated, chars } = render([fact('deploy:status', 'passed', { text })]);
+  assert.equal(truncated, 0);
+  assert.deepEqual(sectionLines(markdown, 'Deploy status'), [text]);
+  assert.ok(chars > 60000);
+});
+
+test('the refused-links line is a note: a long reason never removes it', () => {
+  const reason = 'r'.repeat(70000);
+  const { markdown, truncated, chars } = render(
+    [fact('change:a', 'passed')],
+    [claim('what-changed', 'One', ['change:a'])],
+    { extra: { refused: [{ id: 'link:a', reason }] } },
+  );
+  assert.equal(truncated, 1);
+  assert.ok(sectionLines(markdown, 'Test guide').includes(`- 1 link(s) refused: link:a (${reason})`));
+  assert.ok(chars > 60000);
+});
+
+test('plan lines shaped like list items are never dropped', () => {
+  const { markdown, truncated } = render([fact('change:a', 'passed')], manyClaims(), {
+    options: { observationPlan: '- first\n1. second\nthird' },
+  });
+  assert.ok(truncated > 0);
+  assert.deepEqual(sectionLines(markdown, 'Observation plan'), ['- first', '1. second', 'third']);
+});
+
+test('decision rows are items truncation may drop', () => {
+  const decisions = Array.from({ length: 3000 }, (_, n) => fact(`decision:d${n}`, 'passed', { text: 'x'.repeat(40) }));
+  const { truncated, chars } = render(decisions);
+  assert.ok(truncated > 0);
+  assert.ok(chars <= 60000);
+});
+
+test('a plan longer than the cap loses no line, and the items still go first', () => {
+  const plan = Array.from({ length: 3000 }, (_, n) => `- step ${n} ${'p'.repeat(40)}`).join('\n');
+  const { markdown, truncated } = render(
+    [fact('change:a', 'passed')],
+    [claim('what-changed', 'One', ['change:a'])],
+    { options: { observationPlan: plan } },
+  );
+  assert.equal(truncated, 1);
+  assert.equal(sectionLines(markdown, 'Observation plan').length, 3000);
+});
+
+test('line collapsing matches the original rule on every whitespace shape', () => {
+  const original = (s) => s.replace(/\s*[\r\n]+\s*/g, ' ');
+  for (const s of ['a \n b', '\n a', 'a\n', 'a\n \nb', ' \n \n ', '\r\n\r\n', 'a\r\tb', 'a\t b', 'a\u00a0\nb', '  a  ', 'a  b', '']) {
+    assert.equal(codeSpan(s), `\`${original(s)}\``, JSON.stringify(s));
+    assert.equal(inline(s), original(s).trim(), JSON.stringify(s));
+  }
+});
+
+test('inline stays linear on inputs built to backtrack', () => {
+  const inputs = [
+    ' '.repeat(200000),
+    `a${' '.repeat(200000)}b`,
+    'a'.repeat(200000),
+    'a1'.repeat(100000),
+    'a.'.repeat(100000),
+    'a@'.repeat(100000),
+    '@'.repeat(200000),
+    '#'.repeat(200000),
+    `a@${'b'.repeat(200000)}`,
+    'a/'.repeat(100000),
+    '-'.repeat(200000),
+    '='.repeat(200000),
+  ];
+  for (const input of inputs) {
+    const started = Date.now();
+    inline(input);
+    assert.ok(Date.now() - started < 2000, `${input.slice(0, 8)}: ${Date.now() - started} ms`);
+  }
+});
+
+test('every other autolink shape renders as a code span', () => {
+  const cases = new Map([
+    ['see ftp://x.y now', 'see `ftp://x.y` now'],
+    ['see FTP://X.Y now', 'see `FTP://X.Y` now'],
+    ['ssh://git@host/a', '`ssh://git@host/a`'],
+    ['mail mailto:a@b.co now', 'mail `mailto:a@b.co` now'],
+    ['xmpp:a@b.co', '`xmpp:a@b.co`'],
+    ['tel:+4512345678', '`tel:+4512345678`'],
+    ['write to a.b+c@d.example.co.', 'write to `a.b+c@d.example.co`.'],
+    ['ping @octocat now', 'ping `@octocat` now'],
+    ['(@octocat)', '(`@octocat`)'],
+    ['@org/team', '`@org/team`'],
+    ['fixes #12 today', 'fixes `#12` today'],
+    ['(#12)', '(`#12`)'],
+    ['#12', '`#12`'],
+    ['see owner/repo#12.', 'see `owner/repo#12`.'],
+    ['see octocat#12', 'see `octocat#12`'],
+    ['(.owner/repo#12)', '(.`owner/repo#12`)'],
+  ]);
+  for (const [input, expected] of cases) assert.equal(inline(input), expected);
+});
+
+test('ordinary prose near an autolink shape stays untouched', () => {
+  for (const prose of [
+    'C#',
+    'C# is fine',
+    'a@',
+    'a @ b',
+    'foo@bar',
+    'issue 12',
+    'a#b',
+    'see #12abc',
+    'x#12y',
+    'note#',
+    'target: dev',
+    'link:deploy',
+    'localhost:3000',
+    'key:value',
+    '12:30',
+    'a/b/c',
+    'src/lib/a#12',
+    '://x',
+  ]) {
+    assert.equal(inline(prose), prose);
+  }
+  assert.equal(inline('# 12'), '\\# 12');
+  assert.equal(inline('C:\\temp'), 'C:\\\\temp');
+});
+
+test('autolink shapes in a claim and a fact reason stay out of live text', () => {
+  const { markdown } = render(
+    [fact('change:a', 'passed'), fact('check:lint', 'failed', { reason: 'see @octocat and #12' })],
+    [claim('what-changed', 'mail a@b.co, ftp://x.y', ['change:a'])],
+  );
+  assert.ok(markdown.includes('- mail `a@b.co`, `ftp://x.y` (`change:a`)'));
+  assert.ok(markdown.includes('- `check:lint` — failed: see `@octocat` and `#12`'));
+});
+
 test('invalid input throws SchemaError', () => {
   assert.throws(() => renderPacket({ schemaVersion: 2 }, { schemaVersion: 1, claims: [] }), SchemaError);
+  for (const refused of [null, 'link:a', [null], [{ id: 'link:a' }]]) {
+    assert.throws(() => render([], [], { extra: { refused } }), SchemaError, JSON.stringify(refused));
+  }
 });
 
 test('the return reports every field', () => {
