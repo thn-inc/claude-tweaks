@@ -26,25 +26,39 @@ function stuckCandidates(records) {
   return out;
 }
 
-// {number, pr, code, verdict} -> {number, pr, remedy} | null. `verdict` is the parsed stdout of
-// `dispatch-resume.js --issue {number}` (null when it printed nothing usable); `code` is its exit code
-// and only fills the unreadable message. The branch is on the verdict's data: an eligible verdict
-// renders the resume remedy; a refusal renders its own `remedy` unless a live owner (a no-row reason,
-// or `liveRun: true`) holds the record; anything else reads as unreadable, which stays a visible row.
+// The PR a verdict is about: its own when it names one (an eligible verdict's `prNumber`, or the single
+// entry of a refusal's `prNumbers`), else null. The linked-PR read can list a fork's PR first, so the
+// row never takes its number from there when the verdict has one.
+const isPositiveInteger = (v) => Number.isInteger(v) && v > 0;
+function verdictPr(verdict) {
+  if (verdict.eligible === true) return isPositiveInteger(verdict.prNumber) ? verdict.prNumber : null;
+  return Array.isArray(verdict.prNumbers) && verdict.prNumbers.length === 1 && isPositiveInteger(verdict.prNumbers[0])
+    ? verdict.prNumbers[0]
+    : null;
+}
+
+// {number, pr, failed, verdict} -> {number, pr, remedy} | null. `verdict` is the parsed stdout of
+// `dispatch-resume.js --issue {number}` (null when there is none); `pr` is the linked-PR read's number,
+// used only when the verdict names no PR of its own; `failed` names the read that failed (a string such as
+// 'dispatch-resume exit 4' or 'claim read') and only fills the unreadable message. The branch is on the
+// verdict's data: an eligible verdict renders the resume remedy; a refusal renders its own `remedy` unless
+// a live owner (a no-row reason, or `liveRun: true`) holds the record; anything else reads as unreadable,
+// which stays a visible row.
 function stuckRow({
-  number, pr, code, verdict,
+  number, pr, failed, verdict,
 }) {
   if (isObject(verdict) && verdict.eligible === true) {
-    return { number, pr, remedy: `run /claude-tweaks:dispatch resume #${number} — restarts its stalled PR #${pr}` };
+    const own = verdictPr(verdict) ?? pr;
+    return { number, pr: own, remedy: `run /claude-tweaks:dispatch resume #${number} — restarts its stalled PR #${own}` };
   }
   if (isObject(verdict) && verdict.eligible === false && typeof verdict.reason === 'string') {
     if (NO_ROW_REASONS.includes(verdict.reason) || verdict.liveRun === true) return null;
-    if (typeof verdict.remedy === 'string' && verdict.remedy !== '') return { number, pr, remedy: verdict.remedy };
+    if (typeof verdict.remedy === 'string' && verdict.remedy !== '') return { number, pr: verdictPr(verdict) ?? pr, remedy: verdict.remedy };
   }
   return {
     number,
     pr,
-    remedy: `could not read #${number}'s state (dispatch-resume exit ${code}) — run /claude-tweaks:dispatch resume #${number} to see why`,
+    remedy: `could not read #${number}'s state (${failed}) — re-run /claude-tweaks:backlog attention`,
   };
 }
 

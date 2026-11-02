@@ -75,15 +75,29 @@ test('AC5.1: a non-draft PR row, from the real verdict, names close-out and neve
   assert.doesNotMatch(row.remedy, /gh pr close|close PR/);
 });
 
-test('an unreadable verdict stays visible, never silently absent', () => {
-  for (const code of [2, 4]) {
-    assert.match(stuckRow({ number: 7, pr: 70, code, verdict: null }).remedy, /could not read #7's state \(dispatch-resume exit \d\) — run \/claude-tweaks:dispatch resume #7 to see why/);
+test('an unreadable state stays visible, never silently absent, and names the read that failed', () => {
+  for (const failed of ['dispatch-resume exit 2', 'dispatch-resume exit 4', 'claim read', 'sibling session check']) {
+    const row = stuckRow({ number: 7, pr: 70, failed, verdict: null });
+    assert.equal(row.remedy, `could not read #7's state (${failed}) — re-run /claude-tweaks:backlog attention`);
+    assert.doesNotMatch(row.remedy, /dispatch resume/, 'never points at a command that may start a real resume');
+    assert.equal(row.pr, 70);
   }
+});
+
+test('the row names the verdict\'s own PR when it has one, not the linked-PR read\'s (a fork can be listed first)', () => {
+  const eligible = stuckRow({ number: 7, pr: 70, verdict: { eligible: true, prNumber: 71 } });
+  assert.deepStrictEqual(eligible, { number: 7, pr: 71, remedy: 'run /claude-tweaks:dispatch resume #7 — restarts its stalled PR #71' });
+  assert.equal(stuckRow({ number: 7, pr: 70, failed: 'x', verdict: refused('dirty-worktree', { prNumbers: [72] }) }).pr, 72);
+  // No usable PR on the verdict (several, none, or a non-integer): the linked-PR number stands.
+  for (const prNumbers of [[], [72, 73], ['72'], undefined]) {
+    assert.equal(stuckRow({ number: 7, pr: 70, failed: 'x', verdict: refused('dirty-worktree', { prNumbers }) }).pr, 70, JSON.stringify(prNumbers));
+  }
+  assert.equal(stuckRow({ number: 7, pr: 70, verdict: { eligible: true, prNumber: 'a' } }).pr, 70);
 });
 
 test('a refused verdict with no remedy string reads as unreadable, not as an empty row', () => {
   for (const remedy of [undefined, null, '']) {
-    const row = stuckRow({ number: 7, pr: 70, code: 3, verdict: refused('dirty-worktree', { remedy }) });
+    const row = stuckRow({ number: 7, pr: 70, failed: 'dispatch-resume exit 3', verdict: refused('dirty-worktree', { remedy }) });
     assert.match(row.remedy, /could not read #7's state \(dispatch-resume exit 3\)/);
   }
 });
@@ -185,6 +199,14 @@ function makeEnv(over = {}) {
   return { cfg, deps, calls, out, err, names: () => calls.map((c) => c[0]) };
 }
 const rows = (env) => JSON.parse(env.out.join('').trim()).rows;
+// The could-not-run line: one JSON object with a `failed` key and no `rows`, so a redirected file never reads as "no rows".
+const failedLine = (env) => {
+  assert.equal(env.out.length, 1, 'one line on stdout');
+  const parsed = JSON.parse(env.out[0]);
+  assert.equal(parsed.rows, undefined);
+  assert.equal(typeof parsed.failed.message, 'string');
+  return parsed.failed;
+};
 
 test('AC3.1: exactly one row for the granted, unclaimed, open-PR, no-live-run record; no verdict without an open PR', () => {
   // linked: #1 -> PR 10, #2 -> null. Only #1 has a verdict read; #2 never reaches the claim or the verdict.
@@ -272,7 +294,7 @@ test('a provably live run renders no row; an unproven one renders the verdict re
 
 test('a claim read failure stays visible as a row, and the verdict never runs', () => {
   // readClaim returns {failure:"x"}; separately, an empty result and a throw.
-  const unreadable = /could not read #1's state \(dispatch-resume exit 4\) — run \/claude-tweaks:dispatch resume #1 to see why/;
+  const unreadable = /could not read #1's state \(claim read\) — re-run \/claude-tweaks:backlog attention/;
   for (const patch of [{ claim: { content: null, failure: 'x', absent: false } }, { claim: null }, { claimThrows: true }]) {
     const env = makeEnv(patch);
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
@@ -289,7 +311,8 @@ test('a throwing sibling read stays visible as a row, never as a clean record', 
     const env = makeEnv(patch);
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
     assert.equal(rows(env).length, 1);
-    assert.match(rows(env)[0].remedy, /could not read #1's state/);
+    assert.match(rows(env)[0].remedy, /could not read #1's state \(sibling session check\) — re-run \/claude-tweaks:backlog attention/);
+    assert.doesNotMatch(rows(env)[0].remedy, /dispatch-resume exit/, 'dispatch-resume did not fail');
   }
 });
 
@@ -299,6 +322,25 @@ test('a verdict that fails to run or parse stays visible as a row naming its exi
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
     assert.match(rows(env)[0].remedy, new RegExp(`could not read #1's state \\(dispatch-resume exit ${code}\\)`));
   }
+});
+
+test('only exit 0 or 3 carries a verdict: exit 1 with valid refusal JSON reads as no verdict', () => {
+  for (const code of [1, 2, 4, 5]) {
+    const env = makeEnv({ verdicts: { 1: { code, json: refusedJson(1, 'not-draft') } } });
+    assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+    assert.equal(rows(env)[0].remedy, `could not read #1's state (dispatch-resume exit ${code}) — re-run /claude-tweaks:backlog attention`, String(code));
+  }
+});
+
+test('a fork listed first in the linked-PR read does not name the row: the verdict\'s PR does', () => {
+  // linked says PR 10 (the fork); the eligible verdict is about PR 11.
+  const env = makeEnv({ verdicts: { 1: { code: 0, json: eligibleJson(1, 11) } } });
+  assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+  assert.equal(rows(env)[0].pr, 11);
+  assert.equal(rows(env)[0].remedy, 'run /claude-tweaks:dispatch resume #1 — restarts its stalled PR #11');
+  const refusedEnv = makeEnv({ verdicts: { 1: { code: 3, json: refusedJson(1, 'not-draft', { prNumbers: [11] }) } } });
+  assert.equal(run(['--records', RECORDS_PATH], refusedEnv.deps), 0);
+  assert.equal(rows(refusedEnv)[0].pr, 11);
 });
 
 test('no candidate: no linked-PR read and an empty rows line', () => {
@@ -314,7 +356,7 @@ test('an unreadable --records file is exit 2 with no row', () => {
   for (const patch of bad) {
     const env = makeEnv(patch);
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 2, JSON.stringify(patch));
-    assert.deepStrictEqual(env.out, []);
+    assert.equal(failedLine(env).code, 2);
     assert.match(env.err.join(''), /stuck-open-prs\.js:/);
     assert.equal(env.names().includes('linked'), false);
   }
@@ -325,7 +367,7 @@ test('a linked-PR read failure is exit 4', () => {
   for (const patch of [{ linkedThrows: true }, { linked: new Map([[2, { openPR: null }]]) }, { linked: null }]) {
     const env = makeEnv(patch);
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 4);
-    assert.deepStrictEqual(env.out, []);
+    assert.equal(failedLine(env).code, 4);
     assert.match(env.err.join(''), /linked-PR read failed/);
   }
 });
@@ -334,7 +376,7 @@ test('gh absent, repo unresolved and main checkout unresolved are exit 2', () =>
   for (const patch of [{ gh: false }, { repo: null }, { repo: new Error('no remote') }, { mainRoot: null }, { mainRoot: new Error('no git') }]) {
     const env = makeEnv(patch);
     assert.equal(run(['--records', RECORDS_PATH], env.deps), 2, JSON.stringify(patch));
-    assert.deepStrictEqual(env.out, []);
+    assert.equal(failedLine(env).code, 2);
   }
 });
 

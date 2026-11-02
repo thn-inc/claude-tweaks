@@ -176,6 +176,10 @@ class Exit extends Error {
 
 const errText = (e) => (e && e.message) || String(e);
 
+// The two exits that print a verdict (verdict mode): in-process callers branch on them, so they import these.
+const EXIT_ELIGIBLE = 0;
+const EXIT_REFUSED = 3;
+
 // A dep call whose failure is a transient read failure (exit 4), never a clean answer.
 function read(label, fn) {
   try {
@@ -528,7 +532,7 @@ function refusal(ctx, prs, verdict) {
     ...refusalDetail({ issue, verdict, prs, mainRoot }),
     ...(verdict.liveRun === true ? { liveRun: true } : {}),
   });
-  return 3;
+  return EXIT_REFUSED;
 }
 
 function listRuns(ctx) {
@@ -605,7 +609,7 @@ function runVerdict(ctx) {
     worktreePath: ctx.worktreePath,
     context: readContext(ctx, prior),
   });
-  return 0;
+  return EXIT_ELIGIBLE;
 }
 
 // Resume step 6a. The new run's binding makes `ownedWorktreePaths` skip the stalled worktree whatever
@@ -675,6 +679,8 @@ function run(argv, deps) {
   }
 }
 
-module.exports = { run, parseArgs, realDeps, classifyPriorRun };
+module.exports = {
+  run, parseArgs, realDeps, classifyPriorRun, EXIT_ELIGIBLE, EXIT_REFUSED,
+};
 
 if (require.main === module) process.exitCode = run(process.argv.slice(2), realDeps);

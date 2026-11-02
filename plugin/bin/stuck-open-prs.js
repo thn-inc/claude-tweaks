@@ -9,7 +9,10 @@
 //   --records  a JSON array of open records as the attention snapshot holds them
 //              (`number`, `state`, `title`, `createdAt`, `labels:[{name}]`), the file the skill wrote
 // Stdout is one JSON line, `{rows:[{number, pr, remedy, title, createdAt, labels}]}`: the last three are
-// copied from the record, so the caller can rank the row and print its age. A record renders no row
+// copied from the record, so the caller can rank the row and print its age. `pr` is the verdict's own PR
+// when it names one, else the linked-PR read's. When the check cannot run (exit 2 or 4 once the invocation
+// parsed) stdout is `{failed:{code, message}}` instead, so a caller that redirects it keeps the could-not-run
+// state in its file: a file without a `rows` array is a check that did not run, never an empty answer. A record renders no row
 // when it has no open closing PR, when a live claim or a live sibling session holds it, or when the
 // verdict says a provably live run does; a read that failed is a row whose remedy says so, never an
 // absent one. Per record with an open PR, in this order, because the verdict can refuse a PR it cannot
@@ -18,16 +21,19 @@
 //   2. the sibling session by `#N` token (a hit skips the record)
 //   3. the verdict, `dispatch-resume.js --issue N`, run in process
 //   4. the sibling session on the verdict's head, the exact read (a hit skips the record)
+// A verdict is dispatch-resume.js's stdout JSON object under its exit 0 (eligible) or 3 (refused) only; any
+// other exit, or output that is not a JSON object, is no verdict and renders an unreadable row.
 // Exit codes (a CLI-specific vocabulary — a row is data on stdout, so there is no exit 1 or 3):
 //   0  rows printed, possibly none
 //   2  malformed invocation, an unreadable or malformed --records file, `gh` absent, or the repo or
 //      the main checkout unresolved
-//   4  the batched linked-PR read failed; nothing is printed, since no failed read is taken as "no PR"
+//   4  the batched linked-PR read failed; no row is printed, since no failed read is taken as "no PR"
 'use strict';
 
 const fs = require('fs');
 const { execFileSync } = require('child_process');
 const dispatchResume = require('./dispatch-resume');
+const { EXIT_ELIGIBLE, EXIT_REFUSED } = dispatchResume;
 const { fetchLinkedPRs } = require('./lib/issues/linked-prs');
 const { classifyClaimBlob } = require('./lib/issues/claims');
 const {
@@ -41,7 +47,7 @@ const { stuckCandidates, stuckRow } = require('./lib/dispatch/stuck-open-pr');
 const USAGE = 'usage: stuck-open-prs.js --records <path> [--help]\n'
   + '  prints one JSON line: {rows:[{number, pr, remedy, title, createdAt, labels}]} (exit 0)\n'
   + '  exit 2 malformed invocation / unreadable --records / gh absent / repo or main checkout unresolved;\n'
-  + '  exit 4 the linked-PR read failed\n';
+  + '  exit 4 the linked-PR read failed; either prints {failed:{code, message}} once the invocation parsed\n';
 
 // ---- real deps ----
 
@@ -109,8 +115,9 @@ function readRecords(deps, file) {
   return { records: parsed };
 }
 
-// The verdict dispatch-resume.js prints for one record: {code, verdict}. A run that throws, exits on a
-// code it does not document, or prints something that is not a JSON object has no verdict (null).
+// The verdict dispatch-resume.js prints for one record: {code, verdict}. Only its exit 0 or 3 carries a
+// verdict; a run that throws, exits on any other code, or prints something that is not a JSON object has
+// none (null).
 function readVerdict(deps, n) {
   let text = '';
   let errors = '';
@@ -122,6 +129,7 @@ function readVerdict(deps, n) {
   }
   if (!Number.isInteger(code)) code = 4;
   let verdict = null;
+  if (code !== EXIT_ELIGIBLE && code !== EXIT_REFUSED) return { code, verdict, errors };
   try {
     const parsed = JSON.parse(text);
     if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) verdict = parsed;
@@ -137,21 +145,26 @@ function run(argv, deps) {
   const fail = (code, message) => { deps.stderr(`stuck-open-prs.js: ${message}\n${code === 2 ? USAGE : ''}`); return code; };
   if (opts.error) return fail(2, opts.error);
   if (opts.records === null) return fail(2, '--records is required');
+  // Past argv, a failure also leaves the could-not-run state on stdout, for a caller that redirects it to a file.
+  const failRun = (code, message) => {
+    deps.stdout(`${JSON.stringify({ failed: { code, message } })}\n`);
+    return fail(code, message);
+  };
 
   const read = readRecords(deps, opts.records);
-  if (read.error) return fail(2, read.error);
+  if (read.error) return failRun(2, read.error);
   const byNumber = new Map(read.records.map((r) => [r.number, r]));
   const candidates = stuckCandidates(read.records);
 
   let available = false;
   try { available = deps.ghAvailable(); } catch { /* a throwing probe reads as gh absent */ }
-  if (!available) return fail(2, 'gh CLI not found on PATH — the linked-PR read needs it');
+  if (!available) return failRun(2, 'gh CLI not found on PATH — the linked-PR read needs it');
   let mainRoot = null;
   try { mainRoot = deps.mainRoot(); } catch { /* refused just below */ }
-  if (!mainRoot) return fail(2, 'could not resolve the main checkout root');
+  if (!mainRoot) return failRun(2, 'could not resolve the main checkout root');
   let repo = null;
   try { repo = deps.repo(); } catch { /* refused just below */ }
-  if (!repo || !repo.owner || !repo.repo) return fail(2, 'could not resolve owner/repo from the origin remote');
+  if (!repo || !repo.owner || !repo.repo) return failRun(2, 'could not resolve owner/repo from the origin remote');
 
   const rows = [];
   if (candidates.length > 0) {
@@ -163,7 +176,7 @@ function run(argv, deps) {
       const missing = candidates.filter((n) => !linked || typeof linked.get !== 'function' || linked.get(n) === undefined || linked.get(n) === null);
       if (missing.length > 0) throw new Error(`no linked-PR entry for ${missing.map((n) => `#${n}`).join(', ')}`);
     } catch (e) {
-      return fail(4, `linked-PR read failed: ${errText(e)}`);
+      return failRun(4, `linked-PR read failed: ${errText(e)}`);
     }
 
     const slug = `${repo.owner}/${repo.repo}`;
@@ -182,26 +195,29 @@ function run(argv, deps) {
 }
 
 // One candidate with an open PR -> its row, or null when a live owner holds it. A read that fails or
-// throws is an unreadable row (exit code 4 in its message), so a record is never hidden by a failure.
+// throws is an unreadable row naming that read, so a record is never hidden by a failure.
 function stuckRowFor(deps, {
   n, pr, slug, mainRoot,
 }) {
-  const unreadable = (code = 4) => stuckRow({
-    number: n, pr, code, verdict: null,
+  let step = 'claim read';
+  const unreadable = () => stuckRow({
+    number: n, pr, failed: step, verdict: null,
   });
   try {
     const claim = deps.readClaim(slug, n);
     if (!claim || claim.failure) return unreadable();
     if (classifyClaimBlob(claim.absent ? null : claim.content, deps.now()).state === 'live') return null;
+    step = 'sibling session check';
     if (deps.findSibling(`#${n}`, { cwd: mainRoot }) !== null) return null;
 
     const { code, verdict, errors } = readVerdict(deps, n);
     if (errors.trim() !== '') deps.stderr(`stuck-open-prs.js: #${n}: ${errors.trim()}\n`);
     const row = stuckRow({
-      number: n, pr, code, verdict,
+      number: n, pr, failed: `dispatch-resume exit ${code}`, verdict,
     });
     if (row === null) return null;
     const head = verdict && typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
+    step = 'sibling session check';
     if (head !== null && deps.findSiblingOnWorktree({ branch: head }, { cwd: mainRoot }) !== null) return null;
     return row;
   } catch {

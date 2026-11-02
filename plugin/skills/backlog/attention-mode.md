@@ -92,11 +92,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENT
 ```
 
 A non-zero exit means the check could not run, so the render carries one note saying so above the
-table (`Note: the stuck:open-pr check could not run (exit {code}) — records stuck behind an open PR
-are not shown`) and never an empty section; the merge below then treats the file as no rows. Exit 2
-is a missing `gh` (the MCP-transport case of `_shared/github-write-transport.md`, where this CLI has
-no path), an unresolved repo or main checkout, or an unreadable snapshot; exit 4 is a failed
-linked-PR read.
+table and never an empty section. The CLI leaves that state in the file itself: on exit 2 or 4 it
+prints `{"failed":{"code":…,"message":…}}` where a run prints `{"rows":…}`, so Step 2 and Step 4 read it
+from `$ST_BACKLOG_ATTENTION_STUCK` and not from a shell variable that would not survive between
+fences. The check ran only when that file parses to an object with a `rows` array; a `failed` object,
+an empty file (the CLI never started) and unparseable JSON all mean it did not (the note's exit code
+reads `unknown` when the file holds none). Exit 2 is a missing `gh` (the MCP-transport case of
+`_shared/github-write-transport.md`, where this CLI has no path), an unresolved repo or main checkout,
+or an unreadable snapshot; exit 4 is a failed linked-PR read.
 
 ## Step 2: Merge and dedupe
 
@@ -163,9 +166,12 @@ node -e "
     if (existing) existing.types.push('bot:parked');
     else byNumber.set(r.number, { ...r, types: ['bot:parked'] });
   }
-  // The stuck file is empty or absent when the CLI could not run (Step 1's note): no rows then.
+  // A file without a rows array (failed, empty, unparseable) is a check that did not run (Step 1): no rows.
   let stuckRows = [];
-  try { stuckRows = require('$ST_BACKLOG_ATTENTION_STUCK').rows; } catch { /* no rows */ }
+  try {
+    const stuck = require('$ST_BACKLOG_ATTENTION_STUCK');
+    if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;
+  } catch { /* no rows */ }
   for (const r of stuckRows) {
     const existing = byNumber.get(r.number);
     if (existing) { existing.types.push('stuck:open-pr'); existing.stuckRemedy = r.remedy; }
@@ -278,12 +284,16 @@ and showing nothing for.
 ## Step 4: Render
 
 The two non-record rows from Step 3.5 render first, each on its own line, each independently
-omitted when its own condition doesn't hold; the ranked table follows:
+omitted when its own condition doesn't hold. Then, only when Step 1's file shows the stuck check did
+not run, one note line (`{failed.code}` reads `unknown` when the file holds none); the ranked table
+follows:
 
 ```markdown
 ⚠ Merge-lane circuit breaker tripped {trippedAt} by #{trippedBy.record}: {trippedBy.reason} — run /claude-tweaks:backlog refine --reset-breaker
 
 {count} tidy proposal(s) staged awaiting approval — run /claude-tweaks:tidy --approve
+
+Note: the stuck:open-pr check could not run (exit {failed.code}) — records stuck behind an open PR are not shown
 
 ## Backlog — Needs Attention
 
@@ -295,7 +305,7 @@ omitted when its own condition doesn't hold; the ranked table follows:
 | #{n} | shaped:headless (no grant) | {createdAt, relative} | run /claude-tweaks:backlog refine to grant via the sweep's Grant lane (spec was headlessly shaped — no human has reviewed it) |
 | #{n} | bot:blocked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to re-authorize after the failure — or, for a plan-review question awaiting an answer (`<!-- plan-review-question -->` comment), answer it on the record body first |
 | #{n} | bot:parked | {createdAt, relative} | run /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its checks are green |
-| #{n} | stuck:open-pr | {createdAt, relative} | {remedy} |
+| #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |
 | #{n} | needs:definition + solution:unjustified | {createdAt, relative} | run /claude-tweaks:specify #{n} to route through brainstorming; run /claude-tweaks:challenge #{n} for the evidence-or-accept-risk verdict on the flag |
 
 ### Batch launchers
@@ -333,11 +343,11 @@ to that one record — this row still recommends the bare form because it covers
 /claude-tweaks:backlog refine #{n} to review the parked PR — grants are intact; resume once its
 checks are green` — unlike `bot:blocked`, a merge-verification park never revokes `auto:*` grants
 (`_shared/work-record.md`), so this row is a status check, not a re-authorization. A `stuck:open-pr`
-row's recommended action is the `remedy` Step 1's CLI printed, verbatim: it is
-`dispatch-resume.js`'s own verdict for the record, so it names resume, close-out or
-close-and-redispatch according to that verdict, and never a step the next command refuses. The
-`remedy` of a record whose state the CLI could not read says so and points at `dispatch resume #{n}`
-to see why. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
+row's recommended action is its `stuckRemedy` (Step 2 copies it from the `remedy` Step 1's CLI
+printed), verbatim: it is `dispatch-resume.js`'s own verdict for the record, so it names resume,
+close-out or close-and-redispatch according to that verdict, and never a step the next command
+refuses. The `stuckRemedy` of a record whose state the CLI could not read names the read that failed
+and says to re-run `/claude-tweaks:backlog attention`, never a `dispatch resume` command. This `refine #{n}` catch-all is the **permanent default** for any future `needs:*`
 marker — a new marker earns a dedicated launcher only by a later record's own explicit decision,
 never by default. The trailing "Pick up next" line names the single oldest/highest-priority
 record across all types — the same shape `overview` mode's own "what to build next" recommendation
@@ -382,7 +392,7 @@ ranked table is empty (see below); a group with zero rows this render never appe
 
 When the merged list is empty, render `Nothing needs attention — no open record carries a
 needs:* marker, solution:unjustified, an ungranted shaped:headless spec, bot:blocked, or
-bot:parked. No granted record is stuck behind an open PR.` instead of an empty table, and omit both the Batch launchers block and the "Pick up next" line. The
+bot:parked. No granted record is stuck behind an open PR.` instead of an empty table, and omit both the Batch launchers block and the "Pick up next" line. When the stuck check could not run, drop the sentence `No granted record is stuck behind an open PR.` from that message and keep the could-not-run note above it: an unrun check proves nothing. The
 breaker banner and tidy row still render independently above this message when their own
 conditions hold — an empty table is not an empty mode output.
 
