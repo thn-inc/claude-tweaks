@@ -32,7 +32,7 @@ test('stuckCandidates skips a record with no labels array rather than throwing',
 });
 
 test('AC3.1: an eligible verdict renders the resume remedy', () => {
-  assert.deepStrictEqual(stuckRow({ number: 7, pr: 70, code: 0, verdict: { eligible: true } }),
+  assert.deepStrictEqual(stuckRow({ number: 7, pr: 70, verdict: { eligible: true } }),
     { number: 7, pr: 70, remedy: 'run /claude-tweaks:dispatch resume #7 — restarts its stalled PR #70' });
 });
 
@@ -42,35 +42,35 @@ const refused = (reason, over = {}) => ({
 
 test('AC3.1: a live claim, a live sibling, no PR, or a provably live run renders no row', () => {
   for (const reason of ['live-claim', 'live-sibling', 'no-pr']) {
-    assert.equal(stuckRow({ number: 7, pr: 70, code: 3, verdict: refused(reason) }), null, reason);
+    assert.equal(stuckRow({ number: 7, pr: 70, verdict: refused(reason) }), null, reason);
   }
   for (const reason of ['prior-run-live', 'concurrent-resume']) {
-    assert.equal(stuckRow({ number: 7, pr: 70, code: 3, verdict: refused(reason, { liveRun: true }) }), null, `${reason} with liveRun`);
+    assert.equal(stuckRow({ number: 7, pr: 70, verdict: refused(reason, { liveRun: true }) }), null, `${reason} with liveRun`);
   }
 });
 
 test('a prior-run-live or concurrent-resume refusal without liveRun renders a row with the verdict remedy', () => {
   for (const reason of ['prior-run-live', 'concurrent-resume']) {
-    const row = stuckRow({ number: 7, pr: 70, code: 3, verdict: refused(reason) });
+    const row = stuckRow({ number: 7, pr: 70, verdict: refused(reason) });
     assert.deepStrictEqual(row, { number: 7, pr: 70, remedy: `remedy for ${reason}` }, reason);
   }
 });
 
 test('liveRun is read as a boolean true only: a truthy string is not proof of a live run', () => {
-  assert.notEqual(stuckRow({ number: 7, pr: 70, code: 3, verdict: refused('prior-run-live', { liveRun: 'true' }) }), null);
+  assert.notEqual(stuckRow({ number: 7, pr: 70, verdict: refused('prior-run-live', { liveRun: 'true' }) }), null);
 });
 
 test('a refused row carries the verdict remedy as is', () => {
   const remedy = 'whatever the verdict says';
   for (const disposition of ['resume', 'close-out', 'close']) {
-    assert.equal(stuckRow({ number: 7, pr: 70, code: 3, verdict: refused('dirty-worktree', { disposition, remedy }) }).remedy, remedy);
+    assert.equal(stuckRow({ number: 7, pr: 70, verdict: refused('dirty-worktree', { disposition, remedy }) }).remedy, remedy);
   }
 });
 
 test('AC5.1: a non-draft PR row, from the real verdict, names close-out and never a close instruction', () => {
   const prs = [{ url: 'u', number: 70, headRefName: 'worktree-record-7', headRefOid: 'a', body: 'claude-tweaks-run: 2026-10-30T101632-record-7\n', isDraft: false, isCrossRepository: false, closingRecords: 1 }];
   const v = resumeEligibility({ issue: 7, prs });
-  const row = stuckRow({ number: 7, pr: 70, code: 3, verdict: { ...v, ...refusalDetail({ issue: 7, verdict: v, prs, mainRoot: '/repo' }) } });
+  const row = stuckRow({ number: 7, pr: 70, verdict: { ...v, ...refusalDetail({ issue: 7, verdict: v, prs, mainRoot: '/repo' }) } });
   assert.match(row.remedy, /\/claude-tweaks:dispatch close-out #7/);
   assert.doesNotMatch(row.remedy, /gh pr close|close PR/);
 });

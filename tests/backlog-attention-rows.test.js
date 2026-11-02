@@ -351,10 +351,15 @@ test('work-record-permission-matrix.md: /backlog refine row Adds parked and Remo
 const ROW = '| #{n} | stuck:open-pr | {createdAt, relative} | {stuckRemedy} |';
 const NOTE = 'Note: the stuck:open-pr check could not run (exit {failed.code}) — records stuck behind an open PR are not shown';
 const EMPTY_SENTENCE = 'No granted record is stuck behind an open PR.';
+const CLI_CALL = 'bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW" > "$ST_BACKLOG_ATTENTION_STUCK"';
+const STEP4_CONDITION = "only when Step 1's file shows the stuck check did not run";
 
 // One assertion function for every prose pin of the row; each has a go-red control below.
 function assertStuckRow(source) {
   assert.ok(source.includes('bin/stuck-open-prs.js" --records "$ST_BACKLOG_ATTENTION_SNAPSHOT_RAW"'), 'Step 1 runs the CLI over the snapshot');
+  assert.ok(source.includes(CLI_CALL), 'Step 1 redirects the CLI into the stuck file');
+  const stuckNames = [...source.matchAll(/ST_BACKLOG_ATTENTION_STUCK="\$\(node [^)]*--value ([\w.-]+)\)"/g)].map((m) => m[1]);
+  assert.ok(stuckNames.length >= 2 && new Set(stuckNames).size === 1, 'Steps 1 and 2 resolve the same stuck filename');
   assert.ok(source.includes(ROW), 'the rendered row');
   assert.match(source, /`stuck:open-pr` rows are never batched/, 'stuck rows are never batched');
   assert.match(source, /could not run[^.]*note/, 'a failed CLI is a note, never an empty section');
@@ -362,6 +367,7 @@ function assertStuckRow(source) {
   assert.ok(source.includes('The check ran only when that file parses to an object with a `rows` array'), 'the check-ran test is stated once, on the file');
   const step4 = source.slice(source.indexOf('## Step 4: Render'));
   assert.ok(step4.includes(NOTE), 'Step 4 template has a slot for the could-not-run note');
+  assert.ok(step4.replace(/\s+/g, ' ').includes(STEP4_CONDITION), 'the note renders only when Step 1\'s file shows the check did not run');
   assert.ok(step4.indexOf(NOTE) < step4.indexOf('## Backlog — Needs Attention'), 'the note renders above the table');
   assert.ok(source.includes(`bot:parked. ${EMPTY_SENTENCE}\``), 'the empty-state message names a clear stuck check');
   assert.ok(source.includes(`When the stuck check could not run, drop the sentence \`${EMPTY_SENTENCE}\``), 'the sentence renders only when the check ran');
@@ -374,6 +380,10 @@ test('AC3.1 controls: removing any stuck:open-pr pin goes red on that pin', () =
   const source = read(SKILL_DIR, 'attention-mode.md');
   const controls = [
     [ROW, /the rendered row/],
+    [' > "$ST_BACKLOG_ATTENTION_STUCK"\n```', /redirects the CLI into the stuck file/, '\n```'],
+    [CLI_CALL, /runs the CLI over the snapshot/],
+    [`bot:parked. ${EMPTY_SENTENCE}\``, /names a clear stuck check/, 'bot:parked.`'],
+    ["only when Step 1's file shows", /renders only when Step 1's file shows the check did not run/, "whenever Step 1's file shows"],
     ['`stuck:open-pr` rows are never batched', /stuck rows are never batched/],
     ['the check could not run, so the render carries one note', /a failed CLI is a note/],
     ['prints `{"failed":{"code":…,"message":…}}`', /keeps the could-not-run state in the stuck file/],
@@ -382,10 +392,12 @@ test('AC3.1 controls: removing any stuck:open-pr pin goes red on that pin', () =
     [`When the stuck check could not run, drop the sentence \`${EMPTY_SENTENCE}\``, /renders only when the check ran/],
     ['row\'s recommended action is its `stuckRemedy`', /names the ranked file/],
   ];
-  for (const [from, message] of controls) {
+  for (const [from, message, to = ''] of controls) {
     assert.ok(source.includes(from), `control target exists: ${from.slice(0, 40)}`);
-    assert.throws(() => assertStuckRow(source.replace(from, '')), message, from.slice(0, 40));
+    assert.throws(() => assertStuckRow(source.replace(from, to)), message, from.slice(0, 40));
   }
+  // The two sides of the stuck filename must agree: changing one goes red.
+  assert.throws(() => assertStuckRow(source.replace('--value backlog-attention-stuck.json', '--value backlog-attention-stuck-x.json')), /same stuck filename/);
   // The note slot must sit above the table, not just exist somewhere in Step 4.
   const moved = source.replace(`${NOTE}\n\n`, '').replace('## Backlog — Needs Attention\n\n| Record', `## Backlog — Needs Attention\n\n${NOTE}\n\n| Record`);
   assert.throws(() => assertStuckRow(moved), /above the table/);
@@ -409,7 +421,15 @@ function stuckSnippets() {
 
 const labelsOf = (...names) => names.map((name) => ({ name }));
 const STUCK_ROW = {
-  number: 7, pr: 70, remedy: 'R7: run /claude-tweaks:dispatch resume #7', title: 'Stuck seven', createdAt: '2026-10-01T00:00:00Z', labels: labelsOf('auto:build', 'priority:high'),
+  number: 7, pr: 70, remedy: 'R7: run /claude-tweaks:dispatch resume #7', title: 'Stuck seven', createdAt: '2026-10-10T00:00:00Z', labels: labelsOf('auto:build', 'priority:high'),
+};
+// Two same-band records, the older filed first by the age key alone; #7 is high-band but the youngest, so the
+// band key alone must put it first; #8 has no band and is older than #7, so a ranker that ignores the band fails.
+const MEDIUM_OLD = {
+  number: 9, pr: 90, remedy: 'R9', title: 'Medium old', createdAt: '2026-10-03T00:00:00Z', labels: labelsOf('auto:build', 'priority:medium'),
+};
+const MEDIUM_NEW = {
+  number: 10, pr: 100, remedy: 'R10', title: 'Medium new', createdAt: '2026-10-05T00:00:00Z', labels: labelsOf('auto:build', 'priority:medium'),
 };
 const OVERLAP_ROW = {
   number: 8, pr: 80, remedy: 'R8', title: 'Overlap eight', createdAt: '2026-10-02T00:00:00Z', labels: labelsOf('auto:build', 'needs:definition'),
@@ -440,7 +460,7 @@ function runMergeAndRank({ merge, rank }, stuckFileText) {
 // The merge + rank behavior in one assertion function: rows join the records, carry stuckRemedy, and a
 // file that is not a check that ran contributes nothing and breaks nothing.
 function assertStuckMerge(snippets) {
-  const ranked = runMergeAndRank(snippets, JSON.stringify({ rows: [STUCK_ROW, OVERLAP_ROW] }));
+  const ranked = runMergeAndRank(snippets, JSON.stringify({ rows: [MEDIUM_NEW, OVERLAP_ROW, STUCK_ROW, MEDIUM_OLD] }));
   const seven = ranked.find((r) => r.number === 7);
   assert.ok(seven, 'a stuck-only record gets its own row');
   assert.deepStrictEqual(seven.types, ['stuck:open-pr']);
@@ -452,7 +472,7 @@ function assertStuckMerge(snippets) {
   assert.deepStrictEqual(eight.types, ['needs:definition', 'stuck:open-pr'], 'a record in two sets is one row with both types');
   assert.strictEqual(eight.stuckRemedy, 'R8');
   assert.strictEqual(ranked.filter((r) => r.number === 8).length, 1);
-  assert.strictEqual(ranked[0].number, 7, 'priority:high sorts first');
+  assert.deepStrictEqual(ranked.map((r) => r.number), [7, 9, 10, 8], 'band first (high, medium, none), then oldest first within a band');
 
   for (const text of ['{"failed":{"code":4,"message":"x"}}', '{}', '', 'not json', 'null', '{"rows":"x"}']) {
     const after = runMergeAndRank(snippets, text);
@@ -466,16 +486,20 @@ test('AC3.1: Step 2 and Step 3 turn the CLI\'s rows into ranked stuck:open-pr ro
   assertStuckMerge(stuckSnippets());
 });
 
-test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy or the rows guard is removed', { skip: SKIP_NO_BASH }, () => {
+test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy, the rows guard, the band key or the age key is removed', { skip: SKIP_NO_BASH }, () => {
   const snippets = stuckSnippets();
   const mutations = [
-    ['for (const r of stuckRows)', 'for (const r of [])'],
-    ['stuckRemedy: r.remedy', 'stuckRemedy: undefined'],
-    ['existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined'],
-    ['if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;'],
+    ['merge', 'for (const r of stuckRows)', 'for (const r of [])'],
+    ['merge', 'stuckRemedy: r.remedy', 'stuckRemedy: undefined'],
+    ['merge', 'existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined'],
+    ['merge', 'if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;'],
+    // rank ignores the priority band: only the age key orders, so the older no-band record beats the younger high one
+    ['rank', 'if (bandA !== bandB) return bandA - bandB;', ''],
+    // age key inverted: the band key still orders, but the same-band pair comes out youngest first
+    ['rank', 'return new Date(a.createdAt) - new Date(b.createdAt);', 'return new Date(b.createdAt) - new Date(a.createdAt);'],
   ];
-  for (const [from, to] of mutations) {
-    assert.ok(snippets.merge.includes(from), `control target exists: ${from}`);
-    assert.throws(() => assertStuckMerge({ ...snippets, merge: snippets.merge.replace(from, to) }), undefined, from);
+  for (const [which, from, to] of mutations) {
+    assert.ok(snippets[which].includes(from), `control target exists: ${from}`);
+    assert.throws(() => assertStuckMerge({ ...snippets, [which]: snippets[which].replace(from, to) }), undefined, from);
   }
 });

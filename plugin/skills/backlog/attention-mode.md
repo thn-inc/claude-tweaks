@@ -96,7 +96,7 @@ table and never an empty section. The CLI leaves that state in the file itself: 
 prints `{"failed":{"code":…,"message":…}}` where a run prints `{"rows":…}`, so Step 2 and Step 4 read it
 from `$ST_BACKLOG_ATTENTION_STUCK` and not from a shell variable that would not survive between
 fences. The check ran only when that file parses to an object with a `rows` array; a `failed` object,
-an empty file (the CLI never started) and unparseable JSON all mean it did not (the note's exit code
+an empty file (the CLI refused its argv or never started) and unparseable JSON all mean it did not (the note's exit code
 reads `unknown` when the file holds none). Exit 2 is a missing `gh` (the MCP-transport case of
 `_shared/github-write-transport.md`, where this CLI has no path), an unresolved repo or main checkout,
 or an unreadable snapshot; exit 4 is a failed linked-PR read.

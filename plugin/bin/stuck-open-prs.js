@@ -217,7 +217,6 @@ function stuckRowFor(deps, {
     });
     if (row === null) return null;
     const head = verdict && typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
-    step = 'sibling session check';
     if (head !== null && deps.findSiblingOnWorktree({ branch: head }, { cwd: mainRoot }) !== null) return null;
     return row;
   } catch {
