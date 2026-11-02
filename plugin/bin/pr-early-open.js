@@ -27,9 +27,11 @@
 //
 // Stdout: one JSON line, {outcome, number?, url?, reason?, reopenRejected?};
 // outcome is reused | reopened | opened | push-failed | create-failed.
-// reopenRejected (a CLOSED PR number) appears when a reopen was refused and
-// the run fell through to creation: the caller repoints an earlier attempt's
-// issue pointer comment at the new PR, per the spec's "Reopen fails" paragraph.
+// reopenRejected (a CLOSED PR number) appears when a reopen was refused or
+// unconfirmed (the PR did not read OPEN after it) and the run fell through to
+// creation: the caller repoints an earlier attempt's issue pointer comment at
+// the new PR, per the spec's "Reopen fails" paragraph. The number can equal
+// `number` when a landed reopen is adopted and rebound.
 // Exit 0 a PR is recorded (reused, reopened, opened).
 //      3 a logged degrade (push-failed, create-failed): decisions.md carries the
 //        FAILED line and the run proceeds local-only. A reused or reopened PR
