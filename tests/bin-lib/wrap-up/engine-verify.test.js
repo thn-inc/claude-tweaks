@@ -1837,7 +1837,7 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
 // #3222: a resolvable-parent record's gate is read from the parent's sub-issues
 // (parentGateState) and the oversight floor, not from the parent's demo:pending
 // label alone. Every case resolves its parent to #898.
-function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply, policyRaw }) {
+function parentGateRow({ records, subIssues, parentLabels = [], parentComments = [], subIssuesReply, policyRaw }) {
   const runDir = makeTmpDir('verify-acceptance-parentgate-');
   const repoRoot = makeCleanRepoRoot();
   writePolicy(repoRoot, 'work-links: native\n' + (policyRaw || ''));
@@ -1848,7 +1848,7 @@ function parentGateRow({ records, subIssues, parentLabels = [], subIssuesReply, 
     if (args[0] === '--version') return 'gh version 2.0.0';
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
     if (isSubIssuesCall(args)) return subIssuesReply ? subIssuesReply() : subIssuesGh(subIssues);
-    if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: [] });
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: parentComments });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
@@ -1977,7 +1977,7 @@ test('acceptance-labeling falls back to the default high floor when policy.yml s
 // Two run records under different parents: #898 stays incomplete (open
 // sibling #901) while #899 is due, so each row's detail must carry the not-due
 // skip reason alongside the due parent's outcome.
-function twoParentRow({ dueParentLabels, dueParentComments }) {
+function twoParentRow({ dueParentLabels, dueParentComments, otherParentLabels = [] }) {
   const runDir = makeTmpDir('verify-acceptance-twoparents-');
   writeSpecFile(runDir, '900', 900);
   writeSpecFile(runDir, '910', 910);
@@ -2001,7 +2001,7 @@ function twoParentRow({ dueParentLabels, dueParentComments }) {
     if (isSubIssuesCall(args)) return subIssuesGh(subsOf[Number(args[2].match(/issues\/(\d+)\/sub_issues$/)[1])]);
     if (args.includes('labels,comments')) {
       if (args[2] === '899') return JSON.stringify({ labels: dueParentLabels.map((name) => ({ name })), comments: dueParentComments });
-      return JSON.stringify({ labels: [], comments: [] });
+      return JSON.stringify({ labels: otherParentLabels.map((name) => ({ name })), comments: [] });
     }
     return '';
   };
@@ -2025,6 +2025,154 @@ test('acceptance-labeling fail detail carries the not-due skip reason alongside 
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
   assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
+});
+
+// #3508: the parent path follows the Parent-Gate Procedure's four gate states.
+// A resolved parent (a verdict label) owes nothing more; a gated parent owes the
+// brief its gate posted whatever its risk tier -- only a `due` parent meets the floor.
+const BRIEF_3508 = { body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' };
+function closedSubs3508(risk) {
+  return [
+    { number: 900, state: 'open', labels: [risk] },
+    { number: 901, state: 'closed', labels: [risk] },
+  ];
+}
+
+test('AC1.1: #3508 a demo:approved parent with every sibling closed skips as already dispositioned', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:high') });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+  assert.doesNotMatch(row.detail, /missing demo:pending/);
+});
+
+test('#3508 a below-floor resolved parent skips as dispositioned, not below the floor', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closedSubs3508('risk:medium') });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /already dispositioned/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 every verdict spelling and an outranked pending label skip as dispositioned', () => {
+  for (const parentLabels of [['accept:approved'], ['demo:changes-requested'], ['accept:changes-requested'], ['demo:pending', 'demo:changes-requested']]) {
+    const { row } = parentGateRow({ records: [900], parentLabels, subIssues: closedSubs3508('risk:high') });
+    assert.strictEqual(row.result, 'skip', `${parentLabels}: ${row.detail}`);
+    assert.match(row.detail, /already dispositioned/, parentLabels.join());
+    assert.doesNotMatch(row.detail, /outranked/, parentLabels.join());
+  }
+});
+
+test('#3508 a reopened sub-issue under a resolved parent reads dispositioned, not not due', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    parentLabels: ['demo:approved'],
+    subIssues: [
+      { number: 900, state: 'open', labels: ['risk:high'] },
+      { number: 901, state: 'open', labels: ['risk:high'] },
+    ],
+  });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /already dispositioned/);
+  assert.doesNotMatch(row.detail, /not due/);
+});
+
+test('AC2.1: #3508 a below-floor gated parent with no brief fails', () => {
+  const { row } = parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closedSubs3508('risk:medium') });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#898: no comment carries a confirmed Verification Brief or an acceptance packet/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 a below-floor gated parent with a brief passes, never skips', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    parentLabels: ['demo:pending'],
+    parentComments: [BRIEF_3508],
+    subIssues: closedSubs3508('risk:medium'),
+  });
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#3508 a gated parent with an open sibling still has its brief checked', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    parentLabels: ['demo:pending'],
+    subIssues: [
+      { number: 900, state: 'open', labels: ['risk:medium'] },
+      { number: 901, state: 'open', labels: ['risk:medium'] },
+    ],
+  });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.doesNotMatch(row.detail, /not due/);
+  assert.doesNotMatch(row.detail, /below oversight floor/);
+});
+
+test('#3508 a resolved parent\'s skip reason rides a failing row', () => {
+  const row = twoParentRow({ otherParentLabels: ['demo:approved'], dueParentLabels: [], dueParentComments: [] });
+  assert.strictEqual(row.result, 'fail', row.detail);
+  assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+});
+
+test('#3508 a resolved parent\'s skip reason rides a passing row', () => {
+  const row = twoParentRow({ otherParentLabels: ['demo:approved'], dueParentLabels: ['demo:pending'], dueParentComments: [BRIEF_3508] });
+  assert.strictEqual(row.result, 'pass', row.detail);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+});
+
+// The procedure's gate-state table is the prose twin of this check's parent path.
+// It compares each row's quoted result and detail with the row the check emits for
+// that state, rather than asserting the literals are merely present.
+const GATE_TABLE_HEADING = '**What the `acceptance-labeling` row does with each gate state.**';
+const GATE_TABLE_END = '## Close the parent below the floor';
+const GATE_TABLE_STATES = ['`incomplete`', '`resolved`', '`gated`', '`due`, `exceeds: false`', '`due`, `exceeds: true`'];
+function gateTableFixture3508(state) {
+  const closed = (risk) => closedSubs3508(risk);
+  switch (state) {
+    case '`incomplete`':
+      return parentGateRow({ records: [900], subIssues: [{ number: 900, state: 'open', labels: ['risk:high'] }, { number: 901, state: 'open', labels: ['risk:high'] }] });
+    case '`resolved`':
+      return parentGateRow({ records: [900], parentLabels: ['demo:approved'], subIssues: closed('risk:high') });
+    case '`gated`':
+      return parentGateRow({ records: [900], parentLabels: ['demo:pending'], subIssues: closed('risk:medium') });
+    case '`due`, `exceeds: false`':
+      return parentGateRow({ records: [900], subIssues: closed('risk:medium') });
+    case '`due`, `exceeds: true`':
+      return parentGateRow({ records: [900], subIssues: closed('risk:high') });
+    default:
+      throw new Error(`no fixture for gate state ${state}`);
+  }
+}
+function assertGateTableTwin(doc) {
+  const start = doc.indexOf(GATE_TABLE_HEADING);
+  assert.ok(start >= 0, 'the gate-state table heading is missing');
+  const end = doc.indexOf(GATE_TABLE_END, start);
+  assert.ok(end > start, 'the gate-state table is not followed by the close-below-the-floor section');
+  const rows = doc.slice(start, end).split('\n').filter((l) => l.startsWith('| `')).map((l) => {
+    const cells = l.split('|').slice(1, -1).map((c) => c.trim());
+    return { state: cells[0], result: cells[1].match(/`([^`]+)`/)[1], detail: cells[2].match(/`([^`]+)`/)[1] };
+  });
+  assert.deepStrictEqual(rows.map((r) => r.state), GATE_TABLE_STATES);
+  for (const r of rows) {
+    const { row } = gateTableFixture3508(r.state);
+    const emitted = row.detail.replace(/#898/g, '#P').replace('1 sibling', 'N sibling');
+    assert.strictEqual(row.result, r.result, `${r.state}: result`);
+    assert.strictEqual(emitted, r.detail, `${r.state}: detail`);
+  }
+}
+const PARENT_GATE_DOC_3508 = readText(path.join(__dirname, '../../../plugin/skills/wrap-up/verification-brief-parent-gate.md'));
+
+test('AC3.1: #3508 the procedure\'s gate-state table matches the row the check emits', () => {
+  assertGateTableTwin(PARENT_GATE_DOC_3508);
+});
+
+test('#3508 the gate-state table pin goes red on a reworded detail and a dropped row', () => {
+  // Each mutant must differ from the doc, or the control would pass vacuously on an input it never changed.
+  const reworded = PARENT_GATE_DOC_3508.replace('already dispositioned', 'already accepted');
+  const dropped = PARENT_GATE_DOC_3508.split('\n').filter((l) => !l.startsWith('| `gated` |')).join('\n');
+  assert.notStrictEqual(reworded, PARENT_GATE_DOC_3508, 'the reworded mutant must differ from the doc');
+  assert.notStrictEqual(dropped, PARENT_GATE_DOC_3508, 'the dropped-row mutant must differ from the doc');
+  assert.throws(() => assertGateTableTwin(reworded));
+  assert.throws(() => assertGateTableTwin(dropped));
 });
 
 // #4551: work-links body-text fixture. bodies: { [n]: body string | null };
