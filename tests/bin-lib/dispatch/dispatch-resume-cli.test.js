@@ -261,6 +261,30 @@ test('AC2.1: the read asks only the closing connection, and a connection with no
   });
 });
 
+test('AC2.1: a PR that only mentions the record never resolves, however the reply carries the mention', () => {
+  // The reply GitHub would return for a record whose closing connection is empty while an open, own-marker
+  // draft PR cross-references it (a body mention, no closing keyword): only the connection is read.
+  const mention = {
+    __typename: 'CrossReferencedEvent',
+    willCloseTarget: false,
+    source: toNode(prEntry({ __typename: 'PullRequest' })),
+  };
+  const reply = { data: { repository: { issue: {
+    closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
+    timelineItems: { pageInfo: { hasNextPage: false }, nodes: [mention] },
+  } } } };
+  const env = makeEnv();
+  env.cfg.prs = JSON.stringify(reply);
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'no-pr');
+  assert.deepStrictEqual(r.json.prNumbers, []);
+  assert.equal(r.json.headRefName, null);
+  assert.equal(r.json.line.includes(`#${PR}`), false, 'the mentioning PR is never named');
+  assert.equal(env.calls.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql').length, 1);
+  assert.equal(env.calls.gh.some((a) => a[0] === 'pr'), false, 'no head or mention listing either');
+});
+
 test('merged and closed PRs in the connection read as no-pr', () => {
   for (const over of [{ state: 'MERGED' }, { state: 'CLOSED' }]) {
     const env = makeEnv();
@@ -358,8 +382,11 @@ test('a refusal fired before the prior-run rule still carries liveRun when the o
   setRunState(env, { status: 'active', owner: OWNER });
   const r = exec(env);
   assert.equal(r.json.reason, 'claim-not-resumable');
-  assert.equal(r.json.disposition, 'close');
   assert.equal(r.json.liveRun, true);
+  // A provably live run is never told to close its PR or remove its worktree: the remedy waits, then resumes.
+  assert.equal(r.json.disposition, 'resume');
+  assert.match(r.json.remedy, /provably live — leave PR #\d+ and its worktree alone; wait for that run to exit, then run \/claude-tweaks:dispatch resume #/);
+  assert.doesNotMatch(r.json.remedy, /git worktree|git branch|git push|gh pr close/);
   // A selection refusal too, whichever disposition: a draft bundle marked for this record.
   const bundle = makeEnv();
   bundle.cfg.prs = [prEntry({ closingRecords: 2 })];
@@ -367,10 +394,16 @@ test('a refusal fired before the prior-run rule still carries liveRun when the o
   const b = exec(bundle);
   assert.equal(b.json.reason, 'multi-record-pr');
   assert.equal(b.json.liveRun, true);
+  assert.equal(b.json.disposition, 'resume');
+  assert.doesNotMatch(b.json.remedy, /git worktree|git branch|git push|gh pr close/);
   // Not a proven-live owner: no key.
   const dead = makeEnv();
   dead.cfg.claim = null;
-  assert.equal(Object.hasOwn(exec(dead).json, 'liveRun'), false);
+  const d = exec(dead).json;
+  assert.equal(Object.hasOwn(d, 'liveRun'), false);
+  // ...and keeps the close-and-redispatch steps: the live-run remedy is the exception, not the rule.
+  assert.equal(d.disposition, 'close');
+  assert.match(d.remedy, /git worktree remove/);
 });
 
 const NO_RUN_LINE = `#${N}'s PR #${PR} names run ${RUN}, which left no run directory for close-out to verify — review and merge it by hand`;

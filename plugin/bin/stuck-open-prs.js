@@ -226,7 +226,9 @@ function stuckRowFor(deps, {
     const head = typeof verdict.headRefName === 'string' && verdict.headRefName !== '' ? verdict.headRefName : null;
     if (head !== null && deps.findSiblingOnWorktree({ branch: head }, { cwd: mainRoot }) !== null) return null;
     return row;
-  } catch {
+  } catch (e) {
+    // `step` is the last one reached, so a throw in a later read still names the one before it.
+    deps.stderr(`stuck-open-prs.js: #${n}: threw after ${step}: ${errText(e)}\n`);
     return unreadable();
   }
 }

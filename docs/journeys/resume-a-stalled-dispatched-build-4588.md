@@ -25,12 +25,12 @@ files:
 - **Should understand:** The suffix appears only for the record's own stalled draft PR. A foreign PR, a live sibling, or any other refusal renders the base line unchanged.
 - **Red flags:** The suffix on a PR another run or a human owns; the `dispatch #N` "already claimed" refusal for a `bot:in-progress` record changing wording.
 
-### 2. Run the eligibility check before anything is minted — `dispatch/resume.md` Step 2, `bin/dispatch-resume.js`
+### 2. Run the eligibility check before the stalled run is bound or archived — `dispatch/resume.md` Step 2, `bin/dispatch-resume.js`
 - **URL:** `https://github.com/{owner}/{repo}/pull/{pr}`
 - **Action:** `dispatch resume #N` runs `node bin/dispatch-resume.js --issue N`. It reads the open PRs that close the record through its closing-reference connection (`closedByPullRequestsReferences`, so any head name resolves) and derives the stalled worktree from the chosen PR's head, then reads labels, issue state, open blockers, the claim blob, the prior run directory (archive first), the prior owner's process, sibling sessions, other run dirs bound to the worktree, and the stalled worktree's `git status`. Exit 3 prints the verdict's `line` verbatim, or its `remedy` when the disposition is `close`, and stops.
-- **Should feel:** Safe: every refusal names the state it found and the manual remedy, and nothing has been written yet.
+- **Should feel:** Safe: every refusal names the state it found and the manual remedy, and nothing has been bound, archived or resumed yet (Step 1 may already have minted this firing's own standalone run dir, which the exit closes).
 - **Should understand:** Refusals include `bot:blocked` or no `auto:build` (→ `/claude-tweaks:backlog refine #N`), a dirty stalled worktree (every dirty path listed), a prior owner on another host, a live or unprovable prior owner, a `pr-opened:` tombstone (→ close-out), a PR closing more than one record (`multi-record-pr`) or one from a fork or another repository (`cross-repo-pr`, which names the PR rather than reading as `no-pr`), a live claim, a claim run id that differs from the PR marker's run (`run-mismatch`), and a dead leftover run bound to the worktree (`stale-bound-run`, naming `hooks.js close-run`). Any state the eligible list does not name is refused under the Closed rule.
-- **Red flags:** A run dir minted or archived before an exit-3 refusal; a refusal line with no remedy; a resume that proceeds with uncommitted edits in the stalled worktree.
+- **Red flags:** The prior run bound or archived before an exit-3 refusal; a refusal that prints the close-and-redispatch steps for a run whose owner is provably live (`liveRun: true`); a refusal line with no remedy; a resume that proceeds with uncommitted edits in the stalled worktree.
 
 ### 3. Archive the prior run and bind the worktree — `dispatch/resume.md` Steps 3-6a
 - **URL:** —

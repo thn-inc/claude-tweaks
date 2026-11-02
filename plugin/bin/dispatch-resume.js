@@ -11,9 +11,11 @@
 //                 priorRunPath, archivePriorRun, closePriorRun, localBranchExists, worktreePath,
 //                 context:{lastPhase, openDefects}}
 //     refused  → {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName}
-//                (`line` is the verdict's, printed verbatim; the rest is refusalDetail's: [], null,
-//                null, null for no-pr), plus liveRun:true when a provably live owner holds the run,
-//                whatever the refusal's reason.
+//                (`line` is the verdict's; the rest is refusalDetail's: [], null, null, null for
+//                no-pr). A caller prints `line` verbatim, or `remedy` in its place on disposition
+//                `close`. liveRun:true is added when a provably live owner holds the run, whatever
+//                the refusal's reason; a `close` refusal then carries a wait-then-resume remedy and
+//                disposition `resume`, never the close steps.)
 //     An eligible verdict then runs the run-dir scan below with the prior run's own root dir
 //     excluded, so a run left bound to the stalled worktree refuses before anything is archived.
 //   --bound-run  resume step 6a, after `record-worktree --dispatch` bound the new run: skips the
@@ -532,7 +534,7 @@ function refusal(ctx, prs, verdict, prior = null) {
     issue,
     reason: verdict.reason,
     line: verdict.line,
-    ...refusalDetail({ issue, verdict, prs, mainRoot }),
+    ...refusalDetail({ issue, verdict, prs, mainRoot, liveRun }),
     ...(liveRun ? { liveRun: true } : {}),
   });
   return EXIT_REFUSED;

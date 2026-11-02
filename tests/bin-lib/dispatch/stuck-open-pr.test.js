@@ -149,6 +149,7 @@ function makeEnv(over = {}) {
     exact: null,
     exactThrows: false,
     verdicts: { 1: { code: 0, json: eligibleJson(1, 10) } },
+    resumeThrows: false,
     ...over,
   };
   const calls = [];
@@ -191,6 +192,7 @@ function makeEnv(over = {}) {
     },
     resume: (n, io) => {
       calls.push(['resume', n]);
+      if (cfg.resumeThrows) throw new Error('resume boom');
       const v = cfg.verdicts[n];
       if (!v) return 4;
       if (v.json !== undefined) io.stdout(`${JSON.stringify(v.json)}\n`);
@@ -343,6 +345,31 @@ test('a throwing sibling read stays visible as a row, never as a clean record', 
     assert.equal(rows(env).length, 1);
     assert.match(rows(env)[0].remedy, /could not read #1's state \(sibling session check\) — re-run \/claude-tweaks:backlog attention/);
     assert.doesNotMatch(rows(env)[0].remedy, /dispatch-resume exit/, 'dispatch-resume did not fail');
+  }
+});
+
+test('a throwing verdict run is a row naming the dispatch-resume step, never the sibling check, and carries its cause to stderr', () => {
+  const env = makeEnv({ resumeThrows: true });
+  assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+  assert.equal(rows(env).length, 1);
+  assert.equal(rows(env)[0].remedy, "could not read #1's state (dispatch-resume exit 4) — re-run /claude-tweaks:backlog attention");
+  assert.doesNotMatch(rows(env)[0].remedy, /sibling session check/);
+  assert.match(env.err.join(''), /stuck-open-prs\.js: #1: resume boom/);
+  assert.doesNotMatch(env.err.join(''), /threw after/, 'readVerdict caught it; the outer catch never ran');
+});
+
+test('a throw that reaches the blanket catch writes its record, last step and cause to stderr, row unchanged', () => {
+  const cases = [
+    [{ claimThrows: true }, 'claim read', 'claim boom'],
+    [{ siblingThrows: true }, 'sibling session check', 'sibling boom'],
+    [{ exactThrows: true, verdicts: { 1: { code: 3, json: refusedJson(1, 'not-draft', { headRefName: 'fix/thing' }) } } }, 'sibling session check', 'exact boom'],
+  ];
+  for (const [patch, step, cause] of cases) {
+    const env = makeEnv(patch);
+    assert.equal(run(['--records', RECORDS_PATH], env.deps), 0);
+    assert.equal(rows(env).length, 1, cause);
+    assert.equal(rows(env)[0].remedy, `could not read #1's state (${step}) — re-run /claude-tweaks:backlog attention`, cause);
+    assert.equal(env.err.join(''), `stuck-open-prs.js: #1: threw after ${step}: ${cause}\n`, cause);
   }
 });
 

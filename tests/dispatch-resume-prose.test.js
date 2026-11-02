@@ -386,7 +386,7 @@ const STEP_2_CLAIMS = [
   ['disposition values', /`disposition` \(`resume`, `close-out` or `close`; null for `no-pr`\)/],
   ['refusal shape', /\{eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName\}/],
   ['liveRun on a refusal', /\(plus `liveRun: true` when a run's owner is provably live, the prior run's or another run's bound to the stalled worktree, whatever the refusal's reason\)/],
-  ['a close refusal prints remedy in place of line', /print `line` verbatim as the whole refusal and stop, or `remedy` verbatim in its place when `disposition` is `close`, since `remedy` carries the full steps and names a fork PR that keeps the record excluded/],
+  ['a close refusal prints remedy in place of line', /print `line` verbatim as the whole refusal and stop, or `remedy` verbatim in its place when `disposition` is `close` or `liveRun` is true, since `remedy` carries the full steps, names a fork PR that keeps the record excluded, and for a live run says to leave the PR and worktree alone and wait/],
   ['a non-draft PR never takes close', /a non-draft PR is never told to close, so a foreign, multi-record or cross-repo one reads `close-out` or review-by-hand/],
   ['a non-draft among several PRs reads review by hand', /more than one open PR closes it \(close the extra one; a non-draft among them reads review by hand\)/],
   ['no-pr keeps the plain dispatch remedy', /no open PR closes it \(a plain dispatch applies\)/],

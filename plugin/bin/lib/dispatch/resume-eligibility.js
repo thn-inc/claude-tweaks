@@ -190,14 +190,16 @@ function ownMarkerRunId(issue, prs) {
 
 // Every step a fresh dispatch of the record needs: its open-pr exclusion goes with the PR, and a kept
 // worktree or branch blocks the new one (a locked worktree refuses `remove`, and `branch -D` then fails).
-// A head no worktree could hold is unsafe to paste into a command.
+// A head no worktree could hold is unsafe to paste into a command, and a head this plugin's builds do
+// not name (no `worktree-` prefix: `develop`, `release/2.0`) is a branch the marker alone does not prove
+// ours to delete — both take the by-hand wording.
 function closeRedispatchRemedy({
   issue, prNumber, headRefName, mainRoot, forks = [],
 }) {
   const name = worktreeNameForHead(headRefName);
   const closePr = `close PR #${prNumber} (gh pr close ${prNumber})`;
   const redispatch = redispatchStep(issue, forks);
-  if (name === null) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
+  if (name === null || !headRefName.startsWith('worktree-')) return `${closePr}, remove any worktree holding its branch and delete the local and remote branch by hand, ${redispatch}`;
   const worktree = path.join(mainRoot, '.claude', 'worktrees', ...name.split('/'));
   return `${closePr}, unlock and remove its worktree if one exists (git worktree unlock "${worktree}"; git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
@@ -208,21 +210,28 @@ const NO_CLOSE_STEPS = new Set(['record-closed', 'cross-repo-pr', 'multi-record-
 
 // What a caller reports for a refused verdict. `prNumbers` are the refusal's subject (the kept PRs, or
 // the fork PRs when none is kept), ascending; `headRefName` is the one kept PR's head, else null. The
-// close steps destroy a branch, so they print only for a PR whose marker names this record.
-function refusalDetail({ issue, verdict, prs, mainRoot }) {
+// close steps destroy a branch, so they print only for a PR whose marker names this record, and never
+// when `liveRun` says a provably live owner holds its run: that refusal reads wait-then-resume, since
+// closing the PR and removing the worktree would destroy a running build.
+function refusalDetail({ issue, verdict, prs, mainRoot, liveRun = false }) {
   const { kept, forks } = splitListing(prs);
   const subject = kept.length > 0 ? kept : forks;
   const only = kept.length === 1 ? kept[0] : null;
   let remedy = verdict.line;
+  let disposition = verdict.disposition ?? null;
   if (verdict.reason === 'no-pr') remedy = null;
-  else if (verdict.disposition === 'close' && !NO_CLOSE_STEPS.has(verdict.reason) && only !== null && markerNamesRecord(only, issue)) {
+  else if (liveRun && disposition === 'close') {
+    const pr = only !== null ? `PR #${only.number}` : 'its PR';
+    remedy = `#${issue}'s run has an owner that is provably live — leave ${pr} and its worktree alone; wait for that run to exit, then run /claude-tweaks:dispatch resume #${issue}`;
+    disposition = 'resume';
+  } else if (disposition === 'close' && !NO_CLOSE_STEPS.has(verdict.reason) && only !== null && markerNamesRecord(only, issue)) {
     remedy = closeRedispatchRemedy({
       issue, prNumber: only.number, headRefName: only.headRefName, mainRoot, forks,
     });
   }
   return {
     prNumbers: subject.map((p) => p.number).filter(isPositiveInteger).sort((a, b) => a - b),
-    disposition: verdict.disposition ?? null,
+    disposition,
     remedy,
     headRefName: only === null ? null : only.headRefName,
   };

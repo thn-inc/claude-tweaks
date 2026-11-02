@@ -6,7 +6,10 @@
 
 // Refusals that mean the record is not stuck: another run or session holds it right now. `live-claim`
 // and `live-sibling` are the verdict's; the CLI also hides a record on its own claim and sibling reads,
-// before the verdict, since the verdict can refuse a PR it cannot resume before it reads either.
+// before the verdict, since the verdict can refuse a PR it cannot resume before it reads either. `no-pr`
+// is the odd one: the CLI reaches a verdict only after its batched linked-PR read found an open PR, so
+// `no-pr` means the two reads disagreed (the verdict's closing-reference read found none) — hidden,
+// not an unreadable row.
 const NO_ROW_REASONS = Object.freeze(['live-claim', 'live-sibling', 'no-pr']);
 
 const isObject = (v) => v !== null && typeof v === 'object' && !Array.isArray(v);

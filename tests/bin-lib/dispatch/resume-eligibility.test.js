@@ -285,7 +285,7 @@ const REFUSALS = [
     '#4589 has 2 open PRs that close it (#4604, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['PR closing several records', { prs: [prEntry({ closingRecords: 2 })] }, 'multi-record-pr',
     "#4589's PR #4604 closes 2 records — dispatch resume restarts one record's build, never a bundle; merge or close PR #4604 by hand, then run /claude-tweaks:dispatch #4589", 'close'],
-  ['foreign head', { prs: [prEntry({ headRefName: 'a$(x)' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
+  ['unsafe-charset head', { prs: [prEntry({ headRefName: 'a$(x)' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
   ['foreign marker record', { prs: [prEntry({ body: 'claude-tweaks-run: 2026-10-30T101632-record-12\n' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
   ['malformed marker', { prs: [prEntry({ body: 'claude-tweaks-run: nope\n' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
   ['non-draft PR', { prs: [prEntry({ isDraft: false })] }, 'not-draft',
@@ -664,6 +664,20 @@ test('closeRedispatchRemedy prints no command for a head that is unsafe to paste
   assert.match(s, /by hand/);
   assert.match(s, /close PR #70 \(gh pr close 70\)/);
   assert.match(s, /then run \/claude-tweaks:dispatch #7$/);
+});
+test('closeRedispatchRemedy prints no branch-delete command for a bare head, only for a worktree- head', () => {
+  for (const head of ['develop', 'release/2.0', 'fix/thing']) {
+    const s = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: head, mainRoot: '/repo' });
+    assert.doesNotMatch(s, /git branch -D|git push origin --delete|git worktree/, head);
+    assert.ok(!s.includes(head), head);
+    assert.equal(s, 'close PR #70 (gh pr close 70), remove any worktree holding its branch and delete the local and remote branch by hand, then run /claude-tweaks:dispatch #7', head);
+  }
+  const own = closeRedispatchRemedy({ issue: 7, prNumber: 70, headRefName: 'worktree-record-7', mainRoot: '/repo' });
+  assert.match(own, /git branch -D worktree-record-7; git push origin --delete worktree-record-7/);
+  const prs = [prEntry({ headRefName: 'release/2.0' })];
+  const d = refusalDetail({ issue: N, verdict: verdict({ prs, claimContent: tombstone('merged: x') }), prs, mainRoot: '/repo' });
+  assert.match(d.remedy, /gh pr close 4604/);
+  assert.doesNotMatch(d.remedy, /git branch -D|git push origin --delete/);
 });
 test('AC5.1: a non-draft or pr-opened refusal names close-out and never a close instruction', () => {
   for (const over of [{ prs: [prEntry({ isDraft: false })] }, { claimContent: tombstone(`pr-opened: ${URL}`) }]) {

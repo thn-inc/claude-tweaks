@@ -471,7 +471,7 @@ function assertStuckMerge(snippets) {
   assert.strictEqual(seven.priority, 'high', 'Step 3 ranks it by the copied labels');
   const eight = ranked.find((r) => r.number === 8);
   assert.deepStrictEqual(eight.types, ['needs:definition', 'stuck:open-pr'], 'a record in two sets is one row with both types');
-  assert.strictEqual(eight.stuckRemedy, 'R8');
+  assert.strictEqual(eight.stuckRemedy, 'R8', 'a record in two sets keeps its stuckRemedy');
   assert.strictEqual(ranked.filter((r) => r.number === 8).length, 1);
   assert.deepStrictEqual(ranked.map((r) => r.number), [7, 9, 10, 8], 'band first (high, medium, none), then oldest first within a band');
 
@@ -489,18 +489,20 @@ test('AC3.1: Step 2 and Step 3 turn the CLI\'s rows into ranked stuck:open-pr ro
 
 test('AC3.1 controls: the merge assertion goes red when the loop, stuckRemedy, the rows guard, the band key or the age key is removed', { skip: SKIP_NO_BASH }, () => {
   const snippets = stuckSnippets();
+  // Each control names the assertion (or the fence's own crash) it must trip, so a mutant that dies for an unrelated reason stays red.
   const mutations = [
-    ['merge', 'for (const r of stuckRows)', 'for (const r of [])'],
-    ['merge', 'stuckRemedy: r.remedy', 'stuckRemedy: undefined'],
-    ['merge', 'existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined'],
-    ['merge', 'if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;'],
+    ['merge', 'for (const r of stuckRows)', 'for (const r of [])', /a stuck-only record gets its own row/],
+    ['merge', 'stuckRemedy: r.remedy', 'stuckRemedy: undefined', /the merged row carries stuckRemedy/],
+    ['merge', 'existing.stuckRemedy = r.remedy', 'existing.stuckRemedy = undefined', /a record in two sets keeps its stuckRemedy/],
+    // the unguarded read: a check that did not run leaves stuckRows undefined, and the loop over it crashes the fence
+    ['merge', 'if (Array.isArray(stuck.rows)) stuckRows = stuck.rows;', 'stuckRows = stuck.rows;', /Command failed[\s\S]*is not iterable/],
     // rank ignores the priority band: only the age key orders, so the older no-band record beats the younger high one
-    ['rank', 'if (bandA !== bandB) return bandA - bandB;', ''],
+    ['rank', 'if (bandA !== bandB) return bandA - bandB;', '', /band first \(high, medium, none\), then oldest first within a band/],
     // age key inverted: the band key still orders, but the same-band pair comes out youngest first
-    ['rank', 'return new Date(a.createdAt) - new Date(b.createdAt);', 'return new Date(b.createdAt) - new Date(a.createdAt);'],
+    ['rank', 'return new Date(a.createdAt) - new Date(b.createdAt);', 'return new Date(b.createdAt) - new Date(a.createdAt);', /band first \(high, medium, none\), then oldest first within a band/],
   ];
-  for (const [which, from, to] of mutations) {
+  for (const [which, from, to, intended] of mutations) {
     assert.ok(snippets[which].includes(from), `control target exists: ${from}`);
-    assert.throws(() => assertStuckMerge({ ...snippets, [which]: snippets[which].replace(from, to) }), undefined, from);
+    assert.throws(() => assertStuckMerge({ ...snippets, [which]: snippets[which].replace(from, to) }), intended, from);
   }
 });
