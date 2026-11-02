@@ -71,6 +71,24 @@ function oneLineReason(text, max = 500) {
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
 }
 
+// (#4899) The text of a refused claim read or write, for `permissionStop`. The
+// store's `error` is the failed command's message plus its stderr, so a real
+// refusal opens with a `Command failed: gh api ... -f content=<base64 claim>`
+// line (the command line and the claim payload, which do not belong in the
+// reason) and then repeats gh's own stderr. Drop that line and any exact
+// duplicate line, leaving GitHub's text; nothing left is the empty string.
+function refusalText(error) {
+  const seen = new Set();
+  const kept = [];
+  for (const line of String(error || '').split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === '' || trimmed.startsWith('Command failed:') || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    kept.push(trimmed);
+  }
+  return kept.join('\n');
+}
+
 // Claim blobs are remote data: an unparseable one is classified 'unreadable'
 // by classifyClaimBlob and never fatal here, so every identity read yields
 // null rather than throwing.
@@ -518,7 +536,7 @@ function run(argv, deps) {
   // `--keep-going`, bypassing `stopOrSkip`, and the claims this run already took
   // are released by `abort`. Returns the exit code.
   function permissionStop(issue, operation, result) {
-    const reason = oneLineReason(result.error || 'permission-denied');
+    const reason = oneLineReason(refusalText(result.error) || 'permission-denied');
     deps.stderr(`claim-targets: GitHub refused the claim ${operation} for #${issue}: ${reason} — check the token's access to this repository and the ${CLAIMS_BRANCH} branch\n`);
     return abort({ permissionDenied: { issue, operation, reason } }, 7);
   }

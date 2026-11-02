@@ -2776,6 +2776,52 @@ test('reason falls back to permission-denied when the store carries no error tex
   assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
 });
 
+// The store's real `error` is the failed command's message plus its stderr
+// (defaultGhApi): a `Command failed: gh api ... -f content=<base64 claim>` line,
+// then gh's own text, repeated. The reason keeps only GitHub's text.
+const COMMAND_LINE = 'Command failed: gh api --method PUT repos/a/b/contents/claims/issue-720.json -f content=ewogICJydW5JZCI6';
+const GH_REFUSAL = 'gh: Resource not accessible by personal access token (HTTP 403)';
+
+test('real-shape refusal: the Command failed line and the repeated stderr line are dropped from reason and stderr', () => {
+  const error = `${COMMAND_LINE}\n${GH_REFUSAL}\n${GH_REFUSAL}\n`;
+  const { ghApi } = makeGhApi({ reads: { 720: [readAbsent] }, writes: { 720: [{ ...PERM_403, error }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  const body = assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: GH_REFUSAL });
+  for (const text of [JSON.stringify(body), io.err.join('')]) {
+    assert.doesNotMatch(text, /Command failed/);
+    assert.doesNotMatch(text, /ewogICJydW5JZCI6/);
+  }
+});
+
+test('reason falls back to permission-denied when the error is only the Command failed line', () => {
+  const { ghApi } = makeGhApi({ reads: { 720: [{ ...PERM_403, error: `${COMMAND_LINE}\n` }] } });
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'read', reason: 'permission-denied' });
+});
+
+test('refused branch lookup: PUT 404, absent re-read, then the branches lookup answers 403 exits 7 operation write with its text', () => {
+  const ghApi = (args) => {
+    if (isRead(args, '720')) return readAbsent;
+    if (isWrite(args, '720')) return { stdout: null, failure: null, status: 404 };
+    if (args[0] === `repos/${REPO}/branches/claims-registry`) return { ...PERM_403, error: 'HTTP 403: branch lookup refused' };
+    throw new Error(`unexpected ghApi ${args.join(' ')}`);
+  };
+  const { gh } = makeGh({});
+  const { deps, io } = baseDeps({ ghApi, gh });
+
+  const code = run(['--run-id', 'r1', '--targets', '720'], deps);
+
+  assertPermissionStop(code, io, { issue: 720, operation: 'write', reason: 'HTTP 403: branch lookup refused' });
+});
+
 test('release refused: the earlier claim\'s release read answers 403 — exit stays 7, target in releaseFailed', () => {
   const { ghApi } = makeGhApi({
     reads: { 720: [readAbsent, confirmRead(), PERM_403], 721: [PERM_403] },

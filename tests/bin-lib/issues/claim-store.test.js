@@ -1122,6 +1122,17 @@ test('writeClaimBlob: create-only PUT rejected + absent re-read + branches read 
   assert.deepEqual(w, { ok: false, failure: 'permission-denied' });
 });
 
+// (#4899) Same lookup, but the refusal carries the forge's text: it rides on the result.
+test('writeClaimBlob: a branches read denied (403) WITH error text carries that error on the permission-denied result', () => {
+  const ghApi = (args) => {
+    if (args[0] === '--method') return { stdout: null, failure: null, status: 404 };
+    if (sameArgs(args, BRANCHES_ARGS)) return { stdout: null, failure: 'permission-denied', status: 403, error: 'HTTP 403: branch lookup refused' };
+    return { stdout: null, failure: null, status: 404 }; // contents re-read: absent
+  };
+  const w = writeClaimBlob({ ghApi }, 'acme/w', 7, { content: '{"a":1}', sha: null, createOnly: true, message: 'm' });
+  assert.deepEqual(w, { ok: false, failure: 'permission-denied', error: 'HTTP 403: branch lookup refused' });
+});
+
 test('writeClaimBlob: a rejected PUT whose re-read shows ANOTHER holder\'s blob never consults the branches endpoint', () => {
   const calls = [];
   const ghApi = (args) => {
