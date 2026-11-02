@@ -1299,18 +1299,24 @@ test('#4770: the prose note matches the code constant', () => {
 
 // ---- #4800: the Step 4.0b skip rules are pinned across the prose and the module ----
 //
-// Three enumerators read the live prose and name each deliberate skip reason it states; the
-// module's comment-stripped source names the reasons it emits. A skip added to one side alone makes
-// the two sets differ. The enumerators and the comparison take text and sets as parameters, so the
-// go-red controls below run the same functions on doctored input.
+// Three enumerators read the live prose and name each deliberate skip reason it states; the module's
+// source names the reasons it emits. Two pins: the prose's reasons equal DELIBERATE_SKIP_REASONS, and
+// the prose's reasons less the gate's pass-through states equal the source's literals (the module
+// emits those states as `verdict.state`, not as literals). A Step 4.0b sentence is in scope when it
+// states a skip (a skip word), or when it sits in the routing paragraph, from "Route a `no-parent`
+// verdict first" through "Every other outcome is a no-op": there every sentence must match a row
+// whatever its wording. The remaining limit: a rule stated outside the routing paragraph without a
+// skip word is not detected. The enumerators and the comparison take text and sets as parameters, so
+// the go-red controls below run the same functions on doctored in-memory text.
 
 const BELOW_FLOOR_MODULE = path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'below-floor-parent-close.js');
 const FAILURE_REASONS = ['gh-failed', 'internal-error', 'invalid-risk-floor'];
 const OUTSIDE = (note) => ({ reasons: [], note });
 
-// Step 4.0b's skip sentences, each as [anchor, disposition]. `reasons` are deliberate skip reasons;
-// `failure` is a failing-gh outcome, not a deliberate skip; `note` says why a row names no reason.
-// The catch-all row's `above-floor` is the only reason its sentence adds; enumerators 2 and 3 expand it.
+// Step 4.0b's in-scope sentences, each as [anchor, disposition]. `reasons` are deliberate skip reasons;
+// `failure` is a failing-gh outcome, not a deliberate skip; `note` says why a row names no reason (the
+// routing rows have none). The catch-all row's `above-floor` is the only reason its sentence adds;
+// enumerators 2 and 3 expand it.
 const STEP_40B_SKIP_SENTENCES = [
   ['Under `local-files`', OUTSIDE('outside the mirror: the module is github-issues only')],
   ['After a no-PR local merge it is a no-op unless', OUTSIDE('outside the mirror: its caller only sees PR merges')],
@@ -1326,14 +1332,30 @@ const STEP_40B_SKIP_SENTENCES = [
   ['how it skips on a failing `gh` call', { reasons: [], failure: 'gh-failed' }],
   ['Then write one summary line', OUTSIDE('outside the mirror: logging')],
   ['On the no-`closingSet[]` path above', OUTSIDE('outside the mirror: logging')],
+  ['Route a `no-parent` verdict first', OUTSIDE('no reason: a no-parent record is a silent no-op in the module (resolveParent returns null)')],
+  ["Route every other verdict in the reconciler's order", OUTSIDE('no reason: the routing order the module\'s skipReason checks follow')],
+  ['The verdict reports it as `parentIssue: false`', OUTSIDE('no reason: the field the parent-level check reads')],
+  ['On `due` with `exceeds: false`, run', OUTSIDE('no reason: the close path, not a skip')],
 ];
 
-// The sentences of a section that state a skip: fenced blocks dropped, whitespace collapsed, split
-// at sentence ends, then kept where a skip word appears.
-const step40bSkipSentences = (text) =>
-  collapse(text.replace(/^\s*```[\s\S]*?^\s*```[^\n]*$/gm, ''))
-    .split(/(?<=[.:;])\s+(?=[A-Z`*$])/)
-    .filter((s) => /\b(skips?|skipped|no-op)\b/i.test(s));
+// Every sentence of a section: fenced blocks dropped, whitespace collapsed, split at sentence ends.
+const step40bSentences = (text) =>
+  collapse(text.replace(/^\s*```[\s\S]*?^\s*```[^\n]*$/gm, '')).split(/(?<=[.:;])\s+(?=[A-Z`*$])/);
+
+// The routing paragraph runs from the sentence opening ROUTING_START through the one opening
+// ROUTING_END; every sentence in it is in scope whatever its wording. Elsewhere a sentence is in
+// scope when a skip word appears.
+const ROUTING_START = 'Route a `no-parent` verdict first';
+const ROUTING_END = 'Every other outcome is a no-op';
+function step40bInScope(sentences) {
+  const start = sentences.findIndex((s) => s.startsWith(ROUTING_START));
+  const end = sentences.findIndex((s) => s.startsWith(ROUTING_END));
+  assert.ok(start !== -1 && end > start, `Step 4.0b routing paragraph not found between "${ROUTING_START}" and "${ROUTING_END}"`);
+  return sentences.filter((s, i) => (i >= start && i <= end) || /\b(skips?|skipped|no-op)\b/i.test(s));
+}
+
+// A sentence as a regex that tolerates the file's line wrapping.
+const wrapRe = (s) => new RegExp(s.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
 
 // Each bullet of `text` that starts with `opener`, through its continuation lines and up to the
 // blank line that ends its paragraph.
@@ -1381,31 +1403,46 @@ function idempotenceNoOpReasons(step1) {
 
 // The prose's deliberate skip reasons (the union of the three enumerators) and the failure literals.
 function proseSkipSets({ step40b, gate, step1 }) {
-  const { reasons, failures } = classifyStep40bSkips(step40bSkipSentences(step40b));
+  const { reasons, failures } = classifyStep40bSkips(step40bInScope(step40bSentences(step40b)));
   for (const r of [...gateNoOpStates(gate), ...idempotenceNoOpReasons(step1)]) reasons.add(r);
   return { reasons: [...reasons].sort(), failures: [...failures].sort() };
 }
 
-// The module's deliberate skip reasons: DELIBERATE_SKIP_REASONS plus every reason literal in its
-// comment-stripped source, less the failure literals. A stripper mis-parse fails here.
+// The module's skip reasons, two ways. `deliberate` is DELIBERATE_SKIP_REASONS. `literals` is every
+// quoted literal in a `reason:` expression (up to its `,`, `}` or newline, so both arms of a ternary
+// count) and every `return '...'` literal, less the failure literals. The array's own entries are not
+// scanned, so the list cannot mask a deleted branch. `failures` are the failure literals the source names.
 function codeSkipSets(raw) {
   const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
   const { DELIBERATE_SKIP_REASONS } = require('../plugin/bin/lib/issues/below-floor-parent-close');
   const src = stripComments(raw);
   const verdict = stripperVerdict(raw, src);
   assert.ok(verdict === 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
-  const literals = [...src.matchAll(/\breason:\s*'([a-z-]+)'/g), ...src.matchAll(/\breturn '([a-z-]+)'/g)].map((m) => m[1]);
-  const reasons = new Set([...DELIBERATE_SKIP_REASONS, ...literals.filter((r) => !FAILURE_REASONS.includes(r))]);
-  // A failure literal can sit inside a ternary (`reason: err ? 'gh-failed' : 'internal-error'`), so the
-  // failures are the quoted literals of the stripped source that name a failure.
-  const quoted = new Set([...src.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]));
-  const failures = FAILURE_REASONS.filter((r) => quoted.has(r));
-  return { reasons: [...reasons].sort(), failures };
+  const quoted = (text) => [...text.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]);
+  const expressions = [...src.matchAll(/\breason:([^,}\n]*)/g)].flatMap((m) => quoted(m[1]));
+  const returns = [...src.matchAll(/\breturn '([a-z-]+)'/g)].map((m) => m[1]);
+  const all = [...expressions, ...returns];
+  return {
+    deliberate: [...DELIBERATE_SKIP_REASONS].sort(),
+    literals: [...new Set(all.filter((r) => !FAILURE_REASONS.includes(r)))].sort(),
+    failures: FAILURE_REASONS.filter((r) => all.includes(r)),
+  };
 }
 
 // Both sets, sorted, must be equal; the assertion diff names each reason that differs.
 function assertSkipSetsEqual(prose, code) {
   assert.deepEqual([...prose].sort(), [...code].sort());
+}
+
+// The two pins. The prose's reasons equal DELIBERATE_SKIP_REASONS; the prose's reasons less the gate's
+// pass-through states equal the source literals.
+function assertSkipSetsPinned(live, moduleRaw) {
+  const prose = proseSkipSets(live);
+  const code = codeSkipSets(moduleRaw);
+  assertSkipSetsEqual(prose.reasons, code.deliberate);
+  const passThrough = gateNoOpStates(live.gate);
+  assertSkipSetsEqual(prose.reasons.filter((r) => !passThrough.includes(r)), code.literals);
+  return { prose, code };
 }
 
 const liveSkipTexts = () => ({
@@ -1417,9 +1454,7 @@ const liveSkipTexts = () => ({
 
 test('#4800: the Step 4.0b skip rules are the same set in the prose and the module', () => {
   const live = liveSkipTexts();
-  const prose = proseSkipSets(live);
-  const code = codeSkipSets(live.moduleRaw);
-  assertSkipSetsEqual(prose.reasons, code.reasons);
+  const { prose, code } = assertSkipSetsPinned(live, live.moduleRaw);
   assert.ok(code.failures.includes('gh-failed'), 'gh-failed is a failure literal in the source, so the failing-gh disposition is real');
   for (const f of prose.failures) assert.ok(code.failures.includes(f), `the table's failure ${f} is a source failure literal`);
 });
@@ -1430,21 +1465,43 @@ test('#4800 go-red: a skip sentence added to Step 4.0b without a table row fails
   assert.throws(() => proseSkipSets(doctored), /unclassified Step 4\.0b skip sentence.*Skip a parent whose verdict lists `blocked`\./);
 });
 
+test('#4800 go-red: a no-skip-word sentence inserted into the routing paragraph fails as unclassified', () => {
+  const live = liveSkipTexts();
+  const routing = wrapRe("Route every other verdict in the reconciler's order.");
+  assert.ok(routing.test(live.step40b), 'the routing anchor sentence is in the live text');
+  const doctored = { ...live, step40b: live.step40b.replace(routing, (m) => `${m} A parent carrying \`blocked\` stays open, named in the closing summary.`) };
+  assert.throws(() => assertSkipSetsPinned(doctored, live.moduleRaw), /unclassified Step 4\.0b skip sentence.*stays open/);
+});
+
 test('#4800 go-red: removing the needs sentence from Step 4.0b fails its anchor', () => {
   const live = liveSkipTexts();
   // Matched whitespace-tolerantly on the raw text, since the sentence wraps in the file and the
   // fenced blocks the enumerator drops must stay fenced.
   const sentence = "Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.";
-  const wrapTolerant = new RegExp(sentence.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
-  assert.ok(wrapTolerant.test(live.step40b), 'the needs sentence is in the live text');
-  const doctored = live.step40b.replace(wrapTolerant, '');
-  assert.throws(() => proseSkipSets({ ...live, step40b: doctored }), /anchor matches no skip sentence: Skip a parent whose verdict lists `needs`/);
+  assert.ok(wrapRe(sentence).test(live.step40b), 'the needs sentence is in the live text');
+  const doctored = live.step40b.replace(wrapRe(sentence), '');
+  assert.throws(() => assertSkipSetsPinned({ ...live, step40b: doctored }, live.moduleRaw), /anchor matches no skip sentence: Skip a parent whose verdict lists `needs`/);
 });
 
-test('#4800 go-red: the set comparison fails on a code set with one reason added or removed', () => {
+test('#4800 go-red: deleting the needs-label return from the module fails the source-literal pin', () => {
   const live = liveSkipTexts();
-  const prose = proseSkipSets(live).reasons;
-  const code = codeSkipSets(live.moduleRaw).reasons;
-  assert.throws(() => assertSkipSetsEqual(prose, [...code, 'new-rule']), /new-rule/);
-  assert.throws(() => assertSkipSetsEqual(prose, code.filter((r) => r !== 'needs-label')), /needs-label/);
+  const branch = "if (verdict.needs.length) return 'needs-label';";
+  assert.ok(live.moduleRaw.includes(branch), 'the needs-label branch is in the live module');
+  assert.throws(() => assertSkipSetsPinned(live, live.moduleRaw.replace(branch, '')), /needs-label/);
+});
+
+test('#4800 go-red: a ternary-shaped reason added to the module fails the source-literal pin', () => {
+  const live = liveSkipTexts();
+  const anchor = 'const { maxTier, closeReason } = verdict;';
+  assert.ok(live.moduleRaw.includes(anchor), 'the close-loop anchor is in the live module');
+  const added = "skipped.push({ parent, reason: parent === -1 ? 'new-rule' : 'already-closed' });\n        ";
+  assert.throws(() => assertSkipSetsPinned(live, live.moduleRaw.replace(anchor, () => `${added}${anchor}`)), /new-rule/);
+});
+
+test('#4800 go-red: a stripper mis-parse fails the pin rather than reading as no reason', () => {
+  const live = liveSkipTexts();
+  // After `)` the stripper reads `/` as division, so `/a\/*b/` opens a block comment that blanks the rest
+  // of the file; the engine reads it as a regex. The raw text compiles, the stripped text does not.
+  const misparsed = `${live.moduleRaw}\nfunction misparsed(x) { if (x) /a\\/*b/.test(x); return 1; }\n`;
+  assert.throws(() => assertSkipSetsPinned(live, misparsed), /mis-parsed this file/);
 });
