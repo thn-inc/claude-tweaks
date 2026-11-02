@@ -75,7 +75,7 @@ hand-composed by its six writers (see the `STATUS` row below).
 
 **Batch form: `--entries`.** `bin/log-decision.js --run <run-dir> --entries <file> [--section "/<skill>"]` appends many entries under one lock: `<file>` holds a non-empty JSON array of `{ status, text, step?, spec?, reversibility?, lever?, section? }` (an element's `section` wins over `--section`), every element validated like the single-entry flags before any is written, and it takes none of `--status`/`--text`/`--text-file`/`--step`/`--spec`/`--reversibility`/`--lever`. Batch the model-judged entries a phase accumulates into one `--entries` call at phase end, before its `bin/phase-exit.js` call: resolve the file with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_ENTRIES=decision-entries-{run-id}-{phase}.json`, write the JSON with the Write tool — never through the shell, so no entry text passes through shell quoting — and pass `--entries "{path}"`. An entry something reads before the phase ends (a line a hook gate releases on, such as `PR-early run lifecycle: … FAILED`) is still written at once.
 
-**Text from git or a user: `--text-file`.** When the entry text interpolates anything git or a user supplied (a file name, an error message), never put it in a double-quoted `--text` — the shell expands `$(...)`, backticks and `$VAR` inside it. Instead resolve a session temp path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-{step-slug}.md` (it prints `DECISION_TEXT="{path}"`; see `_shared/session-tmp-root.md`), write the one-line text there with the Write tool, and pass `--text-file "{path}"`. The entry is identical to what `--text` writes. The file must hold one line; a `--text-file` with an interior line break exits 2. `--text` and `--text-file` are mutually exclusive.
+**Text from git or a user: `--text-file`.** When the entry text interpolates anything git or a user supplied (a file name, an error message), never put it in a double-quoted `--text` — the shell expands `$(...)`, backticks and `$VAR` inside it. Instead resolve a session temp path with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" DECISION_TEXT=decision-text-{run-id}-{step-slug}.md` (it prints `DECISION_TEXT="{path}"`; see `_shared/session-tmp-root.md`), write the one-line text there with the Write tool, and pass `--text-file "{path}"`. The entry is identical to what `--text` writes. The file must hold one line; a `--text-file` with an interior line break exits 2. `--text` and `--text-file` are mutually exclusive. A STAGED reproduction entry naming more than one finding — a count (`10 findings`), a lens noun phrase (`lens "3f" findings a.js:1 and b.js:2`), `findings` after the `reproduction:` marker with at most four words between, or two `lens … finding` clauses — also exits 2 (the marker matches case-insensitively unless a quote character precedes it, the lens quotes are optional, and a phrase containing `no`, `zero` or `0` counts as no findings): each finding gets its own line with its lens and full `{path}:{line}`, the key a tiebreak verdict settles it by (`review/step3-tiebreak.md`); write several at once with `--entries`. The documented two-finding coincidence line (full path on both sides) is the one exception.
 
 **Windows / Git Bash invocation note (#2549).** Under Git Bash (MSYS) on Windows with
 `MSYS_NO_PATHCONV` unset, MSYS's automatic path-conversion rewrites a leading-slash `--section`
@@ -89,7 +89,7 @@ drop the leading slash (`--section reflect`) — the CLI adds it back internally
 Each entry follows this shape:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}.
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}.
 ```
 
 | Field | Required | Format |
@@ -99,7 +99,7 @@ Each entry follows this shape:
 | Step or location | yes | Skill step name OR file:line if relevant |
 | Short action | yes | One sentence: what was decided |
 | Detail line | optional | Wraps to second line if needed; explain rationale |
-| Reversibility | yes | `high` / `med` / `low` — drives Review Console sort order (SCANNED, REFUSED, SKIP, and FAILED entries: N/A — nothing to revert) |
+| Reversibility | yes | `high` / `med` / `low` / `n/a` — drives Review Console sort order. `n/a` means nothing to revert: always on SCANNED, REFUSED, SKIP, and FAILED entries, and on an AUTO entry that changed nothing revertible (a detection, a dispatch-time model selection, a ledger creation). It is `log-decision.js`'s default when `--reversibility` is omitted |
 | Commit ref / stage path | when reversible | `commit abc1234` or `stage path: staged/...` |
 
 ## Failure-cause completeness (test-gate entries)
@@ -116,7 +116,7 @@ Never write a partial named list (e.g. "8 fail: {6 named categories}") with no s
 A decision that consulted a policy/config lever may name it at the end of its entry:
 
 ```
-- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low}{; commit ref or stage path}. [lever: {key}={value} ({source})]
+- {STATUS} {HH:MM:SS} — {step or location}: {short action}. {detail line if needed}. Reversibility: {high|med|low|n/a}{; commit ref or stage path}. [lever: {key}={value} ({source})]
 ```
 
 The bracketed field is **always last** — after the existing optional `{; commit ref or stage path}` element when that is present. Multiple levers are semicolon-separated inside one bracket pair. The lever field is optional; absence is valid and no reader may require its presence. Absence means "not lever-governed or not yet adopted" — never an error.
@@ -213,7 +213,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --sta
   [--spec <n>] [--lever "<key>=<value> (<source>)"]
 ```
 
-A text (`--text`, `--text-file`, or an `--entries` element) that begins with its own `--step` plus `:` exits `2` — the step prefix is written for you, so pass the text without it.
+A text (`--text`, `--text-file`, or an `--entries` element) that begins with its own `--step` plus `:` exits `2` — the step prefix is written for you, so pass the text without it; so does a STAGED reproduction entry naming several findings (see the `--text-file` paragraph above).
 
 Prefer it over composing the line by hand or via a scratch `node -e` at every AUTO/STAGED site.
 
