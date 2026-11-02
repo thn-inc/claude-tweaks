@@ -36,6 +36,7 @@ const { parseRecordFacets, LABELS, parseParent, parseSubIssues } = require('../i
 const { resolvePolicyKeys } = require('../policy-schema');
 const { readRunStateWithParent, readRunState } = require('../hooks/context');
 const { resolveRecords, closingRecords } = require('./pack');
+const { readPacket } = require('./packet-gather');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { splitNul, parseStatusPorcelainZ } = require('../git-z');
 const { CLOSING_KEYWORD_ALTERNATION } = require('../issue-branch-tracking');
@@ -877,6 +878,14 @@ function scanPrBrief(prComments, target) {
 // contains the brief, never only the most recent one. A last-comment-only
 // test would hard-stop a correctly-gated parent.
 //
+// #4611: the current form of that comment is the acceptance packet, read by
+// `readPacket` (whole first line equals the marker, trusted authors only). The
+// brief forms below -- a confirmed brief on the issue, or the pr-first pointer
+// plus a brief on the PR -- are legacy readers, reached only when no trusted
+// packet exists and kept until demo/legacy-brief-compatibility.md's cleanup
+// record. A trusted packet of an unknown schema version fails rather than
+// falling through, so a brief beside it cannot pass it.
+//
 // #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
 // oversight floor first (verification-brief-parent-gate.md's "Evaluate the
 // gate"). An incomplete gate, or a due parent whose sub-issues sit below the
@@ -1048,6 +1057,16 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     // failing line, or to `passedNotes` when the target passes.
     const ignored = [];
     const fail = (line) => failing.push(ignored.length ? `${line}; ignored: ${ignored.join('; ')}` : line);
+    const packet = readPacket(comments);
+    ignored.push(...packet.skipped);
+    if (packet.status === 'found') {
+      if (ignored.length) passedNotes.push({ target, ignored });
+      continue;
+    }
+    if (packet.status === 'unreadable') {
+      fail(`#${target}: acceptance packet comment is unreadable (schemaVersion ${packet.version})`);
+      continue;
+    }
     const fullBrief = scanMarkerComments(
       comments,
       (c) => c.body && c.body.includes('## Verification Brief') && c.body.includes('### Confirmed')
