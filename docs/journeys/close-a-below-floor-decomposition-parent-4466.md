@@ -51,7 +51,7 @@ files:
 
 ### 2. The merge lands and Step 4.0b closes the parent with a listing comment
 - **URL:** `_shared/pr-first-merge-post-merge.md`, `### Step 4.0b`, then the gate file's `## Close the parent below the floor`
-- **Action:** Step 4.0b reads the merge's closing records: Step 4.0's `closing-links.js --mode post-merge` `closingSet`, or the merge commit's `Fixes #N` lines when there was no PR. It re-runs the gate as `bin/parent-gate.js --sub-issue {n} --closing {set} --idempotence`, adding `--merging-pr` after a PR merge and `--held` for the sub-issues Step 4.0 reopened or could not settle, then posts the comment and closes the parent with `--reason completed` (`"not planned"` when no sub-issue closed as completed).
+- **Action:** Step 4.0b reads the merge's closing records: Step 4.0's `closing-links.js --mode post-merge` `closingSet`, or, when there was no PR, the merge commit's bare same-repo `Fixes #N` lines (a `Fixes {owner}/{repo}#N` line naming any repository is not in the set). It re-runs the gate as `bin/parent-gate.js --sub-issue {n} --closing {set} --idempotence`, adding `--merging-pr` after a PR merge and `--held` for the sub-issues Step 4.0 reopened or could not settle, then posts the comment and closes the parent with `--reason completed` (`"not planned"` when no sub-issue closed as completed).
 - **Should feel:** finished. The parent reads like a changelog entry, with one line per sub-issue and its PR.
 - **Should understand:**
   - The comment never cites a merge SHA, only PR numbers.
@@ -110,7 +110,7 @@ files:
 
 ## Origin
 
-Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-4466`). Updated by record #4597 (run `2026-10-31T030421-record-4597`): Step 4.0b reads Step 4.0's `closingSet` instead of its own hand-written `gh pr view` jq. Updated by record #4602 (run `2026-10-31T075610-record-4602`): a gh-absent run with the GitHub MCP server closes the parent through the MCP transport mapping. Updated by record #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a PR merge into a non-default base, Step 4.0 closes the `Fixes` records itself, so Step 4.0b uses `closingSet` there instead of being a no-op.
+Built by `/claude-tweaks:flow` record #4466 (run `2026-10-30T045550-spec-4469-4466`). Updated by record #4597 (run `2026-10-31T030421-record-4597`): Step 4.0b reads Step 4.0's `closingSet` instead of its own hand-written `gh pr view` jq. Updated by record #4602 (run `2026-10-31T075610-record-4602`): a gh-absent run with the GitHub MCP server closes the parent through the MCP transport mapping. Updated by record #4549 (run `2026-10-31T095259-spec-4549-4550-4556`): after a PR merge into a non-default base, Step 4.0 closes the `Fixes` records itself, so Step 4.0b uses `closingSet` there instead of being a no-op. Updated by record #4809 (run `2026-11-02T024954-record-4809`): after a no-PR local merge, Step 4.0b reads only bare same-repo `Fixes #N` lines.
 
 The success state and the tidy step's checklist clause updated during build of #4610: the Step 7.5 checklist checks for no acceptance label in either spelling.
 

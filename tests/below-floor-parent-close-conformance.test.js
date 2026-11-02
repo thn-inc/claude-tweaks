@@ -973,6 +973,18 @@ test('#4602 AC2.1: every gh call in the Parent-Gate Procedure and Step 4.0b has 
   assert.ok(!failOpen.includes('If `gh` is unavailable'), 'a gh-absent run with MCP no longer skips');
 });
 
+test('#4809: Step 4.0b reads only bare same-repo Fixes lines after a no-PR local merge', () => {
+  const step40b = collapse(section(read(POST_MERGE_REL), STEP_40B, '### Step 4.1'));
+  assert.ok(step40b.includes('a `Fixes {owner}/{repo}#{n}` line naming any repository is not in the set'));
+  assert.ok(step40b.includes('the merge-message composer `bin/compose-subject.js` renders only the bare form, in `bin/lib/release/subject.js`'));
+});
+
+test('#4809: brokenSpanLines reports a wrapped span and a line-ending gh, and ignores fenced blocks', () => {
+  const bad = ['ok `a` line', 'opens `a span', 'closes it` here', 'then run gh', '```', 'odd ` inside a fence', '```', 'after `fence', 'clean'].join('\n');
+  assert.deepEqual(brokenSpanLines(bad), ['opens `a span', 'closes it` here', 'then run gh', 'after `fence']);
+  assert.deepEqual(brokenSpanLines('all `fine` here\n```\n`\n```'), []);
+});
+
 test('#4602 AC1.1: the close section and Step 4.0b cite the MCP path', () => {
   const close = section(read(GATE_REL), '## Close the parent below the floor', '## Compose the parent brief');
   // #4603: step 1's MCP sentence went with its reads. `get_me` and `get_comments` stay pinned in the

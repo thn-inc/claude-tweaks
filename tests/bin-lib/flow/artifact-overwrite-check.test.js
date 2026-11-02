@@ -369,7 +369,7 @@ test('paths: [] falls back to the default scope (docs/journeys/, stories/) rathe
   assert.strictEqual(withEmptyArray.clean, true, 'the src/ overwrite is outside the default scope and must not be walked');
 });
 
-test('the real #1988-#1997 journey history in this repo passes with no manual ruling (AC1)', () => {
+test('the real #1988-#1997 journey history in this repo passes with no manual ruling (AC1)', (t) => {
   const repoRoot = path.join(__dirname, '..', '..', '..');
   let head;
   try {
@@ -381,7 +381,9 @@ test('the real #1988-#1997 journey history in this repo passes with no manual ru
     // The specific historical commits this AC names are not reachable in
     // whatever checkout is running the suite (a shallow clone, or a fork
     // whose history was rewritten) — skip rather than fail on an
-    // environment precondition this test doesn't control.
+    // environment precondition this test doesn't control. Reported as a
+    // visible skip, because a silent pass would read as a verified replay.
+    t.skip('b247a02d3 not reachable in this checkout');
     return;
   }
   const result = checkArtifactOverwrite({
@@ -459,7 +461,7 @@ test('cross-spec step-markup conversion that also drops a step still HARD-GATEs 
   assert.strictEqual(JSON.parse(spawned.stdout).overwrites[0].commit, commitB);
 });
 
-test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes with no manual ruling', () => {
+test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes with no manual ruling', (t) => {
   const repoRoot = path.join(__dirname, '..', '..', '..');
   let head;
   try {
@@ -469,7 +471,9 @@ test('the real #2702/#2727/#2776 journey reformat (d81250829..80e3dad2d) passes 
   }
   if (head !== 'commit') {
     // Same environment-precondition skip as the AC1 test above: the commit
-    // is not reachable in this checkout, so there is nothing to replay.
+    // is not reachable in this checkout, so there is nothing to replay. Reported
+    // as a visible skip, because a silent pass would read as a verified replay.
+    t.skip('80e3dad2d not reachable in this checkout');
     return;
   }
   const result = checkArtifactOverwrite({
@@ -718,7 +722,11 @@ test('isReferencePreservingOriginLine: a deleted Origin: line with no added Orig
   assert.strictEqual(isReferencePreservingOriginLine(hunks[0]), false);
 });
 
-test('isReferencePreservingOriginLine: a deleted non-Origin line beside the Origin rewrite is not reference-preserving', () => {
+// This does not isolate the non-`Origin:` guard: `Body line.` is not an
+// `Origin:` line, cites no `#N`, and the hunk adds back one `Origin:` line for
+// two deleted. Any of those checks rejects it. The `#N`-carrying test further
+// down (`a deleted non-Origin line carrying a #N ...`) is the one that pins the guard.
+test('isReferencePreservingOriginLine: a deleted body line citing no #N beside the Origin rewrite is not reference-preserving', () => {
   const diff = [
     '--- a/docs/journeys/demo.md',
     '+++ b/docs/journeys/demo.md',

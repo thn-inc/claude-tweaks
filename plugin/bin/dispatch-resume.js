@@ -30,7 +30,8 @@
 //      `gh` absent, the main checkout or the repo slug unresolved
 //   3  refused / concurrent — JSON on stdout
 //   4  a read failed transiently (PR list, label or blocker read, claim read, stalled-worktree
-//      `git status`, branch reads, run-dir listing); no failed read is taken as clean, with two
+//      `git status`, branch reads, run-dir listing) or the pipelines dir is unlistable; no failed
+//      read is taken as clean, with two
 //      exceptions by design: the sibling-session check fails open (findConflictingSession returns
 //      null when `git worktree list` cannot be read, so `siblingLive` is then false), and the
 //      work-links read does too — resolvePolicyConfig's result carries no read error, so an
@@ -66,7 +67,7 @@ const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--
   + '  prints one JSON line: {eligible:true,…} (exit 0) or {eligible:false, issue, reason, line} (exit 3)\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
   + '                     or {concurrent:true, reason, line} (exit 3)\n'
-  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 transient read failure\n';
+  + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 read failure (transient, or an unlistable pipelines dir)\n';
 
 const PR_FIELDS = 'url,number,headRefName,headRefOid,body,isDraft,isCrossRepository';
 const NATIVE_TIMEOUT_MS = 30000; // one aliased GraphQL call (resolve-blockers.js's precedent)
@@ -110,6 +111,21 @@ function resolveWorkLinks() {
   return String(entry.value);
 }
 
+// The shared listing reads an unlistable pipelines dir as "no runs": the bound-run scan passed as clean
+// (verdict and --bound-run modes) and this session's own lock could read as a live sibling. Only an absent
+// dir (ENOENT) is genuinely empty, so any other readdir error throws (#4809).
+function listRunDirsFailClosed(cwd, opts) {
+  const start = cwd || process.cwd(); // iterRunDirsWithState's own anchor
+  const base = path.join(mainCheckoutRoot(start) || start, '.claude-tweaks', 'pipelines');
+  try {
+    fs.readdirSync(base);
+  } catch (e) {
+    if (e && e.code === 'ENOENT') return [];
+    throw e;
+  }
+  return listRunDirsWithState(cwd, opts);
+}
+
 const realDeps = {
   ghAvailable: () => ghAvailable(),
   gh: defaultGh,
@@ -124,7 +140,7 @@ const realDeps = {
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,
-  listRunDirsWithState,
+  listRunDirsWithState: listRunDirsFailClosed,
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
   now: () => Date.now(),
