@@ -656,8 +656,11 @@ test('#4677: newest closed match wins across live-clean and archived (newer name
   assert.strictEqual(resolve({ cwd: main2, env: {}, specSlug: 'spec-50', archived: true }).path, archivedNew);
 });
 
-// The name-tie order: the archived twin wins. The #208 filter itself is pinned by the spec-56 case below.
-test('#4677 #208: when a live clean dir and its archived twin share a run-id, the archived copy is returned', () => {
+// Pins the outcome only: both twins record a `pr`, and the archived copy is returned because `archiveStatus`
+// drops the live twin before the candidate sort. The archived-first name-tie comparator is reachable only
+// when `archiveStatus` reads `unknown`, which no fixture here produces; the spec-56 case below discriminates
+// the filter alone.
+test('#4677 #208: a live clean dir with an archived twin (both recording a pr) resolves to the archived copy', () => {
   const main = gitRepo();
   const live = mkRunDir(main, '2026-01-04T000000-spec-51');
   writeRunState(live, { status: 'clean', worktree: null, pr: { number: 4, url: 'u' } });
@@ -763,6 +766,32 @@ test('#4677: --archived refuses an older closed match when a newer live run of t
   assert.strictEqual(out.reason, 'archived-superseded');
   assert.match(out.message, /2026-02-01T000000-spec-62/);
   assert.match(out.message, /status interrupted/);
+});
+
+// #4807: the supersede rule was pinned only by a newer `interrupted` run. An `active` run step 2
+// refuses (its recorded worktree is gone) is just as open, and with two open runs the newest is named.
+test('AC1.1 #4807: --archived refuses an older closed match when a newer live run is active with its worktree gone', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-64'), { status: 'clean', pr: { number: 20, url: 'u' } });
+  writeRunState(mkRunDir(main, '2026-02-01T000000-spec-64'), {
+    status: 'active', worktree: path.join(main, '.claude', 'worktrees', 'gone-spec-64'), pr: { number: 21, url: 'u' },
+  });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-64', archived: true });
+  assert.strictEqual(out.ok, false);
+  assert.strictEqual(out.reason, 'archived-superseded');
+  assert.match(out.message, /2026-02-01T000000-spec-64/);
+  assert.match(out.message, /status active/);
+});
+
+test('AC1.1 #4807: with two newer open live runs, --archived names the newest as the superseder', () => {
+  const main = gitRepo();
+  writeRunState(mkArchived(main, '2026-01-01T000000-spec-65'), { status: 'clean', pr: { number: 22, url: 'u' } });
+  writeRunState(mkRunDir(main, '2026-02-01T000000-spec-65'), { status: 'interrupted', worktree: null });
+  writeRunState(mkRunDir(main, '2026-03-01T000000-spec-65'), { status: 'interrupted', worktree: null });
+  const out = resolve({ cwd: main, env: {}, specSlug: 'spec-65', archived: true });
+  assert.strictEqual(out.reason, 'archived-superseded');
+  assert.match(out.message, /2026-03-01T000000-spec-65/);
+  assert.doesNotMatch(out.message, /2026-02-01T000000-spec-65/);
 });
 
 test('#4677: an older open live run, or a newer live dir whose run-state.json does not parse, does not stop the fallback', () => {
