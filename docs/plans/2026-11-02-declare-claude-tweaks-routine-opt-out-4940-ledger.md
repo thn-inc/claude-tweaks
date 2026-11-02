@@ -11,3 +11,5 @@
 | 7 | review | Kernel strictness clause not pinned against the resolver (lens 3f, low) | fixed | Added a resolver test for trailing comment, quoted, commented-out and indented keys |
 | 8 | review | Kernel reads policy.yml with a prose parser outside resolve-policy.js (lens 3a, medium reported, low confirmed) | accepted | That branch runs only when no plugin is installed, so the resolver is unavailable; the prose now matches the resolver as pinned by item 7's test |
 | 9 | review | Kernel strictness go-red controls share one message (lens 3f, low) | accepted | Every mutation still goes red; diagnostics only, no behavior at risk |
+| 10 | wrap-up | pr — PR #4984 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 11 | wrap-up | unknown — residue probe suite skipped via --no-suite; the suite state is the verification pass stamp for HEAD 7dd84a6a6 (tests 9925/9925, journeys 79/79 pass) | observation | — |
