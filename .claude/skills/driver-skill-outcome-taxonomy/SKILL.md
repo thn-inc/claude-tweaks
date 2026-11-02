@@ -75,9 +75,10 @@ means there:
   squash names the PR, not a record — only an `/issues/N` payload carrying `pull_request`
   distinguishes them (row 108).
 - **Bind an adopted target to the identity the caller named before anything irreversible acts on
-  it.** A lookup that adopts a run dir or record — an inherited `PIPELINE_RUN_DIR`, a
-  `resolve-run-dir --spec-slug` match — can return a neighbour: the slug match is a substring, so
-  `spec-378` also matches a `spec-3784` dir. Re-read the target's own identity field and stop on a
+  it.** A lookup that adopts a run dir or record can return a neighbour. An inherited
+  `PIPELINE_RUN_DIR` can name another run, and `resolve-run-dir --spec-slug` matches a whole
+  `-`-delimited name segment: `spec-378` never reaches a `spec-3784` dir (#3865), but does reach
+  `…-spec-378-379`. Re-read the target's own identity field and stop on a
   mismatch, naming both (`plugin/skills/wrap-up/merge-mode.md`'s `config.yml` `spec:` check, #3784).
 - **A gate's own evidence is weaker than a direct read.** Screen with the bulk/cached value, then
   re-confirm per item before anything destructive.
