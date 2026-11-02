@@ -5,7 +5,7 @@
 // fakes, assert after `run()` returns.
 'use strict';
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
@@ -26,6 +26,11 @@ const { hasClaimLogFor, classifyDecisions } = require('../../../plugin/bin/lib/l
 // reintroducing the I1/C1 false-contest / lost-update bug in production.
 const claimStore = require('../../../plugin/bin/lib/issues/claim-store');
 const { composePrEarlyBody, composeExpressBody } = require('../../../plugin/bin/lib/flow/pr-body');
+
+const tmpRoots = [];
+after(() => {
+  for (const d of tmpRoots) fs.rmSync(d, { recursive: true, force: true });
+});
 
 const REPO = 'acme/w';
 const NOW = Date.parse('2026-08-17T00:00:00.000Z');
@@ -1064,6 +1069,7 @@ test('(resume-pr-8b) a matched stale claim whose write loses the race is skipped
 
 test('(resume-pr-9) defaultAppendClaimLog with resumePr writes the resume-pr claim line, still claim-log-only', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-resume-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git'));
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-4588');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1838,6 +1844,7 @@ test('--run: appendClaimLog is called once per claimed issue with its transport,
 // the shared test-runner process, and never a write into the real repo).
 test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process cwd inside a fake checkout) ends up claim-log-only, hasClaimLogFor true for both issues', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-anchored-'));
+  tmpRoots.push(root);
   fs.mkdirSync(path.join(root, '.git')); // a real checkout root: mainCheckoutRoot(cwd) anchors here
   const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-2775');
   fs.mkdirSync(runDir, { recursive: true });
@@ -1864,6 +1871,7 @@ test('defaultAppendClaimLog round-trip: an anchored run dir (real child-process 
 // os.tmpdir()'s own ancestry has no `.git` to find.
 test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it): throws, naming the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-'));
+  tmpRoots.push(runDir);
 
   assert.throws(
     () => defaultAppendClaimLog({ runDir, issue: 2775, transport: 'git' }),
@@ -1876,6 +1884,7 @@ test('defaultAppendClaimLog on an unanchored run dir (no .git anywhere above it)
 // stand, and claimLogFailures must name the issue and carry the reason.
 test('--run pointed at an unanchored dir, with the real defaultAppendClaimLog: claim stands, claimLogFailures names the issue and the not-anchored reason', () => {
   const runDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-claim-log-unanchored-run-'));
+  tmpRoots.push(runDir);
   const runId = path.basename(runDir);
   const { ghApi } = makeGhApi({
     reads: { 752: [readAbsent, confirmRead(runId)] },
