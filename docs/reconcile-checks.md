@@ -723,15 +723,19 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   by `marker-write-failed` runs, a disjoint count). A `ran` entry reads `failed` when its Step 4.0
   did not finish clean: `step40Failed: true` (a non-zero `closing-links` exit, exit 5 or a
   `base-unchecked` envelope only once its retries are spent, or an unreadable envelope), or a
-  `closing-links` word outside the clean set (`close-failed`, say). A SKIP marker is written and
-  Step 4.0b is skipped, so the parent waits for tidy's backstop. It also reads `failed` when Step
+  `closing-links` word outside the clean set (`close-failed`, say). For `step40Failed`, a SKIP
+  marker is written and Step 4.0b is skipped, so the parent waits for tidy's backstop. For a
+  non-clean word whose envelope carries a `closingSet`, Step 4.0b still runs: the records Step 4.0
+  could not settle (`failed`, `closeFailed`, `pendingClose`) hold their parent open, the summary
+  marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed` when Step
   4.0b reported a parent failure (`parentFailures`; #4798 adds that field to loop entries, so until
   it lands only Step 4.0 can fail one). An envelope that merely carries no closing set, such as
   `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
   `transient-failure` retry is in none of them. `postMergeFailedRecords` is the sorted, unique
   record numbers of Step 4.0's `failed`, `closeFailed`, `pendingClose` and `unchecked` lists across
-  the failed `ran` entries (`[]` when none carried any); a non-clean loop entry therefore carries
-  `records` (and `logFailed` when set), where a clean one keeps its short shape. The next
+  the failed `ran` entries (`[]` when none carried any); a loop entry whose Step 4.0 printed a
+  non-clean word carries `records` (and `logFailed` when set), where a clean one keeps its short
+  shape; a non-zero exit or unreadable envelope carries none. The next
   SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
   closing M parent record(s) below the oversight floor`, where M counts every `ran` run's closes, a
   failed run's included; when no run read clean the closes render alone as `post-merge steps closed
@@ -756,9 +760,10 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   `in-flight`. Its entries carry Step 4.0's record lists (`records`) and `logFailed`, Step 4.0b's
   failed closes (`parentFailures`), and the `verdict` and `next` that `classifyEntry` derives for
   merge mode to route on — plus, on a `failed` `ran` entry, `failedSteps` (`4.0` and/or `4.0b`), so
-  merge mode reports only the step that failed. `postMergeOne` entries always carry `records` and
-  `logFailed`; a non-clean loop entry carries them too, and `parentFailures`, `verdict`, `next`
-  and `failedSteps` stay single-run.
+  merge mode reports only the step that failed. A `postMergeOne` `ran` entry carries `records`
+  whenever Step 4.0 printed a readable envelope, and `logFailed` when set; a loop entry whose
+  Step 4.0 printed a non-clean word carries them too, and `parentFailures`, `verdict`, `next` and
+  `failedSteps` stay single-run.
 
 ## Timing contract (#4032)
 
