@@ -2637,7 +2637,7 @@ test('#4611: a packet does not stand in for the pending label', () => {
   const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
   const row = result.rows.find((r) => r.check === 'acceptance-labeling');
   assert.strictEqual(row.result, 'fail');
-  assert.match(row.detail, /#900: missing demo:pending label/);
+  assert.match(row.detail, /#900: missing demo:pending or accept:pending label/);
 });
 
 // #3333: in a multi-spec run the Verification Brief lands on the shared PR as
