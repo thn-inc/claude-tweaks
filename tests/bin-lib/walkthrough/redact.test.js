@@ -64,6 +64,48 @@ const CASES = [
   // A prefix after `_` or `-`.
   ['prefix_sk_live_abc', 'prefix_[redacted]'],
   ['x-ghp_abc123', 'x-[redacted]'],
+  // A tail after a JWT under a bearer word.
+  ['Bearer eyJa.b.c.d.e', '[redacted]'],
+  ['bearer eyJhbGciOiJIUzI1NiJ9.e30.abc.secretpart', '[redacted]'],
+  ['bearer eyJhbGciOiJIUzI1NiJ9.e30.abc,secretpart', '[redacted]'],
+  ['bearer eyJhbGciOiJIUzI1NiJ9.e30.abc/secretpart', '[redacted]'],
+  ['bearer eyJhbGciOiJIUzI1NiJ9.e30.abc:secretpart', '[redacted]'],
+  ['eyJa.b.c.d.e', '[redacted]'],
+  // A literal backslash-n, -r or -t before a token.
+  [String.raw`foo\ntoken=abc`, String.raw`foo\ntoken=[redacted]`],
+  [String.raw`foo\npassword=abc`, String.raw`foo\npassword=[redacted]`],
+  [String.raw`foo\nsecret=abc`, String.raw`foo\nsecret=[redacted]`],
+  [String.raw`foo\tsession=abc`, String.raw`foo\tsession=[redacted]`],
+  [String.raw`foo\rtoken=abc`, String.raw`foo\rtoken=[redacted]`],
+  [String.raw`{\"msg\":\"a\ntoken=abc\"}`, String.raw`{\"msg\":\"a\ntoken=[redacted]\"}`],
+  [String.raw`foo\nauthorization: abc`, String.raw`foo\nauthorization: [redacted]`],
+  [String.raw`foo\nauthorization=abc`, String.raw`foo\nauthorization=[redacted]`],
+  [String.raw`foo\n--token abc`, String.raw`foo\n--token [redacted]`],
+  [String.raw`foo\nbearer abc`, String.raw`foo\n[redacted]`],
+  [String.raw`foo\nsk_live_abc`, String.raw`foo\n[redacted]`],
+  [String.raw`foo\neyJa.b.c`, String.raw`foo\n[redacted]`],
+  [String.raw`C:\token=abc`, String.raw`C:\token=[redacted]`],
+  // A quote inside a bare value.
+  ['token=ab"cd', 'token=[redacted]'],
+  ["password=ab'cd", 'password=[redacted]'],
+  ['api_key=ab`cd', 'api_key=[redacted]'],
+  [String.raw`token=ab\"cd`, 'token=[redacted]'],
+  ['"token=abc" next', '"token=[redacted]" next'],
+  ['f("token=abc")', 'f("token=[redacted]")'],
+  ['"token=abc", next', '"token=[redacted]", next'],
+  ['<a href="?token=abc">', '<a href="?token=[redacted]">'],
+  // More scheme words.
+  ['token: NTLM abc', 'token: [redacted]'],
+  ['api_key: ApiKey abc', 'api_key: [redacted]'],
+  ['authorization=NTLM abc123', 'authorization=[redacted]'],
+  ['token: OAuth abc', 'token: [redacted]'],
+  // After a scheme word on an authorization key, the rest of the line goes.
+  ['authorization=Digest username="bob", response="abc"', 'authorization=[redacted]'],
+  ['authorization=Digest username="bob", response="abc"\nnext', 'authorization=[redacted]\nnext'],
+  // JSON escaped twice.
+  [String.raw`{\\\"token\\\":\\\"abc\\\"}`, String.raw`{\\\"token\\\":[redacted]}`],
+  [String.raw`{\\\"Authorization\\\":\\\"Digest abc\\\"}`, String.raw`{\\\"Authorization\\\":[redacted]}`],
+  [String.raw`{\\\"token\\\":\\\"abc def`, String.raw`{\\\"token\\\":[redacted]`],
 ];
 
 const words = (text) => text.split(/[^A-Za-z0-9]+/).filter((word) => word.length > 1);
@@ -200,6 +242,24 @@ test('text around an address is left alone', () => {
 test('a placeholder followed by more of a token is still a value', () => {
   assert.equal(redactText('bearer [redacted]abc').text, '[redacted]');
   assert.equal(redactText('token=[redacted]abc').text, 'token=[redacted]');
+  assert.equal(redactText('token=[redacted].abc').text, 'token=[redacted]');
+  assert.equal(redactText('Authorization: [redacted] abc').text, 'Authorization: [redacted]');
+});
+
+test('a later rule does not run on past a placeholder an earlier rule wrote', () => {
+  const { text, count } = redactText('--client-secret="abc", next');
+  assert.deepEqual([text, count], ['--client-secret=[redacted], next', 1]);
+  const header = redactText('"Authorization": "Digest abc", "x": 1');
+  assert.deepEqual([redactText(header.text).text, redactText(header.text).count], [header.text, 0]);
+});
+
+test('only a backslash makes a leading n, r or t a boundary', () => {
+  // `pantoken` is one word: untouched, and the shared screen reads it the same way.
+  for (const raw of ['pantoken=abc', 'ntoken=abc', 'monkey=1', String.raw`\monkey=1`, String.raw`\nmonkey=1`, String.raw`C:\network=1`, String.raw`\xtoken=abc`]) {
+    const { text, count, residual } = redactText(raw);
+    assert.deepEqual([text, count], [raw, 0], raw);
+    assert.equal(findCredentialInText(residual), null, raw);
+  }
 });
 
 test('a token-shaped word inside a longer word is left alone', () => {

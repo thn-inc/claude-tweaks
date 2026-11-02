@@ -6,7 +6,9 @@
 // Shapes probed while writing it, each with its fix reverted: an unanchored rule restarting inside a long token (over 20 s on
 // the two long tokens, without the left-boundary lookbehind), a leading `\s*` restarting at every space of a run (over 20 s on
 // the space run, with an empty name allowed), and reading the value before checking the name (about 4 s on `a=` repeated).
-// No reverted fix tried turned the repeated-flag case red; it stays as the flag rule's budget.
+// Also: a quoted value taking a backslash run with `\\+` (over 30 s on the unterminated run). No reverted fix tried turned
+// the repeated-flag case red; it stays as the flag rule's budget. The long prefix case goes red on its verdict when the
+// value stops at a separator; on time, only when its boundary is gone and its value also fails to reach a terminator.
 // Lives outside tests/ for the same reason the other perf/ files do: a wall-clock assertion flakes under sibling-suite load.
 'use strict';
 
@@ -22,6 +24,7 @@ const INPUTS = [
   ['repeated non-credential assignments', 'a='.repeat(50000)],
   ['repeated non-credential flags', '--a '.repeat(50000)],
   ['repeated two-character separators', 'a=='.repeat(50000)],
+  ['a backslash run in an unterminated quote', `token="${'\\'.repeat(200000)}`],
 ];
 
 for (const [label, input] of INPUTS) {
