@@ -18,6 +18,8 @@ const REPO = 'thn-inc/claude-tweaks';
 const NOW = new Date(2026, 9, 25, 12, 34, 56).getTime();
 const URL7 = 'https://github.com/thn-inc/claude-tweaks/pull/7';
 const URL42 = 'https://github.com/thn-inc/claude-tweaks/pull/42';
+const PR7_CLOSED = { number: 7, url: URL7, state: 'CLOSED' };
+const PR7_OPEN = { number: 7, url: URL7, state: 'OPEN' };
 
 const created = [];
 test.after(() => {
@@ -183,7 +185,7 @@ test('a reopen of an adopted prior attempt rebinds its body to this run before t
 test('a failed rebind is a logged SKIP, never a stop', async () => {
   const decisions = `- AUTO 10:00:00 — x: adopted prior attempt abc1234 from closed PR #7 for ${BRANCH}. Reversibility: high.\n`;
   const h = harness({
-    lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]],
+    lists: [[PR7_CLOSED], [PR7_OPEN]],
     decisions,
     edit: new Error('HTTP 422'),
   });
@@ -271,7 +273,7 @@ test('a rejected reopen falls through to creation with its own Step 1 line', asy
 });
 
 test('a reopen that exits 0 while the re-list still reads CLOSED is rejected: created, one cause line, no reopened record', async () => {
-  const h = harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'CLOSED' }]] });
+  const h = harness({ lists: [[PR7_CLOSED], [PR7_CLOSED]] });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
   assert.ok(h.lines.some((l) => l.includes(`reopen of closed PR #7 for ${BRANCH} exited 0 but the PR still reads CLOSED; creating.`)));
@@ -282,7 +284,7 @@ test('a reopen that exits 0 while the re-list still reads CLOSED is rejected: cr
 });
 
 test('a reopen whose re-list no longer carries the picked PR reads ABSENT and is not confirmed', async () => {
-  const h = harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], []] });
+  const h = harness({ lists: [[PR7_CLOSED], []] });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
   assert.ok(h.lines.some((l) => l.includes(`reopen of closed PR #7 for ${BRANCH} exited 0 but the PR still reads ABSENT; creating.`)));
@@ -291,7 +293,7 @@ test('a reopen whose re-list no longer carries the picked PR reads ABSENT and is
 
 test('a confirming re-list that throws is an unconfirmed reopen: the create path runs with its own cause line', async () => {
   const h = harness({
-    lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], new Error('HTTP 502: Bad Gateway')],
+    lists: [[PR7_CLOSED], new Error('HTTP 502: Bad Gateway')],
   });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
@@ -302,7 +304,7 @@ test('a confirming re-list that throws is an unconfirmed reopen: the create path
 
 test('a confirming re-list error that names "failed" is logged as "errored", so the line never reads as a degrade', async () => {
   const h = harness({
-    lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], new Error('Command failed: gh pr list --repo thn-inc/claude-tweaks --head x')],
+    lists: [[PR7_CLOSED], new Error('Command failed: gh pr list --repo thn-inc/claude-tweaks --head x')],
   });
   const res = await openPrEarly(OPTS, h.deps);
   assert.equal(res.outcome, 'opened');
@@ -318,9 +320,9 @@ test('a confirming re-list error that names "failed" is logged as "errored", so 
 test('a confirming re-list that throws, then a create that lands the picked PR with another run\'s body: rebound before it is recorded', async () => {
   const h = harness({
     lists: [
-      [{ number: 7, url: URL7, state: 'CLOSED' }],
+      [PR7_CLOSED],
       new Error('HTTP 502: Bad Gateway'),
-      [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }],
+      [{ ...PR7_OPEN, body: bodyFor(OTHER_RUN) }],
     ],
     create: [new Error('a pull request for branch "x" into branch "dev" already exists')],
   });
@@ -338,9 +340,9 @@ test('a confirming re-list that throws, then a create that lands the picked PR w
 test('a landed picked PR whose body already names this run gets no gh pr edit', async () => {
   const h = harness({
     lists: [
-      [{ number: 7, url: URL7, state: 'CLOSED' }],
+      [PR7_CLOSED],
       new Error('HTTP 502: Bad Gateway'),
-      [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(RUN_ID) }],
+      [{ ...PR7_OPEN, body: bodyFor(RUN_ID) }],
     ],
     create: [new Error('a pull request for branch "x" into branch "dev" already exists')],
   });
@@ -351,7 +353,7 @@ test('a landed picked PR whose body already names this run gets no gh pr edit', 
 });
 
 test('a confirming re-list that returns a non-array is unconfirmed, not a crash', async () => {
-  const h = harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], {}] });
+  const h = harness({ lists: [[PR7_CLOSED], {}] });
   const res = await openPrEarly(OPTS, h.deps);
   assert.deepEqual(res, { outcome: 'opened', number: 42, url: URL42, reopenRejected: 7 });
   assert.ok(h.lines.some((l) => l.includes(`could not confirm reopen of closed PR #7 for ${BRANCH} (gh pr list did not return an array); creating.`)));
@@ -553,11 +555,11 @@ test('every line written satisfies the bookkeeping-stamps gate\'s own matchers',
     harness({ list: [] }),
     harness({ list: [{ number: 7, url: URL7, state: 'OPEN' }] }),
     harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] }),
-    harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]] }),
+    harness({ lists: [[PR7_CLOSED], [PR7_OPEN]] }),
     harness({ list: [{ number: 7, url: URL7, state: 'CLOSED' }], reopen: new Error('rejected') }),
-    harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]], decisions: adoptedLine }),
-    harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'CLOSED' }]] }),
-    harness({ lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], new Error('HTTP 502: Bad Gateway')] }),
+    harness({ lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: adoptedLine }),
+    harness({ lists: [[PR7_CLOSED], [PR7_CLOSED]] }),
+    harness({ lists: [[PR7_CLOSED], new Error('HTTP 502: Bad Gateway')] }),
   ];
   for (const h of scenarios) await openPrEarly(OPTS, h.deps);
   for (const h of scenarios) {
@@ -584,7 +586,7 @@ test('every line written satisfies the bookkeeping-stamps gate\'s own matchers',
   // degrade. That is harmless only because the reopened PR is recorded
   // first, so the run is never PR-less. Pin both halves.
   const rebindFail = harness({
-    lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]],
+    lists: [[PR7_CLOSED], [PR7_OPEN]],
     decisions: adoptedLine,
     edit: new Error('HTTP 422'),
   });
