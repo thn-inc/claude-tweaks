@@ -117,6 +117,113 @@ test('the Release claim executor never receives an open-PR stale row (#4423)', (
   assert.match(s, /never a Release row/);
 });
 
+// #4849: a stale-claim Release (and a matched Resume row) states the open linked PR's disposition,
+// taken from bin/dispatch-resume.js's verdict. The section is addressed to the Issue Claims agent,
+// which gets issue-claims-backstops.md inlined whole, so it carries the whole rule.
+const BACKSTOPS = read('plugin/skills/tidy/issue-claims-backstops.md');
+const STEP6 = read('plugin/skills/tidy/step-6-auto.md');
+const DISPOSITION_PREFIX = '### Open linked PR on a stale-claim Release';
+const DISPOSITION_HEADING = `${DISPOSITION_PREFIX} (#4849)`;
+
+function dispositionSection(text) {
+  const start = text.indexOf(DISPOSITION_PREFIX);
+  const end = text.indexOf('### Backstop: missed `parked` restoration');
+  if (start === -1) return '';
+  assert.ok(end > start, 'the disposition section sits before the first Backstop heading');
+  return text.slice(start, end);
+}
+
+// One entry per fact the section must state; a string is an exact literal, a RegExp a window claim.
+const DISPOSITION_FACTS = [
+  { name: 'section', pin: DISPOSITION_HEADING, strip: ' (#4849)' },
+  { name: 'runs the verdict', pin: 'bin/dispatch-resume.js" --issue {n}' },
+  { name: 'resume disposition', pin: 'PR #{prNumber}: resume — /claude-tweaks:dispatch resume #{n}' },
+  { name: 'no-pr appends nothing', pin: 'exit 3 with reason `no-pr`, append nothing' },
+  { name: 'refused disposition', pin: 'PR #{number}: {disposition} — {remedy}' },
+  { name: 'disposition vocabulary', pin: '`disposition` (`resume`, `close-out` or `close`)' },
+  { name: 'lands in the finding', pin: "end of the `[claim]` row's `{recommendation}`" },
+  { name: 'a failed read is stated', pin: /exit 2 or 4[^.]*open linked PR unknown \(dispatch-resume exit \{code\}\)/ },
+  { name: 'gh-absent transport citation', pin: '`_shared/github-write-transport.md`' },
+  { name: 'matched Resume row', pin: 'replaces `{resume}` with `{disposition} — {remedy}`' },
+  { name: 'stale claim reads resumable', pin: 'the same as the `swept: stale claim` tombstone the Release writes' },
+];
+
+function missingDispositionFacts(text) {
+  const flat = dispositionSection(text).replace(/\s+/g, ' ');
+  return DISPOSITION_FACTS.filter(({ pin }) => (typeof pin === 'string' ? !flat.includes(pin) : !pin.test(flat))).map((f) => f.name);
+}
+
+// Strips exactly one fact from the section (the heading fact drops only its issue suffix, so the section is still found).
+function stripFact(text, fact) {
+  const section = dispositionSection(text);
+  const flatSection = section.replace(/\s+/g, ' ');
+  const stripped = flatSection.replace(fact.strip || fact.pin, '');
+  const start = text.indexOf(DISPOSITION_PREFIX);
+  return text.slice(0, start) + stripped + text.slice(start + section.length);
+}
+
+test('AC4.1: the stale-claim finding names a PR disposition when an open linked PR exists (#4849)', () => {
+  assert.ok(dispositionSection(BACKSTOPS).length > 0, 'the section exists in issue-claims-backstops.md');
+  assert.deepEqual(missingDispositionFacts(BACKSTOPS), []);
+});
+
+for (const fact of DISPOSITION_FACTS) {
+  test(`AC4.1 control: dropping "${fact.name}" goes red on exactly that fact (#4849)`, () => {
+    const mutated = stripFact(BACKSTOPS, fact);
+    assert.notEqual(mutated, BACKSTOPS, 'the strip matched something');
+    assert.deepEqual(missingDispositionFacts(mutated), [fact.name]);
+  });
+}
+
+test('AC4.1 control: a section-less file reports every fact missing (#4849)', () => {
+  assert.deepEqual(missingDispositionFacts(BACKSTOPS.replace(DISPOSITION_HEADING, '### Something else')), DISPOSITION_FACTS.map((f) => f.name));
+});
+
+test('AC4.1: the plain-Release sentence hands to the disposition section (#4849)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ');
+  assert.ok(flat.includes("means Release plus `issue-claims-backstops.md`'s PR disposition."));
+  assert.ok(!flat.includes('means plain Release.'), 'the old plain-Release sentence is gone');
+});
+
+test('AC4.1 control: the old plain-Release sentence fails the hand-off pin (#4849)', () => {
+  const flat = claimAuditSection().replace(/\s+/g, ' ').replace("means Release plus `issue-claims-backstops.md`'s PR disposition.", 'means plain Release.');
+  assert.ok(!flat.includes("means Release plus `issue-claims-backstops.md`'s PR disposition."));
+});
+
+const STAGED_ROW_PIN = /`claim-releases`[^.]*`action`[^.]*PR disposition[^.]*verbatim/;
+
+test('AC4.1: a staged claim-releases row carries the disposition into the approval text (#4849)', () => {
+  assert.match(STEP6.replace(/\s+/g, ' '), STAGED_ROW_PIN);
+});
+
+test('AC4.1 control: step-6-auto without the claim-releases sentence fails the pin (#4849)', () => {
+  const flat = STEP6.replace(/\s+/g, ' ');
+  const mutated = flat.replace(STAGED_ROW_PIN, '');
+  assert.notEqual(mutated, flat);
+  assert.doesNotMatch(mutated, STAGED_ROW_PIN);
+});
+
+// [\s\S] not [^.]: the sentence names `release-claim.js`, whose dot would end a [^.]* window.
+const EXECUTOR_PIN = /PR disposition[\s\S]{0,160}`release-claim\.js` never closes or touches the PR/;
+
+function releaseClaimSection() {
+  const start = ACTIONS.indexOf('## Release claim');
+  const end = ACTIONS.indexOf('## Sync to GitHub');
+  assert.ok(start !== -1 && end > start, 'actions-github-issues.md carries both headings');
+  return ACTIONS.slice(start, end);
+}
+
+test('the Release claim executor leaves the PR alone (#4849)', () => {
+  assert.match(releaseClaimSection().replace(/\s+/g, ' '), EXECUTOR_PIN);
+});
+
+test('control: the Release claim section without the executor sentence fails the pin (#4849)', () => {
+  const flat = releaseClaimSection().replace(/\s+/g, ' ');
+  const mutated = flat.replace(EXECUTOR_PIN, '');
+  assert.notEqual(mutated, flat);
+  assert.doesNotMatch(mutated, EXECUTOR_PIN);
+});
+
 test('collection-routing routes a [claim] Resume/Resolve outcome to Yours and supersedes [unsettled] (#4423)', () => {
   const row = findRow(COLLECTION_ROUTING, '| `[backlog]`, `[parked]`');
   assert.ok(row, 'the Approve routing row is present');

@@ -97,7 +97,8 @@ finding}, "title": "{≤50-char title}", "action": "{the staged action, one line
 exact command or mutation}"}`. This sidecar is what `render-tidy-report.js` reads back — the
 **only** thing it reads back — to render the Approve section below, so a staged item with no
 sidecar is invisible to the report and a sidecar with no staged item never exists (one call writes
-both, or neither).
+both, or neither). A `claim-releases` row's `action` carries the `[claim]` row's PR disposition
+verbatim, so the staged-action line the Approve item renders names the open PR.
 
 Nothing enforces that the sidecar's fields stay in sync with the `.md` file's own prose — both
 describe the same proposal, but only the `.json` side is ever read back to render the report.

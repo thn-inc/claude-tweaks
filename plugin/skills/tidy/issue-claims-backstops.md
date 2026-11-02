@@ -57,6 +57,29 @@ Falls back to `scan-procedures.md`'s per-blob `gh api` form only when no local g
 
 ---
 
+### Open linked PR on a stale-claim Release (#4849)
+
+A stale blob whose record has an open PR linked to it, on a head `stale-claim-pr.js` does not read,
+looks like a plain Release; the Release would hide that PR. For each stale blob Step 4.7 will
+recommend as a Release, and for each one `stale-claim-pr.js` matched with a printed `resume`
+command, run `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {n}` and read its exit
+code. The verdict reads the stale claim as resumable, the same as the `swept: stale claim`
+tombstone the Release writes. For a Release row:
+
+- Exit 0 (eligible): append `PR #{prNumber}: resume — /claude-tweaks:dispatch resume #{n}`.
+- On exit 3 with reason `no-pr`, append nothing.
+- Any other exit 3: append `PR #{number}: {disposition} — {remedy}`, one line per entry of the
+  JSON's `prNumbers`, with its `disposition` (`resume`, `close-out` or `close`) and `remedy`
+  verbatim.
+- On exit 2 or 4, append `open linked PR unknown (dispatch-resume exit {code})`; a `gh`-absent
+  environment lands here (`_shared/github-write-transport.md`).
+
+The text goes at the end of the `[claim]` row's `{recommendation}`. A matched Resume row (the
+**Unsettled run** no-op) runs the same command: exit 0 keeps the printed command, exit 3 with
+reason `no-pr` keeps it too, any other exit 3 replaces `{resume}` with `{disposition} — {remedy}`,
+and a failed read keeps it and appends the same unknown note. That row stays never staged and its
+claim never released. This is a read only: nothing here closes or touches a PR.
+
 ### Backstop: missed `parked` restoration
 
 Find materialized build-time headers (`flow/materialize.md`) that recorded `parked-at-shaping:

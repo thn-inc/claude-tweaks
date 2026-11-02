@@ -248,7 +248,7 @@ With `gh` absent (exit 2), list open PRs once per tidy run via `mcp__github__lis
 (`state: open`, paged), Write them as one JSON array to the path
 `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value stale-claim-open-prs.json`
 prints, and add `--listing "{that path}"` to each call. `"match": false` with a null `failure`
-means plain Release.
+means Release plus `issue-claims-backstops.md`'s PR disposition.
 `"match": true` recommends Resume instead and routes as `step-6-auto.md`'s **Unsettled run** row:
 Auto (no-op, always surfaced), rendered in **Yours** as "Resume open PR #{number} ({url}) —
 {resume}" when the output carries `resume` (the PR body's resume line, already validated as a
