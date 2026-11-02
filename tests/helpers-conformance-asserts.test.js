@@ -48,6 +48,7 @@ test('globalOf adds the g flag once and keeps the other flags', () => {
 test('lineStartingWith returns the whole first matching line, or the empty string', () => {
   assert.equal(lineStartingWith('one\ntwo words\ntwo more', 'two'), 'two words');
   assert.equal(lineStartingWith('one', 'two'), '');
+  assert.equal(lineStartingWith('x two\ntwo words', 'two'), 'two words');
 });
 
 const DOC = 'intro\n## First\nbody one\n### Sub\nsub body\n## First Extended\nbody two\n## Last\nbody three\n';
