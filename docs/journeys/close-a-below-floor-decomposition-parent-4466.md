@@ -45,6 +45,7 @@ files:
   - Under `github-issues` the parent stays open at this point; Step 4.0b closes it after the merge.
   - Under `local-files` the run closes the parent record in its own commit, so the closure reaches the integration branch no earlier than the merge.
   - Under `local-files` the same CLI call adds `--idempotence --backend local-files`. It reads the parent and sub-issue records from the record store (`bin/lib/issues/local-parent-gate-shape.js`) with no `gh` call, and any non-zero exit stops the entry instead of failing open.
+  - Under `work-links: body-text`, the CLI reads the sub-issue's `Parent: #P` line and #P's task list. A sub-issue that #P's non-empty task list does not list resolves no parent (`state: 'no-parent'`), so it is labeled as its own record and never counted in #P's gate; an empty or missing task list still resolves #P. Wrap-up's closure check applies the same rule (#4551).
   - Under `github-issues`, wrap-up's closure check agrees: the `acceptance-labeling` row of `wrap-up-engine.js verify` (`plugin/bin/lib/wrap-up/engine-verify.js`) reads `skip (parent #P below oversight floor — closes after the merge lands (Step 4.0b))`, never a fail for the parent's missing `demo:pending`.
 - **Red flags:** a `github-issues` parent closed by wrap-up Phase 4, the auto-merge short-circuit or dispatch's group gate, all of which run before the merge lands. A merge that never lands would then leave a closed parent over an open sub-issue.
 
@@ -61,11 +62,13 @@ files:
   - The CLI never falls back to the default `risk-floor`. An unreadable `.claude-tweaks/policy.yml`, or a `risk-floor` value it rejects, is exit 2, so Step 4.0b treats it as a failing call and leaves the parent open for tidy's `parent-gate` backstop (step 4).
   - After a PR merge, a Step 4.0 result with no `closingSet` (a non-zero exit, `not-merged`, `no-fixes-span`, `no-pr`, `gh-absent`, `base-unchecked`) skips the whole step with a logged `SKIP`; tidy's `parent-gate` backstop (step 4) recovers the parent.
   - A gh-absent run that has the GitHub MCP server, such as a cloud Routine on the local-merge path, closes the parent the same way. The gate file's **Transport (#4602).** paragraph routes every call through `_shared/github-write-transport.md`'s MCP rows: `issue_read` for reads, `add_issue_comment` for the comment, and `issue_write` with `state_reason` for the close. The default-branch check reads `git remote show origin`.
+  - A token that cannot read its own identity does not stop the close. When `gh api user` fails or prints no login (a GitHub App installation token, say), or the facts file's `get_me` result carries no login, the parent still closes: only a trusted author's `## Closed below the oversight floor` comment counts as already posted. When none does, the step posts the comment before closing, and the verdict's `skipped` names `identity probe failed — close marker matched against trusted authors only`; a trusted comment already there means a plain close with no such note. The accepted cost is one duplicate comment when an earlier attempt posted under an untrusted association and its close then failed.
   - The close is one of the two named exceptions in `_shared/auto-mode-contract.md`'s never-reversible list (the other is Step 4.0's close of the `Fixes` records after a merge into a non-default base). Its restore contract is a human `gh issue reopen`.
 - **Red flags:**
   - A second listing comment on a re-run.
   - A Try it block or `demo:pending` posted by this post-merge step.
   - A failed `gh` call that falls back to labeling the sub-issue as if it had no parent.
+  - A due parent left open, or skipped as `gh-failed`, only because the identity read failed.
   - On the MCP path, a due parent left open because the facts file carried a lowercase `closed` state the CLI did not normalize. Another MCP-path red flag is a close call that passes `labels` and wipes the parent's labels.
 
 ### 3. A merge no session saw land is closed by the reconciler's post-merge check
@@ -77,6 +80,7 @@ files:
   - A PR that merged no more than 10 minutes ago (`MERGE_GRACE_MS`) is left for its merging session, which may still be running Step 4.0b. Archive keeps a run whose steps are still pending (`post-merge-pending`) until a later pass runs them.
   - The late pass runs the same `bin/lib/issues/parent-gate.js` core the CLI does, and judges every closing record by its live state, so a sub-issue a human reopened since keeps its parent open (`selfInclude: false`).
   - It applies the same rules as an in-session Step 4.0b after a PR merge. There is no default-branch check: on a non-default base the late Step 4.0 closes the PR's still-open `Fixes` records itself, and the parent closes over the ones it confirmed closed. A `Fixes` record it could not close (`closeFailed[]`) keeps its parent open. A `base-unchecked` result carries no closing set, so nothing closes and the next pass retries it, up to three attempts.
+  - The late pass reads the `gh` identity at most once, however many parents it closes, and replays a failed read to every parent: each closes on trusted-author matching, and the summary marker lists the degrade note beside each parent that had no trusted close comment yet.
   - The first pass after this ships also catches up older merged runs once. Step 4.0's 10-minute reopen window and Step 4.0b's idempotence keep that harmless: no reopen of a record a human closed later, and no second comment.
   - The late pass applies the same policy rule to the whole pass: an unreadable `.claude-tweaks/policy.yml` or a rejected `risk-floor` skips every Step 4.0b close (`unreadable-policy`, `invalid-risk-floor`). Step 4.0 still runs and the marker is still written, so the run is not retried and tidy's backstop recovers the parent.
   - The pass walks only the live run dirs, so it never reaches a run `/claude-tweaks:wrap-up` already archived. For that run, `/claude-tweaks:wrap-up #{n} merge` on the merged PR runs Steps 4.0 and 4.0b once through `bin/post-merge-run.js`, under the same marker and claim as the pass, so whichever starts second reports `already done` or `in-flight` (`merge-a-parked-unattended-pr-3784.md`, step 3).
@@ -115,6 +119,10 @@ Updated by record #4599 (run `2026-10-31T135734-record-4599`): step 3 added. A m
 
 Updated by record #4600 (run `2026-10-31T190944-record-4600`): step 5's `needsBackstop` line. The parent-gate sweep reports a hand-closed parent above the floor itself, and this journey's #4466 close marker keeps the parent it closed out of that row (`catch-a-hand-closed-parent-with-no-sign-off-4600.md`).
 
+Updated by record #4551 (run `2026-11-01T171342-record-4551`): under `work-links: body-text` the gate CLI reads `Parent:` through `parseParent` and resolves no parent for a sub-issue its parent's non-empty task list omits; step 1 notes it.
+
 Updated by record #4603 (run `2026-10-31T211744-record-4603`): the gate's gather and evaluate moved from prose snippets into `bin/parent-gate.js`, which the reconciler's `below-floor-parent-close.js` shares through `bin/lib/issues/parent-gate.js`. Steps 1 and 2 name the CLI call. The review's fix wave added the local-files call (`--backend local-files`, `local-parent-gate-shape.js`) and the fail-closed policy read, which steps 1-3 now note.
+
+Updated by record #4770 (run `2026-11-01T182348-spec-4770`): a failed or empty identity read no longer skips the parent. Steps 2 and 3 note the trusted-author-only fallback, its degrade note, and the reconciler's once-per-run identity read.
 
 Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.

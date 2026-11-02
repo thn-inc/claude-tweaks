@@ -15,6 +15,10 @@ const DEP_RE = /^Blocked by #(\d+)\b/gm;
 // '- [ ] #{subIssueNum}' and checked off over time — both box states count.
 const SUB_ISSUE_RE = /^- \[[ xX]\] #(\d+)\b/gm;
 
+// Line-anchored 'Parent: #N' back-link (work-links: body-text), written by
+// /specify as a metadata line in a sub-issue's body. Non-global: first match wins.
+const PARENT_RE = /^Parent: #(\d+)\b/m;
+
 // Line-anchored 'Blocked by #N: {text}' assumption declarations (multiline) —
 // a separate, additive sibling to DEP_RE/parseDependencies below, never a
 // modification of either. DEP_RE already stops matching at the number, so a
@@ -54,6 +58,16 @@ function parseDependencies(body) {
 // caller reads sub_issues from the API and never calls this.
 function parseSubIssues(body) {
   return parseIssueNumbers(body, SUB_ISSUE_RE);
+}
+
+// sub-issue body -> its parent's issue number from the first line-anchored
+// 'Parent: #N' line (written by /specify under work-links: body-text), or null
+// for a null/undefined/empty/non-string body or one with no such line. Mid-line
+// mentions don't count, exactly as with DEP_RE.
+function parseParent(body) {
+  if (typeof body !== 'string' || !body) return null;
+  const m = body.match(PARENT_RE);
+  return m ? Number(m[1]) : null;
 }
 
 // issue numbers + a per-alias field expression -> the one batched, aliased GraphQL
@@ -251,6 +265,6 @@ function parseDependencyAssumptions(body) {
 
 module.exports = {
   parseDependencies, parseDependencyAssumptions, buildNativeDependencyQuery,
-  hasOpenNativeBlocker, parseSubIssues, buildNativeSubIssuesQuery, buildNativeParentQuery,
+  hasOpenNativeBlocker, parseSubIssues, parseParent, buildNativeSubIssuesQuery, buildNativeParentQuery,
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
 };

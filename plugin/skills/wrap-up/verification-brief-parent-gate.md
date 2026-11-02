@@ -137,7 +137,10 @@ holds `$PARENT_NUM` and skips straight to "Enumerate the parent's sub-issues" be
 
 The CLI (`--sub-issue`) resolves the parent as `/claude-tweaks:review` Step 1.6 does — by
 `facets.parent` under `work-backend: local-files`, else per `work-links` — and reports
-`state: 'no-parent'` when there is none.
+`state: 'no-parent'` when there is none. Under `work-links: body-text`, a `Parent: #N` line whose
+parent's task list lists other records but not this one resolves no parent either
+(`state: 'no-parent'`) — the parent's task list wins, so the record takes the standalone path
+below. An empty or missing task list is not that case: the parent still resolves.
 
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —
@@ -275,12 +278,12 @@ never reshaped, and write only the keys this entry's mode needs:
 - `subIssueGets` — an object keyed by each enumerated sub-issue's number, its value that
   sub-issue's `get`: exactly one key per number the parent's sub-issue list or task list names.
 - `parentComments` — every `get_comments` entry of the parent, all pages concatenated.
-- `me` — `get_me`.
+- `me` — `get_me`, recorded whole even when it fails: a `me` with no login reads as no identity.
 
 `parentComments` and `me` are needed only on an `--idempotence` call whose `parentGet` reads open
 and not `reopened`. Then add `--facts-json {facts-file}` to the entry's command line above, with the
-printed path in place of `{facts-file}`. If any MCP read fails, write no file: that is a failing
-call under the **Fail open on every `gh` call** paragraph.
+printed path in place of `{facts-file}`. If any MCP read other than `get_me` fails, write no file:
+that is a failing call under the **Fail open on every `gh` call** paragraph.
 
 The verdict carries one field each:
 
@@ -299,7 +302,8 @@ The verdict carries one field each:
 - `held` — the enumerated sub-issues that `--held` names.
 - `subIssues` — each enumerated sub-issue in number order, after the **Self-inclusion rule**:
   `number`, `title`, `state`, `stateReason` and `pr` (`null` with no PR).
-- `skipped` — each untrusted heading comment step 1 did not count.
+- `skipped` — each untrusted heading comment step 1 did not count, plus the identity-probe degrade
+  note when the login read failed or printed none.
 
 Route on its exit code:
 
@@ -391,6 +395,13 @@ and comments, and the current `gh` identity, and its `idempotence` field says wh
 - `comment-and-close`: run steps 2 and 3. Any other comment carrying the heading reads as no
   comment posted, and the verdict's `skipped` names each one; name each in that section's skip
   notice in the output, since planting a heading must not suppress the real comment.
+
+A failed identity read: when the login read fails or prints none (a failed `get_me` leaves `me`
+without one), the CLI never skips the parent: only a trusted author's heading comment counts, so
+a `close-only` needs one, and on `comment-and-close` the verdict's `skipped` adds
+`identity probe failed — close marker matched against trusted authors only`, named in the output
+like the other skips. The accepted risk is one duplicate close comment when an earlier attempt
+posted under an untrusted association and its close then failed.
 
 Under `work-backend: local-files` the CLI reads the parent record instead: `already-closed` is a
 set `facets.closed`, `close-only` a body already holding the heading, and `reopened` never occurs;

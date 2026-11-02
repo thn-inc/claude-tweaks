@@ -28,9 +28,6 @@ REPO_DIR=$(find "$SEARCH_ROOT" -maxdepth 2 \( -type d -o -type f \) -name .git 2
 # a plugin is current by comparing version strings against THIS local catalog and nothing
 # else, so a catalog that failed to refresh makes every "already at the latest version"
 # below true of a stale snapshot and false of reality.
-claude plugin marketplace add thn-inc/claude-tweaks-marketplace 2>/dev/null || true
-claude plugin marketplace update claude-tweaks-marketplace \
-  || echo "[claude-cloud-setup] WARNING: catalog refresh failed for claude-tweaks-marketplace — version checks below are measured against whatever catalog this sandbox already had."
 # `claude-plugins-official` (Anthropic's own marketplace) still needs an explicit `add` here:
 # on a fresh cloud sandbox it is not pre-registered at the CLI/runtime level (only this
 # project's own .claude/settings.json schema recognizes it by name with no settings entry),
@@ -48,7 +45,7 @@ claude plugin marketplace update impeccable \
 # Deliberately not silencing update's stderr here: if update fails for a real reason (network,
 # corrupt marketplace cache) rather than "not installed yet," the install fallback's own
 # "already installed" error would otherwise be the only, misleading diagnostic surfaced.
-PLUGIN_SPECS="claude-tweaks@claude-tweaks-marketplace superpowers@claude-plugins-official code-simplifier@claude-plugins-official impeccable@impeccable"
+PLUGIN_SPECS="superpowers@claude-plugins-official code-simplifier@claude-plugins-official impeccable@impeccable"
 for spec in $PLUGIN_SPECS; do
   claude plugin update "$spec" --scope project || claude plugin install "$spec" --scope project
 done

@@ -19,7 +19,7 @@
 // The gh reads, numbered as the comments below and the tests' `shape N:` labels cite them.
 // {slug} is repoSlug({ host, owner, repo }) (`owner/repo` on github.com, `host/owner/repo`
 // off it); off github.com every `gh api` read also carries `--hostname {host}`.
-//   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then PARENT_LINE_RE.
+//   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then parseParent.
 //   2   sub-issue -> parent, native: fetchNativeParent's api graphql -f query=<parent> -f owner= -f repo=.
 //   3   parent -> sub-issues, body-text: issue view {parent} --repo {slug} --json body -q .body, then parseSubIssues.
 //   4   parent -> sub-issues, native: fetch-sub-issues.js's run([parent, --repo {slug}, --resolve-retries]), whose runner sends
@@ -30,11 +30,11 @@
 //   5   each sub-issue, ascending: issue view {n} --repo {slug} --json state,stateReason,labels,title,closedByPullRequestsReferences.
 //   6   the parent's labels: issue view {parent} --repo {slug} --json labels -q [.labels[].name].
 //   7   idempotence: issue view {parent} --repo {slug} --json state,stateReason,comments.
-//   8   the login: api user --jq .login, only when needsIdempotenceReads(7's state, stateReason).
+//   8   the login: api user --jq .login, only when needsIdempotenceReads(7's state, stateReason); a failed or blank read is login '' (trusted authors only, evaluateIdempotence notes it).
 'use strict';
 
 const { fetchNativeParent } = require('./native-dependencies');
-const { parseSubIssues } = require('./record');
+const { parseSubIssues, parseParent } = require('./record');
 const { parseRecordFacets, normalizeLabelNames, LABELS } = require('./record-vocabulary');
 const { parentGateState } = require('./acceptance');
 const { maxRiskTier, exceedsOversightFloor } = require('./oversight-floor');
@@ -51,7 +51,6 @@ const CLOSE_HEADING = '## Closed below the oversight floor';
 // parent whose sub-issues carry no risk label.
 const VALID_RISK_FLOORS = POLICY_KEYS.find((k) => k.key === 'risk-floor').values;
 const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
-const PARENT_LINE_RE = /^Parent: #(\d+)/m;
 
 // The verdict's keys, in emission order.
 const VERDICT_FIELDS = [
@@ -59,6 +58,10 @@ const VERDICT_FIELDS = [
 ];
 // The idempotence values, in the order they are checked.
 const IDEMPOTENCE_VALUES = ['already-closed', 'reopened', 'close-only', 'comment-and-close'];
+
+// The note evaluateIdempotence appends when the login read failed or came back blank and no
+// close marker counted: the dedupe then matched trusted authors only.
+const IDENTITY_PROBE_FAILED_NOTE = 'identity probe failed — close marker matched against trusted authors only';
 
 const QUALIFIED_TOKEN_RE = /^([^/\s#]+)\/([^/\s#]+)#(\d+)$/;
 
@@ -108,6 +111,15 @@ function distinctAscending(values) {
   return [...new Set(values.filter((v) => Number.isInteger(v) && v > 0))].sort((a, b) => a - b);
 }
 
+// Under body-text a `Parent: #N` line is only honored when the parent's task list lists the
+// sub-issue (the parent's list wins). True when a NON-EMPTY list omits it; an empty or missing
+// list is not an omission and keeps the parent. The one copy both labeler transports (gh here,
+// the MCP shape in mcp-parent-gate-shape.js) apply; engine-verify.js's checker applies the same
+// membership rule to its own enumeration, where an empty list is a gather failure instead.
+function listOmitsSubIssue(numbers, subIssue) {
+  return numbers.length > 0 && !numbers.includes(subIssue);
+}
+
 // A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
 // already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
 // github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
@@ -123,11 +135,16 @@ function needsIdempotenceReads(state, stateReason) {
   return state !== 'CLOSED' && stateReason !== 'REOPENED';
 }
 
+// Shape 8: the current gh login, trimmed. Throws whatever caller.call throws (a GhFailure);
+// gatherIdempotenceFacts reads that as no identity. The one place the --hostname rule applies to it.
+function readLogin({ caller, host }) {
+  return String(caller.call(onHost(['api', 'user', '--jq', '.login'], host))).trim();
+}
+
 // Shape 1 (body-text) or 2 (native): the sub-issue's parent number, or null.
 function resolveParent({ subIssue, owner, repo, host, workLinks, caller }) {
   if (workLinks === 'body-text') {
-    const match = PARENT_LINE_RE.exec(String(caller.call(['issue', 'view', String(subIssue), '--repo', repoSlug({ host, owner, repo }), '--json', 'body', '-q', '.body'])));
-    return match ? Number(match[1]) : null;
+    return parseParent(String(caller.call(['issue', 'view', String(subIssue), '--repo', repoSlug({ host, owner, repo }), '--json', 'body', '-q', '.body'])));
   }
   // fetchNativeParent throws only for a failed or malformed GraphQL read.
   try {
@@ -174,8 +191,10 @@ function enumerateSubIssues({
 }
 
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
-// With no resolvable parent it stops after resolution. `host` is the origin's host; absent or
-// 'github.com' leaves every argv as on github.com.
+// With no resolvable parent it stops after resolution; so does a body-text `Parent: #N` whose
+// task list does not list `subIssue` (the parent's task list wins), before any shape 5 or 6 read.
+// An empty or missing task list is not an omission: it keeps the parent, as before.
+// `host` is the origin's host; absent or 'github.com' leaves every argv as on github.com.
 function gatherGateFacts({
   subIssue, parent, owner, repo, host, workLinks, caller,
 }) {
@@ -183,13 +202,16 @@ function gatherGateFacts({
   if (given(subIssue) === given(parent)) {
     throw new TypeError('gatherGateFacts takes exactly one of subIssue and parent');
   }
+  const noParent = { parent: null, parentLabels: [], subIssues: [] };
   let resolved = parent;
   if (resolved === null || resolved === undefined) {
     resolved = resolveParent({ subIssue, owner, repo, host, workLinks, caller });
-    if (resolved === null || resolved === undefined) return { parent: null, parentLabels: [], subIssues: [] };
+    if (resolved === null || resolved === undefined) return noParent;
   }
   const slug = repoSlug({ host, owner, repo });
-  const subIssues = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller }).map((num) => {
+  const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
+  if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
+  const subIssues = numbers.map((num) => {
     const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
     // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
     const rawRefs = live.closedByPullRequestsReferences;
@@ -216,12 +238,14 @@ function gatherGateFacts({
 }
 
 // Shapes 7 and 8: the parent's live state and comments, and the current gh login,
-// read only when the parent is neither CLOSED nor REOPENED. A state that is not a
+// read only when the parent is neither CLOSED nor REOPENED. A failed login read
+// (a GhFailure, from the default read or an injected `readLogin`) or a blank one is
+// login '' (no identity: the dedupe matches trusted authors only). A state that is not a
 // string, a present stateReason that is not one, or (when the comments are read) a
 // comments value that is not an array is a GhFailure: read as '' or [], it would
 // post a duplicate close comment.
 function gatherIdempotenceFacts({
-  parent, owner, repo, host, caller,
+  parent, owner, repo, host, caller, readLogin: readLoginFn = () => readLogin({ caller, host }),
 }) {
   const live = caller.callJson(['issue', 'view', String(parent), '--repo', repoSlug({ host, owner, repo }), '--json', 'state,stateReason,comments'], 'object');
   const malformed = (what, value) => new GhFailure(`gh issue view ${parent}: unexpected output (${what}: ${JSON.stringify(value)})`);
@@ -234,7 +258,15 @@ function gatherIdempotenceFacts({
   const reads = needsIdempotenceReads(state, stateReason);
   if (reads && !Array.isArray(live.comments)) throw malformed('comments is not an array', live.comments);
   const comments = Array.isArray(live.comments) ? live.comments : [];
-  const login = reads ? String(caller.call(onHost(['api', 'user', '--jq', '.login'], host))).trim() : null;
+  let login = null;
+  if (reads) {
+    try {
+      login = String(readLoginFn()).trim();
+    } catch (err) {
+      if (!(err instanceof GhFailure)) throw err;
+      login = '';
+    }
+  }
   return { state, stateReason, comments, login };
 }
 
@@ -315,7 +347,9 @@ const IDEMPOTENCE_SOURCES = ['comments', 'body'];
 // Pure: idempotence facts -> { idempotence, skipped }. `source` names the facts' shape:
 // 'comments' (the default) is the gh/MCP `{ state, stateReason, comments, login }`;
 // 'body' is local-files' `{ state, body }`, where the close marker is a heading in the
-// record body. Any other `source` throws a TypeError.
+// record body. Any other `source` throws a TypeError. A `login` of '' means the identity
+// read failed or came back blank: only trusted authors count, and with no close marker
+// counted `skipped` gains IDENTITY_PROBE_FAILED_NOTE.
 function evaluateIdempotence(facts, { source = 'comments' } = {}) {
   if (!IDEMPOTENCE_SOURCES.includes(source)) {
     throw new TypeError(`source must be one of ${IDEMPOTENCE_SOURCES.join(', ')}; got ${String(source)}`);
@@ -335,6 +369,7 @@ function evaluateIdempotence(facts, { source = 'comments' } = {}) {
     if (isCloseMarkerComment(comment, f.login)) counted = true;
     else skipped.push(untrustedSkipNote(comment));
   }
+  if (!counted && f.login === '') skipped.push(IDENTITY_PROBE_FAILED_NOTE);
   return { idempotence: counted ? 'close-only' : 'comment-and-close', skipped };
 }
 
@@ -388,15 +423,17 @@ function parseClosingTokens(tokens, { owner, repo } = {}) {
 module.exports = {
   CLOSE_HEADING,
   HEADING_LINE_RE,
-  PARENT_LINE_RE,
   VALID_RISK_FLOORS,
   VERDICT_FIELDS,
   IDEMPOTENCE_VALUES,
   IDEMPOTENCE_SOURCES,
   isCloseMarkerComment,
+  IDENTITY_PROBE_FAILED_NOTE,
   needsIdempotenceReads,
+  readLogin,
   positive,
   distinctAscending,
+  listOmitsSubIssue,
   numberSet,
   GhFailure,
   ghCaller,
