@@ -18,6 +18,16 @@ const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE: ?(.*)$/m;
 const RECORD = '\x1e';
 const FIELD = '\x1f';
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
+// Whole-line closing/reference footers a bundled merge commit carries, one per
+// bundled record (#4634): `Fixes #N` closes it, `Refs #N` keeps it open. Not
+// closing-links.js's parseFixesSpan — that reads PR-body span markers a commit
+// body never has. Case-sensitive, anchored, CR-tolerant, so prose never matches.
+const FIXES_RE = /^Fixes #(\d+)[ \t]*\r?$/gm;
+const REFS_RE = /^Refs #(\d+)[ \t]*\r?$/gm;
+
+function issueNumbers(re, body) {
+  return Array.from(body.matchAll(re), (m) => Number(m[1]));
+}
 
 // The highest v* tag reachable as an ancestor of `ref` (`git tag --merged`,
 // full-reachability — not `git describe --first-parent`). A prior version
@@ -74,6 +84,8 @@ function parseCommit({ sha, subject, body = '' }) {
     description,
     unconventional: m === null,
     releaseNotes,
+    fixes: issueNumbers(FIXES_RE, body),
+    refs: issueNumbers(REFS_RE, body),
   };
 }
 

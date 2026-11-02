@@ -5,7 +5,7 @@ const { parseCommit, readCommits, lastTag, conventionalHistory } = require('../.
 
 test('parseCommit: type, scope, description', () => {
   const c = parseCommit({ sha: 'a'.repeat(40), subject: 'fix(deps): bump x', body: '' });
-  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false, releaseNotes: [] });
+  assert.deepStrictEqual(c, { sha: 'a'.repeat(40), subject: 'fix(deps): bump x', type: 'fix', scope: 'deps', breaking: false, breakingNote: null, description: 'bump x', unconventional: false, releaseNotes: [], fixes: [], refs: [] });
 });
 
 test('parseCommit: Release-Note footer (conventional path) is captured as releaseNotes', () => {
@@ -143,4 +143,19 @@ test('conventionalHistory: passes opts through to readCommits', () => {
   const git = (args) => { calls.push(args); return args[0] === 'tag' ? 'v1.2.0\n' : ''; };
   conventionalHistory(git, 'HEAD', { firstParent: false });
   assert.ok(!calls[1].includes('--first-parent'), calls[1].join(' '));
+});
+
+test('parseCommit reads whole-line Fixes #N and Refs #N into fixes and refs, in body order', () => {
+  const c = parseCommit({ sha: 'k'.repeat(40), subject: 'fix: bundle (#10)', body: 'Release-Note: A.\n\nFixes #10\nRefs #11\nFixes #12' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10, 12], [11]]);
+});
+
+test('parseCommit ignores Fixes/Refs that are not whole lines, and lowercase forms', () => {
+  const c = parseCommit({ sha: 'l'.repeat(40), subject: 'fix: y', body: 'Fixes #13 and more\nfixes #14\nSee Refs #15\nrefs #16' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[], []]);
+});
+
+test('parseCommit reads Fixes/Refs lines from a CRLF body', () => {
+  const c = parseCommit({ sha: 'm'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\r\n\r\nFixes #10\r\nRefs #11\r\n' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
 });
