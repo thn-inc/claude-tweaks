@@ -1,16 +1,16 @@
 {
-  "computedAt": "2026-11-02T09:46:01.824Z",
+  "computedAt": "2026-11-02T10:53:15.202Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
       {
-        "number": 4851,
-        "updatedAt": "2026-11-02T05:07:21Z",
+        "number": 4940,
+        "updatedAt": "2026-11-02T10:51:48Z",
         "state": "OPEN"
       },
       {
-        "number": 4847,
-        "updatedAt": "2026-11-02T05:57:08Z",
+        "number": 4851,
+        "updatedAt": "2026-11-02T05:07:21Z",
         "state": "OPEN"
       },
       {
@@ -20,7 +20,7 @@
       },
       {
         "number": 4829,
-        "updatedAt": "2026-11-01T18:32:11Z",
+        "updatedAt": "2026-11-02T10:17:38Z",
         "state": "OPEN"
       },
       {
@@ -30,7 +30,7 @@
       },
       {
         "number": 4826,
-        "updatedAt": "2026-11-01T18:33:38Z",
+        "updatedAt": "2026-11-02T10:20:48Z",
         "state": "OPEN"
       },
       {
@@ -60,7 +60,7 @@
       },
       {
         "number": 4817,
-        "updatedAt": "2026-11-02T06:51:19Z",
+        "updatedAt": "2026-11-02T10:49:59Z",
         "state": "OPEN"
       },
       {
@@ -89,11 +89,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4809,
-        "updatedAt": "2026-11-02T03:55:52Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4807,
         "updatedAt": "2026-11-02T08:18:01Z",
         "state": "OPEN"
@@ -114,38 +109,33 @@
         "state": "OPEN"
       },
       {
-        "number": 4802,
-        "updatedAt": "2026-11-02T06:14:29Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4800,
         "updatedAt": "2026-11-02T07:16:23Z",
         "state": "OPEN"
       },
       {
         "number": 4798,
-        "updatedAt": "2026-11-02T08:59:25Z",
+        "updatedAt": "2026-11-02T10:49:56Z",
         "state": "OPEN"
       },
       {
         "number": 4797,
-        "updatedAt": "2026-11-02T07:18:48Z",
+        "updatedAt": "2026-11-02T10:49:54Z",
         "state": "OPEN"
       },
       {
         "number": 4795,
-        "updatedAt": "2026-11-01T19:35:44Z",
+        "updatedAt": "2026-11-02T10:49:52Z",
         "state": "OPEN"
       },
       {
         "number": 4794,
-        "updatedAt": "2026-11-01T19:58:45Z",
+        "updatedAt": "2026-11-02T10:49:49Z",
         "state": "OPEN"
       },
       {
         "number": 4793,
-        "updatedAt": "2026-11-02T07:37:08Z",
+        "updatedAt": "2026-11-02T10:49:47Z",
         "state": "OPEN"
       },
       {
@@ -200,7 +190,7 @@
       },
       {
         "number": 4637,
-        "updatedAt": "2026-10-30T16:09:57Z",
+        "updatedAt": "2026-11-02T10:37:00Z",
         "state": "OPEN"
       },
       {
@@ -1013,6 +1003,78 @@
   "groups": [
     [
       {
+        "body": "Origin: reflect full from #4847\n\nDefer-reason: tangential\n\n## Current State\n\n#4847 added the `declare-claude-tweaks` policy key: at `false`, `/init` Step 14 stops adding claude-tweaks to the project's committed `.claude/settings.json` and `scripts/claude-cloud-setup.sh`, and `/routine fleet` reports the parity gap as an opt-out instead of failing. Three routine-side surfaces still ignore the key, so a routine created or fired in an opted-out project runs in a sandbox the setup script no longer installs claude-tweaks into:\n\n- `plugin/skills/_shared/routine-template-schema.md` (the kernel self-heal, near line 67) runs `bash scripts/claude-cloud-setup.sh` on every firing where the plugin cache is empty. At `declare-claude-tweaks: false` that script no longer installs claude-tweaks, so every firing self-heals into a script that cannot help and then fails at \"version unresolved\" instead of naming the opt-out.\n\n- `plugin/skills/init/bootstrap/step-15-routine-installation.md` (the Setup-script environment offer) offers to apply the script to a dedicated environment without mentioning the opt-out.\n\n- `plugin/skills/routine/create-and-update.md` (`/routine create`) does not warn that the routine it creates will fire without claude-tweaks.\n\nAbsence probe (integration branch): `git grep -n -F -e declare-claude-tweaks origin/main -- plugin/skills/routine plugin/skills/_shared/routine-template-schema.md` returned no match at the time of filing.\n\n## Deliverables\n\nMake the kernel self-heal in `plugin/skills/_shared/routine-template-schema.md` opt-out aware: at `declare-claude-tweaks: false`, skip the self-heal and print one line naming the opt-out instead of the generic \"version unresolved\" failure.\n\nMake `/init` Step 15's Setup-script environment offer and `/routine create` state, once, that the project opted out of declaring claude-tweaks and that a routine fired there needs claude-tweaks supplied another way, or the key set back to true.\n\nPin each added line with a conformance assertion in the existing `tests/declare-claude-tweaks-opt-out.test.js`, discriminating against the default (`true`) path.\n\n## Acceptance Criteria\n\nWith `declare-claude-tweaks: false`, the kernel self-heal text in `routine-template-schema.md` names the opt-out and does not instruct running `scripts/claude-cloud-setup.sh`.\n\nWith the key unset or `true`, the self-heal text is unchanged in behavior (a test asserts the default path).\n\n`step-15-routine-installation.md` and `routine/create-and-update.md` each carry the opt-out notice, pinned by `tests/declare-claude-tweaks-opt-out.test.js`.\n\n`npm test` passes.\n\n## Release Note\n\nNo user-visible change for projects that keep the default; projects that opted out of declaring claude-tweaks get a clear message instead of a failing routine self-heal.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/_shared/routine-template-schema.md` — modify\n- `plugin/skills/init/bootstrap/step-15-routine-installation.md` — modify\n- `plugin/skills/routine/create-and-update.md` — modify\n- `tests/declare-claude-tweaks-opt-out.test.js` — modify\n\n_Filed by `reflect` via specShapedBody._\n",
+        "createdAt": "2026-11-02T06:32:04Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2pJg",
+            "name": "type:task",
+            "description": "Type: maintenance, refactor, docs, or chore work",
+            "color": "ededed"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
+            "name": "priority:low",
+            "description": "Priority: dispatch picks last among prioritized records",
+            "color": "5319E7"
+          }
+        ],
+        "number": 4940,
+        "state": "OPEN",
+        "title": "Make routine self-heal, /init Step 15 and /routine create aware of declare-claude-tweaks: false",
+        "updatedAt": "2026-11-02T10:51:48Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "low",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
         "body": "## Current State\n\n`findRecentCommitOverlap` in `plugin/bin/lib/issues/recent-commit-check.js` matches words from a new record's title against commit subjects from the last 14 days, and posts a triage comment on two or more shared words. On 2026-11-01 it commented on 12 of 14 new records: 10 matched only template words (`settle`, `digest`, `findings`, plus the area name), and 2 matched `pr-scan` and `item`. Passing files makes it worse, because the threshold drops to one word: #4809 went from 12 hits to 17.\n\nHistory is equally weak. Of 82 records carrying the comment, 2 closed as not planned (#1970, #1776). How many of the 54 completed ones were already fixed is unmeasured, and #1316's own requirement of a low false-positive rate was never measured.\n\nThe comment sets no label, so a true match does not stop a build either. `_shared/health-recent-commit-check.md` still calls it a gap-closer for the #1068 failure, where a record is built after its fix has already merged.\n\n## Deliverables\n\n- The screen asks whether the flawed code still exists. It extracts a record's anchors (the file:line references and quoted symbols in Current State, reusing `near-duplicate.js`'s anchor extraction where it fits), and tests them at `HEAD` and against commits in the lookback window touching those files.\n- A rollup record (a digest cluster) tests each entry's anchor and flags only entries whose anchor is gone.\n- A confirmed match sets `needs:decision` with a proposal naming the commit and the missing anchor, so the record does not build until a human answers. A weak or unprovable result posts nothing, and a failed screen still never blocks filing.\n- A record with no anchors gets no comment: no evidence means no signal.\n- The open-PR screen stops matching on title words alone: it requires a shared Key File or anchor.\n- A replay tool run over the 82 existing records states measured precision in the PR body.\n- `health-recent-commit-check.md` and all five filing call sites describe the new behavior.\n\n## Acceptance Criteria\n\n- A test proves a record whose anchor still exists at `HEAD` gets no comment and no label, even when commit subjects share its title words.\n- A test proves a record whose anchored line was removed by a commit in the window gets `needs:decision` naming that commit.\n- A test proves a rollup flags only the entries whose anchors are gone.\n- Replaying the fixture of #4807's title and Key Files produces no match.\n- A test proves a git failure or an anchorless record yields no comment and no filing failure.\n- The PR body quotes the replay's output over the 82 records.\n\n## Release Note\n\nFlag a new record only when the code it describes has really changed, and hold that record until someone confirms it.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/recent-commit-check.js` — modify\n- `plugin/skills/_shared/health-recent-commit-check.md` — modify\n- `plugin/bin/lib/issues/near-duplicate.js` — modify\n- `plugin/skills/capture/SKILL.md` — modify\n- `plugin/skills/code-health/filing.md` — modify\n- `plugin/skills/harness-health/filing.md` — modify\n- `plugin/skills/docs-health/SKILL.md` — modify\n- `plugin/skills/journey-health/SKILL.md` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nPlan-review answers (2026-11-02). The governing rule is this record's own: a weak or unprovable signal posts nothing. Apply it to any further anchor-classification question rather than stopping on it.\n\n- **Line references: HEAD numbering.** A `file:line` reference is judged at `HEAD`. An in-range line counts as live. Only a missing file, or a line past the end of the file with a removing commit in the window, counts as gone. Line numbers drift too easily to prove more than that.\n- **Bare paths: context only.** A path that still exists casts no vote either way, and the decision comment never claims that no anchors remain.\n- **Stub captures: screened at shaping.** A stub has no anchors at filing, so `/specify` runs the screen when it shapes the record. This keeps coverage for the #3191 duplicate-of-open-PR case, and the journey is rewritten to say so.\n- **`relfile#Symbol` anchors** count as symbol anchors in that file.\n- **Rollups.** A rollup's proposal stays single-line for its single-line readers, naming the flagged entries' count and first entry, with the full list in the comment body.\n- **Dispatch holds on `needs:*`.** `dispatch/queue-pull-script.md`'s eligibility filter excludes a record with any `needs:*` label, so a confirmed match really does stop the build. A test covers this, with a report line that names the label.\n- **Plan shape.** Task 1 exports the anchor classifier that Task 2 uses. Tasks 2 and 3 carry `**Review risk:** high`.\n",
         "createdAt": "2026-11-01T19:08:08Z",
         "labels": [
@@ -1224,7 +1286,7 @@
         "number": 4829,
         "state": "OPEN",
         "title": "Surface a degraded forge detection in reconcile, the express lane and the flow preflight (follow-up to #4578)",
-        "updatedAt": "2026-11-01T18:32:11Z",
+        "updatedAt": "2026-11-02T10:17:38Z",
         "facets": {
           "origin": null,
           "risk": "low",
@@ -1316,78 +1378,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: ledger resolve gate\n\nDefer-reason: genuinely-larger\n\n**Related:** #4828\n\n## Current State\n\nAfter #4555, `plugin/skills/review/step3-lens-dispatch.md` is 52,336 B and `plugin/skills/build/SKILL.md` is 52,235 B — 164 B and 265 B under the 52,500 B Read rail (`wc -c` on the integration branch tip of the #4555 PR). #4555 added 940 B to `step3-lens-dispatch.md` alone. Any later append to either file crosses the rail, and no remedy is named for that append: the next author meets the rail at plan-audit time with no pre-decided split point. Found by #4555's review tiebreak (ledger row 27).\n\n## Deliverables\n\n- [ ] Pick a cohesive section of `plugin/skills/review/step3-lens-dispatch.md` and one of `plugin/skills/build/SKILL.md`, and move each into a lazy-loaded sub-file in the same skill directory, leaving a one-line pointer behind.\n\n- [ ] Update every citation, `docs/plugin-structure.md`'s per-skill sub-file table, and any conformance test that reads the moved text.\n\n## Acceptance Criteria\n\n1. `wc -c plugin/skills/review/step3-lens-dispatch.md plugin/skills/build/SKILL.md` reports each file at least 2,000 B under 52,500.\n\n2. `npm test` passes, including the skill-prose conformance suites that read both files.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-lens-dispatch.md` — move one cohesive section into a lazy-loaded sub-file\n- `plugin/skills/build/SKILL.md` — move one cohesive section into a lazy-loaded sub-file\n- `docs/plugin-structure.md` — add the new sub-files to the per-skill sub-file table\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
-        "createdAt": "2026-11-01T09:17:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4826,
-        "state": "OPEN",
-        "title": "Restore read-rail headroom: review/step3-lens-dispatch.md and build/SKILL.md sit under 300 B of the 52,500 B rail",
-        "updatedAt": "2026-11-01T18:33:38Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "medium",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
@@ -1553,7 +1543,7 @@
     ],
     [
       {
-        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `reflect`, enough to promote as one record.\n\n## Deliverables\n\n- [reflect] gh-api-module-pattern skill: a write path added to a CLI that already proves run ownership before its first write must carry the same proof (closing-links.js 9b close vs 7a run-marker check) — .claude/skills/gh-api-module-pattern/SKILL.md, plugin/bin/closing-links.js — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] windows-checkout-test-parity skill: a test pinning one shell's behaviour skips where CI lacks that shell, so the workflow must install it (zsh on ubuntu-latest, #4107) — .claude/skills/windows-checkout-test-parity/SKILL.md, .github/workflows/test.yml — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] executable-snippet-pins: a go-red mutation of a fence that branches on a node -e exit status must change the exit outcome; an edit that makes node throw keeps the exit non-zero and proves nothing — .claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in reflect.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `plugin/bin/closing-links.js` — modify\n- `.claude/skills/windows-checkout-test-parity/SKILL.md` — modify\n- `.github/workflows/test.yml` — modify\n- `.claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md` — modify\n\n_Filed by `capture` via specShapedBody._",
+        "body": "Origin: tidy run 2026-10-31T204035-sweep-standalone, digest #1426\n\nDefer-reason: tangential\n\n## Current State\n\n#1426 holds 3 active below-floor findings for area `reflect`, enough to promote as one record.\n\n## Deliverables\n\n- [reflect] gh-api-module-pattern skill: a write path added to a CLI that already proves run ownership before its first write must carry the same proof (closing-links.js 9b close vs 7a run-marker check) — .claude/skills/gh-api-module-pattern/SKILL.md, plugin/bin/closing-links.js — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] windows-checkout-test-parity skill: a test pinning one shell's behaviour skips where CI lacks that shell, so the workflow must install it (zsh on ubuntu-latest, #4107) — .claude/skills/windows-checkout-test-parity/SKILL.md, .github/workflows/test.yml — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n- [reflect] executable-snippet-pins: a go-red mutation of a fence that branches on a node -e exit status must change the exit outcome; an edit that makes node throw keeps the exit non-zero and proves nothing — .claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md — Defer-reason: pre-existing-outside-diff — 2026-10-31T172038-release-standalone\n\n## Acceptance Criteria\n\n- Each deliverable is fixed, or closed out with its reason recorded on this record.\n- Each promoted entry line in #1426 carries this record's ref.\n\n## Release Note\n\nSettle 3 small deferred findings in reflect.\n\n## Technical Approach\n\n### Key Files\n\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — modify\n- `plugin/bin/closing-links.js` — modify\n- `.claude/skills/windows-checkout-test-parity/SKILL.md` — modify\n- `.github/workflows/test.yml` — modify\n- `.claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md` — modify\n\n_Filed by `capture` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6571003055).\n\n- **Decision: Reading A.** The run-marker proof covers only the non-default-base path of `closing-links.js --mode post-merge`: the marker check runs when the PR merged into a base other than the default branch, ahead of both that path's reopens and its 9b closes. Default-base post-merge reopens (step 8b, #4199) deliberately stay unproven, so the common default-base path, including the reconciler's late runs, gains no new exit 4. Record this choice in the spec and pin it with a test asserting a default-base post-merge run still reopens for a foreign or marker-less PR body.\n",
         "createdAt": "2026-11-01T07:37:09Z",
         "labels": [
           {
@@ -1602,7 +1592,7 @@
         "number": 4817,
         "state": "OPEN",
         "title": "Settle 3 digest findings in reflect",
-        "updatedAt": "2026-11-02T06:51:19Z",
+        "updatedAt": "2026-11-02T10:49:59Z",
         "facets": {
           "origin": "capture",
           "risk": "low",
@@ -1709,7 +1699,7 @@
     ],
     [
       {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nWhen the reconcile post-merge pass (`plugin/bin/lib/reconcile/post-merge.js`, around line 419) leaves a parent unclosed in Step 4.0b (a `gh-failed` or `internal-error` skip, e.g. the close comment posted but the close failed), it still writes a clean `ran` entry carrying only `parentsClosed`. The skips land only in `decisions.md` prose, so `hooks.js` counts the run as `postMergeRan` and SessionStart never reports the parent left open. Found by the v6.159.0 release-gate review (lens 3c, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Record Step 4.0b skips that left a parent open as a structured field on the post-merge entry.\n\n- [ ] Have SessionStart count and surface those entries rather than treating them as a clean `ran`.\n\n## Acceptance Criteria\n\nA test drives Step 4.0b to a `gh-failed` skip and asserts the entry is not a clean `ran` and that the SessionStart summary names the parent.\n\n`npm test` passes.\n\n## Follow-ups from #4897\n\nThese apply once #4897 (PR #4957) has merged. Build on it, because both records edit `plugin/bin/lib/reconcile/post-merge.js` and `plugin/bin/hooks.js`.\n\n#4897 makes the background summary and the reconcile CLI count any `ran` entry carrying `parentFailures` as failed, through `classifyEntry`. So this record emits the field on loop entries and names the parent. A step-wide policy skip on an empty closing set would therefore count as failed once it is emitted, which is plan-review Q2's Reading A, unless this record decides otherwise.\n\n- [ ] Add the Step 4.0b parent-failure clause back to `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` and `docs/journeys/session-start-fast-background-reconcile.md`. #4897 left it out because loop entries do not carry `parentFailures` yet.\n\n- [ ] Remove the \"#4798 adds that field to loop entries\" clause from `docs/reconcile-checks.md`'s Post-merge closes Surfacing bullet, and describe the field as present.\n\n## Release Note\n\nA parent issue the background merge pass failed to close is now reported at the next session start.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/hooks.js` — modify\n- `docs/reconcile-checks.md` — modify\n- `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` — modify\n- `docs/journeys/session-start-fast-background-reconcile.md` — modify\n\n_Filed by `release` via specShapedBody._\n",
+        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nWhen the reconcile post-merge pass (`plugin/bin/lib/reconcile/post-merge.js`, around line 419) leaves a parent unclosed in Step 4.0b (a `gh-failed` or `internal-error` skip, e.g. the close comment posted but the close failed), it still writes a clean `ran` entry carrying only `parentsClosed`. The skips land only in `decisions.md` prose, so `hooks.js` counts the run as `postMergeRan` and SessionStart never reports the parent left open. Found by the v6.159.0 release-gate review (lens 3c, tiebreak confirmed low).\n\n## Deliverables\n\n- [ ] Record Step 4.0b skips that left a parent open as a structured field on the post-merge entry.\n\n- [ ] Have SessionStart count and surface those entries rather than treating them as a clean `ran`.\n\n## Acceptance Criteria\n\nA test drives Step 4.0b to a `gh-failed` skip and asserts the entry is not a clean `ran` and that the SessionStart summary names the parent.\n\n`npm test` passes.\n\n## Follow-ups from #4897\n\nThese apply once #4897 (PR #4957) has merged. Build on it, because both records edit `plugin/bin/lib/reconcile/post-merge.js` and `plugin/bin/hooks.js`.\n\n#4897 makes the background summary and the reconcile CLI count any `ran` entry carrying `parentFailures` as failed, through `classifyEntry`. So this record emits the field on loop entries and names the parent. A step-wide policy skip on an empty closing set would therefore count as failed once it is emitted, which is plan-review Q2's Reading A, unless this record decides otherwise.\n\n- [ ] Add the Step 4.0b parent-failure clause back to `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` and `docs/journeys/session-start-fast-background-reconcile.md`. #4897 left it out because loop entries do not carry `parentFailures` yet.\n\n- [ ] Remove the \"#4798 adds that field to loop entries\" clause from `docs/reconcile-checks.md`'s Post-merge closes Surfacing bullet, and describe the field as present.\n\n## Release Note\n\nA parent issue the background merge pass failed to close is now reported at the next session start.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/hooks.js` — modify\n- `docs/reconcile-checks.md` — modify\n- `docs/journeys/close-a-below-floor-decomposition-parent-4466.md` — modify\n- `docs/journeys/session-start-fast-background-reconcile.md` — modify\n\n_Filed by `release` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review questions (comment 6571192593).\n\n- **Q1 — Decision: Reading A.** The Acceptance Criterion stands as written: add one end-to-end test that sends a real `postMerge` run (a fake `closeParents` returning a `gh-failed` skip) through `hooks.js reconcile-background` into SessionStart, and asserts the rendered summary names the parent (`#100 (gh-failed, …)`). Seam tests may stay as well, but they do not satisfy the criterion on their own.\n- **Q2 — Decision: Reading B, reported on its own line.** A Step 4.0b step-wide skip (`unreadable-policy`, `invalid-risk-floor`) on a merge whose Step 4.0 closing set is empty does not count as a parent left open and must not render under \"left parent record(s) open\". Surface it on its own separate line in the summary (the unreadable/invalid policy is still worth reporting). A step-wide skip with a non-empty closing set still counts as partial.\n",
         "createdAt": "2026-11-01T07:33:24Z",
         "labels": [
           {
@@ -1752,7 +1742,7 @@
         "number": 4798,
         "state": "OPEN",
         "title": "Surface a partial Step 4.0b parent-close instead of recording a clean ran",
-        "updatedAt": "2026-11-02T08:59:25Z",
+        "updatedAt": "2026-11-02T10:49:56Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1781,7 +1771,7 @@
     ],
     [
       {
-        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe reconcile post-merge pass serializes per-run work with `takeClaim` in `plugin/bin/lib/reconcile/post-merge.js` (around line 160), an exclusive-create plus rename-aside claim written beside the existing `plugin/bin/lib/file-lock.js`. It reclaims a holder by mtime age alone (`CLAIM_STALE_MS`, 10 minutes, no pid liveness probe, no heartbeat), and `releaseClaim` unlinks the claim without checking that the caller still owns it. A pass suspended or stalled past 10 minutes can therefore be taken over while still live, and when it resumes its release deletes the successor's claim, letting two passes run Step 4.0b on the same PR. Found by the v6.159.0 release-gate review (lens 3e reproduced, lens 3a pair; cross-lens debate settled on low severity); the #4668 review had already listed the hand-rolled lock as an open ledger item.\n\n## Deliverables\n\n- [ ] Make the per-run `.post-merge` claim reclaim only a dead holder (pid liveness, as `lib/file-lock.js` does) or a provably stale one, and release only when the caller still owns it (owner token).\n\n- [ ] Prefer reusing `plugin/bin/lib/file-lock.js` over the hand-rolled claim; if it cannot serve, state why at the call site.\n\n## Acceptance Criteria\n\nA test holds a claim from a live pid past `CLAIM_STALE_MS` and shows a second `takeClaim` refuses it.\n\nA test shows a release by a caller whose claim was taken over leaves the successor's claim in place.\n\n`npm test` passes.\n\n## Release Note\n\nTwo background post-merge passes can no longer run the same parent-close step at once when one of them stalls.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/lib/file-lock.js` — reuse\n- `tests/bin-lib/reconcile/post-merge.test.js` — modify\n\n_Filed by `release` via specShapedBody._",
+        "body": "Origin: /claude-tweaks:release v6.159.0 release-gate review (run 2026-10-31T203907-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe reconcile post-merge pass serializes per-run work with `takeClaim` in `plugin/bin/lib/reconcile/post-merge.js` (around line 160), an exclusive-create plus rename-aside claim written beside the existing `plugin/bin/lib/file-lock.js`. It reclaims a holder by mtime age alone (`CLAIM_STALE_MS`, 10 minutes, no pid liveness probe, no heartbeat), and `releaseClaim` unlinks the claim without checking that the caller still owns it. A pass suspended or stalled past 10 minutes can therefore be taken over while still live, and when it resumes its release deletes the successor's claim, letting two passes run Step 4.0b on the same PR. Found by the v6.159.0 release-gate review (lens 3e reproduced, lens 3a pair; cross-lens debate settled on low severity); the #4668 review had already listed the hand-rolled lock as an open ledger item.\n\n## Deliverables\n\n- [ ] Make the per-run `.post-merge` claim reclaim only a dead holder (pid liveness, as `lib/file-lock.js` does) or a provably stale one, and release only when the caller still owns it (owner token).\n\n- [ ] Prefer reusing `plugin/bin/lib/file-lock.js` over the hand-rolled claim; if it cannot serve, state why at the call site.\n\n## Acceptance Criteria\n\nA test holds a claim from a live pid past `CLAIM_STALE_MS` and shows a second `takeClaim` refuses it.\n\nA test shows a release by a caller whose claim was taken over leaves the successor's claim in place.\n\n`npm test` passes.\n\n## Release Note\n\nTwo background post-merge passes can no longer run the same parent-close step at once when one of them stalls.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/post-merge.js` — modify\n- `plugin/bin/lib/file-lock.js` — reuse\n- `tests/bin-lib/reconcile/post-merge.test.js` — modify\n\n_Filed by `release` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6571420214).\n\n- **Decision: Reading B.** Keep an age backstop that reclaims a claim whose holder pid still reads alive, to cover a reused pid. Size it the way `plugin/bin/lib/reconcile/background-lock.js` sizes `STALE_LOCK_MS` (5 min, 2.5x headroom over `BACKGROUND_BUDGET_MS`): derive the value from the post-merge pass's real worst-case duration bound (its budget / gh-timeout bound) with comparable headroom, so a live, merely slow holder is never mistaken for abandoned. Record the chosen value and its derivation in the spec and in a code comment next to the constant. A claim with no readable owner keeps the `CLAIM_STALE_MS` (10 min) reclaim; release still requires the owner token.\n",
         "createdAt": "2026-11-01T07:33:21Z",
         "labels": [
           {
@@ -1824,7 +1814,7 @@
         "number": 4797,
         "state": "OPEN",
         "title": "Replace post-merge.js hand-rolled takeClaim with a liveness-checked, owner-released claim",
-        "updatedAt": "2026-11-02T07:18:48Z",
+        "updatedAt": "2026-11-02T10:49:54Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1853,7 +1843,7 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate (wrap-up of #4505)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4505 solves \"an explicit `--repo` owns its host\" twice. `pinExplicitRepoHost` (`plugin/bin/lib/repo-resolve.js`) mutates `process.env.GH_HOST` once `--repo` is parsed, and 11 CLIs wire it through `realDeps.pinGhHost` plus a `deps.pinGhHost(repoSpec)` call, rostered in `PIN_WIRED` in `tests/gh-host-seam-conformance.test.js`. `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` instead builds a per-call env (`nativeRunnerFor`) and never touches `process.env`.\n\nA process-global pin forces `plugin/bin/materialize.js` to restore the environment it had before the pin (`envBeforeGhHostPin`) before running record-authored shell commands. Unifying the two touches 12 CLIs and materialize's premise-check plumbing, which is why the review deferred it as `genuinely-larger` (ledger row 16 of `docs/plans/2026-10-31-gh-host-seam-ledger.md`, review lens 3e).\n\n## Deliverables\n\n- [ ] Pick one mechanism (a per-call env carried by `ghOptions`, or the process-global pin) and migrate all 12 CLIs to it.\n\n- [ ] Delete the other mechanism and the `envBeforeGhHostPin` restore if the per-call env wins.\n\n- [ ] Update `PIN_WIRED` and the `gh-api-module-pattern` skill's explicit-`--repo` bullet to describe the one mechanism.\n\n## Acceptance Criteria\n\n- [ ] A CLI given an explicit `--repo` on another host sends every gh call it makes (including a call that carries no host flag) to that host, asserted through a recording runner.\n\n- [ ] `plugin/bin/materialize.js` runs a record-authored shell command with the environment the user had, asserted by an exported `GH_HOST` surviving it.\n\n- [ ] `grep -F \"pinExplicitRepoHost\" plugin/bin -r` shows at most the one mechanism the record chose, and `node --test tests/gh-host-seam-conformance.test.js` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/repo-resolve.js` — collapse the two host-pin mechanisms into one\n- `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` — `nativeRunnerFor` onto the chosen mechanism\n- `plugin/bin/materialize.js` — drop or keep `envBeforeGhHostPin` per the chosen mechanism\n- `tests/gh-host-seam-conformance.test.js` — update the `PIN_WIRED` roster\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — describe the one mechanism\n\n_Filed by `ledger resolve gate` via specShapedBody._",
+        "body": "Origin: ledger resolve gate (wrap-up of #4505)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4505 solves \"an explicit `--repo` owns its host\" twice. `pinExplicitRepoHost` (`plugin/bin/lib/repo-resolve.js`) mutates `process.env.GH_HOST` once `--repo` is parsed, and 11 CLIs wire it through `realDeps.pinGhHost` plus a `deps.pinGhHost(repoSpec)` call, rostered in `PIN_WIRED` in `tests/gh-host-seam-conformance.test.js`. `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` instead builds a per-call env (`nativeRunnerFor`) and never touches `process.env`.\n\nA process-global pin forces `plugin/bin/materialize.js` to restore the environment it had before the pin (`envBeforeGhHostPin`) before running record-authored shell commands. Unifying the two touches 12 CLIs and materialize's premise-check plumbing, which is why the review deferred it as `genuinely-larger` (ledger row 16 of `docs/plans/2026-10-31-gh-host-seam-ledger.md`, review lens 3e).\n\n## Deliverables\n\n- [ ] Pick one mechanism (a per-call env carried by `ghOptions`, or the process-global pin) and migrate all 12 CLIs to it.\n\n- [ ] Delete the other mechanism and the `envBeforeGhHostPin` restore if the per-call env wins.\n\n- [ ] Update `PIN_WIRED` and the `gh-api-module-pattern` skill's explicit-`--repo` bullet to describe the one mechanism.\n\n## Acceptance Criteria\n\n- [ ] A CLI given an explicit `--repo` on another host sends every gh call it makes (including a call that carries no host flag) to that host, asserted through a recording runner.\n\n- [ ] `plugin/bin/materialize.js` runs a record-authored shell command with the environment the user had, asserted by an exported `GH_HOST` surviving it.\n\n- [ ] `grep -F \"pinExplicitRepoHost\" plugin/bin -r` shows at most the one mechanism the record chose, and `node --test tests/gh-host-seam-conformance.test.js` passes.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/repo-resolve.js` — collapse the two host-pin mechanisms into one\n- `plugin/bin/lib/backlog-grant-gate/backlog-grant-gate.js` — `nativeRunnerFor` onto the chosen mechanism\n- `plugin/bin/materialize.js` — drop or keep `envBeforeGhHostPin` per the chosen mechanism\n- `tests/gh-host-seam-conformance.test.js` — update the `PIN_WIRED` roster\n- `.claude/skills/gh-api-module-pattern/SKILL.md` — describe the one mechanism\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6562848768).\n\n- **Decision: Reading A.** A module-scoped explicit host recorded in `repo-resolve.js`, which `ghOptions` adds as `GH_HOST` to each gh call's own env, counts as the per-call env mechanism. The per-call `deps.explicitHost` override passed into `ghOptions` (for callers such as `backlog-grant-gate.js` that need the host on only some calls) is part of that same one mechanism. `process.env.GH_HOST` is never written, so `materialize.js`'s `envBeforeGhHostPin` restore is deleted. The 11 CLIs that already wire `pinGhHost` keep their wiring lines. AC3's \"the one mechanism the record chose\" means this mechanism.\n",
         "createdAt": "2026-11-01T05:54:57Z",
         "labels": [
           {
@@ -1896,7 +1886,7 @@
         "number": 4795,
         "state": "OPEN",
         "title": "Unify the two explicit --repo host-pin mechanisms behind one seam",
-        "updatedAt": "2026-11-01T19:35:44Z",
+        "updatedAt": "2026-11-02T10:49:52Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1925,7 +1915,7 @@
     ],
     [
       {
-        "body": "Origin: ledger resolve gate (wrap-up of #4505)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4505 put every `gh` spawn in `plugin/bin` behind `ghOptions` (`plugin/bin/lib/repo-resolve.js`), which injects `GH_HOST` for a GitHub Enterprise origin. Decision Q2 (Reading A) left one class unchanged: a bare `--repo owner/repo` slug derived from origin (not typed by the user) means github.com, because the slug carries no host.\n\n`repoSlugOf` (`plugin/bin/lib/hooks/git-exec.js:207`) drops the host. Its callers in `plugin/bin/lib/reconcile/` (`archive-merged.js`, `release-merged.js`, `reap-merged.js`, `post-merge.js`, `pr-state.js`) pass that bare slug to `gh --repo` and to `repos/${slug}/…` API paths, and `plugin/bin/lib/issues/claim-store.js`'s `openPrListArgs` (`--repo ${owner}/${repo}`) does the same. On a GHE origin those calls therefore still go to github.com. The slug also feeds slug comparisons across the reconcile family, so host-qualifying it touches unrelated systems (ledger row 2 of `docs/plans/2026-10-31-gh-host-seam-ledger.md`).\n\n## Deliverables\n\n- [ ] Make the origin-derived slug carry its host off github.com (`repoSlug`-style `host/owner/repo`), or add a host-aware sibling of `repoSlugOf`, and move the reconcile callers and `claim-store.js` onto it.\n\n- [ ] Keep every slug comparison and every `repos/…` API path consistent with the new spelling, so a github.com origin stays byte-identical.\n\n- [ ] Extend `tests/gh-host-seam-behavior.test.js` with a GHE-origin case per migrated caller.\n\n## Acceptance Criteria\n\n- [ ] With a `*.ghe.com` origin and no `GH_HOST` exported, a reconcile pass and `stale-claim-pr.js` send every `gh` call to the origin's host (asserted through a recording runner, not by reading the source).\n\n- [ ] With a github.com origin, the argv and env of every migrated call are byte-identical to today's.\n\n- [ ] `node --test tests/gh-host-seam-behavior.test.js tests/gh-host-seam-conformance.test.js` passes.\n\n## Release Note\n\nReconcile and claim-store `gh` calls now reach the right host when your origin is a GitHub Enterprise server.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-exec.js` — host-qualify or replace `repoSlugOf`\n- `plugin/bin/lib/issues/claim-store.js` — `openPrListArgs` and its callers\n- `plugin/bin/lib/reconcile/release-merged.js` — migrate to the host-aware slug\n- `plugin/bin/lib/reconcile/post-merge.js` — migrate to the host-aware slug\n- `plugin/bin/lib/reconcile/pr-state.js` — migrate to the host-aware slug\n- `tests/gh-host-seam-behavior.test.js` — GHE-origin cases per migrated caller\n\n_Filed by `ledger resolve gate` via specShapedBody._",
+        "body": "Origin: ledger resolve gate (wrap-up of #4505)\n\nDefer-reason: genuinely-larger\n\n## Current State\n\n#4505 put every `gh` spawn in `plugin/bin` behind `ghOptions` (`plugin/bin/lib/repo-resolve.js`), which injects `GH_HOST` for a GitHub Enterprise origin. Decision Q2 (Reading A) left one class unchanged: a bare `--repo owner/repo` slug derived from origin (not typed by the user) means github.com, because the slug carries no host.\n\n`repoSlugOf` (`plugin/bin/lib/hooks/git-exec.js:207`) drops the host. Its callers in `plugin/bin/lib/reconcile/` (`archive-merged.js`, `release-merged.js`, `reap-merged.js`, `post-merge.js`, `pr-state.js`) pass that bare slug to `gh --repo` and to `repos/${slug}/…` API paths, and `plugin/bin/lib/issues/claim-store.js`'s `openPrListArgs` (`--repo ${owner}/${repo}`) does the same. On a GHE origin those calls therefore still go to github.com. The slug also feeds slug comparisons across the reconcile family, so host-qualifying it touches unrelated systems (ledger row 2 of `docs/plans/2026-10-31-gh-host-seam-ledger.md`).\n\n## Deliverables\n\n- [ ] Make the origin-derived slug carry its host off github.com (`repoSlug`-style `host/owner/repo`), or add a host-aware sibling of `repoSlugOf`, and move the reconcile callers and `claim-store.js` onto it.\n\n- [ ] Keep every slug comparison and every `repos/…` API path consistent with the new spelling, so a github.com origin stays byte-identical.\n\n- [ ] Extend `tests/gh-host-seam-behavior.test.js` with a GHE-origin case per migrated caller.\n\n## Acceptance Criteria\n\n- [ ] With a `*.ghe.com` origin and no `GH_HOST` exported, a reconcile pass and `stale-claim-pr.js` send every `gh` call to the origin's host (asserted through a recording runner, not by reading the source).\n\n- [ ] With a github.com origin, the argv and env of every migrated call are byte-identical to today's.\n\n- [ ] `node --test tests/gh-host-seam-behavior.test.js tests/gh-host-seam-conformance.test.js` passes.\n\n## Release Note\n\nReconcile and claim-store `gh` calls now reach the right host when your origin is a GitHub Enterprise server.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-exec.js` — host-qualify or replace `repoSlugOf`\n- `plugin/bin/lib/issues/claim-store.js` — `openPrListArgs` and its callers\n- `plugin/bin/lib/reconcile/release-merged.js` — migrate to the host-aware slug\n- `plugin/bin/lib/reconcile/post-merge.js` — migrate to the host-aware slug\n- `plugin/bin/lib/reconcile/pr-state.js` — migrate to the host-aware slug\n- `tests/gh-host-seam-behavior.test.js` — GHE-origin cases per migrated caller\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review question (comment 6563106486).\n\n- **Decision: Reading B, with the divergence fixed in this record.** The origin-derived slug is host-qualified only for hosts the #4505 gh seam already treats as GitHub Enterprise (`resolveGhHost(cwd)` in `plugin/bin/lib/repo-resolve.js`: `*.ghe.com`, a gh `hosts.yml` key, or an enterprise token on a non-SSH remote). github.com, SSH-alias origins (e.g. `git@github-work:acme/widgets.git`) and unknown hosts stay bare and byte-identical to today.\n- **Also in scope (not a follow-up):** align `plugin/bin/lib/reconcile/post-merge.js` and `plugin/bin/lib/hooks/teardown-run.js` (today: the raw remote host via `repoSpecOf` in `plugin/bin/lib/hooks/git-exec.js`) to the same seam rule, so one reconcile pass applies one host rule. This also stops those two paths sending gh calls to an SSH alias name gh cannot reach. Add a test covering an SSH-alias origin on each aligned path.\n",
         "createdAt": "2026-11-01T05:54:50Z",
         "labels": [
           {
@@ -1968,7 +1958,7 @@
         "number": 4794,
         "state": "OPEN",
         "title": "Host-qualify the origin-derived repo slug so a GHE origin's reconcile and claim-store gh calls reach the origin's host",
-        "updatedAt": "2026-11-01T19:58:45Z",
+        "updatedAt": "2026-11-02T10:49:49Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -1997,7 +1987,7 @@
     ],
     [
       {
-        "body": "Origin: SDD ruling deferred at Review Console (#4553)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/issues/record-dependencies.js` (`buildNativeDependencyQuery`, with the node projection at its `blockedBy(first:25){ nodes{ number state } }` selection) returns each native blocker as a number only. A blocker linked natively from another repository is therefore looked up by number in this repository.\n\nThis was harmless while the numbers only fed ordering, but #4553's `--blocker-landing` makes it load-bearing: a cross-repository native blocker can read as another repository's issue of the same number, causing a false stop or a false `landed`. The file is outside #4553's diff and `buildNativeDependencyQuery` is deliberately unchanged for its dispatch and wrap-up consumers, so the fix was deferred (#4553 final review, Minor 4).\n\n## Deliverables\n\nProject each native blocker's `repository { nameWithOwner }` and carry it with the number, so `--blocker-landing` and the other consumers can skip or separately resolve a blocker that is not in this repository.\n\nDecide the verdict for a cross-repository blocker in `plugin/bin/lib/preflight-records/blocker-landing.js` (undetermined with a stated `via`, never a same-number lookup here) and pin it in the blocker-landing suite.\n\n## Acceptance Criteria\n\nA blocker-landing test with a native blocker whose repository differs from the run's repository does not query this repository's issue of the same number; reverting the repository check turns it red.\n\n`buildNativeDependencyQuery`'s existing dispatch and wrap-up consumer tests still pass unchanged.\n\n## Release Note\n\nA cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-dependencies.js` — project the blocker repository\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — handle a cross-repository blocker\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
+        "body": "Origin: SDD ruling deferred at Review Console (#4553)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\n`plugin/bin/lib/issues/record-dependencies.js` (`buildNativeDependencyQuery`, with the node projection at its `blockedBy(first:25){ nodes{ number state } }` selection) returns each native blocker as a number only. A blocker linked natively from another repository is therefore looked up by number in this repository.\n\nThis was harmless while the numbers only fed ordering, but #4553's `--blocker-landing` makes it load-bearing: a cross-repository native blocker can read as another repository's issue of the same number, causing a false stop or a false `landed`. The file is outside #4553's diff and `buildNativeDependencyQuery` is deliberately unchanged for its dispatch and wrap-up consumers, so the fix was deferred (#4553 final review, Minor 4).\n\n## Deliverables\n\nProject each native blocker's `repository { nameWithOwner }` and carry it with the number, so `--blocker-landing` and the other consumers can skip or separately resolve a blocker that is not in this repository.\n\nDecide the verdict for a cross-repository blocker in `plugin/bin/lib/preflight-records/blocker-landing.js` (undetermined with a stated `via`, never a same-number lookup here) and pin it in the blocker-landing suite.\n\n## Acceptance Criteria\n\nA blocker-landing test with a native blocker whose repository differs from the run's repository does not query this repository's issue of the same number; reverting the repository check turns it red.\n\n`buildNativeDependencyQuery`'s existing dispatch and wrap-up consumer tests still pass unchanged.\n\n## Release Note\n\nA cross-repository native blocker no longer causes a false stop or a false landed verdict in the blocker-landing check.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/issues/record-dependencies.js` — project the blocker repository\n- `plugin/bin/lib/preflight-records/blocker-landing.js` — handle a cross-repository blocker\n\n_Filed by `ledger resolve gate` via specShapedBody._\n\n## Decisions\n\nAnswers the plan-review questions (comment 6571698333).\n\n- **Q1 — Decision: Reading B.** In `plugin/bin/lib/preflight-records/blocker-landing.js`, a cross-repository blocker whose native `blockedBy` node `state` is `OPEN` reads `open` (taken from the native node, no extra lookup), so `/flow` stops before the claim. Only a CLOSED cross-repository blocker reads `undetermined` with `via: cross-repository`.\n- **Q2 — Decision: Reading B (in scope, not a follow-up).** This record also makes `plugin/bin/lib/wrap-up/pack.js` (around line 732) and `plugin/skills/wrap-up/unblocked-records.md` (around line 67) remove the `crossRepoBlockers` numbers before the `blockedBy.includes(closed)` test, so closing this repository's #N never reports a record blocked natively by `other/repo#N` as unblocked. Add a new test for that case; existing consumer tests stay unchanged.\n",
         "createdAt": "2026-11-01T02:28:07Z",
         "labels": [
           {
@@ -2040,7 +2030,7 @@
         "number": 4793,
         "state": "OPEN",
         "title": "Look up native blocked-by links from another repository by owner and name, not by number alone",
-        "updatedAt": "2026-11-02T07:37:08Z",
+        "updatedAt": "2026-11-02T10:49:47Z",
         "facets": {
           "origin": null,
           "risk": "medium",
@@ -2533,78 +2523,6 @@
         "state": "OPEN",
         "title": "A scoped verify at the integration tip runs zero suites and still stamps verifiedHead: true",
         "updatedAt": "2026-10-30T16:10:01Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Verified-as-of: 3470ac15cf3e74adb9443080aa2329a07ac56bb8\n\nOrigin: /claude-tweaks:release v6.157.0 release-gate review (run 2026-10-30T134829-release-standalone)\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe `'\\''` quoting rule names only --category and --at, but --stack-stderr carries raw git stderr, so a repo-controlled path holding `'` closes the quote and the rest of the value runs as shell.\n\nFound at `plugin/skills/review/step3-routing.md:67` by the release-gate review of v6.157.0 (range v6.156.3...3470ac15c).\n\n## Deliverables\n\nFix the defect at `plugin/skills/review/step3-routing.md:67`, with a regression test.\n\n## Acceptance Criteria\n\nEvery tool-supplied value on the review-routing-line.js call is passed safely: the rule covers --stack-stderr, or the value goes through a file.\n\n## Release Note\n\nA review-routing line can no longer be broken by a quote in git error output.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/review/step3-routing.md` — the defect named above\n\n_Filed by `release` via specShapedBody._",
-        "createdAt": "2026-10-30T14:21:28Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4637,
-        "state": "OPEN",
-        "title": "Quote --stack-stderr on the review-routing-line call: raw git stderr can break out of the single quote",
-        "updatedAt": "2026-10-30T16:09:57Z",
         "facets": {
           "origin": null,
           "risk": "medium",
