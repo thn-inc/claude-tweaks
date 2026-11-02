@@ -267,6 +267,16 @@ test('an origin whose owner is ".." is rejected after the host gate, before any 
   assert.deepStrictEqual(d.calls, []);
 });
 
+// #4933: the gate returns {spec: null, refusal: null} for an absent origin and falls through to
+// the CLI's own owner/repo check, not to the host refusal.
+test('no --repo and no readable origin: exit 2 with the owner/repo message, no host refusal, no gh call', () => {
+  const d = deps({ remoteUrl: () => { throw new Error('no remote'); }, runner: () => { throw new Error('should not be called'); } });
+  assert.strictEqual(run(['5'], d), 2);
+  assert.match(d.err.join(''), /could not resolve owner\/repo/);
+  assert.doesNotMatch(d.err.join(''), /is not a known GitHub host/);
+  assert.deepStrictEqual(d.calls, []);
+});
+
 test('--repo ../evil is rejected before any gh call', () => {
   const d = deps({ runner: () => { throw new Error('should not be called'); } });
   assert.strictEqual(run(['5', '--repo', '../evil'], d), 2);

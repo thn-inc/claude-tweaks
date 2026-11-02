@@ -350,6 +350,19 @@ test('#2240: a GitHub Enterprise Server remote passes the host-qualified --repo 
   for (const r of repos) assert.equal(r, 'ghe.example.com/acme/w');
 });
 
+// #4933: the gate returns {spec: null, refusal: null} for an absent origin and falls through to
+// the CLI's own owner/repo check, not to the host refusal.
+test('CLI: no --repo and no readable origin exits 2 with the owner/repo message, no host refusal, no gh call', () => {
+  const calls = [];
+  const { deps, err } = cliDeps({ runner: (args) => { calls.push(args); return '[]'; }, readDraftsFile: () => [makeDraft()] });
+  deps.remoteUrl = () => { throw new Error('no remote'); };
+  const code = run(['--drafts', 'drafts.json'], deps);
+  assert.equal(code, 2);
+  assert.match(err.join(''), /could not resolve owner\/repo/);
+  assert.doesNotMatch(err.join(''), /is not a known GitHub host/);
+  assert.deepEqual(calls, []);
+});
+
 // #2444 review fix: a caller-supplied --repo can itself already be a
 // host-qualified `host/owner/repo` slug (repoSlug()'s GHE output), not just
 // the bare `owner/repo` form the #2240 test above exercises via the git
