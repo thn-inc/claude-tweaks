@@ -338,6 +338,9 @@ test('#4795: the matcher flags an env built or assigned with GH_HOST, and not a 
   assert.equal(ghHostBuilders('env.GH_HOST &&= h;').length, 1);
   assert.deepEqual(ghHostBuilders("if ('GH_HOST' in base) x(); if (e.GH_HOST === h) y(); const m = 'GH_HOST: set';"), []);
   assert.deepEqual(ghHostBuilders('f(e.GH_HOST, x); g({ a: e.GH_HOST }); if (e.GH_HOST || h) y();'), []);
+  // a comment-stripper mis-parse is reported as an offender, never read as clean (the same
+  // source the spawn scan's mis-parse test uses: blank mode reads `/'/` as a string opener)
+  assert.deepEqual(ghHostBuilders("if (b) /'/.test(b); const c = 'x'; process.env.GH_HOST = c;"), [STRIPPER_VERDICT_MESSAGES.misparsed]);
 });
 test('AC3.1 (#4795): no file under plugin/bin but repo-resolve.js builds or assigns GH_HOST', () => {
   const offenders = [];

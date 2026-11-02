@@ -339,6 +339,8 @@ test('#4795: a GH_HOST already in the call env beats the recorded pin, empty str
 test('#4795: deps.explicitHost scopes the host to one call; _resetGhHostCache clears a recorded pin (Review Focus 5)', () => {
   _resetGhHostCache();
   assert.equal(ghOptions(['api', 'user'], { cwd: '/d' }, { ...dotcom, env: {}, explicitHost: 'github.com' }).env.GH_HOST, 'github.com');
+  const next = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], next, dotcom), next, 'a later call without explicitHost gets none');
   pinExplicitRepoHost({ host: 'other.ghe.com', owner: 'acme', repo: 'widgets' }, { ...dotcom, cwd: '/d', env: {} });
   _resetGhHostCache();
   const opts = { cwd: '/d', env: {} };
@@ -355,7 +357,11 @@ test('#4795: a --repo agreeing with the origin host records nothing, so origin i
   _resetGhHostCache();
   assert.equal(pinExplicitRepoHost({ host: 'acme.ghe.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: {} }), null);
   assert.equal(ghOptions(['api', 'user'], { cwd: '/r', env: {} }, ghe).env.GH_HOST, 'acme.ghe.com');
-  const mine = { GH_HOST: 'mine.example' };
+  // nothing was recorded: a call from a github.com-origin cwd is left alone (a recorded
+  // acme.ghe.com would be added to it)
+  const plain = { cwd: '/d', env: {} };
+  assert.strictEqual(ghOptions(['api', 'user'], plain, dotcom), plain);
+  const mine ={ GH_HOST: 'mine.example' };
   assert.equal(pinExplicitRepoHost({ host: 'github.com', owner: 'acme', repo: 'widgets' }, { ...ghe, cwd: '/r', env: mine }), null);
   assert.deepEqual(mine, { GH_HOST: 'mine.example' });
   _resetGhHostCache();

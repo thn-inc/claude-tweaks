@@ -173,7 +173,9 @@ function resolveGhHost(cwd, deps = {}) {
 }
 
 // Decision Q2: any -R/--repo/--hostname (also `--repo=x`, `--hostname=x` and
-// pflag's attached `-Rx`) names the host itself, so the seam stays out of it.
+// pflag's attached `-Rx`) names the host itself, so the seam's origin-host injection
+// stays out of it (an explicit repo host recorded or passed to ghOptions is still
+// added: see ghOptions below).
 // A `-f repo=widgets` value starts with neither flag; nothing after `--` is a flag,
 // and the token after a value-taking flag is its value (a `--body` text that opens
 // `-R`), never a flag. `gh pr review --comment` is gh's one boolean --comment.
@@ -200,11 +202,17 @@ function hasExplicitHostArg(args) {
 // env (opts.env, deps.env, or process env) plus GH_HOST. In order: an effective env
 // that already has GH_HOST, even empty, wins and injects nothing; then the explicit
 // repo host (`deps.explicitHost`, else the one pinExplicitRepoHost recorded) is
-// injected, before the arg check, so a call naming --repo still reaches it, and
-// prints no note; then an explicit host arg injects nothing; then a known GHE origin
-// host for opts.cwd is injected and its first injection per host prints
-// repoResolutionNote, since GH_HOST also picks gh's auth host. The arg scan runs
-// before the host probe, so an explicit-host call spawns no git.
+// injected, before the arg check, and prints no note. That order is deliberate (#4795,
+// #4505): a host-less `-R owner/name` call on a pinned CLI must still reach the pinned
+// host, as it did when the pin was an exported GH_HOST (which returned at the first
+// check above, ahead of the arg scan), and a host-qualified flag beats GH_HOST in gh
+// itself; checking args first would reintroduce #4505's split across two hosts.
+// `deps.explicitHost` exists beside the recorded host for a caller that scopes the
+// host to some calls only (backlog-grant-gate.js), and it wins over the recorded one.
+// Then an explicit host arg injects nothing; then a known GHE origin host for
+// opts.cwd is injected and its first injection per host prints repoResolutionNote,
+// since GH_HOST also picks gh's auth host. The arg scan runs before the host probe,
+// so an explicit-host call spawns no git.
 function ghOptions(args, opts, deps = {}) {
   const o = opts || {};
   const base = o.env || deps.env || process.env;

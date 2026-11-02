@@ -102,9 +102,10 @@ const realDeps = {
   // call it would replace.
   runner: (args, o = {}, seam = {}) => execFileSync('gh', args, ghOptions(args, { encoding: 'utf8', maxBuffer: LARGE_MAX_BUFFER_BYTES, ...o, windowsHide: true }, seam)),
   // #4505: an explicit --repo's host for the native owner/repo calls only; it
-  // rides ghOptions's per-call `explicitHost` (#4795), the one way a host
-  // reaches gh. The issue lists read cwd's own repo, so they keep `runner`
-  // without it: a GH_HOST that matches none of cwd's remotes would break them.
+  // rides ghOptions's per-call `explicitHost` (#4795). This CLI deliberately
+  // wires no `pinGhHost`: a recorded pin would reach every call, and the issue
+  // lists read cwd's own repo, so they keep `runner` without a host: a GH_HOST
+  // that matches none of cwd's remotes would break them.
   nativeRunnerFor: (repoSpec) => {
     const host = explicitRepoGhHost(repoSpec);
     return host ? (args) => realDeps.runner(args, {}, { explicitHost: host }) : null;

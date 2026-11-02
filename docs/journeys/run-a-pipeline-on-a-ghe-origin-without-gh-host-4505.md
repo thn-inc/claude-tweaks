@@ -30,8 +30,8 @@ files:
 - **URL:** —
 - **Action:** `compose-subject.js N --tag human-approved --pr N` runs `gh issue view N --repo acme.ghe.com/acme/widgets --json …`. The host-qualified `--repo` already routes the call, so the seam steps back. The subject prints and the command exits 0.
 - **Should feel:** Routine: the merge step does not stall on the subject.
-- **Should understand:** Any explicit `-R`/`--repo`/`--hostname` makes the seam step back (the record's Decision Q2). A bare `owner/repo` means github.com. Flag values such as a `--body` that happens to start with `-R` never count as a flag.
-- **Red flags:** `gh issue view N failed` on GHE; a `GH_HOST` injected on a call that already names its host.
+- **Should understand:** Any explicit `-R`/`--repo`/`--hostname` makes the seam's origin-host injection step back (the record's Decision Q2); a host a CLI pinned from its explicit `--repo` (#4795) is still added to the call's env, and it is the host that flag names. A bare `owner/repo` means github.com. Flag values such as a `--body` that happens to start with `-R` never count as a flag.
+- **Red flags:** `gh issue view N failed` on GHE; a `GH_HOST` injected on a call that already names a different host.
 
 ### 3. Wrap-up verify and the pack reach the host — `plugin/bin/lib/wrap-up/engine-verify.js`, `plugin/bin/lib/wrap-up/pack.js`
 - **URL:** —
