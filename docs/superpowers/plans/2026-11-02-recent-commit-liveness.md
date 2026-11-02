@@ -45,7 +45,8 @@ Governing skill `gh-api-module-pattern`, verbatim:
 
 ### Task 1: Liveness screen core
 
-**Role:** judgment. **Review risk:** high.
+**Role:** judgment
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/near-duplicate.js` (extract and export `currentStateText(body)`, which `extractCurrentStateAnchors` then uses, behavior unchanged)
@@ -132,7 +133,8 @@ Expected: PASS
 
 ### Task 2: Open-PR screen needs a shared Key File or anchor
 
-**Role:** integration. **Review risk:** high.
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/recent-commit-check.js`
@@ -163,7 +165,8 @@ Expected: FAIL
 
 ### Task 3: Filing prose, shaping screen, and the hold
 
-**Role:** integration. **Review risk:** high.
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/_shared/health-recent-commit-check.md` (rewrite)
@@ -239,7 +242,7 @@ Expected: PASS
 
 ### Task 4: Replay tool and measured precision
 
-**Role:** judgment.
+**Role:** judgment
 
 **Files:**
 - Create: `tools/recent-commit-replay.js` (maintainer-side, unshipped)
