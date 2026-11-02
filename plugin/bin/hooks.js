@@ -1805,7 +1805,8 @@ async function runReconcileBackground(argv) {
   // blocking failure — this process is detached (spawn'd with
   // `detached: true, stdio: 'ignore'` and unref'd) and nothing reads its
   // exit code or stdout, so every path below returns 0 and best-effort
-  // swallows its own errors rather than surfacing them anywhere.
+  // swallows its own errors rather than surfacing them anywhere (a throw
+  // ahead of the try below exits 1 per #4932, equally unread).
   const cwd = process.cwd();
   const { reconcile } = require('./lib/reconcile');
   const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
