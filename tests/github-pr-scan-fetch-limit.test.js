@@ -35,7 +35,7 @@ const forwardSlashes = (p) => p.split(path.sep).join('/');
 const RULE = '**Fetch limit.** `{resolved-limit}` is the number `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values backlog-fetch-limit` prints, substituted literally into each command and block below, every occurrence; shell state does not survive between Bash calls. A fetch returning that many rows, or 1000 for a `--label` fetch (GitHub\'s cap), may be truncated: a block that checks prints a `WARNING:` line, and any other count at the cap is a floor, never a final count. Report every `WARNING:` line verbatim beside this scope\'s rows, never suppressed, and render a floor count as `{N}+`.';
 const RULE_LAST_SENTENCE = ' Report every `WARNING:` line verbatim beside this scope\'s rows, never suppressed, and render a floor count as `{N}+`.';
 
-// ---- helpers (Task 3 appends tests to this file and reuses these) -------------------------------
+// ---- helpers -------------------------------------------------------------------------------------
 
 // The text from a scope's `## Scope: \`name\`` heading to the next `\n## ` heading.
 function scopeSlice(text, name) {
@@ -63,6 +63,11 @@ function fenceAfter(text, label, nth = 0) {
 }
 
 const ZSH_MISSING = Boolean(spawnSync('zsh', ['-f', '-c', 'true']).error);
+
+// The `skip` option for a per-shell test: only the zsh variant is skipped, and only when zsh is not installed.
+function shellTestOptions(shell) {
+  return { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false };
+}
 
 // The `gh` stub: a shell function serving the first N rows of the fixture universe (`ghRows`), N being the
 // number after `--limit` (or in `--limit=N`) in its argv, or every row when the call carries no `--limit`. That models the
@@ -223,7 +228,7 @@ test('item 8 reproduces #4820: the pre-change fence reports capped counts silent
 });
 
 for (const shell of ['bash', 'zsh']) {
-  test(`item 8 counts the whole universe at a high limit and warns when the fetch reaches the limit (${shell})`, { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false }, () => {
+  test(`item 8 counts the whole universe at a high limit and warns when the fetch reaches the limit (${shell})`, shellTestOptions(shell), () => {
     const fence = fenceAfter(REPO_WIDE, ITEM8_LABEL);
     // A limit above the universe counts all of it, with no warning.
     const whole = runFence(fence, { limit: 1000, ghRows: issueRows(UNIVERSE), shell });
@@ -454,7 +459,7 @@ const assertItem1CapCases = (f, shell = 'bash') => {
 };
 
 for (const shell of ['bash', 'zsh']) {
-  test(`triage item 1 counts the whole ready universe at a high limit and warns at the cap (${shell})`, { skip: shell === 'zsh' && ZSH_MISSING ? 'zsh not on PATH' : false }, () => {
+  test(`triage item 1 counts the whole ready universe at a high limit and warns at the cap (${shell})`, shellTestOptions(shell), () => {
     const fence = fenceAfter(TRIAGE, TRIAGE_ITEM1_LABEL);
     // The live fence at the 1000 default counts the whole 324, with no warning.
     const whole = runFence(fence, { limit: 1000, ghRows: readyRows(READY_UNIVERSE), shell });
