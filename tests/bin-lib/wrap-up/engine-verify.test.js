@@ -2506,6 +2506,140 @@ test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer
   assert.strictEqual(row.result, 'pass');
 });
 
+// #4611: the acceptance packet is the current form of the comment this check
+// looks for; the brief forms above stay readable for records that predate it.
+const PACKET_BODY = '<!-- acceptance-packet: v1 -->\n## Acceptance packet — #900';
+const PACKET_V2_BODY = '<!-- acceptance-packet: v2 -->\n## Acceptance packet — #900';
+const packetComment = (body, authorAssociation) => ({ body, url: 'https://x/ap1', author: { login: 'eve' }, authorAssociation });
+
+test('#4611: a trusted acceptance packet under demo:pending passes', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+});
+
+test('#4611: a trusted packet on a pr-first run passes without reading the PR', () => {
+  const { row, prViews } = acceptanceTrustRow({ withPr: true, issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.deepStrictEqual(prViews, []);
+});
+
+test('#4611: a packet authored NONE fails and names the skipped comment', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'NONE')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet keeps the skip note of an untrusted one on the passing row', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [
+      packetComment(PACKET_BODY, 'NONE'),
+      { ...packetComment(PACKET_BODY, 'MEMBER'), url: 'https://x/ap2' },
+    ],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet of an unknown schema version fails as unreadable, naming the version', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: an unreadable packet is not rescued by a legacy brief beside it', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a legacy brief still passes beside an untrusted packet, with the skip note', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_BODY, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: the marker counts only as the whole first line', () => {
+  for (const body of [`see ${PACKET_BODY}`, `${PACKET_BODY.split('\n')[0]} trailing\n## Acceptance packet — #900`, `\n${PACKET_BODY}`]) {
+    const { row } = acceptanceTrustRow({ issueComments: [packetComment(body, 'MEMBER')] });
+    assert.strictEqual(row.result, 'fail', body);
+    assert.match(row.detail, /no comment carries a confirmed Verification Brief/, body);
+  }
+});
+
+test('#4611: the none failure names both forms it looked for', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief or an acceptance packet/);
+});
+
+test('#4611: an untrusted comment holding the marker and the brief is named once', () => {
+  const both = `${PACKET_BODY}\n${TRUST_BRIEF_BODY}`;
+  const note = 'skipped marker comment https://x/ap1 by eve (NONE)';
+  const failing = acceptanceTrustRow({ issueComments: [packetComment(both, 'NONE')] }).row;
+  assert.strictEqual(failing.result, 'fail');
+  assert.strictEqual(failing.detail.split(note).length - 1, 1, failing.detail);
+
+  const passing = acceptanceTrustRow({
+    issueComments: [packetComment(both, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  }).row;
+  assert.strictEqual(passing.result, 'pass');
+  assert.strictEqual(passing.detail.split(note).length - 1, 1, passing.detail);
+});
+
+// Decision Q1's parent gate posts a legacy brief, and a record with sub-issues and no
+// parent takes the no-parent path with a packet, so a resolved parent reads both forms.
+function parentTargetRow(comments) {
+  const runDir = makeTmpDir('verify-acceptance-parent-target-');
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (isSubIssuesCall(args)) return subIssuesGh([{ number: 900, state: 'closed', labels: ['risk:high'] }]);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('#4611: a parent target passes on a v1 packet with no legacy brief', () => {
+  const row = parentTargetRow([packetComment(PACKET_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#4611: a parent target with a v2 packet beside a legacy brief fails as unreadable', () => {
+  const row = parentTargetRow([packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#898: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a parent target still passes on a legacy brief alone', () => {
+  assert.strictEqual(parentTargetRow([packetComment(TRUST_BRIEF_BODY, 'MEMBER')]).result, 'pass');
+});
+
+test('#4611: a packet does not stand in for the pending label', () => {
+  const runDir = makeTmpDir('verify-acceptance-packet-nolabel-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [packetComment(PACKET_BODY, 'MEMBER')] });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: missing demo:pending or accept:pending label/);
+});
+
 // #3333: in a multi-spec run the Verification Brief lands on the shared PR as
 // `<!-- run-comment: brief:{n} -->`; acceptance-labeling reads that marker
 // first and falls back to the plain `brief` marker (single-spec / pre-change).
