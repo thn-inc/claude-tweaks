@@ -351,6 +351,29 @@ test('AC1.1: the local-files close requires the exported heading regex, not a li
   assert.throws(() => assertSharedHeadingRe(PRE_4802_CLOSE, use), /inline copy of the heading regex/);
 });
 
+test('AC1.1: the local-files close fence appends the section once and closes the parent', () => {
+  const fence = section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
+  const m = /```js\r?\n([\s\S]*?)\r?\n```/.exec(fence);
+  assert.ok(m, 'the local-files close section carries a js fence');
+  const commentFile = path.join(mkTmp('cp-close-'), 'comment.md');
+  fs.writeFileSync(commentFile, MARKER);
+  const script = 'const parentPath = process.argv[1];\n' + m[1]
+    .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'))
+    .split('{parent-close-comment}').join(commentFile.replace(/\\/g, '/'));
+  const { readRecord } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const heading = '## Closed below the oversight floor';
+  const t = localFixture();
+  const fresh = t.parent(1, 'Fresh');
+  const marked = t.parent(2, 'Marked', { body: 'Parent body.\n\n' + MARKER });
+  for (const file of [fresh, marked]) {
+    const r = spawnSync('node', ['-e', script, '--', file], { cwd: t.cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const rec = readRecord(file);
+    assert.equal(rec.facets.closed, true, file);
+    assert.equal(rec.body.split(heading).length - 1, 1, file);
+  }
+});
+
 test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning line', () => {
   const t = localFixture();
   t.parent(10, 'No subs A', { closed: true });
