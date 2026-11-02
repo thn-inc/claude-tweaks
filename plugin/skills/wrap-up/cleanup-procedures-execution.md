@@ -76,12 +76,12 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
    rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
    closing-keyword reader cites this field rather than restating the rule. Only when the pack
-   could not be produced (Section E's production step failed) or lacks that field, list the
+   could not be produced (Section E's production step failed, or this section was skipped) or lacks that field, list the
    worktree mirror's spec headers instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
-   read each `{n}-spec.md` match's numeric header `record:` field, skipping a file whose
+   read each `{n}-spec.md` match's numeric frontmatter `record:` field, skipping a file whose
    `record:` is missing or not a number (`pack.js`'s header reader accepts the same names and values):
 
    ```bash
@@ -91,7 +91,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(dir,f),"utf8").match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const h=/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(dir,f),"utf8")),m=h&&h[1].match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
@@ -107,6 +107,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    was never an issue to close. Skip the commit if one for these issues already exists on the
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
+
+   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop here with no carrier commit: skip steps 3, 3.5, 3.6, 4, and 5 below and Section E, the same posture as "Kept as-is" below, because a merge with no closing keyword leaves the record open. Report one `cleanup: closing-keyword carrier failed — {stderr's Error: line}` line in the closing report.
 
    **Why a dedicated commit, not the merge artifact** — see
    `cleanup-procedures-execution-appendix.md`'s "Step 2" section; read only if the rationale
@@ -329,6 +331,8 @@ If no `ephemeral-server.txt` exists, skip this section silently (the run used an
 ---
 
 ## E. Issue claim release (v5.3.0)
+
+**Skip this whole section when the invocation names `claim-permission-denied: skip the claim release` (#4899)** — `/claude-tweaks:dispatch`'s teardown after a `claim-targets.js` exit 7: the CLI already attempted any release, and `release-claim.js` would post a false release comment on a record this run never claimed. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: claim-permission-denied named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
 
 This spec's record is identified whenever this section runs (`SKILL.md` Phase 1 — an argument, a
 branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a materialized header's

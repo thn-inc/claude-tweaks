@@ -57,12 +57,12 @@ test('resolveTagPair: orders by publishedAt, not array order or semver', () => {
   assert.deepStrictEqual(resolveTagPair(releases), { previous: 'v1.2.0', current: 'v1.3.0' });
 });
 
-test('parseReleaseNotesFromLog: extracts a Release-Note: footer per commit, null for commits without one', () => {
+test('parseReleaseNotesFromLog: extracts the Release-Note: footers per commit, [] for commits without one', () => {
   const raw = logOf(['feat: a\n\nRelease-Note: Added the thing.', 'fix: b\n\nno footer']);
   const out = parseReleaseNotesFromLog(raw);
   assert.strictEqual(out.length, 2);
-  assert.strictEqual(out[0].releaseNote, 'Added the thing.');
-  assert.strictEqual(out[1].releaseNote, null);
+  assert.deepStrictEqual(out[0].releaseNotes, ['Added the thing.']);
+  assert.deepStrictEqual(out[1].releaseNotes, []);
 });
 
 test('applyToReleaseBody: null block is a no-op; otherwise appends Highlights without replacing existing content', () => {
@@ -156,13 +156,11 @@ test('a gh/git failure is caught and reported as exit 1, never thrown', () => {
   assert.match(state.err, /rate limited/);
 });
 
-test('AC7: the module imports RELEASE_NOTE_FOOTER_RE rather than declaring a second copy of the pattern', () => {
+test('AC7: the module imports extractReleaseNotes rather than declaring a second copy of the pattern', () => {
   const src = readText(path.join(__dirname, '../../plugin/bin/lib/release-notes-publish.js'));
   assert.match(src, /require\(['"]\.\/release-notes['"]\)/);
-  assert.match(src, /RELEASE_NOTE_FOOTER_RE/);
-  // No second hand-typed Release-Note:-matching regex literal (release-notes.js's
-  // own `/^Release-Note: ?(.*)$/m` pattern, re-declared here).
-  assert.ok(!/\/\^?Release-Note:/.test(src), 'expected no second Release-Note: regex literal — import RELEASE_NOTE_FOOTER_RE instead');
+  assert.match(src, /extractReleaseNotes/);
+  assert.ok(!/\/\^?Release-Note:/.test(src), 'expected no second Release-Note: regex literal — import extractReleaseNotes instead');
 });
 
 test('AC8: the module imports and calls renderReleaseNotes rather than reimplementing its filter/map/join logic', () => {
@@ -186,4 +184,21 @@ test('the workflow step that runs release-notes-publish checks out the default b
   assert.ok(checkoutAt > 0, 'expected a checkout step before the release-notes-publish run');
   const checkoutStep = wf.slice(checkoutAt, wf.indexOf('- uses:', checkoutAt + 1));
   assert.match(checkoutStep, /^\s+ref:\s*\$\{\{\s*github\.event\.repository\.default_branch\s*\}\}\s*$/m);
+});
+
+test('AC6.1: a three-record bundle in range applies a Highlights block holding all three notes to the Release body and the CHANGELOG entry', () => {
+  const { deps, state } = makeDeps({ commitBodies: ['fix: bundle (#10)\n\nRelease-Note: Added A.\nRelease-Note: Fixed B.\nRelease-Note: Changed C.\n\nFixes #10\nFixes #11\nFixes #12'] });
+  assert.strictEqual(run([], deps), 0, state.err);
+  const block = '### Highlights\n* Added A.\n* Fixed B.\n* Changed C.';
+  const edit = state.gh.find((c) => c.key.startsWith('release edit'));
+  assert.ok(edit && edit.input.includes(block), JSON.stringify(state.gh));
+  assert.ok(state.files['CHANGELOG.md'].includes(block), state.files['CHANGELOG.md']);
+});
+
+test('AC6.2: only No user-visible change notes in range is a no-op on both targets', () => {
+  const { deps, state } = makeDeps({ commitBodies: ['chore: a (#10)\n\nRelease-Note: No user-visible change.\n\nFixes #10', 'chore: b (#11)\n\nRelease-Note: No user-visible change: internal.\n\nFixes #11'] });
+  assert.strictEqual(run([], deps), 0, state.err);
+  assert.ok(!state.gh.some((c) => c.key.startsWith('release edit')), 'no Release edit');
+  assert.deepStrictEqual(state.writes, []);
+  assert.ok(!state.git.some((k) => k.startsWith('commit ')), 'no CHANGELOG commit');
 });

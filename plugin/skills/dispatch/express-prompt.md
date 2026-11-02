@@ -99,6 +99,7 @@ GROUP: {issue}
 OUTCOME: {merged | armed | pending-review | express-escalated | blocked}
 MANIFEST: {absolute path to this group's run-dir decisions.md -- a human-readable trace only;
   the dispatching session already holds this run's identity as {minted-run-dir}}
+ISSUE #{issue}: failed:claim-permission-denied -- only when step 1's claim-targets.js exited 7; omit otherwise
 
 Status line (required): on its own trailing line, after everything above -- the reply's last
 non-empty line -- write exactly `STATUS: {WORD}`, where {WORD} is one of: DONE /

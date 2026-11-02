@@ -5,7 +5,7 @@ subsection. Read only after `../_shared/design-contract.md`'s locate-and-parse p
 over Step 1's changed-path list **and** it resolved a contract or reported one malformed — when
 nothing resolves, `SKILL.md` renders nothing and never reads this file. In the body below, "this
 heading" means `SKILL.md`'s `### The design contract this was built against`, and `### What
-shipped` is the brief section `SKILL.md` Step 2 already rendered.
+changed` (a legacy brief's `### What shipped`) is the section `SKILL.md` Step 2 already rendered.
 
 Design work built through Impeccable carries a **direction contract** recorded in the relevant
 surface brief's `## Direction contract` section — five blocks, written *before* the code. That is
@@ -17,7 +17,7 @@ lets a human answer "is this what it was trying to be?" instead of only "does th
 question, with the five blocks reproduced **verbatim** — never summarized, re-worded, or reordered.
 Introduce it as *what this was promising to be*, and make the direction of the check explicit: the
 human is comparing the result against a promise made beforehand, not reading a description of what
-shipped. `### What shipped` already covers the latter, and collapsing the two wastes the only
+shipped. `### What changed` already covers the latter, and collapsing the two wastes the only
 section here that carries pre-build intent.
 
 Then a `Design-seed:` line, when there is one — the record body's own `Design-seed:` metadata line

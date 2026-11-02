@@ -324,7 +324,7 @@ function prepare({ deps, rootArg, runDir, cwd }) {
     },
     unreleased: async () => {
       const { lastTag, commits } = await historyOf();
-      return { since: lastTag, tipRef, commits: commits.map((c) => ({ sha: c.sha, type: c.type, scope: c.scope, breaking: c.breaking, breakingNote: c.breakingNote, subject: c.subject, description: c.description, unconventional: c.unconventional })) };
+      return { since: lastTag, tipRef, commits: commits.map((c) => ({ sha: c.sha, type: c.type, scope: c.scope, breaking: c.breaking, breakingNote: c.breakingNote, subject: c.subject, description: c.description, unconventional: c.unconventional, fixes: c.fixes, refs: c.refs })) };
     },
     proposedVersion: async () => {
       const { lastTag, commits } = await historyOf();
