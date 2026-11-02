@@ -28,7 +28,7 @@ Ships with the plugin. Plugin-owned, project-agnostic, account-agnostic. NEVER c
 
 Every live routine's prompt is assembled at instantiation from the canonical kernel below: `{{TARGET_BRANCH}}` substituted per the table in the next section, and `{kickoff}` on the closing line replaced with the template's `kickoff` value. Templates carry no prompt text of their own — the firing lifecycle beyond the kernel (stale-docs guard, plugin-list dump, reconcile, target invocation and its exclusions) lives in `skills/routine-kickoff/SKILL.md` and updates with each plugin release instead of being frozen into every live prompt.
 
-kernel_version: 1
+kernel_version: 2
 
 The line above is the kernel's own version, machine-greppable via `grep -m1 '^kernel_version:' "${CLAUDE_PLUGIN_ROOT}/skills/_shared/routine-template-schema.md"` (this file is markdown; `bin/lib/routine-template-parser.js` stays uninvolved). `${CLAUDE_PLUGIN_ROOT}` is a model-resolved placeholder, not a shell contract — see `docs/skill-authoring.md`'s Plugin-root references section. **Any edit to the kernel block text below requires `kernel_version` += 1.** Enforcement is review discipline — the schema test asserts the field is a positive integer, never that it incremented; the structural mitigation is that the kernel is one file, so a bump is one edit, not seven. `template_version` now means only "this template's own fields changed."
 
@@ -59,7 +59,16 @@ report a version without its resolution path. Diagnostic only — never a gate,
 never a reason to stop.
 
 If all four rungs came up empty (`unresolved`), the plugin cache is genuinely
-empty — do not attempt the kickoff yet. Read `$HOME/claude-cloud-setup.log` (via
+empty — do not attempt the kickoff yet. If this checkout's
+`.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false` (a top-level,
+unquoted `false`, optionally followed by a `# comment`; a commented-out line,
+or any other value, a quoted "false" included, means the default), this
+project opted out of declaring claude-tweaks, so its Setup script cannot
+install it here: skip the log read and the self-heal, print exactly one line,
+`claude-tweaks not installed: this project sets declare-claude-tweaks: false,
+so its Setup script does not install claude-tweaks — supply claude-tweaks to
+this environment another way, or set the key back to true`, and stop.
+Otherwise, read `$HOME/claude-cloud-setup.log` (via
 `tail -5 "$HOME/claude-cloud-setup.log"` or equivalent — shell expansion, not a
 literal path) and print exactly one line: `claude-cloud-setup.log: absent — the
 environment Setup script left no trace in this container (not executed, or its
