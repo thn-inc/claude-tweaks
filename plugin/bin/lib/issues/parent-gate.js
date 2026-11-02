@@ -190,6 +190,36 @@ function enumerateSubIssues({
   return distinctAscending(list);
 }
 
+// Shape 5: one sub-issue's live state, labels, title and closing PRs, read through `slug`
+// -> { number, title, state, stateReason, labels, closedBy }. Throws GhFailure on a malformed answer.
+function readSubIssueFacts({ num, slug, caller }) {
+  const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
+  // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
+  const rawRefs = live.closedByPullRequestsReferences;
+  if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
+  }
+  const refs = rawRefs || [];
+  // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
+  // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
+  if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
+  }
+  return {
+    number: num,
+    title: String(live.title || '').trim(),
+    state: String(live.state || '').toUpperCase(),
+    stateReason: String(live.stateReason || '').toUpperCase(),
+    labels: normalizeLabelNames(live.labels),
+    closedBy: refs.map((ref) => ref.number),
+  };
+}
+
+// Shape 6: the parent's label names, normalized, read through `slug`.
+function readParentLabels({ parent, slug, caller }) {
+  return normalizeLabelNames(caller.callJson(['issue', 'view', String(parent), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
+}
+
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
 // With no resolvable parent it stops after resolution; so does a body-text `Parent: #N` whose
 // task list does not list `subIssue` (the parent's task list wins), before any shape 5 or 6 read.
@@ -211,29 +241,8 @@ function gatherGateFacts({
   const slug = repoSlug({ host, owner, repo });
   const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
   if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
-  const subIssues = numbers.map((num) => {
-    const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
-    // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
-    const rawRefs = live.closedByPullRequestsReferences;
-    if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
-    }
-    const refs = rawRefs || [];
-    // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
-    // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
-    if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
-    }
-    return {
-      number: num,
-      title: String(live.title || '').trim(),
-      state: String(live.state || '').toUpperCase(),
-      stateReason: String(live.stateReason || '').toUpperCase(),
-      labels: normalizeLabelNames(live.labels),
-      closedBy: refs.map((ref) => ref.number),
-    };
-  });
-  const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
+  const subIssues = numbers.map((num) => readSubIssueFacts({ num, slug, caller }));
+  const parentLabels = readParentLabels({ parent: resolved, slug, caller });
   return { parent: resolved, parentLabels, subIssues };
 }
 
@@ -439,6 +448,8 @@ module.exports = {
   ghCaller,
   resolveParent,
   enumerateSubIssues,
+  readSubIssueFacts,
+  readParentLabels,
   gatherGateFacts,
   gatherIdempotenceFacts,
   evaluateParentGate,

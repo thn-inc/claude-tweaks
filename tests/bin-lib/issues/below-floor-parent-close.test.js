@@ -399,6 +399,76 @@ test('a parent without the parent-issue label is skipped, a needs:* label is ski
   assert.equal(writes(calls).length, 0);
 });
 
+// #4799: a parent the gate skips before enumeration costs no per-sibling read, and a parent
+// skipped on its labels costs no enumeration either.
+const SIBLING_VIEW = /^issue view \d+ --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/;
+function assertNoSiblingReads(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!argv.some((a) => SIBLING_VIEW.test(a)), `no per-sibling read: ${argv.join(' | ')}`);
+}
+function assertNoEnumeration(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && (String(c.args[3]).startsWith('query={ __type') || String(c.args[3]).includes('subIssues(first:100)'))), `no GraphQL enumeration: ${argv.join(' | ')}`);
+  assert.ok(!argv.some((a) => a.includes('sub_issues')), `no REST enumeration: ${argv.join(' | ')}`);
+}
+
+test('#4799: a parent without the parent-issue label is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['enhancement'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'not-parent-issue-labeled' }] });
+  assert.equal(calls.length, 2, calls.map((c) => c.args.join(' ')).join(' | '));
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a parent carrying needs:* is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['parent-issue', 'needs:decision'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'needs-label' }] });
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a sibling in unsettled is gated before any sub-issue is read (the numbers are enumerated first)', () => {
+  const { gh, calls } = makeGh(happyWorld());
+  const out = closeBelowFloorParents(base({ unsettled: [12], gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'sibling-unsettled' }] });
+  assert.ok(calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && String(c.args[3]).includes('subIssues(first:100)')), 'the sub-issue list was enumerated before the screen ran');
+  assertNoSiblingReads(calls);
+});
+
+test('#4799: a failing parent-label read skips the parent as gh-failed before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: (k) => k.startsWith('issue view 10 --repo o/r --json labels') }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, []);
+  assert.equal(out.skipped.length, 1);
+  assert.equal(out.skipped[0].parent, 10);
+  assert.equal(out.skipped[0].reason, 'gh-failed');
+  assert.equal(writes(calls).length, 0);
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a parent with no sub-issues is skipped as incomplete with no per-sibling read and no write', () => {
+  const { gh, calls } = makeGh(happyWorld({ subs: { 10: [] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'incomplete' }] });
+  assert.equal(writes(calls).length, 0);
+  assertNoSiblingReads(calls);
+});
+
+test('#4799: a parent that clears every screen reads its labels, then enumerates, then reads each sub-issue in ascending order', () => {
+  const { gh, calls } = makeGh(happyWorld({ subs: { 10: [12, 11] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
+  const argv = calls.map((c) => c.args.join(' '));
+  const labelsAt = argv.indexOf('issue view 10 --repo o/r --json labels -q [.labels[].name]');
+  const listAt = calls.findIndex((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && String(c.args[3]).includes('subIssues(first:100)'));
+  const siblingViews = argv.map((a, i) => ({ a, i })).filter(({ a }) => SIBLING_VIEW.test(a));
+  assert.deepEqual(siblingViews.map(({ a }) => a.split(' ')[2]), ['11', '12']);
+  assert.ok(labelsAt >= 0 && labelsAt < listAt && listAt < siblingViews[0].i, `labels ${labelsAt} < list ${listAt} < first sibling read ${siblingViews[0].i}`);
+});
+
 test('a sibling still open and outside the closing set is incomplete', () => {
   const world = happyWorld();
   world.issues[12] = { state: 'OPEN', title: 'Twelve' };
