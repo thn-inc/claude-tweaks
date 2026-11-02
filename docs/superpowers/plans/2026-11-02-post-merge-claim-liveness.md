@@ -17,6 +17,7 @@
 - `takeClaim`'s reasons stay exactly `in-flight` and `claim-failed`. Archive deferral and `classifyEntry` route on them.
 - No new dependency. Never block or poll. The reconcile pass is synchronous per run and has a budget to respect.
 - Commit subjects use `{Verb} {what} — {detail}` and reference the record as `refs #4797`, never `closes`/`fixes`.
+- Governing project skill: `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` states, verbatim, "Decide the shape before writing the file, and reuse `withLock` rather than hand-rolling a second mutex." This plan keeps the existing hand-rolled claim, so it must say at the call site why `file-lock.js` cannot serve (Task 1, Step 3). That is also the record's second Deliverable. No other `.claude/skills/` rule names these files: `caching-and-locks.md` covers holding `file-lock.js` across a long call, which this plan does not do.
 
 ## Review Focus
 
@@ -29,6 +30,9 @@
 ---
 
 ### Task 1: Owner-token, liveness-checked claim in post-merge.js
+
+**Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/file-lock.js` (add `isAlive` to `module.exports`, line 181)
@@ -174,6 +178,8 @@ git commit -m "Check post-merge claim holder liveness — owner-token claim, com
 
 ### Task 2: Sweep the prose that describes the old age-only claim
 
+**Role:** integration
+
 **Files:**
 - Modify: `plugin/skills/wrap-up/merge-mode.md:35`
 - Modify: `docs/reconcile-checks.md:629-634`
@@ -203,7 +209,7 @@ Expected: FAIL. `merge-mode.md` still carries the old "once the claim is past it
 - `plugin/skills/wrap-up/merge-mode.md` line 35: replace the clause from `the line also names` to `in case that holder died.` with the Step 1 tail, ending with a full stop.
 - `docs/reconcile-checks.md` lines 629-634, the *Per-run claim file* bullet. Keep its first two sentences (the `wx` create, background vs inline passes) and its last sentence (the dotfile name). Replace the middle with these facts:
   - The claim file holds its owner's `{pid}-{token}`.
-  - A claim whose holder pid is alive skips `in-flight` however old it is, up to `CLAIM_MAX_HOLD_MS` (24 h, the reused-pid backstop).
+  - A claim whose holder pid is alive skips `in-flight` however old it is, up to `CLAIM_MAX_HOLD_MS` (the reused-pid backstop). Name the constant only. Do not restate its value: no test pins a number in this doc.
   - A dead holder's claim is taken over at once.
   - A claim naming no holder (an older reconciler's empty file) keeps the `CLAIM_STALE_MS` (10 minutes) rule.
   - A takeover is still atomic: renamed aside, re-judged, and only the rename winner retries the create.
