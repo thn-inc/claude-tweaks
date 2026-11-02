@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T21:45:01.389Z",
+  "computedAt": "2026-11-02T21:47:51.427Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -75,7 +75,7 @@
       },
       {
         "number": 4805,
-        "updatedAt": "2026-11-02T20:15:35Z",
+        "updatedAt": "2026-11-02T21:46:33Z",
         "state": "OPEN"
       },
       {
@@ -680,7 +680,7 @@
       },
       {
         "number": 4283,
-        "updatedAt": "2026-10-31T09:59:03Z",
+        "updatedAt": "2026-11-02T21:47:19Z",
         "state": "OPEN"
       },
       {
@@ -1377,84 +1377,6 @@
           "origin": "capture",
           "risk": "low",
           "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "low",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: follow-up from #4603 (PR #4678) wrap-up\n\nDefer-reason: tangential\n\n## Current State\n\n#4603 added `plugin/bin/parent-gate.js` and its shared core `plugin/bin/lib/issues/parent-gate.js` (paginated enumeration with `stateReason`, the self-inclusion rule, the oversight floor, cross-repo closing-reference filtering, reopen handling), and moved `plugin/skills/wrap-up/verification-brief-parent-gate.md` onto it. Two evaluators still compute the gate their own way:\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` (around lines 705-735 and 900-915) enumerates `sub_issues` with its own `gh api --paginate` call, reading no `stateReason`, and calls `parentGateState` directly. Its verdict can diverge from the CLI's on not-planned sub-issues and the oversight floor.\n- `plugin/skills/demo/entry-paths.md` (around lines 254-262) composes its own sub-issue enumeration in prose instead of calling `bin/parent-gate.js`.\n\nLedger rows 28 and 29 of #4603's `docs/plans/2026-10-31-parent-gate-cli-ledger.md`.\n\n## Deliverables\n\n- [ ] `engine-verify.js` evaluates the parent gate through `lib/issues/parent-gate.js` (or `bin/parent-gate.js`), with no `sub_issues` call of its own.\n- [ ] `demo/entry-paths.md` calls `bin/parent-gate.js` for enumeration instead of composing the `gh api` call.\n\n## Acceptance Criteria\n\n- [ ] `grep -n \"sub_issues\" plugin/bin/lib/wrap-up/engine-verify.js` returns nothing.\n- [ ] `grep -F \"issues/\\$PARENT_NUM/sub_issues\" plugin/skills/demo/entry-paths.md` returns nothing.\n- [ ] A unit test shows engine-verify's verdict for a parent whose sub-issues are all closed not-planned matches `bin/parent-gate.js`'s verdict for the same input.\n\n## Plan Review Clarifications\n\nAnswers to the plan-review questions, decided by the maintainer on 2026-11-02.\n\n1. **Oversight floor on `gated`/`resolved` parents: follow the CLI, floor on `due` only.** engine-verify reads `verdict.exceeds` and skips below the floor only when `exceeds === false`, because the CLI's `null` on other states must not read as below the floor. A `gated` parent goes on to the label and brief check. A `resolved` parent, above or below the floor, is skipped as a no-op, as `verification-brief-parent-gate.md` states, with a skip detail that does not cite Step 4.0b. Today a resolved parent above the floor fails with \"missing demo:pending label\"; that failure goes away.\n2. **AC3 uses both fixtures, and compares `closeReason`.** Keep AC3 as written, with a fixture that leaves the run record out of the parent's native sub-issue list, so the CLI's `closeReason` is `not planned`. Add a second fixture with the run record listed, the production shape, where self-inclusion makes `closeReason` `completed`. In both, the test compares the shared core's verdict, including `closeReason`, with `bin/parent-gate.js`'s: the check's row alone reads only state and floor, so it cannot show the difference.\n3. **Malformed sub-issue replies stay `unknown`.** `readSubIssueFacts` throws `GhFailure` on a malformed reply (`state` not a string, `labels` not an array), so engine-verify's row stays `unknown` and never becomes `skip`, because a failed read never counts as landed. The core suite pins this for `readSubIssueFacts`, and the existing engine-verify tests stay.\n4. **An invalid `risk-floor` renders `unknown`.** engine-verify no longer falls back to `high`; it matches `bin/parent-gate.js`, which exits 2 on the same file, and the test changes with it.\n5. **The rule for this family:** any input the CLI refuses or cannot read renders `unknown` in engine-verify, never `skip` or a default. Apply this rule to any further case of this shape rather than stopping to ask.\n\n## Release Note\n\nThe wrap-up check and the demo flow now judge a decomposed feature's parent with the same tested code the close procedure uses, so all three agree on edge cases such as cancelled sub-issues.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/wrap-up/engine-verify.js` — route the parent gate through the shared core\n- `plugin/skills/demo/entry-paths.md` — call bin/parent-gate.js for enumeration\n- `plugin/bin/lib/issues/parent-gate.js` — reuse\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-11-01T07:34:15Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcvg",
-            "name": "priority:low",
-            "description": "Priority: dispatch picks last among prioritized records",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4805,
-        "state": "OPEN",
-        "title": "Move the remaining parent-gate evaluators onto the shared parent-gate core",
-        "updatedAt": "2026-11-02T20:15:35Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
@@ -8208,84 +8130,6 @@
           "grants": {
             "build": true,
             "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: #2767 class split — classification of windows-regression run 40169646104 (main 6a41ebe3a)\n\nDefer-reason: genuinely-larger\n\n**Related:** #2767, #4146 (this record takes its G part), #4134 (owns the test-impact tracer half of class G, the NODE_OPTIONS `--require` splice, including #4254), #3517, #3599\n\n## Current State\n\nShipped skill prose splices `${CLAUDE_PLUGIN_ROOT}` into JavaScript source. The shell expands it inside `node -e \"…\"` strings and inside unquoted `node-eval-file.js` heredoc bodies, so it lands in a JS string literal. There, `\\a`, `\\_` and `\\c` are eaten as escapes and `\\u` is a SyntaxError. A Windows root such as `D:\\a\\claude-tweaks\\…` therefore reaches `require` as `D:aclaude-tweaks…`. The failing evidence is `Cannot find module 'D:aclaude-tweaksclaude-tweaksplugin/bin/lib/issues/grant-maturation.js'`.\n\nHow far it reaches: `grep -rhoE \"require\\(['\\\"]\\\\$\\{?CLAUDE_PLUGIN_ROOT\" plugin/skills` finds 244 occurrences across 61 files. There are also non-`require` literals: `const path = '${CLAUDE_PLUGIN_ROOT}/CHANGELOG.md'` (`plugin/skills/init/bootstrap/version-check.md:58`) and `fs.readFileSync('${CLAUDE_PLUGIN_ROOT}…` (`plugin/skills/init/update-mode.md:64`). The failing tests run these sites:\n\n- `plugin/skills/dispatch/grant-maturation-gate.md:32`, `:79`\n- `plugin/skills/wrap-up/auto-merge-short-circuit.md:28`, `:56`, `:86`\n- `plugin/skills/backlog/attention-mode.md:42`, `:58`, `:120`\n\nSome snippets already pass values as data, for example `plugin/skills/wrap-up/auto-merge-short-circuit.md:192` and `plugin/skills/wrap-up/refused-proposals.md:16`, which read `process.argv[1]`. Five suites work around the splice by forward-slashing the root inside the test (`tests/dispatch-mcp-timestamp-alias.test.js:60-62` and four siblings), which hides the production shape.\n\n`tests/comment-trust-conformance.test.js:483` also splices native temp paths for the `$ST_*` variables. Production prints those with `/` on win32 (`plugin/bin/session-tmp-resolve.js:26-27`, `formatPrintedPath`), so that half is test-only.\n\n3 tests in 1 file fail on Windows (line numbers as of 988cc584d). The 18 failing `tests/test-impact-tracer.test.js` tests in the same class come from a different splice, NODE_OPTIONS `--require \"<native path>\"`. They are handed to #4134.\n\n### Failing tests\n\n- `tests/comment-trust-conformance.test.js:283` — grant maturation snippet in dispatch/grant-maturation-gate.md runs: a NONE pending-grant marker is skipped with a note, a MEMBER one counts\n- `tests/comment-trust-conformance.test.js:283` — grant maturation snippet in wrap-up/auto-merge-short-circuit.md runs: a NONE pending-grant marker is skipped with a note, a MEMBER one counts\n- `tests/comment-trust-conformance.test.js:483` — attention-mode.md merge script runs: a forged newer NONE proposal is skipped with a note, the MEMBER one is read\n\n## Deliverables\n\n- Remove every JS-literal splice of `${CLAUDE_PLUGIN_ROOT}` from `plugin/skills/**`. Pass the root as an argument after the script and read it from `process.argv`: `require(require('path').join(process.argv[1], 'bin/lib/x.js'))`. A `node-eval-file.js` heredoc body reads it from its own argv. Paths stay native, and nothing respells the plugin root.\n- Add a conformance suite that scans `plugin/skills/**/*.md` for `${CLAUDE_PLUGIN_ROOT}` inside a quoted JS literal, in a `node -e` body or a `NODE_EVAL_EOF` heredoc. Give it a go-red self-test.\n- `tests/comment-trust-conformance.test.js` passes the root to each snippet as argv. Its `$ST_*` stand-ins use the form `formatPrintedPath` prints.\n- Drop the forward-slash workarounds in the five suites that carry them, so they run with a native root.\n\n## Acceptance Criteria\n\n1. AC1: `node --test tests/comment-trust-conformance.test.js tests/node-eval-file-heredoc-syntax.test.js` and the new conformance suite pass on Linux. The full `npm test` also passes, because skill prose is pinned by many suites.\n2. AC2: a Linux-runnable proof of the Windows shape. A temp symlink whose name holds backslashes (`x\\a\\_temp`, a legal POSIX file name) points at `plugin/`. With that path as the root, each snippet `tests/comment-trust-conformance.test.js` runs passes.\n3. AC3: go-red for AC2. Running one snippet in its pre-change splice form with the same root fails with `Cannot find module`.\n4. AC4: the conformance scan reports 0 splices, and its self-test flags a doctored `require('${CLAUDE_PLUGIN_ROOT}/bin/x.js')`.\n5. AC5: a `windows-regression.yml` dispatch on the branch shows `tests/comment-trust-conformance.test.js` with 0 failures of this class (its jq-CRLF failures belong to #3995) and no newly failing file.\n\n## Release Note\n\nWindows: skill steps that load plugin modules through `node -e` no longer fail with `Cannot find module` when the plugin is installed under a backslash path.\n\n## Gotchas\n\n- ASSUMPTION — verify at build: Claude Code on Windows exposes `${CLAUDE_PLUGIN_ROOT}` to a skill's Bash commands as a native backslash path. If it already uses forward slashes, the prose change is still correct but has no user-visible effect, and the test fixes are needed either way.\n- `node-eval-file.js` (lines 23-28) forbids any `$` in a heredoc body other than `${CLAUDE_PLUGIN_ROOT}`. Once the root moves to argv, the delimiter can be quoted (`<<'NODE_EVAL_EOF'`). Check each body for other expansions before quoting it.\n- Conformance suites extract these snippets by anchored fence text (`snippetBody` in `tests/comment-trust-conformance.test.js`, line 255). Run the full suite.\n- 61 prose files make a large diff. Consider splitting it into sub-issues by skill directory, with the conformance suite landing last.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/**/*.md` (61 files) — the root passed as argv instead of spliced into JS\n- `tests/plugin-root-splice-conformance.test.js` — new scan plus go-red self-test\n- `tests/comment-trust-conformance.test.js` — snippets run with a native or backslash-named root through argv\n- `tests/dispatch-mcp-timestamp-alias.test.js`, `tests/dispatch-near-dup-pairs-script.test.js`, `tests/dispatch-named-target-exclusion-fixture.test.js`, `tests/dispatch-neighbour-in-flight-mcp.test.js`, `tests/release-run-dir-lifecycle-conformance.test.js` — forward-slash workarounds dropped\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-10-25T13:49:27Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4283,
-        "state": "OPEN",
-        "title": "Windows: skill snippets splice CLAUDE_PLUGIN_ROOT into JS string literals, so a backslash root breaks require",
-        "updatedAt": "2026-10-31T09:59:03Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
           },
           "bot": {
             "inProgress": false,
