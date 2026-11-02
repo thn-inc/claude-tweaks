@@ -12,7 +12,11 @@ const MAX_DECODE_ROUNDS = 3;
 const ESCAPE_RUN_RE = /(?:%[0-9A-Fa-f]{2})+/g;
 const ESCAPE_CHARS = 3;
 const MAX_UTF8_BYTES = 4;
-const CREDENTIAL_KEY_SET = new Set(CREDENTIAL_KEYS);
+
+// Keys compare with `-` and `_` removed from both sides, so `session_id` is
+// `sessionid` and `--api-key` is `apikey` is `api_key`. Reports use the constant's spelling.
+const stripSeparators = (key) => key.replace(/[-_]/g, '');
+const CREDENTIAL_KEY_BY_STRIPPED = new Map(CREDENTIAL_KEYS.map((key) => [stripSeparators(key), key]));
 
 // `_` and `-` count as boundaries, so `GITHUB_TOKEN=` and `--client-secret` match.
 // A miss posts a secret publicly; a false positive only drops one entry visibly.
@@ -23,11 +27,10 @@ const URL_USERINFO_RE = /:\/\/[^\s/?#]+@/;
 const LEFTOVER_ESCAPE_RE = /%[0-9a-f]{2}/g;
 
 // Longest first, so `x-amz-signature=1` reports its own key, not `signature`.
-// `-` and `_` are interchangeable inside a key: `--api-key` is `api_key`.
 const CREDENTIAL_SHAPES = [...CREDENTIAL_KEYS]
   .sort((a, b) => b.length - a.length)
   .map((key) => {
-    const spelled = key.split(/[-_]/).map(escapeRegExp).join('[-_]');
+    const spelled = `${[...stripSeparators(key)].map(escapeRegExp).join('[-_]*')}[-_]*`;
     return {
       key,
       flag: new RegExp(`${LEFT_BOUNDARY}--(?:[a-z0-9]+[-_])*${spelled}(?=$|[\\s=])`),
@@ -101,7 +104,7 @@ function allowedHostname(entry) {
 // The first credential key among the exact keys, else a nested `{key}=` anywhere
 // in the text: `?next=/cb?token=abc`, `?a=1;token=abc`, `#/cb/token=abc`.
 function refusedKey(exactKeys, text) {
-  const exact = exactKeys.find((key) => CREDENTIAL_KEY_SET.has(key));
+  const exact = exactKeys.map((key) => CREDENTIAL_KEY_BY_STRIPPED.get(stripSeparators(key))).find(Boolean);
   if (exact) return exact;
   const screened = screenText(text);
   const nested = CREDENTIAL_SHAPES.find(({ nestedAssignment }) => nestedAssignment.test(screened));
@@ -127,7 +130,9 @@ function checkLink(url, options) {
   if (parsed.username || parsed.password) {
     return { ok: false, reason: 'credential in userinfo' };
   }
-  const query = parsed.search.slice(1);
+  // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before
+  // decoding: an encoded `%2B` is a literal plus.
+  const query = parsed.search.slice(1).replace(/\+/g, ' ');
   const queryKey = refusedKey([...parsed.searchParams.keys()].map(normalizeKey), query);
   if (queryKey) return { ok: false, reason: `credential key in query: ${queryKey}` };
   // Decoded before splitting, and split on `?` as well as `&`: a hash-router URL

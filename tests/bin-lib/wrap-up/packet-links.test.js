@@ -134,6 +134,29 @@ test('checkLink refuses a nested key in the normalized query', () => {
   }
 });
 
+test('checkLink compares keys with - and _ removed, and reports the constant spelling', () => {
+  const cases = [
+    ['http://localhost:3000/?session_id=1', 'query', 'sessionid'],
+    ['http://localhost:3000/?apikey=1', 'query', 'api_key'],
+    ['http://localhost:3000/?api-key', 'query', 'api_key'],
+    ['http://localhost:3000/?accesstoken', 'query', 'access_token'],
+    ['http://localhost:3000/?next=/x?session-id=1', 'query', 'sessionid'],
+    ['http://localhost:3000/#session_id', 'fragment', 'sessionid'],
+    ['http://localhost:3000/#/cb;apikey=1', 'fragment', 'api_key'],
+  ];
+  for (const [url, where, key] of cases) {
+    assert.deepEqual(check(url), { ok: false, reason: `credential key in ${where}: ${key}` }, url);
+  }
+  assert.deepEqual(check('http://localhost:3000/?session_list=1'), { ok: true });
+});
+
+test('checkLink reads + as a space in the query screen, before decoding', () => {
+  assert.deepEqual(check('http://localhost:3000/?token+=abc'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/?a=token+=abc'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/?a=1+2&token+=abc'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/?a=token%2B=abc'), { ok: true });
+});
+
 test('checkLink refuses a nested key in the normalized fragment', () => {
   const cases = [
     ['http://localhost:3000/#/cb;token=abc', 'token'],
@@ -330,7 +353,6 @@ test('findCredentialInText returns null for text that only resembles a credentia
     '/docs/token-guide',
     'keyboard: us',
     'noauthorization: x',
-    'authorization=abc',
     'mail user@example.com',
     'http://localhost:3000/a@b',
     'http://localhost:3000/?x=a@b',
@@ -372,6 +394,29 @@ test('findCredentialInText: - and _ are equivalent in flags and keys', () => {
 test('findCredentialInText: authorization takes a left boundary and a closing quote', () => {
   assert.equal(findCredentialInText(`curl -H '{"Authorization":"Bearer x"}'`), 'authorization');
   assert.equal(findCredentialInText('Proxy-Authorization: x'), 'authorization');
+});
+
+test('findCredentialInText: authorization is a header shape only (Decision Q2), so authorization= is not a match', () => {
+  assert.equal(findCredentialInText('authorization=abc'), null);
+});
+
+test('findCredentialInText compares keys with - and _ removed, and returns the constant spelling', () => {
+  const cases = [
+    ['session_id=abc', 'sessionid'],
+    ['cli --session-id abc', 'sessionid'],
+    ['apikey=abc', 'api_key'],
+    ['x-apikey: abc', 'api_key'],
+    ['accesstoken=abc', 'access_token'],
+    ['cli --my-apikey abc', 'api_key'],
+    ['xamzsignature=1', 'x-amz-signature'],
+    ['pass_word=abc', 'password'],
+    ['token_=abc', 'token'],
+    ['session__id=abc', 'sessionid'],
+  ];
+  for (const [text, key] of cases) assert.equal(findCredentialInText(text), key, text);
+  for (const text of ['monkey=1', 'tokenize the input', '/docs/token-guide', 'keyboard: us', 'session_list=1', 'cli --session-idea abc']) {
+    assert.equal(findCredentialInText(text), null, text);
+  }
 });
 
 test('findCredentialInText: URL userinfo reports password, never the matched text', () => {
