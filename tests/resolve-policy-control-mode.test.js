@@ -247,7 +247,7 @@ test('every control-mode key nothing consumes yet says so in its summary (#4816)
 
 test('no key outside NOT_YET_USED opens its summary with "Not yet used" (#4816)', () => {
   const marked = POLICY_KEYS.filter((r) => /^Not yet used\b/.test(r.summary)).map((r) => r.key);
-  assert.deepStrictEqual([...marked].sort(), [...NOT_YET_USED].sort());
+  assert.deepStrictEqual(marked.sort(), [...NOT_YET_USED].sort());
 });
 
 test('risk-categories accepts extra slugs and rejects a non-slug', () => {
