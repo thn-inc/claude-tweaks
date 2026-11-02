@@ -144,7 +144,24 @@ function ownedWorktreePaths(cwd, sessionId, listRunDirsWithState) {
 // posture this whole module exists to keep.
 function findConflictingSession(recordRef, opts = {}) {
   if (recordRef === undefined || recordRef === null || recordRef === '') return null;
+  return firstForeignInUse((entry) => matchesRecordRef(entry, recordRef), opts);
+}
 
+// findSessionOnWorktree({ branch, worktreePath }, opts) -> { path, branch, pid } | null
+//
+// The exact counterpart for a name that is not a record number: a head named
+// `worktree-fix` token-matches an unrelated `worktree-fix-login`, so this compares
+// the whole branch name and the whole normalized path instead. A null `branch`
+// matches nothing, a detached worktree's null branch included. Same opts, same
+// own-session exclusion and same fail-open posture as findConflictingSession.
+function findSessionOnWorktree({ branch = null, worktreePath = null } = {}, opts = {}) {
+  const pathKey = worktreePath ? normalizePath(worktreePath) : null;
+  return firstForeignInUse((entry) => (branch !== null && entry.branch === branch)
+    || (pathKey !== null && normalizePath(entry.path) === pathKey), opts);
+}
+
+// The first in-use worktree `matches` accepts that is not the calling session's own.
+function firstForeignInUse(matches, opts) {
   const cwd = opts.cwd || process.cwd();
   const run = opts.run || defaultRun(cwd);
   const listRunDirsWithState = opts.listRunDirsWithState || ctxLib.listRunDirsWithState;
@@ -157,7 +174,7 @@ function findConflictingSession(recordRef, opts = {}) {
 
   const candidates = parseWorktreeList(porcelain)
     .filter((entry) => lockVerdict(entry) === 'in-use')
-    .filter((entry) => matchesRecordRef(entry, recordRef));
+    .filter(matches);
   if (candidates.length === 0) return null;
 
   // Lazy: most calls have zero or one candidate, and computing this walks
@@ -251,4 +268,6 @@ function cleanClaimField(value) {
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ').slice(0, 200);
 }
 
-module.exports = { findConflictingSession, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize };
+module.exports = {
+  findConflictingSession, findSessionOnWorktree, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize,
+};
