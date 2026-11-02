@@ -23,4 +23,4 @@ not-found. A named record excluded here renders as:
 
 `#{N} already has an open PR (#{pr}) — not re-dispatch-eligible until that PR merges or closes`
 
-Before rendering that line, run `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {N}`: `exit 0` (the resume verdict is eligible) appends `; it is #{N}'s own stalled build — run /claude-tweaks:dispatch resume #{N}` to the line; any other exit (3 refused, 2 `gh` absent or malformed, 4 transient) renders the line unchanged, so the remedy is named only when resume would accept the record.
+Before rendering that line, run `node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-resume.js" --issue {N}`: `exit 0` (the resume verdict is eligible) appends `; it is #{N}'s own stalled build — run /claude-tweaks:dispatch resume #{N}` to the line; any other exit (3 refused, 2 `gh` absent or malformed, 4 transient) renders the line unchanged, so the remedy is named only when resume would accept the record. The CLI reads the same closing-reference connection as this exclusion, so a record excluded here is never `no-pr` there.
