@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T22:06:39.539Z",
+  "computedAt": "2026-11-02T22:46:18.612Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -200,7 +200,7 @@
       },
       {
         "number": 4612,
-        "updatedAt": "2026-11-02T20:22:39Z",
+        "updatedAt": "2026-11-02T22:39:08Z",
         "state": "OPEN"
       },
       {
@@ -665,12 +665,12 @@
       },
       {
         "number": 4289,
-        "updatedAt": "2026-10-31T09:58:49Z",
+        "updatedAt": "2026-11-02T22:08:36Z",
         "state": "OPEN"
       },
       {
         "number": 4286,
-        "updatedAt": "2026-11-02T21:50:14Z",
+        "updatedAt": "2026-11-02T22:21:21Z",
         "state": "OPEN"
       },
       {
@@ -916,11 +916,6 @@
       {
         "number": 3731,
         "updatedAt": "2026-10-30T06:34:58Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 3721,
-        "updatedAt": "2026-11-02T21:58:09Z",
         "state": "OPEN"
       },
       {
@@ -2391,84 +2386,6 @@
           "origin": null,
           "risk": "medium",
           "size": "high",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "high",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n## Overview\n\nFill the acceptance packet's **Recording** section automatically, and keep secrets out of it. When a story and a local base URL exist, wrap-up runs the walkthrough encoder (an animated GIF built from step screenshots) and links the result in the packet. Today `/walkthrough` does this only when a human runs it.\n\nAgent-side checking always happens locally before merge: the agent runs its stories, including negative (break-it) stories, against a local build in the worktree, and records the walkthrough there. This is where adversarial testing is safe, and where `/stories`' Target Environment Guard (negative stories disabled on any non-localhost host) already allows it. The recording is of the happy-path feature in use.\n\n**Exposure requirement (the main risk of this record).** Screenshots and recordings can capture tokens, e-mail addresses or customer-like data, and the packet may land in a public repository. Recordings and screenshots must be **redacted**, or — for a public repo — **stored privately and linked, never embedded**. Links must carry no token, password or session value. The mechanism is the builder's call; the invariant is that nothing secret-shaped reaches a public surface. Video is out of scope: Playwright CLI has no screencast operation (per `/walkthrough`), so GIF from step screenshots is the v1 form.\n\n**Contract decisions this record pins:**\n\n- **Source of frames.** The recording is built from the step screenshots the pipeline's own happy-path stories already wrote to the caller-supplied absolute `SCREENSHOT_PATH` directories (verified in `plugin/agents/qa-agent.md`: each story writes `NN_<step-name>.png` under the directory the caller passes, so the files are readable after the agent returns). No new browser run, and the recording step never starts a server. Stories marked negative (break-it) are excluded, so error screens never enter the GIF.\n- **\"Resolvable local base URL\"** means the base URL the story run itself was given (recorded as a run fact), whose host is `localhost`, `127.0.0.1` or `::1`. `/walkthrough` deliberately never auto-detects a server (`--base` is required), and this record does not change that.\n- **Storage and exposure (v1).** The GIF is stored in the run's local directory and never uploaded, in any repository visibility; the packet links the local path. A remote store is allowed later only if it enforces authenticated collaborator access, proven by an anonymous-fetch probe that fails; secret gists and Actions artifacts of a public repository do not qualify. Exposure values: `local-only` (the v1 default, and the result for any unreachable or unprobed store), `linked-private` (a remote store that passed the probe), `withheld` (a link refused by the credential rule). The packet never embeds the recording or any screenshot (no markdown image syntax, no `img` tag) in any repository visibility, and a remote link must point to a non-image landing page.\n- **What redaction does and does not do.** Redaction covers every string the Recording section renders from the walkthrough (step captions, story titles, link text, failure messages), applied at one choke point, `renderRecordingSection`; it keeps the key name and replaces the whole value (`api_key=[redacted]`, `sk_live_abc` becomes `[redacted]`, so no prefix or length leaks). It does not and cannot scan pixels: the stored GIF is unredacted and local-only, and the stories must run against seed data and throwaway credentials (a Gotcha of the story step, stated in the packet contract). `captionList` stays redaction-free (a test pins that) and the standalone `/walkthrough` path is intentionally unchanged.\n- **One credential-key constant.** The link rule and the redactor use the shared credential-key constant defined by the packet record (`token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`); the redactor adds value shapes (JWT, bearer, `sk_`/`ghp_`/`gho_` prefixes, e-mail addresses). A bearer-shaped path segment is a segment of 20 or more characters from `[A-Za-z0-9_-]` containing at least one digit and one letter (positive test `/a/Xk3j9f8s7d6f5g4h3j2k1/b`, negative test `/docs/token-guide`).\n- **Redaction count.** A non-zero count is reported but does not change the exposure decision (exposure is already the strictest value that applies).\n- **Not-recorded fact.** `{ id, kind: 'recording', status: 'not-run', reason }` with `reason` one of `no-story`, `no-local-base-url`, `no-happy-path-screenshots`, `encoder-failed`; each of the last three also appears under Couldn't test (a recording was expected but impossible); `no-story` renders plain `not recorded` only.\n\n## Non-Goals\n\n- Not the packet schema or its other sections (separate record; this record is Blocked by it).\n- Not video capture or any new recording backend.\n- Not recording dev-environment sessions (the dev smoke check is a different record and never runs negative stories).\n- Not changing `/walkthrough`'s standalone interactive behavior.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4611 | Acceptance packet: schema, canonical marker comment, new sections | open (Blocked by) |\n\n## Current State\n\n- Encoder CLI: `plugin/bin/walkthrough-encode.js` over `plugin/bin/lib/walkthrough/encode.js` (126 lines; exports `planFrames`, `encodeWalkthrough`, `captionList`, `FrameMismatchError`, `BudgetExceededError`). Captions come from the walkthrough steps — a caption is free text and is the likeliest place for a secret-shaped string to appear alongside the screenshot content.\n- Skill: `plugin/skills/walkthrough/SKILL.md` (about 9 KB) drives the encoder interactively.\n- Packet contract: `plugin/skills/_shared/acceptance-packet.md` (created by the packet record) names the Recording section and says it renders `not recorded` until this record populates it.\n- Stories: `/stories` and the qa-agent produce per-step screenshots; the Target Environment Guard disables negative stories off localhost.\n- Repo visibility is knowable: `gh repo view --json isPrivate` (this repository is public — `isPrivate=false` — so the public-repo path is the live one here).\n\n## Deliverables\n\n- [ ] Wrap-up step (in the wrap-up engine) that, when the record has a happy-path story and a resolvable local base URL (definitions above), runs `encodeWalkthrough` over the stories' existing step screenshots and records the output path as a `recording` packet fact; otherwise records the not-recorded fact with its reason.\n- [ ] A redaction module (pure, `plugin/bin/lib/walkthrough/`): scans caption text and any text-bearing metadata for secret-shaped strings (bearer/JWT-shaped tokens, `key=`/`token=`/`password=`/`secret=` values, `sk_`/`ghp_`/`gho_` style prefixes, e-mail addresses) and replaces them with a fixed placeholder; reports what it redacted as a count in the packet fact (never the value).\n- [ ] The exposure policy above in one function `decideExposure({ repoVisibility, storeProbe })` (single place the embed/link decision is made, a test per branch); repository visibility is read from `gh repo view --json isPrivate` and an unreadable or unexpected answer is treated as **public** (fail closed). The v1 outcome is `local-only` whatever the visibility, so visibility only matters for a future remote store.\n- [ ] A conformance scan (in the style of the `bin-source-scan-conformance` skill) that fails if any module under `plugin/bin/lib/wrap-up/` or `plugin/bin/lib/walkthrough/` emits markdown image syntax or an `img` tag.\n- [ ] Packet link rule: a recording link (or any test-guide link) carrying `token=`, `access_token=`, `password=`, `session=`, or a bearer-shaped path segment is refused and the section renders `recording withheld: link contained a credential-shaped value`.\n- [ ] Skill prose updates in `plugin/skills/walkthrough/SKILL.md` and the packet contract describing the automatic path and the exposure rules.\n\n## Acceptance Criteria\n\n1. A packet for a story-backed web change whose local base URL resolves carries a Recording section with a link to the encoded GIF (test with a stubbed encoder returning a path).\n2. For a repo reported public, a repo reported private, and a repo whose visibility lookup fails, the rendered packet contains no markdown image syntax or HTML `img` tag for the recording or any screenshot, only a path or link, and `decideExposure` returns `local-only` in all three; the conformance scan passes and fails when an `img` emission is planted.\n2a. A story set containing one happy-path and one negative story produces a recording from the happy-path screenshots only (frame count equals the happy-path step count).\n3. A caption, story title, link text or failure message containing a secret-shaped string (for example `Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc` or `api_key=sk_live_123abc`) is rendered with the whole value replaced by `[redacted]` (key names kept), the original string appearing nowhere in the Recording section; a test asserts this for at least five secret shapes plus an e-mail address, across all four text channels.\n3a. `captionList` output is byte-identical to before this change (pinned by a test), and the standalone `walkthrough-encode.js` path applies no redaction.\n4. A recording link carrying a credential-shaped query parameter (`token=`, `access_token=`, `password=`, `session=`) is withheld and the Recording section states why. The matcher normalizes before matching and the tests cover: uppercase key (`TOKEN=abc`), percent-encoded key (`tok%65n=abc`, `%74oken=abc`), the key in the fragment (`#token=abc`), credentials in userinfo (`https://user:pass@host/`), an uppercase scheme (`HTTPS://host/?token=abc`), a trailing-slash variant, and dot segments before the query (`https://host/a/../b?token=abc`). A benign link whose *path* merely contains the word (`https://host/docs/token-guide`) is not withheld (substring in the wrong component).\n5. No story or no resolvable local base URL: the Recording section reads `not recorded` with the reason, and the same fact appears under **Couldn't test** when a recording was expected but impossible (for example the dev server would not start).\n6. `walkthrough-encode.js` standalone invocation behavior is unchanged (its existing tests pass untouched).\n7. `npm test` passes.\n\n## Release Note\n\nAdded an automatic walkthrough recording to the acceptance packet, with secret-shaped text redacted and public repositories linked to a private copy instead of embedding images.\n\n## Technical Approach\n\nReuse `encodeWalkthrough`; add the redaction as a pure pre-step over `captionList` output so the encoder keeps its contract. Treat redaction as best-effort defense in depth, not a guarantee: because pixel content of a screenshot cannot be scanned with a text matcher, the public-repo rule (link, never embed) is the load-bearing control, and the redaction handles the text the plugin itself writes (captions, link text, packet prose).\n\n### Data / API Surface\n\n- Fact: `{ id, kind: 'recording', status, url_or_path, redactions: <int>, exposure: 'local-only' | 'linked-private' | 'withheld' }`, or the not-recorded fact described above.\n- Redaction placeholder: a single fixed token (`[redacted]`) so tests and consumers can assert on it.\n\n### Key Files\n\n- `plugin/bin/walkthrough-encode.js` — CLI; confirm it needs no change\n- `plugin/bin/lib/walkthrough/encode.js` — `captionList`, `encodeWalkthrough`\n- `plugin/bin/lib/walkthrough/redact.js` — new redaction module\n- `plugin/skills/walkthrough/SKILL.md` — document the automatic path and exposure rules\n- `plugin/skills/_shared/acceptance-packet.md` — Recording section contract (created by #4611)\n- `plugin/bin/lib/wrap-up/engine-render.js` — render the Recording section\n- `tests/bin-lib/walkthrough/encode.test.js` — encoder tests; add redaction tests beside them\n- `tests/walkthrough-conformance.test.js` — pins `/walkthrough` skill prose; update with the SKILL.md change\n\n## Gotchas\n\n- Fail closed on visibility: an unreadable `isPrivate` answer means public. Do not default to private.\n- Redaction placeholders must not be reversible and must not leak length or prefix of the secret (`[redacted]` is the only placeholder).\n- Never embed, in any repository visibility; the embed/link decision lives only in `decideExposure`, and the conformance scan guards the rest.\n- The stored GIF is unredacted pixels, local-only. Do not add an upload path without the authenticated-access probe in the contract above.\n- Negative (break-it) stories run only against localhost; the recording step must not start a negative story against a non-local base URL (the Target Environment Guard stays; do not relax it).\n- Verified during shaping: qa-agent step screenshots are written to the caller-supplied absolute `SCREENSHOT_PATH`, so wrap-up can read them after the agent returns; no dispatch-side recording step is needed.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:record-the-walkthrough-automatically-and-keep-secrets-out-of -->\nwork-fingerprint: human-in-control-acceptance:record-the-walkthrough-automatically-and-keep-secrets-out-of\n\n## Plan Review Decisions\n\nDecided by the maintainer on 2026-11-02, who accepted these readings in session. Where a decision conflicts with the text above, the decision wins.\n\n- **Exposure rules and `--recordings`: Reading B.** The rules bind every Recording link. Legacy image URLs are refused, and the public evidence-commit route (`docs/demo-evidence/`) is retired or moved to a private store. No 40-hex exemption is added to the bearer rule.\n- **Posted link after archiving: Reading B.** The packet names a stable location, such as the run id plus a reader rule that also checks `pipelines/archive/{run-id}/`, so the link stays resolvable after the GIF moves.\n",
-        "createdAt": "2026-10-30T11:46:10Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
-            "name": "priority:high",
-            "description": "Priority: dispatch picks this band first",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4612,
-        "state": "OPEN",
-        "title": "Record the walkthrough automatically and keep secrets out of the packet",
-        "updatedAt": "2026-11-02T20:22:39Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -7956,90 +7873,6 @@
           "grants": {
             "build": true,
             "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: #2767 class split — classification of windows-regression run 40169646104 (main 6a41ebe3a)\n\nDefer-reason: genuinely-larger\n\n**Related:** #2767, #3702, #3064, #4222 (the same fix for `tests/bin-lib/verify/cli.test.js`), #3982 (owns `tests/reconcile.test.js:488`), #3695\n\n## Current State\n\nGit for Windows prints paths with forward slashes. `rev-parse --show-toplevel` and `worktree list --porcelain` print `D:/a/_temp/…`, and `ls-files` and `status` print repo-relative `a/b/c`. These tests build their expected value with the native `path.join`, which gives `D:\\a\\_temp\\…` and `a\\b\\c`, so the comparison fails on win32 only. Under the #3064 calibration, git's own spelling is the correct value and the test is what needs fixing.\n\n- `tests/bin-lib/verify/baseline.test.js:913`: `realGit.listWorktrees` output does not `includes(normalWt)`, a native path.\n- `tests/hooks-git-exec.test.js:13`, `:114`, `:264`: `runGit`/`runGitAsync` return `D:/a/_temp/ct-wtd-…`, and the test expects the native temp dir.\n- `tests/run-integrity.test.js:176`: `worktreePathForBranch` returns the porcelain path `D:/…/.claude/worktrees/feat`.\n- `tests/teardown-gate.test.js:550`: the `wd-foreign-teardown` event's `path` carries `D:/…/wt`.\n- `tests/tidy-residue-markers.test.js:305`, `:344`: git-listed `.claude-tweaks/pipelines/…/decisions.md` against a `path.join` expectation.\n\nExcluded on purpose: `tests/bin-lib/verify/cli.test.js:3425` (#4222) and `tests/reconcile.test.js:488` (#3982).\n\n8 tests in 5 files fail on Windows (line numbers as of 988cc584d).\n\n### Failing tests\n\n- `tests/bin-lib/verify/baseline.test.js:913` — realGit.listWorktrees reads real `git worktree list` output, and findStaleBaselineWorktrees names only the stale scratch one (#3064)\n- `tests/hooks-git-exec.test.js:13` — runGit: success returns trimmed stdout and a null failure\n- `tests/hooks-git-exec.test.js:114` — runGitAsync: success returns trimmed stdout and a null failure\n- `tests/hooks-git-exec.test.js:264` — runGit: a non-numeric or non-positive CT_HOOKS_GIT_TIMEOUT_MS falls back to DEFAULT_TIMEOUT_MS\n- `tests/run-integrity.test.js:176` — worktreePathForBranch: finds the live linked worktree checked out on the given branch\n- `tests/teardown-gate.test.js:550` — AC5: a foreign-owned run warns instead of denying, and logs wd-foreign-teardown\n- `tests/tidy-residue-markers.test.js:305` — #1493 C1: Step 7.5's copy+add lands decisions.md, report.md, and staged/** in the worktree's own commit\n- `tests/tidy-residue-markers.test.js:344` — #1494 review fix: Step 7.5's copy+add also lands in a *-sweep-standalone* run dir's worktree commit\n\n## Deliverables\n\n- For an absolute path that git printed, derive the expected value from git's own output, as #4222 does. For example, `hooks-git-exec.test.js` compares against `git rev-parse --show-toplevel` run by the test itself, and `baseline.test.js` and `run-integrity.test.js` take the porcelain entry whose path ends in the fixture directory. No `process.platform` branch.\n- Build a repo-relative ID that git lists with `path.posix.join`, or with `toPosix` on the test's own `path.join`, in `tidy-residue-markers.test.js`.\n- `teardown-gate.test.js:550`: compare the event `path` with the porcelain spelling git prints for that worktree, taken from `git worktree list --porcelain` in the test.\n\n## Acceptance Criteria\n\n1. AC1: `node --test tests/bin-lib/verify/baseline.test.js tests/hooks-git-exec.test.js tests/run-integrity.test.js tests/teardown-gate.test.js tests/tidy-residue-markers.test.js` passes on Linux with the same test count per file.\n2. AC2: discrimination is kept. In `hooks-git-exec.test.js:13`, running `runGit` against a different repo than the one the expected value is derived from makes the test fail on Linux.\n3. AC3: a `windows-regression.yml` dispatch on the branch shows these 5 files with 0 failures of this class and no newly failing file. `teardown-gate.test.js`'s class H failures are tracked separately.\n\n## Release Note\n\nNo user-visible change: fixes Windows-only failures in tests that expect native paths where git prints forward-slash paths.\n\n## Gotchas\n\n- ASSUMPTION — verify at build: no production consumer of `worktreePathForBranch` (`plugin/bin/lib/hooks/run-integrity.js` callers) or of the `wd-foreign-teardown` event `path` compares that value with a native path using `===`. If one does, the fix is a production change in the shape of `findWorktreeEntry` (`plugin/bin/lib/hooks/worktree-reap.js`, #3695, the skill's porcelain Anti-Patterns row), and it gets its own record.\n\n## Technical Approach\n\n### Key Files\n\n- `tests/bin-lib/verify/baseline.test.js` — expected worktree path from the porcelain listing\n- `tests/hooks-git-exec.test.js` — expected toplevel from git\n- `tests/run-integrity.test.js` — expected worktree path from the porcelain listing\n- `tests/teardown-gate.test.js` — event path compared in git's spelling\n- `tests/tidy-residue-markers.test.js` — git-listed paths built with `/`\n\n_Filed by `capture` via specShapedBody._\n",
-        "createdAt": "2026-10-25T13:49:45Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4289,
-        "state": "OPEN",
-        "title": "Windows: tests expect native paths where git prints forward-slash paths (#3064 calibration class)",
-        "updatedAt": "2026-10-31T09:58:49Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
           },
           "bot": {
             "inProgress": false,
