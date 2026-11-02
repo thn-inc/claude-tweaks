@@ -40,7 +40,11 @@ Scope sweep, no-change hits: `plugin/skills/_shared/policy-schema.md` (names `is
 
 Waived AC2.1: already satisfied, with no code to change. Digest #1426's comment 6545562270 (run 2026-10-31T142701-release-standalone) carries `→ #4816` on all three promoted lines (materiality fingerprints `materiality-e1218f8c`, `materiality-8f132cc0`, `materiality-364cbdca`), read live with `gh api repos/thn-inc/claude-tweaks/issues/1426/comments` during build.
 
-Post-execution (controller, not a task): post one comment on #4816 recording each deliverable's disposition — D1 fixed (shared `stripComment`, CRLF blind spot), D2 closed out (helper kept: #4609's single comparison site, revisit condition unmet, no change needed once a consumer lands; comment updated), D3 fixed (comment names leaves; summaries marked).
+**Required controller gate (not an implementer task; runs after Task 2's review and before `/build`'s Common Step 3):** post one comment on #4816 recording each deliverable's disposition, then read it back (`gh issue view 4816 --comments`) and confirm all three lines are present. AC1.1 for D2 is not met until this comment exists. Text:
+
+- D1 fixed for the `model-profiles` block: its two readers now share `policy-fragment.js`'s `stripComment`, which closes the CRLF + trailing-comment blind spot in `auditPolicy`. `risk-path-globs` keeps its quote-aware rule on purpose, because a glob may hold `#`. Flat keys keep their documented cut-at-first-`#` rule.
+- D2 closed out with its reason. `isControlModeOn` is kept: #4609 shipped it as the single comparison site for the #4608 leaves, none of which has landed, so the finding's own revisit condition is unmet. When a leaf lands it becomes the first caller and the helper needs no change. Its comment now says this.
+- D3 fixed: the Control mode comment names the #4608 leaf that wires each key, and all 14 summaries open "Not yet used" (pinned by `tests/resolve-policy-control-mode.test.js`).
 
 ---
 
@@ -171,7 +175,18 @@ Replace the block comment at `policy-schema.js:178` with:
   // Control mode (#4609, human-in-control #4608): twelve flat keys here, plus `risk-categories` and `risk-path-globs` in the merge-safety group above. No plugin code acts on them yet, so each summary opens "Not yet used". The #4608 leaves wire them: control-mode -> #4624, and every control-mode-gated leaf through isControlModeOn (bin/lib/policy.js); acceptance-target -> #4615; deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds -> #4616; owned-owners -> #4621; trusted-authors -> #4622; risk-categories, risk-path-globs -> #4618, #4619. The record that wires a key drops its marker and its entry in tests/resolve-policy-control-mode.test.js's NOT_YET_USED. All but `control-mode` itself are consulted only with control mode on. All advanced — the core tier is at its cap.
 ```
 
-In `policy.js`, append to `isControlModeOn`'s comment: it has no production caller yet — #4609 shipped it ahead of the #4608 control-mode leaves (#4615, #4616, #4618-#4624) so they share one comparison; the first leaf to land becomes its first caller, and nothing about the helper changes then.
+In `policy.js`, replace `isControlModeOn`'s comment (the five lines above `function isControlModeOn`) with exactly:
+
+```js
+// `control-mode` (#4609): the one comparison site every consumer of the control-
+// mode keys goes through, so "is it on" is decided in exactly one place. Takes the
+// resolved value (e.g. from resolve-policy.js --values), strictly the exact string
+// `on` — `ON`, `yes`, an absent value and a boolean are all off, so a typo can
+// never switch the mode on. No production caller yet: #4609 shipped it ahead of
+// the #4608 control-mode leaves (#4615, #4616, #4618-#4624) so they share one
+// comparison. The first leaf to land becomes its first caller; the helper itself
+// needs no change then.
+```
 
 - [ ] **Step 4: Run tests to verify they pass**
 
