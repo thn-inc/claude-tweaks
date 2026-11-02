@@ -269,15 +269,19 @@ test('#4637: the raw --stack-stderr value reaches the logged STAGED line verbati
   assert.ok(text.includes(`(${raw})`), `the raw stderr must be logged verbatim: ${text}`);
 });
 
-test('#4637: the "Staging a patch" paragraph points its --stack-stderr usage back at the quoting rule', () => {
+function stagingPatchParagraph() {
   const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
   assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  return paragraph;
+}
+
+test('#4637: the "Staging a patch" paragraph points its --stack-stderr usage back at the quoting rule', () => {
+  const paragraph = stagingPatchParagraph();
   assert.ok(paragraph.includes('follow the quoting rule above'), `the --stack-stderr usage must cite the quoting rule: ${paragraph}`);
 });
 
 test('#4637: both --stack-stderr spans in the "Staging a patch" paragraph are single-quoted', () => {
-  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
-  assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  const paragraph = stagingPatchParagraph();
   const spans = paragraph.match(/--stack-stderr [^`\s]/g) || [];
   assert.deepEqual(spans, ["--stack-stderr '", "--stack-stderr '"], `the conflict and unverifiable-stack spans must each open with a single quote: ${paragraph}`);
 });
