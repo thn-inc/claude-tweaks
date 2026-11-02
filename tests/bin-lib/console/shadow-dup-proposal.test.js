@@ -333,7 +333,7 @@ test('readNoFollow fallback: a leaf swapped back to a fresh regular file before 
       fs.writeFileSync(leaf, 'fresh');
       return st;
     };
-    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: it is a symlink/);
+    assert.throws(() => readNoFollow(leaf, NO_NOFOLLOW), /refusing to read .*: it was replaced while it was being opened/);
   } finally {
     fs.openSync = realOpen;
     fs.fstatSync = realFstat;

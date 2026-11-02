@@ -67,8 +67,9 @@ function readNoFollow(p, { constants = fs.constants } = {}) {
   try {
     const opened = fs.fstatSync(fd, { bigint: true });
     const after = fs.lstatSync(p, { bigint: true });
-    if (after.isSymbolicLink() || opened.dev !== after.dev || opened.ino !== after.ino) {
-      throw new Error(`refusing to read ${p}: it is a symlink`);
+    if (after.isSymbolicLink()) throw new Error(`refusing to read ${p}: it is a symlink`);
+    if (opened.dev !== after.dev || opened.ino !== after.ino) {
+      throw new Error(`refusing to read ${p}: it was replaced while it was being opened`);
     }
     return fs.readFileSync(fd, 'utf8');
   } finally { fs.closeSync(fd); }
