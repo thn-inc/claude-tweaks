@@ -33,6 +33,16 @@ Shape 1 also hides at the edge of a regex, on a whitespace or newline run rather
 
 A scan that re-reads the input once per match is the same cost without a regex: #3903's brace tracker recounted from the start of the file for every match. Keep one persistent scan position.
 
+### A line under `m` is JS's line, not git's
+
+This one is a wrong answer, not a slow one. A commit body's line ends at LF, but JS `^` and `$` under `m` also break on U+2028 and U+2029, so `Release-Note: A Fixes #99` read as a `Fixes #99` footer and booked #99 (#4634, a review probe, one fix wave). Split on `'\n'` and match each line without `m`, as `parseCommit` in `plugin/bin/lib/release-local/commits.js` and `extractReleaseNotes` in `plugin/bin/lib/release-notes.js` do. Three details come with the split:
+
+- `.` stops at U+2028 and U+2029 too, so `/^N: (.*)$/` fails on a line holding one and the line silently drops. Capture with `[^\n]*`.
+- `split('\n')` leaves a CRLF body's `\r` on the line. Tolerate it in the pattern (`[ \t]*\r?$`) or strip it first (`parseFixesSpan` in `plugin/bin/lib/flow/closing-links.js`).
+- `\s` matches both separators and LF, so `\s*$` under `m` can run past the end of the line.
+
+Probe a footer reader with the separator in front of the footer: `` `a Fixes #99\n\nFixes #10` `` must return `[10]`. `fixesRecords` in `plugin/bin/lib/express/sampling.js` and `parseFixesMembers` in `plugin/bin/lib/reconcile/console-execute.js` read PR bodies with `/gm` and return `[99, 10]`.
+
 ## Decision Framework
 
 | The scan | Do |

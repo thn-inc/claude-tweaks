@@ -79,6 +79,28 @@ test('releaseNote: throws ComposeSubjectError naming the record number when empt
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42 }), (err) => err instanceof ComposeSubjectError);
 });
 
+test('releaseNote array: one Release-Note line per entry, in order, in one paragraph before the Fixes paragraph', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X.', '  Fixed Y.  '], fixes: [42, 43] });
+  assert.equal(body, 'Release-Note: Added X.\nRelease-Note: Fixed Y.\n\nFixes #42\nFixes #43');
+});
+
+test('releaseNote array: an empty array or a blank entry throws naming the record number', () => {
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: [] }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', '  '] }), /releaseNote must be a non-empty string[^]*#42/);
+  assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', 7] }), /releaseNote must be a non-empty string[^]*#42/);
+});
+
+test('releaseNote array: a bundled multi-line note collapses to one line, so the paragraph stays one Release-Note line per record', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\n\n  and more.', 'Fixed Y.'], fixes: [42, 43] });
+  assert.equal(body, 'Release-Note: Added X and more.\nRelease-Note: Fixed Y.\n\nFixes #42\nFixes #43');
+});
+
+test('releaseNote: a single note stays verbatim, multi-line included, whether a string or a one-entry array', () => {
+  const expected = 'Release-Note: Added X\nand more.\n\nFixes #42';
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: 'Added X\nand more.' }).body, expected);
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\nand more.'] }).body, expected);
+});
+
 test('body: Release-Note paragraph sits after summary/tag and before Fixes (and before BREAKING CHANGE)', () => {
   const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, summary: 'Adds X.', tag: 'auto-merge', releaseNote: 'Added X.', fixes: [42, 43] });
   const paras = body.split('\n\n');

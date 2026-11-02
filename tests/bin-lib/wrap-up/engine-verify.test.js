@@ -10,8 +10,20 @@ const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 
+// Every tmp root this file creates is registered here and removed once, after the
+// file's last test: the per-test try/finally removals cover only some call sites,
+// and a test that throws before its cleanup would otherwise leak its roots.
+const tmpRoots = [];
+test.after(() => {
+  for (const root of tmpRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function trackTmp(dir) {
+  tmpRoots.push(dir);
+  return dir;
+}
+
 function makeTmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 // plans-ledger's sdd-leftover check reads `cwd`'s own filesystem directly
@@ -941,7 +953,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
   // actually prevents that collapse, so this proves it against real git
   // output rather than a hand-written fixture that could just as easily
   // encode the wrong (collapsed) shape.
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   try {
     fs.mkdirSync(path.join(repo, 'docs', 'plans'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'docs', 'plans', 'some-topic-audit.json'), '{}');
@@ -964,7 +976,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
 // fixture so a machine whose global config says `false` cannot make these
 // pass vacuously.
 function nonAsciiRepo() {
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   realExecFileSync('git', ['config', 'core.quotepath', 'true'], { cwd: repo });
   return repo;
 }
@@ -1091,8 +1103,9 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
 });
 
 test('AC1 (live git): a plans-ledger leftover created in a worktree is caught by a verify run invoked from that same worktree, and is invisible from the main checkout', () => {
-  const main = gitRepo();
-  const wt = linkedWorktreeOf(main);
+  const main = trackTmp(gitRepo());
+  const wt = trackTmp(linkedWorktreeOf(main));
+  trackTmp(path.dirname(wt)); // linkedWorktreeOf's ct-wtd-parent-* dir
   try {
     const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
     // #3168: create the run dir before the leftover, with a real mtime margin
@@ -1654,17 +1667,24 @@ test('AC1.1: accept:pending satisfies the pending-label check', () => {
 // precedence), not the mere presence of one pending label.
 function acceptanceLabelingRow(labelNames, dirPrefix) {
   const runDir = makeTmpDir(dirPrefix);
-  writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
-    }
-    return '';
-  };
-  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
-  return result.rows.find((r) => r.check === 'acceptance-labeling');
+  let repoRoot;
+  try {
+    repoRoot = makeNativeRepoRoot();
+    writeSpecFile(runDir, '900', 900);
+    const fakeGh = (args) => {
+      if (args[0] === '--version') return 'gh version 2.0.0';
+      if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+      if (args.includes('labels,comments')) {
+        return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
+      }
+      return '';
+    };
+    const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+    return result.rows.find((r) => r.check === 'acceptance-labeling');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    if (repoRoot) fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 }
 
 test('AC3.1: engine-verify agrees on mixed labels', () => {
@@ -2986,7 +3006,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
 // invocation is wrapped to recover stdout from the thrown error either way.
 test('wrap-up-engine.js verify prints a check table for a real, anchored run dir', () => {
   const cliPath = path.join(__dirname, '../../../plugin/bin/wrap-up-engine.js');
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   const runDir = fs.mkdtempSync(path.join(repo, 'verify-rundir-'));
   let out;
   try {

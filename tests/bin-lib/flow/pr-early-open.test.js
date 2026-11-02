@@ -226,7 +226,7 @@ test('AC1.1: a recorded still-open PR whose body names another run is rebound, w
   assert.deepEqual(h.records, []);
 });
 
-test('AC2.1: a reused PR whose body already names this run gets no gh pr edit, on either reuse path', async () => {
+test('AC2.1: a reused PR whose body already names this run, or names no run at all, gets no gh pr edit, on either reuse path', async () => {
   const bodies = [bodyFor(RUN_ID), `claude-tweaks-run: ${RUN_ID}\n\nMCP-written body`, 'A hand-written body with no marker.'];
   for (const body of bodies) {
     const listed = harness({ list: [{ number: 7, url: URL7, state: 'OPEN', body }] });
@@ -982,6 +982,10 @@ test('CLI: an internal error (unparseable gh output) exits 1', async () => {
   assert.doesNotMatch(h.err.join(''), /gh-timeout-ms/);
 });
 
+// cliDeps stubs ghAvailable, so this pins only the CLI's error routing (the timeout
+// hint, never the gh-absent message). The probe's own rule that a timed-out
+// `gh --version` means present is pinned by tests/bin-lib/repo-resolve.test.js's
+// ghAvailable cases (#4554).
 test('CLI: a gh timeout exits 1 with the timeout hint, never the gh-absent message (#4554)', async () => {
   const fx = cliFixture();
   const h = cliDeps(fx);
