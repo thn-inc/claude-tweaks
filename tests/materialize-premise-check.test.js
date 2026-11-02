@@ -518,7 +518,7 @@ test("#4795: materialize's --repo pin never reaches process.env, so the Premise-
   }));
 });
 
-test("#4505: a user's own exported GH_HOST is never stripped from the Premise-check command", () => {
+test("AC2.1 (#4795): materialize runs the Premise-check command with the user's environment — an exported GH_HOST survives it", () => {
   const repo = gitRepo();
   withCwd(repo, () => withGhHost('mine.example', () => {
     const command = '[ "$GH_HOST" = mine.example ]';
@@ -526,4 +526,9 @@ test("#4505: a user's own exported GH_HOST is never stripped from the Premise-ch
     assert.strictEqual(process.env.GH_HOST, 'mine.example');
     assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
   }));
+});
+
+test('#4795: materialize no longer defines an env restore for the Premise-check command', () => {
+  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'materialize.js'), 'utf8');
+  assert.doesNotMatch(src, /envBeforeGhHostPin|pinnedGhHost/);
 });
