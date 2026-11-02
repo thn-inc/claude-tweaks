@@ -470,11 +470,11 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
   ];
   assert.ok(files.length > 50, 'the sweep should cover the plugin tree');
   // Whitespace is collapsed first so a sentence wrapped across lines is seen whole; `refus` covers
-  // refused/refuses/refusal, and the exit code may be backticked. The first branch's gap cannot cross
-  // "rate-limited": exit 7's own bullet says a rate-limited 403 is exit 4, which is correct.
+  // refused/refuses/refusal, and the exit code may be backticked. The first branch excludes only the
+  // exact phrase "rate-limited 403 is exit 4": exit 7's own bullet says it, and it is correct.
   const exit4 = '\\bexits? `?4\\b';
   const sweep = new RegExp(
-    `(claim read( or write)?|claim write|401/403)(?:(?!rate-limited)[^.]){0,80}${exit4}`
+    `(claim read( or write)?|claim write|401/403)[^.]{0,80}(?<!rate-limited 403 is )${exit4}`
     + `|${exit4}[^.]{0,80}((refus|401/403)[^.]{0,80}claim|claim (read|write)[^.]{0,80}(refus|401|403))`,
     'gi',
   );
