@@ -1339,6 +1339,19 @@ test('AC2.1/AC4.1: POST classified secondary-rate-limit / network-failure is tra
     { ok: false, reason: 'contents-api: HTTP 403: Forbidden' });
 });
 
+test('ensureClaimsBranch: a real-shape refusal reason (the exit-6 route) drops the Command failed line and the repeated stderr line', () => {
+  const commandLine = 'Command failed: gh api --method POST repos/acme/w/git/refs -f ref=refs/heads/claims-registry -f sha=abc123';
+  const refusal = 'gh: Resource not accessible by integration (HTTP 403)';
+  const refuse = (error) => ensureClaimsBranch({
+    ghApi: bootstrapGhApi([], { post: { stdout: null, failure: 'permission-denied', status: 403, error } }),
+  }, 'acme/w');
+  const r = refuse(`${commandLine}\n${refusal}\n ${refusal}\n`);
+  assert.deepEqual(r, { ok: false, reason: `contents-api: ${refusal}` });
+  assert.doesNotMatch(r.reason, /Command failed/);
+  // Nothing but the command line left: fall back to the classified failure, not an empty reason.
+  assert.deepEqual(refuse(`${commandLine}\n`), { ok: false, reason: 'contents-api: permission-denied' });
+});
+
 // (#4495) A git-CAS rejection whose verification read finds the claims-registry
 // branch itself gone. That is not a claim someone else took, so it must surface
 // as a missing branch (the caller bootstraps it), never as a contest with no

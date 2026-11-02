@@ -28,7 +28,7 @@ const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
-const { tombstoneInFlightPr } = claimStore;
+const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
 const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on this record';
@@ -69,24 +69,6 @@ function errText(e) {
 function oneLineReason(text, max = 500) {
   const flat = String(text).replace(/[\p{Cc}\s]+/gu, ' ').trim();
   return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
-}
-
-// (#4899) The text of a refused claim read or write, for `permissionStop`. The
-// store's `error` is the failed command's message plus its stderr, so a real
-// refusal opens with a `Command failed: gh api ... -f content=<base64 claim>`
-// line (the command line and the claim payload, which do not belong in the
-// reason) and then repeats gh's own stderr. Drop that line and any exact
-// duplicate line, leaving GitHub's text; nothing left is the empty string.
-function refusalText(error) {
-  const seen = new Set();
-  const kept = [];
-  for (const line of String(error || '').split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (trimmed === '' || trimmed.startsWith('Command failed:') || seen.has(trimmed)) continue;
-    seen.add(trimmed);
-    kept.push(trimmed);
-  }
-  return kept.join('\n');
 }
 
 // Claim blobs are remote data: an unparseable one is classified 'unreadable'
@@ -233,6 +215,10 @@ function holderFromFreshRead(deps, repoSlug, issue) {
 // guarantees that.
 function verifyClaimLanded(deps, repoSlug, issue, runId, knownTip) {
   const verify = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
+  // A refused read-back (`permission-denied` included) deliberately stays `false`,
+  // so the caller reports 'unverified' (exit 5): the write itself was accepted and
+  // only its confirmation was refused, so "unverified" is accurate. #4899's exit 7
+  // covers the claim read and write only.
   if (verify.failure) return false;
   const content = verify.absent ? null : verify.content;
   const classified = classifyClaimBlob(content, deps.now());
@@ -425,9 +411,10 @@ function run(argv, deps) {
   // fresh per-issue read either finds the write landed (releases it,
   // reclaimable immediately) or still doesn't see it (reports it in
   // `releaseFailed` — visible, not silently dropped). Then report the stop
-  // alongside what was released and what could not be. Called only from
-  // `stopOrSkip()` below, which is in turn the single call site every stop
-  // below shares — so this cannot drift from any of them. `exitCode` is 3 for
+  // alongside what was released and what could not be. Called from
+  // `stopOrSkip()` below (the contested, in-flight, transient and unverified
+  // stops) and directly from `handleBranchMissing` (exit 6) and
+  // `permissionStop` (exit 7), which have their own envelopes. `exitCode` is 3 for
   // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
   // `unverified` one, 6 for a `branchMissing` one (#4495), 7 for a
   // `permissionDenied` one (#4899).

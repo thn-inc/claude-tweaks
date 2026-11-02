@@ -352,7 +352,9 @@ test('AC6.1: flow/claim-targets.md carries the exit-7 card with no retry and no 
   assert.match(bullet, /token's access/);
   assert.match(bullet, /claims-registry/);
   assert.match(bullet, /No `AskUserQuestion`/);
-  const card = bullet.slice(bullet.indexOf('```markdown'));
+  const cardStart = bullet.indexOf('```markdown');
+  assert.ok(cardStart !== -1, 'the exit-7 bullet should carry a markdown card fence');
+  const card = bullet.slice(cardStart);
   assert.doesNotMatch(card, /re-run/i, 'a refused token is not fixed by a re-run');
   assert.match(content, /On exit 3, 4, 5, 6, or 7/);
 });
@@ -466,10 +468,13 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
   const files = [
     ...walk(path.join(REPO_ROOT, 'plugin'), '.md'),
     ...walk(path.join(REPO_ROOT, 'plugin'), '.js'),
+    // The project skills restate the exit table too (batching-failure-posture.md once kept the old exit 4 claim).
+    ...walk(path.join(REPO_ROOT, '.claude/skills'), '.md'),
     path.join(REPO_ROOT, 'docs/plugin-structure.md'),
     path.join(REPO_ROOT, 'docs/journeys/act-on-a-contested-claim.md'),
   ];
   assert.ok(files.length > 50, 'the sweep should cover the plugin tree');
+  assert.ok(files.some((file) => file.includes(`${path.sep}.claude${path.sep}skills${path.sep}`)), 'the sweep should cover .claude/skills');
   // Whitespace is collapsed first so a sentence wrapped across lines is seen whole; `refus` covers
   // refused/refuses/refusal, and the exit code may be backticked. The first branch excludes only the
   // exact phrase "rate-limited 403 is exit 4": exit 7's own bullet says it, and it is correct.
@@ -479,13 +484,20 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
     + `|${exit4}[^.]{0,80}((refus|401/403)[^.]{0,80}claim|claim (read|write)[^.]{0,80}(refus|401|403))`,
     'gi',
   );
+  const sweepOffenders = (text) => [...text.replace(/\s+/g, ' ').matchAll(sweep)].map((match) => match[0]);
   const offenders = [];
   for (const file of files) {
-    const text = readText(file).replace(/\s+/g, ' ');
-    for (const match of text.matchAll(sweep)) {
-      offenders.push(`${path.relative(REPO_ROOT, file)}: ${match[0]}`);
+    for (const hit of sweepOffenders(readText(file))) {
+      offenders.push(`${path.relative(REPO_ROOT, file)}: ${hit}`);
     }
   }
   assert.deepStrictEqual(offenders, []);
+  // go-red control: the same matcher flags a planted line in each branch's shape. The strings are
+  // built from parts so this file never carries the forbidden sentence whole.
+  const planted = ['A claim read or write', ['401', '403'].join('/'), 'exits', '4.'].join(' ');
+  assert.strictEqual(sweepOffenders(planted).length, 1, 'control: a planted "claim read or write 401/403 exits 4" must be flagged');
+  const plantedReverse = ['It exits', '4 when GitHub', 'refuses a', 'claim read.'].join(' ');
+  assert.strictEqual(sweepOffenders(plantedReverse).length, 1, 'control: a planted "exits 4 when GitHub refuses a claim read" must be flagged');
+  assert.deepStrictEqual(sweepOffenders('Exit 7 covers a claim read or write; a rate-limited 403 is exit 4.'), [], 'control: the exact rate-limited phrase stays allowed');
   assert.match(read('docs/plugin-structure.md'), /7 GitHub refused a claim read or write/);
 });
