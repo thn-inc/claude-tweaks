@@ -930,7 +930,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   }
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
-  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
+  const skipped = []; // #3222, #3508: parent-gate skip reasons (incomplete gate, resolved parent, below oversight floor)
   const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
 
   // Resolve each issue's target (its parent, when resolvable; itself
