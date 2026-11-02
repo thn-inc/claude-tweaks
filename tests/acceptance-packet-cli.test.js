@@ -472,12 +472,21 @@ test('a QA entry with no id does not count as a listed story', (t) => {
   assert.ok(!gather(ws, ['--stories-dir', ws.file('none'), '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
 });
 
-test('an empty stories dir that exists states no partial, whatever is listed', (t) => {
+test('an empty stories dir states the partial only when a story is listed, since its negative flag is lost', (t) => {
   const ws = workspace(t);
   const stories = path.join(ws.root, 'stories');
   fs.mkdirSync(stories);
   const qa = writeJson(ws.file('qa.json'), { stories: [{ id: 'x', status: 'PASS' }] });
-  assert.ok(!gather(ws, ['--stories-dir', stories, '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+  assert.ok(gather(ws, ['--stories-dir', stories, '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+  assert.ok(!gather(ws, ['--stories-dir', stories]).facts.partial.includes(STORIES_NOTE));
+});
+
+test('a stories dir holding no story file counts as empty', (t) => {
+  const ws = workspace(t);
+  const stories = path.join(ws.root, 'stories');
+  writeText(path.join(stories, 'README.md'), 'not a story file');
+  const qa = writeJson(ws.file('qa.json'), { stories: [{ id: 'x', status: 'PASS' }] });
+  assert.ok(gather(ws, ['--stories-dir', stories, '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
 });
 
 test('a stories dir that is denied is a stated partial, with nothing listed', (t) => {
@@ -841,9 +850,11 @@ test('--dropped-out holds a section and a fixed reason for every drop, never a c
       schemaVersion: 1,
       claims: [
         claim(`section-${secret}`, ['check:tests']),
+        claim(`line one\nsection-${secret}`, ['check:tests']),
         claim('what-changed', []),
         claim('what-changed', [`change:${secret}`]),
         claim('what-changed', [`${secret} as a ref`]),
+        claim('what-changed', [`line one\n${secret} as a ref`]),
         claim('what-changed', ['check:tests']),
         claim('tried-to-break', ['check:tests']),
         claim('risk-proofs', ['check:tests']),
@@ -858,7 +869,9 @@ test('--dropped-out holds a section and a fixed reason for every drop, never a c
   assert.ok(!raw.includes(secret));
   assert.deepEqual(JSON.parse(raw).dropped, [
     { section: 'unknown', reason: 'unknown section' },
+    { section: 'unknown', reason: 'unknown section' },
     { section: 'what-changed', reason: 'no refs' },
+    { section: 'what-changed', reason: 'absent fact' },
     { section: 'what-changed', reason: 'absent fact' },
     { section: 'what-changed', reason: 'absent fact' },
     { section: 'what-changed', reason: 'incompatible fact' },
@@ -1181,11 +1194,38 @@ function localRecord(ws, facets = defaultFacets()) {
   return file;
 }
 
+const marked = (text) => `${PACKET_MARKER}\n${text}`;
+
+for (const [name, text] of [
+  ['no marker', 'PACKET'],
+  ['the marker on a later line', `intro\n${PACKET_MARKER}\n`],
+  ['text after the marker', `${PACKET_MARKER} trailing\n`],
+]) {
+  test(`local with a body with ${name} exits 2 and leaves the record byte-unchanged`, (t) => {
+    const ws = workspace(t);
+    const file = localRecord(ws);
+    const before = fs.readFileSync(file, 'utf8');
+    const body = writeText(ws.file('body.md'), text);
+    const h = harness(ws);
+    assert.equal(run(['local', '--record-file', file, '--body-file', body, '--pending'], h.deps), 2);
+    assert.match(h.stderr(), /--body-file/);
+    assert.equal(fs.readFileSync(file, 'utf8'), before);
+  });
+}
+
+test('local accepts a CRLF marker line', (t) => {
+  const ws = workspace(t);
+  const file = localRecord(ws);
+  const body = writeText(ws.file('body.md'), `${PACKET_MARKER}\r\nPACKET`);
+  const h = harness(ws);
+  assert.equal(run(['local', '--record-file', file, '--body-file', body], h.deps), 0, h.stderr());
+});
+
 test('local without --pending leaves facets.acceptance unset, and upserts in place', (t) => {
   const ws = workspace(t);
   const file = localRecord(ws);
-  const first = writeText(ws.file('first.md'), 'FIRST');
-  const second = writeText(ws.file('second.md'), 'SECOND');
+  const first = writeText(ws.file('first.md'), marked('FIRST'));
+  const second = writeText(ws.file('second.md'), marked('SECOND'));
   const h = harness(ws);
   assert.equal(run(['local', '--record-file', file, '--body-file', first], h.deps), 0, h.stderr());
   assert.deepEqual(JSON.parse(h.stdout()), { recordFile: file, pending: false });
@@ -1195,14 +1235,14 @@ test('local without --pending leaves facets.acceptance unset, and upserts in pla
   const { body, title } = readRecord(file);
   assert.equal(title, 'A record');
   assert.ok(body.includes('Some body.'));
-  assert.ok(body.includes(`${LOCAL_START}\nSECOND\n${LOCAL_END}`));
+  assert.ok(body.includes(`${LOCAL_START}\n${marked('SECOND')}\n${LOCAL_END}`));
   assert.ok(!body.includes('FIRST'));
 });
 
 test('local with --pending sets facets.acceptance to pending', (t) => {
   const ws = workspace(t);
   const file = localRecord(ws);
-  const body = writeText(ws.file('body.md'), 'PACKET');
+  const body = writeText(ws.file('body.md'), marked('PACKET'));
   const h = harness(ws);
   assert.equal(run(['local', '--record-file', file, '--body-file', body, '--pending'], h.deps), 0, h.stderr());
   assert.deepEqual(JSON.parse(h.stdout()), { recordFile: file, pending: true });
@@ -1213,7 +1253,7 @@ test('local with an unreadable record or body exits 1', (t) => {
   const ws = workspace(t);
   const file = localRecord(ws);
   const before = fs.readFileSync(file, 'utf8');
-  const body = writeText(ws.file('body.md'), 'PACKET');
+  const body = writeText(ws.file('body.md'), marked('PACKET'));
   assert.equal(run(['local', '--record-file', ws.file('8-absent.md'), '--body-file', body], harness(ws).deps), 1);
   assert.equal(run(['local', '--record-file', file, '--body-file', ws.file('absent.md')], harness(ws).deps), 1);
   assert.equal(fs.readFileSync(file, 'utf8'), before);
@@ -1222,7 +1262,7 @@ test('local with an unreadable record or body exits 1', (t) => {
 test('local with a failed write exits 1', (t) => {
   const ws = workspace(t);
   const file = localRecord(ws);
-  const body = writeText(ws.file('body.md'), 'PACKET');
+  const body = writeText(ws.file('body.md'), marked('PACKET'));
   const h = harness(ws, { writeRecord: () => { throw new Error('disk full'); } });
   assert.equal(run(['local', '--record-file', file, '--body-file', body], h.deps), 1);
   assert.match(h.stderr(), /disk full/);

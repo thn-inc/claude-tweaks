@@ -10,9 +10,9 @@
 //   1 a payload or write failure: gather's or render's unwritable --out, render's
 //     invalid or over-cap input (any earlier --out and --dropped-out are removed, so
 //     a stale packet is not there to post), post's ok:false or unreadable --body-file,
-//     local's unreadable record or failed write.
-//   2 a malformed invocation, post's --body-file with no packet marker on its first
-//     line included. Nothing runs, and no MCP fallback is signalled.
+//     local's unreadable record or --body-file or failed write.
+//   2 a malformed invocation, post's or local's --body-file with no packet marker on its
+//     first line included. Nothing runs, and no MCP fallback is signalled.
 //   3 a --run that resolveTarget refuses (gather, snapshot), or a snapshot write
 //     failure: the sanctioned writers' "wrong run dir" code (a worktree-local shadow
 //     is never read as the run's record, [IL-127]).
@@ -380,15 +380,17 @@ function readExpectedChecks(opts, deps) {
   return declaration.decl === null ? [] : expectedChecksFromDeclaration(declaration.decl);
 }
 
-// Per file, never the joined text: a second file's `stories:` key would end the first's list.
-// A missing directory costs only the negative flags of the stories listed, so with none
-// listed it is a project with no stories and states nothing (Decision Q13).
+// Per file, never the joined text: a second file's `stories:` key would drop the first's list.
+// A missing or empty directory costs only the negative flags of the stories listed, so
+// with none listed it is a project with no stories and states nothing (Decision Q13).
 function readStoryIndex(storiesDir, listsStories, deps, notes) {
   if (storiesDir === undefined) return null;
   const stories = [];
   let lost = false;
   try {
-    for (const name of [...deps.listDir(storiesDir)].filter((entry) => STORY_FILE_RE.test(entry)).sort()) {
+    const names = [...deps.listDir(storiesDir)].filter((entry) => STORY_FILE_RE.test(entry)).sort();
+    if (names.length === 0) lost = listsStories;
+    for (const name of names) {
       const text = readTextOrNull(deps, path.join(storiesDir, name));
       if (text === null) lost = true;
       else stories.push(...parseStoryFile(text));
@@ -602,6 +604,8 @@ function renderToFiles(opts, deps) {
 
 // ---- post ----
 
+const startsWithMarker = (body) => body.split(/\r?\n/, 1)[0] === PACKET_MARKER;
+
 function runPost(opts, deps) {
   let repoSpec = null;
   if (opts.repo !== undefined) {
@@ -622,7 +626,7 @@ function runPost(opts, deps) {
     return 1;
   }
   // The next run finds the comment by this line, so a body without it would become a second packet.
-  if (body.split(/\r?\n/, 1)[0] !== PACKET_MARKER) {
+  if (!startsWithMarker(body)) {
     deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
     return 2;
   }
@@ -657,9 +661,19 @@ function runPost(opts, deps) {
 
 function runLocal(opts, deps) {
   const pending = opts.pending === true;
+  let packet;
+  try {
+    packet = deps.readFile(opts.bodyFile);
+  } catch (err) {
+    deps.stderr(`acceptance-packet.js: could not read --body-file ${opts.bodyFile} (${messageOf(err)})\n`);
+    return 1;
+  }
+  if (!startsWithMarker(packet)) {
+    deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
+    return 2;
+  }
   try {
     const record = deps.readRecord(opts.recordFile);
-    const packet = deps.readFile(opts.bodyFile);
     deps.writeRecord(opts.recordFile, {
       title: record.title,
       body: upsertLocalPacket(record.body, packet),
