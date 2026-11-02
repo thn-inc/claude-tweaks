@@ -31,22 +31,33 @@ staged path and the offending value (or "absent"). Log:
 REFUSED {time} — Queue write {Q#}: no valid Defer-reason on {staged path}; kept staged.
 ```
 
+A ledger-origin item (Ledger origin, below) logs the same line ending `; ledger row reopened,
+staged file removed.` instead.
+
 The row has **no default**. It is excluded from Approve all, from `consoleAutoResolve`, and from
 `queueWriteAutoFile` — no policy lever bypasses it. The only ways out: a human edits the staged
-file's header and re-runs the console for that run, or drops it via Override → Skip.
+file's header and re-runs the console for that run, or drops it via Override → Skip. For a
+ledger-origin item the staged file is gone and the way out is its reopened ledger row (Ledger
+origin, below).
 
 ## Ledger origin
 
-When the refused proposal came from a ledger item (`staged/ledger-record-*.md`): set that item's
-status back to `open` with note `proposal refused — no defer reason`, so the ledger's own
-nothing-left-behind gate resurfaces it on the next resolve; delete the staged file (the ledger
-item is the durable trace). A refused proposal with **no** ledger origin (a leftover section, a
-reflect tangential) stays staged in its run dir and dies with it at `close-run` unless a human
-rescues it — by design: the summary's refused-count line is the signal, and the reasonless
-deferral should have been a fix.
+When a `deferred` row in the run's active ledger (`_shared/ledger-format.md`'s Location section's
+resolution rule) names the refused proposal's staged path in its Resolution — the exact path,
+spec-qualified in a multi-spec run (`spec-{N}/staged/{name}`): set that row's status back to `open`
+with note `proposal refused — no defer reason`, so the ledger's own nothing-left-behind gate
+resurfaces it on the next resolve; delete the staged file (the ledger item is the durable trace).
+Delete it only once the status write has landed: when the active ledger does not resolve to one
+file, or the write fails, change neither the row nor the staged file — the proposal stays staged as
+if no row named it (below), and its `REFUSED` line keeps the `kept staged.` ending. Today's producers are `staged/ledger-record-*.md` (the ledger resolve gate's Defer/Keep) and
+`staged/review-followup-*.md` (`/review` Step 3's record proposal). This is the one reopen
+`_shared/ledger-format.md`'s Resolution-text requirements allow. A refused proposal that no
+`deferred` ledger row names (a leftover section, a reflect tangential, or a row in another status)
+stays staged in its run dir and dies with it at `close-run` unless a human rescues it — by design:
+the summary's refused-count line is the signal, and the reasonless deferral should have been a fix.
 
-Under `--dry-run`, the check still runs (it is a read); the ledger status flip is previewed, not
-applied.
+Under `--dry-run`, the check still runs (it is a read); the ledger status flip and the staged-file
+deletion are previewed, not applied.
 
 ## A failed execution is not a refusal
 

@@ -668,10 +668,11 @@ async function resolveConsoleExecution(runDir, {
   // Guarded (unlike the two gh calls above, this is the only I/O in the
   // function with no injected-failure return shape of its own): by this
   // point both gh writes have already landed for real, so an uncaught throw
-  // here would propagate to hooks.js's main()'s top-level
-  // `.catch(() => process.exit(0))` and exit silently successful — this
-  // module's own header names that exact hazard as one a sibling code path
-  // was already patched to avoid.
+  // here would propagate to hooks.js's main() and surface only as the
+  // generic `claude-tweaks: resolve-console: {message}` exit 1 (#4932), not
+  // the distinguishable console-write-failed status, so the caller could not
+  // tell that both gh writes already landed — this module's own header names
+  // that exact hazard as one a sibling code path was already patched to avoid.
   const nextConsoleJson = {
     ...consoleJson,
     ...(Array.isArray(consoleJson.items) ? {

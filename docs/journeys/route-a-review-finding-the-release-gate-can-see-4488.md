@@ -42,7 +42,7 @@ files:
     3. It reads `{n}` from the first stdout line.
     4. It logs `review-routing-line.js --route staged … --stage-path staged/review-followup-{n}.md`.
 - **Should feel:** Like the patch path with a different payload. The name is fixed, so there is nothing to invent.
-- **Should understand:** Nothing is filed here: the Review Console's Queue writes step files the record on approval. The ledger row is written `deferred`, naming the staged file. `--id review-{n}.md` is refused as `unmapped-prefix`, and a literal `{n}` in `--id` exits 2.
+- **Should understand:** Nothing is filed here: the Review Console's Queue writes step files the record on approval. The ledger row is written `deferred`, naming the staged file: `spec-{N}/staged/review-followup-{n}.md` in a multi-spec run, so one path names one proposal. If the console refuses the proposal for want of a valid `Defer-reason:`, that row returns to `open` and the staged file is removed (`settle-a-refused-staged-proposal-in-the-ledger-4772.md`). `--id review-{n}.md` is refused as `unmapped-prefix`, and a literal `{n}` in `--id` exits 2.
 - **Red flags:** A record proposal staged as `review-{n}.md`, a STAGED line naming a different `{n}` than the file `--allocate` wrote, a low/low/low finding filed as a backlog record, or a `high` finding digested with no `high-severity finding` line.
 
 ### 4. A hand-typed prefix is refused — `log-decision.js`
@@ -69,4 +69,5 @@ files:
 ## Origin
 - Created during build of #4488 (review routing line composer + `--step` prefix refusal)
 - Steps 1-2 and 4-5 built in #4488; steps 3 and 6 added in the build of #4484 (the `review-followup-{n}.md` staging name, its roster row, and the auto-mode materiality floor)
+- Updated during the wrap-up of #4772: step 3 notes the spec-qualified Resolution path in a multi-spec run, and that a refused record proposal reopens its ledger row.
 - Related: #4481 (the run whose hand-typed lines carried the doubled prefix and the mis-ordered token), #3792 (git/user text never double-quoted)

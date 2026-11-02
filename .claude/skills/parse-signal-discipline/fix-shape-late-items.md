@@ -202,6 +202,29 @@ Lazy-loaded from `SKILL.md`'s "The fix shape" section; the numbering continues t
     offset. When a fix widens an extractor whose value feeds a stored id, keep the old extraction
     for the key, and pin a stored legacy-keyed item surviving a re-run without a second filing
     (`tests/bin-lib/console/backfill.test.js`'s AC2 cases).
+    Widening the class to take a space is no fix when one side of the join is drifting prose.
+    #4632 had to key `a dir/x.ts:3` and `b dir/x.ts:3` apart. A tiebreak verdict line is written
+    by code (`resolveTiebreak`), so its path is exact, but a STAGED line is LLM-written from a
+    template, and 55 of 3,204 real lens lines put other words between `finding` and the path
+    (`finding at plugin/a.ts:4`). Parsing the text after `finding ` as the path would have made
+    keys no verdict carries, and lines that settle today would have stopped settling. So
+    `resolve.js` keys a verdict on its whole parsed path (`verdictKey`), and a STAGED location
+    offers ordered candidates instead of one parsed value (`locationCandidates`: the
+    `FINDING_PATH` match first, then each longer span that starts after a character outside the
+    class). The longest candidate some settler's key names wins, and the shortest, today's key,
+    is the fallback (`namedCandidate`). A coincidence line's second location the class cannot
+    read keys as its raw text, which no settler names, so the line stays open. The first version
+    let it settle on its first location alone, and the whole-branch review caught it. The same
+    truncation sat in a second reader of the same value: `tiebreak.js`'s `EVIDENCE_RE` read the
+    evidence path as `\S+`, so a space-holding finding could never be confirmed or dropped. Only
+    the spec's premise check found it, because the shaped record named `resolve.js` alone.
+    `parseEvidence` now matches the finding's own path as a literal prefix (string comparison, no
+    regex built from the path). When one side of a join is machine-written and the other is
+    drifting prose, key from the exact side and let the prose side offer candidates resolved
+    against it; never parse the prose into one value. Measure how far real prose drifts from its
+    template before choosing, keep today's key as the fallback, grep for every other reader of
+    the same value, and pin the drifted-prose case, the fallback, and a path holding two spaces
+    (`tests/bin-lib/console/resolve.test.js`'s #4632 cases).
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format
     guarantees, not a home-made model of that format.** A model that drifts from the real parser
     fails toward accepting the marker. `plugin/bin/lib/issues/accept-verdict.js`'s

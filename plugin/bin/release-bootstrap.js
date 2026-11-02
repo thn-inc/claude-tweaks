@@ -9,7 +9,7 @@
 'use strict';
 
 const fs = require('fs');
-const { bootstrapRelease, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
+const { bootstrapRelease, containsActionsExpression, RELEASE_TYPE_VALUES } = require('./lib/init/release-bootstrap');
 const { isValidBranchName } = require('./lib/branch-name');
 
 const USAGE = 'usage: release-bootstrap.js --integration-model <pr-first|local-merge|unresolved> [--root <dir>] [--branch <name>] [--release-type <type> --extra-file <path>] [--dry-run]\n';
@@ -40,6 +40,7 @@ function parseArgs(argv) {
     return { error: `invalid --integration-model: ${opts.integrationModel}` };
   }
   if (!opts.help && !isValidBranchName(opts.branch)) return { error: `invalid --branch: ${opts.branch}` };
+  if (!opts.help && containsActionsExpression(opts.branch)) return { error: `invalid --branch: ${opts.branch} contains an Actions expression` };
   // Pairing before vocabulary — matches resolveReleaseType's order in
   // lib/init/release-bootstrap.js, so an invalid --release-type is rejected
   // the same way here regardless of whether --extra-file is also missing.
