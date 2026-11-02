@@ -18,13 +18,14 @@
 //
 // The gh reads, numbered as the comments below and the tests' `shape N:` labels cite them.
 // {slug} is repoSlug({ host, owner, repo }) (`owner/repo` on github.com, `host/owner/repo`
-// off it); off github.com every `gh api` read also carries `--hostname {host}`.
+// off it); off github.com every `gh api` read also carries `--hostname {host}` (trailing, except
+// 4a and 4b, which fetch-sub-issues.js sends as `api graphql --hostname {host} ...`).
 //   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then parseParent.
 //   2   sub-issue -> parent, native: fetchNativeParent's api graphql -f query=<parent> -f owner= -f repo=.
 //   3   parent -> sub-issues, body-text: issue view {parent} --repo {slug} --json body -q .body, then parseSubIssues.
 //   4   parent -> sub-issues, native: fetch-sub-issues.js's run([parent, --repo {slug}, --resolve-retries]), whose runner sends
-//   4a    the schema probe: api graphql -f query={ __type(name: "Issue") { fields { name } } };
-//   4b    the batched page: api graphql -f query=<subIssues(first:100)> -f owner= -f repo=;
+//   4a    the schema probe: api graphql [--hostname {host}] -f query={ __type(name: "Issue") { fields { name } } };
+//   4b    the batched page: api graphql [--hostname {host}] -f query=<subIssues(first:100)> -f owner= -f repo=;
 //   4c    on hasNextPage or a missing alias only: api --paginate repos/{owner}/{repo}/issues/{parent}/sub_issues --jq .[].number;
 //   4d  when run exits EXIT_SUBISSUES_UNAVAILABLE: 4c's argv, sent by this file instead.
 //   5   each sub-issue, ascending: issue view {n} --repo {slug} --json state,stateReason,labels,title,closedByPullRequestsReferences.
@@ -120,12 +121,12 @@ function listOmitsSubIssue(numbers, subIssue) {
   return numbers.length > 0 && !numbers.includes(subIssue);
 }
 
-// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
-// already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
-// github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
-// take no host, so their runners pass each argv through this.
+// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com. Any other argv,
+// or no host or github.com, is returned unchanged. fetchNativeParent's GraphQL read and this
+// file's own REST and `api user` reads take no host, so they pass through this;
+// fetch-sub-issues.js sends its own (4a, 4b, 4c).
 function onHost(args, host) {
-  if (!host || host === 'github.com' || args[0] !== 'api' || args.includes('--hostname')) return args;
+  if (!host || host === 'github.com' || args[0] !== 'api') return args;
   return [...args, '--hostname', host];
 }
 
@@ -171,7 +172,7 @@ function enumerateSubIssues({
   const code = fetcher([String(parent), '--repo', slug, '--resolve-retries'], {
     ghAvailable: () => true,
     remoteUrl: () => null,
-    runner: (args) => caller.call(onHost(args, host)),
+    runner: (args) => caller.call(args),
     stdout: (s) => { out += s; },
     stderr: (s) => { err += s; },
   });
@@ -188,6 +189,36 @@ function enumerateSubIssues({
   const list = parsed && parsed.byParent && parsed.byParent[String(parent)];
   if (!Array.isArray(list)) throw new GhFailure(`fetch-sub-issues.js: no sub-issue list for #${parent}`);
   return distinctAscending(list);
+}
+
+// Shape 5: one sub-issue's live state, labels, title and closing PRs, read through `slug`
+// -> { number, title, state, stateReason, labels, closedBy }. Throws GhFailure on a malformed answer.
+function readSubIssueFacts({ num, slug, caller }) {
+  const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
+  // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
+  const rawRefs = live.closedByPullRequestsReferences;
+  if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
+  }
+  const refs = rawRefs || [];
+  // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
+  // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
+  if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
+  }
+  return {
+    number: num,
+    title: String(live.title || '').trim(),
+    state: String(live.state || '').toUpperCase(),
+    stateReason: String(live.stateReason || '').toUpperCase(),
+    labels: normalizeLabelNames(live.labels),
+    closedBy: refs.map((ref) => ref.number),
+  };
+}
+
+// Shape 6: the parent's label names, normalized, read through `slug`.
+function readParentLabels({ parent, slug, caller }) {
+  return normalizeLabelNames(caller.callJson(['issue', 'view', String(parent), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
 }
 
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
@@ -211,29 +242,8 @@ function gatherGateFacts({
   const slug = repoSlug({ host, owner, repo });
   const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
   if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
-  const subIssues = numbers.map((num) => {
-    const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
-    // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
-    const rawRefs = live.closedByPullRequestsReferences;
-    if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
-    }
-    const refs = rawRefs || [];
-    // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
-    // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
-    if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
-    }
-    return {
-      number: num,
-      title: String(live.title || '').trim(),
-      state: String(live.state || '').toUpperCase(),
-      stateReason: String(live.stateReason || '').toUpperCase(),
-      labels: normalizeLabelNames(live.labels),
-      closedBy: refs.map((ref) => ref.number),
-    };
-  });
-  const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
+  const subIssues = numbers.map((num) => readSubIssueFacts({ num, slug, caller }));
+  const parentLabels = readParentLabels({ parent: resolved, slug, caller });
   return { parent: resolved, parentLabels, subIssues };
 }
 
@@ -439,6 +449,8 @@ module.exports = {
   ghCaller,
   resolveParent,
   enumerateSubIssues,
+  readSubIssueFacts,
+  readParentLabels,
   gatherGateFacts,
   gatherIdempotenceFacts,
   evaluateParentGate,

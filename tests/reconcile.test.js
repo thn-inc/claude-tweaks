@@ -21,6 +21,7 @@ const { gitRepo } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
+const { requireOption } = require('../tools/test-impact/node-options');
 
 const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -1944,7 +1945,7 @@ test('formatSummary: post-merge entries render as "merged run" taken and skipped
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,
     postMerge: [
-      { runDir: 'r1', pr: 11, action: 'ran' },
+      { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'nothing-closed' },
       { runDir: 'r2', pr: 12, action: 'skipped', reason: 'merge-grace' },
       { runDir: 'r3', pr: 13, action: 'skipped', reason: 'merge-grace' },
     ],
@@ -1954,7 +1955,7 @@ test('formatSummary: post-merge entries render as "merged run" taken and skipped
     'post-merge steps run: 1 merged run',
     'skipped: 2 merged runs (merge-grace 2)',
   ].join('\n'));
-  assert.strictEqual(formatSummary({ ...result, postMerge: [{ runDir: 'r1', pr: 11, action: 'ran' }], skipped: null }), 'post-merge steps run: 1 merged run');
+  assert.strictEqual(formatSummary({ ...result, postMerge: [{ runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'nothing-closed' }], skipped: null }), 'post-merge steps run: 1 merged run');
   assert.strictEqual(formatSummary({ ...result, postMerge: null }), 'reconcile: nothing to do');
 });
 
@@ -1966,14 +1967,36 @@ test('formatSummary: a post-merge entry whose Step 4.0 failed is reported on its
   const failed = { runDir: 'r2', pr: 12, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true };
   assert.strictEqual(formatSummary({ ...base, postMerge: [ran, failed, { ...failed, runDir: 'r3', pr: 13 }] }), [
     'post-merge steps run: 1 merged run',
-    'post-merge Step 4.0 failed: 2 merged runs',
+    'post-merge steps failed: 2 merged runs',
   ].join('\n'));
   // Only failures: no "steps run" line at all.
-  assert.strictEqual(formatSummary({ ...base, postMerge: [failed] }), 'post-merge Step 4.0 failed: 1 merged run');
+  assert.strictEqual(formatSummary({ ...base, postMerge: [failed] }), 'post-merge steps failed: 1 merged run');
   // A failed entry never lands in the aggregated skip line.
   assert.strictEqual(
     formatSummary({ ...base, postMerge: [failed, { runDir: 'r4', pr: 14, action: 'skipped', reason: 'in-flight' }] }),
-    ['post-merge Step 4.0 failed: 1 merged run', 'skipped: 1 merged run (in-flight 1)'].join('\n'),
+    ['post-merge steps failed: 1 merged run', 'skipped: 1 merged run (in-flight 1)'].join('\n'),
+  );
+});
+
+test('AC8.1: a close-failed entry renders under post-merge steps failed, never steps run (#4897)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const entry = { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 };
+  assert.strictEqual(formatSummary({ ...base, postMerge: [entry] }), 'post-merge steps failed: 1 merged run');
+});
+
+test('formatSummary: the failed row names the records the failed runs left, sorted and unique (#4897)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const closeFailed = { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [102], pendingClose: [], unchecked: [] } };
+  const reopenFailed = { runDir: 'r2', pr: 12, action: 'ran', closingLinks: 'reopen-failed', parentsClosed: 0, records: { failed: [101], closeFailed: [], pendingClose: [], unchecked: [] } };
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [closeFailed, reopenFailed] }),
+    'post-merge steps failed: 2 merged runs (records #101, #102)',
+  );
+  // A clean entry's records never join the list; a failed entry with no records keeps the bare row.
+  const clean = { runDir: 'r3', pr: 13, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, records: { failed: [103] } };
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [clean, { runDir: 'r4', pr: 14, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 }] }),
+    ['post-merge steps run: 1 merged run', 'post-merge steps failed: 1 merged run'].join('\n'),
   );
 });
 
@@ -2516,7 +2539,7 @@ async function runReconcileVerbStubbed(argvs, { reconcileResult = () => ({ skipp
   spawnMod.spawnBackgroundIfStale = (args) => { spawnCalls.push(args); return spawnResult; };
   process.stdout.write = (chunk) => { outputs.push(String(chunk)); return true; };
   try {
-    for (const argv of argvs) await main(['node', 'hooks.js', ...argv]);
+    for (const argv of argvs) assert.equal(await main(['node', 'hooks.js', ...argv]), 0, `main(${argv.join(' ')}) exit code`);
   } finally {
     reconcileMod.reconcile = originalReconcile;
     spawnMod.spawnBackgroundIfStale = originalSpawn;
@@ -2610,6 +2633,30 @@ test('unscoped CLI: a module-load failure still prints the reconcile-threw JSON 
       Object.defineProperty(reconcileMod, prop, desc);
     }
   }
+});
+
+test('reconcile verb: a post-merge.js load fault still renders the reconcile-threw line in the compact output, not a silent exit 0 (#4897)', () => {
+  // A child process, so the fault is planted in its module loader only: the child preloads a script that makes any
+  // require resolving to reconcile/post-merge.js throw. format-summary.js is required outside hooks.js's try, so a
+  // module-level require of post-merge.js there would throw past the fallback and main's catch would exit 0 silently.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-loadfault-'));
+  const preload = path.join(scratch, 'fault.js');
+  fs.writeFileSync(preload, [
+    "const Module = require('module');",
+    "const path = require('path');",
+    'const load = Module._load;',
+    'Module._load = function (request, parent, isMain) {',
+    '  let file = null;',
+    '  try { file = Module._resolveFilename(request, parent, isMain); } catch { /* the real loader reports it */ }',
+    "  if (file && file.endsWith(path.join('reconcile', 'post-merge.js'))) throw new Error('planted load fault');",
+    '  return load.apply(this, arguments);',
+    '};',
+    '',
+  ].join('\n'));
+  const dir = noRemoteFixture('ct-recon-loadfault-repo-');
+  const r = runHook(['reconcile', '--dry-run'], { cwd: dir, env: { NODE_OPTIONS: requireOption(preload) } });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /^skipped: all — reconcile-threw$/m);
 });
 
 test('unscoped CLI still defers and spawns when the pass carries a report-only non-canonical-run-dir skip (#4032)', async () => {
