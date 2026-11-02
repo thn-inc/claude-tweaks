@@ -1296,3 +1296,155 @@ test('#4770: the prose note matches the code constant', () => {
   const rebuilt = withoutLiteral4770(read(GATE_REL), read('tidy/SKILL.md'), 'close-note');
   assert.equal(collapse(closeStep1(rebuilt.gate)).match(/`(identity probe failed[^`]*)`/), null);
 });
+
+// ---- #4800: the Step 4.0b skip rules are pinned across the prose and the module ----
+//
+// Three enumerators read the live prose and name each deliberate skip reason it states; the
+// module's comment-stripped source names the reasons it emits. A skip added to one side alone makes
+// the two sets differ. The enumerators and the comparison take text and sets as parameters, so the
+// go-red controls below run the same functions on doctored input.
+
+const BELOW_FLOOR_MODULE = path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'below-floor-parent-close.js');
+const FAILURE_REASONS = ['gh-failed', 'internal-error', 'invalid-risk-floor'];
+const OUTSIDE = (note) => ({ reasons: [], note });
+
+// Step 4.0b's skip sentences, each as [anchor, disposition]. `reasons` are deliberate skip reasons;
+// `failure` is a failing-gh outcome, not a deliberate skip; `note` says why a row names no reason.
+// The catch-all row's `above-floor` is the only reason its sentence adds; enumerators 2 and 3 expand it.
+const STEP_40B_SKIP_SENTENCES = [
+  ['Under `local-files`', OUTSIDE('outside the mirror: the module is github-issues only')],
+  ['After a no-PR local merge it is a no-op unless', OUTSIDE('outside the mirror: its caller only sees PR merges')],
+  ["A `failed[]` or `pendingClose[]` record's live state", { reasons: ['sibling-unsettled'] }],
+  ['A `closeFailed[]` record holds its parent', { reasons: ['sibling-unsettled'] }],
+  ['After a PR merge, when `closingSet[]` is absent', OUTSIDE('outside the mirror: decided by the caller before the module runs')],
+  ['A parent whose labels lack `parent-issue`', { reasons: ['not-parent-issue-labeled'] }],
+  ['Skip a parent whose verdict lists `needs`', { reasons: ['needs-label'] }],
+  ['A non-empty `held` skips the parent', { reasons: ['sibling-unsettled'] }],
+  ['With `gh` absent, every call', OUTSIDE('outside the mirror: transport, no skip of a parent')],
+  ['Every other outcome is a no-op', { reasons: ['above-floor'] }],
+  ['Evaluate each parent once', OUTSIDE("no reason: the module's handled set, silently")],
+  ['how it skips on a failing `gh` call', { reasons: [], failure: 'gh-failed' }],
+  ['Then write one summary line', OUTSIDE('outside the mirror: logging')],
+  ['On the no-`closingSet[]` path above', OUTSIDE('outside the mirror: logging')],
+];
+
+// The sentences of a section that state a skip: fenced blocks dropped, whitespace collapsed, split
+// at sentence ends, then kept where a skip word appears.
+const step40bSkipSentences = (text) =>
+  collapse(text.replace(/^\s*```[\s\S]*?^\s*```[^\n]*$/gm, ''))
+    .split(/(?<=[.:;])\s+(?=[A-Z`*$])/)
+    .filter((s) => /\b(skips?|skipped|no-op)\b/i.test(s));
+
+// Each bullet of `text` that starts with `opener`, through its continuation lines and up to the
+// blank line that ends its paragraph.
+const bulletsOf = (text, opener) =>
+  text.split(/\n\n/).flatMap((p) => p.split(/\n(?=- )/)).filter((b) => b.startsWith(opener));
+
+// The reasons and failure literals the sentences name, through the table. A sentence no row matches
+// fails, and so does a row no sentence matches.
+function classifyStep40bSkips(sentences, table = STEP_40B_SKIP_SENTENCES) {
+  const reasons = new Set();
+  const failures = new Set();
+  for (const sentence of sentences) {
+    const rows = table.filter(([anchor]) => sentence.includes(anchor));
+    assert.ok(rows.length > 0, `unclassified Step 4.0b skip sentence (add a row to STEP_40B_SKIP_SENTENCES, and implement the rule in closeBelowFloorParents if it skips a parent): ${sentence}`);
+    for (const [, d] of rows) {
+      for (const r of d.reasons) reasons.add(r);
+      if (d.failure) failures.add(d.failure);
+    }
+  }
+  for (const [anchor] of table) {
+    assert.ok(sentences.some((s) => s.includes(anchor)), `Step 4.0b skip anchor matches no skip sentence: ${anchor}`);
+  }
+  return { reasons, failures };
+}
+
+// The gate's no-op states: the backticked state names in the head of each top-level bullet of
+// Evaluate the gate that says No-op.
+function gateNoOpStates(gate) {
+  return bulletsOf(section(gate, '## Evaluate the gate', '**Oversight-floor check'), '- ')
+    .filter((b) => /no-op/i.test(collapse(b)))
+    .flatMap((b) => [...b.split('—')[0].matchAll(/`([a-z-]+)`/g)].map((m) => m[1]));
+}
+
+// Close step 1's no-op values, each mapped to the reason the close loop emits for it.
+const IDEMPOTENCE_NOOP_REASONS = { 'already-closed': 'already-closed', reopened: 'reopened-by-human' };
+function idempotenceNoOpReasons(step1) {
+  return bulletsOf(step1, '- `')
+    .filter((b) => /no-op/i.test(collapse(b)))
+    .map((b) => {
+      const value = /^- `([a-z-]+)`/.exec(b)[1];
+      assert.ok(Object.hasOwn(IDEMPOTENCE_NOOP_REASONS, value), `Close step 1 no-op value "${value}" has no reason mapping`);
+      return IDEMPOTENCE_NOOP_REASONS[value];
+    });
+}
+
+// The prose's deliberate skip reasons (the union of the three enumerators) and the failure literals.
+function proseSkipSets({ step40b, gate, step1 }) {
+  const { reasons, failures } = classifyStep40bSkips(step40bSkipSentences(step40b));
+  for (const r of [...gateNoOpStates(gate), ...idempotenceNoOpReasons(step1)]) reasons.add(r);
+  return { reasons: [...reasons].sort(), failures: [...failures].sort() };
+}
+
+// The module's deliberate skip reasons: DELIBERATE_SKIP_REASONS plus every reason literal in its
+// comment-stripped source, less the failure literals. A stripper mis-parse fails here.
+function codeSkipSets(raw) {
+  const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('./helpers/strip-comments');
+  const { DELIBERATE_SKIP_REASONS } = require('../plugin/bin/lib/issues/below-floor-parent-close');
+  const src = stripComments(raw);
+  const verdict = stripperVerdict(raw, src);
+  assert.ok(verdict === 'ok', STRIPPER_VERDICT_MESSAGES[verdict]);
+  const literals = [...src.matchAll(/\breason:\s*'([a-z-]+)'/g), ...src.matchAll(/\breturn '([a-z-]+)'/g)].map((m) => m[1]);
+  const reasons = new Set([...DELIBERATE_SKIP_REASONS, ...literals.filter((r) => !FAILURE_REASONS.includes(r))]);
+  // A failure literal can sit inside a ternary (`reason: err ? 'gh-failed' : 'internal-error'`), so the
+  // failures are the quoted literals of the stripped source that name a failure.
+  const quoted = new Set([...src.matchAll(/'([a-z-]+)'/g)].map((m) => m[1]));
+  const failures = FAILURE_REASONS.filter((r) => quoted.has(r));
+  return { reasons: [...reasons].sort(), failures };
+}
+
+// Both sets, sorted, must be equal; the assertion diff names each reason that differs.
+function assertSkipSetsEqual(prose, code) {
+  assert.deepEqual([...prose].sort(), [...code].sort());
+}
+
+const liveSkipTexts = () => ({
+  step40b: step40bOf(),
+  gate: read(GATE_REL),
+  step1: closeStep1(read(GATE_REL)),
+  moduleRaw: readText(BELOW_FLOOR_MODULE),
+});
+
+test('#4800: the Step 4.0b skip rules are the same set in the prose and the module', () => {
+  const live = liveSkipTexts();
+  const prose = proseSkipSets(live);
+  const code = codeSkipSets(live.moduleRaw);
+  assertSkipSetsEqual(prose.reasons, code.reasons);
+  assert.ok(code.failures.includes('gh-failed'), 'gh-failed is a failure literal in the source, so the failing-gh disposition is real');
+  for (const f of prose.failures) assert.ok(code.failures.includes(f), `the table's failure ${f} is a source failure literal`);
+});
+
+test('#4800 go-red: a skip sentence added to Step 4.0b without a table row fails as unclassified', () => {
+  const live = liveSkipTexts();
+  const doctored = { ...live, step40b: `${live.step40b}\n\nSkip a parent whose verdict lists \`blocked\`.` };
+  assert.throws(() => proseSkipSets(doctored), /unclassified Step 4\.0b skip sentence.*Skip a parent whose verdict lists `blocked`\./);
+});
+
+test('#4800 go-red: removing the needs sentence from Step 4.0b fails its anchor', () => {
+  const live = liveSkipTexts();
+  // Matched whitespace-tolerantly on the raw text, since the sentence wraps in the file and the
+  // fenced blocks the enumerator drops must stay fenced.
+  const sentence = "Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.";
+  const wrapTolerant = new RegExp(sentence.split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
+  assert.ok(wrapTolerant.test(live.step40b), 'the needs sentence is in the live text');
+  const doctored = live.step40b.replace(wrapTolerant, '');
+  assert.throws(() => proseSkipSets({ ...live, step40b: doctored }), /anchor matches no skip sentence: Skip a parent whose verdict lists `needs`/);
+});
+
+test('#4800 go-red: the set comparison fails on a code set with one reason added or removed', () => {
+  const live = liveSkipTexts();
+  const prose = proseSkipSets(live).reasons;
+  const code = codeSkipSets(live.moduleRaw).reasons;
+  assert.throws(() => assertSkipSetsEqual(prose, [...code, 'new-rule']), /new-rule/);
+  assert.throws(() => assertSkipSetsEqual(prose, code.filter((r) => r !== 'needs-label')), /needs-label/);
+});
