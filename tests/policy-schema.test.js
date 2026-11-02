@@ -144,8 +144,9 @@ test('POLICY_KEYS entries are unique', () => {
   // 82 -> 84, #4025 (express lane): express-lane — boolean opt-in, default false; express-review-sample-every — integer >= 1, default 5
   // 84 -> 97, #4609 (human-in-control policy keys): thirteen inert flat keys — control-mode, acceptance-target, deploy-reach, deploy-command, deploy-live-workflow, deploy-version-url, dev-base-url, dev-test-account, deploy-wait-seconds, deploy-poll-seconds, owned-owners, trusted-authors, risk-categories
   // 97 -> 98, #4609 (human-in-control policy keys): risk-path-globs — the second block-style key, a slug-to-glob-list map
-  assert.strictEqual(POLICY_KEYS.length, 98);
-  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 98);
+  // 98 -> 99, #4847: declare-claude-tweaks — boolean, default true — false stops /init Step 14 declaring claude-tweaks at project scope
+  assert.strictEqual(POLICY_KEYS.length, 99);
+  assert.strictEqual(new Set(POLICY_KEYS.map((k) => k.key)).size, 99);
 });
 
 test('express-lane keys resolve their defaults (#4025)', () => {

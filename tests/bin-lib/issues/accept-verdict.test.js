@@ -175,8 +175,13 @@ test('AC4.1: a block must own its line, so a nesting construct cannot carry one'
     ['a three-space indent', `   ${good}`, /malformed/],
     ['a backslash-escaped opener that renders as text', `\\${good}`, /malformed/],
     ['a U+2028 that is not a Markdown line ending', `prose${LS}${good}`, /malformed/],
-    ['a second close on the line', `${good} -->`, /raw|malformed/],
   ]);
+});
+
+// MARKER_LINE's greedy capture takes the first ` -->` into the JSON, so the
+// line still matches and the raw-bracket rule is what rejects it.
+test('AC4.1: a second close on the marker line is caught by the raw-bracket rule', () => {
+  assertRejected(parseOwner(`${good} -->`), /^raw < or > in verdict JSON$/, 'a second close on the line');
 });
 
 test('AC4.1: a block inside another HTML comment is rejected', () => {

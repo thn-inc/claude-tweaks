@@ -4,7 +4,7 @@ Referenced by `skills/dispatch/SKILL.md` Step 3's Loop. A prior version of that 
 "claimed/Settle-failed groups drop out automatically, via claim or `bot:blocked`" — false for two
 real terminal shapes, both leaving a group's labels exactly as eligible as before the attempt:
 
-- A claim-contest/in-flight/claims-branch-missing pre-flight stop (`settle-and-merge.md`'s
+- A claim-contest/in-flight/claims-branch-missing/claim-permission-denied pre-flight stop (`settle-and-merge.md`'s
   Claim-contest special case explicitly adds neither label, since there was nothing to release or
   classify).
 - An ordinary build/test failure before `dispatch-retry-ceiling` is reached — the record keeps
@@ -13,6 +13,7 @@ real terminal shapes, both leaving a group's labels exactly as eligible as befor
 Without an explicit guard, the very next iteration of the *same* firing re-ranks the identical
 group back to the top and reproduces the identical stop, burning the remaining budget on one stuck
 record instead of reaching other eligible candidates.
+A claim-permission-denied stop also ends the firing (`SKILL.md`'s Claim permission stop), so no next iteration runs.
 
 ## The rule
 

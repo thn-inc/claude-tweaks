@@ -98,13 +98,14 @@ test('settle-and-merge.md posts the full comment, trust-negative-evidence marker
   assert.match(SETTLE, /bin\/lib\/issues\/trust\.js.*reads only the record issue's comments and is not modified/s);
 });
 
-test('verification-brief.md routes the full brief to the PR and leaves a one-line pointer on the issue', () => {
-  assert.match(BRIEF, /the full brief moves to the PR; the issue keeps a one-line pointer/);
-  assert.match(BRIEF, /Verification Brief posted to PR #\{pr-number\}: \{pr-url\}/);
+test('verification-brief.md posts the packet on the record and links it from the PR, with no pointer comment', () => {
+  assert.match(BRIEF, /The packet lives on the record whether or not the run has a PR/);
+  assert.match(BRIEF, /`post` appends its `Acceptance packet:` line to the PR's body/);
+  assert.doesNotMatch(BRIEF, /Verification Brief posted to PR #\{pr-number\}/, 'the issue pointer line is no longer posted');
   assert.match(
     BRIEF,
-    /Acceptance labeling\s*\nstays on the issue either way/,
-    'demo:pending must still land on the issue regardless of where the brief content lives',
+    /Acceptance labeling\s+stays on the record either way/,
+    'demo:pending must still land on the record, with or without a PR',
   );
 });
 
@@ -262,18 +263,14 @@ test("pr-run-comments.md's Comment kinds table shows both the single-spec and mu
   assert.match(COMMENTS, /`timing`.*run-comment: timing:\{spec\}/);
 });
 
-test('verification-brief.md composes the spec-qualified brief and timing markers under a multi-spec run', () => {
+test('verification-brief.md composes the spec-qualified timing marker under a multi-spec run, and no brief marker on either', () => {
   assert.match(BRIEF, /MULTISPEC_PARENT_DIR/);
-  assert.match(BRIEF, /run-comment: brief:\{spec\}/);
+  assert.doesNotMatch(BRIEF, /run-comment: brief/, 'new runs post the packet on the record, never a brief on the PR');
   assert.match(BRIEF, /run-comment: timing:\{spec\}/);
   assert.match(
     BRIEF,
     /basename\(\$PIPELINE_RUN_DIR\)/,
     'the spec identifier must be derived from this spec\'s own run-dir subdirectory, not a separately threaded value',
-  );
-  assert.ok(
-    BRIEF.includes('<!-- run-comment: brief -->'),
-    'the single-spec brief marker must still be composed unchanged when $MULTISPEC_PARENT_DIR is unset',
   );
   assert.ok(
     BRIEF.includes('<!-- run-comment: timing -->'),

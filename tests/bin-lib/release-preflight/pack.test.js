@@ -6,7 +6,7 @@ const { gatherReleasePreflight, PROBE_NAMES, isBotAuthor, isReleasePr } = requir
 
 const ROOT = '/repo';
 const SHA = 'a'.repeat(40);
-const LOG = (subjects) => subjects.map((s, i) => `${String(i).repeat(40)}\x1f${s}\x1f\x1e\n`).join('');
+const LOG = (subjects, bodies = []) => subjects.map((s, i) => `${String(i).repeat(40)}\x1f${s}\x1f${bodies[i] || ''}\x1e\n`).join('');
 
 function fakeDeps(o = {}) {
   const workflowFiles = Object.fromEntries(Object.entries(o.workflows || {}).map(([name, text]) => [path.join(ROOT, '.github/workflows', name), text]));
@@ -51,7 +51,7 @@ function fakeDeps(o = {}) {
               ? LOG(['Merge pull request #1 from org/feat'])
               : LOG(['Merge pull request #1 from org/feat', 'feat(x): y']);
           }
-          return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects);
+          return LOG(o.subjects === undefined ? ['feat: a'] : o.subjects, o.bodies);
         }
         if (key === 'tag -l v*') return `${(o.tags === undefined ? ['v1.2.0'] : o.tags).join('\n')}\n`;
         if (key.startsWith('show ')) {
@@ -461,4 +461,16 @@ test('a hung probe is bounded by the timeout and degrades itself only', async ()
   assert.strictEqual(pack.releasePr.ok, false);
   assert.match(pack.releasePr.error, /timeout after 20ms/);
   assert.strictEqual(pack.lastTag.ok, true);
+});
+
+test('AC7.1: the unreleased probe returns fixes and refs for each commit — [10, 12] and [11] for a bundle with #11 kept open', async () => {
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Release-Note: A.\n\nFixes #10\nRefs #11\nFixes #12', ''] }).deps });
+  const [bundle] = pack.unreleased.value.commits;
+  assert.deepStrictEqual([bundle.fixes, bundle.refs], [[10, 12], [11]]);
+});
+
+test('AC7.2: the unreleased probe returns two empty lists for a commit with neither line', async () => {
+  const pack = await gatherReleasePreflight({ cwd: ROOT, deps: fakeDeps({ subjects: ['fix: bundle (#10)', 'chore: plain'], bodies: ['Fixes #10', ''] }).deps });
+  const plain = pack.unreleased.value.commits[1];
+  assert.deepStrictEqual([plain.fixes, plain.refs], [[], []]);
 });

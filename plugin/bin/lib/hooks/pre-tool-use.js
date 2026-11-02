@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, keepLost,
   PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
@@ -34,7 +34,7 @@ const wtDetect = require('./worktree-detect');
 const { resolveIntegrationBranch, preferRemoteTrackingRef, bareIntegrationName } = require('./worktree-reap');
 const { runGit, FAILURE } = require('./git-exec');
 const { parseNameStatusZ } = require('../git-z');
-const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS } = require('../policy-schema');
+const { detectIntegrationModel, resolvePolicyConfig, HOOK_FORGE_PROBE_TIMEOUT_MS, FORGE_DEGRADE_MEMO_TTL_MS } = require('../policy-schema');
 const { resolveCeiling, bookkeepingPermissions } = require('../issues/autonomy');
 // toPosix: git always reports/accepts forward-slash paths regardless of
 // platform — used for GATE_COVERAGE's prose-facing rendering and for comparing
@@ -947,6 +947,31 @@ function checkGitStashWarn(segments, warnings) {
   }
 }
 
+// #4548: warn-only heads-up for a Bash command that kills processes by image or name
+// (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, a `pgrep`-fed `kill`, also
+// inside `sh -c`/`cmd /c`/`powershell -Command`). Unlike checkGitStashWarn's linked-worktree
+// condition, the hazard is machine-wide — every sibling session and worktree shares the
+// process table — so this is run- and location-independent: it needs no run state and no
+// repo. It is reachable only because GUARDED_PROGRAM_WORDS.processKill feeds the bash
+// prefilter, which matches those words case-insensitively (`TASKKILL`). The parser is
+// git-command.js's processKillByName; a PID-scoped kill is never reported. Fail-open: any
+// parser throw swallows to silence, never to a block.
+function checkProcessKillWarn(command, cwd, warnings) {
+  if (!command) return;
+  try {
+    if (processKillByName(command, cwd).length) {
+      warnings.push(
+        'claude-tweaks: killing a process by image or name (`taskkill /IM`, `pkill`, `killall`, '
+        + '`Stop-Process -Name`, a `pgrep`-fed `kill`, also inside `sh -c`/`cmd /c`/`powershell -Command`) '
+        + 'matches every process of that name on this machine — the process table is shared with every '
+        + 'sibling session and worktree, so it can take down their dev servers and tooling. Kill only a '
+        + 'PID you captured when you started the process, or the listener on a port you own '
+        + '(`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`, then `kill {pid}`; win32: `taskkill /PID {pid} /T /F`).',
+      );
+    }
+  } catch (_) { /* best-effort heads-up: a parser failure is silence, never a block */ }
+}
+
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
 // state at all — it fires on the first Edit/Write/NotebookEdit/commit of a
 // session, before any skill has ever run, whenever the target repo has opted
@@ -1628,6 +1653,16 @@ function hasNoUpstreamYet(dir) {
   return upstream !== `origin/${branch}`;
 }
 
+// Freshness of a run-scoped forge degrade memo (#4830): `at` is the epoch-ms stamp
+// the memo was written at, `now` the current epoch ms, `ttlMs` the window
+// (FORGE_DEGRADE_MEMO_TTL_MS at the call site). Fresh only for a finite stamp no
+// later than `now` and strictly younger than the TTL; absent, non-numeric, NaN,
+// Infinity, or a future stamp (a clock step) is stale.
+function isFreshForgeDegradeMemo(at, now, ttlMs) {
+  const age = now - at;
+  return Number.isFinite(at) && age >= 0 && age < ttlMs;
+}
+
 // The PRODUCTION integration-model read for the PR-stamp branch below.
 // `_shared/integration-model.md`'s contract (and its "Re-detecting mid-run
 // instead of reading the run's pin" anti-pattern) is that a run resolves the
@@ -1659,7 +1694,9 @@ function hasNoUpstreamYet(dir) {
 // `opts.timeoutMs` / `opts.onDegrade` (#4578) are forwarded to
 // detectIntegrationModel, each only when set (an absent opt adds no key), and
 // only the fresh-detection fallback uses them: a pin returns first and never
-// calls `onDegrade`. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
+// calls `onDegrade`. With the #4830 memo opted in (below), `onDegrade` is
+// instead always wrapped, so the memo can see the degrade, and is also called
+// on a memo hit with no detection at all. This gate passes `timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS`
 // rather than inheriting `gh-timeout-ms` (up to 60 s, retried once = 120 s)
 // because it runs inside a PreToolUse lifecycle hook (no per-hook timeout in
 // hooks.json, so Claude Code's default command-hook timeout applies) and must
@@ -1667,6 +1704,25 @@ function hasNoUpstreamYet(dir) {
 // gives a 15 s worst case (git 5 s + two 5 s attempts, record #4578 Decision
 // Q2). `check-pr-bookkeeping.js` (via pr-bookkeeping/precondition.js) runs as a
 // CLI, not a hook, passes no `timeoutMs`, and so follows the ladder.
+//
+// `opts.degradeMemoTtlMs` (#4830) is an opt-in run-scoped degrade memo, and only
+// this gate opts in (precondition.js passes `{ onDegrade }` alone and gets
+// today's behavior, byte for byte). Without it, a hung `gh` costs the full ~15 s
+// forge probe on every hooked call. With a positive-integer TTL and a non-empty
+// `runDir`, a degraded detection stamps `forgeDegradedAt` into run-state.json and
+// a call inside the TTL returns 'local-merge' without spawning `gh` or `git`. A
+// memo hit is still reported through `onDegrade` — as `{ memoized: true,
+// degradedAt }`, deliberately with no `reason` key so nothing mistakes it for a
+// FORGE_DEGRADE_REASON code — so the gate's Q5 rule still withholds `prExempt`.
+// The memo expires after the TTL and is cleared by the next clean detection. It
+// is read only after the pin check, so an explicit pin always wins. `opts.now`
+// (default Date.now) is a test seam.
+//
+// Concurrency: no compare-and-set. A degraded detection that began before a
+// concurrent clean one still writes `forgeDegradedAt: now()` after its probe,
+// which can re-arm a just-cleared memo; a recovered forge then goes unnoticed
+// for at most one more TTL — accepted, inside "recovery is noticed within one
+// TTL".
 function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const git = () => mainRoot;
   const readFile = (p) => {
@@ -1681,7 +1737,36 @@ function resolveRunPinnedIntegrationModel(mainRoot, runDir, opts = {}) {
   const detectOpts = {};
   if (opts.timeoutMs !== undefined) detectOpts.timeoutMs = opts.timeoutMs;
   if (opts.onDegrade !== undefined) detectOpts.onDegrade = opts.onDegrade;
-  return detectIntegrationModel(root, detectOpts);
+  const ttl = opts.degradeMemoTtlMs;
+  if (!(Number.isInteger(ttl) && ttl > 0 && typeof runDir === 'string' && runDir !== '')) {
+    return detectIntegrationModel(root, detectOpts);
+  }
+  const now = typeof opts.now === 'function' ? opts.now : Date.now;
+  const state = ctxLib.readRunState(runDir);
+  const memoAt = state && state.forgeDegradedAt;
+  if (isFreshForgeDegradeMemo(memoAt, now(), ttl)) {
+    if (typeof opts.onDegrade === 'function') {
+      try { opts.onDegrade({ memoized: true, degradedAt: memoAt }); } catch { /* a reporting callback never breaks the resolver */ }
+    }
+    return 'local-merge';
+  }
+  let degraded = false;
+  detectOpts.onDegrade = (d) => {
+    degraded = true;
+    // detectIntegrationModel guards and swallows a throwing callback itself.
+    if (typeof opts.onDegrade === 'function') opts.onDegrade(d);
+  };
+  const model = detectIntegrationModel(root, detectOpts);
+  if (degraded) {
+    ctxLib.writeRunState(runDir, { forgeDegradedAt: now() });
+  } else if (memoAt != null) {
+    // Clear on a clean detection. The outer `memoAt != null` check keeps the
+    // common no-memo path free of the run-state lock and write. The updater
+    // re-checks under the lock and returns null when a concurrent call already
+    // cleared it, which writeRunState treats as "write nothing, keep updatedAt".
+    ctxLib.writeRunState(runDir, (s) => (s.forgeDegradedAt == null ? null : { forgeDegradedAt: null }));
+  }
+  return model;
 }
 
 // True only on a PROVABLE ownership mismatch: this run's run-state.json was
@@ -1867,8 +1952,9 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //      pinned once at run start per `_shared/integration-model.md` and never
 //      re-derived mid-run; decisions.md is append-only, so a logged degrade
 //      line never disappears), so the cache can never produce a false allow
-//      later. See the PR-stamp branch below for the one case that must NOT
-//      be cached (a caught resolution exception).
+//      later. See the PR-stamp branch below for the two cases that must NOT
+//      be cached as `prExempt`: a caught resolution exception, and a degraded
+//      detection (#4578; memoized run-scoped instead, #4830).
 // Ambiguity resolves to allow throughout, same posture as E1.
 //
 // A provably foreign-owned run (isForeignSessionCall above) downgrades either
@@ -2104,13 +2190,16 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     try {
       model = override
         ? override(mainRoot, { onDegrade })
-        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, onDegrade });
+        : resolveRunPinnedIntegrationModel(mainRoot, ctx.runDir, { timeoutMs: HOOK_FORGE_PROBE_TIMEOUT_MS, degradeMemoTtlMs: FORGE_DEGRADE_MEMO_TTL_MS, onDegrade });
     } catch {
       model = 'local-merge'; // fail open: an unresolvable model is not provably pr-first
       modelResolved = false;
     }
-    // Decision Q5: a degraded detection is never cached as `prExempt` — the next
-    // covered call detects again, exactly like the catch branch above.
+    // Decision Q5: a degraded detection is never cached as `prExempt`, exactly
+    // like the catch branch above. After a degrade the next covered call detects
+    // again once the run's degrade memo expires (#4830); after a catch it detects
+    // at once, since the catch branch writes no memo. A memo hit arrives through
+    // `onDegrade` too, so it never persists `prExempt` either.
     if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
     // before doing anything else in this branch — this is a narrow, one-shot
@@ -2283,6 +2372,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // three times per invocation (once per consumer) was pure repeated work.
   const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
+  checkProcessKillWarn(command, ctx.cwd, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
@@ -2519,4 +2609,9 @@ module.exports = {
   // (#2472) to reuse rather than reimplement — the same integration-model
   // resolution checkBookkeepingStampsGate's own PR-stamp branch already uses.
   resolveRunPinnedIntegrationModel,
+  // Exported only for its unit test (#4830): the one place the degrade memo's
+  // boundary cases (age equal to the TTL, a future stamp, a non-finite or
+  // non-numeric stamp) are pinned directly. Its sole production caller is
+  // resolveRunPinnedIntegrationModel above.
+  isFreshForgeDegradeMemo,
 };
