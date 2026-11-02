@@ -507,12 +507,12 @@ function runWithRealPin(repo, command, runDir) {
   return JSON.parse(deps.calls.stdout.join('')).premise;
 }
 
-test('#4505: the GH_HOST materialize pinned for --repo does not reach the Premise-check command', () => {
+test("#4795: materialize's --repo pin never reaches process.env, so the Premise-check command sees no GH_HOST", () => {
   const repo = gitRepo();
   withCwd(repo, () => withGhHost(undefined, () => {
     const command = '[ -z "${GH_HOST+x}" ]';
     const premise = runWithRealPin(repo, command, runDirFor(repo));
-    assert.strictEqual(process.env.GH_HOST, 'acme.ghe.com', "the pin still lands for materialize's own gh calls");
+    assert.strictEqual(process.env.GH_HOST, undefined, 'the pin never touches process.env (#4795)');
     assert.deepStrictEqual(premise, { command, exit: 0, satisfiedAtBase: false });
     assert.ok(!fs.existsSync(path.join(runDirFor(repo), 'staged')), 'no close proposal is staged');
   }));
