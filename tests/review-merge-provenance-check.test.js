@@ -32,8 +32,8 @@ function fences(text) {
   const bodies = [...text.matchAll(/```bash\r?\n([\s\S]*?)```/g)]
     .map((m) => m[1].split(/\r?\n/).filter((l) => l.trim() !== ''));
   assert.equal(bodies.length, 2, 'extraction pattern is out of sync');
-  assert.equal(bodies[0].length, 2, 'extraction pattern is out of sync: fence 1 line count');
-  assert.equal(bodies[1].length, 2, 'extraction pattern is out of sync: fence 2 line count');
+  assert.equal(bodies[0].length, 1, 'extraction pattern is out of sync: fence 1 line count');
+  assert.equal(bodies[1].length, 3, 'extraction pattern is out of sync: fence 2 line count');
   return bodies;
 }
 
@@ -54,23 +54,24 @@ function fill(line, vars) {
 const files = (stdout) => [...new Set(stdout.split('\n').map((l) => l.trim()).filter(Boolean))].sort();
 
 // Runs the live fences' lines against a fixture repo and applies the doc's exclusion rule.
-function excludedBy(shell, dir, base, branch, { tipExit = true } = {}) {
+function excludedBy(shell, dir, base, branch, { lineExit = true, integration = 'main' } = {}) {
   const [fence1, fence2] = fences(CHECK);
-  const vars = { base, branch, 'integration-branch': 'main' };
-  const forkRun = run(shell, dir, fill(fence1[0], vars)); // exits non-zero when there is no fork point
+  const vars = { base, branch, 'integration-branch': integration };
+  const forkRun = run(shell, dir, fill(fence1[0], vars)); // exits 1, printing nothing, when there is no fork point
   const fork = forkRun.stdout.trim();
-  if (fork === '') return { full: [], excluded: [] };
-  const tipRun = run(shell, dir, fill(fence1[1], vars));
-  assert.equal(tipRun.status, 0, 'fence 1 line 2 (tip) must exit 0');
-  const tip = tipRun.stdout.trim();
-  const withFork = { ...vars, fork, tip };
-  const branchRun = run(shell, dir, fill(fence2[0], withFork));
-  assert.equal(branchRun.status, 0, 'fence 2 line 1 (branch-side) must exit 0');
-  const fullRun = run(shell, dir, fill(fence2[1], withFork));
-  assert.equal(fullRun.status, 0, 'fence 2 line 2 (full diff) must exit 0');
+  if (fork === '') {
+    assert.equal(forkRun.status, 1, `merge-base printed nothing with status ${forkRun.status}: could not run, not "no fork point"`);
+    return { full: [], excluded: [] };
+  }
+  const withFork = { ...vars, fork };
+  const lineRun = run(shell, dir, fill(fence2[0], withFork)); // grep -Fx exits 1 when the fork is off this branch's line
+  const branchRun = run(shell, dir, fill(fence2[1], withFork));
+  assert.equal(branchRun.status, 0, 'fence 2 line 2 (branch-side) must exit 0');
+  const fullRun = run(shell, dir, fill(fence2[2], withFork));
+  assert.equal(fullRun.status, 0, 'fence 2 line 3 (full diff) must exit 0');
   const branchSide = files(branchRun.stdout);
   const full = files(fullRun.stdout);
-  if (tipExit && fork === tip) return { full, excluded: [] };
+  if (lineExit && lineRun.stdout.trim() !== '') return { full, excluded: [] };
   return { full, excluded: full.filter((f) => !branchSide.includes(f)) };
 }
 
@@ -128,16 +129,17 @@ function assertProse(stepsText, checkText) {
   const flat = flatten(checkText);
   assert.match(flat, /A `base:\{ref\}` scope never reads this file/, 'check file: base scope exit');
   assert.match(flat, /\*\*Excluded files\*\* are those in the full diff and absent from the branch-side list/, 'check file: exclusion rule');
-  assert.match(flat, /When `\{fork\}` equals `\{tip\}`[^.]*nothing is excluded/, 'check file: fork-is-tip exit');
+  assert.match(flat, /When the first command prints `\{fork\}`[^.]*first-parent line[^.]*nothing is excluded/, 'check file: first-parent-line exit');
   assert.match(flat, /When `git merge-base` prints nothing[^.]*nothing is excluded/, 'check file: no-fork exit');
   assert.match(flat, /arrived via merge from \{integration-branch\}, not this branch's own work/, 'check file: report wording');
+  // The retired own-work rule and its report wording stay gone (the new fence legitimately
+  // uses `--first-parent` alone, so only the old pairing is banned).
+  assert.doesNotMatch(flat, /--first-parent --no-merges/, 'check file: retired own-work rule is back');
+  assert.doesNotMatch(flat, /arrived via merge from \{base\}/, 'check file: retired report wording is back');
 }
 
 test('AC1.1: the prose states the gate, the rule and both exits', () => {
   assertProse(STEPS, CHECK);
-  const flat = flatten(CHECK);
-  assert.ok(!flat.includes('--first-parent'));
-  assert.ok(!flat.includes('arrived via merge from {base}'));
 });
 
 test('AC1.1: a clause removed from the prose goes red with its own message', () => {
@@ -146,14 +148,17 @@ test('AC1.1: a clause removed from the prose goes red with its own message', () 
     { target: 'steps', from: 'Every path in the diff stays in scope', to: 'Some paths drop out of scope', message: /steps gate: every path stays/ },
     { target: 'check', from: 'A `base:{ref}` scope never reads this file', to: 'A `base:{ref}` scope may read this file', message: /check file: base scope exit/ },
     { target: 'check', from: 'and absent from the branch-side list', to: 'and nothing more', message: /check file: exclusion rule/ },
-    { target: 'check', from: 'this branch has no side of its own, so nothing is excluded', to: 'this branch has no side of its own, so exclusion proceeds', message: /check file: fork-is-tip exit/ },
+    { target: 'check', from: 'rather than having merged it, so nothing is excluded', to: 'rather than having merged it, so exclusion proceeds', message: /check file: first-parent-line exit/ },
     { target: 'check', from: 'there is no fork point, nothing is excluded, and the raw', to: 'there is no fork point, exclusion proceeds, and the raw', message: /check file: no-fork exit/ },
     { target: 'check', from: "arrived via merge from {integration-branch}, not this branch's own work", to: "arrived via merge from {base}, not this branch's own work", message: /check file: report wording/ },
+    // the bans: append the banned text
+    { target: 'check', append: ' git log --first-parent --no-merges {base}..{branch}', message: /check file: retired own-work rule is back/ },
+    { target: 'check', append: ' (arrived via merge from {base}, not this branch\'s own work)', message: /check file: retired report wording is back/ },
   ];
   for (const c of cases) {
     const original = c.target === 'steps' ? STEPS : flatten(CHECK);
-    const mutated = original.replace(c.from, c.to);
-    assert.notEqual(mutated, original, `mutation did not apply: ${c.from}`);
+    const mutated = c.append ? original + c.append : original.replace(c.from, c.to);
+    assert.notEqual(mutated, original, `mutation did not apply: ${c.from || c.append}`);
     const args = c.target === 'steps' ? [mutated, CHECK] : [STEPS, mutated];
     assert.throws(() => assertProse(...args), { message: c.message });
   }
@@ -174,8 +179,8 @@ test('AC1.1: fixture A, a base:{ref} range, keeps every path', async (t) => {
   await forShells(t, (shell) => {
     assert.deepEqual(excludedBy(shell, dir, 'v1', 'origin/main'),
       { full: ['pr-file', 'squash-file'], excluded: [] });
-    // the same rule with no tip exit would exclude all of it: the exit is load-bearing
-    assert.deepEqual(excludedBy(shell, dir, 'v1', 'origin/main', { tipExit: false }).excluded,
+    // the same rule with no line exit would exclude all of it: the exit is load-bearing
+    assert.deepEqual(excludedBy(shell, dir, 'v1', 'origin/main', { lineExit: false }).excluded,
       ['pr-file', 'squash-file']);
   });
 });
@@ -284,5 +289,34 @@ test('AC1.1: fixture F, no common ancestor, excludes nothing', async (t) => {
   commitFile('lone-file');
   await forShells(t, (shell) => {
     assert.deepEqual(excludedBy(shell, dir, 'origin/main', 'lone').excluded, []);
+  });
+});
+
+test('AC1.1: fixture H, HEAD~N with local ahead of origin, excludes nothing', async (t) => {
+  const { dir, g, commitFile, origin } = fixture();
+  commitFile('older');
+  g('checkout', '-q', '-b', 'pr');
+  commitFile('pr-file');
+  g('checkout', '-q', 'main');
+  g('merge', '-q', '--no-ff', 'pr', '-m', 'merge pr');
+  origin();
+  commitFile('newer');
+  await forShells(t, (shell) => {
+    assert.deepEqual(excludedBy(shell, dir, 'HEAD~2', 'main'), { full: ['newer', 'pr-file'], excluded: [] });
+    // the same rule with no line exit drops pr-file: the review's reproduction, frozen
+    assert.deepEqual(excludedBy(shell, dir, 'HEAD~2', 'main', { lineExit: false }).excluded, ['pr-file']);
+  });
+});
+
+test('AC1.1: fixture I, a branch that is its own integration branch, excludes nothing', async (t) => {
+  const { dir, g, commitFile } = fixture();
+  const start = g('rev-parse', 'HEAD').trim();
+  g('checkout', '-q', '-b', 'feat');
+  commitFile('own-pushed');
+  g('update-ref', 'refs/remotes/origin/feat', 'feat');
+  commitFile('own-local');
+  await forShells(t, (shell) => {
+    assert.deepEqual(excludedBy(shell, dir, start, 'feat', { integration: 'feat' }),
+      { full: ['own-local', 'own-pushed'], excluded: [] });
   });
 });
