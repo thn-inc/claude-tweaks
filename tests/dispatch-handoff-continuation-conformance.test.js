@@ -44,8 +44,8 @@ test('task-prompt.md: both templates name handoff in their OUTCOME line, with a 
 });
 
 test('task-prompt.md: a continuation is the same template with its step list replaced by NEXT_STEPS, same run dir and model profile', () => {
-  const t = read('task-prompt.md');
-  const c = squash(region(t, '## Continuation call', null, 'continuation section'));
+  const t = read('continuation-call.md');
+  const c = squash(region(t, '# Dispatch Step 5 — Continuation call', null, 'continuation section'));
   assert.match(c, /`OUTCOME: handoff`/);
   assert.match(c, /same template|that call's own template/i);
   assert.match(c, /step list[^.]*replaced by[^.]*`NEXT_STEPS`/);
@@ -55,6 +55,13 @@ test('task-prompt.md: a continuation is the same template with its step list rep
   assert.ok(c.includes(`"${STOP_SENTENCE.split(' --')[0]}"`), 'the section must quote the "Stop after the test gate" sentence it keeps');
   assert.match(c, /resumes? (?:from that step )?onward/);
   assert.match(c, /`two-call-gate\.md` section 8/);
+});
+
+test('#4548: task-prompt.md\'s Continuation call heading points at continuation-call.md', () => {
+  assert.match(read('task-prompt.md'), /## Continuation call — after `OUTCOME: handoff` \(#4027\)\n\nRead `continuation-call\.md` in this skill's directory\./);
+  // The body moved out: a copy left behind in task-prompt.md would be a second, drifting statement of it.
+  assert.doesNotMatch(read('task-prompt.md'), /Every other sentence stays verbatim/);
+  assert.match(read('continuation-call.md'), /Every other sentence stays verbatim/);
 });
 
 test('the first-call continuation substitution: NEXT_STEPS replaces both invocation step lists and the stop sentence survives verbatim', () => {

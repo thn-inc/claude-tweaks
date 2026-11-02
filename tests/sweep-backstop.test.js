@@ -287,6 +287,12 @@ test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4
   }
 });
 
+// #4804: this run-id rule moved with item 10's resume procedure into the resume file.
+test("the resume file takes {run-id} from the claim blob runId, never from the PR body's own marker", () => {
+  assert.match(RESUME, /`\{run-id\}` being the `runId` of the record's claim blob/);
+  assert.match(RESUME, /Never take `\{run-id\}` from the PR body's own marker here/);
+});
+
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {
   assert.match(SCAN, /Anti-pattern: a self-scheduled per-PR check-in loop\./);
   assert.match(SCAN, /that durability lives in GitHub's own `--auto`.*plus this scheduled sweep/s);
