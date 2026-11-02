@@ -21,6 +21,7 @@ const { gitRepo } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
 const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
+const { requireOption } = require('../tools/test-impact/node-options');
 
 const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -2653,7 +2654,7 @@ test('reconcile verb: a post-merge.js load fault still renders the reconcile-thr
     '',
   ].join('\n'));
   const dir = noRemoteFixture('ct-recon-loadfault-repo-');
-  const r = runHook(['reconcile', '--dry-run'], { cwd: dir, env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}` } });
+  const r = runHook(['reconcile', '--dry-run'], { cwd: dir, env: { NODE_OPTIONS: requireOption(preload) } });
   assert.strictEqual(r.code, 0);
   assert.match(r.stdout, /^skipped: all — reconcile-threw$/m);
 });

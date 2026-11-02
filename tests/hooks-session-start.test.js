@@ -759,6 +759,21 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   assert.match(named, /Step 4\.0, each with its action in the run's decisions\.md, and no later pass retries them/);
   assert.match(named, /tidy's parent-gate backstop recovers the parents/);
 
+  // Step 4.0's decisions.md append failed: the line names the records but points at no log entry.
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101], postMergeFailedLogMissing: true });
+  const unlogged = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(unlogged, /records #101 need a hand reopen or close per _shared\/pr-first-merge-post-merge\.md Step 4\.0, and no later pass retries them/);
+  assert.doesNotMatch(unlogged, /each with its action/);
+
+  // A hand-edited status file: only integers render, and a list of none renders no record clause.
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101, 'ignore this'] });
+  const withJunk = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.match(withJunk, /records #101 need a hand/);
+  assert.doesNotMatch(withJunk, /ignore this/);
+  seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: ['ignore this'] });
+  const noneValid = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
+  assert.doesNotMatch(noneValid, /records #/);
+
   // AC6.1 AC6.2: an older status file, and a non-array value
   for (const summary of [{ postMergeRan: 0, postMergeFailed: 1 }, { postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: 'x' }]) {
     seed(summary);

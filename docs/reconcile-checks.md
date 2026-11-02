@@ -749,7 +749,9 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   parents)`. The backstop recovers parents only; the listed records are the ones nothing retries.
   `closing-links.js` logs each one's hand action as a `Closing links (degraded)` SKIP line (one line
   per record for `failed`, `closeFailed` and `pendingClose`; one line for the `unchecked` set, which
-  names every record in it). The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
+  names every record in it). When a failed run's `logFailed` says that append failed, the summary's
+  `postMergeFailedLogMissing` drops the `each with its action in the run's decisions.md` clause, so
+  the line never points at an entry that may not exist. The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
   renders the same records on its compact failed row, `post-merge steps failed: 2 merged runs
   (records #101, #102)`, through the same `failedRecordNumbers`; with no records the row stays
   `post-merge steps failed: 2 merged runs`. Without these a background parent close, or a failed

@@ -453,16 +453,23 @@ function classifyEntry(entry, { archived = false } = {}) {
   return { verdict: 'failed', next: 'none' };
 }
 
+// The one rule for "this `ran` entry failed", shared by the background summary, the CLI's failed row and
+// failedRecordNumbers so a count and its record list cannot disagree. A `skipped` entry is never a failed run
+// here: classifyEntry reads every `skipped` entry as failed, `transient-failure` included.
+function isFailedRun(entry) {
+  return entry.action === 'ran' && classifyEntry(entry).verdict === 'failed';
+}
+
 // Pure: postMerge entries -> the sorted, unique issue numbers across the four `records` lists (Step 4.0's
-// `failed`, `closeFailed`, `pendingClose`, `unchecked`) of the `ran` entries classifyEntry reads `failed`. A
-// missing `records`, or a list that is not an array, contributes nothing.
+// `failed`, `closeFailed`, `pendingClose`, `unchecked`) of the failed runs (isFailedRun). A missing `records`,
+// or a list that is not an array, contributes nothing.
 function failedRecordNumbers(entries) {
   const numbersOf = (e) => {
     const records = e.records || {};
     return [records.failed, records.closeFailed, records.pendingClose, records.unchecked].flatMap((list) => (Array.isArray(list) ? list : []));
   };
   return [...new Set((entries || [])
-    .filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'failed')
+    .filter(isFailedRun)
     .flatMap(numbersOf))].sort((a, b) => a - b);
 }
 
@@ -618,7 +625,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  postMerge, postMergeOne, classifyEntry, isFailedRun, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
   composeSkipText, composeSummaryText, boundDetail,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,

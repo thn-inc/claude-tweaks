@@ -71,7 +71,7 @@ const CATEGORIES = [
   // post-merge.js's classifyEntry judges a `ran` entry failed when Step 4.0 failed (a SKIP marker, Step 4.0b
   // never run) or its word is not clean (close-failed, ...), or Step 4.0b reported a parent failure: it is
   // reported on its own line, never as a run that ran.
-  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.action === 'ran' && verdictOf(e) === 'failed', suffix: failedRecordsSuffix },
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => require('./post-merge').isFailedRun(e), suffix: failedRecordsSuffix },
   { key: 'runs', unit: 'run dir', verb: 'archived', takenActions: ['archived'], skipActions: ['skipped'] },
   { key: 'branches', unit: 'branch', verb: 'archived', takenActions: ['delete', 'tag-and-delete'], skipActions: ['skip'], kindFilter: (e) => e.kind !== 'tag' },
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },

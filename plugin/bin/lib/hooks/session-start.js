@@ -352,10 +352,13 @@ async function run(ctx) {
         // A step failed, or the check threw, for these (counted apart from `postMergeRan`). Tidy's
         // parent-gate backstop recovers the parents; the records Step 4.0 listed (`postMergeFailedRecords`,
         // absent from an older status file) get no retry, so they are named for a hand reopen or close; closing-links
-        // logged each one's hand action to the run's decisions.md.
+        // logged each one's hand action to the run's decisions.md, unless that append failed
+        // (`postMergeFailedLogMissing`), when the pointer is left out rather than sending the reader to no entry.
         if (s.postMergeFailed) {
-          const failedRecords = Array.isArray(s.postMergeFailedRecords) && s.postMergeFailedRecords.length
-            ? `records ${s.postMergeFailedRecords.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the run's decisions.md, and no later pass retries them; `
+          const failedNumbers = Array.isArray(s.postMergeFailedRecords) ? s.postMergeFailedRecords.filter(Number.isInteger) : [];
+          const logPointer = s.postMergeFailedLogMissing === true ? '' : ", each with its action in the run's decisions.md";
+          const failedRecords = failedNumbers.length
+            ? `records ${failedNumbers.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0${logPointer}, and no later pass retries them; `
             : '';
           lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
         }
