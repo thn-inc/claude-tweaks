@@ -6,6 +6,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { PROFILES } = require('./model-profiles/profiles');
+const { stripComment } = require('./model-profiles/policy-fragment');
 const { parseRiskPathGlobs } = require('./risk-path-globs');
 
 const PROFILE_NAMES = Object.keys(PROFILES);
@@ -710,6 +711,9 @@ function resolvePolicyKeys(requestedKeys, { policyRaw, runConfigRaw, onInvalid }
 // names — parseFlatLines only sees flat `key: value` lines, so a block-style
 // value (model-profiles, the one caller) is otherwise invisible to auditPolicy.
 // risk-path-globs, the other block key, has its own parser: bin/lib/risk-path-globs.js.
+// Shares stripComment with the resolver (model-profiles/policy-fragment.js) so the
+// two never disagree on a comment (the old `/#.*$/` missed one on a CRLF line,
+// since `.` does not match `\r`, #4816).
 // Returns undefined when the block is absent, distinct from an empty map.
 function extractMapEntry(raw, topKey) {
   if (!raw) return undefined;
@@ -718,7 +722,7 @@ function extractMapEntry(raw, topKey) {
   const map = {};
   for (let i = 0; i < lines.length; i += 1) {
     const rawLine = lines[i];
-    const stripped = rawLine.replace(/#.*$/, '').trimEnd();
+    const stripped = stripComment(rawLine);
     if (!found) {
       if (/^\S/.test(rawLine) && new RegExp(`^${topKey}:\\s*$`).test(stripped.trim())) found = true;
       continue;

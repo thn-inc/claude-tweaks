@@ -768,6 +768,15 @@ test('model-profiles: an unrecognized sub-field inside a valid row is accepted â
   assert.deepStrictEqual(result.invalidValues, []);
 });
 
+test('AC1.1: model-profiles audit sees the block when policy.yml has CRLF endings and a trailing comment on the key line (#4816)', () => {
+  const repo = tmpRepo();
+  writePolicy(repo, ['model-profiles:   # project overrides', '  bogus:', '    model: opus', ''].join('\r\n'));
+  const result = auditPolicy(repo);
+  assert.strictEqual(result.invalidValues.length, 1);
+  assert.strictEqual(result.invalidValues[0].key, 'model-profiles');
+  assert.deepStrictEqual(result.invalidValues[0].value, { bogus: true });
+});
+
 test('auditPolicy flags a valid policy.yml value for a source-excluded lever as sourceExcludedKeys, not silently accepted (#839)', () => {
   const repo = tmpRepo();
   writePolicy(repo, 'merge-authorization: pre-authorized\n');
