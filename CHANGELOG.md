@@ -53,6 +53,29 @@ Three conventions follow from how this repo works, and all are visible below:
 
 <!-- release-please boundary: `## v6.128.0`, directly below, and everything below it predate the 2026-09-21 migration to release-please and keep their `## vX.Y.Z — {summary}` heading form; every entry release-please generates is inserted directly below this comment, above `## v6.128.0`. -->
 
+## [6.160.2](https://github.com/thn-inc/claude-tweaks/compare/v6.160.1...v6.160.2) (2026-11-02)
+
+
+### Bug Fixes
+
+* Digest rollover drops live entries from clustering… ([#4848](https://github.com/thn-inc/claude-tweaks/issues/4848)) ([57b2c1d](https://github.com/thn-inc/claude-tweaks/commit/57b2c1d6a4dd0719e3603c7128036605770d7e32))
+* Gate the gh host seam's GH_HOST injection on a positive… ([#4854](https://github.com/thn-inc/claude-tweaks/issues/4854)) ([dd67916](https://github.com/thn-inc/claude-tweaks/commit/dd6791663e532beefea55083d1232d0e64cbac09))
+* Granted records with a stale open PR are stuck: resume… ([#4849](https://github.com/thn-inc/claude-tweaks/issues/4849)) ([cb2bb53](https://github.com/thn-inc/claude-tweaks/commit/cb2bb53a750afe0fcb7b08785398f708ac755fa9))
+* Keep tidy's open-parent [parent-gate] rows when the gh… ([#4801](https://github.com/thn-inc/claude-tweaks/issues/4801)) ([7ab8660](https://github.com/thn-inc/claude-tweaks/commit/7ab86605b7aeec8638d5e00ac5a2834d72b6c3d1))
+* Merge mode's MERGED-PR next step may dead-end: does… ([#4692](https://github.com/thn-inc/claude-tweaks/issues/4692)) ([d8aa771](https://github.com/thn-inc/claude-tweaks/commit/d8aa7716bc7dac3e2e6fb8bbf67c7e61e29dd656))
+
+### Highlights
+* Stop dispatched agents from killing processes by name, which could take down other sessions' dev servers, and scope dev-server teardown to the server's own listening process.
+* Tidy's parent-gate report no longer goes empty when the GitHub token cannot read the current user.
+* Settle 3 small deferred findings in flow.
+* Fix `/claude-tweaks:wrap-up #N merge` on an already-merged PR: it now finishes the post-merge work itself, including for an archived run, instead of pointing at `cleanup-only`, which could not find that run.
+* With `GH_ENTERPRISE_TOKEN` or `GITHUB_ENTERPRISE_TOKEN` set, the plugin no longer points its gh calls (`GH_HOST`) at a non-GitHub git host such as a self-hosted GitLab or Gitea origin, so the token is not sent there. `GH_HOST` is now set only for a `*.ghe.com` origin or a host listed in gh's `hosts.yml`.
+* A mistyped flag on a claude-tweaks run-management command now fails with exit 1 and an error on stderr, instead of printing usage and exiting 0 as if it had succeeded.
+* No user-visible change.
+* Show and restart granted work stuck behind a stale open pull request, whatever its branch is called.
+* Keep open low-priority findings tracked when the digest issue fills up and rolls over.
+* Internal: a test now guards the sweep's rule against taking a resume run id from the PR body.
+
 ## [6.160.1](https://github.com/thn-inc/claude-tweaks/compare/v6.160.0...v6.160.1) (2026-11-01)
 
 
