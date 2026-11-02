@@ -133,11 +133,20 @@ function networkLines(lines) {
   return lines.filter((l) => !/ ARGS=--version$/.test(l));
 }
 
+// The argv part of a recorded gh spawn line.
+function argsOf(line) {
+  return line.slice(line.indexOf(' ARGS=') + 6);
+}
+
+function escapeHost(host) {
+  return host.replace(/\./g, '\\.');
+}
+
 // The argv alone routes the call to the host (a host-qualified --repo or a --hostname),
 // whatever GH_HOST the call was spawned with.
 function argvReachesHost(line, host) {
-  const args = line.slice(line.indexOf(' ARGS=') + 6);
-  const h = host.replace(/\./g, '\\.');
+  const args = argsOf(line);
+  const h = escapeHost(host);
   return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args);
 }
 
@@ -147,8 +156,7 @@ function argvReachesHost(line, host) {
 // check only has to show the spec kept the host. list-claims/claim-store put a
 // host-qualified slug into a REST path, a pre-existing defect tracked in #4988.
 function argvNamesHost(line, host) {
-  const args = line.slice(line.indexOf(' ARGS=') + 6);
-  return argvReachesHost(line, host) || new RegExp(`^api repos/${host.replace(/\./g, '\\.')}/`).test(args);
+  return argvReachesHost(line, host) || new RegExp(`^api repos/${escapeHost(host)}/`).test(argsOf(line));
 }
 
 function reachesHost(line, host) {
@@ -363,8 +371,7 @@ function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
 function repoValues(lines) {
   const values = [];
   for (const line of lines) {
-    const args = line.slice(line.indexOf(' ARGS=') + 6);
-    for (const m of args.matchAll(/(?:^| )(?:-R|--repo)[ =](\S+)/g)) values.push(m[1]);
+    for (const m of argsOf(line).matchAll(/(?:^| )(?:-R|--repo)[ =](\S+)/g)) values.push(m[1]);
   }
   return values;
 }
@@ -409,11 +416,10 @@ function describeOriginGate(row) {
         assertEveryLineReaches(r.lines, host);
       }
       for (const line of net.filter((l) => / ARGS=api /.test(l) && (!row.hostnameLines || row.hostnameLines(l)))) {
-        assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
+        assert.ok(new RegExp(` --hostname ${escapeHost(host)}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
       }
       for (const line of net) {
-        const args = line.slice(line.indexOf(' ARGS=') + 6);
-        for (const m of args.matchAll(/(?:^| )--hostname[ =](\S+)/g)) assert.equal(m[1], host, `--hostname value: ${line}`);
+        for (const m of argsOf(line).matchAll(/(?:^| )--hostname[ =](\S+)/g)) assert.equal(m[1], host, `--hostname value: ${line}`);
       }
       for (const value of repoValues(r.lines)) assert.equal(value, `${host}/o/r`, `--repo value:\n${log}`);
     });
