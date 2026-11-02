@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-10-31T120302-record-4634/work/4634-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T141400-record-4634/work/4634-spec.md`
 
 **Scope keywords:** RELEASE_NOTE_FOOTER_RE, releaseNote, renderReleaseNotes, parseReleaseNotesFromLog, parseCommit, Records shipped, shipped set
 
