@@ -5,11 +5,14 @@
 // bin/lib/wrap-up/packet-*.js; this file reads the inputs and picks the exit code.
 //
 // Exit vocabulary, Payload-1/Invocation-2 as in bin/wrap-up-engine.js, plus:
-//   0 success, including snapshot's nothing-ahead skip.
+//   0 success, including snapshot's two skips (nothing ahead of the base; a snapshot
+//     already there on a re-run from the main checkout).
 //   1 a payload or write failure: gather's or render's unwritable --out, render's
-//     invalid or over-cap input, post's ok:false or unreadable --body-file, local's
-//     unreadable record or failed write.
-//   2 a malformed invocation. Nothing runs, and no MCP fallback is signalled.
+//     invalid or over-cap input (any earlier --out and --dropped-out are removed, so
+//     a stale packet is not there to post), post's ok:false or unreadable --body-file,
+//     local's unreadable record or failed write.
+//   2 a malformed invocation, post's --body-file with no packet marker on its first
+//     line included. Nothing runs, and no MCP fallback is signalled.
 //   3 a --run that resolveTarget refuses (gather, snapshot), or a snapshot write
 //     failure: the sanctioned writers' "wrong run dir" code (a worktree-local shadow
 //     is never read as the run's record, [IL-127]).
@@ -35,12 +38,15 @@ const {
 } = require('./lib/repo-resolve');
 const { sessionTmpPath } = require('./lib/session-tmp');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
-const { resolveTarget } = require('./lib/stage-item/write');
+const { safeReal } = require('./lib/hooks/worktree-detect');
+const { resolveTarget, findGitRoot } = require('./lib/stage-item/write');
 const { readDeclaration, DECLARATION_PATH } = require('./lib/verify/declaration');
 const { readQaStamp, QA_STAMP_NAME } = require('./lib/verify/qa-stamp');
 const { gitDir } = require('./lib/verify/report');
 const { parseNameStatusZ } = require('./lib/git-z');
-const { MAX_PACKET_CHARS, SCHEMA_VERSION } = require('./lib/wrap-up/packet-contract');
+const {
+  CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION,
+} = require('./lib/wrap-up/packet-contract');
 const {
   gatherPacketFacts,
   lowConfidenceFindings,
@@ -61,7 +67,7 @@ const USAGE = [
   '       acceptance-packet.js render --facts <file> --narrative <file> --out <file> [--dropped-out <file>] [--observation-plan <file>] [--poster <text>]',
   '       acceptance-packet.js post --record <n> --body-file <file> [--pr <n>] [--label <name>] [--repo <owner/name>]',
   '       acceptance-packet.js local --record-file <file> --body-file <file> [--pending]',
-  '  exit 0 ok; 1 payload or write failure; 2 malformed invocation;',
+  '  exit 0 ok; 1 payload or write failure; 2 malformed invocation or a --body-file with no packet marker;',
   '  3 --run refused (gather, snapshot) or snapshot write failure; exit 4 post only: gh absent, follow the MCP path',
   '',
 ].join('\n');
@@ -93,6 +99,10 @@ const STORY_FILE_RE = /\.ya?ml$/;
 const LOG_LINE_RE = /^([0-9a-f]+)\t(.*)$/;
 const GH_ABSENT = "gh absent — follow _shared/acceptance-packet.md's MCP path";
 const FINDINGS_NOT_READ = 'review findings not read — low-confidence findings not listed';
+const UNKNOWN_SECTION = 'unknown';
+// The validator's three reasons that interpolate a claim-supplied value: the section or
+// a ref. Each is cut back to its fixed lead-in.
+const INTERPOLATED_REASON_RE = /^(unknown section|absent fact|incompatible fact) .*$/s;
 
 const flagKey = (flag) => flag.slice(2).replace(/-([a-z])/g, (_, letter) => letter.toUpperCase());
 const isObject = (value) => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -138,8 +148,8 @@ const realDeps = {
   cwd: () => process.cwd(),
   mainRoot: undefined,
   readFile: (p) => fs.readFileSync(p, 'utf8'),
-  // A missing directory is an empty one. Any other failure stays a throw, so
-  // findingItems reports it rather than reading a run with no staged items.
+  // findingItems' seam: a missing directory is an empty one. Any other failure stays a
+  // throw, so it reports that rather than reading a run with no staged items.
   readdir: (p) => {
     try {
       return fs.readdirSync(p);
@@ -148,8 +158,11 @@ const realDeps = {
       throw err;
     }
   },
+  // Every failure a throw, for a caller that must tell a missing directory from an empty one.
+  listDir: (p) => fs.readdirSync(p),
   writeFile: (p, s) => fs.writeFileSync(p, s),
   writeAtomic: (p, s) => writeFileAtomic(p, s),
+  removeFile: (p) => fs.unlinkSync(p),
   mkdir: (p) => fs.mkdirSync(p, { recursive: true }),
   readRecord,
   writeRecord,
@@ -199,6 +212,15 @@ function gitOrNull(deps, args) {
     return deps.git(args).trim() || null;
   } catch {
     return null;
+  }
+}
+
+// A file already gone is the goal. Any other failure is stated: the file is still there.
+function removeIfPresent(deps, file) {
+  try {
+    deps.removeFile(file);
+  } catch (err) {
+    if (!isAbsentError(err)) deps.stderr(`acceptance-packet.js: could not remove ${file} (${messageOf(err)})\n`);
   }
 }
 
@@ -270,6 +292,13 @@ function qaReportSource(stamp, runDir, deps) {
   return qaSelectionFromDecisions(decisions) > 0 ? newestQaReport(deps) : { status: 'absent' };
 }
 
+// The run dir is anchored, so its nearest `.git` is the main checkout's. A linked
+// worktree's own `.git` file is nearer to its cwd, even when it is nested under that root.
+function cwdIsMainCheckout(runDir, deps) {
+  const cwd = safeReal(deps.cwd());
+  return Boolean(cwd) && findGitRoot(cwd)?.dir === findGitRoot(runDir)?.dir;
+}
+
 function runSnapshot(opts, deps) {
   const target = anchoredRun(opts.run, deps);
   if (!target) return 3;
@@ -279,6 +308,13 @@ function runSnapshot(opts, deps) {
   // files are not this run's, and an earlier snapshot may be the only copy.
   if (mergeBase !== null && mergeBase === head) {
     deps.stdout(`${JSON.stringify({ skipped: 'no commits ahead of base' })}\n`);
+    return 0;
+  }
+  // The same hazard when local main is ahead of the base or the merge-base read failed.
+  // Any manifest counts, a damaged one included: the main checkout has nothing better.
+  const earlier = readSource(deps, path.join(target.dir, PACKET_INPUTS, MANIFEST));
+  if (earlier.status !== 'absent' && cwdIsMainCheckout(target.dir, deps)) {
+    deps.stdout(`${JSON.stringify({ skipped: 'snapshot exists, re-run from the main checkout' })}\n`);
     return 0;
   }
 
@@ -345,18 +381,20 @@ function readExpectedChecks(opts, deps) {
 }
 
 // Per file, never the joined text: a second file's `stories:` key would end the first's list.
-function readStoryIndex(storiesDir, deps, notes) {
+// A missing directory costs only the negative flags of the stories listed, so with none
+// listed it is a project with no stories and states nothing (Decision Q13).
+function readStoryIndex(storiesDir, listsStories, deps, notes) {
   if (storiesDir === undefined) return null;
   const stories = [];
   let lost = false;
   try {
-    for (const name of [...deps.readdir(storiesDir)].filter((entry) => STORY_FILE_RE.test(entry)).sort()) {
+    for (const name of [...deps.listDir(storiesDir)].filter((entry) => STORY_FILE_RE.test(entry)).sort()) {
       const text = readTextOrNull(deps, path.join(storiesDir, name));
       if (text === null) lost = true;
       else stories.push(...parseStoryFile(text));
     }
-  } catch {
-    lost = true;
+  } catch (err) {
+    lost = !isAbsentError(err) || listsStories;
   }
   if (lost) notes.push(notReadNote('--stories-dir'));
   return stories;
@@ -441,6 +479,8 @@ function runGather(opts, deps) {
   const head = opts.head ?? snapshot.head ?? 'HEAD';
   const base = snapshot.mergeBase ?? opts.base;
   const storyResults = storyResultsFromQaReport(readObject(opts.storyResults)) ?? storyResultsFromQaReport(snapshot.qaReport);
+  const stampStories = readStampStories(head, snapshot, deps);
+  const listsStories = [...(storyResults ?? []), ...(stampStories ?? [])].some(({ id }) => id !== null);
 
   let facts;
   try {
@@ -460,9 +500,9 @@ function runGather(opts, deps) {
       decisions: optionalJson('--decision-items', isEntryList),
       decisionsText: runDir === null ? null : readTextOrNull(deps, path.join(runDir, 'decisions.md')),
       lowConfidence: runDir === null ? null : readLowConfidence(runDir, deps, notes),
-      storyIndex: readStoryIndex(opts.storiesDir, deps, notes),
+      storyIndex: readStoryIndex(opts.storiesDir, listsStories, deps, notes),
       storyResults,
-      stampStories: readStampStories(head, snapshot, deps),
+      stampStories,
       qaReportUnread: (opts.storyResults !== undefined && storyResults === null) || snapshot.qaReportUnreadable,
       ...readChanges(base, head, deps),
     });
@@ -484,7 +524,26 @@ function runGather(opts, deps) {
 
 // ---- render ----
 
+// Section and fixed reason only: a claim's text, section and refs are the narrator's, and
+// this file is a working copy nobody screened.
+function droppedEntry({ claim, reason }) {
+  return {
+    section: CLAIM_SECTIONS.includes(claim.section) ? claim.section : UNKNOWN_SECTION,
+    reason: reason.replace(INTERPOLATED_REASON_RE, '$1'),
+  };
+}
+
 function runRender(opts, deps) {
+  const code = renderToFiles(opts, deps);
+  // An earlier run's files would still read as this run's packet.
+  if (code !== 0) {
+    removeIfPresent(deps, opts.out);
+    if (opts.droppedOut !== undefined) removeIfPresent(deps, opts.droppedOut);
+  }
+  return code;
+}
+
+function renderToFiles(opts, deps) {
   const failInput = (flag, err) => {
     deps.stderr(`acceptance-packet.js: could not read ${flag} (${messageOf(err)})\n`);
     return 1;
@@ -528,7 +587,9 @@ function runRender(opts, deps) {
     if (opts.droppedOut !== undefined) {
       // Section and key only: a screened claim's text is the thing screened out.
       const screenedKeys = screened.map(({ claim, key }) => ({ section: claim.section, key }));
-      deps.writeFile(opts.droppedOut, `${JSON.stringify({ dropped, screened: screenedKeys, truncated, chars }, null, 2)}\n`);
+      deps.writeFile(opts.droppedOut, `${JSON.stringify({
+        dropped: dropped.map(droppedEntry), screened: screenedKeys, truncated, chars,
+      }, null, 2)}\n`);
     }
   } catch (err) {
     deps.stderr(`acceptance-packet.js: could not write --out or --dropped-out (${messageOf(err)})\n`);
@@ -554,11 +615,17 @@ function runPost(opts, deps) {
   }
   // Ahead of every other check: gh reading a missing file would count as a failed post,
   // which clears a pending label, and the MCP path would post from the same missing file.
+  let body;
   try {
-    deps.readFile(opts.bodyFile);
+    body = deps.readFile(opts.bodyFile);
   } catch (err) {
     deps.stderr(`acceptance-packet.js: could not read --body-file ${opts.bodyFile} (${messageOf(err)})\n`);
     return 1;
+  }
+  // The next run finds the comment by this line, so a body without it would become a second packet.
+  if (body.split(/\r?\n/, 1)[0] !== PACKET_MARKER) {
+    deps.stderr(`acceptance-packet.js: --body-file ${opts.bodyFile} does not start with the packet marker ${PACKET_MARKER}\n`);
+    return 2;
   }
   if (!deps.ghAvailable()) {
     deps.stderr(`acceptance-packet.js: ${GH_ABSENT}\n`);
@@ -566,16 +633,22 @@ function runPost(opts, deps) {
   }
   if (repoSpec) deps.pinGhHost(repoSpec);
 
-  const result = publishPacket({
-    issue: opts.record,
-    bodyFile: opts.bodyFile,
-    repo: opts.repo ?? null,
-    prNumber: opts.pr ?? null,
-    label: opts.label ?? null,
-    runner: deps.gh,
-    writeFile: deps.writeFile,
-    tmpPath: opts.pr === undefined ? null : deps.tmpPath(`acceptance-packet-pr-${opts.pr}-${process.pid}.md`),
-  });
+  const tmpPath = opts.pr === undefined ? null : deps.tmpPath(`acceptance-packet-pr-${opts.pr}-${process.pid}.md`);
+  let result;
+  try {
+    result = publishPacket({
+      issue: opts.record,
+      bodyFile: opts.bodyFile,
+      repo: opts.repo ?? null,
+      prNumber: opts.pr ?? null,
+      label: opts.label ?? null,
+      runner: deps.gh,
+      writeFile: deps.writeFile,
+      tmpPath,
+    });
+  } finally {
+    if (tmpPath !== null) removeIfPresent(deps, tmpPath);
+  }
   deps.stdout(`${JSON.stringify(result)}\n`);
   if (!result.ok) deps.stderr(`acceptance-packet.js: ${result.error}\n`);
   return result.ok ? 0 : 1;

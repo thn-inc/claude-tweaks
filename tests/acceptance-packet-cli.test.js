@@ -436,10 +436,54 @@ test('a story file that will not read is a stated partial', (t) => {
   assert.ok(facts.partial.includes('--stories-dir input not read — treated as absent'));
 });
 
-test('a stories dir that does not exist states no partial', (t) => {
+const STORIES_NOTE = '--stories-dir input not read — treated as absent';
+
+test('a stories dir gone with the worktree is a stated partial when a stamp lists a story', (t) => {
+  const ws = workspace(t);
+  writeStamp(ws.gitDir, { stories: [{ id: 'tag-only', file: 's.yaml', sha256: HASH }] });
+  const { git } = fakeGit({ revParse: { HEAD: H } });
+  const { facts } = gather(ws, ['--stories-dir', ws.file('none')], { git });
+  assert.equal(factOf(facts, 'story:tag-only').status, 'passed');
+  assert.ok(facts.partial.includes(STORIES_NOTE));
+});
+
+test('a stories dir gone with the worktree is a stated partial when the QA report lists a story', (t) => {
+  const ws = workspace(t);
+  const qa = writeJson(ws.file('qa.json'), { stories: [{ id: 'tag-only', status: 'PASS' }] });
+  assert.ok(gather(ws, ['--stories-dir', ws.file('none'), '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+});
+
+test('a stories path that is a file reads as absent too', (t) => {
+  const ws = workspace(t);
+  const qa = writeJson(ws.file('qa.json'), { stories: [{ id: 'tag-only', status: 'PASS' }] });
+  const file = writeText(ws.file('stories-file'), 'x');
+  assert.ok(gather(ws, ['--stories-dir', path.join(file, 'stories'), '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+});
+
+test('Q13: a missing stories dir with nothing listed states no partial', (t) => {
   const ws = workspace(t);
   const { facts } = gather(ws, ['--stories-dir', ws.file('none')]);
-  assert.ok(!facts.partial.includes('--stories-dir input not read — treated as absent'));
+  assert.ok(!facts.partial.includes(STORIES_NOTE));
+});
+
+test('a QA entry with no id does not count as a listed story', (t) => {
+  const ws = workspace(t);
+  const qa = writeJson(ws.file('qa.json'), { stories: [{ status: 'PASS' }] });
+  assert.ok(!gather(ws, ['--stories-dir', ws.file('none'), '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+});
+
+test('an empty stories dir that exists states no partial, whatever is listed', (t) => {
+  const ws = workspace(t);
+  const stories = path.join(ws.root, 'stories');
+  fs.mkdirSync(stories);
+  const qa = writeJson(ws.file('qa.json'), { stories: [{ id: 'x', status: 'PASS' }] });
+  assert.ok(!gather(ws, ['--stories-dir', stories, '--story-results', qa]).facts.partial.includes(STORIES_NOTE));
+});
+
+test('a stories dir that is denied is a stated partial, with nothing listed', (t) => {
+  const ws = workspace(t);
+  const denied = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  assert.ok(gather(ws, ['--stories-dir', ws.file('none')], { listDir: denied }).facts.partial.includes(STORIES_NOTE));
 });
 
 test('gather with an unwritable --out exits 1', (t) => {
@@ -539,6 +583,59 @@ test('snapshot with nothing ahead of the base writes nothing', (t) => {
   assert.deepEqual(fs.readdirSync(path.join(ws.runDir, 'packet-inputs')), ['manifest.json']);
 });
 
+const MAIN_RERUN = { skipped: 'snapshot exists, re-run from the main checkout' };
+
+for (const [name, cwdOf, gitOpts] of [
+  ['local main ahead of the base', (ws) => ws.root, { revParse: { HEAD: H }, mergeBase: MB }],
+  ['a failed merge-base', (ws) => ws.root, { revParse: { HEAD: H } }],
+  ['a cwd below the main root', (ws) => { const sub = path.join(ws.root, 'sub'); fs.mkdirSync(sub, { recursive: true }); return sub; }, { revParse: { HEAD: H }, mergeBase: MB }],
+]) {
+  test(`a re-run from the main checkout with ${name} leaves the earlier snapshot byte-unchanged`, (t) => {
+    const ws = workspace(t);
+    const earlier = writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: OTHER, mergeBase: MB, files: {} });
+    const before = fs.readFileSync(earlier, 'utf8');
+    writeJson(verifyReportAt(ws.gitDir), REPORT);
+    const { code, stdout, stderr } = snapshot(ws, { git: fakeGit(gitOpts).git, cwd: () => cwdOf(ws) });
+    assert.equal(code, 0, stderr);
+    assert.deepEqual(JSON.parse(stdout), MAIN_RERUN);
+    assert.equal(fs.readFileSync(earlier, 'utf8'), before);
+    assert.deepEqual(fs.readdirSync(path.join(ws.runDir, 'packet-inputs')), ['manifest.json']);
+  });
+}
+
+test('a re-run through a symlinked cwd still reads as the main checkout', (t) => {
+  if (process.platform === 'win32') return t.skip('needs a symlink');
+  const ws = workspace(t);
+  const earlier = writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: OTHER });
+  const before = fs.readFileSync(earlier, 'utf8');
+  const link = path.join(tempDir(t), 'link');
+  fs.symlinkSync(ws.root, link);
+  const { stdout } = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git, cwd: () => link });
+  assert.deepEqual(JSON.parse(stdout), MAIN_RERUN);
+  assert.equal(fs.readFileSync(earlier, 'utf8'), before);
+});
+
+test('an unparseable earlier manifest still blocks a main-checkout overwrite', (t) => {
+  const ws = workspace(t);
+  const earlier = writeText(inputs(ws, 'manifest.json'), '{not json');
+  const { stdout } = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git });
+  assert.deepEqual(JSON.parse(stdout), MAIN_RERUN);
+  assert.equal(fs.readFileSync(earlier, 'utf8'), '{not json');
+});
+
+test('a re-run from a linked worktree nested under the main root still refreshes', (t) => {
+  const ws = workspace(t);
+  writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: OTHER, mergeBase: MB, files: {} });
+  writeJson(verifyReportAt(ws.gitDir), REPORT);
+  const wt = path.join(ws.root, '.claude', 'worktrees', 'x');
+  writeText(path.join(wt, '.git'), 'gitdir: elsewhere\n');
+  const { code, stdout, stderr } = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git, cwd: () => wt });
+  assert.equal(code, 0, stderr);
+  assert.equal(JSON.parse(stdout).head, H);
+  assert.equal(readJson(inputs(ws, 'manifest.json')).head, H);
+  assert.deepEqual(readJson(inputs(ws, 'verify-report.json')), REPORT);
+});
+
 test('a failed git read leaves head and mergeBase null, and still writes the manifest', (t) => {
   const ws = workspace(t);
   const { code, stdout } = snapshot(ws, { git: fakeGit().git });
@@ -558,6 +655,7 @@ test('snapshot gates the newest QA report on a logged selection', (t) => {
   const { git } = fakeGit({ revParse: { HEAD: H }, mergeBase: MB });
   assert.equal(JSON.parse(snapshot(ws, { git }).stdout).files.qaReport, 'absent');
   assert.throws(() => fs.statSync(inputs(ws, 'qa-report.json')));
+  fs.rmSync(inputs(ws, 'manifest.json'));
   writeText(path.join(ws.runDir, 'decisions.md'), '- AUTO 10:00:00 — QA scoped: 2/9.\n');
   assert.equal(JSON.parse(snapshot(ws, { git }).stdout).files.qaReport, 'copied');
   assert.equal(readJson(inputs(ws, 'qa-report.json')).stories[0].id, 'newer');
@@ -726,10 +824,93 @@ test('render round-trip: markdown starts with the marker, --dropped-out carries 
   assert.ok(!raw.includes(secret), 'a screened claim\'s text never reaches --dropped-out');
   const dropped = JSON.parse(raw);
   assert.deepEqual(dropped.screened, [{ section: 'test-guide', key: 'token' }]);
-  assert.equal(dropped.dropped.length, 1);
+  assert.deepEqual(dropped.dropped, [{ section: 'what-changed', reason: 'absent fact' }]);
   assert.equal(dropped.truncated, 0);
   assert.equal(dropped.chars, markdown.length);
   assert.deepEqual(JSON.parse(h.stdout()), { out: ws.file('out.md'), dropped: 1, screened: 1, truncated: 0, chars: markdown.length });
+});
+
+test('--dropped-out holds a section and a fixed reason for every drop, never a claim-supplied value', (t) => {
+  const ws = workspace(t);
+  const secret = 'S3CRET-VALUE';
+  const facts = { ...FACTS, facts: [...FACTS.facts, { id: 'flag:f1', kind: 'flag', status: 'passed', source: 'flags' }] };
+  const claim = (section, refs) => ({ section, text: `claim holding ${secret}`, refs });
+  const argv = renderArgs(ws, {
+    facts,
+    narrative: {
+      schemaVersion: 1,
+      claims: [
+        claim(`section-${secret}`, ['check:tests']),
+        claim('what-changed', []),
+        claim('what-changed', [`change:${secret}`]),
+        claim('what-changed', [`${secret} as a ref`]),
+        claim('what-changed', ['check:tests']),
+        claim('tried-to-break', ['check:tests']),
+        claim('risk-proofs', ['check:tests']),
+        claim('risk-proofs', ['flag:f1']),
+      ],
+    },
+  });
+  const droppedOut = ws.file('dropped.json');
+  const h = harness(ws);
+  assert.equal(run([...argv, '--dropped-out', droppedOut], h.deps), 0, h.stderr());
+  const raw = fs.readFileSync(droppedOut, 'utf8');
+  assert.ok(!raw.includes(secret));
+  assert.deepEqual(JSON.parse(raw).dropped, [
+    { section: 'unknown', reason: 'unknown section' },
+    { section: 'what-changed', reason: 'no refs' },
+    { section: 'what-changed', reason: 'absent fact' },
+    { section: 'what-changed', reason: 'absent fact' },
+    { section: 'what-changed', reason: 'incompatible fact' },
+    { section: 'tried-to-break', reason: 'tried-to-break claim cites no negative or failed fact' },
+    { section: 'risk-proofs', reason: 'risk proof cites no flag' },
+    { section: 'risk-proofs', reason: 'risk proof cites no proof fact' },
+  ]);
+});
+
+const STALE = 'an earlier render';
+
+for (const [name, breakIt] of [
+  ['an unreadable --facts', (ws) => fs.rmSync(ws.file('facts.json'))],
+  ['an unparseable --narrative', (ws) => writeText(ws.file('narrative.json'), '{not json')],
+  ['a schema failure', (ws) => writeJson(ws.file('narrative.json'), { schemaVersion: 2, claims: [] })],
+]) {
+  test(`render failing on ${name} removes an earlier --out and --dropped-out`, (t) => {
+    const ws = workspace(t);
+    const argv = renderArgs(ws);
+    breakIt(ws);
+    const droppedOut = writeText(ws.file('dropped.json'), STALE);
+    writeText(ws.file('out.md'), STALE);
+    const h = harness(ws);
+    assert.equal(run([...argv, '--dropped-out', droppedOut], h.deps), 1);
+    assert.throws(() => fs.statSync(ws.file('out.md')));
+    assert.throws(() => fs.statSync(droppedOut));
+  });
+}
+
+test('render over the cap removes an earlier --out', (t) => {
+  const ws = workspace(t);
+  const plan = writeText(ws.file('plan.txt'), 'x'.repeat(MAX_PACKET_CHARS + 10));
+  writeText(ws.file('out.md'), STALE);
+  const h = harness(ws);
+  assert.equal(run([...renderArgs(ws), '--observation-plan', plan], h.deps), 1);
+  assert.throws(() => fs.statSync(ws.file('out.md')));
+});
+
+test('render whose --dropped-out will not write removes the --out it just wrote', (t) => {
+  const ws = workspace(t);
+  const blocker = writeText(ws.file('blocker'), 'x');
+  const h = harness(ws);
+  assert.equal(run([...renderArgs(ws), '--dropped-out', path.join(blocker, 'dropped.json')], h.deps), 1);
+  assert.throws(() => fs.statSync(ws.file('out.md')));
+});
+
+test('a failed removal of a stale --out is stated, and the exit stays 1', (t) => {
+  const ws = workspace(t);
+  const argv = renderArgs(ws, { narrative: { schemaVersion: 2, claims: [] } });
+  const h = harness(ws, { removeFile: () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); } });
+  assert.equal(run(argv, h.deps), 1);
+  assert.ok(h.stderr().includes(`could not remove ${ws.file('out.md')}`));
 });
 
 test('render forwards --observation-plan', (t) => {
@@ -757,6 +938,7 @@ test('render with a schemaVersion 2 narrative exits 1', (t) => {
   const h = harness(ws);
   assert.equal(run(renderArgs(ws, { narrative: { schemaVersion: 2, claims: [] } }), h.deps), 1);
   assert.match(h.stderr(), /schemaVersion/);
+  assert.ok(!h.stderr().includes('could not remove'), 'no earlier --out to remove is not a failure');
   assert.throws(() => fs.statSync(ws.file('out.md')));
 });
 
@@ -791,10 +973,18 @@ test('render with an unwritable --out exits 1', (t) => {
 
 // ---- post ----
 
-function fakeGh({ comments = [], labels = [], commentThrows = false, prBody = 'pr body' } = {}) {
+const BODY = `${PACKET_MARKER}\n\npacket`;
+
+function fakeGh({ comments = [], labels = [], commentThrows = false, prBody = 'pr body', prEditThrows = false } = {}) {
   const calls = [];
+  const prBodies = [];
   const gh = (args) => {
     calls.push(args);
+    if (args[0] === 'pr' && args[1] === 'edit') {
+      prBodies.push(fs.readFileSync(args[args.indexOf('--body-file') + 1], 'utf8'));
+      if (prEditThrows) throw new Error('pr edit failed');
+      return '';
+    }
     if (args[0] === 'issue' && args[1] === 'view' && args.includes('comments')) return JSON.stringify({ comments });
     if (args[0] === 'issue' && args[1] === 'view' && args.includes('labels')) return JSON.stringify({ labels: labels.map((name) => ({ name })) });
     if (args[0] === 'issue' && args[1] === 'comment') {
@@ -803,15 +993,67 @@ function fakeGh({ comments = [], labels = [], commentThrows = false, prBody = 'p
     }
     if (args[0] === 'issue' && args[1] === 'edit') return '';
     if (args[0] === 'pr' && args[1] === 'view') return JSON.stringify({ body: prBody });
-    if (args[0] === 'pr' && args[1] === 'edit') return '';
     throw new Error(`unexpected gh ${args.join(' ')}`);
   };
-  return { gh, calls };
+  return { gh, calls, prBodies };
 }
+
+for (const [name, text] of [
+  ['no marker', 'packet'],
+  ['the marker on a later line', `intro\n${PACKET_MARKER}\n`],
+  ['text after the marker', `${PACKET_MARKER} trailing\n`],
+]) {
+  test(`post with a body with ${name} exits 2, before any gh probe or call`, (t) => {
+    const ws = workspace(t);
+    const body = writeText(ws.file('body.md'), text);
+    const { gh, calls } = fakeGh({ labels: ['demo:pending'] });
+    let probed = false;
+    const h = harness(ws, { gh, ghAvailable: () => { probed = true; return true; } });
+    assert.equal(run(['post', '--record', '7', '--body-file', body, '--label', 'demo:pending'], h.deps), 2);
+    assert.match(h.stderr(), /--body-file/);
+    assert.deepEqual(calls, []);
+    assert.equal(probed, false);
+  });
+}
+
+test('post accepts a CRLF marker line', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), `${PACKET_MARKER}\r\n\r\npacket`);
+  const { gh } = fakeGh();
+  const h = harness(ws, { gh });
+  assert.equal(run(['post', '--record', '7', '--body-file', body], h.deps), 0, h.stderr());
+});
+
+test('post deletes the --pr temp file when the pull request edit fails too', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const tmp = ws.file('pr-body.md');
+  const { gh, prBodies } = fakeGh({ prEditThrows: true });
+  const h = harness(ws, { gh, tmpPath: () => tmp });
+  assert.equal(run(['post', '--record', '7', '--body-file', body, '--pr', '9'], h.deps), 0, h.stderr());
+  assert.equal(JSON.parse(h.stdout()).prLink.ok, false);
+  assert.equal(prBodies.length, 1);
+  assert.throws(() => fs.statSync(tmp));
+});
+
+test('post deletes the --pr temp file when the comment post fails, and states a failed delete', (t) => {
+  const ws = workspace(t);
+  const body = writeText(ws.file('body.md'), BODY);
+  const removed = [];
+  const { gh } = fakeGh({ commentThrows: true });
+  const h = harness(ws, {
+    gh,
+    tmpPath: () => ws.file('pr-body.md'),
+    removeFile: (p) => { removed.push(p); throw Object.assign(new Error('denied'), { code: 'EACCES' }); },
+  });
+  assert.equal(run(['post', '--record', '7', '--body-file', body, '--pr', '9'], h.deps), 1);
+  assert.deepEqual(removed, [ws.file('pr-body.md')]);
+  assert.ok(h.stderr().includes(`could not remove ${ws.file('pr-body.md')}`));
+});
 
 test('post with gh absent exits 4 and names the MCP path', (t) => {
   const ws = workspace(t);
-  const body = writeText(ws.file('body.md'), 'packet');
+  const body = writeText(ws.file('body.md'), BODY);
   const h = harness(ws, { ghAvailable: () => false });
   assert.equal(run(['post', '--record', '7', '--body-file', body], h.deps), 4);
   assert.match(h.stderr(), /gh absent — follow _shared\/acceptance-packet\.md's MCP path/);
@@ -842,7 +1084,7 @@ test('post with an unreadable body file exits 1 with no gh call, gh present or a
 
 test('post whose comment post throws exits 1, adds no label, and reports the stale state', (t) => {
   const ws = workspace(t);
-  const body = writeText(ws.file('body.md'), 'packet');
+  const body = writeText(ws.file('body.md'), BODY);
   const { gh, calls } = fakeGh({ commentThrows: true, labels: ['demo:pending'] });
   const h = harness(ws, { gh });
   assert.equal(run(['post', '--record', '7', '--body-file', body, '--label', 'demo:pending'], h.deps), 1);
@@ -856,9 +1098,9 @@ test('post whose comment post throws exits 1, adds no label, and reports the sta
 
 test('post that lands exits 0, labels, and links the pull request through the tmp file', (t) => {
   const ws = workspace(t);
-  const body = writeText(ws.file('body.md'), 'packet');
+  const body = writeText(ws.file('body.md'), BODY);
   const tmp = ws.file('pr-body.md');
-  const { gh, calls } = fakeGh();
+  const { gh, calls, prBodies } = fakeGh();
   const names = [];
   const h = harness(ws, { gh, tmpPath: (name) => { names.push(name); return tmp; } });
   assert.equal(run(['post', '--record', '7', '--body-file', body, '--label', 'demo:pending', '--pr', '9'], h.deps), 0, h.stderr());
@@ -868,22 +1110,24 @@ test('post that lands exits 0, labels, and links the pull request through the tm
   assert.deepEqual(result.prLink, { ok: true, action: 'appended' });
   assert.ok(calls.some((c) => c.includes('--add-label') && c.includes('demo:pending')));
   assert.ok(calls.some((c) => c[0] === 'issue' && c[1] === 'comment' && c.includes(body)));
-  assert.match(fs.readFileSync(tmp, 'utf8'), /Acceptance packet: https:\/\/github\.com\/o\/r\/issues\/7#issuecomment-1/);
+  assert.match(prBodies[0], /Acceptance packet: https:\/\/github\.com\/o\/r\/issues\/7#issuecomment-1/);
   assert.equal(names.length, 1);
+  assert.throws(() => fs.statSync(tmp), 'the temp file is gone after the call');
 });
 
 test('post with no --pr asks for no tmp path', (t) => {
   const ws = workspace(t);
-  const body = writeText(ws.file('body.md'), 'packet');
+  const body = writeText(ws.file('body.md'), BODY);
   const { gh } = fakeGh();
   const h = harness(ws, { gh, tmpPath: () => { throw new Error('asked'); } });
   assert.equal(run(['post', '--record', '7', '--body-file', body], h.deps), 0, h.stderr());
+  assert.equal(h.stderr(), '', 'with no temp file there is nothing to remove');
 });
 
 for (const [repo, host] of [['o/r', 'github.com'], ['ghe.example/o/r', 'ghe.example']]) {
   test(`post pins and forwards --repo ${repo}`, (t) => {
     const ws = workspace(t);
-    const body = writeText(ws.file('body.md'), 'packet');
+    const body = writeText(ws.file('body.md'), BODY);
     const { gh, calls } = fakeGh();
     const pinned = [];
     const h = harness(ws, { gh, pinGhHost: (spec) => pinned.push(spec) });
@@ -898,7 +1142,7 @@ for (const [repo, host] of [['o/r', 'github.com'], ['ghe.example/o/r', 'ghe.exam
 
 test('post with no --repo pins nothing', (t) => {
   const ws = workspace(t);
-  const body = writeText(ws.file('body.md'), 'packet');
+  const body = writeText(ws.file('body.md'), BODY);
   const { gh } = fakeGh();
   let pinned = false;
   const h = harness(ws, { gh, pinGhHost: () => { pinned = true; } });
@@ -1015,5 +1259,8 @@ test('real subprocess: snapshot then gather over a real repo', (t) => {
   const skipped = cli('snapshot', '--run', runDir, '--base', head);
   assert.equal(skipped.status, 0, skipped.stderr);
   assert.deepEqual(JSON.parse(skipped.stdout), { skipped: 'no commits ahead of base' });
+  const rerun = cli('snapshot', '--run', runDir, '--base', mergeBase);
+  assert.equal(rerun.status, 0, rerun.stderr);
+  assert.deepEqual(JSON.parse(rerun.stdout), MAIN_RERUN);
   assert.equal(readJson(path.join(runDir, 'packet-inputs', 'manifest.json')).head, head);
 });
