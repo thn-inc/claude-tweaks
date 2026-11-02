@@ -271,9 +271,10 @@ for (const shell of ['bash', 'zsh']) {
 
 // ---- item 4: the merged/closed branch cross-check ----------------------------------------------------
 
-// The fence writes each PR list to a file and prints only the remnants, so up to `{resolved-limit}` rows per
-// state never reach a Bash result; a list that reached the limit gets the `[pr]` cap row, printed by the block
-// itself (the cross-check yields no count, so neither the WARNING nor the floor clause of the Fetch limit rule fires).
+// The fences write each PR list and the local branch list to files and the join block prints only the remnants, so
+// up to `{resolved-limit}` rows per state never reach a Bash result; a list that reached the limit gets the `[pr]`
+// cap row, printed by the block itself (the cross-check yields no count, so neither the WARNING nor the floor clause
+// of the Fetch limit rule fires). The item is four fences: two `gh` fetches, the branch listing, and the join block.
 const ITEM4_LABEL = '4. **Merged/closed PRs with local remnants**';
 const prRows = (n) => Array.from({ length: n }, (_, i) => ({ number: i + 1, headRefName: `branch-${i + 1}` }));
 const capRow = (state, n) => `[pr] ${state} PR list: ${n} rows (the cap) — older ${state} branches unchecked — raise backlog-fetch-limit to check them`;
@@ -294,10 +295,18 @@ function repoWithBranches(names) {
 
 for (const shell of ['bash', 'zsh']) {
   test(`item 4 prints only the local remnants and a cap row for each state whose list reached the limit (${shell})`, shellTestOptions(shell), () => {
-    const fence = fenceAfter(REPO_WIDE, ITEM4_LABEL);
+    const fence = fenceAfter(REPO_WIDE, ITEM4_LABEL, 3);
+    const fetches = [0, 1, 2].map((n) => fenceAfter(REPO_WIDE, ITEM4_LABEL, n)).join('\n');
     const repo = repoWithBranches(['branch-2', 'branch-4', 'unrelated']);
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pr-scan-item4-'));
     try {
-      const run = (limit, rows, text = fence) => runFence(text.replaceAll('{REPO_ROOT}', forwardSlashes(repo)), { limit, ghRows: prRows(rows), shell });
+      // The three session-tmp paths the prose has the agent substitute as literals.
+      const withPaths = (text) => text
+        .replaceAll('{merged-path}', forwardSlashes(path.join(tmp, 'merged.json')))
+        .replaceAll('{closed-path}', forwardSlashes(path.join(tmp, 'closed.json')))
+        .replaceAll('{branches-path}', forwardSlashes(path.join(tmp, 'branches.txt')))
+        .replaceAll('{REPO_ROOT}', forwardSlashes(repo));
+      const run = (limit, rows, text = fence) => runFence(withPaths(`${fetches}\n${text}`), { limit, ghRows: prRows(rows), shell });
       const remnants = ['merged PR #2 branch-2', 'merged PR #4 branch-4', 'closed PR #2 branch-2', 'closed PR #4 branch-4'];
       // A limit above the list: the remnants of both states, no cap row.
       const whole = run(1000, 5);
@@ -326,6 +335,7 @@ for (const shell of ['bash', 'zsh']) {
       assert.ok(!run(5, 5, strict).stdout.includes('(the cap)'));
     } finally {
       fs.rmSync(repo, { recursive: true, force: true });
+      fs.rmSync(tmp, { recursive: true, force: true });
     }
   });
 }
