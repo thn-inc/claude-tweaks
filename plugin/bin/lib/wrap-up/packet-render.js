@@ -303,24 +303,24 @@ function dropLastItem(section) {
   section.chars = bodyChars(body);
 }
 
+// Works on a copy: when notes alone exceed the cap no drop can meet it, and the CLI
+// refuses to post that result, so the caller keeps the document as it was.
 function truncate(doc) {
-  const sections = doc.sections.map((section) => {
-    section.chars = bodyChars(section.body);
-    return section;
-  });
+  const sections = doc.sections.map(({ heading, body }) => ({ heading, body: [...body], chars: bodyChars(body) }));
+  const trial = { ...doc, sections };
   const noteChars = (n) => truncatedLines(n).reduce((sum, line) => sum + line.length + 1, 0);
-  let size = compose(doc, 0).length;
+  let size = compose(trial, 0).length;
   let omitted = 0;
   while (size + noteChars(omitted) > MAX_PACKET_CHARS) {
     const candidates = sections.filter(({ body }) => body.some(({ droppable }) => droppable));
-    if (candidates.length === 0) break;
+    if (candidates.length === 0) return { doc, omitted: 0 };
     const longest = candidates.reduce((a, b) => (b.chars > a.chars ? b : a));
     const before = longest.chars;
     dropLastItem(longest);
     size += longest.chars - before;
     omitted += 1;
   }
-  return omitted;
+  return { doc: trial, omitted };
 }
 
 function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
@@ -367,8 +367,7 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
     bottom.push('', '---', `_Posted by ${inline(poster)}. Resolve with \`/claude-tweaks:demo\`._`);
   }
 
-  const doc = { top, sections, bottom };
-  const truncated = truncate(doc);
+  const { doc, omitted: truncated } = truncate({ top, sections, bottom });
   const markdown = compose(doc, truncated);
   return { markdown, dropped, screened, truncated, chars: markdown.length };
 }

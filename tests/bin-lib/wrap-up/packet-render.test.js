@@ -899,9 +899,24 @@ test('the refused-links line is a note: a long reason never removes it', () => {
     [claim('what-changed', 'One', ['change:a'])],
     { extra: { refused: [{ id: 'link:a', reason }] } },
   );
-  assert.equal(truncated, 1);
+  assert.equal(truncated, 0, 'dropping the claim could not meet the cap, so it stays');
+  assert.deepEqual(sectionLines(markdown, 'What changed'), ['- One (`change:a`)']);
   assert.ok(sectionLines(markdown, 'Test guide').includes(`- 1 link(s) refused: link:a (${reason})`));
   assert.ok(chars > 60000);
+});
+
+test('when notes alone exceed the cap no item is dropped, and when a drop can meet it one is', () => {
+  const rows = Array.from({ length: 100 }, (_, n) => fact(`check:c${n}`, 'skipped', { reason: 'r' }));
+  const over = render(rows, [], { extra: { partial: ['x'.repeat(61000)] } });
+  assert.equal(over.truncated, 0);
+  assert.equal(rowsIn(over.markdown, "Couldn't test").length, 100, 'every row stays');
+  assert.ok(!over.markdown.includes('truncated:'));
+  assert.ok(!over.markdown.includes('all items omitted'));
+  assert.ok(over.chars > 60000);
+  const under = render(rows, [], { extra: { partial: ['x'.repeat(59000)] } });
+  assert.ok(under.truncated > 0 && under.truncated < 100);
+  assert.ok(under.chars <= 60000, `chars ${under.chars}`);
+  assert.ok(under.markdown.includes(`truncated: ${under.truncated} items omitted`));
 });
 
 test('plan lines shaped like list items are never dropped', () => {
@@ -919,14 +934,15 @@ test('decision rows are items truncation may drop', () => {
   assert.ok(chars <= 60000);
 });
 
-test('a plan longer than the cap loses no line, and the items still go first', () => {
+test('a plan longer than the cap loses no line, and with no way to meet the cap the items stay too', () => {
   const plan = Array.from({ length: 3000 }, (_, n) => `- step ${n} ${'p'.repeat(40)}`).join('\n');
   const { markdown, truncated } = render(
     [fact('change:a', 'passed')],
     [claim('what-changed', 'One', ['change:a'])],
     { options: { observationPlan: plan } },
   );
-  assert.equal(truncated, 1);
+  assert.equal(truncated, 0);
+  assert.deepEqual(sectionLines(markdown, 'What changed'), ['- One (`change:a`)']);
   assert.equal(sectionLines(markdown, 'Observation plan').length, 3000);
 });
 
