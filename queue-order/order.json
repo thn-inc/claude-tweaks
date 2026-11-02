@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T23:14:51.916Z",
+  "computedAt": "2026-11-02T23:26:42.944Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -600,7 +600,7 @@
       },
       {
         "number": 4344,
-        "updatedAt": "2026-10-31T09:58:05Z",
+        "updatedAt": "2026-11-02T23:26:01Z",
         "state": "OPEN"
       },
       {
@@ -7103,7 +7103,7 @@
         "number": 4344,
         "state": "OPEN",
         "title": "Extract the PR-stamp release rule so the push gate and phase-exit.js call one predicate",
-        "updatedAt": "2026-10-31T09:58:05Z",
+        "updatedAt": "2026-11-02T23:26:01Z",
         "facets": {
           "origin": "capture",
           "risk": "medium",
