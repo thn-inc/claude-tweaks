@@ -5,7 +5,7 @@
 // Pure: no git, gh or fs.
 'use strict';
 
-const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS } = require('./packet-contract');
+const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
 const { checkLink, findCredentialInText } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
 
@@ -26,7 +26,6 @@ const AUTOLINK_TOKEN_RE = new RegExp([
   `${NOT_AFTER_WORD}#\\d+${NOT_BEFORE_WORD}`,
 ].join('|'), 'gi');
 const CHECKS_PASSED_LABEL = 'Checks that passed:';
-const COMMANDS_ONLY_SURFACES = Object.freeze(['infra', 'backend']);
 const ROW_KINDS = Object.freeze(['check', 'story']);
 
 // A whitespace run holding a line break becomes one space. Matching the run first

@@ -45,6 +45,9 @@ const SECTIONS = Object.freeze([
 
 const MAX_PACKET_CHARS = 60000;
 
+// `Surface:` values whose Test guide lists commands and renders no links.
+const COMMANDS_ONLY_SURFACES = Object.freeze(['infra', 'backend']);
+
 const CREDENTIAL_KEYS = Object.freeze([
   'token', 'access_token', 'password', 'passwd', 'secret', 'session', 'sessionid',
   'jwt', 'auth', 'key', 'api_key', 'sig', 'signature', 'x-amz-signature',
@@ -86,6 +89,7 @@ module.exports = Object.freeze({
   SECTION_KINDS,
   SECTIONS,
   MAX_PACKET_CHARS,
+  COMMANDS_ONLY_SURFACES,
   CREDENTIAL_KEYS,
   FACT_ID_RE,
   encodeFactKey,
