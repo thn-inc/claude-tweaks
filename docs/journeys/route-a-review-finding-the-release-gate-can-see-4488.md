@@ -27,10 +27,10 @@ files:
 
 ### 2. Run the cited command — `review-routing-line.js`
 - **URL:** `node "${CLAUDE_PLUGIN_ROOT}/bin/review-routing-line.js" --run "$PIPELINE_RUN_DIR" --route staged --severity high --category 'security' --at 'app/routes/posts.$postId.tsx:12' --stage-path staged/review-3.patch`
-- **Action:** The agent fills the placeholders and runs the command, single-quoting `--category` and `--at` (a `'` inside a value is written `'\''`). The CLI composes the text and appends it under `## /review` with step `Step 3 Routing`, echoing the line.
+- **Action:** The agent fills the placeholders and runs the command, single-quoting `--category`, `--at` and, on a stacked-check outcome, `--stack-stderr` (a `'` inside a value is written `'\''`). The CLI composes the text and appends it under `## /review` with step `Step 3 Routing`, echoing the line.
 - **Should feel:** Like filling a form. Severity case (`High`) doesn't matter, and the token order is not the agent's job.
 - **Should understand:** Exit 2 means the call was refused and nothing was written: a route/severity pairing the table never produces, a flag that doesn't belong to the route (`--commit` on staged), a non-hex `--commit`, a malformed `--stage-path`, or a `--category`/`--at`/`--lever` that carries a line break or `severity finding` / `critical finding`. Exit 3 means the run dir is missing or not anchored under the main checkout. `tests/review-routing-line-prose-conformance.test.js` runs the command each `Log:` bullet and the record-proposal paragraph cite, and fails if `step3-routing.md` regains a hand-typed `Step 3 Routing` template. A bullet that drifts from the CLI fails CI.
-- **Red flags:** The `$postId` segment vanishes from the logged path (the value was double-quoted), or a hand-typed `{severity}-severity {category} finding` reaches `decisions.md`.
+- **Red flags:** The `$postId` segment vanishes from the logged path (the value was double-quoted), a `'` in raw git stderr closes the `--stack-stderr` quote and the rest runs as shell, or a hand-typed `{severity}-severity {category} finding` reaches `decisions.md`.
 
 ### 3. No patch to stage — a record proposal (`staged/review-followup-{n}.md`)
 - **URL:** `plugin/skills/review/step3-routing.md`'s "Staging a record proposal" paragraph
@@ -70,4 +70,5 @@ files:
 - Created during build of #4488 (review routing line composer + `--step` prefix refusal)
 - Steps 1-2 and 4-5 built in #4488; steps 3 and 6 added in the build of #4484 (the `review-followup-{n}.md` staging name, its roster row, and the auto-mode materiality floor)
 - Updated during the wrap-up of #4772: step 3 notes the spec-qualified Resolution path in a multi-spec run, and that a refused record proposal reopens its ledger row.
+- Updated during the build of #4637: step 2 names `--stack-stderr` in the quoting rule.
 - Related: #4481 (the run whose hand-typed lines carried the doubled prefix and the mis-ordered token), #3792 (git/user text never double-quoted)
