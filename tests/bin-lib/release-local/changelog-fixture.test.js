@@ -52,12 +52,12 @@ test('15.0.0: a breaking feat and a breaking hidden-type refactor render notes i
   assert.strictEqual(out, stripPrLinks(read('release-please-15.0.0.md')));
 });
 
-test('renderSection: a releaseNote + a breaking commit renders Highlights after BREAKING CHANGES and before the first type-grouped section', () => {
+test('renderSection: a releaseNotes entry + a breaking commit renders Highlights after BREAKING CHANGES and before the first type-grouped section', () => {
   const out = renderSection({
     version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
     commits: [
-      commit('feat', null, 'drop node 16', 's'.repeat(40), { breaking: true, breakingNote: 'drop node 16', releaseNote: 'Dropped support for Node 16.' }),
-      commit('fix', null, 'bump x', 't'.repeat(40), { releaseNote: 'Fixed a bug with x.' }),
+      commit('feat', null, 'drop node 16', 's'.repeat(40), { breaking: true, breakingNote: 'drop node 16', releaseNotes: ['Dropped support for Node 16.'] }),
+      commit('fix', null, 'bump x', 't'.repeat(40), { releaseNotes: ['Fixed a bug with x.'] }),
     ],
   });
   const iBreaking = out.indexOf('### ⚠ BREAKING CHANGES');
@@ -70,10 +70,10 @@ test('renderSection: a releaseNote + a breaking commit renders Highlights after 
   assert.ok(out.includes('* Fixed a bug with x.'), out);
 });
 
-test('renderSection: a releaseNote with no breaking commit renders Highlights first', () => {
+test('renderSection: a releaseNotes entry with no breaking commit renders Highlights first', () => {
   const out = renderSection({
     version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
-    commits: [commit('fix', null, 'bump x', 'u'.repeat(40), { releaseNote: 'Fixed a bug with x.' })],
+    commits: [commit('fix', null, 'bump x', 'u'.repeat(40), { releaseNotes: ['Fixed a bug with x.'] })],
   });
   assert.strictEqual(out.indexOf('### ⚠ BREAKING CHANGES'), -1, out);
   const iHighlights = out.indexOf('### Highlights');
@@ -82,7 +82,7 @@ test('renderSection: a releaseNote with no breaking commit renders Highlights fi
   assert.ok(iHighlights < iFixes, out);
 });
 
-test('renderSection: zero releaseNote values renders no Highlights block at all', () => {
+test('renderSection: zero releaseNotes values renders no Highlights block at all', () => {
   const out = renderSection({
     version: '1.2.0', previousTag: 'v1.1.0', date: '2026-09-18', repo,
     commits: [commit('fix', null, 'bump x', 'v'.repeat(40))],
