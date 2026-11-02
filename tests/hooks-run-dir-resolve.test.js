@@ -466,6 +466,9 @@ test('AC1.1 #4807: --standalone with a name already ending in -standalone is not
   // `standalone-x` has no leading dash, so it does not exercise the mid-name case).
   const midDash = resolve({ cwd: gitRepo(), env: {}, standalone: 'backlog-standalone-x', create: true, now });
   assert.strictEqual(path.basename(midDash.path), '2026-03-04T050607-backlog-standalone-x-standalone');
+  // The bare word `standalone` has no leading dash, so it is suffixed (`endsWith('standalone')` would not).
+  const bare = resolve({ cwd: gitRepo(), env: {}, standalone: 'standalone', create: true, now });
+  assert.strictEqual(path.basename(bare.path), '2026-03-04T050607-standalone-standalone');
 });
 
 // #848: record #764's run dir was minted as `20260817T173343-spec-764` — no
