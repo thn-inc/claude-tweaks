@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T13:25:37.196Z",
+  "computedAt": "2026-11-02T14:17:23.163Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -180,7 +180,7 @@
       },
       {
         "number": 4634,
-        "updatedAt": "2026-10-31T13:08:50Z",
+        "updatedAt": "2026-11-02T14:16:37Z",
         "state": "OPEN"
       },
       {
@@ -231,11 +231,6 @@
       {
         "number": 4612,
         "updatedAt": "2026-10-30T16:08:46Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 4611,
-        "updatedAt": "2026-11-02T06:12:17Z",
         "state": "OPEN"
       },
       {
@@ -814,11 +809,6 @@
         "state": "OPEN"
       },
       {
-        "number": 4164,
-        "updatedAt": "2026-10-26T14:34:20Z",
-        "state": "OPEN"
-      },
-      {
         "number": 4163,
         "updatedAt": "2026-10-30T06:35:06Z",
         "state": "OPEN"
@@ -866,11 +856,6 @@
       {
         "number": 3986,
         "updatedAt": "2026-10-23T22:43:34Z",
-        "state": "OPEN"
-      },
-      {
-        "number": 3982,
-        "updatedAt": "2026-10-24T05:40:09Z",
         "state": "OPEN"
       },
       {
@@ -2387,90 +2372,6 @@
     ],
     [
       {
-        "body": "Origin: /claude-tweaks:specify #4552 brainstorm\n\nDefer-reason: tangential\n\nSurface: backend\n\n**Related:** #4552, #4108, #2251, #2580, #2581, #2582, #4199\n\n## Current State\n\nA bundled merge lists every record in its `Fixes` footer, but its subject carries one `(#N)` suffix: the lowest record's (`plugin/bin/lib/release/subject.js`). Three release surfaces read only that one record.\n\n- **Records shipped:** `plugin/skills/release/console.md:20` builds the row from \"One line per `(#N)` suffix\", and `plugin/bin/lib/release-preflight/pack.js:323` passes each commit's `subject` with no body. That row says a record silently absent \"would under-report what the release contains\".\n- **Bookkeeping:** `plugin/skills/release/bookkeeping.md:19` builds the shipped set from the same suffix, so Step 7's `Shipped in v{version}` comment skips the other bundled records. They still close through their `Fixes` lines at merge.\n- **Release notes:** `plugin/bin/lib/compose-subject.js:336` renders only the lowest record's Release Note, and `RELEASE_NOTE_FOOTER_RE` in `plugin/bin/lib/release-notes.js:16` reads one `Release-Note:` line per commit. The composer still requires a note from every bundled record.\n\n**Measured on `main` (2026-10-30):**\n\n- 72 of the 620 composed merges in the last 1,500 commits were bundles.\n- Across eight released bundles, seven suffix records got a `Shipped in v` comment (7 of 7) and the other bundled records got none (0 of 18). The eighth bundle had no suffix match.\n- 13 non-suffix records sampled from v6.156.2, v6.153.0 and v6.152.0: all 10 with a real note were missing from the Release, for example #4421 and #4041. The other 3 say \"No user-visible change\". Their numbers do appear, on the suffix commit's `closes` line, with no note text.\n- In v6.156.2, 4 of the 6 Highlights bullets say \"No user-visible change\".\n\n**Why the rule exists:** \"never aggregated\" is not a design principle. #2580 lists rendering every bundled note as a non-goal, calls it \"an accepted scope limitation\", and names multiple `Release-Note:` lines per commit as the way to solve it. #2581 repeats it as a known limitation.\n\n**A related defect, from reading the code:** a merge composed with `--keep-open` on its lowest record has a `Refs` line but its suffix still names that record, so Step 7 books it and closes it, against #4199's intent. No release has been checked for a live case. This record's shipped-set rule fixes it.\n\n**Decisions (human-approved 2026-10-30):**\n\n- **Shipped set:** a commit with any `Fixes` or `Refs` line ships its `Fixes` numbers. A commit with neither keeps the `(#N)` suffix rule. A `Refs` record is not booked, because Step 7 closes what it books.\n- **Notes:** one `Release-Note:` line per record, including a kept-open record, whose code did ship. Not an agent-written bundle note: #2580 says a note is written once, at spec time, by whoever holds the record's context, and makes release-time rewording a non-goal.\n- **Filtering belongs in the renderer**, not the composer, so it also clears the noise from single-record merges and the commit keeps every note.\n- **No backfill.** Old records would get comments long after the fact, and old Releases would change without anyone expecting it.\n\n## Deliverables\n\n1. `plugin/bin/lib/compose-subject.js` passes every record's Release Note to `composeSubject`, lowest number first, and `plugin/bin/lib/release/subject.js` writes one `Release-Note:` line per note. A single-record merge composes a byte-identical title and body to today. Update both header comments, which state the old rule.\n2. `plugin/bin/lib/release-notes.js` gains one shared extractor that returns every `Release-Note:` line in a commit body, trimmed and in order. `plugin/bin/lib/release-local/commits.js` and `plugin/bin/lib/release-notes-publish.js` both use it, so neither restates the pattern. Parsed commits carry all the notes.\n3. `renderReleaseNotes` renders every note and drops, case-insensitively, any note starting with `No user-visible change`. It also removes exact duplicates within the release, and still returns `null` when nothing is left.\n4. `plugin/bin/lib/release-local/commits.js`'s `parseCommit` reads the `Fixes #N` and `Refs #N` lines (whole-line matches) into two number lists, and `plugin/bin/lib/release-preflight/pack.js`'s `unreleased` probe passes both through on each commit.\n5. `plugin/skills/release/console.md`'s Records shipped row and `plugin/skills/release/bookkeeping.md`'s shipped set use the Decisions' shipped-set rule. Numbers are still deduplicated across commits, and a number whose payload is a pull request is still dropped. `Refs` numbers that nothing else ships render on one nested `Kept open (not booked)` console line.\n6. Update `docs/releasing.md` and `docs/journeys/merge-a-record-with-a-conventional-subject-2251.md` wherever they state one note per merge.\n\n## Acceptance Criteria\n\n1. `compose-subject.js 10,11,12` on a fixture bundle produces a body with three `Release-Note:` lines in number order, then the `Fixes` lines. With `--keep-open 11`, it still has three notes, and #11's footer line is `Refs #11`.\n2. `compose-subject.js 10` output equals today's for the same fixture, compared byte for byte in a test.\n3. A bundle where any record has an empty `## Release Note` section still fails with the existing message.\n4. The shared extractor returns every note from a three-note body and `[]` from a body with none. `parseCommit` and `parseReleaseNotesFromLog` both return all three for the same body.\n5. `renderReleaseNotes` drops `No user-visible change.` and `No user-visible change: fixes Windows-only test failures.`, keeps a note that only mentions that phrase later in its text, collapses an exact duplicate to one bullet, and returns `null` when every note was dropped.\n6. Given a fixture range with a three-record bundle, `release-notes-publish.js`'s run applies a Highlights block holding all three notes to both the Release body and the CHANGELOG entry. With only `No user-visible change` notes in range, it is a no-op on both targets.\n7. The `unreleased` probe returns `fixes` and `refs` for each commit: `[10, 12]` and `[11]` for a bundle with #11 kept open, and two empty lists for a commit with neither line.\n8. Prose tests pin the shipped-set rule in `console.md` and `bookkeeping.md`, including the three cases: a bundle books every `Fixes` number, a `Refs`-only commit books nothing even when its suffix names that record, and a commit with neither line books its suffix.\n9. Revert the composer change, the extractor change, the renderer filter and the `fixes`/`refs` read in turn, and show which new test fails for each.\n10. `npm test` passes.\n\n## Release Note\n\nA release now lists every record in a bundled merge, carries each one's own release note, and leaves out notes that say there is no user-visible change.\n\n## Technical Approach\n\nThe composer change is small because every note is already validated at `compose-subject.js:330`: replace the one-note read with a per-record read. Have the new lines replace the single push at `subject.js:108`, keeping the existing paragraph order so `Release-Note:` still comes before the footers. Look at `parseFixesSpan` in `plugin/bin/lib/flow/closing-links.js` before writing the `Fixes`/`Refs` read; reuse it if it fits a commit body.\n\n### Key Files\n\n- `plugin/bin/lib/compose-subject.js` — one note per record\n- `plugin/bin/lib/release/subject.js` — one line per note\n- `plugin/bin/lib/release-notes.js` — shared extractor and renderer filter\n- `plugin/bin/lib/release-notes-publish.js` — reads through the extractor\n- `plugin/bin/lib/release-local/commits.js` — all notes, plus `Fixes`/`Refs`\n- `plugin/bin/lib/release-preflight/pack.js` — `fixes` and `refs` on each commit\n- `plugin/skills/release/console.md` — Records shipped row\n- `plugin/skills/release/bookkeeping.md` — shipped set\n- `docs/releasing.md` — release note wording\n- `docs/journeys/merge-a-record-with-a-conventional-subject-2251.md` — bundle wording\n- `tests/bin-lib/compose-subject.test.js`, `tests/bin-lib/release/subject.test.js`, `tests/bin-lib/release-notes.test.js`, `tests/bin-lib/release-notes-publish.test.js`, `tests/bin-lib/release-local/commits.test.js` — the cases above\n- `tests/merge-subject-composer-conformance.test.js` — existing pins\n\n## Gotchas\n\n- `tests/bin-lib/compose-subject.test.js` pins a non-subject note as validated but not rendered (#2580's AC 3). That pin flips here on purpose.\n- An older installed build reads only the first `Release-Note:` line and the suffix, so a new-format commit reads as it does today. Nothing breaks during rollout.\n- #4552 edits the same composer and `subject.js` title logic. The two touch different paragraphs, but whichever merges second must re-run the composer tests against the other.\n- release-please lists the `closes` numbers by parsing the commit body. Never test this with a live release (#2582). Keep the `Fixes` lines in their own paragraph, then confirm on the first real release that a bundle's `closes` numbers still appear.\n- A `release: published` re-fire for a release published before this ships renders a different block, so the idempotency check would not match and a second Highlights block could be added. Only the newest release is ever walked, so this window closes with the next release.\n- The filter depends on how authors phrase a note, so a differently worded \"internal only\" note still shows. That is no worse than today.\n- A `Refs` record shipping in two merges would otherwise show its note twice, which is why the renderer removes duplicates.\n\n## Original request\n\n> Origin: /claude-tweaks:specify #4552 brainstorm\n>\n> Defer-reason: tangential\n>\n> **Related:** #4552, #2251, #2581\n>\n> ## Current State\n>\n> A bundled merge lists every record in its `Fixes` footer, but its subject carries one `(#N)` suffix: the lowest record's (`plugin/bin/lib/release/subject.js`). Three release surfaces read only that one record. This comes from reading the prose and code; no release has been checked for it.\n>\n> - **Records shipped:** `plugin/skills/release/console.md:20` builds the row from \"One line per `(#N)` suffix\", and `plugin/bin/lib/release-preflight/pack.js:323` passes each commit's `subject` with no body. That row says a record silently absent \"would under-report what the release contains\".\n> - **Bookkeeping:** `plugin/skills/release/bookkeeping.md:19` builds the shipped set from the same suffix, so Step 7's `Shipped in v{version}` comment skips the other bundled records. They still close through their `Fixes` lines at merge.\n> - **Release notes:** `plugin/bin/lib/compose-subject.js` renders only the lowest record's Release Note, deliberately (\"never aggregated across a bundle\"), and `plugin/bin/lib/release-notes.js` reads one `Release-Note:` line per commit. So the other records' notes do not reach the changelog, although the composer requires each to have one.\n>\n> ## Deliverables\n>\n> - [ ] Decide how the release reads a bundle's records, and how a bundle's release notes reach the changelog.\n> - [ ] Implement that in the release pack, `console.md`, `bookkeeping.md`, and the composer or notes renderer, with a test per surface.\n>\n> ## Open Question\n>\n> For the record list: read the `Fixes`/`Refs` footer lines from each commit's body, or carry every number some other way? `Refs` is a kept-open record, so does it count as shipped?\n>\n> For the notes: compose one `Release-Note:` line per record (the renderer reads only the first today), join them into one line, or have the agent write one note for the bundle? This overturns the composer's stated \"never aggregated\" rule, so check why it was written first.\n>\n> ## Release Note\n>\n> A release that includes a bundled merge lists every record in it.\n>\n> ## Technical Approach\n>\n> ### Key Files\n>\n> - `plugin/bin/lib/release-preflight/pack.js` — the commit fields the console and bookkeeping read\n> - `plugin/skills/release/console.md` — the Records shipped row\n> - `plugin/skills/release/bookkeeping.md` — the shipped set\n> - `plugin/bin/lib/compose-subject.js` — the bundle's Release Note\n> - `plugin/bin/lib/release-notes.js` — the footer read\n>\n> _Filed by `capture` via specShapedBody._\n\n## Plan Review Decisions\n\nAnswers to the plan-review question posted on 2026-10-31 (build Common Step 1.6), decided by the maintainer:\n\n- **Where a `Refs`-only commit appears on the release console: Reading A.** A commit carrying only `Refs` lines is accounted for by its `Refs` number: on the `Kept open (not booked)` line, or under the record another commit's `Fixes` line books. It is never listed under `Unattributed commits`, which keeps only commits with neither a `Fixes`/`Refs` line nor a `(#N)` suffix. Narrow `plugin/skills/release/bookkeeping.md`'s sentence to say so.\n",
-        "createdAt": "2026-10-30T13:38:20Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          }
-        ],
-        "number": 4634,
-        "state": "OPEN",
-        "title": "A bundled merge under-reports in a release: only its lowest record is booked and noted",
-        "updatedAt": "2026-10-31T13:08:50Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n## Overview\n\n**Risk flags at intent time.** Invisible risk — things clicking around in dev cannot reveal — is controlled when the work is shaped, never discovered at merge time. During `/claude-tweaks:specify` the work is classified against a fixed set of **invisible-risk categories**:\n\n- data migrations / schema changes\n- auth, permissions, access control\n- public contracts other consumers depend on (APIs, file formats, hook payloads, labels)\n- irreversible side effects (deletions, outbound sends, payments)\n\nThe project may extend the list in policy (`risk-categories`). Each detected flag is **recorded on the work record** so every downstream step can read it. A **kept** flag means (1) the acceptance target is forced to `local` (the human's verdict precedes merge) and (2) the plan **must contain a specific proof** for the risk (for example a migration rehearsed against a data copy; a test that an unauthenticated request is still refused); the packet shows that proof in its own section.\n\nInteractive vs headless (designer's call): in an interactive `/specify` the detected flags are shown and the human **keeps or removes** each one. In a **headless** run (no human present) a detected category is **kept** (more caution, consistent with \"automatic machinery may only add caution\") and the record is **marked so the flag is shown at the next human touchpoint**, where it can be removed. Existing backlog records are **not** reclassified in bulk; they are classified when next shaped. In practice the classification hook is `/specify`, since brainstorming is third-party. Only the human removes a flag, and removal is logged to the decision log.\n\n**Contract decisions this record pins:**\n\n- **Line grammar (body metadata, committed; `local-files` uses the same body lines, parity test included).** `Risk-flags: migrations, auth` (comma-separated lowercase slugs from the built-in set `migrations`, `auth`, `public-contract`, `irreversible-side-effect` plus policy `risk-categories`) or `Risk-flags: none` (classified, nothing flagged). Absent line = unclassified legacy record, read as no flags (existing backlog is not reclassified). A present line that is malformed or names an unknown slug is read as **unknown = all four built-in categories flagged** (highest caution is \"all of them\", so there is no ordering question). Built-in slugs are frozen; a flag whose category was later dropped from policy stays flagged. Optional `Risk-flags-unconfirmed: true` marks a headless-kept flag set.\n- **One sanctioned writer.** `plugin/bin/lib/issues/record.js` exports `addRiskFlags(body, slugs)` (add or preserve only) and `removeRiskFlag(body, slug, { humanConfirmed })`, which refuses unless `humanConfirmed === true` and which only the interactive `/specify` path (and the human batch in `/backlog refine`) call. A source-scan conformance test (`bin-source-scan-conformance` skill) fails on any other writer of the `Risk-flags` line in `plugin/bin`, and the skill prose says all body rewrites go through these functions.\n- **Headless means no human is reachable:** `/specify --chained`, a headless `/backlog refine`, a dispatch-bound or Routine run, or any `AskUserQuestion` that errors, times out or is auto-answered. The fail direction is always keep: a detected flag is kept and `Risk-flags-unconfirmed: true` is written, never removed.\n- **Removal logging.** An interactive removal logs to `decisions.md` when a run directory resolved; with none, it posts a record comment `Risk flag {slug} removed by the maintainer during shaping` (the durable log). The human's keep/removal also clears `Risk-flags-unconfirmed`. `/backlog refine` (human present) displays and can confirm unconfirmed flags through the same writer; `/claude-tweaks:accept` shows them because the packet's Risk-proofs input is a `flag` fact carrying `unconfirmed: true`, produced by this record into the packet gather, so no separate accept code is needed.\n- **Plan proof.** A plan satisfies a kept flag when one plan step contains a line `Proof(<slug>): <text>` with `<text>` at least 20 characters and not merely restating the category name. The classifier appends a `## Gotchas` bullet to a flagged record telling the planner to include one such line per kept slug. The plan-audit check reads `Risk-flags:` from the materialized spec the CLI already receives (ASSUMPTION — verify at build: confirm the plan-audit input includes the spec; if not, add a `--spec` input). Unparseable plan or flag line: the check reports `could-not-parse` distinctly (gating, never silent pass), per the `parse-signal-discipline` and `plan-audit-check-addition` skills.\n- **Until the consumers ship** (target resolution, local park, tripwire), a kept flag is recorded and audited only; its forcing effect arrives with the target-resolution record.\n- **Guarantee limit.** The classifier sees only the declared text (Deliverables, Acceptance Criteria, Key Files); a record that omits the sensitive path gets no flag here. The diff tripwire record (#4619) is the backstop for that gap and is Related, not a prerequisite.\n\n## Non-Goals\n\n- Not the diff tripwire (separate record; it cross-checks the declaration against the actual diff).\n- Not target resolution or the local park (separate records; they consume the kept flags).\n- Not a bulk reclassification of the existing backlog.\n- Not changing brainstorming (third-party); the hook lives in `/specify`.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4609 | Add control-mode policy keys | open (Blocked by) |\n\n## Current State\n\n- Shaping stamps: `plugin/skills/specify/shaping-mode-stamping.md` (where risk/size/ceremony and framing verdicts are stamped on a shaped record); decomposition sub-issue creation: `plugin/skills/specify/record-creation-subissues.md` (Scoring, Ceremony, Framing run per sub-issue before create).\n- Record helpers: `plugin/bin/lib/issues/record.js` (`recordPayload`, tiers, fingerprint helpers).\n- Plan audit: `plugin/bin/plan-audit.js` over `plugin/bin/lib/plan-audit/checks.js` (731 lines; lettered Checks); the `plan-audit-check-addition` skill lists every site a new check must land in (parser, envelope key, summary line, warn-only vs gating, skip gate, USAGE).\n- Policy keys `risk-categories` and `risk-path-globs` are added by the policy-keys record.\n- Existing, unrelated: the `risk:*` scoring label (low/medium/high blast radius) is a different axis from risk flags; do not conflate them in names.\n\n## Deliverables\n\n- [ ] A classifier step in `/specify` (shaping and decomposition) that matches the work's Deliverables/Acceptance Criteria/Key Files against the built-in categories plus policy `risk-categories`, producing a flag list with the evidence sentence for each.\n- [ ] Flag recording on the record per the line grammar above, validated on read with a `local-files` parity round-trip test, written only through the sanctioned writer.\n- [ ] Interactive path: show each detected flag with its evidence and let the human keep or remove it (one `AskUserQuestion` for the batch); removal goes through `removeRiskFlag` and is logged as above. Headless path: keep all detected flags and set the unconfirmed marker; `/specify` shaping and a human `/backlog refine` (prose edit in `backlog/refine-mode.md`) surface unconfirmed flags for keep or remove.\n- [ ] A `flag` fact producer feeding the packet gather (including `unconfirmed`), and the proof fact (the `Proof(<slug>)` line) for the packet's Risk-proofs section; if the packet module has not shipped, the producer lands and the gather picks it up.\n- [ ] Plan audit: a new gating Check, failing a plan for a record with a kept flag when the plan has no `Proof(<slug>)` line for that slug, reporting `could-not-parse` distinctly; added at every site the `plan-audit-check-addition` skill lists, plus tests.\n- [ ] `/specify` sub-issue templates (`spec-template.md`'s metadata block) document the new lines.\n\n## Acceptance Criteria\n\n1. A record whose Key Files include a `migrations/` path or whose Deliverables mention a schema change is classified with the migrations category and the flag line appears on the created record.\n2. Interactive shaping presents the flags and a \"remove\" answer drops the flag and writes a removal entry to `decisions.md` (when a run directory exists); a \"keep\" answer leaves it.\n3. Headless shaping never drops a detected flag: with no human reachable, the flag is kept and `Risk-flags-unconfirmed: true` is written (test with the headless path and no `AskUserQuestion` available).\n4. `plan-audit` fails (non-zero, naming the slug) for a record carrying a kept flag whose plan has no `Proof(<slug>): ...` line of at least 20 characters, passes when one exists per kept slug, reports `could-not-parse` for an unparseable plan or flag line, and does nothing for a record with no flags or an unclassified record (no new failures in existing plan-audit tests).\n5. A malformed `Risk-flags:` line or one naming an unknown slug reads as all four built-in categories flagged (a single shared parse function returning `{ flags, status: 'ok' | 'unknown' | 'unclassified' }`, which every reader uses), never as \"no flags\"; an absent line reads `unclassified` (no flags); `Risk-flags: none` reads `ok` with an empty list. Pinned by a test for each of the three states.\n5a. `removeRiskFlag` without `humanConfirmed: true` refuses; the source-scan conformance test fails when a second writer of the `Risk-flags` line is planted; an `AskUserQuestion` that errors or times out leaves the flag kept and sets `Risk-flags-unconfirmed: true`.\n6. An existing backlog record with no flag lines is not reclassified by any batch operation; it is classified only when next shaped.\n7. `npm test` passes.\n\n## Release Note\n\nAdded risk-flag classification when you shape work, so changes touching migrations, auth, public contracts or irreversible actions require a specific proof and a local check before merge.\n\n## Technical Approach\n\nThe classifier is judgment plus deterministic matching: category keywords and policy path globs give the deterministic floor; the agent's classification may add flags, never silently drop one. Recording is monotonic from the machine's side. The plan-audit check reads the same flag lines the classifier wrote, so there is one source of truth on the record.\n\n### Data / API Surface\n\n- Categories: `migrations`, `auth`, `public-contract`, `irreversible-side-effect`, plus policy extras.\n- Record lines: `Risk-flags: a, b` and optional `Risk-flags-unconfirmed: true`.\n- Plan-audit finding: category name plus the plan path.\n\n### Key Files\n\n- `plugin/skills/specify/shaping-mode-stamping.md` — classification step and recording\n- `plugin/skills/specify/record-creation-subissues.md` — per-sub-issue classification before create\n- `plugin/skills/specify/spec-template.md` — metadata block documentation\n- `plugin/bin/lib/issues/record.js` — parse/serialize the flag lines; `addRiskFlags`, `removeRiskFlag`\n- `plugin/bin/lib/issues/local-store.js` — `local-files` parity for the body lines\n- `plugin/skills/backlog/refine-mode.md` — human refine surfaces unconfirmed flags\n- `plugin/bin/lib/plan-audit/checks.js` — new gating Check\n- `plugin/bin/plan-audit.js` — wiring, envelope key, USAGE, summary line\n- `plugin/skills/_shared/policy-schema.md` — category list reference (extension key defined by the policy-keys record)\n- `tests/bin-lib/plan-audit/checks.test.js` — extend with the risk-proof check cases\n\n## Gotchas\n\n- Headless means \"no human reachable\", not \"auto mode\": `_shared/auto-mode-contract.md`'s no-new-mid-flow-stops rule applies; headless shaping stages the flag display for the next touchpoint instead of stopping.\n- A flag must never be removable by any automated path; only the human, and the removal is logged. The sanctioned-writer plus source-scan test above is the enforcement; skill prose that rewrites record bodies must call the writer.\n- Do not re-use the `risk:low/medium/high` label name space for flags: `risk:*` is the scoring axis.\n- Parity siblings: the same flag lines must be readable from `local-files` records (`facets` or body lines per `local-store.js`'s documented key set; do not invent frontmatter keys, use body lines).\n- The classifier's evidence sentence is derived from untrusted record text; neutralize it before rendering in a prompt or packet.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:risk-flags-at-intent-time -->\nwork-fingerprint: human-in-control-acceptance:risk-flags-at-intent-time",
         "createdAt": "2026-10-30T11:46:34Z",
         "labels": [
@@ -2525,6 +2426,162 @@
           "origin": null,
           "risk": "medium",
           "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\nRename and rewrite `/claude-tweaks:demo` as `/claude-tweaks:accept`, the acceptance step. It is **the same flow from two entries**:\n\n- **Automatic, at pipeline end:** produce the acceptance packet (or reuse the one wrap-up already posted), post it, mark the record `accept:pending`.\n- **On demand, `/claude-tweaks:accept #N`:** walk the human through the same packet: open the links, show the recording, step through the test guide, then ask the verdict.\n\n**Re-running on an item that already has a packet reuses it and refreshes only what is stale** (deploy status, links to an older deploy). It never builds a second packet. The same verdict comes from either surface (terminal or Dispatch) and has the same effect; the verdict handler itself is a separate record.\n\nKeep from today's `/demo`: the verdict labels (renamed to `accept:*` by the expand record), follow-up record mechanics (a separate record reworks them), the Verification Brief / Try-it block as packet input, the Prepare / Validate / Show observation plan, and the **no-record path** for this session's unrecorded work. Drop: the standalone-only restriction, and the terminal question as the only way to give a verdict.\n\n`/demo` stays as a **deprecated alias** with one warn-tier deprecation notice per invocation and a **recorded removal condition** (the repo's deprecated-alias convention, see `plugin/skills/specify/deprecated-aliases.md` and `plugin/skills/dispatch/deprecated-aliases.md`). The removal condition recorded here is exactly this text, quoted by the notice and by `plugin/skills/demo/deprecated-aliases.md`, and is what the final contract-cleanup record waits on: **`/demo` may be removed when all three hold, checked at each minor release: (a) `grep -rFn \"claude-tweaks:demo\" plugin docs README.md` finds no match outside the alias stub, the alias doc, `docs/incident-log.md`, `docs/decisions/` and `docs/plans/`; (b) at least two minor releases (versions of `plugin/.claude-plugin/plugin.json`) have shipped after the release containing this change; (c) the maintainer has confirmed Dispatch emits `accept:*` labels.** The alias doc lives in `plugin/skills/demo/` (the aliased skill's own directory, as `specify/` and `dispatch/` do for theirs).\n\n**Contract decisions this record pins:**\n\n- **Single owner of the packet.** The packet module (the packet record) owns creating and refreshing it; `/accept` never builds one by itself. The automatic entry is the lazy-loaded sub-file `plugin/skills/accept/automatic-entry.md`, which the five call sites in `wrap-up/verification-brief.md`'s Routing table reach; it calls the packet module (which finds the packet by marker and creates it only if absent), then applies `accept:pending` only when the record carries no verdict label of either vocabulary (read through the label-expand record's precedence function). **The automatic entry never prompts, never blocks and returns after labelling**, so auto mode's no-new-mid-flow-stop rule holds; every interactive step (walking the guide, asking the verdict) belongs to the on-demand entry only. The standalone-only restriction `/demo` had protected nothing the packet-centric flow needs once the automatic entry is non-interactive; drop it.\n- **Staleness.** The refreshable fields are a closed list: the Deploy-status section, the base URL of Test-guide links, and the Recording link. Staleness test: compare the `deploy.ref` fact stored in the packet with the current ref from the deploy-status source when that source exists; when it does not, or is unavailable, leave the field as is and mark it `unverified`. Nothing else is ever rewritten by `/accept`; a human-edited packet keeps the human's edits outside those three fields. A missing, duplicated or deleted marker comment follows the packet reader rules (the packet record): missing means build, duplicate means the earliest trusted wins, never a second packet.\n- **Packet states `/accept` handles** (each with minimal behavior): awaiting local acceptance (start the app from the PR branch, then walk); waiting for deploy (show the deploy status, skip the link step, say so plainly); live on dev (walk the guide with dev links); no recording (say so, walk the rest); already accepted or closed (show the recorded verdict and stop; no second verdict); no packet and a resolvable record (build via the packet module, then walk). An unhandled state prints a one-line message naming the state and stops; it does not guess.\n- **Labels written.** During the expand window `/accept` writes `accept:*` and removes the `demo:*` twin when present; `/accept #N` on a record carrying only `demo:pending` reads it as pending, and on a verdict removes it and writes the `accept:*` verdict. `/demo` (the alias) forwards, so it too writes `accept:*`.\n- **Verdict handling until the verdict-handler record lands.** The interim is `/demo`'s existing verdict mechanics under the `accept:*` labels, confined to one sub-file `plugin/skills/accept/verdict-interim.md` that the verdict-handler record (#4614, which follows this record) replaces wholesale and deletes; Dispatch-given verdicts are not handled until then, and the skill says so. The parent-close behavior of `/demo`'s Approve step (close a parent once its sub-issues are accepted, keyed on `isParentIssue`) carries over unchanged into `/accept`'s Approve step until the feature-level-acceptance record changes it.\n- **No-record path selection.** It is taken only for `/claude-tweaks:accept` with no `#N` argument and unrecorded work in this session. A `#N` that does not resolve is an error and never falls back to the no-record path.\n- **Sub-files.** `entry-paths.md`, `browser-verdict.md`, `design-contract-section.md` and `follow-up-record.md` move to `plugin/skills/accept/` (git mv; no pointer stubs left in `demo/`); `legacy-brief-compatibility.md` stays in `plugin/skills/demo/` (readers of legacy briefs) until the final cleanup record. After the moves, sweep every path citation, including tests and the `files:` frontmatter of journey docs.\n\n## Non-Goals\n\n- Not the verdict handler's actions (fix forward, revert now, local re-entry) — separate record.\n- Not target resolution (local vs dev), the local pre-merge park, or deploy-wait — separate records; `/accept` here handles whichever state the packet is in.\n- Not removing `/demo` or `demo:*` (the final contract-cleanup record).\n- Not adding an inbox or overview to claude-tweaks (that belongs to Dispatch).\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4610 | Add accept:* verdict labels alongside demo:* | open (Blocked by) |\n| #4611 | Acceptance packet: schema, canonical marker comment, new sections | open (Blocked by) |\n\n## Current State\n\n- Skill: `plugin/skills/demo/SKILL.md` (about 29 KB) with sub-files `entry-paths.md` (about 21 KB), `follow-up-record.md`, `legacy-brief-compatibility.md`, `browser-verdict.md`, `design-contract-section.md`. Its Approve step reads a parent record's `isParentIssue` facet to decide whether to close a parent once its sub-issues are accepted.\n- Deprecated-alias precedent: `plugin/skills/specify/deprecated-aliases.md` (the `next` alias and its removal condition) and `plugin/skills/dispatch/deprecated-aliases.md`.\n- Graph and docs: `docs/skill-graph.md` is the only home for skill-to-skill edges (CLAUDE.md); `README.md` carries the artifact lifecycle diagram, which `/help`'s workflow diagram must keep in sync with (`plugin/skills/help/`: `SKILL.md`, `reference-card.md`, `context-flow.md`, `status-scan.md`, `policy.md`).\n- Skill authoring rules: `docs/skill-authoring.md` (read before creating `plugin/skills/**/*.md`); references to skills inside actionable instruction text must use the fully-qualified `/claude-tweaks:accept` form.\n- `plugin/skills/accept/` does not exist.\n\n## Deliverables\n\n- [ ] `plugin/skills/accept/SKILL.md` (new) plus lazy-loaded sub-files, under the skill size ceiling: `automatic-entry.md` (non-interactive), the on-demand entry (`#N`) with the state table above, the packet reuse-and-refresh rule, the no-record path, the verdict question, and `verdict-interim.md` (replaced by the verdict-handler record).\n- [ ] `plugin/skills/demo/SKILL.md` reduced to a deprecated alias stub that prints one warn-tier notice (quoting the removal condition) and forwards to `/claude-tweaks:accept` with the same arguments; the condition recorded in `plugin/skills/demo/deprecated-aliases.md` following the existing shape.\n- [ ] Move the four sub-files named in the contract decisions to `plugin/skills/accept/`, keep `legacy-brief-compatibility.md` in `demo/`, and sweep path citations in skills, tests and journey `files:` frontmatter.\n- [ ] Update `docs/journeys/accept-built-work-via-demo.md` (or add a successor journey and retire it) so journey-health stays green; update `plugin/skills/help/reference-card.md`'s argument grammar.\n- [ ] Update every caller that invokes `/claude-tweaks:demo` in actionable instruction text (grep `claude-tweaks:demo` across `plugin/skills` and `docs`) to `/claude-tweaks:accept`, except the alias itself.\n- [ ] `docs/skill-graph.md` edges, `/help`'s workflow diagrams and `README.md`'s lifecycle diagram updated together (the two diagrams must stay in sync); `docs/plugin-structure.md` skill list updated.\n- [ ] Tests: conformance for the new skill's frontmatter and structure per the existing skill conformance suites; a test that the alias stub prints the deprecation notice and names the new skill; a test (or fixture-driven prose check) that the on-demand path on a record with an existing packet comment edits rather than posts.\n\n## Acceptance Criteria\n\n1. `/claude-tweaks:demo #N` still works: it prints exactly one deprecation notice naming `/claude-tweaks:accept` and the recorded removal condition, then behaves as `/claude-tweaks:accept #N`.\n2. `/claude-tweaks:accept #N` on a record whose acceptance packet comment already exists reuses it: no second packet comment is created (the record ends with exactly one comment carrying the packet marker), and stale parts (deploy status line, links) are refreshed in place.\n3. `/claude-tweaks:accept` with no argument and no record for this session's work takes the no-record path `/demo` had today, with unchanged observable behavior.\n4. The automatic entry, given a record with no packet yet, has the packet module produce and post one packet and applies the pending label; given one with a packet, it only ensures the pending label; given a record already carrying any verdict label of either vocabulary (`accept:approved`, `accept:changes-requested`, `demo:approved`, `demo:changes-requested`, or a pending one), it applies nothing. It issues no prompt in any case (a test asserts no `AskUserQuestion` call path is reachable from `automatic-entry.md`).\n4a. `/claude-tweaks:accept #N` on a record labelled only `demo:pending` treats it as pending and, on an approve verdict, ends with `accept:approved` present and `demo:pending` removed.\n4b. Each packet state in the state table has a fixture-driven check of its minimal behavior; an unhandled state prints a one-line message and stops. A `#N` that does not resolve exits with an error and does not take the no-record path.\n5. `plugin/skills/demo/deprecated-aliases.md` has a row for `/demo` carrying the removal condition (a)-(c) verbatim, and the alias notice quotes it.\n6. `grep -rFn \"claude-tweaks:demo\" plugin docs README.md` returns no match outside `plugin/skills/demo/SKILL.md`, `plugin/skills/demo/deprecated-aliases.md`, `docs/incident-log.md`, `docs/decisions/` and `docs/plans/` (the grep has been run once against the pre-change tree and matched). Descriptive prose using the bare `/demo` is allowed per CLAUDE.md.\n7. `docs/skill-graph.md`, `/help`'s workflow diagram and `README.md`'s lifecycle diagram each list `accept`; the help reference card's argument grammar lists `/claude-tweaks:accept`; the journey doc is updated; and the existing doc-conformance and journey-health tests pass.\n7a. The Approve step of `/accept` still closes a parent whose sub-issues are all accepted (parent-close fixture from `/demo`'s tests passes against `/accept`).\n8. `npm test` passes.\n\n## Release Note\n\nAdded `/claude-tweaks:accept`, an acceptance step that walks you through a finished feature's packet and takes your verdict, and kept `/claude-tweaks:demo` as a deprecated alias.\n\n## Technical Approach\n\nTreat this as a rename plus a rewrite behind a stable alias, expand-contract style: add `accept`, make `demo` forward, migrate callers, and leave removal to the contract record. The skill's flow is packet-centric: find the packet by its marker comment; if absent, build it (the packet record's module); if present, refresh stale facts; then step the human through it and ask for the verdict. Both entries converge on one code path so behavior cannot diverge by surface. `local-files` backend: the packet and interactive verdict work through the existing `acceptance:` field; Dispatch-given verdicts and revert-now are GitHub-only and say so when unavailable.\n\n### Data / API Surface\n\n- Invocation: `/claude-tweaks:accept [#N]`; automatic entry is called from wrap-up/flow, not typed.\n- Reads: the packet marker comment (GitHub) or the record's packet section (`local-files`).\n- Writes: the pending acceptance label; verdicts through the verdict handler.\n\n### Key Files\n\n- `plugin/skills/demo/SKILL.md` — becomes the alias stub\n- `plugin/skills/demo/entry-paths.md` — entry logic to move or share\n- `plugin/skills/demo/legacy-brief-compatibility.md` — keep for records with an old-style brief\n- `plugin/skills/accept/SKILL.md` — new skill\n- `plugin/skills/accept/automatic-entry.md` — new; the non-interactive entry\n- `plugin/skills/accept/verdict-interim.md` — new; replaced by the verdict-handler record\n- `plugin/skills/demo/deprecated-aliases.md` — new; the `/demo` removal condition\n- `plugin/skills/wrap-up/verification-brief.md` — Routing table callers reach the automatic entry\n- `plugin/skills/wrap-up/execution-and-verification.md` — Phase 4 acceptance-labeling bullet\n- `docs/journeys/accept-built-work-via-demo.md` — journey to update\n- `docs/skill-graph.md` — edges, stated once\n- `docs/plugin-structure.md` — skill listing\n- `README.md` — lifecycle diagram\n- `plugin/skills/help/SKILL.md` — workflow diagrams must list all skills\n- `plugin/skills/help/reference-card.md` — argument grammar\n- `docs/skill-authoring.md` — read first (conventions)\n\n## Gotchas\n\n- `docs/skill-graph.md` is where edges live; do not restate an edge inside a SKILL.md unless it is the skill's trigger condition or its only disambiguation from a same-named skill.\n- Fully-qualified `/claude-tweaks:accept` form in actionable text; bare `/accept` only in descriptive prose and relationship tables.\n- During the expand window both vocabularies exist; the alias must not strand a record labelled with `demo:*` (the label-expand record makes both readable).\n- Do not carry over the \"standalone-only\" restriction from `/demo`; the whole point is that the same step runs in-pipeline and on demand.\n- `docs/journeys/accept-built-work-via-demo.md` documents the old flow; update it or add a successor journey in the same change, since journey-health reads it.\n- The skill size ceiling is a platform-limits guard (`docs/decisions/0024-*`); keep SKILL.md small and push detail into lazy-loaded sub-files.\n\n**Related:** #3831\n**Related:** #3758\n**Related:** #3381\n\n\n<!-- work-fingerprint: human-in-control-acceptance:rewrite-demo-as-claude-tweaks-accept -->\nwork-fingerprint: human-in-control-acceptance:rewrite-demo-as-claude-tweaks-accept",
+        "createdAt": "2026-10-30T11:46:14Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4613,
+        "state": "OPEN",
+        "title": "Rewrite /demo as /claude-tweaks:accept",
+        "updatedAt": "2026-10-30T16:08:51Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "high",
+          "ceremony": "standard",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "high",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
+        }
+      }
+    ],
+    [
+      {
+        "body": "Surface: infra\n\n## Overview\n\nFill the acceptance packet's **Recording** section automatically, and keep secrets out of it. When a story and a local base URL exist, wrap-up runs the walkthrough encoder (an animated GIF built from step screenshots) and links the result in the packet. Today `/walkthrough` does this only when a human runs it.\n\nAgent-side checking always happens locally before merge: the agent runs its stories, including negative (break-it) stories, against a local build in the worktree, and records the walkthrough there. This is where adversarial testing is safe, and where `/stories`' Target Environment Guard (negative stories disabled on any non-localhost host) already allows it. The recording is of the happy-path feature in use.\n\n**Exposure requirement (the main risk of this record).** Screenshots and recordings can capture tokens, e-mail addresses or customer-like data, and the packet may land in a public repository. Recordings and screenshots must be **redacted**, or — for a public repo — **stored privately and linked, never embedded**. Links must carry no token, password or session value. The mechanism is the builder's call; the invariant is that nothing secret-shaped reaches a public surface. Video is out of scope: Playwright CLI has no screencast operation (per `/walkthrough`), so GIF from step screenshots is the v1 form.\n\n**Contract decisions this record pins:**\n\n- **Source of frames.** The recording is built from the step screenshots the pipeline's own happy-path stories already wrote to the caller-supplied absolute `SCREENSHOT_PATH` directories (verified in `plugin/agents/qa-agent.md`: each story writes `NN_<step-name>.png` under the directory the caller passes, so the files are readable after the agent returns). No new browser run, and the recording step never starts a server. Stories marked negative (break-it) are excluded, so error screens never enter the GIF.\n- **\"Resolvable local base URL\"** means the base URL the story run itself was given (recorded as a run fact), whose host is `localhost`, `127.0.0.1` or `::1`. `/walkthrough` deliberately never auto-detects a server (`--base` is required), and this record does not change that.\n- **Storage and exposure (v1).** The GIF is stored in the run's local directory and never uploaded, in any repository visibility; the packet links the local path. A remote store is allowed later only if it enforces authenticated collaborator access, proven by an anonymous-fetch probe that fails; secret gists and Actions artifacts of a public repository do not qualify. Exposure values: `local-only` (the v1 default, and the result for any unreachable or unprobed store), `linked-private` (a remote store that passed the probe), `withheld` (a link refused by the credential rule). The packet never embeds the recording or any screenshot (no markdown image syntax, no `img` tag) in any repository visibility, and a remote link must point to a non-image landing page.\n- **What redaction does and does not do.** Redaction covers every string the Recording section renders from the walkthrough (step captions, story titles, link text, failure messages), applied at one choke point, `renderRecordingSection`; it keeps the key name and replaces the whole value (`api_key=[redacted]`, `sk_live_abc` becomes `[redacted]`, so no prefix or length leaks). It does not and cannot scan pixels: the stored GIF is unredacted and local-only, and the stories must run against seed data and throwaway credentials (a Gotcha of the story step, stated in the packet contract). `captionList` stays redaction-free (a test pins that) and the standalone `/walkthrough` path is intentionally unchanged.\n- **One credential-key constant.** The link rule and the redactor use the shared credential-key constant defined by the packet record (`token`, `access_token`, `password`, `passwd`, `secret`, `session`, `sessionid`, `jwt`, `auth`, `key`, `api_key`, `sig`, `signature`, `x-amz-signature`); the redactor adds value shapes (JWT, bearer, `sk_`/`ghp_`/`gho_` prefixes, e-mail addresses). A bearer-shaped path segment is a segment of 20 or more characters from `[A-Za-z0-9_-]` containing at least one digit and one letter (positive test `/a/Xk3j9f8s7d6f5g4h3j2k1/b`, negative test `/docs/token-guide`).\n- **Redaction count.** A non-zero count is reported but does not change the exposure decision (exposure is already the strictest value that applies).\n- **Not-recorded fact.** `{ id, kind: 'recording', status: 'not-run', reason }` with `reason` one of `no-story`, `no-local-base-url`, `no-happy-path-screenshots`, `encoder-failed`; each of the last three also appears under Couldn't test (a recording was expected but impossible); `no-story` renders plain `not recorded` only.\n\n## Non-Goals\n\n- Not the packet schema or its other sections (separate record; this record is Blocked by it).\n- Not video capture or any new recording backend.\n- Not recording dev-environment sessions (the dev smoke check is a different record and never runs negative stories).\n- Not changing `/walkthrough`'s standalone interactive behavior.\n\n## Prerequisites\n\n| Spec | Title | Status |\n|------|-------|--------|\n| #4611 | Acceptance packet: schema, canonical marker comment, new sections | open (Blocked by) |\n\n## Current State\n\n- Encoder CLI: `plugin/bin/walkthrough-encode.js` over `plugin/bin/lib/walkthrough/encode.js` (126 lines; exports `planFrames`, `encodeWalkthrough`, `captionList`, `FrameMismatchError`, `BudgetExceededError`). Captions come from the walkthrough steps — a caption is free text and is the likeliest place for a secret-shaped string to appear alongside the screenshot content.\n- Skill: `plugin/skills/walkthrough/SKILL.md` (about 9 KB) drives the encoder interactively.\n- Packet contract: `plugin/skills/_shared/acceptance-packet.md` (created by the packet record) names the Recording section and says it renders `not recorded` until this record populates it.\n- Stories: `/stories` and the qa-agent produce per-step screenshots; the Target Environment Guard disables negative stories off localhost.\n- Repo visibility is knowable: `gh repo view --json isPrivate` (this repository is public — `isPrivate=false` — so the public-repo path is the live one here).\n\n## Deliverables\n\n- [ ] Wrap-up step (in the wrap-up engine) that, when the record has a happy-path story and a resolvable local base URL (definitions above), runs `encodeWalkthrough` over the stories' existing step screenshots and records the output path as a `recording` packet fact; otherwise records the not-recorded fact with its reason.\n- [ ] A redaction module (pure, `plugin/bin/lib/walkthrough/`): scans caption text and any text-bearing metadata for secret-shaped strings (bearer/JWT-shaped tokens, `key=`/`token=`/`password=`/`secret=` values, `sk_`/`ghp_`/`gho_` style prefixes, e-mail addresses) and replaces them with a fixed placeholder; reports what it redacted as a count in the packet fact (never the value).\n- [ ] The exposure policy above in one function `decideExposure({ repoVisibility, storeProbe })` (single place the embed/link decision is made, a test per branch); repository visibility is read from `gh repo view --json isPrivate` and an unreadable or unexpected answer is treated as **public** (fail closed). The v1 outcome is `local-only` whatever the visibility, so visibility only matters for a future remote store.\n- [ ] A conformance scan (in the style of the `bin-source-scan-conformance` skill) that fails if any module under `plugin/bin/lib/wrap-up/` or `plugin/bin/lib/walkthrough/` emits markdown image syntax or an `img` tag.\n- [ ] Packet link rule: a recording link (or any test-guide link) carrying `token=`, `access_token=`, `password=`, `session=`, or a bearer-shaped path segment is refused and the section renders `recording withheld: link contained a credential-shaped value`.\n- [ ] Skill prose updates in `plugin/skills/walkthrough/SKILL.md` and the packet contract describing the automatic path and the exposure rules.\n\n## Acceptance Criteria\n\n1. A packet for a story-backed web change whose local base URL resolves carries a Recording section with a link to the encoded GIF (test with a stubbed encoder returning a path).\n2. For a repo reported public, a repo reported private, and a repo whose visibility lookup fails, the rendered packet contains no markdown image syntax or HTML `img` tag for the recording or any screenshot, only a path or link, and `decideExposure` returns `local-only` in all three; the conformance scan passes and fails when an `img` emission is planted.\n2a. A story set containing one happy-path and one negative story produces a recording from the happy-path screenshots only (frame count equals the happy-path step count).\n3. A caption, story title, link text or failure message containing a secret-shaped string (for example `Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc` or `api_key=sk_live_123abc`) is rendered with the whole value replaced by `[redacted]` (key names kept), the original string appearing nowhere in the Recording section; a test asserts this for at least five secret shapes plus an e-mail address, across all four text channels.\n3a. `captionList` output is byte-identical to before this change (pinned by a test), and the standalone `walkthrough-encode.js` path applies no redaction.\n4. A recording link carrying a credential-shaped query parameter (`token=`, `access_token=`, `password=`, `session=`) is withheld and the Recording section states why. The matcher normalizes before matching and the tests cover: uppercase key (`TOKEN=abc`), percent-encoded key (`tok%65n=abc`, `%74oken=abc`), the key in the fragment (`#token=abc`), credentials in userinfo (`https://user:pass@host/`), an uppercase scheme (`HTTPS://host/?token=abc`), a trailing-slash variant, and dot segments before the query (`https://host/a/../b?token=abc`). A benign link whose *path* merely contains the word (`https://host/docs/token-guide`) is not withheld (substring in the wrong component).\n5. No story or no resolvable local base URL: the Recording section reads `not recorded` with the reason, and the same fact appears under **Couldn't test** when a recording was expected but impossible (for example the dev server would not start).\n6. `walkthrough-encode.js` standalone invocation behavior is unchanged (its existing tests pass untouched).\n7. `npm test` passes.\n\n## Release Note\n\nAdded an automatic walkthrough recording to the acceptance packet, with secret-shaped text redacted and public repositories linked to a private copy instead of embedding images.\n\n## Technical Approach\n\nReuse `encodeWalkthrough`; add the redaction as a pure pre-step over `captionList` output so the encoder keeps its contract. Treat redaction as best-effort defense in depth, not a guarantee: because pixel content of a screenshot cannot be scanned with a text matcher, the public-repo rule (link, never embed) is the load-bearing control, and the redaction handles the text the plugin itself writes (captions, link text, packet prose).\n\n### Data / API Surface\n\n- Fact: `{ id, kind: 'recording', status, url_or_path, redactions: <int>, exposure: 'local-only' | 'linked-private' | 'withheld' }`, or the not-recorded fact described above.\n- Redaction placeholder: a single fixed token (`[redacted]`) so tests and consumers can assert on it.\n\n### Key Files\n\n- `plugin/bin/walkthrough-encode.js` — CLI; confirm it needs no change\n- `plugin/bin/lib/walkthrough/encode.js` — `captionList`, `encodeWalkthrough`\n- `plugin/bin/lib/walkthrough/redact.js` — new redaction module\n- `plugin/skills/walkthrough/SKILL.md` — document the automatic path and exposure rules\n- `plugin/skills/_shared/acceptance-packet.md` — Recording section contract (created by #4611)\n- `plugin/bin/lib/wrap-up/engine-render.js` — render the Recording section\n- `tests/bin-lib/walkthrough/encode.test.js` — encoder tests; add redaction tests beside them\n- `tests/walkthrough-conformance.test.js` — pins `/walkthrough` skill prose; update with the SKILL.md change\n\n## Gotchas\n\n- Fail closed on visibility: an unreadable `isPrivate` answer means public. Do not default to private.\n- Redaction placeholders must not be reversible and must not leak length or prefix of the secret (`[redacted]` is the only placeholder).\n- Never embed, in any repository visibility; the embed/link decision lives only in `decideExposure`, and the conformance scan guards the rest.\n- The stored GIF is unredacted pixels, local-only. Do not add an upload path without the authenticated-access probe in the contract above.\n- Negative (break-it) stories run only against localhost; the recording step must not start a negative story against a non-local base URL (the Target Environment Guard stays; do not relax it).\n- Verified during shaping: qa-agent step screenshots are written to the caller-supplied absolute `SCREENSHOT_PATH`, so wrap-up can read them after the agent returns; no dispatch-side recording step is needed.\n\n\n<!-- work-fingerprint: human-in-control-acceptance:record-the-walkthrough-automatically-and-keep-secrets-out-of -->\nwork-fingerprint: human-in-control-acceptance:record-the-walkthrough-automatically-and-keep-secrets-out-of",
+        "createdAt": "2026-10-30T11:46:10Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
+            "name": "size:medium",
+            "description": "Scoring: moderate change, may span several files",
+            "color": "8B5CF6"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2oaA",
+            "name": "type:feature",
+            "description": "Type: new capability or enhancement",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHb2Q",
+            "name": "priority:high",
+            "description": "Priority: dispatch picks this band first",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
+            "name": "risk:medium",
+            "description": "Scoring: moderate blast radius — review before merge recommended",
+            "color": "FBCA04"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
+            "name": "ceremony:standard",
+            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
+            "color": "FEF2C0"
+          }
+        ],
+        "number": 4612,
+        "state": "OPEN",
+        "title": "Record the walkthrough automatically and keep secrets out of the packet",
+        "updatedAt": "2026-10-30T16:08:46Z",
+        "facets": {
+          "origin": null,
+          "risk": "medium",
+          "size": "medium",
           "ceremony": "standard",
           "solutionUnjustified": false,
           "breaking": false,
@@ -10535,6 +10592,96 @@
     ],
     [
       {
+        "body": "Surface: infra\n\n**Related:** #3823, #3953, #3982, #3983, #3993\n\n## Current State\n\nThe post-merge Windows check on commit 6c660b23c (merged PR #3916, run 40029571772) reported `tests/bin-lib/issues/comment-trust.test.js` newly failing. The failing test is \"untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\" (line 66). Its actual output ends every line with `\\r\\n`, where the expected value is `\\n`-joined.\n\nRoot cause, reproduced on macOS against `main` at d02483933: native `jq` on Windows writes stdout in text mode, so every output newline becomes CRLF. The tests compare `spawnSync('jq', …).stdout` byte-for-byte against `\\n`-joined text. Running the files with a `jq` shim on `PATH` that converts output `\\n` to `\\r\\n` reproduces exactly four failures, and a CRLF file-read simulation adds none. This is not the `readText` CRLF-read class:\n\n- `tests/bin-lib/issues/comment-trust.test.js` (8 tests: 6 pass, 2 fail):\n  - \"untrustedJqNote prints the same text…\" (jq call at line 80)\n  - \"AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)\" (jq call at line 119; `split('\\n')` leaves a trailing `\\r` on each kept value)\n- `tests/comment-trust-conformance.test.js` (37 tests: 35 pass, 2 fail):\n  - \"AC5.2: grant-lane-decision.md's jq lines run…\"\n  - \"AC5.2: shaping-mode-stamping.md's jq lines run…\"\n  - Both go through the `runJq` helper's jq call at line 449.\n\n`tests/comment-trust-conformance.test.js` was never filed. The latest Windows run's `verify-report` artifact (run 40030935846, head d02483933) lists both files in `baselineAdjudicated.failingFiles`. The conformance file has been red since it was introduced, so the per-push baseline diff never reports it as newly failing. These three `spawnSync('jq', …)` calls are the only non-probe jq invocations under `tests/`. Shipped plugin code is unaffected: `comment-trust.js` only builds the filter strings.\n\n## Deliverables\n\n1. Normalize jq's stdout to `\\n` line endings at each of the three call sites (`tests/bin-lib/issues/comment-trust.test.js` lines 80 and 119, `tests/comment-trust-conformance.test.js` line 449) before any assertion reads it. Do this through one shared test helper rather than three hand-written replacements.\n2. Fix both test files in this record, since they share the root cause.\n\n## Acceptance Criteria\n\n1. No assertion in either file reads raw `jq` stdout. Every one of the three non-probe `spawnSync('jq', …)` results is EOL-normalized first.\n2. With a CRLF-emitting `jq` shim first on `PATH` (a wrapper that pipes real `jq` output through `perl -pe 's/\\n/\\r\\n/'`), both files pass every test. Before the fix this reports 2 failures in each file.\n3. Both files are green on Linux/macOS with the real `jq`. The `jq not found` skip path is unchanged.\n4. The next post-merge `windows-regression.yml` run's `verify-report` artifact lists neither file in `baselineAdjudicated.failingFiles`.\n\n## Release Note\n\nFix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.\n\n## Technical Approach\n\nAdd a small `runJq(args, input)` helper next to `readText` under `tests/helpers/`. It wraps `spawnSync('jq', args, { input, encoding: 'utf8' })` and returns the result with `stdout` normalized via `.replace(/\\r\\n/g, '\\n')`. Route the three call sites through it, keeping each `status`/`stderr` assertion as-is. Normalizing at the read mirrors the house rule for the CRLF-read class (#3776, #3953): fix the input once instead of loosening every assertion.\n\n### Key Files\n\n- `tests/bin-lib/issues/comment-trust.test.js` — two jq calls routed through the helper\n- `tests/comment-trust-conformance.test.js` — `runJq`'s jq call routed through the helper\n- `tests/helpers/` — new shared jq-run helper (or extend an existing helper module)\n\n## Gotchas\n\n- Do not pass `jq --binary` / `-b` instead. That flag is documented for native Windows builds, and its behavior on the Linux/macOS jq versions CI and maintainers run is not established here. Normalizing in the test is platform-independent.\n- The `--version` probes need no change: they only check `status`.\n- CI runs on ubuntu only. AC2's shim is the pre-merge stand-in, and only the post-merge `windows-regression.yml` run proves the fix on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 6c660b23c\n\nThe post-merge Windows check failed on commit 6c660b23cb7b054f4908afabd7a30949e220e57c (compared against 2b943d781).\n\n**Merged PR:** #3916 (https://github.com/thn-inc/claude-tweaks/pull/3916)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/40029571772\n\n### Newly failing test files\n- `tests/bin-lib/issues/comment-trust.test.js`\n\n### Failure excerpts\n\n#### `tests/bin-lib/issues/comment-trust.test.js`\n\n```\nnot ok 3668 - untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\n  ---\n  duration_ms: 1095.4188\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\bin-lib\\\\issues\\\\comment-trust.test.js:66:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator\\r\\n' +\n    +   'skipped marker comment https://x/c2 by unknown (NONE) — not an owner, member, or collaborator\\r\\n' +\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
+        "createdAt": "2026-10-23T22:05:46Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEquA",
+            "name": "auto:merge",
+            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
+            "color": "BFDADC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACszED4w",
+            "name": "ceremony:fast-lane",
+            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
+            "color": "FEF2C0"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
+            "name": "shaped:headless",
+            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
+            "color": "ededed"
+          }
+        ],
+        "number": 3995,
+        "state": "OPEN",
+        "title": "Windows regression: 1 test file(s) newly failing after 6c660b23c",
+        "updatedAt": "2026-10-24T05:40:13Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": "fast-lane",
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": true
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
         "body": "Surface: infra\n\n**Related:** #3737, #3876, #3190, #3744, #3792, #3835, #3931, #3936, #3955, #3956, #3965, #3975, #3989\n\nOrigin: ledger resolve gate (#3340 wrap-up)\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md:39` (**One plain command per Bash call.**) tells every dispatch prompt that, for a worktree-isolated dispatched agent, \"`&&`/`;` chains, a variable assigned and then used in the same call, loops, and heredocs are refused by shape\", and asserts that every dispatch under `worktree-always` is worktree-isolated.\n\n`_shared/scratch-worktree.md` §7's current-state table (re-verified live by #3340 on 2026-10-20, rows since added by #3783 and #3829) contradicts the shape list: a 2-command `&&` chain, `;` sequences with assign-then-use, `VAR=val && cmd \"$VAR\"`, `for`/`while` loops, and standalone heredocs all **pass** (`scratch-worktree.md:243-248`, `:270`). Shapes that are still **refused** include `git` inside `$(...)` (`:255`), a runtime variable as `node`'s script operand (`:260`), `sed` on a runtime-variable path (`:259`), the bare tokens `complete`/`eval` (`:249`, `:263`), `mkdir -p … && heredoc` (`:271`), and a backslash-escaped space (`:273`). §7's own Practical workaround (`:275`) still recommends one plain command per call because it \"avoids every refused shape\", and the boundary moves between Claude Code builds (`:279`).\n\nThe isolation premise is also mixed in practice. #3480's dispatched lens agents hit the guard about 14 times in three minutes (#3675), so dispatched agents can be guard-isolated; #3340 saw a dispatched implementer's Bash run unguarded. Neither observation supports the absolute \"as every dispatch under `worktree-always` does\".\n\n`dispatch/task-prompt.md`'s Context pack item 6 (Worktree shell constraint) has the same drift: its avoid-list includes a `for`/`while` loop variable, a glob argument, a `gh api` call inside an `if RAW=$(...)`, and `cat \"$P/…\"`, all of which §7 now marks as passing.\n\n## Deliverables\n\n- [ ] Keep **One plain command per Bash call** as the dispatch-prompt convention. It still avoids every refused shape, costs little, and holds even when the harness boundary moves. Reword its justification: some shapes are refused by the worktree guard, the refused set changes between Claude Code builds, and one plain command per call avoids all of them. Cite §7 for the current refused set; do not list shapes inline.\n- [ ] Replace \"as every dispatch under `worktree-always` does\" with what is observed: a dispatched agent **may** be guard-isolated (#3480's lens agents were; #3340's implementer was not), so every dispatch prompt carries the rule regardless\n- [ ] `dispatch/task-prompt.md` item 6: drop every shape §7 marks `passes` from its avoid-list, keeping only refused shapes (or replace the list with a §7 citation), and keep the \"one plain command per Bash call is the general pattern\" sentence\n- [ ] Sweep the remaining copies — `_shared/worktree-setup.md:132`, `review/step3-lens-dispatch.md`'s Scratch path paragraph, and any dispatch template that restates the rule — so none lists a shape §7 marks as passing\n\n## Acceptance Criteria\n\n- `subagent-dispatch-core.md`'s rule no longer states that `&&`/`;` chains, assign-then-use, loops, or heredocs are refused, and cites `_shared/scratch-worktree.md` §7 for the refused set\n- The rule no longer asserts that every `worktree-always` dispatch is guard-isolated\n- `dispatch/task-prompt.md` item 6 names no shape that §7's table marks `passes`\n- `tests/subagent-contract-clauses.test.js`'s `PLAIN_COMMAND_RULE` / `PLAIN_COMMAND_CITATION` pins still pass (the rule heading and its citation form are unchanged), and a new assertion fails if a dispatch prompt lists a §7-passing shape as refused\n- `npm test` passes\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\nThe decision the original request left open is settled from §7 alone, with no new probe. Whether a given dispatched agent is guard-isolated doesn't change what its prompt should say: guarded agents need the rule, unguarded ones lose nothing by following it, and both cases have been observed. What changes is the justification text, which must stop asserting a refused-shape list that §7 has since contradicted.\n\nFor the new assertion, derive the \"passes\" shapes from §7's table rows (Verdict column `passes`) rather than hard-coding them. The test then follows the table as rows change, which is how §7 is maintained (\"a new or changed shape updates or adds a row … never a dated addendum\").\n\n### Key Files\n\n- `plugin/skills/_shared/subagent-dispatch-core.md` — line 39's rule text\n- `plugin/skills/dispatch/task-prompt.md` — Context pack item 6's avoid-list\n- `plugin/skills/_shared/worktree-setup.md` — the §7 pointer near line 132\n- `plugin/skills/review/step3-lens-dispatch.md` — Scratch path paragraph\n- `plugin/skills/_shared/scratch-worktree.md` — §7 table (read-only source of truth; no change expected)\n- `tests/subagent-contract-clauses.test.js` — existing pins plus the new no-passing-shape assertion\n\n## Gotchas\n\n- `/flow`'s `multispec-parallel-waves.md` and other dispatch sites inline Context pack items verbatim; grep for item 6's text before editing so every inlined copy moves together.\n- #3737 (open) asks lens prompts to forbid shell-variable paths and cd-chains. Keep this change's wording compatible: `sed`/`node` on a variable path are still refused in §7, so naming them as refused stays correct.\n- The §7 table is \"last observed, not a guarantee\". Cite it rather than copying its verdicts, so the next re-verification doesn't reopen this drift.\n\n## Original request\n\nSettle the dispatch-prompt \"one plain command per call\" mandate against the section 7 refusal table\n\n**Related:** #3737, #3876\n\nOrigin: ledger resolve gate (#3340 wrap-up)\n\nDefer-reason: needs-human-decision\n\n## Current State\n\n`plugin/skills/_shared/subagent-dispatch-core.md` line 39 (\"One plain command per Bash call\") tells every dispatch prompt that `&&`/`;` chains, assign-then-use variables, loops and heredocs \"are refused by shape\" for any worktree-isolated dispatched agent. #3340 re-verified `_shared/scratch-worktree.md` section 7 live: `;` sequences, loops, assign-then-use and standalone heredocs now pass in a guard-isolated session, so the clause overstates the guard. #3340 also observed that the dispatched implementer subagent's Bash ran unguarded (no refusals, control probe passed), which contradicts the \"as every dispatch under `worktree-always` does\" premise. Whether dispatched subagent sessions are guard-isolated is therefore unsettled, and the dispatch-prompt mandate is a shipped contract that every dispatching skill inlines.\n\n## Deliverables\n\n- Settle whether a dispatched (Task-tool) agent session is guard-isolated, with a live probe from a dispatched agent under a `worktree-always` project.\n- Restate `subagent-dispatch-core.md` line 39 to match section 7's table (cite it, do not list shapes), keeping or dropping the \"one plain command per call\" mandate by that finding.\n- Sweep the dispatch prompts that inline the mandate so none still lists a shape the table marks as passing.\n\n## Open Question\n\nKeep \"one plain command per call\" in dispatch prompts as a conservative convention (it avoids every refused shape and costs little), or relax it to the shapes the table actually refuses? Needs a maintainer call plus the dispatched-agent probe.\n\n## Release Note\n\nNo user-visible change.\n\n_Filed by `ledger resolve gate` via specShapedBody._\n",
         "createdAt": "2026-10-20T21:01:53Z",
         "labels": [
@@ -12812,272 +12959,6 @@
           "shapedHeadless": true
         }
       }
-    ],
-    [
-      {
-        "body": "Surface: infra\n\n**Related:** #2767, #3702, #3703, #3742, #3751, #3776, #3953, #3983, #3993, #3995\n\n## Current State\n\nThe post-merge Windows check on commit c31b0e07c (merged PR #3919) reported `tests/reconcile.test.js` newly failing. The failing test is \"archiveRunDir: the git mv of work/ is committed, not left staged (no uncommitted rename after archival)\" (line 485), with:\n\n```\n+ '.claude-tweaks/pipelines/archive/2026-08-14T120000-spec-999/work/999-spec.md'\n- '.claude-tweaks\\\\pipelines\\\\archive\\\\2026-08-14T120000-spec-999\\\\work\\\\999-spec.md'\n```\n\nRoot cause, read from current `main` (d02483933): the assertion at line 501 compares `git ls-files -- {archivedWorkRel}` output, which git always prints with `/` separators, against `path.join(archivedWorkRel, '999-spec.md')`, which is `\\`-separated on Windows. The production code (`archiveRunDir` in `plugin/bin/lib/reconcile/archive-merged.js`) behaves correctly: the archived file is committed at the right path. Only the test's expected value is platform-joined. This is the path-separator class #2767 tracks, not a CRLF read. Line 501 is the only `ls-files`-vs-`path.join` comparison in the file.\n\n`plugin/bin/lib/shared-primitives.js` exports `toPosix(p)`, the house helper for converting a platform path to git's `/` form.\n\n## Deliverables\n\n1. `tests/reconcile.test.js`: build line 501's expected value in git's separator form, `toPosix(path.join(archivedWorkRel, '999-spec.md'))` using `shared-primitives`' `toPosix`, so the comparison holds on every platform.\n\n## Acceptance Criteria\n\n1. The `archiveRunDir: the git mv of work/ is committed…` test's `ls-files` assertion compares against a `/`-separated expected path on every platform.\n2. Under a `path.sep` simulation where the expected value is built with `path.win32.join` (or the assertion is exercised with `toPosix(p, '\\\\')` on a backslash-joined input), the assertion still matches git's output. This is demonstrated in the PR or by a small unit check.\n3. `node --test tests/reconcile.test.js` is green on Linux/macOS.\n4. The next post-merge Windows check (`.github/workflows/windows-regression.yml`) no longer lists this test file.\n\n## Release Note\n\nFix a Windows-only failure in the reconcile archival test caused by path separators.\n\n## Technical Approach\n\nImport `toPosix` from `../plugin/bin/lib/shared-primitives` and wrap the expected path. The `git status --porcelain -- {archivedWorkRel} {oldWorkRel}` assertion two lines above passes platform paths as pathspecs, which Git for Windows accepts, and compares against `''`, so it needs no change. No production code changes.\n\n### Key Files\n\n- `tests/reconcile.test.js` — line 501's expected path converted with `toPosix`\n- `plugin/bin/lib/shared-primitives.js` — `toPosix` reused (read-only)\n\n## Gotchas\n\n- Do not change the expectation to a hardcoded `/`-joined string literal built from `runId`. Converting the already-computed relative path keeps the test tied to the same `archiveDir` derivation as the code under test.\n- CI runs on ubuntu only, so only the post-merge `windows-regression.yml` run proves this on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after c31b0e07c\n\nThe post-merge Windows check failed on commit c31b0e07c5cfe9944b44b3197850e621d41ddc12 (compared against 63180ed6f).\n\n**Merged PR:** #3919 (https://github.com/thn-inc/claude-tweaks/pull/3919)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/39834625407\n\n### Newly failing test files\n- `tests/reconcile.test.js`\n\n### Failure excerpts\n\n#### `tests/reconcile.test.js`\n\n```\nnot ok 12801 - archiveRunDir: the git mv of work/ is committed, not left staged (no uncommitted rename after archival)\n  ---\n  duration_ms: 739.536\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\reconcile.test.js:485:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + '.claude-tweaks/pipelines/archive/2026-08-14T120000-spec-999/work/999-spec.md'\n    - '.claude-tweaks\\\\pipelines\\\\archive\\\\2026-08-14T120000-spec-999\\\\work\\\\999-spec.md'\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
-        "createdAt": "2026-10-22T19:11:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3982,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after c31b0e07c",
-        "updatedAt": "2026-10-24T05:40:09Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #3823, #3953, #3982, #3983, #3993\n\n## Current State\n\nThe post-merge Windows check on commit 6c660b23c (merged PR #3916, run 40029571772) reported `tests/bin-lib/issues/comment-trust.test.js` newly failing. The failing test is \"untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\" (line 66). Its actual output ends every line with `\\r\\n`, where the expected value is `\\n`-joined.\n\nRoot cause, reproduced on macOS against `main` at d02483933: native `jq` on Windows writes stdout in text mode, so every output newline becomes CRLF. The tests compare `spawnSync('jq', …).stdout` byte-for-byte against `\\n`-joined text. Running the files with a `jq` shim on `PATH` that converts output `\\n` to `\\r\\n` reproduces exactly four failures, and a CRLF file-read simulation adds none. This is not the `readText` CRLF-read class:\n\n- `tests/bin-lib/issues/comment-trust.test.js` (8 tests: 6 pass, 2 fail):\n  - \"untrustedJqNote prints the same text…\" (jq call at line 80)\n  - \"AC1.1: trustedJqSelect keeps a trusted comment on both transports (real jq)\" (jq call at line 119; `split('\\n')` leaves a trailing `\\r` on each kept value)\n- `tests/comment-trust-conformance.test.js` (37 tests: 35 pass, 2 fail):\n  - \"AC5.2: grant-lane-decision.md's jq lines run…\"\n  - \"AC5.2: shaping-mode-stamping.md's jq lines run…\"\n  - Both go through the `runJq` helper's jq call at line 449.\n\n`tests/comment-trust-conformance.test.js` was never filed. The latest Windows run's `verify-report` artifact (run 40030935846, head d02483933) lists both files in `baselineAdjudicated.failingFiles`. The conformance file has been red since it was introduced, so the per-push baseline diff never reports it as newly failing. These three `spawnSync('jq', …)` calls are the only non-probe jq invocations under `tests/`. Shipped plugin code is unaffected: `comment-trust.js` only builds the filter strings.\n\n## Deliverables\n\n1. Normalize jq's stdout to `\\n` line endings at each of the three call sites (`tests/bin-lib/issues/comment-trust.test.js` lines 80 and 119, `tests/comment-trust-conformance.test.js` line 449) before any assertion reads it. Do this through one shared test helper rather than three hand-written replacements.\n2. Fix both test files in this record, since they share the root cause.\n\n## Acceptance Criteria\n\n1. No assertion in either file reads raw `jq` stdout. Every one of the three non-probe `spawnSync('jq', …)` results is EOL-normalized first.\n2. With a CRLF-emitting `jq` shim first on `PATH` (a wrapper that pipes real `jq` output through `perl -pe 's/\\n/\\r\\n/'`), both files pass every test. Before the fix this reports 2 failures in each file.\n3. Both files are green on Linux/macOS with the real `jq`. The `jq not found` skip path is unchanged.\n4. The next post-merge `windows-regression.yml` run's `verify-report` artifact lists neither file in `baselineAdjudicated.failingFiles`.\n\n## Release Note\n\nFix Windows-only failures in the comment-trust jq tests caused by native jq's CRLF output.\n\n## Technical Approach\n\nAdd a small `runJq(args, input)` helper next to `readText` under `tests/helpers/`. It wraps `spawnSync('jq', args, { input, encoding: 'utf8' })` and returns the result with `stdout` normalized via `.replace(/\\r\\n/g, '\\n')`. Route the three call sites through it, keeping each `status`/`stderr` assertion as-is. Normalizing at the read mirrors the house rule for the CRLF-read class (#3776, #3953): fix the input once instead of loosening every assertion.\n\n### Key Files\n\n- `tests/bin-lib/issues/comment-trust.test.js` — two jq calls routed through the helper\n- `tests/comment-trust-conformance.test.js` — `runJq`'s jq call routed through the helper\n- `tests/helpers/` — new shared jq-run helper (or extend an existing helper module)\n\n## Gotchas\n\n- Do not pass `jq --binary` / `-b` instead. That flag is documented for native Windows builds, and its behavior on the Linux/macOS jq versions CI and maintainers run is not established here. Normalizing in the test is platform-independent.\n- The `--version` probes need no change: they only check `status`.\n- CI runs on ubuntu only. AC2's shim is the pre-merge stand-in, and only the post-merge `windows-regression.yml` run proves the fix on Windows.\n\n## Original request\n\nWindows regression: 1 test file(s) newly failing after 6c660b23c\n\nThe post-merge Windows check failed on commit 6c660b23cb7b054f4908afabd7a30949e220e57c (compared against 2b943d781).\n\n**Merged PR:** #3916 (https://github.com/thn-inc/claude-tweaks/pull/3916)\n\n**Run:** https://github.com/thn-inc/claude-tweaks/actions/runs/40029571772\n\n### Newly failing test files\n- `tests/bin-lib/issues/comment-trust.test.js`\n\n### Failure excerpts\n\n#### `tests/bin-lib/issues/comment-trust.test.js`\n\n```\nnot ok 3668 - untrustedJqNote prints the same text as untrustedSkipNote, including a deleted (null) author and a missing association\n  ---\n  duration_ms: 1095.4188\n  type: 'test'\n  location: 'D:\\\\a\\\\claude-tweaks\\\\claude-tweaks\\\\tests\\\\bin-lib\\\\issues\\\\comment-trust.test.js:66:1'\n  failureType: 'testCodeFailure'\n  error: |-\n    Expected values to be strictly equal:\n    + actual - expected\n    \n    + 'skipped marker comment https://x/c1 by eve (NONE) — not an owner, member, or collaborator\\r\\n' +\n    +   'skipped marker comment https://x/c2 by unknown (NONE) — not an owner, member, or collaborator\\r\\n' +\n```\n\n_Filed by .github/workflows/windows-regression.yml — failures were compared against the push's base commit (verify.js --baseline). Shape it with /claude-tweaks:specify before building._\n",
-        "createdAt": "2026-10-23T22:05:46Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3995,
-        "state": "OPEN",
-        "title": "Windows regression: 1 test file(s) newly failing after 6c660b23c",
-        "updatedAt": "2026-10-24T05:40:13Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      },
-      {
-        "body": "Surface: infra\n\n**Related:** #3986, #4198, #4244, #4292, #4294, #4345\n\nOrigin: #3950 acceptance run and final whole-branch review (PR #3992) — parked observation, ruled out of #3950's scope\nDefer-reason: tangential\n\n## Current State\n\n`resolveTiebreak` (`plugin/bin/lib/tiebreak.js:261`) settles each tiebreak judge's reply for `/claude-tweaks:review` Step 3.7 (`plugin/skills/review/step3-tiebreak.md`) and the refutation pass. The `resolve-tiebreak` verb of `plugin/bin/review-coordination.js` (`:205-232`) feeds it a `readFile` confined to `--root`. Before accepting a confirmed or refuted verdict, `evidenceProblem` (`tiebreak.js:230-246`) checks three things, in this order:\n\n- `evidence.path !== finding.path` returns `'evidence-path-mismatch'`.\n- The cited line must sit within ±5 of the finding's line (`LINE_TOLERANCE_REPRODUCTION_WIDE`, `plugin/bin/lib/coordination.js:17`).\n- The whitespace-squashed quote must appear in the ±5-line window of `readFile(finding.path)`.\n\nA rejected verdict falls back to can't-tell handling, which files or digests a finding the judge actually settled.\n\n**Case 1, skill-relative Location (still reproduces).** On current main, a finding with path `wrap-up/x.md`, given a correct reply citing `plugin/skills/wrap-up/x.md:10` with the verbatim line, resolves `digest` with reason `evidence-path-mismatch` (probed against `tiebreak.js` at HEAD). Even with the path equality relaxed, `readFile(finding.path)` would resolve `wrap-up/x.md` against `--root` and fail, so the read would also need the canonical path.\n\n**Case 2, backtick-bearing quote (already resolved; premise corrected).** The filed request says a quote whose source line contains backticks fails. On current main it does not. `stripWrapper` (`tiebreak.js:81-94`, landed in #3817) strips a Markdown code span of any equal backtick run, padding included. The check is a substring match against the squashed window, not a whole-line equality. Probed on HEAD, a single-backtick wrap of ``Run `foo` then `bar` now`` and of `` `a` and `b` `` both resolve `confirmed`. `tests/bin-lib/tiebreak.test.js:334` (\"a code span of any backtick run…\") already pins the backtick-led form.\n\n## Deliverables\n\n1. `evidenceProblem` accepts a skill-relative finding path when `'plugin/skills/' + finding.path === evidence.path`, and reads the file through that canonical path. A finding path that already starts with `plugin/` is compared exactly as today.\n2. A test for case 1 goes red on the current resolver and green after the change.\n3. A regression test for case 2's template-literal shape: a single-backtick wrap of a source line that itself contains backticks resolves to the judge's verdict. This pins today's correct behavior so a future parser change cannot reintroduce the report.\n\n## Acceptance Criteria\n\n1. Finding `{ path: 'wrap-up/x.md', line: 10 }` with reply Evidence `plugin/skills/wrap-up/x.md:10` plus the verbatim line, and a reader that serves only `plugin/skills/wrap-up/x.md`, resolves `confirmed`. The same test resolves `evidence-path-mismatch` with the change reverted.\n2. Finding `wrap-up/x.md` with Evidence `plugin/skills/review/x.md:10` still resolves `evidence-path-mismatch`. So does Evidence `plugin/bin/x.md:10`.\n3. A finding with full path `plugin/skills/wrap-up/x.md` behaves exactly as before. The existing `tests/bin-lib/tiebreak.test.js` cases pass unchanged.\n4. The case-2 regression test resolves `confirmed` for Evidence `` `Run `foo` then `bar` now` `` against that source line.\n5. `npm test` passes.\n\n## Release Note\n\nReview tiebreak verdicts are no longer discarded when a finding's location is written relative to its skill.\n\n## Technical Approach\n\nNormalize once, at the top of `evidenceProblem`. Compute the canonical finding path: the path as given when it starts with `plugin/`, else `plugin/skills/{path}` only when `evidence.path` equals that. Use it for both the equality check and the `readFile` call. Keep `--root` confinement in `review-coordination.js` unchanged, since the canonical path is still repo-relative. Do not widen the rule to other prefixes (`plugin/bin/`, `tests/`). The skill-relative shape is the only legacy form observed.\n\n### Key Files\n\n- `plugin/bin/lib/tiebreak.js` — `evidenceProblem` path canonicalisation and read path\n- `tests/bin-lib/tiebreak.test.js` — case-1 go-red test, mismatch guards, case-2 regression pin\n- `plugin/bin/review-coordination.js` — reference only: the `--root`-confined `readFile` the canonical path must still pass\n\n## Gotchas\n\n- The logged `where` string (`tiebreak.js:270`) and the refuted drop line use `finding.path`. Leave them showing the finding's own Location so the decisions.md trail still matches the reported finding.\n- `findingId` hashes `finding.path` (`tiebreak.js:55`). Do not canonicalise the finding object itself, or tiebreak ids and `checkRunTiebreakCoverage` matching would shift for existing runs.\n- The step3-tiebreak.md template already tells judges to cite \"the Location path exactly as given\". For a legacy skill-relative Location, a judge citing the full path is right in substance, which is why the resolver, not the template, absorbs the difference.\n\n## Original request\n\nTiebreak resolver rejects correct evidence for skill-relative Locations and backtick-bearing quotes\n\nOrigin: #3950 acceptance run and final whole-branch review (PR #3992) — parked observation, ruled out of #3950's scope\nDefer-reason: tangential\n\n## Current State\n\n`resolve-tiebreak` (the resolver `/claude-tweaks:review` Step 3.7 `step3-tiebreak.md` and the refutation pass feed each judge's reply through) checks a confirmed or refuted verdict's `Evidence:` line: the cited path must be the finding's Location path, the line within 5 of it, and the quote the whole source line verbatim. Two cases fail that check although the judge's evidence is correct:\n\n1. A legacy Location written skill-relative (`wrap-up/x.md`) never matches a correct full-path Evidence line (`plugin/skills/wrap-up/x.md`), so a correct verdict is discarded.\n2. An Evidence quote whose source line contains a backtick fails the verbatim comparison, because the reply template wraps the quote in backticks.\n\nA discarded verdict falls back to can't-tell handling, which files or digests a finding the judge actually settled.\n\n## Deliverables\n\n- The path check accepts a skill-relative Location when the Evidence path is the same file under `plugin/skills/`.\n- The quote check handles a source line containing backticks — either the template's quote delimiter changes, or the parser takes the outermost delimiters.\n\n## Acceptance Criteria\n\n- A resolver test with Location `wrap-up/x.md:10` and Evidence `plugin/skills/wrap-up/x.md:10` plus a verbatim quote resolves to the judge's verdict; the same test fails against the current resolver.\n- A resolver test whose quoted source line contains a backtick resolves to the judge's verdict; it fails against the current resolver.\n- A mismatched path (another file) is still rejected.\n\n## Release Note\n\nReview tiebreak verdicts are no longer discarded when a finding's location is written relative to its skill or the quoted line contains a backtick.\n\n_Filed from the #3950 final review's parked observation._\n",
-        "createdAt": "2026-10-24T16:34:12Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszED4w",
-            "name": "ceremony:fast-lane",
-            "description": "Ceremony: small/clean record — proportionately fewer review & wrap-up steps",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4164,
-        "state": "OPEN",
-        "title": "Tiebreak resolver rejects correct evidence for skill-relative Locations and backtick-bearing quotes",
-        "updatedAt": "2026-10-26T14:34:20Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "fast-lane",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
     ]
   ],
   "excluded": [
@@ -13145,18 +13026,6 @@
       "blockedBy": [
         4467,
         4613
-      ]
-    },
-    {
-      "number": 4613,
-      "blockedBy": [
-        4611
-      ]
-    },
-    {
-      "number": 4612,
-      "blockedBy": [
-        4611
       ]
     },
     {
@@ -13288,13 +13157,6 @@
         4243,
         4300,
         4351
-      ]
-    },
-    {
-      "records": [
-        3982,
-        3995,
-        4164
       ]
     }
   ]
