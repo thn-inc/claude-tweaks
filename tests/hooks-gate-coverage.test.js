@@ -1112,8 +1112,9 @@ for (const command of [
   });
 }
 
-// Known misses, all tracked in #4328: bash 3.2, bash 5 and zsh write x for each, and the scanner resolves
-// no target. `echo $M>x` is the documented gap, and a bare `$`, backtick or non-blank escape after the last
+// Known misses, all tracked in #4328 (its Absorbed table, and its bullet on a glued redirect after a word
+// holding a bare `$`, which covers `echo $M>x`, `echo $M\ $N>x`, `echo ${M}\ ${N}>x` and `echo $M\a>x`):
+// bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x` is the documented gap, and a bare `$`, backtick or non-blank escape after the last
 // escaped blank is the same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
 // a `$[ ]` or a backtick holding a blank before the escaped blank is not read as closed, and neither is a
 // `${ }` that closes after the blank. A `$VAR` target behind a second `$` or a backtick is one
@@ -1131,8 +1132,17 @@ for (const command of [
 // Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment. One token
 // cannot see the expansion an earlier token opened. Base reads the plain word the same way
 // (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
-// A `}` inside a backtick is counted too, so the `${` around it reads as closed.
+// A `}` inside a backtick is counted too, so the `${` around it reads as closed. `echo $'\'\ >x'` is the
+// tokenizer's misreading of `$'\'`, not a prefix rule: it ends the ANSI-C string at the escaped quote, so the
+// blank and `>x'` read as bare words (the spaced `echo $'\' >x'` gives `x'` at base too). bash 3.2, bash 5 and
+// zsh write nothing; a fix belongs in `tokenize`, tracked in #4328.
+// `echo $M\ >x>y` is the documented "Chained glued redirects" gap (the plain `echo foo>x>y` gives `x>y` at
+// base): bash 3.2, bash 5 and zsh write x and y, and the scanner joins them into one name `x>y`. That denies
+// a wrong name rather than leaking: the same word without the `$M\ ` prefix reads the same way.
 test('AC1.1 #4294: an expansion the prefix cannot see open reads as a false deny, as the plain word does', () => {
+  assert.deepStrictEqual(fileWriteTargets("echo $'\\'\\ >x'", '/r'), [{ action: 'write', file: path.resolve('/r', "x'") }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $M\\ >x>y', '/r'), [{ action: 'write', file: path.resolve('/r', 'x>y') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo foo>x>y', '/r'), [{ action: 'write', file: path.resolve('/r', 'x>y') }]);
   assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
   assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
   assert.deepStrictEqual(fileWriteTargets('echo ${M:-`d}`\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
