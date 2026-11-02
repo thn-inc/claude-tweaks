@@ -30,7 +30,7 @@ One agent per entry, in parallel waves of **8**: dispatch a wave in one batch, w
 
 > **Parallel execution:** Dispatch each wave's tiebreak agents as parallel Task agents — each runs independently, sees only its own finding's allowlist, and returns the template's `Verdict:`/`Evidence:`/`Severity:`/`Recommendation:` reply, settled by `resolve-tiebreak`. Assemble results after all agents complete.
 
-After the last wave, re-run `step3-lens-dispatch.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
+After the last wave, re-run `step3-fanout-sweep.md`'s post-fan-out untracked-file sweep against the same pre-dispatch listing — report-only, as there, logging only what the earlier sweep did not already report. Skip it when this step dispatched no agent (no entries, or every verdict read inline).
 
 Model: `[Use: Capable]`, resolved with `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-profile.js" capable --run-dir "$PIPELINE_RUN_DIR"` (drop `--run-dir` when no run directory exists).
 

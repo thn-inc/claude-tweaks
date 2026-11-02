@@ -463,6 +463,7 @@ test('code-mode-steps wiring assertions can go red', () => {
 // --- step3-lens-dispatch.md: the low tier routes through the tiebreak; the Direct-verification override is retired ---
 
 const STEP3 = path.join(SKILLS, 'review', 'step3-lens-dispatch.md');
+const SWEEP = path.join(SKILLS, 'review', 'step3-fanout-sweep.md');
 
 const lowTierParagraph = (text) => lineStartingWith(text, '**Low-tier single-read dispatch (`low` only).**');
 const overrideParagraph = (text) => lineStartingWith(text, '> **Direct-verification override.**');
@@ -1017,6 +1018,7 @@ const SUMMARY_TEMPLATE = path.join(SKILLS, 'review', 'review-summary-template.md
 const liveTexts = () => ({
   tiebreak: tiebreakText(),
   step3: readText(STEP3),
+  sweep: readText(SWEEP),
   debate: debateText(),
   template: readText(SUMMARY_TEMPLATE),
 });
@@ -1036,7 +1038,7 @@ const FIX_WAVE = [
   // F3 (#3950): the reviewer-read override is retired; only an inline fallback verdict is reviewer-read, and it carries Mode: inline.
   [tiebreakSection('Resolve and act'), /An inline fallback verdict \(`## Dispatched reviewer`\) goes through the same resolver, with ` Mode: inline\.` appended to the content of `T`/, 'F3 only an inline fallback verdict is reviewer-read and carries Mode: inline.'],
   // F4: the post-fan-out sweep re-runs after the tiebreak's last wave.
-  [tiebreakSection('Dispatch'), /After the last wave, re-run `step3-lens-dispatch\.md`'s Post-fan-out untracked-file sweep against the same pre-dispatch listing/, 'F4 the sweep re-runs after the last wave against the same listing'],
+  [tiebreakSection('Dispatch'), /After the last wave, re-run `step3-fanout-sweep\.md`'s post-fan-out untracked-file sweep against the same pre-dispatch listing/, 'F4 the sweep re-runs after the last wave against the same listing'],
   [tiebreakSection('Dispatch'), /report-only, as there/, 'F4 the re-run sweep is report-only'],
   [tiebreakSection('Dispatch'), /Skip it when this step dispatched no agent/, 'F4 the re-run is skipped when nothing was dispatched'],
   // F5: what #3772 supersedes, and how a console outcome surfaces.
@@ -1143,16 +1145,16 @@ test('the retired-wording assertions can go red', () => {
 });
 
 // F4: the cited sweep heading resolves.
-const SWEEP_HEADING = '\n## Post-fan-out untracked-file sweep\n';
-const hasSweepHeading = (text) => text.includes(SWEEP_HEADING);
+const SWEEP_HEADING = '# Post-fan-out untracked-file sweep';
+const hasSweepHeading = (text) => text.split('\n').some((line) => line.startsWith(SWEEP_HEADING));
 
-test('the cited Post-fan-out untracked-file sweep heading exists', () => {
-  assert.ok(hasSweepHeading(readText(STEP3)));
+test("the cited post-fan-out sweep file's heading exists", () => {
+  assert.ok(hasSweepHeading(readText(SWEEP)));
 });
 
-test('the sweep-heading assertion can go red', () => {
-  const text = readText(STEP3);
-  const stripped = text.replace(SWEEP_HEADING, '\n');
+test("the sweep-file-heading assertion can go red", () => {
+  const text = readText(SWEEP);
+  const stripped = text.replace(SWEEP_HEADING, 'Sweep');
   assert.notEqual(stripped, text, 'anchor heading not found — proof cannot discriminate');
   assert.ok(!hasSweepHeading(stripped), 'stripping the heading must turn the check red');
 });
@@ -1288,7 +1290,7 @@ function residualProblems(texts) {
   if (consoleLowItems(`${instantiate(nearLocationLine(texts))}\n`).length !== 1) problems.push('nearLocation line does not surface');
   if (!PER_FINDING_LINE.test(hungParagraph(texts))) problems.push('hung-agent findings get no per-finding line');
   if (!PER_FINDING_LINE.test(partnerDiedParagraph(texts))) problems.push('partner-died findings get no per-finding line');
-  if (!/Step 3\.7 re-runs it/.test(texts.step3)) problems.push('step3 sweep says once without the Step 3.7 re-run');
+  if (!/Step 3\.7 re-runs it/.test(texts.sweep)) problems.push('step3 sweep says once without the Step 3.7 re-run');
   if (!/exactly once \(Step 3\.7 re-runs it/.test(texts.debate)) problems.push('debate sweep says once without the Step 3.7 re-run');
   if (!/logging only what the earlier sweep did not already report/.test(sectionOf(texts.tiebreak, 'Dispatch'))) problems.push('Step 3.7 sweep re-logs earlier leftovers');
   return problems;
@@ -1304,7 +1306,7 @@ test('each console-visibility and sweep re-run assertion can go red', () => {
     [{ step3: live.step3.replace('both staged unconfirmed.', 'both staged.') }, 'nearLocation line does not surface'],
     [{ step3: live.step3.replace(', plus the per-finding line above for each finding it reports.', '') }, 'hung-agent findings get no per-finding line'],
     [{ step3: live.step3.replace(' plus the low-tier per-finding `unconfirmed` line for each of its findings,', '') }, 'partner-died findings get no per-finding line'],
-    [{ step3: live.step3.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],
+    [{ sweep: live.sweep.replace('; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`).', '.') }, 'step3 sweep says once without the Step 3.7 re-run'],
     [{ debate: live.debate.replace(' (Step 3.7 re-runs it for its own waves)', '') }, 'debate sweep says once without the Step 3.7 re-run'],
     [{ tiebreak: live.tiebreak.replace(', logging only what the earlier sweep did not already report', '') }, 'Step 3.7 sweep re-logs earlier leftovers'],
   ];

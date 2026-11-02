@@ -16,7 +16,7 @@ const PRIMITIVE_DOC = readSkillFile('_shared', 'multi-agent-coordination.md');
 // than inlined in it: reproduction's in step3-lens-dispatch.md, Cross-Lens Debate's and
 // Per-Candidate Refutation's in step3-debate-and-refutation.md. Concatenate all three so this
 // still asserts against the real documented format wherever it currently lives.
-const REVIEW_SKILL = ['SKILL.md', 'step3-lens-dispatch.md', 'step3-debate-and-refutation.md']
+const REVIEW_SKILL = ['SKILL.md', 'step3-lens-dispatch.md', 'step3-debate-and-refutation.md', 'step3-fanout-sweep.md']
   .map((f) => readSkillFile('review', f))
   .join('\n');
 const SPECIFY_RED_TEAM = readSkillFile('specify', 'red-team.md');
@@ -1474,11 +1474,11 @@ test('step3-lens-dispatch.md gives each dispatched lens agent a scratch path (#2
   );
 });
 
-test('step3-lens-dispatch.md defines the post-fan-out untracked-file sweep (#2022)', () => {
+test('step3-fanout-sweep.md defines the post-fan-out untracked-file sweep (#2022, #4826)', () => {
   assert.match(
     REVIEW_SKILL,
-    /## Post-fan-out untracked-file sweep/,
-    'step3-lens-dispatch.md must define the post-fan-out untracked-file sweep section',
+    /^# Post-fan-out untracked-file sweep — \/claude-tweaks:review$/m,
+    'step3-fanout-sweep.md must define the post-fan-out untracked-file sweep',
   );
   assert.match(
     REVIEW_SKILL,

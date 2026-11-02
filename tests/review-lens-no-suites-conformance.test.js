@@ -125,7 +125,7 @@ test('the pre-dispatch listing also snapshots local TCP listeners next to pre-di
 });
 
 test('the post-fan-out sweep documents a report-only listener diff and its outputs', () => {
-  const sweep = section(read('review', 'step3-lens-dispatch.md'), '## Post-fan-out untracked-file sweep');
+  const sweep = read('review', 'step3-fanout-sweep.md');
   assert.match(sweep, /pre-dispatch-listeners\.txt/);
   assert.match(sweep, /command name and port/, 'diff is keyed on command + port, not PID or raw line');
   assert.match(sweep, /Never kill/);

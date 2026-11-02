@@ -159,22 +159,7 @@ Each agent's reply ends with a trailing `STATUS: {WORD}` line — one of `DONE /
 
 ## Post-fan-out untracked-file sweep
 
-Run once per review, comparing against the pre-dispatch listing captured above (`{ctx-dir}/pre-dispatch-status.txt`) — never once per lens or per agent; Step 3.7 re-runs it once for its own waves (`step3-tiebreak.md`). At **`low`/`medium`** tier, this file's own Step 3 reproduction/single-read dispatch is the only fan-out this review runs (`step3-debate-and-refutation.md` never loads at these tiers) — run the sweep now, before returning to Step 3 Routing (at `medium`, after the cross-lens corroboration pass). At **`high` and above**, skip running it here **only if `step3-debate-and-refutation.md` was actually loaded and read this run** — its own closing section runs the sweep once, after Step 3.5/3.6, using this same pre-dispatch listing. If, for any reason, that file was not loaded this run despite the tier resolving `high`+, run the sweep here instead rather than skipping it silently.
-
-Procedure: `git status --porcelain --untracked-files=all`, diffed against the captured pre-dispatch listing. Any new untracked path outside `{ctx-dir}` is:
-- reported by name in the review summary's `Fan-out leftovers` section (`review-summary-template.md`), rendered in the compact form too,
-- logged to `decisions.md`: `STAGED {HH:MM:SS} — Review fan-out left {n} untracked file(s): {paths}. Not deleted. Reversibility: n/a.`,
-- excluded from evidence a reviewer trusts — a finding whose only supporting evidence is one of these paths is downgraded to `unconfirmed`, with that reason noted in its entry.
-
-Never delete anything here — report only. A path under `{ctx-dir}` is a sibling agent's or the skill's own scratch output, not a leftover, and is excluded from the diff. A reviewer cannot distinguish its own dispatched agents' leftovers from a concurrent implementer's in-flight untracked work in the same worktree, so the controller — not this sweep — decides what happens to a reported file.
-
-**Leftover-listener check.** When `listenersPath` was non-null (this review's `build` call wrote `{ctx-dir}/pre-dispatch-listeners.txt`; a file left in a reused `{ctx-dir}` by an earlier build does not count), re-run `lsof +c 0 -nP -iTCP -sTCP:LISTEN` (same full-COMMAND-name form as the pre-dispatch snapshot; an empty, exit-1 result means no listeners, not a failure) and compare the two listings by command name and port (the `COMMAND` column and the port in `NAME`), never by PID or whole line, so a process that merely re-bound with a new PID is not counted as new. De-duplicate command:port pairs before counting `{n}` — a process listening on both IPv4 and IPv6 for the same port produces two rows that collapse to one pair. Any command:port pair absent from the pre-dispatch snapshot is a new listener that a lens agent may have left running (a dev server, mock server, or test runner, none of which leaves an untracked file for the diff above to see). It is:
-- reported by command name and port in the review summary's `Fan-out leftovers` section,
-- logged to `decisions.md`: `STAGED {HH:MM:SS} — Review fan-out left {n} new listener(s): {command:port list}. Not killed. Reversibility: n/a.`
-
-Never kill anything here. The check is report-only, like the untracked-file diff. It cannot attribute ownership, because another session may have started a listener during the fan-out, so a reported listener is never proof that a lens agent misbehaved. The controller decides what happens to it.
-
-**Agent-scratch cleanup check.** The `{ctx-dir}` exclusion above covers the skill's own scratch files (the pre/post-fan-out status snapshots) — it does not exempt `{ctx-dir}/agent-scratch/**` from scrutiny, because the Scratch rule's "delete what it created before its status word" is a self-reported promise (`_shared/subagent-output-contract.md`) with no verification elsewhere. As part of this same sweep, run `find {ctx-dir}/agent-scratch -type f 2>/dev/null`: any file still present means a dispatched agent did not honor that promise. Report it exactly like an untracked leftover above — named in the `Fan-out leftovers` section, logged to `decisions.md`, and excluded as sole evidence for a `confirmed` finding — the only difference is the path lives under `agent-scratch/` instead of outside `{ctx-dir}`.
+Before returning to Step 3 Routing — at every tier, whether or not a lens was dispatched, and at `medium` after the cross-lens corroboration pass — read `step3-fanout-sweep.md` in this skill's directory: it decides whether the sweep runs now or at `step3-debate-and-refutation.md`'s closing step, and holds the untracked-file, leftover-listener, and agent-scratch checks.
 
 ## Lens definitions (3a-3g)
 
