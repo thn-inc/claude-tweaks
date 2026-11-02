@@ -76,7 +76,7 @@ function makeEnv(over = {}) {
     host: 'h1',
     alive: () => true,
     startTime: () => 'T0',
-    gitAvailable: true,
+    ghAvailable: true,
     ...over,
   };
   // default world: run archived, stalled worktree present
@@ -94,7 +94,7 @@ function makeEnv(over = {}) {
     stdout: (s) => calls.out.push(s),
     stderr: (s) => calls.err.push(s),
     mainRoot: () => MAIN,
-    ghAvailable: () => cfg.gitAvailable,
+    ghAvailable: () => cfg.ghAvailable,
     sessionId: cfg.sessionId,
     now: () => NOW,
     gh: (args) => {
@@ -334,7 +334,7 @@ test('--help prints usage, exit 0, before any dep is touched', () => {
 });
 
 test('gh absent -> exit 2', () => {
-  const env = makeEnv({ gitAvailable: false });
+  const env = makeEnv({ ghAvailable: false });
   assert.equal(exec(env).code, 2);
   assert.deepStrictEqual(env.calls.gh, []);
 });
