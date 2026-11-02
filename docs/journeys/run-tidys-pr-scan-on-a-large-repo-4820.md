@@ -46,11 +46,11 @@ files:
 - **URL:** `repo-wide` item 4 (merged/closed PRs with local remnants) and item 10's no-PR `[unsettled]` rows
 - **Action:**
   - When the merged or closed PR list returns `{resolved-limit}` rows, the scan emits `[pr] {state} PR list: {resolved-limit} rows (the cap) — older {state} branches unchecked — raise backlog-fetch-limit to check them`, once per capped state.
-  - A no-PR `[unsettled]` row adds "(the PR fetch hit backlog-fetch-limit — an older PR may exist)" only when the PR join hit the cap and its oldest fetched PR is newer than that claim, so an older PR could sit past the cap.
+  - A no-PR `[unsettled]` row adds "(the PR fetch hit backlog-fetch-limit — an older PR may exist)" only when the PR join hit the cap and its oldest fetched PR is newer than that claim, so an older PR could sit past the cap. A row found by its `bot:in-progress` label alone is qualified whenever the join hit the cap, because its claim time is only the issue's last update, an upper bound on the real one.
 - **Should feel:** quiet on the common case, where a claim's PR is recent and well inside the fetched window.
 - **Should understand:** these results are cross-checks, not counts, so they cannot render as `{N}+`; a sentence takes the place of the floor.
 - **Red flags:** the may-be-incomplete qualifier on every no-PR row, which is noise rather than signal.
 
 ## Origin
 
-Built by `/claude-tweaks:flow` record #4820 (run `2026-11-01T231622-record-4820`, PR #4902). The `triage-queue` scope moved to `_shared/github-pr-scan-triage.md` in the same build, to keep `github-pr-scan.md` under the 52,500 B Read rail. Follow-ups: #4906 (acceptance-queue fetch), #4907 (render templates' WARNING slot), #4908 (`wrap-up/unblocked-records.md`), #4909 (triage item 3's commit count).
+Built by `/claude-tweaks:flow` record #4820 (run `2026-11-01T231622-record-4820`, PR #4902). The `triage-queue` scope moved to `_shared/github-pr-scan-triage.md` in the same build, to keep `github-pr-scan.md` under the 52,500 B Read rail. Follow-ups: #4906 (acceptance-queue fetch), #4907 (render templates' WARNING slot), #4908 (`wrap-up/unblocked-records.md`), #4909 (triage item 3's commit count), and from the review and reflect passes #4910 (cap checks for the remaining sized lists), #4911 (per-PR work in items 1 and 2), #4912 (`/help`'s run-marker join), #4913 (the uncomposed `when: transport=gh` fence), #4914 (item 4 as a bin CLI).
