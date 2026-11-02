@@ -27,10 +27,10 @@
 Each line is pinned by a named test in Task 1.
 
 1. HEAD is the integration tip and the tree is dirty on a mapped path: the dirty path selects a suite, so only the `mergeNarrowing` guard stops it excluding everything else. Test: `AC1.1: at the tip with a dirty tree narrowing still declines`.
-2. A pre-anchor commit of the branch's own, then an anchor, then a merge: `own` is non-empty but shares no path with the changed set. Test: `AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites`.
-3. One commit past the tip touching only a bookkeeping path. Test: `AC1.3: a bookkeeping commit past a merge does not hide the merged-in paths`.
-4. The narrowed set selects only static checks (`static-only`, zero suites), which a guard keyed on `mode === 'none'` would miss. Test: `AC1.3: a static-only narrowed set also declines`.
-5. A delta that is bookkeeping on both sides of the merge stays exempt. Test: `AC1.4: a bookkeeping-only delta still stamps none, unnarrowed`.
+2. A pre-anchor commit of the branch's own, then an anchor, then a merge: `own` is non-empty but shares no path with the changed set. Test: `AC1.2 (Reading A): a pre-anchor own commit plus a merge never stamps from zero suites`.
+3. One commit past the tip touching only a bookkeeping path. Test: `AC1.2 (Reading A): a bookkeeping commit past a merge does not hide the merged-in paths`.
+4. The narrowed set selects only static checks (`static-only`, zero suites), which a guard keyed on `mode === 'none'` would miss. Test: `AC1.2 (Reading A): a static-only narrowed set also declines`.
+5. A delta that is bookkeeping on both sides of the merge stays exempt. Test: `AC1.2 (Reading B): a bookkeeping-only delta still stamps none, unnarrowed`.
 
 ---
 
@@ -136,7 +136,7 @@ async function runScoped(r) {
   return { run, stamp, report: JSON.parse(fs.readFileSync(stamp.reportPath, 'utf8')) };
 }
 
-test('--scope --integration-branch: AC1.1, AC1.2: at the integration tip the changed paths run their suites, never a zero-suite stamp (#4638)', async () => {
+test('--scope --integration-branch: AC1.1: at the integration tip the changed paths run their suites, never a zero-suite stamp (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   r.git('checkout', '-q', r.trunk);
@@ -156,7 +156,7 @@ test('--scope --integration-branch: AC1.1, AC1.2: at the integration tip the cha
   assert.deepStrictEqual(report.scope.changedFiles, ['src/merged.js']);
 });
 
-test('--scope --integration-branch: AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading A): a pre-anchor own commit plus a merge never stamps from zero suites (#4638)', async () => {
   const r = zeroSuiteRepo();
   commitFile(r, 'src/pre.js', 'pre');
   await anchorFullPass(r);
@@ -168,7 +168,7 @@ test('--scope --integration-branch: AC1.3: a pre-anchor own commit plus a merge 
   assert.deepStrictEqual(report.scope.changedFiles, ['ui/a.js']);
 });
 
-test('--scope --integration-branch: AC1.3: a merge with nothing of its own never stamps from zero suites (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading A): a merge with nothing of its own never stamps from zero suites (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   mergeTrunk(r, ['ui/a.js']);
@@ -177,7 +177,7 @@ test('--scope --integration-branch: AC1.3: a merge with nothing of its own never
   assert.strictEqual(report.scope.mergeNarrowing, null);
 });
 
-test('--scope --integration-branch: AC1.3: a bookkeeping commit past a merge does not hide the merged-in paths (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading A): a bookkeeping commit past a merge does not hide the merged-in paths (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   mergeTrunk(r, ['ui/a.js']);
@@ -189,7 +189,7 @@ test('--scope --integration-branch: AC1.3: a bookkeeping commit past a merge doe
   assert.deepStrictEqual(report.scope.changedFiles, ['docs/a.md', 'ui/a.js']);
 });
 
-test('--scope --integration-branch: AC1.3: a static-only narrowed set also declines (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading A): a static-only narrowed set also declines (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   mergeTrunk(r, ['ui/a.js']);
@@ -199,7 +199,7 @@ test('--scope --integration-branch: AC1.3: a static-only narrowed set also decli
   assert.strictEqual(report.scope.mergeNarrowing, null);
 });
 
-test('--scope --integration-branch: AC1.4: a bookkeeping-only delta still stamps none, unnarrowed (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading B): a bookkeeping-only delta still stamps none, unnarrowed (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   mergeTrunk(r, ['docs/b.md']);
@@ -212,7 +212,7 @@ test('--scope --integration-branch: AC1.4: a bookkeeping-only delta still stamps
   assert.strictEqual(report.scope.mergeNarrowing, null);
 });
 
-test('--scope --integration-branch: AC1.3: narrowing that leaves a suite still narrows (#3072 stays) (#4638)', async () => {
+test('--scope --integration-branch: AC1.2 (Reading A): narrowing that leaves a suite still narrows (#3072 stays) (#4638)', async () => {
   const r = zeroSuiteRepo();
   await anchorFullPass(r);
   mergeTrunk(r, ['ui/a.js']);
@@ -227,7 +227,7 @@ test('--scope --integration-branch: AC1.3: narrowing that leaves a suite still n
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js`
-Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. The CLI `AC1.1`, `AC1.3` zero-suite and `AC1.4` tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. Two pass at this step, because they pin behavior that must survive: `a failing ahead-count read` goes red only under Step 5's mutation, and `narrowing that leaves a suite still narrows` holds before and after. This appends to two already-passing files, so plan-audit reports it as append-shaped.
+Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. The CLI `AC1.1` and `AC1.2` zero-suite tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. Two pass at this step, because they pin behavior that must survive: `a failing ahead-count read` goes red only under Step 5's mutation, and `narrowing that leaves a suite still narrows` holds before and after. This appends to two already-passing files, so plan-audit reports it as append-shaped.
 
 - [ ] **Step 3: Implement both guards**
 
@@ -267,9 +267,9 @@ In a scratch copy of the two source files (never `git stash`), or by editing and
 |---|---|
 | Delete the `ahead.trim() === '0'` clause | `AC1.1: at the tip with a dirty tree narrowing still declines` |
 | Delete the `ahead === null` clause | `a failing ahead-count read degrades to null` |
-| Delete the `verify.js` outcome guard | `AC1.3: a pre-anchor own commit plus a merge never stamps from zero suites` |
-| Change the guard's condition to `sel.mode === 'none'` | `AC1.3: a static-only narrowed set also declines` |
-| Make the guard always fire when `narrowing` is set | `AC1.3: narrowing that leaves a suite still narrows` |
+| Delete the `verify.js` outcome guard | `AC1.2 (Reading A): a pre-anchor own commit plus a merge never stamps from zero suites` |
+| Change the guard's condition to `sel.mode === 'none'` | `AC1.2 (Reading A): a static-only narrowed set also declines` |
+| Make the guard always fire when `narrowing` is set | `AC1.2 (Reading A): narrowing that leaves a suite still narrows` |
 | Restore only `files`, not `statuses`, in the guard | none expected on this fixture: `statuses` is `null` without an `impact` block; report it as a known survivor |
 
 The new `ahead` guard sits ahead of the `differs`, `status` and `mb` reads. Their existing failure-path tests still reach them, because `mergeTrunkWith`'s merge commit is one commit ahead of trunk. Prove that: delete the `status === null` return and confirm `a failing working-tree status read degrades to null` fails, and delete the `mb === null` return and confirm `a failing anchor merge-base or pre-anchor diff degrades to null` fails.
