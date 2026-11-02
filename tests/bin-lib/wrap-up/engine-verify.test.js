@@ -10,8 +10,20 @@ const { resolveRecords } = require('../../../plugin/bin/lib/wrap-up/pack');
 const { gitRepo, linkedWorktreeOf } = require('../../helpers/git-fixtures');
 const { readText } = require('../../helpers/read-skill');
 
+// Every tmp root this file creates is registered here and removed once, after the
+// file's last test: the per-test try/finally removals cover only some call sites,
+// and a test that throws before its cleanup would otherwise leak its roots.
+const tmpRoots = [];
+test.after(() => {
+  for (const root of tmpRoots) fs.rmSync(root, { recursive: true, force: true });
+});
+function trackTmp(dir) {
+  tmpRoots.push(dir);
+  return dir;
+}
+
 function makeTmpDir(prefix) {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return trackTmp(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
 }
 
 // plans-ledger's sdd-leftover check reads `cwd`'s own filesystem directly
@@ -941,7 +953,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
   // actually prevents that collapse, so this proves it against real git
   // output rather than a hand-written fixture that could just as easily
   // encode the wrong (collapsed) shape.
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   try {
     fs.mkdirSync(path.join(repo, 'docs', 'plans'), { recursive: true });
     fs.writeFileSync(path.join(repo, 'docs', 'plans', 'some-topic-audit.json'), '{}');
@@ -964,7 +976,7 @@ test('design-caches check catches an untracked *-audit.json inside a WHOLLY-untr
 // fixture so a machine whose global config says `false` cannot make these
 // pass vacuously.
 function nonAsciiRepo() {
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   realExecFileSync('git', ['config', 'core.quotepath', 'true'], { cwd: repo });
   return repo;
 }
@@ -1091,8 +1103,9 @@ test('design-caches check scans `cwd`, not `repoRoot`, for untracked cache-file 
 });
 
 test('AC1 (live git): a plans-ledger leftover created in a worktree is caught by a verify run invoked from that same worktree, and is invisible from the main checkout', () => {
-  const main = gitRepo();
-  const wt = linkedWorktreeOf(main);
+  const main = trackTmp(gitRepo());
+  const wt = trackTmp(linkedWorktreeOf(main));
+  trackTmp(path.dirname(wt)); // linkedWorktreeOf's ct-wtd-parent-* dir
   try {
     const realGit = (args, cwd) => realExecFileSync('git', args, { cwd, encoding: 'utf8' });
     // #3168: create the run dir before the leftover, with a real mtime margin
@@ -1654,17 +1667,24 @@ test('AC1.1: accept:pending satisfies the pending-label check', () => {
 // precedence), not the mere presence of one pending label.
 function acceptanceLabelingRow(labelNames, dirPrefix) {
   const runDir = makeTmpDir(dirPrefix);
-  writeSpecFile(runDir, '900', 900);
-  const fakeGh = (args) => {
-    if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
-    if (args.includes('labels,comments')) {
-      return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
-    }
-    return '';
-  };
-  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
-  return result.rows.find((r) => r.check === 'acceptance-labeling');
+  let repoRoot;
+  try {
+    repoRoot = makeNativeRepoRoot();
+    writeSpecFile(runDir, '900', 900);
+    const fakeGh = (args) => {
+      if (args[0] === '--version') return 'gh version 2.0.0';
+      if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+      if (args.includes('labels,comments')) {
+        return JSON.stringify({ labels: labelNames.map((name) => ({ name })), comments: [{ body: '## Verification Brief\n### Confirmed\n', authorAssociation: 'MEMBER' }] });
+      }
+      return '';
+    };
+    const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+    return result.rows.find((r) => r.check === 'acceptance-labeling');
+  } finally {
+    fs.rmSync(runDir, { recursive: true, force: true });
+    if (repoRoot) fs.rmSync(repoRoot, { recursive: true, force: true });
+  }
 }
 
 test('AC3.1: engine-verify agrees on mixed labels', () => {
@@ -2506,6 +2526,140 @@ test('AC2.2: the same PR brief authored COLLABORATOR satisfies a trusted pointer
   assert.strictEqual(row.result, 'pass');
 });
 
+// #4611: the acceptance packet is the current form of the comment this check
+// looks for; the brief forms above stay readable for records that predate it.
+const PACKET_BODY = '<!-- acceptance-packet: v1 -->\n## Acceptance packet — #900';
+const PACKET_V2_BODY = '<!-- acceptance-packet: v2 -->\n## Acceptance packet — #900';
+const packetComment = (body, authorAssociation) => ({ body, url: 'https://x/ap1', author: { login: 'eve' }, authorAssociation });
+
+test('#4611: a trusted acceptance packet under demo:pending passes', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.strictEqual(row.detail, '');
+});
+
+test('#4611: a trusted packet on a pr-first run passes without reading the PR', () => {
+  const { row, prViews } = acceptanceTrustRow({ withPr: true, issueComments: [packetComment(PACKET_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'pass');
+  assert.deepStrictEqual(prViews, []);
+});
+
+test('#4611: a packet authored NONE fails and names the skipped comment', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_BODY, 'NONE')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief/);
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet keeps the skip note of an untrusted one on the passing row', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [
+      packetComment(PACKET_BODY, 'NONE'),
+      { ...packetComment(PACKET_BODY, 'MEMBER'), url: 'https://x/ap2' },
+    ],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: a trusted packet of an unknown schema version fails as unreadable, naming the version', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER')] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: an unreadable packet is not rescued by a legacy brief beside it', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')],
+  });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a legacy brief still passes beside an untrusted packet, with the skip note', () => {
+  const { row } = acceptanceTrustRow({
+    issueComments: [packetComment(PACKET_BODY, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  });
+  assert.strictEqual(row.result, 'pass');
+  assert.match(row.detail, /ignored: skipped marker comment https:\/\/x\/ap1 by eve \(NONE\)/);
+});
+
+test('#4611: the marker counts only as the whole first line', () => {
+  for (const body of [`see ${PACKET_BODY}`, `${PACKET_BODY.split('\n')[0]} trailing\n## Acceptance packet — #900`, `\n${PACKET_BODY}`]) {
+    const { row } = acceptanceTrustRow({ issueComments: [packetComment(body, 'MEMBER')] });
+    assert.strictEqual(row.result, 'fail', body);
+    assert.match(row.detail, /no comment carries a confirmed Verification Brief/, body);
+  }
+});
+
+test('#4611: the none failure names both forms it looked for', () => {
+  const { row } = acceptanceTrustRow({ issueComments: [] });
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: no comment carries a confirmed Verification Brief or an acceptance packet/);
+});
+
+test('#4611: an untrusted comment holding the marker and the brief is named once', () => {
+  const both = `${PACKET_BODY}\n${TRUST_BRIEF_BODY}`;
+  const note = 'skipped marker comment https://x/ap1 by eve (NONE)';
+  const failing = acceptanceTrustRow({ issueComments: [packetComment(both, 'NONE')] }).row;
+  assert.strictEqual(failing.result, 'fail');
+  assert.strictEqual(failing.detail.split(note).length - 1, 1, failing.detail);
+
+  const passing = acceptanceTrustRow({
+    issueComments: [packetComment(both, 'NONE'), { ...packetComment(TRUST_BRIEF_BODY, 'MEMBER'), url: 'https://x/b1' }],
+  }).row;
+  assert.strictEqual(passing.result, 'pass');
+  assert.strictEqual(passing.detail.split(note).length - 1, 1, passing.detail);
+});
+
+// Decision Q1's parent gate posts a legacy brief, and a record with sub-issues and no
+// parent takes the no-parent path with a packet, so a resolved parent reads both forms.
+function parentTargetRow(comments) {
+  const runDir = makeTmpDir('verify-acceptance-parent-target-');
+  const repoRoot = makeCleanRepoRoot();
+  writePolicy(repoRoot, 'work-links: native\n');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
+    if (isSubIssuesCall(args)) return subIssuesGh([{ number: 900, state: 'closed', labels: ['risk:high'] }]);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [{ name: 'demo:pending' }], comments });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
+  return result.rows.find((r) => r.check === 'acceptance-labeling');
+}
+
+test('#4611: a parent target passes on a v1 packet with no legacy brief', () => {
+  const row = parentTargetRow([packetComment(PACKET_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'pass', row.detail);
+});
+
+test('#4611: a parent target with a v2 packet beside a legacy brief fails as unreadable', () => {
+  const row = parentTargetRow([packetComment(PACKET_V2_BODY, 'MEMBER'), packetComment(TRUST_BRIEF_BODY, 'MEMBER')]);
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#898: acceptance packet comment is unreadable \(schemaVersion 2\)/);
+});
+
+test('#4611: a parent target still passes on a legacy brief alone', () => {
+  assert.strictEqual(parentTargetRow([packetComment(TRUST_BRIEF_BODY, 'MEMBER')]).result, 'pass');
+});
+
+test('#4611: a packet does not stand in for the pending label', () => {
+  const runDir = makeTmpDir('verify-acceptance-packet-nolabel-');
+  writeSpecFile(runDir, '900', 900);
+  const fakeGh = (args) => {
+    if (args[0] === '--version') return 'gh version 2.0.0';
+    if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), null);
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: [], comments: [packetComment(PACKET_BODY, 'MEMBER')] });
+    return '';
+  };
+  const result = runVerify({ runDir, base: 'main', repoRoot: makeNativeRepoRoot(), deps: { git: fakeOriginGit(), gh: fakeGh } });
+  const row = result.rows.find((r) => r.check === 'acceptance-labeling');
+  assert.strictEqual(row.result, 'fail');
+  assert.match(row.detail, /#900: missing demo:pending or accept:pending label/);
+});
+
 // #3333: in a multi-spec run the Verification Brief lands on the shared PR as
 // `<!-- run-comment: brief:{n} -->`; acceptance-labeling reads that marker
 // first and falls back to the plain `brief` marker (single-spec / pre-change).
@@ -2852,7 +3006,7 @@ test('runVerify short-circuits to an all-unknown row set when runDir is null, ne
 // invocation is wrapped to recover stdout from the thrown error either way.
 test('wrap-up-engine.js verify prints a check table for a real, anchored run dir', () => {
   const cliPath = path.join(__dirname, '../../../plugin/bin/wrap-up-engine.js');
-  const repo = gitRepo();
+  const repo = trackTmp(gitRepo());
   const runDir = fs.mkdtempSync(path.join(repo, 'verify-rundir-'));
   let out;
   try {

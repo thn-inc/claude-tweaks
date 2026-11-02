@@ -51,8 +51,9 @@ Step 4.0b entry also differs, as its bullet and the paragraphs after this list s
 returns to `verification-brief.md`'s **Posting it alone** and posts this sub-issue's Try it block
 (with any end-to-end variant appended to `"$TRY_IT"`). The one exception is the fail-open fallback
 below, which hands this record to the no-parent path, so the block lands where that path's
-Oversight-floor gate puts it: embedded in the record's own brief (Step 4's template) when it clears
-the floor, posted alone (**Posting it alone**) when it does not. The parent-side
+Oversight-floor gate puts it: the Test guide of the record's own packet
+(`_shared/acceptance-packet.md`). That path posts a packet on either side of the floor, with the
+pending label only above it. The parent-side
 (`/claude-tweaks:tidy`) entry does not post one, and neither does the post-merge
 `_shared/pr-first-merge-post-merge.md` Step 4.0b entry: it posts no Try it block and appends
 nothing to `"$TRY_IT"`, since the run that delivered each sub-issue already posted its own.
@@ -86,9 +87,10 @@ which skips the whole of Step 4.0b.
 available, `gh` is present but unauthenticated (the Detection rule picks `gh` on presence alone, so
 there is no fallback to MCP), the repo has no GitHub remote, or any parent-gate `gh` call below
 fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to
-the no-parent path (`verification-brief.md`'s Oversight-floor gate, then Steps 1-4 on this record
-itself when it clears the floor) — never blocking the wrap-up, the auto-merge short-circuit, or
-the dispatched group's merge gate. The post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
+the no-parent path (`verification-brief.md`'s Oversight-floor gate, then the Steps it routes to on
+this record itself: a packet either way, with the pending label only above the floor) — never
+blocking the wrap-up, the auto-merge short-circuit, or the dispatched group's merge gate. The
+post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
 entry is the sub-issue-side exception: on any failing `gh` call it skips that parent — or the
 whole step, when the call is Step 4.0b's default-branch check — names each skipped parent in the
 closing summary, and never falls back to the no-parent path — its merge has already landed, so
@@ -144,8 +146,9 @@ below. An empty or missing task list is not that case: the parent still resolves
 
 **No parent resolvable** (a record human-filed or `/capture`d directly, or one produced by a
 `/specify` decomposition whose Step 2.6 collapse decision created no parent —
-`specify/decomposition-mode.md`) — skip this section entirely: fall through to Steps 1-4 in
-`verification-brief.md` and apply `demo:pending` to this record itself, exactly as today. The
+`specify/decomposition-mode.md`) — skip this section entirely: fall through to
+`verification-brief.md`'s Oversight-floor gate and the Steps it routes to, so this record itself
+gets a packet, with the pending label only above the floor. The
 exception is `_shared/pr-first-merge-post-merge.md` Step 4.0b's post-merge entry, for which no
 resolvable parent is a no-op: no labeling, no Try it.
 
@@ -347,8 +350,8 @@ size axis is never evaluated (`#366`): parents carry no scoring of their own
 `exceeds` only: `parentIssue`, `needs` and `held` are Step 4.0b's
 (`_shared/pr-first-merge-post-merge.md`).
 
-- **`exceeds: false`** — no `demo:pending`, no brief, same as a below-floor sub-issue record on
-  the non-parent path. Do not compose the parent brief. The parent still has to be closed, and
+- **`exceeds: false`** — no `demo:pending`, no brief: like the non-parent path's below-floor
+  record, no label. Do not compose the parent brief. The parent still has to be closed, and
   the entry decides when:
   - **Sub-issue-side entry, `work-backend: github-issues`:** a pre-merge caller leaves the parent
     open, because this run's merge has not landed yet. `_shared/pr-first-merge-post-merge.md`'s
@@ -535,18 +538,61 @@ Where no register exists (fewer than 4 sub-issues — the threshold that was the
 `promise-register-min-leaves` policy lever until its retirement in #331; removal trail:
 `_shared/policy-deprecations.md` — or `work-backend: local-files`), part 2 alone carries the brief, and `### Confirmed` reads `No cross-spec promise register — walk the end-to-end path in Try it above.` (the section stays: the already-posted check below and `engine-verify.js` both key on it).
 
-Render the same `## Verification Brief` template Step 4 (`verification-brief.md`) renders, with:
+The template's **Try it block**, Step 2 and Step 3 references mean `verification-brief.md`'s `## Try it block`, its Step 2 and its Step 3 (the evidence step). A parent brief replaces or omits each of those slots, as the sentence below the template states, so none of them runs here.
+
+```markdown
+## Verification Brief
+
+### The ask
+{condensed vision/why — the record's problem statement, not just the Acceptance Criteria
+checklist; a human returning days later needs to remember *why*, not just *what to check*}
+
+### What shipped
+{one-paragraph summary from the record body + diff}
+
+{the Try it block composed in **Try it block** above — re-run the **Try it block** resolve line, read the file at the path `$TRY_IT` names, and insert its content verbatim, its own `### Try it` heading included}
+
+### Confirmed
+{app-route/rendered-page, walk completed:}
+Visual review walked {journey/page name} — {clean | "found and fixed: {N} issues — {one line each}"}.
+
+{screenshot embeds from above, 1-3}
+
+{app-route/rendered-page, browser unavailable:}
+_Visual verification wasn't available in this environment._
+
+{diff/rationale, same shape as cli/flow/diff below}
+
+{cli/flow/diff:}
+Code review: {spec-compliance verdict}. {key quality notes, 1-2 lines}
+
+{diff, embedded in full or bounded to key hunks per Step 3}
+
+### Observation plan
+- Surface: {rendered-page | app-route | cli | flow | diff}
+- Entry point: {from Step 2}
+- Prepare: {command sub-bullets, or none}
+- Inspect: {pointer sub-bullets — flow pointers may carry an indented Regenerate: line}
+
+{this section's content follows `skills/_shared/observation-plan.md`'s schema and grammar; it is
+always present on a sub-issue brief — a parent brief omits it (Parent-Gate Procedure)}
+
+---
+
+_Posted by {poster}. Resolve with `/claude-tweaks:demo`._
+```
+
+Render this template — the legacy Verification Brief, kept for the parent gate until the feature-level acceptance record (#4617) moves parents to the acceptance packet (`_shared/acceptance-packet.md`) — with:
 **The ask** — the parent's own design summary (problem, chosen approach — `_shared/work-record.md`'s
 Decomposition rules); **What shipped** — one-paragraph summary of what was delivered across the
-assembled sub-issues; **Confirmed** — part 1 above, in place of Step 4's kind-keyed Confirmed
-branches; **Try it** — part 2, in place of Step 4's per-record Try it block; **`{poster}`** in the template's own footer — substitute the **skill** actually
+assembled sub-issues; **Confirmed** — part 1 above, in place of the template's kind-keyed Confirmed
+branches; **Try it** — part 2, in place of the template's per-record Try it block; **`{poster}`** in the template's own footer — substitute the **skill** actually
 running *this* composition (see the Routing table in `verification-brief.md`), never hardcode
 `` `/claude-tweaks:wrap-up` ``: `` `/claude-tweaks:wrap-up` `` for either wrap-up entry (Phase 4's
 execution step or the auto-merge short-circuit), `` `/claude-tweaks:dispatch` `` for the group auto-merge gate,
 `` `/claude-tweaks:tidy` `` for the backstop entry. Omit the **Observation plan** section — part 2's
-Try it section already names the entry point. A parent brief carries the `### Branch`
-section on the same condition Step 4 states — the durability record belongs to the run in hand,
-not to the parent, so it is present exactly when that run produced one.
+Try it section already names the entry point. A parent brief composes no `### Branch` section:
+the template holds none.
 
 ## Apply the gate
 
@@ -607,8 +653,8 @@ gh issue comment $PARENT_NUM --body-file "$PARENT_VERIFICATION_BRIEF"
 gh issue edit $PARENT_NUM --add-label demo:pending
 ```
 
-Post the brief **before** adding the label — matching Step 4 (`verification-brief.md`)'s existing
-invariant that a reader never sees `demo:pending` without a brief already attached.
+Post the brief **before** adding the label — the same order Step 4 (`verification-brief.md`) keeps
+for its own comment, so a reader never sees `demo:pending` without a brief already attached.
 
 **Partial-state note.** These are two independent `gh` calls, not one atomic write: if the comment
 posts and the label add then fails (a transient `gh` error; the bootstrap above should make a
@@ -618,8 +664,7 @@ multi-step sequence. The already-posted-brief check above is the recovery path o
 state: the next entry finds the brief, skips the comment, and adds the label alone.
 
 `work-backend: local-files` — append the brief to the parent record's own body and set
-`facets.acceptance = 'pending'` on the parent, the same write Step 4 (`verification-brief.md`)
-performs for a non-decomposed record, applied to the parent's file instead of this sub-issue's.
+`facets.acceptance = 'pending'` on the parent's file, not this sub-issue's.
 `parentBriefTemplate` below is the same rendered template from **Compose the parent brief**,
 above — no separate write to a temp file is needed for this backend, since the write below embeds
 it directly. `parentPath` is the `.path` field of the parent's own record — a combined open+closed

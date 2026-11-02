@@ -8,9 +8,9 @@
 // Overview's first sentence, falling back to ## Current State's first
 // sentence for shaping-mode/specShapedBody records, which carry no ##
 // Overview; migrationNote = the ## Breaking Change section; releaseNote =
-// the subject record's own ## Release Note section, never aggregated across
-// a bundle — every record in the bundle must still carry a non-empty
-// section, but only the subject's text is rendered), and prints
+// every record's own ## Release Note section, one per record, lowest number
+// first (#4634 — formerly only the lowest-numbered record's note reached the
+// commit; every record in the bundle must carry a non-empty section), and prints
 // bin/lib/release/subject.js's composeSubject() output. Skill prose reaches
 // the composer only through this CLI — the pure module has no shell surface.
 //
@@ -345,7 +345,7 @@ function run(argv, deps = realDeps) {
     return 1;
   }
   const migrationNote = breakingRecords.map((r) => extractSection(r.body, 'Breaking Change')).filter(Boolean).join('\n\n');
-  const releaseNote = releaseNoteOf(subjectRecord.body);
+  const releaseNotes = records.map((r) => releaseNoteOf(r.body));
 
   let scope = opts.scope;
   if (scope === null) {
@@ -389,7 +389,7 @@ function run(argv, deps = realDeps) {
       breaking: breakingRecords.length > 0,
       summary: firstSentence(extractSection(subjectRecord.body, 'Overview') || extractSection(subjectRecord.body, 'Current State')),
       migrationNote,
-      releaseNote,
+      releaseNote: releaseNotes,
       fixes: opts.numbers,
       keepOpen: opts.keepOpen,
       tag: opts.tag,

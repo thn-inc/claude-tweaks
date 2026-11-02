@@ -22,6 +22,7 @@ const { chmodDenialSkip } = require('./helpers/root');
 const { readText } = require('./helpers/read-skill');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
+const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
 const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
@@ -612,7 +613,7 @@ test('archiveRunDir: the git mv of work/ is committed, not left staged (no uncom
   // for cleanliness here, since that's the actual write this test pins.
   assert.strictEqual(git(['status', '--porcelain', '--', archivedWorkRel, oldWorkRel], root).trim(), '');
   assert.strictEqual(git(['ls-files', '--', archivedWorkRel], root).trim(),
-    path.join(archivedWorkRel, '999-spec.md'));
+    toPosix(path.join(archivedWorkRel, '999-spec.md')));
   assert.match(git(['log', '-1', '--format=%s'], root).trim(), /archive run/);
 });
 
