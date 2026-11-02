@@ -64,7 +64,11 @@ function excludedBy(shell, dir, base, branch, { lineExit = true, branchExit = tr
   const [fence1, fence2] = fences(CHECK);
   const vars = { base, branch, 'integration-branch': integration };
   const checkedOut = branch === 'HEAD' ? run(shell, dir, 'git symbolic-ref --short HEAD').stdout.trim() : null;
-  if (branchExit && (branch === integration || branch === `origin/${integration}` || checkedOut === integration)) {
+  // detached at the integration branch's tip is the same branch for the doc's exit
+  const atTip = branch === 'HEAD'
+    && run(shell, dir, 'git rev-parse HEAD').stdout.trim() === run(shell, dir, `git rev-parse refs/heads/${integration}`).stdout.trim();
+  const named = [integration, `refs/heads/${integration}`, `origin/${integration}`];
+  if (branchExit && (named.includes(branch) || checkedOut === integration || atTip)) {
     // the doc skips the rest of the check; `full` is computed only so the caller can see what stays in scope
     const onlyFull = run(shell, dir, fill(fence2[2], { ...vars, fork: '' }));
     assert.equal(onlyFull.status, 0, 'fence 2 line 3 (full diff) must exit 0');
@@ -148,7 +152,7 @@ function assertProse(stepsText, checkText) {
   const flat = flatten(checkText);
   assert.match(flat, /A `base:\{ref\}` scope never reads this file/, 'check file: base scope exit');
   assert.match(flat, /\*\*Excluded files\*\* are those in the full diff and absent from the branch-side list/, 'check file: exclusion rule');
-  assert.match(flat, /When `\{branch\}` is that branch, `origin\/\{integration-branch\}`, or `HEAD` with that branch checked out, nothing is excluded/, 'check file: branch-is-integration exit');
+  assert.match(flat, /When `\{branch\}` is that branch, `refs\/heads\/\{integration-branch\}`, `origin\/\{integration-branch\}`, or `HEAD` with that branch checked out or detached at its tip, nothing is excluded/, 'check file: branch-is-integration exit');
   assert.match(flat, /When the `git rev-list` line prints `\{fork\}`[^.]*first-parent line[^.]*nothing is excluded/, 'check file: first-parent-line exit');
   assert.match(flat, /An error on that line excludes nothing/, 'check file: guard error exit');
   assert.match(flat, /When `git merge-base` prints nothing[^.]*nothing is excluded/, 'check file: no-fork exit');
@@ -171,7 +175,7 @@ test('AC1.1: a clause removed from the prose goes red with its own message', () 
     { target: 'check', from: 'A `base:{ref}` scope never reads this file', to: 'A `base:{ref}` scope may read this file', message: /check file: base scope exit/ },
     { target: 'check', from: 'and absent from the branch-side list', to: 'and nothing more', message: /check file: exclusion rule/ },
     { target: 'check', from: 'rather than having merged it, so nothing is excluded', to: 'rather than having merged it, so exclusion proceeds', message: /check file: first-parent-line exit/ },
-    { target: 'check', from: 'or `HEAD` with that branch checked out, nothing is excluded', to: 'or `HEAD` with that branch checked out, exclusion proceeds', message: /check file: branch-is-integration exit/ },
+    { target: 'check', from: 'or detached at its tip, nothing is excluded', to: 'or detached at its tip, exclusion proceeds', message: /check file: branch-is-integration exit/ },
     { target: 'check', from: 'or `origin/{integration-branch}` does not resolve', to: 'or `{integration-branch}` does not resolve', message: /check file: origin-form no-fork exit/ },
     { target: 'check', from: 'An error on that line excludes nothing either.', to: 'An error on that line is ignored.', message: /check file: guard error exit/ },
     { target: 'check', from: 'there is no fork point, nothing is excluded, and the raw', to: 'there is no fork point, exclusion proceeds, and the raw', message: /check file: no-fork exit/ },
@@ -433,5 +437,55 @@ test('AC1.1: fixture N, HEAD on a pull-merged integration branch, excludes nothi
     // without the branch exit the fork is the merge's second parent: the review's reproduction, frozen
     assert.deepEqual(excludedBy(shell, dir, start, 'HEAD', { branchExit: false }).excluded,
       ['teammate-base', 'teammate-file']);
+  });
+});
+
+// A pull-merged integration branch under the other spellings the doc's exit names.
+function pullMergedMain() {
+  const { dir, g, commitFile } = fixture();
+  const start = g('rev-parse', 'HEAD').trim();
+  commitFile('teammate-base');
+  g('checkout', '-q', '-b', 'tmp');
+  commitFile('teammate-file');
+  g('update-ref', 'refs/remotes/origin/main', 'tmp');
+  g('checkout', '-q', 'main');
+  commitFile('own-local');
+  g('merge', '-q', 'origin/main', '--no-edit');
+  return { dir, g, start };
+}
+
+test('AC1.1: fixture O, HEAD detached at the tip of a pull-merged integration branch, excludes nothing', async (t) => {
+  const { dir, g, start } = pullMergedMain();
+  g('checkout', '-q', '--detach');
+  await forShells(t, (shell) => {
+    assert.deepEqual(excludedBy(shell, dir, start, 'HEAD').excluded, []);
+    assert.deepEqual(excludedBy(shell, dir, start, 'HEAD', { branchExit: false }).excluded,
+      ['teammate-base', 'teammate-file']);
+  });
+});
+
+test('AC1.1: fixture P, refs/heads/main on a pull-merged integration branch, excludes nothing', async (t) => {
+  const { dir, start } = pullMergedMain();
+  await forShells(t, (shell) => {
+    assert.deepEqual(excludedBy(shell, dir, start, 'refs/heads/main').excluded, []);
+    assert.deepEqual(excludedBy(shell, dir, start, 'refs/heads/main', { branchExit: false }).excluded,
+      ['teammate-base', 'teammate-file']);
+  });
+});
+
+test('AC1.1: fixture Q, HEAD on a feature branch that merged the integration line, still excludes what arrived from it', async (t) => {
+  const { dir, g, commitFile, origin } = fixture();
+  const start = g('rev-parse', 'HEAD').trim();
+  g('checkout', '-q', '-b', 'feat');
+  commitFile('feat-file');
+  g('checkout', '-q', 'main');
+  commitFile('main-file');
+  origin();
+  g('checkout', '-q', 'feat');
+  g('merge', '-q', 'origin/main', '--no-edit');
+  await forShells(t, (shell) => {
+    // a helper that treated any checked-out HEAD as the integration branch would return [] here
+    assert.deepEqual(excludedBy(shell, dir, start, 'HEAD'),
+      { full: ['feat-file', 'main-file'], excluded: ['main-file'] });
   });
 });

@@ -128,7 +128,7 @@ read `cross-spec-promise-check.md` in this skill's directory.
 
 **Resolving `{base}`:** never trust a bare local branch name for `{base}` — a long-lived worktree's local tracking branch (commonly `main`) routinely drifts behind its remote. Resolve it via `git fetch origin {base}` then use `origin/{base}` in every command below, or otherwise confirm `git log -1 {base}` matches `git log -1 origin/{base}` before trusting the diff scope.
 
-On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}..{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
+On a `base:{ref}` scope, `{base}` is the given ref and `{branch}` is `origin/{integration-branch}`. **This paragraph overrides the `origin/{base}` rule above it**: a `base:{ref}` ref is a tag (`v6.48.0`) or a sha, neither of which has an `origin/` form, so it is used exactly as given — after `git fetch --tags origin`, so the tag resolves locally. Only `{branch}` takes the `origin/` prefix on this scope. The change set is `git log --first-parent {base}..{branch}` / `git diff {base}...{branch}` — the first-parent line of the integration branch, so each squash-merged PR is one commit and a `--no-ff` merge counts once.
 
 ### Merge-Provenance Check
 
