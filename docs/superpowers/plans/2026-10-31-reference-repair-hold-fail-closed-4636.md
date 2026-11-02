@@ -2,13 +2,13 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A floor denial computed by `permittedInitiative` reaches the Review Console resolver through a structured JSON field in `engine-state.json`, the resolver re-checks the test-path and merge-sensitive floors itself from the staged file's own diff, and a `staged/wrap-up-reference-*.md` repair the resolver cannot classify resolves `pending` instead of `approve`.
+**Goal:** A floor denial computed by `permittedInitiative` reaches the Review Console resolver through a structured JSON field in `engine-state.json`, the resolver re-checks the test-path and merge-sensitive floors itself from the staged file's own diff, a `staged/wrap-up-reference-*.md` repair the resolver cannot classify resolves `pending` instead of `approve`, and an approved repair is applied from that same staged diff, so what the resolver checked is what lands.
 
-**Architecture:** `permittedInitiative` (`plugin/bin/lib/issues/initiative-budget.js`) gains a boolean `hold` on every result, derived from the floor conditions whichever check fails first. The broken-reference sweep writes it as `findings[].hold` in its `references` payload (which `engine-record.js` already stores verbatim into `engine-state.json`), copies it into a required `Hold: yes|no` header of the staged file, and must write the repair's real diff into that file. A new leaf module, `plugin/bin/lib/console/reference-repair.js`, holds the decision: it approves a repair only when the JSON field reads `hold: false`, the header agrees, the staged diff's `diff --git` paths parse and none is a test path or a merge-sensitive match. `console-resolve.js`'s `readPolicy` resolves `merge-sensitive-paths` and passes it through `deps.sensitivePaths`; an unreadable value holds. The causal check stays on the agent-written `hold`, because its `brokenBy` input comes from the agent anyway.
+**Architecture:** `permittedInitiative` (`plugin/bin/lib/issues/initiative-budget.js`) gains a boolean `hold` on every result, derived from the floor conditions whichever check fails first. The broken-reference sweep writes it as `findings[].hold` in its `references` payload (which `engine-record.js` already stores verbatim into `engine-state.json`), copies it into a required `Hold: yes|no` header of the staged file, and must write the repair's real diff into that file, composed on a temp copy. A new leaf module, `plugin/bin/lib/console/reference-repair.js`, holds the decision: it approves a repair only when the JSON field reads `hold: false`, the header agrees, the staged diff's `diff --git` paths parse and none is a test path or a merge-sensitive match. `console-resolve.js`'s `readPolicy` resolves `merge-sensitive-paths` and passes it through `deps.sensitivePaths`; an unreadable value holds. The causal check stays on the agent-written `hold`, because its `brokenBy` input comes from the agent anyway. Phase 4 applies an approved repair with `git apply` from the staged file; one that no longer applies is rewritten `approve` → `pending` through `console-resolve.js --set-item`.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T201642-record-4636/work/4636-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T203149-record-4636/work/4636-spec.md`
 
 Scope keywords: referenceRepairHoldReason, reference-repair-held, permittedInitiative
 
@@ -20,10 +20,15 @@ Scope keywords: referenceRepairHoldReason, reference-repair-held, permittedIniti
 - Plan Review Decision (verbatim): "Task 1 (the per-denial-path decision logic) carries `Review risk: high`."
 - Plan Review Decision (verbatim): "At `unattended`, the resolver runs the test-path and merge-sensitive checks itself and holds on a hit. It reads the paths from the `diff --git` lines of the staged `wrap-up-reference-*` file, never from the agent-written `target`, `files` or `summary`, and holds when that file has no parseable diff. The reference sweep must write the diff into every staged repair. The causal check stays on the agent-written `hold`, because its `brokenBy` input comes from the agent anyway."
 - Plan Review Decision (verbatim): "a non-string `stagePath` counts as no staged file; the "whichever check fails first" test skips the `no files` + `files cap` pair; Task 3 carries `Review risk: high`; `supervised` stays approvable and an unknown or non-string ceiling holds."
+- Plan Review Decision (verbatim): "An approved reference repair is applied from the staged diff with `git apply`, so what the resolver checked is what lands; `plugin/skills/wrap-up/execution-and-verification.md` changes accordingly, with a test for this direction. A diff that no longer applies leaves the row pending for a human."
+- Plan Review Decision (verbatim): "They carry `Hold: yes` plus a `Held:` line and no diff, and the resolver holds them before it reads any diff. Every other staged repair must carry a real diff."
+- Plan Review Decision (verbatim): "the sweep composes each diff on a temp copy with `git diff --no-index`, leaving the shared worktree untouched, including under `--dry-run`; a `sensitivePaths` value that is not an array holds (`!Array.isArray`); the fan-out payload JSON template gains `hold`."
+- Probed composition recipe: in a fresh temp directory outside the repo, copy the file to `a/{path}`, write the repaired text to `b/{path}`, and run `git diff --no-index --no-prefix -- a/{path} b/{path}` from that directory. It prints `diff --git a/{path} b/{path}` with the real repo path, spaces included, and `git apply --check` accepts it under a `Hold:` preamble. `git diff --no-index` exits 1 when the files differ, which is success here. Comparing the repo file against a temp copy directly would print a rename header naming the temp path, so that shape is never used.
+- Probed: `git apply --check` run from a subdirectory of the repo exits 0 without checking a path outside that subdirectory, so every apply and check runs as `git -C "{worktree root}" apply`, the form `_shared/staged-patch.md`'s Staging-time gate already requires.
 - `merge-sensitive-paths` is a comma-separated string when configured and `[]` when unset (`plugin/skills/_shared/policy-schema.md`, probed through `resolvePolicyConfig`), so it goes through `plugin/bin/lib/express/policy.js`'s `sensitivePathsOf`, the parse the express lane already shares. A `resolvePolicyConfig` entry carrying `error`, or a missing entry, is unreadable: `sensitivePaths: null`, never `[]`.
 - Deliverable (verbatim): "Fix the defect at `plugin/bin/lib/console/resolve.js:646`, with a regression test." The function is now `referenceRepairHoldReason`, at line 722.
 - Header = the lines before the first empty line, split on `/\r?\n/`, each with trailing whitespace stripped by `trimEnd()` (the header rule `sddRulingDeferralReason` uses, without its `/\s+$/` regex).
-- Existing reason strings stay byte-identical: `reference-repair-held`, `reference-repair-unreadable`. One new reason string: `reference-repair-unclassified`.
+- Existing reason strings stay byte-identical: `reference-repair-held`, `reference-repair-unreadable`. Two new reason strings: `reference-repair-unclassified` (the resolver's) and `reference-repair-stale` (Task 4's post-execution rewrite; the resolver never returns it).
 - Expand-contract: a `Held: {reason}` header line still holds (files staged by earlier versions in in-flight runs keep holding). A repair staged before this change has no JSON `hold`, so it resolves `pending`. That is the intended fail-closed change: it costs one click, never an unattended apply.
 - Existing denial `reason` strings and their order stay unchanged. `tests/bin-lib/issues/initiative-budget.test.js` already pins them, and it has no whole-result `deepEqual`, so the widened return shape defangs nothing (grep: `git grep -n permittedInitiative -- tests plugin/bin` shows one test module and no other code caller).
 - `.claude/skills/review-console-section-addition/SKILL.md`, quoted: "**A new `pending` reason on an existing row needs the same sibling grep.** None of sites 1–5 moves when a row gains a reason it resolves pending under". `git grep -n -E 'reference-repair-(held|unreadable)' -- plugin docs/journeys tests` gives the site list Task 3 covers: `resolve.js`, `reference-sweep.md`, `review-console-appendix.md`, the two journeys, `resolve.test.js`.
@@ -40,6 +45,9 @@ Scope keywords: referenceRepairHoldReason, reference-repair-held, permittedIniti
 6. **A diff that says one thing while the agent's fields say another.** `Hold: no`, `hold: false` and a `diff --git` line naming a test or merge-sensitive path holds. Pinned in Task 2.
 7. **A `diff --git` line the parser cannot read** (quoted, no `a/`/`b/` prefix, `..`, an ambiguous rename) beside a readable one. One unreadable line makes the whole file unclassified. Pinned in Task 2.
 8. **An unreadable `merge-sensitive-paths`.** It holds, never reads as an empty list. Pinned in Task 2.
+9. **An ambiguous candidate with no diff.** `Hold: yes` plus `Held:` and no diff resolves `reference-repair-held`, not `reference-repair-unclassified`. Pinned in Task 2.
+10. **What lands is what was checked.** A repair approved at the console is applied from the staged diff, a stale diff never lands, and an edit outside that diff is impossible. Pinned in Task 4's real-git test.
+11. **A repair whose diff stopped applying.** Its stored `approve` is rewritten `pending`, so it surfaces as residue rather than reading as done. Pinned in Task 4.
 
 ---
 
@@ -196,7 +204,7 @@ git commit -m "Add a structured hold field to permittedInitiative — refs #4636
 **Interfaces:**
 - Consumes: Task 1's `hold` only as data: `engineState.results.references.findings[].hold`, never through a `require`. Task 1's `isTestPath` and `matchesPath` through a `require` of `../issues/initiative-budget`.
 - Produces, from `reference-repair.js`, a leaf module like `sdd-ruling.js` that never requires `resolve.js`:
-  - frozen `REFERENCE_REPAIR_REASONS = { HELD: 'reference-repair-held', UNCLASSIFIED: 'reference-repair-unclassified', UNREADABLE: 'reference-repair-unreadable' }`, re-exported by `resolve.js` for Task 3's prose test.
+  - frozen `REFERENCE_REPAIR_REASONS = { HELD: 'reference-repair-held', UNCLASSIFIED: 'reference-repair-unclassified', UNREADABLE: 'reference-repair-unreadable', STALE: 'reference-repair-stale' }`, re-exported by `resolve.js` for Task 3's prose test. `STALE` is written only by Task 4's `--set-item` call; a comment says so.
   - `referenceRepairHoldReason(item, findings, sensitivePaths) -> null | one of those`. `findings` is the array of `references` findings naming this file. `sensitivePaths` is `string[]`, or `null` when unreadable.
   - `referenceFindingsByFile(engineState) -> Map<basename, finding[]>`.
   - `stagedDiffPaths(text) -> string[] | null`.
@@ -364,6 +372,14 @@ test('#4636: a path with spaces parses, so a clean one approves and a test one h
   assert.strictEqual(resolveRef(spaced('tests/my a.test.js'), refState()).reason, 'reference-repair-held');
 });
 
+test('#4636: an ambiguous candidate carries no diff and holds before any diff is read', () => {
+  for (const sensitivePaths of [[], null]) {
+    const item = resolveRef('Hold: yes\nHeld: two plausible new targets\nTarget: docs/a.md\n\nold -> one of b or c\n', refState(true), { sensitivePaths });
+    assert.strictEqual(item.resolution, 'pending');
+    assert.strictEqual(item.reason, 'reference-repair-held');
+  }
+});
+
 test('#4636: unreadable merge-sensitive paths hold', () => {
   for (const sensitivePaths of [null, undefined, 'docs/**', [7]]) {
     const item = resolveRef(`Hold: no\n\n${REF_DIFF}`, refState(), { sensitivePaths });
@@ -418,7 +434,7 @@ A path that is empty, or has an empty, `.` or `..` segment after splitting on `/
 4. Any of `findings` with `hold === true` → `HELD`.
 5. `paths = stagedDiffPaths(item.text)`. Any of `paths` that `isTestPath` accepts, or that `matchesPath` accepts for any of `sensitivePaths` when that is an array → `HELD`.
 6. `holds` = the header lines matching `/^hold:(.*)$/i`, each mapped to its captured value, trimmed and lowercased. `holds.length !== 1` → `UNCLASSIFIED`. `'yes'` → `HELD`. Anything other than `'no'` → `UNCLASSIFIED`.
-7. `paths === null` or `sensitivePaths === null` → `UNCLASSIFIED`.
+7. `paths === null` or `!Array.isArray(sensitivePaths)` → `UNCLASSIFIED`.
 8. The header says no. `findings.length === 1 && findings[0].action === 'staged' && findings[0].hold === false` → `null`, else `UNCLASSIFIED`.
 
 `referenceFindingsByFile(engineState)`: read `engineState.results.references`; return an empty map unless `result === 'findings'` and `findings` is an array; skip an entry that is not an object or whose `stagePath` is not a string; key by `path.basename(stagePath)`. Guard a `null` `engineState`.
@@ -468,7 +484,7 @@ Scope-keyword hits outside this list, each read: `plugin/skills/wrap-up/console-
 ```js
 test('#4636: review-console-appendix.md names every reference-repair pending reason', () => {
   const reasons = Object.values(REFERENCE_REPAIR_REASONS);
-  assert.ok(reasons.length >= 3);
+  assert.ok(reasons.length >= 4);
   const text = APPENDIX.replace(/\s+/g, ' ');
   for (const reason of reasons) assert.ok(text.includes(`pending — ${reason}`), reason);
 });
@@ -481,9 +497,9 @@ Expected: FAIL — `#4636: review-console-appendix.md names every reference-repa
 
 - [ ] **Step 3: Update the prose**
 
-- `plugin/skills/wrap-up/reference-sweep.md` Step 4. Under **`supervised`**, each candidate still goes through `permittedInitiative`, which denies it on the ceiling; nothing is applied and its `hold` is still recorded. Replace the paragraph's Held rules (from "When its target is ambiguous" through "carries no `Held:` line.") with: every staged candidate records `permittedInitiative`'s `hold` twice, copied verbatim and never judged: as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes` or `Hold: no` line in the staged file's header (the lines before the first blank line). A target Step 3 found ambiguous takes `hold: true`/`Hold: yes` whatever the floor said. On `Hold: yes`, also add a `Held: {reason}` line naming why. Over-budget, over-cap and `supervised` denials of an otherwise clean fix come back `hold: false`. Then add, as a required sentence: every staged repair's body carries the repair's real diff, one `diff --git a/{path} b/{path}` block per file, taken from `git diff` per `_shared/staged-patch.md` and never hand-typed, with those lines unindented and at the start of the line. Name that a repair with no parseable diff never auto-approves, and that the resolver reads the repair's paths from those lines rather than from `targetPath`, `files` or `summary`. `console-resolve.js --policy console-auto` approves only when the finding's `hold` is `false`, the header says `Hold: no`, and no path in the diff is a test file or matches `merge-sensitive-paths`; a true value on either side, a `Held:` line or such a path resolves `pending — reference-repair-held`, and a missing, duplicated, misplaced or malformed value on either side, or a missing or unparseable diff, resolves `pending — reference-repair-unclassified`. Under `--dry-run` the same records are written, since everything stages there.
-- `plugin/skills/wrap-up/curation-engine.md`: add a row after `findings[].stagePath`: `findings[].hold` | `references` staged findings | Boolean: `permittedInitiative`'s verdict, copied verbatim (`reference-sweep.md` Step 4). Not validated at record time and stored as given; the console resolver reads it and holds the repair on anything but `false`. The resolver reads the repair's paths from the staged file's own diff, never from this payload.
-- `plugin/skills/wrap-up/review-console-appendix.md` lines 50-52: the `wrap-up-reference-*` clause becomes "a `wrap-up-reference-*` item the initiative floor held (a `references` finding with `hold: true`, a header carrying `Hold: yes` or a `Held:` line, or a staged diff naming a test file or a merge-sensitive path — `reference-sweep.md` Step 4) lands as `pending — reference-repair-held`; one whose finding or header is missing, duplicated or malformed, so the two cannot agree on `Hold: no`, or whose staged diff is missing or unparseable, lands as `pending — reference-repair-unclassified`; one whose file cannot be read lands as `pending — reference-repair-unreadable`; none is auto-approved".
+- `plugin/skills/wrap-up/reference-sweep.md` Step 4. Under **`supervised`**, each candidate still goes through `permittedInitiative`, which denies it on the ceiling; nothing is applied and its `hold` is still recorded. Replace the paragraph's Held rules (from "When its target is ambiguous" through "carries no `Held:` line.") with: every staged candidate records `permittedInitiative`'s `hold` twice, copied verbatim and never judged: as the finding's boolean `hold` field in the row's payload, and as exactly one `Hold: yes` or `Hold: no` line in the staged file's header (the lines before the first blank line). A target Step 3 found ambiguous takes `hold: true`/`Hold: yes` whatever the floor said, plus a `Held: {reason}` line naming why, and carries no diff: nothing has been decided to compose one from. On any other `Hold: yes`, also add a `Held: {reason}` line naming why. Over-budget, over-cap and `supervised` denials of an otherwise clean fix come back `hold: false`. Then add, as a required sentence: every other staged repair's body carries the repair's real diff, one `diff --git a/{path} b/{path}` block per file, with those lines unindented and at the start of the line. Give the composition recipe from Global Constraints as a fenced command: a fresh temp directory outside the repo holding `a/{path}` and `b/{path}`, then `git diff --no-index --no-prefix -- a/{path} b/{path}` from there, its exit 1 being success, its output pasted verbatim under the header and never hand-typed, so a staged candidate leaves the shared worktree untouched, including under `--dry-run`. Then run `_shared/staged-patch.md`'s Staging-time gate on the file (`git -C "{worktree root}" apply --check "{stagePath}"`); on its malformed branch, recompose once, and if it still fails, stage it `hold: true`/`Hold: yes` with a `Held: diff did not apply at staging` line and no diff, rather than that gate's description-only `.md`. Name that a repair with no parseable diff never auto-approves, and that the resolver reads the repair's paths from those lines rather than from `targetPath`, `files` or `summary`. `console-resolve.js --policy console-auto` approves only when the finding's `hold` is `false`, the header says `Hold: no`, and no path in the diff is a test file or matches `merge-sensitive-paths`; a true value on either side, a `Held:` line or such a path resolves `pending — reference-repair-held`, and a missing, duplicated, misplaced or malformed value on either side, or a missing or unparseable diff, resolves `pending — reference-repair-unclassified`. Under `--dry-run` the same records are written, since everything stages there.
+- `plugin/skills/wrap-up/curation-engine.md`: in the section 3 payload JSON template, add `"hold": false,` after `"stagePath": null,` in the example finding. Add a row after `findings[].stagePath`: `findings[].hold` | `references` staged findings | Boolean: `permittedInitiative`'s verdict, copied verbatim (`reference-sweep.md` Step 4). Not validated at record time and stored as given; the console resolver reads it and holds the repair on anything but `false`. The resolver reads the repair's paths from the staged file's own diff, never from this payload.
+- `plugin/skills/wrap-up/review-console-appendix.md` lines 50-52: the `wrap-up-reference-*` clause becomes "a `wrap-up-reference-*` item the initiative floor held (a `references` finding with `hold: true`, a header carrying `Hold: yes` or a `Held:` line, or a staged diff naming a test file or a merge-sensitive path — `reference-sweep.md` Step 4) lands as `pending — reference-repair-held`; one whose finding or header is missing, duplicated or malformed, so the two cannot agree on `Hold: no`, or whose staged diff is missing or unparseable, lands as `pending — reference-repair-unclassified`; one whose file cannot be read lands as `pending — reference-repair-unreadable`; none is auto-approved". After the `--set-item` sentence at line 63 (`apply` → `keep-staged`), add that a reference repair whose diff no longer applies at Phase 4 is rewritten `approve` → `pending — reference-repair-stale` the same way (`execution-and-verification.md`'s Reference repairs bullet). Task 3's prose test requires this sentence.
 - `docs/journeys/resolve-the-unattended-console-in-one-process-1932.md`: in the line 53 sentence starting "A reference repair the Broken references row stages", it resolves `approve` under Reference repairs only when its `engine-state.json` finding carries `hold: false`, its staged header agrees with `Hold: no`, and the resolver's own check of the staged file's `diff --git` lines finds no test file or merge-sensitive path; otherwise it resolves `pending` (`reference-repair-held` / `reference-repair-unclassified` / `reference-repair-unreadable`), never auto-approved. In the line 54 red flags, change "a `wrap-up-reference-` repair with a `Held:` header line reported `approve`" to "a `wrap-up-reference-` repair reported `approve` without both a finding `hold: false` and a header `Hold: no`, with a `Held:` header line, with a staged diff naming a test file or merge-sensitive path, or with no parseable staged diff".
 - `docs/journeys/review-what-an-unattended-console-left-open-3370.md` line 33: the `wrap-up-reference-*` parenthetical becomes "a `wrap-up-reference-*` repair the floor held, whose finding and header do not both say no, whose staged diff is missing or names a test file or merge-sensitive path, or whose file cannot be read — `reference-repair-held` / `reference-repair-unclassified` / `reference-repair-unreadable`, #4585, #4636". Line 67: append "Updated by #4636: an unclassifiable `wrap-up-reference-*` repair is a `pending` class too."
 
@@ -502,4 +518,110 @@ Expected: every hit's sentence also names `reference-repair-unclassified` or sit
 ```bash
 git add plugin/skills/wrap-up/reference-sweep.md plugin/skills/wrap-up/curation-engine.md plugin/skills/wrap-up/review-console-appendix.md docs/journeys/resolve-the-unattended-console-in-one-process-1932.md docs/journeys/review-what-an-unattended-console-left-open-3370.md tests/bin-lib/console/resolve.test.js
 git commit -m "Have the reference sweep write the hold verdict twice and state the rule — refs #4636"
+```
+
+---
+
+### Task 4: An approved repair is applied from the staged diff, and a stale diff goes back to pending
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/skills/wrap-up/execution-and-verification.md` (the **Reference repairs** bullet, line 14)
+- Modify: `plugin/bin/lib/console/item-resolution.js` (`REWRITE_FROM`, the header comment)
+- Modify: `plugin/bin/console-resolve.js` (`USAGE`, the second-shape header comment)
+- Test: `tests/bin-lib/console/item-resolution.test.js` (lines 38-39 and 87, plus appended tests)
+- Test: `tests/bin-lib/console/reference-repair-apply.test.js` (new)
+
+**Interfaces:**
+- Consumes: Task 2's `stagedDiffPaths` and `REFERENCE_REPAIR_REASONS.STALE`; Task 3's composition recipe.
+- Produces: `REWRITE_FROM = { 'keep-staged': ['apply'], pending: ['approve'] }`, each list frozen. `--set-item` already validates `--resolution` against the table's keys, so the CLI takes `pending` with no flag change.
+
+- [ ] **Step 1: Update the pins and write the failing tests**
+
+In `tests/bin-lib/console/item-resolution.test.js`: line 38's `deepStrictEqual` gains `pending: ['approve']`, and line 39 also asserts `Object.isFrozen(REWRITE_FROM.pending)`. Line 87's case is `['a target outside REWRITE_FROM', STORED(), /not rewritable to filed/, { resolution: 'filed' }]`. Add, in that same table, `['an apply item to pending', STORED(), /apply, not rewritable to pending/, { resolution: 'pending' }]`. Append:
+
+```js
+test('#4636: rewrites an approve item to pending, recording what it replaced', () => {
+  const before = STORED();
+  before.items[0] = { id: 'wrap-up-reference-1.md', section: 'Reference repairs', resolution: 'approve', reason: 'stance' };
+  const consolePath = consoleFile(before);
+  const r = call(consolePath, { id: 'wrap-up-reference-1.md', resolution: 'pending', reason: 'reference-repair-stale' });
+  assert.strictEqual(r.status, 'rewrote');
+  assert.strictEqual(r.from, 'approve');
+  const after = JSON.parse(fs.readFileSync(consolePath, 'utf8')).items[0];
+  assert.strictEqual(after.resolution, 'pending');
+  assert.strictEqual(after.reason, 'reference-repair-stale');
+  assert.strictEqual(after.rewrittenFrom, 'approve');
+});
+```
+
+Create `tests/bin-lib/console/reference-repair-apply.test.js`. Each test builds a real temp git repo (`git init`, a committed `docs/a.md`, `core.autocrlf=false`), and a helper `compose(repo, rel, next)` that follows the recipe: a fresh temp directory, `a/{rel}` copied from the repo, `b/{rel}` written, `spawnSync('git', ['diff', '--no-index', '--no-prefix', '--', `a/${rel}`, `b/${rel}`], { cwd })`, asserting status 1.
+
+```js
+test('#4636: the composition recipe names the real path and leaves the repo untouched', () => {
+  for (const rel of ['docs/a.md', 'docs/sub dir/my guide.md']) {
+    const repo = repoWith(rel, 'one\nold\nthree\n');
+    const diff = compose(repo, rel, 'one\nnew\nthree\n');
+    assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\n${diff}`), [rel]);
+    assert.strictEqual(git(repo, 'status', '--porcelain'), '');
+  }
+});
+
+test('#4636: what the resolver checked is what git apply lands', () => {
+  const rel = 'docs/a.md';
+  const repo = repoWith(rel, 'one\nold\nthree\n');
+  const staged = stagedFile(`Hold: no\nTarget: ${rel}\n\n${compose(repo, rel, 'one\nnew\nthree\n')}`);
+  assert.strictEqual(apply(repo, '--check', staged), 0);
+  assert.strictEqual(apply(repo, staged), 0);
+  assert.strictEqual(fs.readFileSync(path.join(repo, rel), 'utf8'), 'one\nnew\nthree\n');
+  assert.deepStrictEqual(git(repo, 'status', '--porcelain').trim().split('\n'), [` M ${rel}`]);
+});
+
+test('#4636: a diff that no longer applies is refused and changes nothing', () => {
+  const rel = 'docs/a.md';
+  const repo = repoWith(rel, 'one\nold\nthree\n');
+  const staged = stagedFile(`Hold: no\n\n${compose(repo, rel, 'one\nnew\nthree\n')}`);
+  fs.writeFileSync(path.join(repo, rel), 'one\nmoved on\nthree\n');
+  assert.notStrictEqual(apply(repo, '--check', staged), 0);
+  assert.strictEqual(fs.readFileSync(path.join(repo, rel), 'utf8'), 'one\nmoved on\nthree\n');
+});
+
+test('#4636: the Reference repairs bullet applies from the staged diff and routes a stale one to pending', () => {
+  const bullet = EXECUTION.split('\n').find((l) => l.startsWith('- **Reference repairs**'));
+  assert.ok(bullet);
+  assert.ok(bullet.includes('apply --check'), 'checks first');
+  assert.ok(bullet.includes('--set-item'), 'names the rewrite');
+  assert.ok(bullet.includes('--resolution pending'), 'names the target');
+  assert.ok(bullet.includes(REFERENCE_REPAIR_REASONS.STALE), 'names the reason');
+  assert.ok(bullet.includes('git -C'), 'runs from the worktree root');
+});
+```
+
+`apply(repo, ...args)` runs `git -C {repo} apply ...args` and returns the exit status. `stagedFile(text)` writes to a temp file outside the repo. `EXECUTION` reads `plugin/skills/wrap-up/execution-and-verification.md`.
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `node --test tests/bin-lib/console/item-resolution.test.js tests/bin-lib/console/reference-repair-apply.test.js`
+Expected: FAIL — the rewrite-table pin, and `#4636: the Reference repairs bullet applies from the staged diff` on `apply --check`.
+
+- [ ] **Step 3: Implement**
+
+`item-resolution.js`: `REWRITE_FROM = Object.freeze({ 'keep-staged': Object.freeze(['apply']), pending: Object.freeze(['approve']) })`. The header comment gains one sentence: a Reference-repairs `approve` whose staged diff no longer applies at Phase 4 goes to `pending` the same way (#4636).
+
+`console-resolve.js`: `USAGE`'s second line reads `--resolution keep-staged|pending`. The header comment names the `approve` → `pending` rewrite beside the existing one.
+
+`execution-and-verification.md`'s Reference repairs bullet: after the sentence ending "confirm them under Verify execution instead", replace "A staged repair approved here is an ordinary edit in this step's commit, not an initiative fix, and carries no trailer" with: a staged repair approved here is applied from its own staged file, so the edit that lands is the diff the resolver checked: `git -C "{worktree root}" apply --check "{staged path}"`, then `git -C "{worktree root}" apply "{staged path}"`, always the `-C` form, since from a subdirectory `git apply` skips a path outside it and still exits 0. Never re-derive the edit from `Target:` or `summary`, and never hand-edit. The result is an ordinary edit in this step's commit, not an initiative fix, and carries no trailer. Keep the trailer clause that follows. Then add: when the check fails, or the file holds no `diff --git` line (an ambiguous candidate a human approved), apply nothing and run `node "${CLAUDE_PLUGIN_ROOT}/bin/console-resolve.js" --run "$PIPELINE_RUN_DIR" --set-item '{name}' --resolution pending --reason 'reference-repair-stale: {first stderr line, or "no staged diff"}'`, so the row surfaces as residue for a human. `--set-item` exits 5 on a console this CLI did not auto-resolve; a human is present on that path, so name the row and its staged path in the Phase 4 report as not applied instead. Keep it one bullet: Step 1's test reads one line.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `node --test tests/bin-lib/console/item-resolution.test.js tests/bin-lib/console/reference-repair-apply.test.js tests/bin-lib/console/cli.test.js tests/console-failed-execution-residue-conformance.test.js tests/wrap-up-verify-execution-pin.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/skills/wrap-up/execution-and-verification.md plugin/bin/lib/console/item-resolution.js plugin/bin/console-resolve.js tests/bin-lib/console/item-resolution.test.js tests/bin-lib/console/reference-repair-apply.test.js
+git commit -m "Apply an approved reference repair from its staged diff and send a stale one back to pending — refs #4636"
 ```
