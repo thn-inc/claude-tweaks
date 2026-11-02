@@ -36,14 +36,14 @@
 ### Task 1: Composer — one `Release-Note:` line per bundled record
 
 **Files:**
-- Modify: `plugin/bin/lib/release/subject.js` (header comment lines 9-10, `composeSubject` signature comment line 55, release-note validation lines 75-76, inline comment + push lines 103-108)
-- Modify: `plugin/bin/lib/compose-subject.js` (header comment lines 10-14, `releaseNote` derivation line 336, `composeSubject` call line 380)
-- Modify: `docs/journeys/merge-a-record-with-a-conventional-subject-2251.md` (step 1 Action line 33 "never aggregated across a bundle"; step 3 Action line 47 — add "one `Release-Note:` line per record"; append an `Updated during build of #4634` history line)
-- Modify: `docs/plugin-structure.md` line 64 (`releaseNote (## Release Note …)` → one note per record)
+- Modify: `plugin/bin/lib/release/subject.js` (header comment, `composeSubject` signature comment, `cleanReleaseNote` validation, inline comment + `Release-Note:` push)
+- Modify: `plugin/bin/lib/compose-subject.js` (header comment, `const releaseNote = releaseNoteOf(subjectRecord.body);`, `composeSubject` call)
+- Modify: `docs/journeys/merge-a-record-with-a-conventional-subject-2251.md` (step 1 Action "never aggregated across a bundle"; step 3 Action — add "one `Release-Note:` line per record"; append an `Updated during build of #4634` history line)
+- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/compose-subject.js` entry's `releaseNote (## Release Note …)` → one note per record)
 - Test: `tests/bin-lib/release/subject.test.js`, `tests/bin-lib/compose-subject.test.js`
 
 **Interfaces:**
-- Produces: `composeSubject({ ..., releaseNote: string | string[] })` — a string is one note (unchanged output); an array is one note per record, lowest number first, each trimmed. Writes one `Release-Note: {note}` line per note, joined by `\n` into the single existing paragraph. An empty array, or any entry that is not a non-empty string after trimming, throws `ComposeSubjectError` with the existing message `releaseNote must be a non-empty string for #${number}`.
+- Produces: `composeSubject({ ..., releaseNote: string | string[] })` — a string or a one-entry array is one note, written verbatim after trimming, multi-line included (unchanged output: spec "A single-record merge composes a byte-identical title and body to today"). A longer array is one note per record, lowest number first, each trimmed and with every internal line break and its surrounding whitespace collapsed to one space (spec "writes one `Release-Note:` line per note"), so no continuation line or blank line can split the paragraph. Writes one `Release-Note: {note}` line per note, joined by `\n` into the single existing paragraph. An empty array, or any entry that is not a non-empty string after trimming, throws `ComposeSubjectError` with the existing message `releaseNote must be a non-empty string for #${number}`.
 - `compose-subject.js` passes `releaseNote: records.map((r) => releaseNoteOf(r.body))` (records are already in ascending number order).
 
 - [ ] **Step 1: Write the failing tests**
@@ -60,6 +60,17 @@ test('releaseNote array: an empty array or a blank entry throws naming the recor
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: [] }), /releaseNote must be a non-empty string[^]*#42/);
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', '  '] }), /releaseNote must be a non-empty string[^]*#42/);
   assert.throws(() => composeSubject({ type: 'feature', title: 'T', number: 42, releaseNote: ['Ok.', 7] }), /releaseNote must be a non-empty string[^]*#42/);
+});
+
+test('releaseNote array: a bundled multi-line note collapses to one line, so the paragraph stays one Release-Note line per record', () => {
+  const { body } = composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\n\n  and more.', 'Fixed Y.'], fixes: [42, 43] });
+  assert.equal(body, 'Release-Note: Added X and more.\nRelease-Note: Fixed Y.\n\nFixes #42\nFixes #43');
+});
+
+test('releaseNote: a single note stays verbatim, multi-line included, whether a string or a one-entry array', () => {
+  const expected = 'Release-Note: Added X\nand more.\n\nFixes #42';
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: 'Added X\nand more.' }).body, expected);
+  assert.equal(composeSubject({ type: 'feature', title: 'Add X', number: 42, releaseNote: ['Added X\nand more.'] }).body, expected);
 });
 ```
 
@@ -114,9 +125,9 @@ Expected: FAIL — `releaseNote array` tests throw `releaseNote must be a non-em
 
 - [ ] **Step 3: Implement**
 
-In `subject.js`, normalize `releaseNote` to a list (`typeof === 'string'` → `[releaseNote]`, an array as-is, anything else → `[]`), trim each, throw the existing usage error when the list is empty or any entry is blank/non-string, and replace the single `paragraphs.push` at line 108 with one push of `notes.map((n) => \`Release-Note: ${n}\`).join('\n')`. Rewrite the header comment (lines 9-10) and the inline comment (lines 103-107) to say one `Release-Note:` line per bundled record, each single-line by construction, read back by `release-notes.js`'s `extractReleaseNotes`. Update the signature comment to `releaseNote: string|string[]`.
+In `subject.js`, normalize `releaseNote` to a list (`typeof === 'string'` → `[releaseNote]`, an array as-is, anything else → `[]`), trim each, throw the existing usage error when the list is empty or any entry is blank/non-string, collapse line breaks per the Interfaces block when the list has more than one entry, and replace the single `paragraphs.push(\`Release-Note: ${cleanReleaseNote}\`)` with one push of `notes.map((n) => \`Release-Note: ${n}\`).join('\n')`. Rewrite the header comment and the inline comment above that push to say one `Release-Note:` line per bundled record, a bundled note collapsed to one line, a single-record note verbatim, read back by `release-notes.js`'s `extractReleaseNotes`. Update the signature comment to `releaseNote: string|string[]`.
 
-In `compose-subject.js`, replace line 336 with `const releaseNotes = records.map((r) => releaseNoteOf(r.body));` and pass `releaseNote: releaseNotes`. Rewrite header lines 10-14: every record's `## Release Note` section, one per record, lowest number first (#4634 — replacing the old "never aggregated across a bundle" rule).
+In `compose-subject.js`, replace `const releaseNote = releaseNoteOf(subjectRecord.body);` (leave the `releaseNoteMissing` guard above it alone: AC3 pins it) with `const releaseNotes = records.map((r) => releaseNoteOf(r.body));` and pass `releaseNote: releaseNotes` in the `composeSubject` call. Rewrite the header comment that says "never aggregated across": every record's `## Release Note` section, one per record, lowest number first (#4634 — replacing the old "never aggregated across a bundle" rule).
 
 Update the journey and `docs/plugin-structure.md` line 64 per the Files block.
 
@@ -136,12 +147,14 @@ git commit -m "Compose one Release-Note line per bundled record — every bundle
 
 ### Task 2: Shared `Release-Note:` extractor and renderer filter
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/release-notes.js` (header comment; retire the `RELEASE_NOTE_FOOTER_RE` export — keep the pattern module-internal as a `/gm` regex; add `extractReleaseNotes`; rewrite `renderReleaseNotes`)
-- Modify: `plugin/bin/lib/release-local/commits.js` (import line 12; `parseCommit` lines 55-58 and its return's `releaseNote` field → `releaseNotes`)
-- Modify: `plugin/bin/lib/release-notes-publish.js` (import line 23; `parseReleaseNotesFromLog` lines 45-57 → `{ sha, releaseNotes }`; header exit-code comment line 19 and the zero-block stdout line 112 → `no Release-Note: trailers to render between …`)
-- Modify: `docs/releasing.md` line 15 (every `Release-Note:` line — one per bundled record — drops `No user-visible change` notes and exact duplicates)
-- Modify: `docs/plugin-structure.md` lines 31, 32, 243 (`RELEASE_NOTE_FOOTER_RE` → `extractReleaseNotes`; `releaseNote` → `releaseNotes`; renderer filter)
+- Modify: `plugin/bin/lib/release-local/commits.js` (the `release-notes` import; `parseCommit`'s footer read and its return's `releaseNote` field → `releaseNotes`)
+- Modify: `plugin/bin/lib/release-notes-publish.js` (the `release-notes` import; `parseReleaseNotesFromLog` → `{ sha, releaseNotes }`; header exit-code comment and the zero-block stdout line → `no Release-Note: trailers to render between …`)
+- Modify: `docs/releasing.md` (every `Release-Note:` line — one per bundled record — drops `No user-visible change` notes and exact duplicates)
+- Modify: `docs/plugin-structure.md` (every entry naming `RELEASE_NOTE_FOOTER_RE` or `releaseNote` fields: `RELEASE_NOTE_FOOTER_RE` → `extractReleaseNotes`; `releaseNote` → `releaseNotes`; renderer filter)
 - Test: `tests/bin-lib/release-notes.test.js`, `tests/bin-lib/release-local/commits.test.js`, `tests/bin-lib/release-notes-publish.test.js`, `tests/bin-lib/release-local/changelog-fixture.test.js`
 
 **Interfaces:**
@@ -250,8 +263,8 @@ git commit -m "Read every Release-Note line through one extractor — renderer d
 
 **Files:**
 - Modify: `plugin/bin/lib/release-local/commits.js` (`parseCommit` — add `fixes`, `refs`)
-- Modify: `plugin/bin/lib/release-preflight/pack.js` line 323 (`unreleased` map passes `fixes: c.fixes, refs: c.refs`)
-- Modify: `plugin/skills/release/SKILL.md` line 101 (`unreleased` field list gains `fixes, refs`; file is 48,673 B against the 52,500 B rail — headroom ample)
+- Modify: `plugin/bin/lib/release-preflight/pack.js` (`unreleased` map passes `fixes: c.fixes, refs: c.refs`)
+- Modify: `plugin/skills/release/SKILL.md` (`unreleased` field list gains `fixes, refs`; headroom ample)
 - Test: `tests/bin-lib/release-local/commits.test.js`, `tests/bin-lib/release-preflight/pack.test.js`
 
 **Interfaces:**
@@ -301,7 +314,7 @@ test('AC7.2: the unreleased probe returns two empty lists for a commit with neit
 Run: `node --test tests/bin-lib/release-local/commits.test.js tests/bin-lib/release-preflight/pack.test.js`
 Expected: FAIL — `fixes`/`refs` are `undefined`.
 
-- [ ] **Step 3: Implement** per the Interfaces block; update `SKILL.md` line 101's field list to `{sha, type, scope, breaking, breakingNote, subject, description, unconventional, fixes, refs}`.
+- [ ] **Step 3: Implement** per the Interfaces block; update `SKILL.md`'s `unreleased` field list to `{sha, type, scope, breaking, breakingNote, subject, description, unconventional, fixes, refs}`.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -319,9 +332,11 @@ git commit -m "Carry Fixes and Refs numbers on unreleased commits — the releas
 
 ### Task 4: Shipped-set rule in the release console and bookkeeping prose
 
+**Review risk:** high
+
 **Files:**
-- Modify: `plugin/skills/release/console.md` line 20 (`Records shipped` row)
-- Modify: `plugin/skills/release/bookkeeping.md` line 19 (Inputs: the shipped set) and line 94 (anti-pattern row: "resolved `(#N)` suffixes to records" → "resolved each commit's `Fixes` numbers and `(#N)` suffixes to records")
+- Modify: `plugin/skills/release/console.md` (`Records shipped` row)
+- Modify: `plugin/skills/release/bookkeeping.md` (Inputs: the shipped set; anti-pattern row: "resolved `(#N)` suffixes to records" → "resolved each commit's `Fixes` numbers and `(#N)` suffixes to records")
 - Create: `tests/release-shipped-set-conformance.test.js`
 
 Behavior-change prose sweep (run before editing; every hit is listed here): `git grep -n -i -e "per \`(#N)\` suffix" -e "distinct \`(#N)\` suffix" -e "resolved \`(#N)\` suffixes" -- plugin docs` → `console.md:20`, `bookkeeping.md:19`, `bookkeeping.md:94` (edited); `docs/journeys/release-a-version.md:32` (red flag about unattributed commits — still true, no change).
@@ -329,15 +344,16 @@ Behavior-change prose sweep (run before editing; every hit is listed here): `git
 **Interfaces:**
 - Consumes: Task 3's `unreleased.value.commits[].fixes` / `.refs`.
 
-The three clause strings below are exact copy — both files carry all three verbatim (the test pins them in both):
+The four clause strings below are exact copy — both files carry all four verbatim (the test pins them in both):
 
 - `CLAUSE_FIXES`: ``a commit carrying any `Fixes` or `Refs` line ships its `Fixes` numbers, so a bundle books every `Fixes` number``
 - `CLAUSE_REFS`: ``a `Refs`-only commit books nothing, even when its `(#N)` suffix names that record``
 - `CLAUSE_SUFFIX`: ``a commit carrying neither line ships its `(#N)` suffix``
+- `CLAUSE_REFS_ACCOUNTED` (Reading A, the record's Plan Review Decisions): ``A `Refs`-only commit is accounted for by its `Refs` number, on the `Kept open (not booked)` line or under the record another commit's `Fixes` line books, and is never listed under `Unattributed commits` ``
 
-Console row's opening, replacing "One line per `(#N)` suffix found in `unreleased.value.commits[].subject`, joined to that record's title and type.": "One line per record in the shipped set, joined to that record's title and type. The shipped set is built per commit in `unreleased.value.commits[]`, from its `fixes`/`refs` lists and its subject: {CLAUSE_FIXES}; {CLAUSE_REFS} — Step 7 closes what it books, and a `Refs` record was kept open on purpose (#4199); {CLAUSE_SUFFIX}." Later in the row: "Duplicate `(#N)` suffixes across commits collapse to one line." → "A number shipped by more than one commit collapses to one line."; the PR-payload drop sentence keeps applying to every number; "A commit subject carrying no `(#N)` suffix never drops out of this row" → "A commit that ships no number (neither line, no `(#N)` suffix) never drops out of this row"; add: "`Refs` numbers that nothing else in the range ships render on one nested `Kept open (not booked): #a, #b` line, never booked at Step 7."
+Console row's opening, replacing "One line per `(#N)` suffix found in `unreleased.value.commits[].subject`, joined to that record's title and type.": "One line per record in the shipped set, joined to that record's title and type. The shipped set is built per commit in `unreleased.value.commits[]`, from its `fixes`/`refs` lists and its subject: {CLAUSE_FIXES}; {CLAUSE_REFS} — Step 7 closes what it books, and a `Refs` record was kept open on purpose (#4199); {CLAUSE_SUFFIX}." Later in the row: "one `gh api repos/{owner}/{repo}/issues/N` call per distinct `N`" gains "(every `Fixes` number, every `(#N)` suffix the shipped set reads, and every `Refs` number nothing else ships)"; the PR-payload drop keeps applying to every such number, and a dropped number is left off `Kept open (not booked)`; the line `PR-number suffixes (not records): #a, #b` becomes `PR numbers (not records): #a, #b` (and the same label in `bookkeeping.md`'s Inputs bullet); "Duplicate `(#N)` suffixes across commits collapse to one line." → "A number shipped by more than one commit collapses to one line."; "A commit subject carrying no `(#N)` suffix never drops out of this row" → "A commit carrying neither a `Fixes`/`Refs` line nor a `(#N)` suffix never drops out of this row"; add: "`Refs` numbers that nothing else in the range ships render on one nested `Kept open (not booked): #a, #b` line, never booked at Step 7. {CLAUSE_REFS_ACCOUNTED}."
 
-Bookkeeping Inputs bullet's opening, replacing "one entry per distinct `(#N)` suffix in `unreleased.value.commits[].subject` (…), the same join Step 4's console row rendered, deduplicated across repeated suffixes,": "the same set Step 4's `Records shipped` row rendered (console.md), built per commit in `unreleased.value.commits[]` (`plugin/bin/lib/release-preflight/pack.js`): {CLAUSE_FIXES}; {CLAUSE_REFS}, because this step closes what it books; {CLAUSE_SUFFIX}. Deduplicated across commits,". Keep the "minus the `(#N)` suffixes Step 4 dropped as PR numbers" sentence, reworded to "minus the numbers Step 4 dropped as PR numbers". Its last sentence becomes "A commit that ships no number contributes no record here — …".
+Bookkeeping Inputs bullet's opening, replacing "one entry per distinct `(#N)` suffix in `unreleased.value.commits[].subject` (…), the same join Step 4's console row rendered, deduplicated across repeated suffixes,": "the same set Step 4's `Records shipped` row rendered (console.md), built per commit in `unreleased.value.commits[]` (`plugin/bin/lib/release-preflight/pack.js`): {CLAUSE_FIXES}; {CLAUSE_REFS}, because this step closes what it books; {CLAUSE_SUFFIX}. Deduplicated across commits,". Keep the "minus the `(#N)` suffixes Step 4 dropped as PR numbers" sentence, reworded to "minus the numbers Step 4 dropped as PR numbers". Its last sentence becomes "A commit carrying neither a `Fixes`/`Refs` line nor a `(#N)` suffix contributes no record here — it stayed in the console's nested `Unattributed commits` line, listed in Step 8's summary, never booked against a record that doesn't exist. {CLAUSE_REFS_ACCOUNTED}." (the record's Plan Review Decisions, Reading A: narrow this sentence).
 
 - [ ] **Step 1: Write the failing test** `tests/release-shipped-set-conformance.test.js`:
 
@@ -356,6 +372,7 @@ const CLAUSES = {
   fixes: 'a commit carrying any `Fixes` or `Refs` line ships its `Fixes` numbers, so a bundle books every `Fixes` number',
   refs: 'a `Refs`-only commit books nothing, even when its `(#N)` suffix names that record',
   suffix: 'a commit carrying neither line ships its `(#N)` suffix',
+  refsAccounted: 'A `Refs`-only commit is accounted for by its `Refs` number, on the `Kept open (not booked)` line or under the record another commit\'s `Fixes` line books, and is never listed under `Unattributed commits`',
 };
 
 function assertShippedSetRule(text, label) {
@@ -418,3 +435,8 @@ Controller-run scratch check, after Tasks 1-4. For each change, edit only that h
 Evidence: `mkdir -p "$PIPELINE_RUN_DIR/evidence"`, each run's output redirected to `$PIPELINE_RUN_DIR/evidence/ac9-{name}.txt`, then one `log-decision.js --status AUTO --step "AC evidence" --text-file {file}` entry naming `AC9`, the four reverts, and the red test each produced. Confirm `git status --porcelain` is clean afterwards.
 
 Waived AC10.1: `npm test` passing is `/build` Common Step 5's runner verification (and `/test`'s), not a plan test step.
+
+Waived plugin/bin/lib/flow/closing-links.js: read only, Task 3's Interfaces records why `parseFixesSpan` does not fit.
+Waived tests/bin-lib/compose-subject.test.js: covered by Task 1's comma-joined `Test:` entry.
+Waived tests/bin-lib/release-notes-publish.test.js: covered by Task 2's comma-joined `Test:` entry.
+Waived tests/merge-subject-composer-conformance.test.js: read only, Task 1 Step 4 runs it unchanged.
