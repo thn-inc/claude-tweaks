@@ -707,11 +707,11 @@ test('#4548: processKillByName returns one label per matching segment', () => {
 });
 
 test('#4548: processKillByName caps wrapper recursion without throwing', () => {
-  const nest = (levels) => {
+  function nest(levels) {
     let command = 'pkill node';
     for (let i = 0; i < levels; i += 1) command = i % 2 ? `bash -c "${command.replace(/(["\\$`])/g, '\\$1')}"` : `sh -c '${command.replace(/'/g, "'\\''")}'`;
     return command;
-  };
+  }
   // The cap is four wrappers deep: the fourth still reports, the fifth and anything deeper reads as none.
   assert.deepStrictEqual(processKillByName(nest(4), '/repo'), ['pkill']);
   assert.deepStrictEqual(processKillByName(nest(5), '/repo'), []);
