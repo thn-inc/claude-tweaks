@@ -3,7 +3,8 @@
 // renderer of the collected notes as a flat, headerless bullet list (#2581).
 // extractReleaseNotes is the one place the trailer pattern lives; its consumers
 // are release-local/commits.js and release-notes-publish.js (the pr-first
-// post-publish step, #2582), and the renderer's is release-local/changelog.js.
+// post-publish step, #2582), and the renderer's are release-local/changelog.js
+// and release-notes-publish.js.
 // It lives here rather than inside release-local/ so those consumers import the
 // same exports instead of restating them. A bundled merge commit carries one
 // `Release-Note:` line per bundled record (#4634), so the reader returns every
