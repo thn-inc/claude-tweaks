@@ -18,15 +18,22 @@ const BARE_VALUE = '[^\\s,;&"\'`)]+';
 // Unrolled, so one run of plain characters has one way to match. An unterminated quote
 // matches nothing: redacting one word of it would leave the rest looking clean to the screen.
 const quoted = (quote) => `${quote}[^${quote}\\\\]*(?:\\\\[\\s\\S][^${quote}\\\\]*)*${quote}`;
-const VALUE = `(?:${quoted('"')}|${quoted("'")}|${quoted('`')}|${BARE_VALUE})`;
+const QUOTED_VALUE = `(?:${quoted('"')}|${quoted("'")}|${quoted('`')})`;
+const VALUE = `(?:${QUOTED_VALUE}|${BARE_VALUE})`;
+// A header's scheme and parameters vary, so its value is the rest of the line. A quoted value
+// ends at its quote only where the quote plainly closes it, as in `"Authorization": "x", "y": 1`.
+const HEADER_VALUE = `(?:${QUOTED_VALUE}(?=\\s*(?:[,;}\\])]|$))|\\S[^\\r\\n]*)`;
+// The screen flags `authorization` only before a colon, so both forms of the name ask it that.
+const AUTHORIZATION_NAME = '(?<name>[A-Za-z0-9_-]*authorization)["\'`]?\\s*';
 
 // Each pattern rule names `value`, and may name the `key` and `close` text kept around it.
-// A rule with a `name` group applies only when the credential screen flags that name.
-function patternRule(pattern, flags) {
+// A rule with a `name` group applies only when the credential screen flags that name
+// followed by `nameSuffix`.
+function patternRule(pattern, flags, nameSuffix = '') {
   const re = new RegExp(pattern, flags);
   return (text, render) => text.replace(re, (whole, ...rest) => {
     const { key = '', value, close = '', name } = rest.at(-1);
-    if (name !== undefined && findCredentialInText(name) === null) return whole;
+    if (name !== undefined && findCredentialInText(`${name}${nameSuffix}`) === null) return whole;
     return render(whole, key, value, close);
   });
 }
@@ -58,7 +65,9 @@ function assignmentRule(text, render) {
 // Order matters: a keyed rule runs before the shape rules that would match its value alone,
 // so `api_key=sk_live_1` keeps its key and counts once.
 const RULES = [
-  patternRule(`(?<![A-Za-z0-9])(?<key>authorization["'\`]?\\s*:\\s*)(?<value>(?:(?:bearer|basic|token)\\s+)?${VALUE})`, 'gi'),
+  patternRule(`${TOKEN_START}(?<key>${AUTHORIZATION_NAME}:\\s*)(?<value>${HEADER_VALUE})`, 'gi', ':'),
+  // The screen does not flag this form, so an open quote cannot be left for it: it takes the line.
+  patternRule(`${TOKEN_START}(?<key>${AUTHORIZATION_NAME}=\\s*)(?<value>(?:${VALUE}|["'\`][^\\r\\n]*))`, 'gi', ':'),
   patternRule('(?<key>://)(?<value>[^\\s/?#]+)(?<close>@)', 'g'),
   // A value never starts with `--`, so `--verbose --api-key abc` does not spend the second flag as the first's value.
   patternRule(`${TOKEN_START}(?<key>(?<name>--[A-Za-z0-9_-]+)(?:=|\\s+))(?!--)(?<value>${VALUE})`, 'g'),
