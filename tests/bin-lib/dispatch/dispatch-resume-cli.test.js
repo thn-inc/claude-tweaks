@@ -11,8 +11,8 @@ const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
-const { findConflictingSession } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
-const { resumeEligibility } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
+const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
+const { resumeEligibility, refusalDetail } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { MAX_PID } = require('../../../plugin/bin/lib/run-liveness/owner-pid-probe');
 
 const N = 4589;
@@ -53,6 +53,10 @@ const STALE = () => claimPayload({
   issueNumber: N, runId: RUN, sessionId: 's1', ttlHours: 72, host: 'h', now: NOW - 100 * HOUR,
 }).fileContent;
 const gitExit1 = () => Object.assign(new Error('exit 1'), { status: 1, stdout: '' });
+// A PR entry as closedByPullRequestsReferences returns it. An entry's own keys win.
+const toNode = (p) => ({
+  state: 'OPEN', repository: { nameWithOwner: SLUG }, closingIssuesReferences: { totalCount: p.closingRecords ?? 1 }, ...p,
+});
 
 // A fake world. `cfg` is mutated by each test before run(); `calls` records every dep touch.
 function makeEnv(over = {}) {
@@ -88,7 +92,7 @@ function makeEnv(over = {}) {
     cfg.dirs[WT] = ['x'];
   }
   const calls = {
-    gh: [], git: [], fs: [], findSibling: [], readClaim: [], native: [], out: [], err: [],
+    gh: [], git: [], fs: [], findSibling: [], findSiblingOnWorktree: [], readClaim: [], native: [], out: [], err: [],
   };
   const deps = {
     stdout: (s) => calls.out.push(s),
@@ -100,9 +104,12 @@ function makeEnv(over = {}) {
     gh: (args) => {
       calls.gh.push(args);
       if (args[0] === 'repo') return `${SLUG}\n`;
-      if (args[0] === 'pr' && args[1] === 'list') {
-        if (cfg.prListThrows) throw new Error('boom pr list');
-        return typeof cfg.prs === 'string' ? cfg.prs : JSON.stringify(cfg.prs);
+      if (args[0] === 'api' && args[1] === 'graphql') {
+        if (cfg.prListThrows) throw new Error('boom pr read');
+        if (typeof cfg.prs === 'string') return cfg.prs;
+        return JSON.stringify({ data: { repository: { issue: { closedByPullRequestsReferences: {
+          pageInfo: { hasNextPage: cfg.prMore === true }, nodes: cfg.prs.map(toNode),
+        } } } } });
       }
       if (args[0] === 'issue' && args[1] === 'view') {
         const n = Number(args[2]);
@@ -144,6 +151,10 @@ function makeEnv(over = {}) {
     findSibling: (ref, opts) => {
       calls.findSibling.push({ ref, opts });
       return cfg.sibling ? cfg.sibling(ref, opts) : null;
+    },
+    findSiblingOnWorktree: (target, opts) => {
+      calls.findSiblingOnWorktree.push({ target, opts });
+      return cfg.siblingOnWorktree ? cfg.siblingOnWorktree(target, opts) : null;
     },
     listRunDirsWithState: () => cfg.runDirs,
     probes: {
@@ -196,14 +207,278 @@ test('eligible: archived prior run, failed: tombstone, clean worktree -> exit 0 
   });
 });
 
-test('the gh pr list argv pins the head branch, repo and a --json list that includes isDraft and headRefOid', () => {
+test('the PR read is one GraphQL call over the closing connection, never a head or mention listing', () => {
   const env = makeEnv();
   exec(env);
-  const call = env.calls.gh.find((a) => a[0] === 'pr' && a[1] === 'list');
-  assert.deepStrictEqual(call, [
-    'pr', 'list', '--repo', SLUG, '--head', HEAD, '--state', 'open',
-    '--json', 'url,number,headRefName,headRefOid,body,isDraft,isCrossRepository',
-  ]);
+  assert.equal(env.calls.gh.some((a) => a[0] === 'pr'), false);
+  const reads = env.calls.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql');
+  assert.equal(reads.length, 1);
+  const call = reads[0];
+  const q = call.find((a) => a.startsWith('query='));
+  assert.match(q, /closedByPullRequestsReferences\(first:100\)/);
+  assert.doesNotMatch(q, /timelineItems|CROSS_REFERENCED/);
+  assert.ok(call.includes('owner=o') && call.includes('repo=r') && call.includes(`issue=${N}`));
+});
+
+const altHead = { headRefName: 'worktree-record-4589' };
+const ALT_WT = path.join(MAIN, '.claude', 'worktrees', 'record-4589');
+
+test('AC1.1: an open closing PR on a non-dispatch head resolves, with the worktree derived from that head', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry(altHead)];
+  env.cfg.status = `## ${altHead.headRefName}...origin/${altHead.headRefName}\0`;
+  env.cfg.dirs[ALT_WT] = ['x'];
+  const r = exec(env);
+  assert.equal(r.code, 0);
+  assert.equal(r.json.prNumber, PR);
+  assert.equal(r.json.headRefName, altHead.headRefName);
+  assert.equal(r.json.worktreePath, ALT_WT);
+});
+
+test('a head with no worktree- prefix derives its worktree, each slash a path segment', () => {
+  const env = makeEnv();
+  const wt = path.join(MAIN, '.claude', 'worktrees', 'fix', 'thing');
+  env.cfg.prs = [prEntry({ headRefName: 'fix/thing' })];
+  env.cfg.status = '## fix/thing...origin/fix/thing\0';
+  env.cfg.dirs[wt] = ['x'];
+  const r = exec(env);
+  assert.equal(r.code, 0, JSON.stringify(r.json));
+  assert.equal(r.json.worktreePath, wt);
+});
+
+test('AC2.1: the read asks only the closing connection, and a connection with no PR returns no-pr', () => {
+  const env = makeEnv();
+  env.cfg.prs = [];
+  const r = exec(env);
+  const q = env.calls.gh.find((a) => a[0] === 'api').find((a) => a.startsWith('query='));
+  assert.match(q, /closedByPullRequestsReferences/);
+  assert.doesNotMatch(q, /timelineItems|CROSS_REFERENCED/);
+  assert.equal(r.code, 3);
+  assert.deepStrictEqual(r.json, {
+    eligible: false, issue: N, reason: 'no-pr',
+    line: `#${N} has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #${N}`,
+    prNumbers: [], disposition: null, remedy: null, headRefName: null,
+  });
+});
+
+test('AC2.1: a PR that only mentions the record never resolves, however the reply carries the mention', () => {
+  // The reply GitHub would return for a record whose closing connection is empty while an open, own-marker
+  // draft PR cross-references it (a body mention, no closing keyword): only the connection is read.
+  const mention = {
+    __typename: 'CrossReferencedEvent',
+    willCloseTarget: false,
+    source: toNode(prEntry({ __typename: 'PullRequest' })),
+  };
+  const reply = { data: { repository: { issue: {
+    closedByPullRequestsReferences: { pageInfo: { hasNextPage: false }, nodes: [] },
+    timelineItems: { pageInfo: { hasNextPage: false }, nodes: [mention] },
+  } } } };
+  const env = makeEnv();
+  env.cfg.prs = JSON.stringify(reply);
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'no-pr');
+  assert.deepStrictEqual(r.json.prNumbers, []);
+  assert.equal(r.json.headRefName, null);
+  assert.equal(r.json.line.includes(`#${PR}`), false, 'the mentioning PR is never named');
+  assert.equal(env.calls.gh.filter((a) => a[0] === 'api' && a[1] === 'graphql').length, 1);
+  assert.equal(env.calls.gh.some((a) => a[0] === 'pr'), false, 'no head or mention listing either');
+});
+
+test('merged and closed PRs in the connection read as no-pr', () => {
+  for (const over of [{ state: 'MERGED' }, { state: 'CLOSED' }]) {
+    const env = makeEnv();
+    env.cfg.prs = [prEntry(over)];
+    assert.equal(exec(env).json.reason, 'no-pr', JSON.stringify(over));
+  }
+});
+
+test('a merged PR beside an open one is dropped: the open one resolves', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ number: 9, state: 'MERGED' }), prEntry()];
+  const r = exec(env);
+  assert.equal(r.code, 0, JSON.stringify(r.json));
+  assert.equal(r.json.prNumber, PR);
+});
+
+test('AC6.1: an open fork PR, or a PR in another repository, refuses by naming it, never no-pr', () => {
+  for (const over of [{ isCrossRepository: true }, { repository: { nameWithOwner: 'x/y' }, isCrossRepository: false }]) {
+    const env = makeEnv();
+    env.cfg.prs = [prEntry(over)];
+    const r = exec(env);
+    assert.equal(r.code, 3);
+    assert.equal(r.json.reason, 'cross-repo-pr', JSON.stringify(over));
+    assert.ok(r.json.line.includes(`#${PR}`));
+    assert.deepStrictEqual(r.json.prNumbers, [PR]);
+    assert.equal(r.json.disposition, 'close');
+  }
+});
+
+test('a repository name differing only in case is this repository', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ repository: { nameWithOwner: SLUG.toUpperCase() } })];
+  assert.notEqual(exec(env).json.reason, 'cross-repo-pr');
+});
+
+test('a truncated connection is a failed read, exit 4, never no-pr', () => {
+  const env = makeEnv();
+  env.cfg.prMore = true;
+  assert.equal(exec(env).code, 4);
+});
+
+test('a connection reply that cannot prove its shape is a failed read, exit 4, never no-pr', () => {
+  const reply = (issue) => JSON.stringify({ data: { repository: { issue } } });
+  const connection = (c) => reply({ closedByPullRequestsReferences: c });
+  for (const prs of [
+    reply(null),
+    connection(null),
+    connection({ pageInfo: { hasNextPage: false }, nodes: null }),
+    connection({ nodes: [] }),
+    connection({ pageInfo: { hasNextPage: false }, nodes: [null] }),
+    connection({ pageInfo: { hasNextPage: false }, nodes: [{ number: PR }] }),
+    connection({ pageInfo: { hasNextPage: false }, nodes: [{ number: PR, state: null }] }),
+  ]) {
+    const env = makeEnv();
+    env.cfg.prs = prs;
+    assert.equal(exec(env).code, 4, prs);
+  }
+});
+
+test('every refusal carries the PR numbers, a disposition and a remedy', () => {
+  const bundle = makeEnv();
+  bundle.cfg.prs = [prEntry({ closingRecords: 2 })];
+  const b = exec(bundle);
+  assert.equal(b.json.reason, 'multi-record-pr');
+  assert.deepStrictEqual(b.json.prNumbers, [PR]);
+  assert.equal(b.json.disposition, 'close');
+  assert.equal(b.json.remedy, b.json.line, 'a bundle holds other records\' work, so no close steps');
+
+  const own = makeEnv();
+  own.cfg.claim = tombstone('other: not a resumable reason');
+  const o = exec(own);
+  assert.equal(o.json.reason, 'claim-not-resumable');
+  assert.deepStrictEqual(o.json.prNumbers, [PR]);
+  assert.equal(o.json.disposition, 'close');
+  assert.match(o.json.remedy, new RegExp(`gh pr close ${PR}`));
+  assert.equal(o.json.headRefName, HEAD);
+});
+
+test('prior-run-live: a live owner sets liveRun on the refusal, an unknown one does not', () => {
+  const live = makeEnv();
+  setRunState(live, { status: 'active', owner: OWNER });
+  assert.equal(exec(live).json.liveRun, true);
+  const unknown = makeEnv();
+  setRunState(unknown, { status: 'active', owner: OWNER });
+  unknown.cfg.alive = () => { throw new Error('EPERM'); };
+  const r = exec(unknown);
+  assert.equal(r.json.reason, 'prior-run-live');
+  assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
+});
+
+test('a refusal fired before the prior-run rule still carries liveRun when the owner is provably live', () => {
+  // An absent claim refuses claim-not-resumable, with a close remedy, ahead of the prior-run rule.
+  const env = makeEnv();
+  env.cfg.claim = null;
+  setRunState(env, { status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.json.reason, 'claim-not-resumable');
+  assert.equal(r.json.liveRun, true);
+  // A provably live run is never told to close its PR or remove its worktree: the remedy waits, then resumes.
+  assert.equal(r.json.disposition, 'resume');
+  assert.match(r.json.remedy, /provably live — leave PR #\d+ and its worktree alone; wait for that run to exit, then run \/claude-tweaks:dispatch resume #/);
+  assert.doesNotMatch(r.json.remedy, /git worktree|git branch|git push|gh pr close/);
+  // A selection refusal too, whichever disposition: a draft bundle marked for this record.
+  const bundle = makeEnv();
+  bundle.cfg.prs = [prEntry({ closingRecords: 2 })];
+  setRunState(bundle, { status: 'active', owner: OWNER });
+  const b = exec(bundle);
+  assert.equal(b.json.reason, 'multi-record-pr');
+  assert.equal(b.json.liveRun, true);
+  assert.equal(b.json.disposition, 'resume');
+  assert.doesNotMatch(b.json.remedy, /git worktree|git branch|git push|gh pr close/);
+  // Not a proven-live owner: no key.
+  const dead = makeEnv();
+  dead.cfg.claim = null;
+  const d = exec(dead).json;
+  assert.equal(Object.hasOwn(d, 'liveRun'), false);
+  // ...and keeps the close-and-redispatch steps: the live-run remedy is the exception, not the rule.
+  assert.equal(d.disposition, 'close');
+  assert.match(d.remedy, /git worktree remove/);
+});
+
+const NO_RUN_LINE = `#${N}'s PR #${PR} names run ${RUN}, which left no run directory for close-out to verify — review and merge it by hand`;
+
+test('with the marker\'s run in neither root nor archive, a close-out remedy reads by hand, through the real classification', () => {
+  const shapes = [
+    ['not-draft', (env) => { env.cfg.prs = [prEntry({ isDraft: false })]; }],
+    ['pr-opened', (env) => { env.cfg.claim = tombstone(`pr-opened: ${URL}`); }],
+    ['multi-record-pr', (env) => { env.cfg.prs = [prEntry({ isDraft: false, closingRecords: 2 })]; }],
+  ];
+  for (const [reason, arrange] of shapes) {
+    const env = makeEnv();
+    arrange(env);
+    delete env.cfg.dirs[ARCH];
+    delete env.cfg.files[ARCH_STATE];
+    const r = exec(env);
+    assert.equal(r.code, 3, reason);
+    assert.equal(r.json.reason, reason);
+    assert.equal(r.json.line, NO_RUN_LINE, reason);
+    assert.equal(r.json.remedy, NO_RUN_LINE, reason);
+    assert.equal(r.json.disposition, 'close-out', reason);
+    // The archive still holds the run: the same shape names the command.
+    const kept = makeEnv();
+    arrange(kept);
+    assert.match(exec(kept).json.remedy, new RegExp(`/claude-tweaks:dispatch close-out #${N}$`), reason);
+  }
+});
+
+test('a residue root dir keeps the close-out command: the path still resolves', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ isDraft: false })];
+  setRunState(env, undefined, { files: ['work'] });
+  const r = exec(env);
+  assert.equal(r.json.reason, 'not-draft');
+  assert.match(r.json.remedy, new RegExp(`/claude-tweaks:dispatch close-out #${N}$`));
+});
+
+test('the prune remedy reads the main checkout from the gatherer, not from the worktree path', () => {
+  const env = makeEnv();
+  const wt = path.join(MAIN, '.claude', 'worktrees', 'fix', 'thing');
+  env.cfg.prs = [prEntry({ headRefName: 'fix/thing' })];
+  delete env.cfg.dirs[WT];
+  env.cfg.porcelain = `worktree ${MAIN}\nHEAD ${OID}\nbranch refs/heads/main\n\nworktree ${wt}\nHEAD ${OID}\nbranch refs/heads/fix/thing\n\n`;
+  const r = exec(env);
+  assert.equal(r.json.reason, 'branch-checked-out');
+  assert.ok(r.json.line.includes(`run git -C "${MAIN}" worktree unlock "${wt}" (ignore a "not locked" error), then git -C "${MAIN}" worktree prune, then run`), r.json.line);
+});
+
+// ownMarkerRunId's two gates: the one run a verdict on this listing can be about.
+test('two kept PRs with a live owner on the first marker carry no liveRun: the listing names no one run', () => {
+  const env = makeEnv();
+  env.cfg.prs = [
+    prEntry(),
+    prEntry({ number: 4700, url: 'https://github.com/o/r/pull/4700', body: 'claude-tweaks-run: 2026-10-31T101632-record-4589\n' }),
+  ];
+  setRunState(env, { status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'multiple-prs');
+  assert.deepStrictEqual(r.json.prNumbers, [PR, 4700]);
+  assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
+  assert.deepStrictEqual(env.calls.fs, [], 'no run dir is read for a listing with no one run');
+});
+
+test('a marker naming another record is never classified: a foreign live run sets no liveRun', () => {
+  const foreign = '2026-10-30T101632-record-1';
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ headRefName: 'worktree-dispatch-record-1', body: `claude-tweaks-run: ${foreign}\n` })];
+  env.cfg.dirs[path.join(ROOT, foreign)] = ['run-state.json', 'work'];
+  env.cfg.files[path.join(ROOT, foreign, 'run-state.json')] = JSON.stringify({ status: 'active', owner: OWNER });
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'foreign-pr');
+  assert.equal(Object.hasOwn(r.json, 'liveRun'), false);
+  assert.deepStrictEqual(env.calls.fs, [], 'the foreign run dir is never read');
 });
 
 test('context is read from the archived decisions.md', () => {
@@ -244,14 +519,15 @@ test('a fork PR listed before the same-repo PR:the prior run id comes from the s
   assert.ok(!env.calls.fs.some(([, p]) => p.includes('2020-01-01')));
 });
 
-test('foreign head -> exit 3 with the open-pr line', () => {
+test('a marker naming another record -> exit 3 foreign-pr with the open-pr line', () => {
   const env = makeEnv();
-  env.cfg.prs = [prEntry({ headRefName: 'worktree-dispatch-record-1' })];
+  env.cfg.prs = [prEntry({ headRefName: 'worktree-dispatch-record-1', body: 'claude-tweaks-run: 2026-10-30T101632-record-1\n' })];
   const r = exec(env);
   assert.equal(r.code, 3);
+  const line = `#${N} already has an open PR (#${PR}) — not re-dispatch-eligible until that PR merges or closes`;
   assert.deepStrictEqual(r.json, {
-    eligible: false, issue: N, reason: 'foreign-pr',
-    line: `#${N} already has an open PR (#${PR}) — not re-dispatch-eligible until that PR merges or closes`,
+    eligible: false, issue: N, reason: 'foreign-pr', line,
+    prNumbers: [PR], disposition: 'close', remedy: line, headRefName: 'worktree-dispatch-record-1',
   });
 });
 
@@ -286,7 +562,7 @@ test('two same-repo PRs on the head branch pass through: exit 3 multiple-prs nam
   assert.deepStrictEqual(env.calls.readClaim, []);
 });
 
-test('a non-array listing -> exit 4', () => {
+test('a reply with no issue in it -> exit 4', () => {
   const env = makeEnv();
   env.cfg.prs = '{"not":"an array"}';
   assert.equal(exec(env).code, 4);
@@ -298,7 +574,7 @@ test('an unparseable listing -> exit 4', () => {
   assert.equal(exec(env).code, 4);
 });
 
-test('gh throws on pr list -> exit 4', () => {
+test('gh throws on the PR read -> exit 4', () => {
   const env = makeEnv();
   env.cfg.prListThrows = true;
   assert.equal(exec(env).code, 4);
@@ -996,24 +1272,57 @@ test('worktree present: neither rev-parse nor worktree list is called', () => {
 
 // ---- sibling sessions ----
 
-test('the sibling check is called with the main root as cwd, the session id and a listing seam', () => {
+test('the sibling check reads #N, then the exact head and worktree, each with the main root as cwd, the session id and a listing seam', () => {
   const env = makeEnv();
   exec(env);
-  assert.equal(env.calls.findSibling.length, 1);
-  const { ref, opts } = env.calls.findSibling[0];
-  assert.equal(ref, `#${N}`);
-  assert.equal(opts.cwd, MAIN);
-  assert.equal(opts.sessionId, SESSION);
-  assert.equal(typeof opts.listRunDirsWithState, 'function');
+  assert.deepStrictEqual(env.calls.findSibling.map((c) => c.ref), [`#${N}`]);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree.map((c) => c.target), [{ branch: HEAD, worktreePath: WT }]);
+  for (const { opts } of [...env.calls.findSibling, ...env.calls.findSiblingOnWorktree]) {
+    assert.equal(opts.cwd, MAIN);
+    assert.equal(opts.sessionId, SESSION);
+    assert.equal(typeof opts.listRunDirsWithState, 'function');
+  }
 });
 
-test('a sibling conflict -> exit 3 live-sibling with the open-pr line', () => {
+test('a sibling conflict -> exit 3 live-sibling with the open-pr line, and a #N hit never runs the exact read', () => {
   const env = makeEnv();
   env.cfg.sibling = () => ({ path: '/elsewhere' });
   const r = exec(env);
   assert.equal(r.code, 3);
   assert.equal(r.json.reason, 'live-sibling');
   assert.match(r.json.line, /already has an open PR/);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree, []);
+});
+
+test('a session exactly on a head with no record number -> live-sibling', () => {
+  const env = makeEnv();
+  env.cfg.prs = [prEntry({ headRefName: 'fix/thing' })];
+  env.cfg.siblingOnWorktree = ({ branch }) => (branch === 'fix/thing' ? { path: '/elsewhere' } : null);
+  const r = exec(env);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'live-sibling');
+  assert.equal(r.json.headRefName, 'fix/thing');
+});
+
+test('a throwing exact sibling read -> exit 4', () => {
+  const env = makeEnv();
+  env.cfg.siblingOnWorktree = () => { throw new Error('x'); };
+  assert.equal(exec(env).code, 4);
+});
+
+test('the exact sibling read keeps the prior run\'s own-lock exclusion, through the real function', () => {
+  const lock = `locked claude (pid ${process.pid})`;
+  const porcelain = [`worktree ${MAIN}`, `HEAD ${OID}`, 'branch refs/heads/main', '', `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, ''].join('\n');
+  const real = (env) => {
+    env.deps.findSiblingOnWorktree = (target, opts) => findSessionOnWorktree(target, { ...opts, run: () => porcelain });
+  };
+  const own = makeEnv();
+  own.cfg.files[ARCH_STATE] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
+  real(own);
+  assert.equal(exec(own).code, 0);
+  const other = makeEnv();
+  real(other);
+  assert.equal(exec(other).json.reason, 'live-sibling', 'control: the prior run recorded another session');
 });
 
 test('a throwing sibling check -> exit 4', () => {
@@ -1108,7 +1417,7 @@ test('the PRs reach the verdict with headRefOid: a reaped worktree whose local b
 function verdictInput(over = {}) {
   return {
     issue: N,
-    prs: [prEntry()],
+    prs: [prEntry({ closingRecords: 1 })],
     claimContent: FAILED(),
     labels: ['ready', 'auto:build'],
     now: NOW,
@@ -1123,6 +1432,7 @@ function verdictInput(over = {}) {
     openBlockers: [],
     localBranchSha: null,
     branchCheckedOutAt: null,
+    mainRoot: MAIN,
     ...over,
   };
 }
@@ -1146,7 +1456,10 @@ test('the printed refusal line equals the line of the verdict for the same input
     assert.equal(expected.reason, reason, `fixture drift: ${reason}`);
     assert.equal(r.code, 3, reason);
     assert.equal(r.lines.length, 1, reason);
-    assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason, line: expected.line }, reason);
+    assert.deepStrictEqual(r.json, {
+      eligible: false, issue: N, reason, line: expected.line,
+      ...refusalDetail({ issue: N, verdict: expected, prs: [prEntry()], mainRoot: MAIN }),
+    }, reason);
   }
 });
 
@@ -1154,6 +1467,61 @@ test('the printed refusal line equals the line of the verdict for the same input
 
 const NEW_RUN = path.join(ROOT, '2026-10-31T120000-record-4589');
 const BOUND = ['--issue', String(N), '--bound-run', NEW_RUN];
+const NEW_RUN_ENTRY = { dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: WT } };
+// The fields a run-dir scan hit gains in verdict mode: its remedy is its own line.
+const hitDetail = (line) => ({ prNumbers: [PR], disposition: 'resume', remedy: line, headRefName: HEAD });
+
+test('--bound-run scans against the bound run\'s own stamped worktree, on any head', () => {
+  const env = makeEnv();
+  const rival = path.join(ROOT, '2026-10-31T110000-record-4589');
+  env.cfg.runDirs = [
+    { dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: ALT_WT } },
+    { dir: rival, state: { status: 'active', sessionId: 'other', worktree: ALT_WT, owner: { sessionId: 'other', host: 'h1', pid: 7, pidStartedAt: 'T0' } } },
+  ];
+  const r = exec(env, BOUND);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'concurrent-resume');
+});
+
+test('--bound-run with no worktree stamped on the bound run, or no entry for it, fails closed, exit 4', () => {
+  for (const runDirs of [
+    [{ dir: NEW_RUN, state: { status: 'active', sessionId: SESSION } }],
+    [{ dir: NEW_RUN, state: null }],
+    [],
+  ]) {
+    const env = makeEnv();
+    env.cfg.runDirs = runDirs;
+    const r = exec(env, BOUND);
+    assert.equal(r.code, 4, JSON.stringify(runDirs));
+    assert.ok(r.err.includes(NEW_RUN), 'names the bound run');
+  }
+});
+
+test('--bound-run: a session exactly on the stamped worktree -> exit 3 live-sibling; the read names the path and no branch', () => {
+  const wt = path.join(MAIN, '.claude', 'worktrees', 'fix', 'thing');
+  const env = makeEnv();
+  env.cfg.runDirs = [{ dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: wt } }];
+  env.cfg.siblingOnWorktree = ({ worktreePath }) => (worktreePath === wt ? { path: wt } : null);
+  const r = exec(env, BOUND);
+  assert.equal(r.code, 3);
+  assert.equal(r.json.reason, 'live-sibling');
+  assert.equal(r.json.line, `#${N} has another worktree in use by a live session (${wt}) — stop this resume, then run /claude-tweaks:dispatch resume #${N} once that session ends`);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree.map((c) => c.target), [{ branch: null, worktreePath: wt }]);
+  assert.equal(env.calls.findSiblingOnWorktree[0].opts.cwd, MAIN);
+});
+
+test('--bound-run: a #N sibling hit never runs the exact read; a throwing exact read -> exit 4', () => {
+  const hit = makeEnv();
+  hit.cfg.runDirs = [NEW_RUN_ENTRY];
+  hit.cfg.sibling = () => ({ path: WT });
+  assert.equal(exec(hit, BOUND).json.reason, 'live-sibling');
+  assert.deepStrictEqual(hit.calls.findSiblingOnWorktree, []);
+
+  const thrown = makeEnv();
+  thrown.cfg.runDirs = [NEW_RUN_ENTRY];
+  thrown.cfg.siblingOnWorktree = () => { throw new Error('x'); };
+  assert.equal(exec(thrown, BOUND).code, 4);
+});
 
 test('--bound-run with nothing else bound -> exit 0 {concurrent:false}; no gh, no verdict', () => {
   const env = makeEnv();
@@ -1177,12 +1545,13 @@ test('--bound-run: a second non-terminal top-level run dir bound to the worktree
     concurrent: true,
     reason: 'concurrent-resume',
     line: `#${N}'s stalled worktree ${WT} is bound to another active run 2026-10-31T115900-record-4589 — another dispatch resume may be running; stop this one, then run /claude-tweaks:dispatch resume #${N} once that run ends`,
+    liveRun: true,
   });
 });
 
 test('--bound-run: the rival with an interrupted status still counts; terminal status or another worktree does not', () => {
   const interrupted = makeEnv();
-  interrupted.cfg.runDirs = [{ dir: path.join(ROOT, 'r1'), state: { status: 'interrupted', sessionId: 'rival', worktree: WT } }];
+  interrupted.cfg.runDirs = [NEW_RUN_ENTRY, { dir: path.join(ROOT, 'r1'), state: { status: 'interrupted', sessionId: 'rival', worktree: WT } }];
   assert.equal(exec(interrupted, BOUND).code, 3);
   for (const state of [
     { status: 'clean', sessionId: 'rival', worktree: WT },
@@ -1193,7 +1562,7 @@ test('--bound-run: the rival with an interrupted status still counts; terminal s
     null,
   ]) {
     const env = makeEnv();
-    env.cfg.runDirs = [{ dir: path.join(ROOT, 'r1'), state }];
+    env.cfg.runDirs = [NEW_RUN_ENTRY, { dir: path.join(ROOT, 'r1'), state }];
     const r = exec(env, BOUND);
     assert.equal(r.code, 0, JSON.stringify(state));
     assert.deepStrictEqual(r.json, { concurrent: false });
@@ -1204,7 +1573,7 @@ test('--bound-run: an ad-hoc dir bound there never counts, whichever session sta
   // The #4598 shape: the original dispatcher's EnterWorktree placeholder, left active while the worktree stays registered.
   for (const [sessionId, sid] of [[SESSION, SESSION], ['rival', SESSION], ['', '']]) {
     const env = makeEnv({ sessionId: sid });
-    env.cfg.runDirs = [{
+    env.cfg.runDirs = [NEW_RUN_ENTRY, {
       dir: path.join(ROOT, '2026-10-31T061116-adhoc-standalone'),
       state: { status: 'active', sessionId, worktree: WT, owner: { ...OWNER, sessionId: sessionId || 'x' } },
     }];
@@ -1237,19 +1606,19 @@ test('--bound-run: a leftover run bound there whose owner is provably dead -> ex
 const unknownLine = (dir) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)}, whose owner cannot be proven alive or dead — confirm that run is no longer running, close it with node "${HOOKS_JS}" close-run --run "${dir}", then run /claude-tweaks:dispatch resume #${N}`;
 const otherHostLine = (dir, host) => `#${N}'s stalled worktree ${WT} is bound to another active run ${path.basename(dir)}, owned by a session on another host (${host}) — resume or close that run from ${host}, then run /claude-tweaks:dispatch resume #${N}`;
 
-test('--bound-run: a bound run whose owner is live, unknown or on another host is concurrent-resume, each with its own line', () => {
-  for (const [label, owner, over, line] of [
-    ['live', OWNER, {}, concurrentLine(LEFTOVER)],
-    ['alive, no start time', { ...OWNER, pidStartedAt: null }, {}, concurrentLine(LEFTOVER)],
-    ['pidAlive throws', OWNER, { alive: () => { throw new Error('probe'); } }, unknownLine(LEFTOVER)],
-    ['host-less with a valid pid', { sessionId: 'rival', pid: 4242 }, {}, unknownLine(LEFTOVER)],
-    ['another host', { ...OWNER, host: 'elsewhere' }, {}, otherHostLine(LEFTOVER, 'elsewhere')],
+test('--bound-run: a bound run whose owner is live, unknown or on another host is concurrent-resume, each with its own line; only a proven-live owner sets liveRun', () => {
+  for (const [label, owner, over, line, proven] of [
+    ['live', OWNER, {}, concurrentLine(LEFTOVER), { liveRun: true }],
+    ['alive, no start time', { ...OWNER, pidStartedAt: null }, {}, concurrentLine(LEFTOVER), { liveRun: true }],
+    ['pidAlive throws', OWNER, { alive: () => { throw new Error('probe'); } }, unknownLine(LEFTOVER), {}],
+    ['host-less with a valid pid', { sessionId: 'rival', pid: 4242 }, {}, unknownLine(LEFTOVER), {}],
+    ['another host', { ...OWNER, host: 'elsewhere' }, {}, otherHostLine(LEFTOVER, 'elsewhere'), {}],
   ]) {
     const env = makeEnv(over);
-    env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner } }];
+    env.cfg.runDirs = [NEW_RUN_ENTRY, { dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner } }];
     const r = exec(env, BOUND);
     assert.equal(r.code, 3, label);
-    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'concurrent-resume', line }, label);
+    assert.deepStrictEqual(r.json, { concurrent: true, reason: 'concurrent-resume', line, ...proven }, label);
   }
 });
 
@@ -1257,13 +1626,14 @@ test('a bound run owned by this same session id is never proven dead: concurrent
   // Its pid is gone and its block names this session: the prior-run ladder would read it as dead.
   const state = { status: 'active', sessionId: SESSION, worktree: WT, owner: { ...OWNER, sessionId: SESSION } };
   const bound = makeEnv({ alive: () => false });
-  bound.cfg.runDirs = [{ dir: LEFTOVER, state }];
+  bound.cfg.runDirs = [NEW_RUN_ENTRY, { dir: LEFTOVER, state }];
   assert.deepStrictEqual(exec(bound, BOUND).json, { concurrent: true, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
   const verdict = makeEnv({ alive: () => false });
   verdict.cfg.runDirs = [{ dir: LEFTOVER, state }];
   const r = exec(verdict);
   assert.equal(r.code, 3);
-  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: ownSessionLine(LEFTOVER) });
+  const line = ownSessionLine(LEFTOVER);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line, ...hitDetail(line) });
 });
 
 // ---- the same run-dir scan in verdict mode (Step 2, before Step 3 archives anything) ----
@@ -1273,7 +1643,8 @@ test('verdict mode: an otherwise eligible record with a dead leftover run bound 
   env.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } }];
   const r = exec(env);
   assert.equal(r.code, 3);
-  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'stale-bound-run', line: staleLine(LEFTOVER) });
+  const line = staleLine(LEFTOVER);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'stale-bound-run', line, ...hitDetail(line) });
 });
 
 test('verdict mode: a live run bound to the worktree -> exit 3 concurrent-resume; a terminal one, an ad-hoc one, or one on another worktree -> eligible', () => {
@@ -1281,7 +1652,8 @@ test('verdict mode: a live run bound to the worktree -> exit 3 concurrent-resume
   live.cfg.runDirs = [{ dir: LEFTOVER, state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } }];
   const r = exec(live);
   assert.equal(r.code, 3);
-  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line: concurrentLine(LEFTOVER) });
+  const line = concurrentLine(LEFTOVER);
+  assert.deepStrictEqual(r.json, { eligible: false, issue: N, reason: 'concurrent-resume', line, ...hitDetail(line), liveRun: true });
   for (const entry of [
     { dir: LEFTOVER, state: { status: 'clean', sessionId: 'rival', worktree: WT, owner: OWNER } },
     { dir: path.join(ROOT, '2026-10-31T061116-adhoc-standalone'), state: { status: 'active', sessionId: 'rival', worktree: WT, owner: OWNER } },
@@ -1366,10 +1738,12 @@ test('--bound-run refused by resolveTarget (not anchored / missing) -> exit 2', 
 // ---- the real wiring ----
 
 test('realDeps carries the production seams the CLI needs', () => {
-  for (const key of ['ghAvailable', 'gh', 'git', 'mainRoot', 'readClaim', 'exists', 'readdir', 'readFile', 'findSibling',
+  for (const key of ['ghAvailable', 'gh', 'git', 'mainRoot', 'readClaim', 'exists', 'readdir', 'readFile',
     'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
     assert.ok(realDeps[key] !== undefined, key);
   }
+  assert.strictEqual(realDeps.findSibling, findConflictingSession);
+  assert.strictEqual(realDeps.findSiblingOnWorktree, findSessionOnWorktree);
   assert.equal(typeof realDeps.probes.pidAlive, 'function');
   assert.equal(typeof realDeps.probes.hostname, 'function');
 });

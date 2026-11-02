@@ -1,19 +1,21 @@
 // tests/hooks-js-flag-strict.test.js
 //
-// #4777: every hooks.js verb refuses an undeclared `--*` flag with its own
-// usage line, before its handler runs. KNOWN_FLAGS covers the whole VERBS
-// table, and a verb missing its entry fails closed (refuses every flag).
+// #4777: every hooks.js verb refuses an undeclared `--*` flag before its
+// handler runs. KNOWN_FLAGS covers the whole VERBS table, and a verb missing
+// its entry fails closed (refuses every flag). #4834: a refusal is nothing on
+// stdout, the offending token named on stderr, the verb's usage line on
+// stderr, and exit 1.
 // Each verb's positive control runs without the typo and asserts the state
 // effect that run actually produces, so a "nothing changed" assertion on the
 // refused call can fail.
 'use strict';
 const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
-const { execFileSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS } = require('../plugin/bin/hooks.js');
+const { main, KNOWN_FLAGS, USAGE, VALUE_FLAGS, VERBS } = require('../plugin/bin/hooks.js');
 const { readText } = require('./helpers/read-skill');
 const { fixtureGit } = require('./helpers/git-fixtures');
 
@@ -45,13 +47,17 @@ const HOOK_SANDBOX = tracked(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-flag-sand
 const OFFLINE_GH = { GH_HOST: 'localhost', GH_TOKEN: 'x', GH_REPO: '' };
 
 function runHook(args, { cwd = HOOK_SANDBOX, env = {} } = {}) {
-  try {
-    // PIPELINE_RUN_DIR: '' neutralizes any ambient run-dir env var (#1130).
-    const stdout = execFileSync('node', [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env } });
-    return { code: 0, stdout };
-  } catch (e) {
-    return { code: e.status, stdout: e.stdout || '' };
-  }
+  // PIPELINE_RUN_DIR: '' neutralizes any ambient run-dir env var (#1130).
+  const r = spawnSync(process.execPath, [HOOKS, ...args], { cwd, encoding: 'utf8', env: { ...process.env, PIPELINE_RUN_DIR: '', ...OFFLINE_GH, ...env } });
+  assert.ifError(r.error);
+  return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+}
+
+// #4834: the refusal shape — nothing on stdout, two stderr lines, exit 1.
+function assertRefused(result, verb, firstLine, label) {
+  assert.equal(result.code, 1, label);
+  assert.equal(result.stdout, '', label);
+  assert.equal(result.stderr, `${firstLine}\nclaude-tweaks: usage: ${USAGE[verb]}\n`, label);
 }
 
 function runDirFixture(status) {
@@ -144,29 +150,28 @@ test('#4777: every flag a usage line names is declared, and VALUE_FLAGS matches 
   assert.ok(valueFlagCount > 0, 'the usage lines were parsed');
 });
 
-test('#4777: every VERBS verb refuses an undeclared flag with its usage line', () => {
+test('#4777: every VERBS verb refuses an undeclared flag on stderr with exit 1', () => {
   for (const verb of Object.keys(VERBS)) {
     const result = runHook([verb, '--definitely-not-a-flag']);
-    assert.equal(result.code, 0, verb);
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, verb);
+    assertRefused(result, verb, `claude-tweaks: ${verb}: unknown flag '--definitely-not-a-flag'`, verb);
   }
 });
 
-test('#4777 AC1.1 AC1.2: reconcile --dryrun prints the reconcile usage line and runs no check', () => {
+test('#4777 AC1.1 AC1.2: reconcile --dryrun refuses on stderr with exit 1 and runs no check', () => {
   const { root } = reconcileFixture();
   const head = git(['rev-parse', 'HEAD'], root);
-  const usage = 'claude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n';
   for (const args of [['reconcile', '--dryrun'], ['reconcile', '--json', '--dryrun']]) {
     const result = runHook(args, { cwd: root });
-    assert.equal(result.code, 0, args.join(' '));
-    assert.equal(result.stdout, usage, args.join(' '));
+    assertRefused(result, 'reconcile', "claude-tweaks: reconcile: unknown flag '--dryrun'", args.join(' '));
+    assert.equal(result.stderr, "claude-tweaks: reconcile: unknown flag '--dryrun'\nclaude-tweaks: usage: reconcile [--dry-run] [--json] [--mcp-reachable] [--checks <c1,c2,...>]\n", args.join(' '));
     assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
     assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
   }
-  // Declared-flag control: the same verb with its real flags does not print the usage line.
+  // Declared-flag control: the same verb with its real flags is not refused.
   // This goes red when reconcile's KNOWN_FLAGS entry is removed, since the fail-closed guard then refuses every flag.
   const declared = runHook(['reconcile', '--dry-run', '--json'], { cwd: root });
   assert.doesNotMatch(declared.stdout, /claude-tweaks: usage:/);
+  assert.doesNotMatch(declared.stderr, /unknown flag|needs a value/);
 });
 
 test('#4777: reconcile --json with no typo runs for real (positive control for the reconcile tests)', () => {
@@ -186,25 +191,31 @@ test('#4777: declared value flags consume their value token', () => {
   ]) {
     const result = runHook(args, { cwd: root });
     assert.doesNotMatch(result.stdout, /claude-tweaks: usage:/, args.join(' '));
+    assert.doesNotMatch(result.stderr, /unknown flag|needs a value/, args.join(' '));
   }
 });
 
 test('#4777: a value flag followed by a flag is refused as a missing value', () => {
   const { root } = reconcileFixture();
-  for (const args of [
-    ['reconcile', '--dry-run', '--checks', '--json'],
-    ['reconcile', '--dry-run', '--checks', '--bogus'],
-  ]) {
+  const head = git(['rev-parse', 'HEAD'], root);
+  const reconcileCases = [
+    [['reconcile', '--dry-run', '--checks', '--json'], "claude-tweaks: reconcile: --checks needs a value, got '--json'"],
+    [['reconcile', '--dry-run', '--checks', '--bogus'], "claude-tweaks: reconcile: --checks needs a value, got '--bogus'"],
+  ];
+  for (const [args, firstLine] of reconcileCases) {
     const result = runHook(args, { cwd: root });
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE.reconcile}\n`, args.join(' '));
+    assertRefused(result, 'reconcile', firstLine, args.join(' '));
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
+    assert.equal(git(['rev-parse', 'HEAD'], root), head, 'HEAD is unchanged');
   }
   const fresh = freshRepo();
-  for (const args of [
-    ['resolve-run-dir', '--spec-slug', '--bogus', '--create'],
-    ['resolve-run-dir', '--spec-slug', '--create'],
-  ]) {
+  const resolveCases = [
+    [['resolve-run-dir', '--spec-slug', '--bogus', '--create'], "claude-tweaks: resolve-run-dir: --spec-slug needs a value, got '--bogus'"],
+    [['resolve-run-dir', '--spec-slug', '--create'], "claude-tweaks: resolve-run-dir: --spec-slug needs a value, got '--create'"],
+  ];
+  for (const [args, firstLine] of resolveCases) {
     const result = runHook(args, { cwd: fresh });
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, args.join(' '));
+    assertRefused(result, 'resolve-run-dir', firstLine, args.join(' '));
     assertNoRunDirMinted(fresh);
   }
 });
@@ -224,8 +235,7 @@ test('#4777: reconcile-background and reconcile-summary refuse an undeclared fla
   const head = git(['rev-parse', 'HEAD'], root);
   for (const verb of ['reconcile-background', 'reconcile-summary']) {
     const result = runHook([verb, '--bogus'], { cwd: root });
-    assert.equal(result.code, 0, verb);
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE[verb]}\n`, verb);
+    assertRefused(result, verb, `claude-tweaks: ${verb}: unknown flag '--bogus'`, verb);
     assert.ok(!fs.existsSync(path.join(root, STATUS)), `${verb} wrote no background status`);
     assert.equal(git(['rev-parse', 'HEAD'], root), head, `${verb} left HEAD where it was`);
   }
@@ -247,8 +257,7 @@ test('#4777: adopt-run-dir refuses an undeclared flag before adopting', () => {
     ['adopt-run-dir', '--bogus', '--run', runDir, '--worktree', wt],
   ]) {
     const result = runHook(args, { cwd: root });
-    assert.equal(result.code, 0, args.join(' '));
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['adopt-run-dir']}\n`, args.join(' '));
+    assertRefused(result, 'adopt-run-dir', "claude-tweaks: adopt-run-dir: unknown flag '--bogus'", args.join(' '));
     assert.ok(!fs.existsSync(copy), 'nothing was adopted into the worktree');
   }
   // Positive control: the same arguments without the typo adopt the run's decisions.md.
@@ -277,8 +286,7 @@ test('#4777: sweep-shadow refuses an undeclared flag before sweeping', () => {
     ['sweep-shadow', '--bogus', '--run', runDir, '--worktree', wt],
   ]) {
     const result = runHook(args, { cwd: root });
-    assert.equal(result.code, 0, args.join(' '));
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['sweep-shadow']}\n`, args.join(' '));
+    assertRefused(result, 'sweep-shadow', "claude-tweaks: sweep-shadow: unknown flag '--bogus'", args.join(' '));
     assert.ok(fs.existsSync(shadow), 'the shadow file is not swept');
   }
 });
@@ -298,8 +306,7 @@ test('#4777: resolve-run-dir --create refuses an undeclared flag and mints nothi
     ['resolve-run-dir', '--bogus', '--spec-slug', 'x', '--create'],
   ]) {
     const result = runHook(args, { cwd: root });
-    assert.equal(result.code, 0, args.join(' '));
-    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE['resolve-run-dir']}\n`, args.join(' '));
+    assertRefused(result, 'resolve-run-dir', "claude-tweaks: resolve-run-dir: unknown flag '--bogus'", args.join(' '));
     assertNoRunDirMinted(root);
   }
 });
@@ -331,6 +338,43 @@ test('#4777: check-sibling-sessions --record <id> does not print the usage line 
   const result = runHook(['check-sibling-sessions', '--record', 'x'], { cwd: freshRepo() });
   assert.equal(result.code, 0);
   assert.doesNotMatch(result.stdout, /claude-tweaks: usage:/);
+  assert.doesNotMatch(result.stderr, /unknown flag|needs a value/);
+});
+
+test('#4834: help wins over an unknown flag in the same call', () => {
+  const { root } = reconcileFixture();
+  for (const args of [['reconcile', '--dryrun', '--help'], ['reconcile', '-h', '--dryrun']]) {
+    const result = runHook(args, { cwd: root });
+    assert.equal(result.code, 0, args.join(' '));
+    assert.equal(result.stdout, `claude-tweaks: usage: ${USAGE.reconcile}\n`, args.join(' '));
+    assert.ok(!fs.existsSync(path.join(root, '.claude-tweaks', 'reconcile-cache.json')), 'the reconcile pass never ran');
+  }
+});
+
+test('#4834: an unusable stderr still refuses with exit 1', async () => {
+  const realWriteSync = fs.writeSync;
+  let stderrWrites = 0;
+  fs.writeSync = (fd, ...rest) => {
+    if (fd === 2) {
+      stderrWrites += 1;
+      throw Object.assign(new Error('EBADF'), { code: 'EBADF' });
+    }
+    return realWriteSync.call(fs, fd, ...rest);
+  };
+  try {
+    // resolve-run-dir without --create is read-only: if the guard ever missed
+    // --bogus, this in-process call must not mutate the developer's checkout.
+    assert.equal(await main(['node', 'hooks.js', 'resolve-run-dir', '--bogus']), 1);
+  } finally {
+    fs.writeSync = realWriteSync;
+  }
+  assert.ok(stderrWrites >= 1, 'the refusal reached the throwing fd-2 write');
+});
+
+test('#4834: a captured resolve-run-dir --root-only with a typo yields an empty value and exit 1', () => {
+  const root = freshRepo();
+  const result = runHook(['resolve-run-dir', '--root-only', '--typo'], { cwd: root });
+  assertRefused(result, 'resolve-run-dir', "claude-tweaks: resolve-run-dir: unknown flag '--typo'", 'root-only typo');
 });
 
 test('#4777: hooks.js comments no longer describe a lenient verb set', () => {
