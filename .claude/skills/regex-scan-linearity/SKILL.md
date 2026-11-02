@@ -24,7 +24,7 @@ Seconds at these sizes is the bug; the fixed #4581 detector takes single-digit m
 
 ### The three shapes and their fixes
 
-1. **An unanchored global regex restarting inside every long token.** `PATH_RE` in `plugin/bin/lib/log-decision/aggregate-reproduction.js` retried `FINDING_PATH` at each position of a dot-free token. Fix: a left-boundary lookbehind of the class, `(?<![A-Za-z0-9_./@+~%$\[\]()-])${FINDING_PATH}`, so a match starts only where a path can start. When only presence matters, test a fixed suffix instead of the whole pattern: `LOCATION_RE` tests `${FINDING_PATH_UNIT}\.[A-Za-z0-9]+:\d+`, which matches whenever the full pattern would.
+1. **An unanchored global regex restarting inside every long token.** `PATH_RE` in `plugin/bin/lib/log-decision/aggregate-reproduction.js` retried `FINDING_PATH` at each position of a dot-free token. Fix: a left-boundary lookbehind of the class, `(?<![A-Za-z0-9_./@+~%$\[\]()-])${FINDING_PATH}`, so a match starts only where a path can start. When only presence matters, test a fixed suffix instead of the whole pattern: `readsLocation` in `plugin/bin/lib/console/finding-path.js` tests `${FINDING_PATH_UNIT}\.[A-Za-z0-9]+:\d+`, which matches whenever the full pattern would.
 2. **A lazy or unbounded group rescanning to the end once per split.** #4632's coincidence locations `.+?:\d+` rescanned the rest of the line once per ` / `. Fix: a tempered token that cannot cross a boundary, `(?:(?!:\d).)+:\d+` (`COINCIDENCE_LOCATION` in `plugin/bin/lib/console/finding-path.js`). #2622's `(?:seg\.)+` took a `{1,8}` cap instead.
 3. **A `\s` that crosses newlines under `/m`.** `^\s*` restarts at every line and runs across blank-line runs. Fix: `[ \t]` (#3412).
 

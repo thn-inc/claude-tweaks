@@ -15,7 +15,7 @@ const path = require('path');
 const {
   classifyStagedItem, SHADOW_DUP_RE, SECTIONS, runIdOf, parseTiebreakLine,
 } = require('./resolve');
-const { FINDING_PATH } = require('./finding-path');
+const { FINDING_LOCATION } = require('./finding-path');
 const { digestTextOf } = require('./staged-digest-text');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
 const { readRunState, isStaleClaim, RUN_ID_RE } = require('../hooks/context');
@@ -27,11 +27,11 @@ const STAGED_FINDING_RE = /^review-(unconfirmed|contested|debate)-/;
 const SEVERITIES = ['critical', 'high', 'medium', 'low', 'info'];
 // Reporter severities a tiebreak could file at (unknown counts as medium).
 const FILEABLE_SEVERITIES = new Set(['critical', 'high', 'medium']);
-const LOCATION_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`, 'g');
+const LOCATION_RE = new RegExp(FINDING_LOCATION, 'g');
 // The narrower path class the id key was minted under. A finding's id names its location by this class
 // so ids minted before FINDING_PATH stay byte-identical; the reported path is LOCATION_RE's.
 const LEGACY_LOCATION_RE = /([A-Za-z0-9_./-]+\.[A-Za-z0-9]+):(\d+)/g;
-const FIRST_LOCATION_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+const FIRST_LOCATION_RE = new RegExp(FINDING_LOCATION);
 const PATH_SHAPED_RE = /[A-Za-z0-9_.-]+\/[A-Za-z0-9_./-]+\.[A-Za-z0-9]+/;
 // Reproduction meta describes how a finding was (not) reproduced, never the finding itself. It is
 // stripped a whole clause at a time — a parenthetical clause (split at `,` `;`) that opens with one of

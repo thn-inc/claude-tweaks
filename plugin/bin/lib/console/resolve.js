@@ -13,7 +13,7 @@ const { evaluateMaturation } = require('../issues/grant-maturation');
 const { resolveRecords } = require('../wrap-up/pack');
 const { SDD_RULING_REASONS, sddRulingDeferralReason } = require('./sdd-ruling');
 const { planFilings } = require('./finding-filing');
-const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LENS, COINCIDENCE } = require('./finding-path');
+const { FINDING_PATH_CLASS, FINDING_LENS_CLASS, FINDING_PATH, FINDING_LOCATION, FINDING_LENS, parseCoincidence } = require('./finding-path');
 const { FINDINGS_ARTIFACT, VERDICT_LINE_END } = require('../tiebreak');
 const { parseCategory, isApplicableReflect, parseReflectDestination, deferReasonProblem } = require('./reflect-destination');
 
@@ -500,9 +500,8 @@ function approveAllDefault(recommendation) {
   return recommendation === 'drop' ? 'dropped' : 'filed';
 }
 
-const COINCIDENCE_RE = new RegExp(COINCIDENCE, 'i');
 // A STAGED line's finding keys: its first location's, plus the second location of a
-// two-finding coincidence line (finding-path.js COINCIDENCE, the pattern the aggregate detector exempts).
+// two-finding coincidence line (finding-path.js parseCoincidence, the clause the aggregate detector exempts).
 // Each location takes its longest candidate (locationCandidates) a settler's key names, else the
 // FINDING_PATH match (#4632). The second location's candidates start after the ` / `. A second
 // location FINDING_PATH cannot read keys as its raw text, which no settler names, so the line stays open.
@@ -512,11 +511,10 @@ function lineKeys(line, known = new Set()) {
   const lens = FINDING_LENS_RE.exec(line);
   const loc = FINDING_LOC_RE.exec(line);
   if (lens && loc) keys.push(namedCandidate(locationCandidates(line, loc, lens[1]), known));
-  const co = COINCIDENCE_RE.exec(line);
-  const coLens = co && (co[1] ?? co[2]);
-  const second = co && FINDING_LOC_RE.exec(co[4]);
-  if (second) keys.push(namedCandidate(locationCandidates(co[4], second, coLens), known));
-  else if (co) keys.push(`${coLens}|${co[4]}`);
+  const co = parseCoincidence(line);
+  const second = co && FINDING_LOC_RE.exec(co.second);
+  if (second) keys.push(namedCandidate(locationCandidates(co.second, second, co.lens), known));
+  else if (co) keys.push(`${co.lens}|${co.second}`);
   return keys;
 }
 
@@ -528,7 +526,7 @@ function lineKeys(line, known = new Set()) {
 // The optional `Step N: ` prefix is the shape log-decision.js writes when the line is logged with `--step`.
 const DEBATE_CONVERGED_RE = new RegExp(String.raw`^- AUTO \d{2}:\d{2}:\d{2} — (?:Step [\d.]+: )?Debate: cross-lens disagreement on (${FINDING_PATH}):(\d+) converged positive\b(.*)$`);
 const DEBATE_ENTRY_RE = new RegExp(String.raw`\b${FINDING_LENS}\s+(?:finding\s+)?(${FINDING_PATH})?:(\d+)`, 'gi');
-const FINDING_LOC_RE = new RegExp(String.raw`(${FINDING_PATH}):(\d+)`);
+const FINDING_LOC_RE = new RegExp(FINDING_LOCATION);
 const FINDING_LENS_RE = new RegExp(String.raw`\blens\s+"?([${FINDING_LENS_CLASS}]+)"?`, 'i');
 const VERDICT_LENS_RE = new RegExp(`^[${FINDING_LENS_CLASS}]+`);
 const FINDING_PATH_CHAR = new RegExp(`[${FINDING_PATH_CLASS}]`);
