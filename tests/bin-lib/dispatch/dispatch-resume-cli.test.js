@@ -1771,7 +1771,9 @@ test('the real workLinks dep resolves to a string', () => {
   assert.equal(typeof realDeps.workLinks(), 'string');
 });
 
-test("AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+// 45000 is above the 30000 floor (batch == single-call bound); 10000 is below it, so only
+// GH_BATCH_TIMEOUT_MS (not GH_TIMEOUT_MS) yields 30000.
+function nativeGhTimeoutFor(envValue) {
   const cp = require('node:child_process');
   const origExec = cp.execFileSync;
   const envKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
@@ -1782,17 +1784,25 @@ test("AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () =>
   let seen = null;
   try {
     // dispatch-resume reads the getter at require time, so the env var and the stub come first.
-    process.env[envKey] = '45000';
+    process.env[envKey] = envValue;
     cp.execFileSync = (cmd, args, opts) => { if (cmd === 'gh') seen = opts.timeout; return '{}'; };
     delete require.cache[resumePath];
     delete require.cache[primitivesPath];
     const fresh = require(resumePath);
     try { fresh.realDeps.fetchNative({ numbers: [1], owner: 'o', repo: 'r' }); } catch { /* the '{}' reply fails to parse; only the captured timeout matters */ }
-    assert.equal(seen, 45000);
+    return seen;
   } finally {
     cp.execFileSync = origExec;
     if (hadEnv) process.env[envKey] = origEnv; else delete process.env[envKey];
     delete require.cache[resumePath];
     delete require.cache[primitivesPath];
   }
+}
+
+test("#4815 AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+  assert.equal(nativeGhTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the native-dependency runner at 30000', () => {
+  assert.equal(nativeGhTimeoutFor('10000'), 30000);
 });

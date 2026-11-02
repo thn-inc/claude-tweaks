@@ -22,7 +22,6 @@
 // - ghRequiredNote (optional): a trailing note appended to the "`gh` is
 //   required" exit-2 message (resolve-blockers.js's own
 //   "(work-links: native)" qualifier; resolve-linked-prs.js passes none).
-//
 // realDeps.runner's timeout is shared-primitives' GH_BATCH_TIMEOUT_MS, read per call.
 'use strict';
 

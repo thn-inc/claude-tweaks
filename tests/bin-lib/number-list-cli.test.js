@@ -185,7 +185,9 @@ test('#2425 review fix: a bare --repo owner/repo still resolves to host: "github
   assert.equal(seen.repo, 'else');
 });
 
-test('AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at call time', () => {
+// 45000 is above the 30000 floor (batch == single-call bound); 10000 is below it, so only
+// GH_BATCH_TIMEOUT_MS (not GH_TIMEOUT_MS) yields 30000.
+function runnerTimeoutFor(envValue) {
   const cp = require('node:child_process');
   const origExec = cp.execFileSync;
   const envKey = 'CLAUDE_TWEAKS_GH_TIMEOUT_MS';
@@ -202,13 +204,21 @@ test('AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at 
     const { makeNumberListCli: freshMake } = require(cliPath);
     const cli = freshMake({ name: 'x.js', usage: 'usage\n', fetch: () => new Map(), mapResult: () => null });
     // Set only after the factory call: the timeout must be read per runner call, not at factory time.
-    process.env[envKey] = '45000';
+    process.env[envKey] = envValue;
     cli.realDeps.runner(['api']);
-    assert.equal(seen, 45000);
+    return seen;
   } finally {
     cp.execFileSync = origExec;
     if (hadEnv) process.env[envKey] = origEnv; else delete process.env[envKey];
     delete require.cache[cliPath];
     delete require.cache[primitivesPath];
   }
+}
+
+test('#4815 AC1.1: realDeps.runner passes GH_BATCH_TIMEOUT_MS as its timeout, read at call time', () => {
+  assert.equal(runnerTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the batched runner at 30000', () => {
+  assert.equal(runnerTimeoutFor('10000'), 30000);
 });
