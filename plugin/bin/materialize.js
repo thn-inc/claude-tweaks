@@ -51,7 +51,7 @@ const {
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -399,7 +399,12 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
     const { host, owner, repo } = repoSpec;

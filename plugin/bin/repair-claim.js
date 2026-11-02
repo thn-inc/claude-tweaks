@@ -26,7 +26,7 @@ const { repairClaim, defaultRunner: repairDefaultRunner } = require('./lib/repai
 const { formatEntry, appendEntry, resolveTarget } = require('./lib/log-decision/append');
 const { defaultRunner: gitDefaultRunner } = require('./lib/issues/claims-git-cas');
 const {
-  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost,
+  parseRepo, ghAvailable, remoteUrl, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: repair-claim.js <issue> --run <run-dir> --mode <release|reclaim> --reason <reason> [--link <url>] [--repo owner/name] [--section "/<skill>"] [--step <text>] [--help]\n';
@@ -101,7 +101,13 @@ function run(argv, deps = realDeps) {
   }
   let remote = null;
   if (!o.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = o.repo ? parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (o.repo) repoSpec = parseRepo(o.repo.split('/').length >= 3 ? o.repo : `github.com/${o.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`repair-claim.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('repair-claim.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   if (o.repo && deps.pinGhHost) deps.pinGhHost(repoSpec);
   // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'

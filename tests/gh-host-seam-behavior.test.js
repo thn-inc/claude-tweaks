@@ -10,7 +10,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { execFileSync } = require('node:child_process');
+const { execFileSync, spawnSync } = require('node:child_process');
 const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { _resetGhHostCache } = require('../plugin/bin/lib/repo-resolve');
 const { composePrEarlyBody } = require('../plugin/bin/lib/flow/pr-body');
@@ -75,7 +75,18 @@ function installFakeGh(t, canned = {}) {
     '',
   ].join('\n'));
   t.after(restore);
-  return () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+  return () => joinSpawnLines(fs.existsSync(log) ? fs.readFileSync(log, 'utf8').split('\n').filter(Boolean) : []);
+}
+
+// One entry per spawn: an argv value with newlines (a comment body) spills onto
+// continuation lines, which carry no `GH_HOST=` prefix, so they rejoin their spawn.
+function joinSpawnLines(raw) {
+  const joined = [];
+  for (const line of raw) {
+    if (line.startsWith('GH_HOST=') || joined.length === 0) joined.push(line);
+    else joined[joined.length - 1] += ` ${line}`;
+  }
+  return joined;
 }
 
 function childEnv() {
@@ -125,7 +136,8 @@ function networkLines(lines) {
 function reachesHost(line, host) {
   if (line.startsWith(`GH_HOST=${host} `)) return true;
   const args = line.slice(line.indexOf(' ARGS=') + 6);
-  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${host.replace(/\./g, '\\.')}/`).test(args);
+  const h = host.replace(/\./g, '\\.');
+  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args);
 }
 
 function assertEveryLineReaches(lines, host) {
@@ -292,3 +304,134 @@ test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every ca
   const { native, lists } = grantGateLines(t, { GH_HOST: 'mine.example' });
   for (const line of [...native, ...lists]) assert.ok(line.startsWith('GH_HOST=mine.example '), `exported GH_HOST overridden: ${line}`);
 });
+
+// #4933: the origin-host gate, one behavior table for every gh CLI that derives
+// its repo from `origin`. CLI_TABLE row: { cli: path under plugin/bin, argv: the
+// smallest argv that passes the CLI's own input validation ({runDir} is replaced
+// by the case's run dir), setup?: (repo) => void, acceptsRepo: the CLI takes
+// --repo, typedRepoLines?: (line) => boolean (AC6.1 asserts host reachability
+// only on the lines it selects; default every network line), canned?: gh answers
+// replacing CANNED entries for the row's cases }. describeOriginGate(row)
+// registers every case for one row, so a later task adds a CLI by adding a row.
+const UNKNOWN_HOST = 'git.corp.invalid';
+const NOT_KNOWN_MSG = 'is not a known GitHub host';
+
+// Runs one CLI against a temp repo whose origin is `origin`. The child env has no
+// GH_HOST unless `ghHost` sets one, carries an enterprise token (which admits no
+// host by itself), and an empty per-case gh config dir (`hostsYml` writes its
+// hosts.yml). GIT_ALLOW_PROTOCOL=file keeps git-CAS fetches off the network.
+function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
+  const readLog = installFakeGh(t, row.canned);
+  const { repo, runDir } = makeRepo(t, origin);
+  if (row.setup) row.setup(repo);
+  const cfgDir = tmp(t, 'ct-gh-seam-cfg-');
+  if (hostsYml !== undefined) fs.writeFileSync(path.join(cfgDir, 'hosts.yml'), hostsYml);
+  const env = childEnv();
+  delete env.GH_REPO;
+  env.GH_ENTERPRISE_TOKEN = 't';
+  env.GH_CONFIG_DIR = cfgDir;
+  env.GIT_ALLOW_PROTOCOL = 'file';
+  if (ghHost !== undefined) env.GH_HOST = ghHost;
+  const argv = [...row.argv.map((a) => a.replace('{runDir}', runDir)), ...extraArgs];
+  const r = spawnSync(process.execPath, [path.join(BIN, row.cli), ...argv], { cwd: repo, env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  return { status: r.status, stderr: r.stderr || '', lines: readLog() };
+}
+
+// Every `--repo`/`-R` value in the recorded gh argv.
+function repoValues(lines) {
+  const values = [];
+  for (const line of lines) {
+    const args = line.slice(line.indexOf(' ARGS=') + 6);
+    for (const m of args.matchAll(/(?:^| )(?:-R|--repo)[ =](\S+)/g)) values.push(m[1]);
+  }
+  return values;
+}
+
+function describeOriginGate(row) {
+  const name = row.cli;
+  const opts = { skip: STUB_SKIP };
+
+  test(`AC2.1 ${name}: refused on an unknown origin host (AC3.1: no bare-slug fallback)`, opts, (t) => {
+    const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git` });
+    const log = r.lines.join('\n');
+    assert.ok(r.status !== null && r.status !== 0, `expected a non-zero exit, got ${r.status}; stderr:\n${r.stderr}`);
+    assert.ok(r.stderr.includes(UNKNOWN_HOST), `stderr does not name ${UNKNOWN_HOST}:\n${r.stderr}`);
+    assert.ok(r.stderr.includes(`GH_HOST=${UNKNOWN_HOST}`), `stderr does not suggest GH_HOST=${UNKNOWN_HOST}:\n${r.stderr}`);
+    assert.deepEqual(networkLines(r.lines), [], `gh was called beyond --version:\n${log}`);
+    assert.ok(!log.includes(UNKNOWN_HOST), `a gh call names ${UNKNOWN_HOST}:\n${log}`);
+    assert.ok(!repoValues(r.lines).includes('o/r'), `a gh call carries a bare --repo o/r:\n${log}`);
+  });
+
+  const passThrough = [
+    ['an acme.ghe.com origin', 'acme.ghe.com', { origin: 'https://acme.ghe.com/o/r.git' }],
+    ['a hosts.yml-key origin', 'ghes.corp.invalid', { origin: 'https://ghes.corp.invalid/o/r.git', hostsYml: 'ghes.corp.invalid:\n' }],
+    [`a ${UNKNOWN_HOST} origin with GH_HOST exported`, UNKNOWN_HOST, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST }],
+  ];
+  for (const [label, host, caseOpts] of passThrough) {
+    test(`AC4.1 ${name}: ${label} keeps the host-qualified repo`, opts, (t) => {
+      const r = runGated(t, row, caseOpts);
+      assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+      assertEveryLineReaches(r.lines, host);
+      for (const value of repoValues(r.lines)) assert.equal(value, `${host}/o/r`, `--repo value:\n${r.lines.join('\n')}`);
+    });
+  }
+
+  test(`AC5.1 ${name}: an exported GH_HOST naming another host is not refused and the slug is bare`, opts, (t) => {
+    const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: 'github.com' });
+    const log = r.lines.join('\n');
+    assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+    assert.ok(networkLines(r.lines).length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
+    assert.ok(!log.includes(UNKNOWN_HOST), `a gh call names ${UNKNOWN_HOST}:\n${log}`);
+    for (const value of repoValues(r.lines)) assert.equal(value, 'o/r', `--repo value:\n${log}`);
+  });
+
+  if (row.acceptsRepo) {
+    test(`AC6.1 ${name}: a typed --repo ${UNKNOWN_HOST}/o/r is not refused and goes to ${UNKNOWN_HOST} as typed`, opts, (t) => {
+      const typed = `${UNKNOWN_HOST}/o/r`;
+      const r = runGated(t, row, { origin: `https://${UNKNOWN_HOST}/o/r.git`, extraArgs: ['--repo', typed] });
+      assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+      const net = networkLines(r.lines);
+      assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${r.lines.join('\n')}`);
+      const selected = row.typedRepoLines ? net.filter(row.typedRepoLines) : net;
+      assert.ok(selected.length >= 1, `typedRepoLines selected no line, log:\n${r.lines.join('\n')}`);
+      for (const line of selected) assert.ok(reachesHost(line, UNKNOWN_HOST), `gh call did not reach ${UNKNOWN_HOST}: ${line}`);
+      for (const value of repoValues(r.lines)) assert.equal(value, typed, `--repo value:\n${r.lines.join('\n')}`);
+    });
+  }
+
+  test(`AC7.1 ${name}: a github.com. origin normalizes to the bare slug`, opts, (t) => {
+    const r = runGated(t, row, { origin: 'https://github.com./o/r.git' });
+    const log = r.lines.join('\n');
+    assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+    assert.ok(networkLines(r.lines).length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
+    for (const value of repoValues(r.lines)) assert.equal(value, 'o/r', `--repo value:\n${log}`);
+    assert.ok(!log.includes('--hostname'), `a gh call carries --hostname:\n${log}`);
+    assert.ok(!r.stderr.includes('resolved repo'), `unexpected resolution note:\n${r.stderr}`);
+    for (const line of r.lines) assert.ok(line.startsWith('GH_HOST=unset '), `GH_HOST set on github.com: ${line}`);
+  });
+
+  test(`AC7.2 ${name}: an ACME.ghe.com. origin normalizes to acme.ghe.com`, opts, (t) => {
+    const r = runGated(t, row, { origin: 'https://ACME.ghe.com./o/r.git' });
+    const log = r.lines.join('\n');
+    assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
+    const net = networkLines(r.lines);
+    assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
+    for (const value of repoValues(r.lines)) assert.equal(value, 'acme.ghe.com/o/r', `--repo value:\n${log}`);
+    for (const line of net.filter((l) => / ARGS=api /.test(l))) {
+      assert.ok(/ --hostname acme\.ghe\.com(?: |$)/.test(line) || line.startsWith('GH_HOST=acme.ghe.com '), `gh api call does not name acme.ghe.com: ${line}`);
+    }
+    assert.ok(!/ACME|ghe\.com\./.test(log), `a gh call carries the un-normalized host:\n${log}`);
+    for (const note of r.stderr.split('\n').filter((l) => l.includes('resolved repo'))) {
+      assert.ok(note.includes('acme.ghe.com') && !/ACME|ghe\.com\./.test(note), `resolution note does not name acme.ghe.com: ${note}`);
+    }
+  });
+}
+
+const CLI_TABLE = [
+  { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
+  { cli: 'compose-subject.js', argv: ['7', '--tag', 'human-approved'], acceptsRepo: true },
+  { cli: 'release-claim.js', argv: ['7', '--run', '{runDir}', '--reason', 'done'], acceptsRepo: true },
+  { cli: 'repair-claim.js', argv: ['7', '--run', '{runDir}', '--mode', 'release', '--reason', 'unreadable'], acceptsRepo: true },
+];
+
+for (const row of CLI_TABLE) describeOriginGate(row);
