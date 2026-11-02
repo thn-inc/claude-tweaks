@@ -133,12 +133,14 @@ function networkLines(lines) {
   return lines.filter((l) => !/ ARGS=--version$/.test(l));
 }
 
-// The argv alone names the host (a host-qualified --repo or a --hostname), whatever
-// GH_HOST the call was spawned with.
+// The argv alone names the host (a host-qualified --repo, a --hostname, or a REST
+// path `repos/{host}/…` -- list-claims.js's one call), whatever GH_HOST the call was
+// spawned with.
 function argvReachesHost(line, host) {
   const args = line.slice(line.indexOf(' ARGS=') + 6);
   const h = host.replace(/\./g, '\\.');
-  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args);
+  return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args)
+    || new RegExp(`^api repos/${h}/`).test(args);
 }
 
 function reachesHost(line, host) {
@@ -500,6 +502,13 @@ const CLI_TABLE = [
   { cli: 'apply-refine-labels.js', argv: ['actions.json'], setup: writeJsonFile('actions.json', [{ issue: 7, addLabels: ['ready'] }]), acceptsRepo: true },
   // --dry-run keeps file-feedback to its one repo-addressed read (the dedup search).
   { cli: 'file-feedback.js', argv: ['--drafts', 'drafts.json', '--dry-run'], setup: writeJsonFile('drafts.json', [{ title: 'T', body: 'B', fingerprintBasis: { component: 'c', summary: 's' } }]), acceptsRepo: true, canned: { 'issue-list': '[]' } },
+  // list-claims.js: its one REST call carries the host in the path and no --hostname by
+  // design (the seam's GH_HOST reaches it), so the GH_HOST-exported case requires none.
+  { cli: 'list-claims.js', argv: [], acceptsRepo: true, hostnameLines: () => false },
+  // resolve-blockers.js / resolve-linked-prs.js (lib/number-list-cli.js): both print a
+  // repoResolutionNote.
+  { cli: 'resolve-blockers.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
+  { cli: 'resolve-linked-prs.js', argv: ['7'], acceptsRepo: true, printsResolutionNote: true },
 ];
 
 for (const row of CLI_TABLE) describeOriginGate(row);
