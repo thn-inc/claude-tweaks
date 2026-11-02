@@ -33,7 +33,7 @@ Hand-picked cases find the bugs you already imagined. Generate commands from a s
 
 ### Time adversarial shapes through the real hook, and keep wall clock out of tests/
 
-The scanner runs on every Bash call, so a super-linear shape stalls the session. Time repeated nests, unterminated `"$(` chains and many distinct `cd`s through `hooks.js pre-tool-use` itself, not just the function. #4149 found 12 s at 120 KB and 24 to 49 s at 40 KB that way. Bound them with a cap (`NEST_LEVEL_CAP`, the per-pass step budget, the 16-entry cwd cap), and pin each cap in `tests/` with a timing-free case (a budget-spending line that must leave the next body kept). Wall-clock budgets go in `perf/heredoc-scan-linearity.test.js`. A `ms < 750` assertion in `tests/` failed `npm test` under load.
+The scanner runs on every Bash call, so a super-linear shape stalls the session. Time repeated nests, unterminated `"$(` chains and many distinct `cd`s through `hooks.js pre-tool-use` itself, not just the function. #4149 found 12 s at 120 KB and 24 to 49 s at 40 KB that way. Bound them with a cap (`NEST_LEVEL_CAP`, the per-pass step budget, the 16-entry cwd cap), and pin each cap in `tests/` with a timing-free case (a budget-spending line that must leave the next body kept). Wall-clock budgets go in `perf/heredoc-scan-linearity.test.js`. A `ms < 750` assertion in `tests/` failed `npm test` under load. A regex run over a segment's text is the same hazard: `\S*` after an opener rescans the rest of the word from every `$(` or backtick, and #4548's `PGREP_SUBSTITUTION_RE` took 2.5 to 3 s on `kill ` plus 32,000 backticks or `$(` openers until its directory part excluded the delimiters (`` [^\s`()]* ``). Check what the narrower class stops matching: the first fix also excluded `$`, and `$($HOME/bin/pgrep node)` stopped warning. Those shapes are budgeted in `perf/process-kill-linearity.test.js`.
 
 ### Every rule earns a mutant that turns a test red
 
@@ -325,4 +325,5 @@ Orphaned oracle shells: `pgrep -lf '[r]unBash-'` lists every bash a driver run l
 - `plugin/bin/lib/hooks/pre-tool-use.js` — `walkOptions`, the overflow cwd
 - `tests/hooks-gate-coverage.test.js` — write-target cases, the `#4149 routine` table, the prose pins
 - `perf/heredoc-scan-linearity.test.js` — linearity budgets
+- `perf/process-kill-linearity.test.js` — `processKillByName`'s linearity budgets
 - `docs/hooks.md` — the Bash prefilter section
