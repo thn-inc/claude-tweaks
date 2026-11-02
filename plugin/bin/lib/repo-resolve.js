@@ -7,8 +7,11 @@
 // GH_HOST names (#4854). It adds no timeout or windowsHide and there is no seam
 // spawn helper: each wrapped site's own `timeout` carries its bound. The origin-host
 // gate (#4933), gateOriginRepo(remote, deps), is what a CLI's origin-derived repo
-// goes through: a host with no positive GitHub signal (github.com, isKnownGhHost, or
-// a matching exported GH_HOST) comes back as a refusal, never as a spec for gh.
+// goes through. Any non-empty exported GH_HOST stops the refusal: one matching the
+// origin host carries that host; another host yields a bare slug (spec host
+// github.com), even for a known GitHub origin. An empty GH_HOST is no opt-in. Without
+// one, a host with no positive GitHub signal (github.com or isKnownGhHost) comes back
+// as a refusal, never as a spec for gh.
 'use strict';
 const { execFileSync } = require('child_process');
 const fs = require('fs');
@@ -132,15 +135,16 @@ function isKnownGhHost(host, deps = {}) {
 // Unlike ghOptions, an exported but empty (or whitespace-only) GH_HOST is no opt-in
 // here, so an unknown origin host is still refused (decided at #4933's plan review).
 // Then github.com or isKnownGhHost passes; any other host is refused. Never throws.
-function gateOriginRepo(remote, deps = {}) {
+function gateOriginRepo(remote, deps) {
+  const d = deps || {};
   const parsed = parseRepo(remote);
   if (!parsed) return { spec: null, refusal: null };
   const host = normalizeHost(parsed.host);
-  const ghHost = String((deps.env || process.env).GH_HOST || '').trim();
+  const ghHost = String((d.env || process.env).GH_HOST || '').trim();
   if (ghHost) {
     return { spec: { ...parsed, host: normalizeHost(ghHost) === host ? host : 'github.com' }, refusal: null };
   }
-  if (host === 'github.com' || isKnownGhHost(host, deps)) return { spec: { ...parsed, host }, refusal: null };
+  if (host === 'github.com' || isKnownGhHost(host, d)) return { spec: { ...parsed, host }, refusal: null };
   return {
     spec: null,
     refusal: `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`,

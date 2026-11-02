@@ -471,6 +471,25 @@ test('gate defaults env to process.env when deps carries none', () => {
     if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
   }
 });
+test('gate takes a null deps argument without throwing, reading process.env', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'git.corp.invalid';
+    assert.deepEqual(gateOriginRepo('https://git.corp.invalid/o/r.git', null), { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+    delete process.env.GH_HOST;
+    assert.deepEqual(gateOriginRepo('https://github.com/o/r.git', null), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+// The binding order: a non-empty exported GH_HOST is checked first, so one naming
+// another host yields a bare github.com slug even for a known GitHub origin.
+test('gate order: GH_HOST naming another host wins over a *.ghe.com or hosts.yml-key origin', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  assert.deepEqual(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...hostsYml('ghes.corp.invalid:\n'), env: { GH_HOST: 'other.corp.invalid' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
 
 // Re-review: the free-text value flags --comment, --subject, --notes and --description
 // are values too. `gh pr review --comment` is gh's one boolean --comment, so there the
