@@ -75,6 +75,11 @@ function encodeFactKey(raw) {
   return encoded;
 }
 
+// How far a recording travels: `local-only` is the v1 default and the result for any
+// unreachable or unprobed store, `linked-private` a remote store that passed the
+// anonymous-fetch probe, `withheld` a link the credential rule refused.
+const EXPOSURES = Object.freeze(['local-only', 'linked-private', 'withheld']);
+
 const VERIFICATION_WORDS = Object.freeze(['tested', 'verified', 'works']);
 const VERIFICATION_CLAIM_RE = new RegExp(`\\b(${VERIFICATION_WORDS.join('|')})\\b`, 'i');
 
@@ -94,6 +99,7 @@ module.exports = Object.freeze({
   CREDENTIAL_KEYS,
   FACT_ID_RE,
   encodeFactKey,
+  EXPOSURES,
   VERIFICATION_WORDS,
   VERIFICATION_CLAIM_RE,
 });

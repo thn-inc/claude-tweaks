@@ -24,6 +24,8 @@ const {
   normalizeKey,
   checkLink,
   findCredentialInText,
+  isCredentialRefusal,
+  isImageUrl,
 } = require('../../../plugin/bin/lib/wrap-up/packet-links');
 
 const allowedHosts = ['http://localhost:3000', 'https://dev.example.com'];
@@ -50,6 +52,31 @@ test('checkLink refuses with the exact reason for each rule', () => {
   for (const [url, reason] of cases) {
     assert.deepEqual(check(url), { ok: false, reason }, url);
   }
+});
+
+// Characterization (#4612): the order checkLink applies its rules in, and what it has
+// always let through in a path, pinned before the bearer-segment rule joins them.
+test('checkLink reports the first rule that fails: url, scheme, host, userinfo, query, fragment', () => {
+  const cases = [
+    ['ftp://user:pass@evil.example/?token=1#sig=1', 'scheme not http(s)'],
+    ['http://user:pass@evil.example/?token=1#sig=1', 'host not allowed: evil.example'],
+    ['http://user:pass@localhost:3000/?token=1#sig=1', 'credential in userinfo'],
+    ['http://localhost:3000/?token=1#sig=1', 'credential key in query: token'],
+    ['http://localhost:3000/#sig=1', 'credential key in fragment: sig'],
+  ];
+  for (const [url, reason] of cases) assert.deepEqual(check(url), { ok: false, reason }, url);
+});
+
+test('checkLink normalizes scheme case, a missing path and dot segments before the query screen', () => {
+  assert.deepEqual(check('HTTP://LOCALHOST:3000'), { ok: true });
+  assert.deepEqual(check('HTTP://LOCALHOST:3000/?token=1'), { ok: false, reason: 'credential key in query: token' });
+  assert.deepEqual(check('http://localhost:3000/a/../b?sig=1'), { ok: false, reason: 'credential key in query: sig' });
+  assert.deepEqual(check('http://localhost.:3000/'), { ok: false, reason: 'host not allowed: localhost.' });
+});
+
+test('checkLink accepts a path that merely looks odd: assignments, dots, stray percent, short ids', () => {
+  const paths = ['/cb/token=abc', '/a/access_token/b', '/%/x', '/a%2Fb/c', '/file.v2.final.report.name.png', '/@scope/pkg', '/;jsessionid=abc', '/id/1234567', '/a/Xk3j9f8s7d6f5g4h3j2/b'];
+  for (const p of paths) assert.deepEqual(check(`http://localhost:3000${p}`), { ok: true }, p);
 });
 
 test('checkLink userinfo: a username alone or a password alone is refused', () => {
@@ -219,6 +246,74 @@ test('every credential key refuses in query and in fragment', () => {
   for (const key of CREDENTIAL_KEYS) {
     assert.deepEqual(check(`http://localhost:3000/?${key}=1`), { ok: false, reason: `credential key in query: ${key}` });
     assert.deepEqual(check(`http://localhost:3000/#${key}=1`), { ok: false, reason: `credential key in fragment: ${key}` });
+  }
+});
+
+// ---- Exposure link rule (#4612): every Recording link keeps to it ----
+
+const okRaw = (url) => checkLink(url, { allowedHosts: ['host', 'raw.githubusercontent.com'] });
+
+test('AC4.2: credential query shapes are refused after normalizing', () => {
+  for (const url of ['https://host/?TOKEN=abc', 'https://host/?tok%65n=abc', 'https://host/?%74oken=abc', 'https://host/#token=abc',
+    'https://user:pass@host/', 'HTTPS://host/?token=abc', 'https://host/x/?token=abc', 'https://host/a/../b?token=abc',
+    'https://host/?access_token=a', 'https://host/?password=a', 'https://host/?session=a']) {
+    const r = okRaw(url);
+    assert.equal(r.ok, false, url);
+    assert.ok(isCredentialRefusal(r.reason), url);
+  }
+});
+
+test('AC4.3: a benign path naming the word is not withheld', () => {
+  assert.equal(okRaw('https://host/docs/token-guide').ok, true);
+});
+
+test('a bearer-shaped path segment is refused', () => {
+  assert.deepEqual(okRaw('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b'), { ok: false, reason: 'credential in path segment' });
+  assert.equal(isCredentialRefusal(okRaw('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b').reason), true);
+});
+
+test('a bearer-shaped segment is found when it is encoded, last, or the only segment', () => {
+  for (const path of ['/%58k3j9f8s7d6f5g4h3j2k1', '/a/Xk3j9f8s7d6f5g4h3j2k1', '/Xk3j9f8s7d6f5g4h3j2k1/', '/a/Xk3j9f8s7d6f5g4h3j2k1_-/b']) {
+    assert.equal(okRaw(`https://host${path}`).reason, 'credential in path segment', path);
+  }
+});
+
+test('a 20-character segment with no digit, or no letter, is not bearer-shaped', () => {
+  assert.equal(okRaw('https://host/abcdefghijklmnopqrst').ok, true);
+  assert.equal(okRaw('https://host/12345678901234567890').ok, true);
+  assert.equal(okRaw('https://host/abcdefghij-klmnopqrs_t/x').ok, true);
+});
+
+test('a 19-character segment is not bearer-shaped, and a 20-character one is', () => {
+  assert.equal(okRaw(`https://host/${'a1'.repeat(9)}b`).ok, true);
+  assert.equal(okRaw(`https://host/${'a1'.repeat(10)}`).reason, 'credential in path segment');
+});
+
+test('a segment holding a character outside the alphabet is not bearer-shaped', () => {
+  assert.equal(okRaw('https://host/Xk3j9f8s7d6f5g4h3j2k1.png').ok, true);
+  assert.equal(okRaw('https://host/Xk3j9f8s7d6f5g4h3j2k1=').ok, true);
+});
+
+test('no exemption: a 40-hex commit sha segment on a raw host is refused', () => {
+  assert.equal(okRaw(`https://raw.githubusercontent.com/o/r/${'a1'.repeat(20)}/docs/x.png`).reason, 'credential in path segment');
+});
+
+test('the userinfo and path reasons both read as credential refusals; no other reason does', () => {
+  assert.equal(isCredentialRefusal('credential in userinfo'), true);
+  assert.equal(isCredentialRefusal('credential key in query: token'), true);
+  assert.equal(isCredentialRefusal('credential key in fragment: sig'), true);
+  for (const reason of ['unparseable url', 'scheme not http(s)', 'host not allowed: credential.example', '']) {
+    assert.equal(isCredentialRefusal(reason), false, reason);
+  }
+  assert.equal(isCredentialRefusal(undefined), false);
+});
+
+test('isImageUrl reads the pathname only', () => {
+  for (const url of ['https://h/r.gif', 'https://h/r.PNG?x=1', 'https://h/a/r.webp#f', 'https://h/r.jpg', 'https://h/r.jpeg', 'https://h/r.svg', 'https://h/r.avif', 'https://h/r.bmp', 'https://h/r%2Egif', 'https://h/r.p%6Eg']) {
+    assert.equal(isImageUrl(url), true, url);
+  }
+  for (const url of ['https://h/r.gif/landing', 'https://h/landing?f=r.png', 'https://h/landing#r.png', 'https://h/', 'not a url', undefined, null]) {
+    assert.equal(isImageUrl(url), false, String(url));
   }
 });
 

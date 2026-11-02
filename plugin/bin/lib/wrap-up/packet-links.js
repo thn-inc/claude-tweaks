@@ -158,6 +158,35 @@ function refusedKey(exactKeys, text) {
   return nested ? nested.key : null;
 }
 
+// A path segment that looks like a bearer value: 20 or more of `[A-Za-z0-9_-]`, with a
+// digit and a letter in it. No exemption of any kind, a 40-hex commit sha included
+// (the spec's Plan Review Decisions rule one out).
+const BEARER_SEGMENT_RE = /^[A-Za-z0-9_-]{20,}$/;
+const HAS_LETTER_RE = /[A-Za-z]/;
+const HAS_DIGIT_RE = /[0-9]/;
+const IMAGE_PATH_RE = /\.(?:gif|png|jpe?g|webp|svg|avif|bmp)$/i;
+
+function isBearerSegment(segment) {
+  return BEARER_SEGMENT_RE.test(segment) && HAS_LETTER_RE.test(segment) && HAS_DIGIT_RE.test(segment);
+}
+
+// Every reason checkLink gives for a credential starts with this word.
+function isCredentialRefusal(reason) {
+  return typeof reason === 'string' && reason.startsWith('credential');
+}
+
+// The pathname only, raw or decoded: `?f=r.png` and `/r.gif/landing` are not images, and
+// `r%2Egif` is one. An unparseable url is false, since checkLink already refuses it.
+function isImageUrl(url) {
+  let pathname;
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    return false;
+  }
+  return IMAGE_PATH_RE.test(pathname) || IMAGE_PATH_RE.test(decodeText(pathname));
+}
+
 function checkLink(url, options) {
   const allowedHosts = Array.isArray(options?.allowedHosts) ? options.allowedHosts : [];
   let parsed;
@@ -176,6 +205,9 @@ function checkLink(url, options) {
   }
   if (parsed.username || parsed.password) {
     return { ok: false, reason: 'credential in userinfo' };
+  }
+  if (parsed.pathname.split('/').some((segment) => isBearerSegment(decodeText(segment)))) {
+    return { ok: false, reason: 'credential in path segment' };
   }
   // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before
   // decoding: an encoded `%2B` is a literal plus.
@@ -206,5 +238,7 @@ function findCredentialInText(text) {
 module.exports = {
   normalizeKey,
   checkLink,
+  isCredentialRefusal,
+  isImageUrl,
   findCredentialInText,
 };
