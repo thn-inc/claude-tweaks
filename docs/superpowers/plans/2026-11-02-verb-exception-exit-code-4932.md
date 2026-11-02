@@ -10,7 +10,7 @@
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-02T063216-spec-4932/work/4932-spec.md` (main-checkout run dir)
 
-Scope keywords: `process.exit(0))`, `entry catch`, `entry's`, `top-level catch`, `catch-and-exit-0`, `exit silently successful`, `silent exit 0`
+Scope keywords: `process.exit(0))`, `entry catch`, `entry's`, `top-level catch`, `catch-and-exit-0`, `exit silently successful`, `silent exit 0`, `always exits 0`
 
 ## Global Constraints
 
@@ -26,6 +26,7 @@ Scope keywords: `process.exit(0))`, `entry catch`, `entry's`, `top-level catch`,
   - Decision 6 (excerpt): "That refusal returns straight into `process.exit`, so it writes with `fs.writeSync(2, …)` inside a try/catch, not `process.stderr.write`: a closed (EBADF) or broken (EPIPE) stderr would otherwise throw into hooks.js's entry `.catch(() => process.exit(0))` and turn the refusal back into a silent exit 0."
   - Registration-set closing rule: "Then add a dedicated `tests/hooks-{verb}.test.js` (spawn the CLI, assert stdout, stderr and the exit code separately)". This applies here as: spawn tests assert stdout, stderr and the exit code separately.
 - Governing skill `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` line 4 (exit-code conformance), verbatim: "a deliberate exception goes in that test's `ALLOWLIST` with its reason stated beside it (today: `bin/hooks.js`, whose stdout is a synchronous `fs.writeSync(1, …)` with nothing pending to flush, and `bin/lib/statusline-wrapper-source.js`, which deliberately hard-stops on a child process's own exit code)". hooks.js stays allowlisted, so this stays accurate (classified no-change in Task 2).
+- Task 3's files are also named by `run-directory-fact-packs`, `shared-contract-extraction`, `merge-shape-landed-proof`, `prose-code-twin-pin`, `bin-source-scan-conformance`, `pre-tool-use-gate-exemptions` and `skill-prose-conformance-tests/executable-snippet-pins.md`. None of them carries a rule about these comments or about `delete-ledger`'s exit contract, so none apply to comment and prose edits. `bin-source-scan-conformance`'s repo-wide scans run in each task's suite command anyway.
 - Commits: `{Verb} {what} — {detail}`, ending with `Claude-Session: https://claude.ai/code/session_01X7gPFBSHdRdkUYWzT4s5TU`. Stage named files only.
 
 ## Review Focus
@@ -57,6 +58,8 @@ Scope keywords: `process.exit(0))`, `entry catch`, `entry's`, `top-level catch`,
 - Modify: `plugin/bin/hooks.js:11-14` (header comment: append that a VERBS command's unexpected exception exits 1 with `claude-tweaks: {verb}: {message}` on stderr, #4932, while EVENTS keep exit 0 through the entry catch)
 - Modify: `plugin/bin/hooks.js:957-962` (record-pr comment: the deriveBranch try/catch stays; only the stated consequence changes. Without the guard, a throw would now exit 1 with `claude-tweaks: record-pr: …` and still skip writeRunState, so the PR would not be recorded. The guard degrades to the pre-#1672 `{number, url}` write instead)
 - No-change (classified): `plugin/bin/hooks.js:1969-1973`. The flag refusal's comment stays true, because the refusal runs before the new try, so a throwing stderr write there would still reach the entry catch.
+- Modify: `tests/reconcile.test.js:2519`. Under the new contract, a throwing stubbed handler no longer rejects; `main()` resolves 1. So `for (const argv of argvs) await main(['node', 'hooks.js', ...argv]);` must keep its failure signal. Change it to `for (const argv of argvs) assert.equal(await main(['node', 'hooks.js', ...argv]), 0, \`main(${argv.join(' ')}) exit code\`);`, and run the file before and after to confirm every call resolves 0 today.
+- No-change (classified): the other in-process `main()` callers (`grep -rn "await main(\[" tests`). They are `tests/hooks-js-flag-strict.test.js:367` and `tests/bin-lib/hooks/reconcile-background.test.js:217,369,394`, and each already asserts its return value. The same applies to `tests/hooks-dispatcher.test.js:373` ("record-worktree always exits 0, even on a rejected --run"), which is about a refusal, not an exception.
 
 **Interfaces:**
 - Consumes: `VERBS`, `main` from `plugin/bin/hooks.js` (`module.exports`, line 2069)
@@ -90,7 +93,9 @@ test('AC2.1: a throwing EVENTS module still exits 0', () => {
 
 test('#4932: an unusable stderr still returns 1 for a throwing verb', async () => {
   // in-process, per hooks-js-verb-registration decision 5: stub
-  // VERBS['check-staged-inventory'].run to throw (restore in finally), patch
+  // VERBS['check-staged-inventory'].run = async () => { throw new Error('injected in-process fault'); }
+  // (async, so it REJECTS — a sync-throwing stub would be caught even without
+  // `await` and Step 5(a)'s mutation could not turn this red; restore in finally), patch
   // fs.writeSync to throw EBADF on fd 2 (restore in finally); no flags passed.
   assert.equal(await main(['node', 'hooks.js', 'check-staged-inventory']), 1);
   assert.ok(stderrWrites >= 1, 'the exception path reached the throwing fd-2 write');
@@ -108,7 +113,7 @@ Use `if (verb) { try { return await verb.run(argv); } catch (err) { … return 1
 
 - [ ] **Step 4: Run the new and neighboring suites**
 
-Run: `node --test tests/hooks-verb-exception-exit.test.js tests/hooks-js-flag-strict.test.js tests/hooks-help-guard.test.js tests/hooks-dispatcher.test.js`
+Run: `node --test tests/hooks-verb-exception-exit.test.js tests/hooks-js-flag-strict.test.js tests/hooks-help-guard.test.js tests/hooks-dispatcher.test.js tests/reconcile.test.js tests/bin-lib/hooks/reconcile-background.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
 Expected: PASS, 0 failures.
 
 - [ ] **Step 5: Go-red controls (scratch, not committed)**
@@ -118,7 +123,7 @@ Make each mutation with Edit, run `node --test tests/hooks-verb-exception-exit.t
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/hooks.js tests/hooks-verb-exception-exit.test.js
+git add plugin/bin/hooks.js tests/hooks-verb-exception-exit.test.js tests/reconcile.test.js
 git commit -m "Exit 1 on an unexpected VERBS exception in hooks.js — EVENTS keep the exit-0 entry catch (#4932)"
 ```
 
@@ -129,7 +134,16 @@ git commit -m "Exit 1 on an unexpected VERBS exception in hooks.js — EVENTS ke
 **Files:**
 - Modify: `docs/hooks.md:5` (Never-break-a-session bullet: after "…may exit non-zero on malformed or rejected input.", insert: "An unexpected exception escaping a verb's handler writes `claude-tweaks: {verb}: {message}` on stderr and exits 1 (#4932); a harness hook event that throws still exits 0 through the entry catch.")
 - Modify: `.claude/skills/hooks-js-verb-registration/SKILL.md:31` (decision 3: append "An unexpected exception is not a refusal: `main()` catches whatever a handler throws or rejects with, writes `claude-tweaks: {verb}: {message}` on stderr and exits 1 (#4932), so a handler never needs its own top-level try/catch just to avoid a silent exit 0; catch inside the handler only where a partial result must still be reported.")
-- Modify: `tests/bin-lib/exit-code-conformance.test.js:21-24` (ALLOWLIST rationale comment: keep the fs.writeSync(1) reason, and add that hooks.js's entry `.catch(() => process.exit(0))` now only catches EVENTS failures, the never-break-a-session invariant, because `main()` turns a VERBS exception into exit 1 itself (#4932). The ALLOWLIST set itself is unchanged.)
+- Modify: `tests/bin-lib/exit-code-conformance.test.js:21-24`. Replace the ALLOWLIST rationale comment with exactly the block below. The ALLOWLIST set itself is unchanged.
+  ```
+  // The two exceptions #1535's final whole-branch review verified safe:
+  // hooks.js's own stdout goes through a synchronous fs.writeSync(1, ...) with
+  // nothing pending to flush, and statusline-wrapper-source.js deliberately
+  // hard-stops on a child process's own exit code. hooks.js's entry
+  // `.catch(() => process.exit(0))` now only catches harness EVENTS failures
+  // (the never-break-a-session invariant): main() turns a VERBS command's
+  // unexpected exception into exit 1 itself (#4932).
+  ```
 - No-change (classified): `.claude/skills/hooks-js-verb-registration/SKILL.md:34` (decision 6). The flag refusal sits outside the new try, so its EBADF sentence stays true.
 - No-change (classified): `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md:4`. hooks.js stays allowlisted for the same stated reason.
 
@@ -163,9 +177,33 @@ git commit -m "Document the hooks.js VERBS/EVENTS exception split — hooks.md, 
 **Role:** transcription
 
 **Files:**
-- Modify: `plugin/bin/lib/hooks/sweep-shadow.js:140-145`. The guard stays. Its stated consequence becomes: a mid-sweep throw would otherwise surface as hooks.js's generic `claude-tweaks: sweep-shadow: {message}` exit 1 (#4932) and lose the partial-sweep lines already collected.
-- Modify: `plugin/bin/lib/reconcile/console-execute.js:668-674`. The guard stays. Its stated consequence becomes: an uncaught throw here would surface as hooks.js's generic `claude-tweaks: resolve-console: {message}` exit 1 (#4932), not the distinguishable `console-write-failed` status, so the caller could not tell that both gh writes already landed.
-- Modify: `tests/resolve-console.test.js:569-572`. "propagate uncaught to hooks.js's top-level catch-and-exit-0" becomes "propagate uncaught to hooks.js's generic exception exit (#4932)".
+Each edit below replaces the quoted lines with exactly the text given. The guard code around each comment is untouched.
+
+- Modify: `plugin/bin/lib/hooks/sweep-shadow.js:140-145`. Replace the comment block starting `// The readdir and every step below it are wrapped` with:
+  ```
+    // The readdir and every step below it are wrapped so a mid-sweep throw
+    // (e.g. a permission-denied staged/ dir) becomes a `sweep:`-prefixed
+    // diagnostic line instead of propagating to hooks.js's main(), which
+    // would turn it into the generic `claude-tweaks: sweep-shadow: {message}`
+    // exit 1 (#4932) and lose the partial-sweep lines already collected.
+  ```
+- Modify: `plugin/bin/lib/reconcile/console-execute.js:668-674`. Replace the comment block starting `// Guarded (unlike the two gh calls above` with:
+  ```
+    // Guarded (unlike the two gh calls above, this is the only I/O in the
+    // function with no injected-failure return shape of its own): by this
+    // point both gh writes have already landed for real, so an uncaught throw
+    // here would propagate to hooks.js's main() and surface only as the
+    // generic `claude-tweaks: resolve-console: {message}` exit 1 (#4932), not
+    // the distinguishable console-write-failed status, so the caller could not
+    // tell that both gh writes already landed — this module's own header names
+    // that exact hazard as one a sibling code path was already patched to avoid.
+  ```
+- Modify: `tests/resolve-console.test.js:572`. Replace `// propagate uncaught to hooks.js's top-level catch-and-exit-0.` with `// propagate uncaught to hooks.js's generic exception exit (#4932).`
+- Modify: `plugin/skills/wrap-up/cleanup-procedures.md:37` (Item 2 paragraph). This makes two in-place replacements, since `delete-ledger` is a VERBS command and now has an exception outcome:
+  - `(the verb always exits 0, so read its printed report, not the exit code)` becomes `(the verb exits 0 on every printed report, so read the report, not the exit code; an unexpected exception instead prints nothing, exits 1 and writes \`claude-tweaks: delete-ledger: {message}\` on stderr (#4932), which also leaves the ledger on disk)`
+  - `for the last three, which leave no run dir to log into, or when its stderr names a failed` becomes `for the last three, which leave no run dir to log into, for an exception exit (naming its stderr line), or when its stderr names a failed`
+- Modify: `plugin/skills/wrap-up/auto-merge-short-circuit.md:162-163`. `(the verb always exits 0 — read the report, not` / `the exit code)` becomes `(the verb exits 0 on every printed report — read the report, not` / `the exit code; an exception exit 1 with empty stdout is handled like a non-\`deleted\` report, #4932)`. Keep the line break where it is.
+- No-change (classified), from the repo-wide `always exits 0` sweep: `plugin/bin/code-health.js:72` (its own gate), `plugin/bin/lib/hooks/user-prompt-submit.js:31` (an EVENTS module, still exit 0), `plugin/skills/_shared/trust-table.md:247` (a shell loop), and `plugin/skills/init/bootstrap/step-21-release.md:17` and `plugin/skills/_shared/pre-review-catchup.md:15` (other CLIs, which already name their exit 1).
 - No-change (classified): `tests/bin-lib/hooks/sweep-shadow.test.js:3-6`. It is past-tense history ("was silent"), so it stays accurate.
 
 **Interfaces:**
@@ -174,21 +212,22 @@ git commit -m "Document the hooks.js VERBS/EVENTS exception split — hooks.md, 
 
 - [ ] **Step 1: Write the failing check**
 
-The check is that all three files cite `#4932`, and that the stale-phrase grep `grep -n -E "process\.exit\(0\)\)|catch-and-exit-0|exit silently successful" plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js` comes back empty. Today the stale-phrase grep prints 3 hits (sweep-shadow.js:144, console-execute.js:672, resolve-console.test.js:572). Control: the same grep on `plugin/bin/hooks.js` prints line 2063, which proves the pattern matches.
+The check is that all five files cite `#4932`, and that the stale-phrase grep `grep -n -E "process\.exit\(0\)\)|catch-and-exit-0|exit silently successful|always exits 0" plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js plugin/skills/wrap-up/cleanup-procedures.md plugin/skills/wrap-up/auto-merge-short-circuit.md` comes back empty. Today it prints 5 hits (sweep-shadow.js:144, console-execute.js:672, resolve-console.test.js:572, cleanup-procedures.md:37, auto-merge-short-circuit.md:162). Control: the same grep on `plugin/bin/hooks.js` prints line 2063, which proves the pattern matches.
 
 - [ ] **Step 2: Verify it fails**
 
-Run: `grep -c "#4932" plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js`
+Run: `grep -c "#4932" plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js plugin/skills/wrap-up/cleanup-procedures.md plugin/skills/wrap-up/auto-merge-short-circuit.md`
 Expected: FAIL (exit 1), with every count `0`.
 
 - [ ] **Step 3: Edit the three comments, then run the affected suites**
 
-Run: `node --test tests/bin-lib/hooks/sweep-shadow.test.js tests/resolve-console.test.js`
+Run: `node --test tests/bin-lib/hooks/sweep-shadow.test.js tests/resolve-console.test.js tests/ledger-reader-ownership-conformance.test.js tests/wrap-up-ledger-delete-before-merge.test.js tests/auto-merge-short-circuit-ledger-deletion.test.js tests/delete-ledger-verb.test.js tests/log-decision-text-file-sites-conformance.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
+`tests/ledger-reader-ownership-conformance.test.js` pins phrases from the edited paragraph. If it fails, keep the pinned phrase verbatim and adjust the surrounding insertion. Never weaken the pin.
 Expected: PASS, 0 failures. Re-run Step 2's grep. Expected: every count ≥ 1. Run Step 1's stale-phrase grep. Expected: no output, exit 1.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js
-git commit -m "Repoint stale exit-0 catch comments to the #4932 exception exit — sweep-shadow, console-execute, resolve-console test"
+git add plugin/bin/lib/hooks/sweep-shadow.js plugin/bin/lib/reconcile/console-execute.js tests/resolve-console.test.js plugin/skills/wrap-up/cleanup-procedures.md plugin/skills/wrap-up/auto-merge-short-circuit.md
+git commit -m "Repoint stale exit-0 restatements to the #4932 exception exit — sweep-shadow, console-execute, delete-ledger report handling"
 ```
