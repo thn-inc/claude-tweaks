@@ -22,6 +22,48 @@ const CASES = [
   ['--client-secret=abc', '--client-secret=[redacted]'],
   ['https://user:pass@example.com/x', 'https://[redacted]@example.com/x'],
   ['mail bob.smith+a@example.co.uk now', 'mail [redacted] now'],
+  // A keyed value beginning with a scheme word.
+  ['authorization=Bearer abc123', 'authorization=[redacted]'],
+  ['Authorization = Bearer abc123', 'Authorization = [redacted]'],
+  ['token: Bearer abc123', 'token: [redacted]'],
+  ['auth: Basic dXNlcjpwYXNz', 'auth: [redacted]'],
+  ['x-api-key: Bearer abc123', 'x-api-key: [redacted]'],
+  ['--token Bearer abc123', '--token [redacted]'],
+  // A separator of more than one character.
+  ['password := hunter2', 'password := [redacted]'],
+  ['password == hunter2', 'password == [redacted]'],
+  ['token=="abc123"', 'token==[redacted]'],
+  ['token === "abc123"', 'token === [redacted]'],
+  [':password => "hunter2"', ':password => [redacted]'],
+  ['Authorization := Digest abc123', 'Authorization := [redacted]'],
+  ['authorization == abc123', 'authorization == [redacted]'],
+  ['api_key: = abc123', 'api_key: = [redacted]'],
+  // JSON quotes escaped inside a string.
+  [String.raw`{\"password\": \"hunter2\"}`, String.raw`{\"password\": [redacted]}`],
+  [String.raw`{\"token\":\"abc123\"}`, String.raw`{\"token\":[redacted]}`],
+  [String.raw`{\"Authorization\":\"Digest abc123\"}`, String.raw`{\"Authorization\":[redacted]}`],
+  [String.raw`{\"token\":\"ab\\\"cd\"}`, String.raw`{\"token\":[redacted]}`],
+  [String.raw`{\"token\":\"abc def`, String.raw`{\"token\":[redacted]`],
+  // A delimiter inside a bare value.
+  ['password=pa;ss', 'password=[redacted]'],
+  ['password=ab,cd', 'password=[redacted]'],
+  ['api_key=abc)def', 'api_key=[redacted]'],
+  ['?token=abc&x=1', '?token=[redacted]&x=1'],
+  ['token=abc, next', 'token=[redacted], next'],
+  ['{"a":1,"token":"abc","b":2}', '{"a":1,"token":[redacted],"b":2}'],
+  // One secret under two rules.
+  ['bearer eyJhbGciOiJIUzI1NiJ9.e30.abc, next', 'bearer [redacted], next'],
+  ['Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc.', 'Bearer [redacted].'],
+  ['token: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', 'token: [redacted]'],
+  // E-mail local parts and hosts.
+  ['jörg@example.com', '[redacted]'],
+  ["o'brien@example.com", '[redacted]'],
+  ['bob@localhost', '[redacted]'],
+  ['bob@exämple.com', '[redacted]'],
+  ["'bob@example.com'", "'[redacted]'"],
+  // A prefix after `_` or `-`.
+  ['prefix_sk_live_abc', 'prefix_[redacted]'],
+  ['x-ghp_abc123', 'x-[redacted]'],
 ];
 
 const words = (text) => text.split(/[^A-Za-z0-9]+/).filter((word) => word.length > 1);
@@ -36,8 +78,8 @@ test('redacts each shape, whole value, key kept', () => {
     assert.equal(text, expected, raw);
     assert.equal(count, 1, raw);
     assert.equal(findCredentialInText(residual), null, raw);
-    const expectedWords = words(expected);
-    for (const fragment of words(raw).filter((word) => !expectedWords.includes(word))) {
+    // A fragment inside the expected text is a kept key's letters (`pa` in `password`), not a leak.
+    for (const fragment of words(raw).filter((word) => !expected.includes(word))) {
       assert.equal(text.includes(fragment), false, `${raw}: ${fragment} in text`);
       assert.equal(residual.includes(fragment), false, `${raw}: ${fragment} in residual`);
     }
@@ -129,6 +171,35 @@ test('an unterminated quote stays in the residual for the screen to refuse', () 
   const { text, count, residual } = redactText('password="two words');
   assert.deepEqual([text, count], ['password="two words', 0]);
   assert.notEqual(findCredentialInText(residual), null);
+});
+
+test('a scheme word before an unterminated quote is not spent as the value', () => {
+  // The keyed rule declines, so the key stays in the residual and the screen refuses the whole string.
+  assert.equal(findCredentialInText(redactText('token: Bearer "abc def').residual), 'token');
+  assert.equal(findCredentialInText(redactText('password: Basic "abc def').residual), 'password');
+  assert.equal(redactText('authorization=Bearer "abc def\nnext').text, 'authorization=[redacted]\nnext');
+});
+
+test('a separator with no value after it is not spent as the value', () => {
+  for (const raw of ['authorization==', 'token==']) {
+    assert.deepEqual((({ text, count }) => [text, count])(redactText(raw)), [raw, 0], raw);
+  }
+});
+
+test('a version pin reads as an address: over-redacted, visibly', () => {
+  assert.deepEqual((({ text, count }) => [text, count])(redactText('pkg@1.2.3')), ['[redacted]', 1]);
+  assert.deepEqual((({ text, count }) => [text, count])(redactText('foo@latest')), ['[redacted]', 1]);
+});
+
+test('text around an address is left alone', () => {
+  for (const raw of ['@scope/pkg', 'user@', '[redacted]@example.com']) {
+    assert.deepEqual((({ text, count }) => [text, count])(redactText(raw)), [raw, 0], raw);
+  }
+});
+
+test('a placeholder followed by more of a token is still a value', () => {
+  assert.equal(redactText('bearer [redacted]abc').text, '[redacted]');
+  assert.equal(redactText('token=[redacted]abc').text, 'token=[redacted]');
 });
 
 test('a token-shaped word inside a longer word is left alone', () => {

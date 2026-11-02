@@ -21,6 +21,7 @@ const INPUTS = [
   ['a long space run inside a line', `a${' '.repeat(200000)}b`],
   ['repeated non-credential assignments', 'a='.repeat(50000)],
   ['repeated non-credential flags', '--a '.repeat(50000)],
+  ['repeated two-character separators', 'a=='.repeat(50000)],
 ];
 
 for (const [label, input] of INPUTS) {
@@ -34,3 +35,13 @@ for (const [label, input] of INPUTS) {
     assert.ok(residual === input, `residual changed, length ${residual.length}`);
   });
 }
+
+test('redactText stays linear on a long repeated prefix, which is one secret', () => {
+  const start = performance.now();
+  const { text, count, residual } = redactText('sk_'.repeat(70000));
+  const ms = performance.now() - start;
+  assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);
+  assert.strictEqual(count, 1);
+  assert.strictEqual(text, '[redacted]');
+  assert.strictEqual(residual, ' ');
+});
