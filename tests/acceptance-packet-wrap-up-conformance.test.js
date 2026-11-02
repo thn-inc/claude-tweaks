@@ -76,7 +76,7 @@ test('a note ahead of the template says whose sections its references mean, and 
   const compose = section(read(PARENT_GATE), '## Compose the parent brief', '## Apply the gate');
   const fence = compose.indexOf('\n```markdown\n');
   const note = compose.slice(compose.lastIndexOf('\n\n', fence - 2), fence);
-  for (const literal of ['**Try it block**', 'Step 2', 'Step 3', '`verification-brief.md`', '`## Try it block`']) {
+  for (const literal of ['**Try it block**', "`verification-brief.md`'s `## Try it block`, its Step 2 and its Step 3"]) {
     assert.ok(note.includes(literal), `the note names ${literal}`);
   }
   const brief = read('wrap-up/verification-brief.md');
