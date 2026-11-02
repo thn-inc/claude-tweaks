@@ -47,7 +47,7 @@ files:
 
 ### 4. Next ref, same shape — `#N,#M` batches only
 - **URL:** *(no command — demo advances to the next ref in the list)*
-- **Action:** Nothing. Once this ref's verdict has landed (label swap or follow-up filed), demo re-enters Step 1 for the next ref — a fresh, independent lookup with its own brief, its own walkthrough, its own single verdict question. `## Next Actions` renders once, after the last ref.
+- **Action:** Nothing. Once this ref's verdict has landed (label swap or follow-up filed), demo re-enters Step 1 for the next ref — a fresh, independent lookup with its own packet or brief, its own walkthrough, its own single verdict question. `## Next Actions` renders once, after the last ref.
 - **Should feel:** Like paste-once, decide-per-record — no cross-record table, no apply-all, nothing lost if you stop halfway (every verdict already given is already applied).
 - **Should understand:** A batch is your own explicit list, never a backlog scan — what is outstanding is still `/claude-tweaks:help` Stage 4.7's job; the once-per-item scope-fork checkpoint resets for each ref.
 - **Red flags:** One combined verdict question spanning several records; a batch table asking for apply-all; the second ref starting before the first ref's label swap landed; a Next Actions block after every item instead of once at the end.
