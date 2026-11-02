@@ -15,6 +15,7 @@ description: Use when adding a key to the policy.yml schema (`POLICY_KEYS` in `p
 4. **The doc row** in `_shared/policy-schema.md`. Every key needs a table row there that starts `` | `{key}` | `` (`tests/policy-key-naming.test.js`), and its summary must not be copied verbatim from the row's `summary` (`tests/policy-schema-metadata.test.js`). State the value the resolver returns for unset, set and malformed input, from the code, not from intent. #4609's first `risk-path-globs` row said a malformed block resolves `{}`, the unset shape; the code gives `null` with `invalid: true` (review row 9).
 5. **A renamed key** keeps its old name in `RENAMED_KEYS`, never in `POLICY_KEYS`. `tests/policy-schema.test.js` pins that count too.
 6. **A Manifesto-visible lever** also walks `_shared/auto-mode-contract.md`'s "Adding a new policy lever" checklist.
+7. **A key that lands before its consumer** opens its `summary` with `Not yet used. ` or `Not yet used; ` and joins `NOT_YET_USED` in `tests/resolve-policy-control-mode.test.js`. That file pins both directions: every listed key carries the marker, and no unlisted key does. The record that wires a key's first consumer drops the marker and the list entry in the same commit. #4816 marked #4609's fourteen control-mode keys this way, and the comment above `control-mode` in `POLICY_KEYS` names the record that wires each.
 
 ## Decide who may set it
 
