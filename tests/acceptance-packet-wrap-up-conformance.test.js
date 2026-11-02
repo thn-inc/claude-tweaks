@@ -11,7 +11,7 @@ const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
 const { readPacket } = require('../plugin/bin/lib/wrap-up/packet-gather');
 
-const SKILLS =path.join(__dirname, '..', 'plugin', 'skills');
+const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
 const read = (rel) => readText(path.join(SKILLS, rel));
 const PARENT_GATE = 'wrap-up/verification-brief-parent-gate.md';
 
@@ -570,6 +570,12 @@ test('local-files reads the delimited packet first, then the legacy body section
   assert.ok(paragraph.includes('`<!-- acceptance-packet:end -->`'), paragraph);
   assert.ok(paragraph.includes("whatever the record's facets"), paragraph);
   assert.ok(start < paragraph.indexOf('`## Verification Brief`'), 'the packet comes before the legacy section');
+});
+
+test('local-files delimiter wording matches the contract: whitespace around one changes nothing', () => {
+  const paragraph = localFiles();
+  assert.ok(!paragraph.includes('whole-line delimiters'), paragraph);
+  assert.ok(paragraph.includes('each alone on its line, whitespace around it aside'), paragraph);
 });
 
 test('demo Step 2 renders a packet, never a fresh Try it block', () => {

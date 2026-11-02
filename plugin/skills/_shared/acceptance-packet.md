@@ -62,9 +62,9 @@ negative stories and failures only, and a routine pass never renders there.
   does not fail the publish, since the packet landed.
 - **`local-files`.** The packet sits between the whole-line delimiters `<!-- acceptance-packet:start -->` and
   `<!-- acceptance-packet:end -->` in the record body, replaced in place, and is appended at the end
-  of the body when no such block exists. Whitespace around a delimiter does not change what it is. The
-  block runs from the first start through the last end, so repeated blocks collapse into one. A start
-  with no end below it is the block's start alone, and the text after it stays.
+  of the body when no such block exists. Whitespace around a delimiter does not change what it is. An
+  end closes the nearest start above it. Repeated blocks collapse into one at the first one's place, and
+  any text between them stays. A start with no end pairing it loses its delimiter line, and the text after it stays.
 - **How many.** One packet per work item. A legacy brief comment is left untouched, and "exactly one"
   counts packet comments only.
 - **Parents.** Decomposed work: the packet lives on the parent and a sub-issue's wrap-up posts none.
@@ -267,12 +267,15 @@ case-insensitive after percent-decoding: `tok%65n=`, or `100% tok%65n=` with a s
 drops that entry, and its omission is stated by id or key, never its text, and the packet still posts:
 
 - A command link goes to `refused` with the reason `credential key in command: {key}`.
-- A claim goes to `screened`, whatever its section, and so does an observation-plan line, dropped alone.
-  The screened line names each by section and key:
+- A claim goes to `screened`, whatever its section, and so does an observation-plan line. A line
+  following a dropped line that ends in a backslash, and any more deeply indented line under a dropped
+  line, goes with it, since a key often leaves its value there. The screened line names each match by section and key:
   `{N} entries omitted for credential-shaped content: Test guide (password); Observation plan (token)`,
   or `1 entry omitted` in the singular. `render --dropped-out` holds the same section and key.
 - A `reason` renders `(reason withheld: credential-shaped)` and its row stays, so the row count holds.
 - Any other free text renders `(text withheld: credential-shaped)`.
+- A fact id or refused id renders `(id withheld: credential-shaped)` and its row stays. Validation is
+  unchanged: a withheld id stays citable.
 
 **Credentials in the Test guide** appear only as vault entry names: a step that needs a login names the
 entry to use, never its value.

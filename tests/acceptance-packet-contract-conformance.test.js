@@ -236,12 +236,29 @@ test('the lookup rules stated are what the code does', () => {
 test('the local-files block rules stated are what the code does', () => {
   const body = inSection('## Canonical copy and lookup');
   assert.match(body, /Whitespace around a delimiter does not change what it is/);
-  assert.match(body, /The block runs from the first start through the last end, so repeated blocks collapse into one/);
-  assert.match(body, /A start with no end below it is the block's start alone, and the text after it stays/);
+  assert.match(body, /Repeated blocks collapse into one at the first one's place, and any text between them stays/);
+  assert.match(body, /A start with no end pairing it loses its delimiter line, and the text after it stays/);
   const block = (text) => `${LOCAL_START}\n${text}\n${LOCAL_END}`;
   assert.strictEqual(upsertLocalPacket(`  ${LOCAL_START} \nA\n${LOCAL_END}\t`, 'N'), block('N'));
-  assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${block('B')}`, 'N'), block('N'));
+  assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${block('B')}`, 'N'), `${block('N')}\nx`);
   assert.strictEqual(upsertLocalPacket(`${LOCAL_START}\nnotes`, 'N'), `${block('N')}\nnotes`);
+  assert.strictEqual(upsertLocalPacket(`${block('A')}\nx\n${LOCAL_START}\ny`, 'N'), `${block('N')}\nx\ny`);
+});
+
+test('what a dropped plan line takes with it, and a withheld id, are stated and rendered', () => {
+  const body = inSection('## Links and credentials');
+  assert.match(body, /A line following a dropped line that ends in a backslash, and any more deeply indented line under a dropped line, goes with it/);
+  assert.ok(body.includes('`(id withheld: credential-shaped)`'));
+  assert.match(body, /Validation is unchanged: a withheld id stays citable/);
+  const { markdown } = renderPacket(
+    facts([fact('check:token%3Dabc', 'check')]),
+    narrative([]),
+    { observationPlan: '- --token \\\nvalue\n- password=a\n    child\n- kept' },
+  );
+  assert.ok(markdown.includes('(id withheld: credential-shaped)'));
+  assert.ok(!markdown.includes('token%3D'));
+  const lines = markdown.split('\n');
+  assert.deepStrictEqual(lines.slice(lines.indexOf('### Observation plan') + 1), ['- kept']);
 });
 
 // ---- ## Facts and claims ----

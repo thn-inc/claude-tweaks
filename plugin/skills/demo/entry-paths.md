@@ -209,7 +209,7 @@ applies to this block specifically.
 
 **`work-backend: local-files`:** `readRecord(filePath)` for the single record
 (`bin/lib/issues/local-store.js`). The packet comes first, whatever the record's facets: the block
-between the whole-line delimiters `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->`
+between the delimiters `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->`, each alone on its line, whitespace around it aside,
 in its body (`_shared/acceptance-packet.md`), which stands in for the brief as the comment does above,
 and stops this ref the same way when its first line names another schema version. With no such block, the
 Verification Brief is the record's own `## Verification Brief` body section. Same pending-facet → closing-commit → session-recall fallback order as
