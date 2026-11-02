@@ -341,3 +341,67 @@ test('F3c: Step 14 states the Opt-out paragraph before the Detect paragraph', ()
   assert.strictEqual(paragraphs.length - kept.length, 1);
   assert.throws(() => step14OptOutOrder(kept.join('\n\n')), { message: /marker missing/ });
 });
+
+// The routine prompt kernel's cloud self-heal under the opt-out (#4940): with the key at false
+// the kernel names the opt-out and stops, never reading the setup log or running the script.
+const SCHEMA = readText(path.join(ROOT, 'plugin', 'skills', '_shared', 'routine-template-schema.md'));
+const KERNEL_OPT_OUT_IF = "If this checkout's `.claude-tweaks/policy.yml` sets `declare-claude-tweaks: false`";
+const KERNEL_OPT_OUT_LINE = '`claude-tweaks not installed: this project sets declare-claude-tweaks: false, so its Setup script does not install claude-tweaks — supply claude-tweaks to this environment another way, or set the key back to true`';
+const KERNEL_DEFAULT_READ = 'Otherwise, read `$HOME/claude-cloud-setup.log`';
+const KERNEL_DEFAULT_HEAL = 'run `bash scripts/claude-cloud-setup.sh` to self-heal, and re-run the resolved-build line once before proceeding to the kickoff.';
+
+function kernelSelfHeal(text) {
+  const afterHeading = text.split('## Standard prompt kernel')[1];
+  assert.ok(afterHeading, 'kernel heading missing');
+  const fence = afterHeading.split('```')[1];
+  assert.ok(fence, 'kernel fence missing');
+  const hits = fence.split(/\n\n/).filter((p) => p.startsWith('If all four rungs came up empty'));
+  assert.strictEqual(hits.length, 1, 'kernel self-heal paragraph not found exactly once');
+  return collapse(hits[0]);
+}
+
+function assertKernelOptOut(p) {
+  assert.ok(p.includes(KERNEL_OPT_OUT_IF), 'kernel opt-out condition missing');
+  assert.ok(p.includes(KERNEL_OPT_OUT_LINE), 'kernel opt-out print line missing');
+  const from = p.indexOf(KERNEL_OPT_OUT_IF);
+  const to = p.indexOf(KERNEL_DEFAULT_READ);
+  assert.ok(from !== -1 && to > from, 'kernel opt-out segment anchors missing');
+  const segment = p.slice(from, to);
+  assert.ok(segment.includes('and stop.'), 'kernel opt-out does not stop');
+  assert.ok(!segment.includes('claude-cloud-setup'), 'kernel opt-out still names the setup script');
+}
+
+function assertKernelDefault(p) {
+  for (const needle of [
+    KERNEL_DEFAULT_READ,
+    KERNEL_DEFAULT_HEAL,
+    'claude-cloud-setup.log: absent — the environment Setup script left no trace in this container (not executed, or its write failed)',
+    'claude-cloud-setup.log: present — tail: {last 5 lines}',
+  ]) {
+    assert.ok(p.includes(needle), `kernel default path lost: ${needle}`);
+  }
+  assert.ok(p.indexOf(KERNEL_DEFAULT_READ) < p.indexOf('bash scripts/claude-cloud-setup.sh'), `kernel default path lost: ${KERNEL_DEFAULT_READ} must come before the self-heal`);
+}
+
+test('AC (kernel, false): the self-heal names the opt-out and never runs the setup script on it', () => {
+  assertKernelOptOut(kernelSelfHeal(SCHEMA));
+});
+
+test('AC (kernel, default): the unset/true path still reads the log and self-heals', () => {
+  assertKernelDefault(kernelSelfHeal(SCHEMA));
+});
+
+test('kernel opt-out go-red controls', () => {
+  const original = kernelSelfHeal(SCHEMA);
+  const cases = [
+    ['strip the print line', original.replace(KERNEL_OPT_OUT_LINE, ''), assertKernelOptOut, /kernel opt-out print line missing/],
+    ['strip the condition', original.replace(KERNEL_OPT_OUT_IF, ''), assertKernelOptOut, /kernel opt-out condition missing/],
+    ['drop the stop', original.replace(', and stop.', '.'), assertKernelOptOut, /kernel opt-out does not stop/],
+    ['name the setup script in the opt-out', original.replace(', and stop.', ' run `bash scripts/claude-cloud-setup.sh`, and stop.'), assertKernelOptOut, /kernel opt-out still names the setup script/],
+    ['strip the default self-heal', original.replace(KERNEL_DEFAULT_HEAL, ''), assertKernelDefault, /kernel default path lost/],
+  ];
+  for (const [name, mutated, check, message] of cases) {
+    assert.notEqual(mutated, original, name);
+    assert.throws(() => check(mutated), { message }, name);
+  }
+});
