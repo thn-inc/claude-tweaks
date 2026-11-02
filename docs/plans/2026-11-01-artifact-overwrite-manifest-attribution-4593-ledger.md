@@ -3,13 +3,13 @@
 | # | Phase | Item | Status | Resolution |
 |---|-------|------|--------|------------|
 | 1 | ops | Pre-flight branch-divergence-check: origin/main was 1 commit ahead of the worktree at run start | fixed | Post-creation catch-up merged origin/main (3b03a3177) into the worktree branch before any build work |
-| 2 | build | SDD ruling — rescale the attributeByWindow boundary test to whole seconds (Q10): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
-| 3 | build | SDD ruling — fix Task 1 minor test gaps in-build (tied windows, author date): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
-| 4 | build | SDD ruling — fix Task 3 doc minors as doc-only edits: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
-| 5 | build | SDD ruling — route the no-blame reason-shape doc nit to the final fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | open | — |
+| 2 | build | SDD ruling — rescale the attributeByWindow boundary test to whole seconds (Q10): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | accepted | ratified at Review Console — cost if wrong: one test rewritten, no behavior change |
+| 3 | build | SDD ruling — fix Task 1 minor test gaps in-build (tied windows, author date): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | accepted | ratified at Review Console — cost if wrong: one extra fix round |
+| 4 | build | SDD ruling — fix Task 3 doc minors as doc-only edits: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | accepted | ratified at Review Console — cost if wrong: operators get less spec info in the unattributable case than a code fix would give |
+| 5 | build | SDD ruling — route the no-blame reason-shape doc nit to the final fix wave: ratify or reverse at the Review Console (staged/sdd-ruling-4.md) | accepted | ratified at Review Console — cost if wrong: one sentence of doc prose; applied in the final fix wave (multispec-artifact-namespacing.md line 102) |
 | 6 | review | Stale comments: ArtifactOverwriteCheckError says git-only (artifact-overwrite-check.js:87) and the CLI catch says only a walk failure is exit 3 (check-artifact-overwrite.js:108) — both now also cover the unusable-manifest throws | fixed | Comments updated in the review fix wave (7f2ad26e8) |
 | 7 | review | CLI header overstated that manifest.yml writers always refuse a non-anchored --run; resolveRunArg's #280 worktree-local fallback admits one | fixed | Header reworded in 7f2ad26e8 |
-| 8 | review | _shared/pipeline-run-dir.md's CLI-argument boundary list does not name check-artifact-overwrite.js (a --run reader that is deliberately unanchored); the contract owes a guard or a documented exception (needs-human-decision) | open | — |
+| 8 | review | _shared/pipeline-run-dir.md's CLI-argument boundary list does not name check-artifact-overwrite.js (a --run reader that is deliberately unanchored); the contract owes a guard or a documented exception (needs-human-decision) | deferred | → backlog, needs:definition (defer-reason: needs-human-decision); staged/ledger-record-check-artifact-overwrite-run-boundary.md |
 | 9 | review | Journey step 6 named the test case "AC1.1", which is ambiguous across the test file | fixed | Renamed to the test's descriptive title in 7f2ad26e8 |
 | 10 | review | Bare Q-labels (Q6, Q8, Q9, Q10) in shipped comments | fixed | Qualified as "#4593 Qn" in 7f2ad26e8 |
 | 11 | review | No test pinned startedAt winning over an earlier phases[].at | fixed | Added computeSpecWindows test (goes red under the swapped precedence) in 7f2ad26e8 |
@@ -17,3 +17,5 @@
 | 13 | review | Fixture git calls inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE | fixed | Both test files scrub them at load, as tests/stash-guard.test.js does (7f2ad26e8) |
 | 14 | review | Tiebreak recommended drop: manifestPath/readManifest reuse (CLI line 88, two reports), {parent} placeholder style, storyRepo timeout literal and manifestRun duplication, fixture tmpdir cleanup (three reports), WINDOW_STATUSES and earliest-window comments | accepted | Independent tiebreak verdicts judged each real but not worth acting on (readManifest would lose the distinct exit-3 errors and the readFile seam; the rest are style or match the neighbouring suites) |
 | 15 | review | Tiebreak refuted: journey line 28 "stale" claim; Q-labels "resolve only against the deleted spec" | accepted | Line 28 is accurate for its own case (step 2 runs without --run); the Q-numbers also live in the record body |
+| 16 | wrap-up | pr — PR #4882 — this run's own pr-first PR; disposition is Phase 4's merge decision | observation | — |
+| 17 | wrap-up | Residue probe's suite check was skipped by the fact pack (--no-suite); the run's verification pass stamp covers it | observation | Pass stamp at HEAD e76898afb: tests 7713/7713, journeys 79/79 |
