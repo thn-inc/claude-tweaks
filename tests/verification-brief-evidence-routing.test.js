@@ -126,7 +126,7 @@ test('AC6.1: the wrap-up summary carries an evidence-PR row in Actions Performed
   const table = doc.slice(doc.indexOf('### Actions Performed'));
   assert.ok(table.includes('| Operational | Opened evidence PR #{m} ({url}) for #{n}'), 'missing evidence-PR row');
   assert.ok(table.includes("the run's own branch was not a safe home ({merged \\| closed \\| unavailable})"), 'row reason covers the guard and unreadable cases');
-  assert.match(table, /the Verification Brief's evidence PR/);
+  assert.match(table, /the acceptance packet's evidence PR/);
 });
 
 test('AC8.1: removing the evidence-PR route turns the routing assertions red', () => {

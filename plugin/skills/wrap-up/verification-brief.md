@@ -240,10 +240,16 @@ Write each with the Write tool:
   the criterion's own number or positional `AC1`, `AC2` for bulleted criteria; values exactly
   `met`, `partially met` or `not met` in lowercase. The review table is keyed by criterion text, so
   match each row to its id and leave out a row matching no id. A review with no table (no spec,
-  fast-lane skip) writes no file and passes no `--ac-results`.
-- **`{LINKS}`** — the Try it block's Entry point as a `link` input, one entry per Try it group:
-  `[{ "id": "entry-point", "label": "{feature}", "url": "{entry point}" }]`, with `"command"` in
-  place of `"url"` for `cli`/`flow` plans and a `diff` plan's file path.
+  or a review its ceremony profile skipped) writes no file and passes no `--ac-results`.
+- **`{LINKS}`** — the Try it block's Entry point as a `link` input, one entry per Try it group,
+  each with its own id `entry-point-{n}`:
+  `[{ "id": "entry-point-1", "label": "{feature}", "url": "{local base URL}{route}" }]`. An Entry
+  point is a route, and gather refuses a bare one, so `url` is `APP_URL` (`_shared/dev-url-detection.md`,
+  do not re-derive URL discovery), the same value `--local-base-url` carries, plus the route. Write
+  `"command"` in place of `"url"`, holding the Entry point as the Try it block states it, for
+  `cli`/`flow` plans and a `diff` plan's file path, on an `infra` or `backend` surface, and
+  when no base URL resolves or the host would be refused: a refused link leaves the Test guide with
+  no step to cite.
 
 **`app-route`/`rendered-page` plans whose Step 2.5 walk completed** (resolved clean with an
 actual walk — not the browser-unavailable fallback):
@@ -254,8 +260,6 @@ actual walk — not the browser-unavailable fallback):
 2. Select 1-3 of the walk's most representative screenshots — the primary journey step's final
    state, or the single-page review's key screenshot(s). Hand them to Step 4's screenshot-commit
    procedure; their URLs become `recording` inputs (`--recordings`).
-3. Resolve the entry point — `APP_URL` + the journey/page path (reuse `dev-url-detection.md`, do
-   not re-derive URL discovery).
 
 **Every other plan** (`cli`/`flow`/`diff`, or `app-route`/`rendered-page` with no completed walk:
 the browser-unavailable fallback, or a below-floor record, where Step 2.5 did not run):
@@ -371,7 +375,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out 
 ```
 
 - `--run` — `{run-dir}` as resolved above, `$PIPELINE_RUN_DIR` or `$RUN_ROOT/.claude-tweaks/pipelines/archive/{run-id}/` once cleanup item 8 archived it. It supplies `decisions.md`, the Review Console's finding set, and the `packet-inputs/` snapshot wrap-up Phase 1 took. Omitted when no run directory resolves.
-- `--spec` — the first that exists: the current checkout's `work/{N}-spec.md` at the run dir's relative path, then `{run-dir}/work/{N}-spec.md`, else the record body written with the Write tool to `{SPEC}` (read with `gh issue view {N} --json body`, or MCP `issue_read`), since a record body carries the same `## Acceptance Criteria`.
+- `--spec` — the first that exists: the current checkout's `work/{N}-spec.md` at the run dir's relative path, then `{run-dir}/work/{N}-spec.md`, else the record body written with the Write tool to `{SPEC}` (read with `gh issue view {N} --json body`, or MCP `issue_read`), or under `work-backend: local-files` the record file itself, since a record body carries the same `## Acceptance Criteria`.
 - `--report` and `--story-results` — only when the current branch is not the integration branch (the run's own checkout). `--report` is `{git-dir}/claude-tweaks-verify/report.json`, with `{git-dir}` from `git rev-parse --git-dir` as its own call. `--story-results` is the QA run's `report.json` (the QA stamp's `reportPath`, else the newest `.claude-tweaks/artifacts/screenshots/qa/*/report.json`), whose `stories[]` is the set `/test` selected, passed only when QA ran. From the main checkout both are omitted, because its files belong to other runs, and gather reads the snapshot.
 - `--stories-dir` always — the project's stories directory (`STORIES_DIR`, else `stories/`). Without it a tag-only negative story reads as a routine pass. It supplies negative flags only (Decision Q13), and a missing directory is a project with no stories.
 - `--ac-results` — Step 3's `{AC_RESULTS}`, omitted with no review table.
@@ -379,14 +383,14 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out 
 - `--head` — the PR's head sha when `run-state.json` carries a `pr` object, read as its own call with `gh pr view {pr-number} --json headRefOid` (MCP `pull_request_read`). Omitted with no PR or a failed read: gather then takes the snapshot's `head`, else `HEAD`. When `git cat-file -e {sha}` fails, run `git fetch origin pull/{pr-number}/head` as its own call first (a fresh sandbox or a pruned branch); a diff that still fails becomes gather's stated `git changes not gathered`.
 - `--links` — Step 3's `{LINKS}`.
 - `--surface` — the materialized header's `surface:`, omitted with no header.
-- `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces only.
-- `--recordings` — `{RECORDINGS}`, only when screenshots were committed above.
+- `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces and `app-route`/`rendered-page` plans, omitted when none resolves.
+- `--recordings` — `{RECORDINGS}`, only when the embeds survive the route above.
 
 Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy`, `--flags` and `--decision-items` are filled by the dev-target, risk-flag and control-mode records, and this record passes none of them.
 
 Gather non-zero: report it in the summary and log it, post nothing, apply no label.
 
-**Narrate.** Write `{NARRATIVE}` with the Write tool as the envelope `validateNarrativeShape` requires, `{ "schemaVersion": 1, "claims": [{ "section": "test-guide", "text": "…", "refs": ["link:entry-point"] }] }`, every claim citing fact ids copied from `{FACTS}` (encoded ids included), never inventing one; the contract's section table says which kinds each section may cite, and the `fact-validated-narration` project skill, where present, is the checklist. A section with no claim reads as empty, so write `what-changed` claims over the `change` facts (the record's problem and what shipped), one `least-confident` claim per `finding` fact, and `tried-to-break` claims over the `negative` and `failed` facts. Each Try it step (re-run the **Try it block** resolve line and read the file) becomes one `test-guide` claim, with its Precondition, Access and Expected in the claim text; a step needing a login names the vault entry, never a value.
+**Narrate.** Write `{NARRATIVE}` with the Write tool as the envelope `validateNarrativeShape` requires, `{ "schemaVersion": 1, "claims": [{ "section": "test-guide", "text": "…", "refs": ["link:entry-point-1"] }] }`, every claim citing fact ids copied from `{FACTS}` (encoded ids included), never inventing one; the contract's section table says which kinds each section may cite, and the `fact-validated-narration` project skill, where present, is the checklist. A section with no claim reads as empty, so write `what-changed` claims over the `change` facts (the record's problem and what shipped), one `least-confident` claim per `finding` fact, and `tried-to-break` claims over the `negative` and `failed` facts. Each Try it step (re-run the **Try it block** resolve line and read the file) becomes one `test-guide` claim citing its own group's `link:entry-point-{n}`, with its Precondition, Access and Expected in the claim text; a step needing a login names the vault entry, never a value.
 
 **Render**, as its own Bash call:
 
@@ -417,16 +421,16 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {N} --body-f
 - **Exit 1** — the label is not applied. With no result JSON, `--body-file` would not read and nothing ran. Otherwise report the result's `error`, and `stalePacket` when it names one, in the summary and log it, stating what `labelRemoval` reports and never more:
   - `labelRemoval: 'removed'` — the post or edit failed and the pending label was removed.
   - `labelRemoval: 'absent'` — the post or edit failed and no pending label was there to remove.
-  - `labelRemoval: 'failed'` — the post or edit failed and so did the removal: add a needs-human line naming the pending label still on the record and the stale packet.
+  - `labelRemoval: 'failed'` — the post or edit failed and so did the removal: add a needs-human line naming the pending label still on the record, and `stalePacket` when it names one.
   - `labelRemoval: null` — nothing was cleared. A failed comment read or an unreadable existing packet made no write at all, so any pending label is still there: say so. A result carrying a `url` is the other case: the packet landed and the label failed to apply (`labelApplied: false`), so report that packet's url.
 - **Exit 2** — a malformed call, or a `--body-file` with no marker on its first line. Nothing ran: report it, post nothing, apply no label. This is never the MCP path.
 - **Exit 4** — `gh` is absent: the contract's MCP transport (Decision Q4). Read the record's comments through `issue_read` (`get_comments`) and run `readPacket`'s rules by hand (`## Canonical copy and lookup`).
   - A failed read or an `unreadable` packet: report it, write nothing, post nothing, apply no label (`## Failure contract`).
   - An existing packet: report the failed edit naming that packet's url, post nothing, apply no label, and clear the pending label.
-  - None: post `{PACKET}`'s text with `add_issue_comment`, per `_shared/github-write-transport.md`'s Marker comments on the MCP path; a failure there is reported and followed by the same clearing. Then, above the floor only, apply the label through `issue_write`'s read-merge-write. Then, when the run has a PR, read its body with `pull_request_read` and append the `Acceptance packet: {comment url}` line through MCP `update_pull_request` unless the line is already present, matching `publishPacket`'s step 4.
+  - None: post `{PACKET}`'s text with `add_issue_comment`, per `_shared/github-write-transport.md`'s Marker comments on the MCP path; a failure there is reported and followed by the same clearing. Then, above the floor only, apply the label through `issue_write`'s read-merge-write. Then, when the run has a PR, read its body with `pull_request_read` and append the `Acceptance packet: {comment url}` line through MCP `update_pull_request` unless the line is already present, matching `publishPacket`'s step 4. A failed label write leaves the packet in place and skips the PR line, reported as the `gh` path's `labelApplied: false` is. A failed PR-line write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is.
   - Clearing the label is `issue_read` (`get_labels`) immediately before the write, then, only when `demo:pending` or `accept:pending` is present, `issue_write` with the complete array `mergeLabelNames` computes, per `_shared/github-write-transport.md`'s Full-replace hazard, and no write when neither is present. A failed clearing gets the same needs-human line.
 
-`work-backend: local-files` — run `local` as its own Bash call, with `--pending` omitted below the floor (Decision Q5). A non-zero exit means the record is unchanged: report it in the summary and log it.
+`work-backend: local-files` — run `local` as its own Bash call, with `--pending` omitted below the floor (Decision Q5). `{record-file}` is the record file itself, the `.path` of its `queryRecords('specs', {})` entry. A non-zero exit means the record is unchanged: report it in the summary and log it.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending

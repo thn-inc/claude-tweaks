@@ -213,7 +213,7 @@ test('the exit-1 branch reports what labelRemoval says happened, by branch', () 
   assert.ok(between(exit1(), "`labelRemoval: 'removed'`", "`labelRemoval: 'absent'`").includes('was removed'));
   assert.ok(between(exit1(), "`labelRemoval: 'absent'`", "`labelRemoval: 'failed'`").includes('no pending label was there'));
   const failed = flat(between(exit1(), "`labelRemoval: 'failed'`", '`labelRemoval: null`'));
-  assert.ok(failed.includes('needs-human line naming the pending label still on the record and the stale packet'), failed);
+  assert.ok(failed.includes('needs-human line naming the pending label still on the record'), failed);
   const nothing = flat(exit1().slice(exit1().indexOf('`labelRemoval: null`')));
   for (const literal of ['nothing was cleared', 'failed comment read', 'unreadable existing packet', 'any pending label is still there', '`labelApplied: false`']) {
     assert.ok(nothing.includes(literal), `the null branch names ${literal}`);
@@ -258,6 +258,106 @@ test('the local-files branch runs the local subcommand, --pending above the floo
   const branch = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
   assert.ok(branch.includes('acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending'), branch);
   assert.ok(branch.includes('`--pending` omitted below the floor'), branch);
+});
+
+// ---- fix round 1: what the prose feeds the real CLI ----
+
+const linksBullet = () => flat(between(step3(), '- **`{LINKS}`**', '**`app-route`/`rendered-page` plans whose'));
+const gatherList = () => flat(between(step4(), 'acceptance-packet.js" gather', 'Gather non-zero'));
+
+test('{LINKS} builds a url from the local base URL, since an Entry point is a route', () => {
+  const bullet = linksBullet();
+  assert.ok(bullet.includes('"url": "{local base URL}{route}"'), bullet);
+  assert.ok(!bullet.includes('"url": "{entry point}"'), 'a bare route is refused as unparseable');
+  assert.ok(bullet.includes('the same value `--local-base-url` carries'), 'the host check passes on the value it was built from');
+  assert.ok(bullet.includes('`_shared/dev-url-detection.md`'), bullet);
+});
+
+test('the dead entry-point instruction is gone from the walk branch', () => {
+  assert.ok(!step3().includes('Resolve the entry point'), 'it fed nothing once {LINKS} owns the url');
+});
+
+test('{LINKS} falls back to a command when no base URL resolves or the host would be refused', () => {
+  const bullet = linksBullet();
+  assert.ok(bullet.includes('for `cli`/`flow` plans and a `diff` plan\'s file path'), bullet);
+  assert.ok(bullet.includes('when no base URL resolves or the host would be refused'), bullet);
+  assert.ok(bullet.includes('an `infra` or `backend` surface'), 'a commands-only surface refuses every url');
+});
+
+test('--local-base-url is keyed to the plan kind as well as the surface', () => {
+  const bullet = between(gatherList(), '- `--local-base-url` —', '- `--recordings`');
+  assert.ok(bullet.includes('`app-route`/`rendered-page` plans'), bullet);
+  assert.ok(bullet.includes('omitted when none resolves'), bullet);
+});
+
+test('each Try it group has its own link id, and a step cites its own group\'s', () => {
+  const bullet = linksBullet();
+  assert.ok(bullet.includes('`entry-point-{n}`'), bullet);
+  assert.ok(bullet.includes('"id": "entry-point-1"'), bullet);
+  assert.ok(!bullet.includes('"id": "entry-point"'), 'a shared id keeps only the first group\'s fact');
+  const narrate = flat(between(step4(), '**Narrate.**', '**Render**'));
+  assert.ok(narrate.includes('"refs": ["link:entry-point-1"]'), narrate);
+  assert.ok(!narrate.includes('"link:entry-point"'), narrate);
+});
+
+test('the Try it narration sentence is pinned', () => {
+  const narrate = flat(between(step4(), '**Narrate.**', '**Render**'));
+  assert.ok(narrate.includes("Each Try it step (re-run the **Try it block** resolve line and read the file) becomes one `test-guide` claim citing its own group's `link:entry-point-{n}`, with its Precondition, Access and Expected in the claim text"), narrate);
+});
+
+test('the whole render call is pinned', () => {
+  assert.ok(step4().includes('bin/acceptance-packet.js" render --facts "{FACTS}" --narrative "{NARRATIVE}" --out "{PACKET}" --dropped-out "{DROPPED}" --observation-plan "{PLAN}" --poster "{poster}"\n```'));
+});
+
+test('--recordings follows the route, not the commit', () => {
+  const bullet = gatherList().slice(gatherList().indexOf('- `--recordings` —'));
+  assert.ok(bullet.includes('only when the embeds survive the route above'), bullet);
+  assert.ok(!bullet.includes('only when screenshots were committed'), bullet);
+});
+
+test('the MCP branch states the outcome of a failed label write and a failed PR-line write', () => {
+  const branch = flat(exit4());
+  assert.ok(branch.includes("A failed label write leaves the packet in place and skips the PR line, reported as the `gh` path's `labelApplied: false` is"), branch);
+  assert.ok(branch.includes("A failed PR-line write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is"), branch);
+});
+
+test('the failed-removal line names the stale packet only when there is one', () => {
+  const failed = flat(between(exit1(), "`labelRemoval: 'failed'`", '`labelRemoval: null`'));
+  assert.ok(failed.includes('and `stalePacket` when it names one'), failed);
+});
+
+test('on local-files the record file itself is --spec and {record-file}', () => {
+  const spec = between(gatherList(), '- `--spec` —', '- `--report`');
+  assert.ok(spec.includes('under `work-backend: local-files` the record file itself'), spec);
+  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  assert.ok(local.includes('`{record-file}` is the record file itself'), local);
+});
+
+test('the snapshot paragraph cites where {integration-branch} comes from', () => {
+  const skill = read('wrap-up/SKILL.md');
+  const snapshot = flat(between(skill, '**Snapshot the packet inputs', '\n\n'));
+  assert.ok(snapshot.includes('`{integration-branch}` per `_shared/integration-branch.md`'), snapshot);
+});
+
+test('the call sites describe the packet, the below-floor case included', () => {
+  const settle = flat(read('dispatch/settle-and-merge.md'));
+  const short = flat(read('wrap-up/auto-merge-short-circuit.md'));
+  const STEPS = 'gathering, posting the acceptance packet, then `demo:pending`; below the oversight floor it skips the bootstrap and the safety-net gate and posts the packet with no label';
+  for (const [name, doc] of [['settle-and-merge', settle], ['auto-merge-short-circuit', short]]) {
+    assert.ok(doc.includes(STEPS), `${name} states the steps`);
+    assert.ok(!doc.includes('sourcing, posting, then `demo:pending`'), `${name} stale steps gone`);
+  }
+  assert.ok(settle.includes('One packet per record with no resolvable parent, and one label above the floor'));
+  assert.ok(!settle.includes('One brief and one label per record'));
+  const mapping = paragraphAt(read('dispatch/settle-and-merge.md'), 'This blanket mapping also covers').replace(/\s+/g, ' ');
+  assert.ok(mapping.includes("`acceptance-packet.js post` exits 4 with `gh` absent, and that file's Step 4 then makes the same writes through `add_issue_comment` and `issue_write`"), mapping);
+  assert.ok(!mapping.includes('the `verification-brief.md` calls (`gh issue comment`'), mapping);
+  const console_ = read('wrap-up/review-console.md');
+  assert.ok(console_.includes('no acceptance packet comment'));
+  assert.ok(console_.includes('print the packet as a preview line'));
+  assert.ok(!console_.includes('no Verification Brief comment'));
+  const plan = flat(read('_shared/observation-plan.md').split('\n## ')[0]);
+  assert.ok(plan.includes('of an acceptance packet (`_shared/acceptance-packet.md`), or of a legacy Verification Brief'), plan);
 });
 
 test('verification-brief.md holds exactly one template, the packet', () => {
@@ -314,13 +414,14 @@ test('the Branch paragraph describes a packet on the record', () => {
   assert.ok(paragraph.includes('the packet sits on the record'), paragraph);
 });
 
-test('the five Routing call sites remain in ## Routing (AC6)', () => {
+test('every Routing call site remains in ## Routing (AC6)', () => {
   const routing = section(brief(), '## Routing — read this before anything else, whatever invoked this file', '## Try it block (every record, before either branch)');
   for (const row of [
     "| `/claude-tweaks:wrap-up` Phase 4 execution's Acceptance-labeling bullet (`wrap-up/execution-and-verification.md`) |",
     "| `/claude-tweaks:wrap-up`'s auto-merge short-circuit (`wrap-up/review-console.md`) |",
     "| `/claude-tweaks:dispatch`'s group auto-merge gate (`dispatch/settle-and-merge.md`) |",
     "| `/claude-tweaks:dispatch`'s close-out step 3 (`dispatch/close-out.md`) |",
+    '| `_shared/pr-first-merge-post-merge.md` Step 4.0b (post-merge) |',
     "| `/claude-tweaks:tidy`'s `Open parent gate` action (",
   ]) {
     assert.ok(routing.includes(row), `Routing keeps ${row}`);
