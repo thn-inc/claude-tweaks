@@ -1503,7 +1503,7 @@ function escapedBlankPrefixOk(raw, kinds, k) {
     if (c === '(') return false;
     if (c === '`') tick = !tick;
     else if (c === '$' && raw[j + 1] === '[' && kinds[j + 1] === 'b') return false;
-    else if (c === '$' && raw[j + 1] === '{' && kinds[j + 1] === 'b') { braces += 1; j += 1; }
+    else if (c === '$' && raw[j + 1] === '{' && kinds[j + 1] === 'b') braces += 1;
     else if (c === '}' && braces > 0) braces -= 1;
   }
   return braces === 0 && !tick;

@@ -1091,6 +1091,8 @@ for (const command of [
   'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
   'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
   'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
+  // A `}` with no `${` open is text, so it closes nothing.
+  'echo }$M\\ >x',
   // An escaped or quoted `{`, `[`, backtick, `(` or `$` is text, so it opens nothing.
   'echo $\\{M\\ >x', 'echo $\\[$M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
 ]) {
@@ -1101,36 +1103,39 @@ for (const command of [
 
 // bash 3.2, bash 5 and zsh write nothing for each: a bad substitution, a syntax error, an unterminated
 // backtick or quote, an escaped `>`, a comparison, an fd dup or a sink.
-test('AC1.1 #4294: an escaped blank inside an open expansion or before a non-operator `>` resolves no target', () => {
-  for (const command of [
-    'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
-    'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
-  ]) {
-    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
-  }
-});
+for (const command of [
+  'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo }${M\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
+  'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves no target, an escaped blank inside an open expansion or before a non-operator \`>\``, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
 
-// Known misses: bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x`
-// is the documented gap; a bare `$`, backtick or non-blank escape after the last escaped blank is the same
-// shape, owned by #4328. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))` or a
-// backtick holding a blank before the escaped blank is not read as closed. A `$VAR` target behind a second
-// `$` or a backtick is one substituteVars skips: those two write y/x.
-test('#4294: known misses stay without a target', () => {
-  for (const command of [
-    'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
-    'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
-    'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
-  ]) {
-    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [], JSON.stringify(command));
-  }
-});
+// Known misses, all tracked in #4328: bash 3.2, bash 5 and zsh write x for each, and the scanner resolves
+// no target. `echo $M>x` is the documented gap, and a bare `$`, backtick or non-blank escape after the last
+// escaped blank is the same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
+// a `$[ ]` or a backtick holding a blank before the escaped blank is not read as closed, and neither is a
+// `${ }` that closes after the blank. A `$VAR` target behind a second `$` or a backtick is one
+// substituteVars skips: those two write y/x.
+for (const command of [
+  'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
+  'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo $[1]\\ >x', 'echo ${M:-\\ }>x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
+  'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} stays a known miss without a target`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
 
-// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment, because one
-// token cannot see the expansion an earlier token opened. Base reads the plain word the same way
+// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment. One token
+// cannot see the expansion an earlier token opened. Base reads the plain word the same way
 // (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
-test('#4294: an expansion opened in an earlier token reads as a false deny, as the plain word does', () => {
+// A `}` inside a backtick is counted too, so the `${` around it reads as closed.
+test('AC1.1 #4294: an expansion the prefix cannot see open reads as a false deny, as the plain word does', () => {
   assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
   assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-`d}`\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
 });
 
 // #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
