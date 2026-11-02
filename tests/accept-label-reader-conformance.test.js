@@ -156,7 +156,11 @@ const DEMO_LABEL_COPY_ONLY = {
   },
 };
 
-const DEMO_MATCH_RE = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/g;
+// One matcher source for both walks. Any DEMO_* identifier counts except the two named
+// non-label constants. The global regex is for matchAll; demoLabelUse builds its own
+// non-global one so exec carries no lastIndex state between calls.
+const DEMO_LABEL_SOURCE = String.raw`\bDEMO_(?!CREDENTIAL_RE\b|ACCOUNT\b)[A-Z0-9_]+\b|\bdemo:`;
+const DEMO_MATCH_RE = new RegExp(DEMO_LABEL_SOURCE, 'g');
 
 // -> [{ line, text }] for every demo:* match in `raw`'s code that is not inside the
 // pinned `copy` text. The copy is removed from its line before matching, so a
@@ -209,10 +213,11 @@ function demoLabelUse(raw) {
   const src = stripComments(raw);
   const verdict = stripperVerdict(raw, src);
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
-  // A bare demo: catches a startsWith / concatenation reader; the bare DEMO_ names
-  // catch a destructured LABELS member. Not DEMO_ alone: candidates-app-store-readiness.js
-  // names DEMO_CREDENTIAL_RE and DEMO_ACCOUNT.
-  const m = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/.exec(src);
+  // A bare demo: catches a startsWith / concatenation reader; a DEMO_* identifier
+  // catches a destructured LABELS member. Any DEMO_* name counts except DEMO_CREDENTIAL_RE
+  // and DEMO_ACCOUNT (candidates-app-store-readiness.js names those and they are not
+  // labels), so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
+  const m = new RegExp(DEMO_LABEL_SOURCE).exec(src);
   return m ? m[0] : null;
 }
 
@@ -246,6 +251,7 @@ test('guard self-test: a copy-only module gains a reader outside, or on, the cop
   assert.deepEqual(copyOnlyViolations(copyLine, copy), []);
   assert.deepEqual(copyOnlyViolations(copyLine + "\nconst r = (l) => l.startsWith('demo:');", copy), [{ line: 2, text: 'demo:' }]);
   assert.deepEqual(copyOnlyViolations(copyLine + '\nconst p = LABELS.DEMO_PENDING;', copy), [{ line: 2, text: 'DEMO_PENDING' }]);
+  assert.deepEqual(copyOnlyViolations(copyLine + '\nconst b = DEMO_PENDING_BATCH;', copy), [{ line: 2, text: 'DEMO_PENDING_BATCH' }]);
   assert.deepEqual(copyOnlyViolations(copyLine.replace('.`;', ".`; const r = (l) => l.includes('demo:approved');"), copy), [{ line: 1, text: 'demo:' }]);
 });
 
@@ -324,6 +330,9 @@ test('guard self-test: the reader walk names a planted mis-parse, not "no label 
   assert.equal(demoLabelUse("const r = (labels, s) => labels.includes('demo:' + s);"), 'demo:');
   assert.equal(demoLabelUse('const { DEMO_PENDING } = LABELS;'), 'DEMO_PENDING');
   assert.equal(demoLabelUse('const { DEMO_CHANGES_REQUESTED: bad } = LABELS;'), 'DEMO_CHANGES_REQUESTED');
+  // A new label-shaped name outside the three known ones must be classified too.
+  assert.equal(demoLabelUse('const DEMO_PENDING_BATCH = 1;'), 'DEMO_PENDING_BATCH');
+  assert.equal(demoLabelUse('const n = LABELS.DEMO_LABEL_BATCH;'), 'DEMO_LABEL_BATCH');
   // Unrelated DEMO_ names are not label readers.
   assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE = /x/; const DEMO_ACCOUNT = 1;'), null);
   assert.equal(demoLabelUse("// LABELS.DEMO_PENDING and demo:pending in a comment\nconst ok = 1;"), null);
