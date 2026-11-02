@@ -236,12 +236,13 @@ The Acceptance axis records whether a human has actually verified a built record
 was asked — distinct from tests passing (`/claude-tweaks:test`) and code-quality review passing
 (`/claude-tweaks:review`), both of which gate *before* this axis is ever set.
 
-- `/claude-tweaks:wrap-up` applies `demo:pending` once build+test+review are done, and posts a
-  Verification Brief (an issue comment, or — on the `local-files` driver, which has no comment
-  mechanism regardless of `work-links` (`#205`: that key governs dependency/parent-child
-  expression under `github-issues` only, and doesn't apply here) — a `## Verification Brief`
-  body section) with what
-  changed, why, and how to verify it. This happens **regardless of merge timing** — an
+- `/claude-tweaks:wrap-up` applies `demo:pending` once build+test+review are done, above the
+  oversight floor, and posts an acceptance packet (`_shared/acceptance-packet.md`; an issue comment, or
+  — on the `local-files` driver, which has no comment mechanism regardless of `work-links` (`#205`:
+  that key governs dependency/parent-child expression under `github-issues` only, and doesn't apply
+  here) — a delimited block in the record body) with what
+  changed, how to test it, and what could not be tested; a decomposition parent's gate still posts the
+  legacy Verification Brief. This happens **regardless of merge timing** — an
   `auto:merge`'d record still gets `demo:pending` on its now-closed issue, enabling retrospective
   sign-off. Two headless paths perform the identical write without passing through wrap-up's
   Phase 4 execution step: wrap-up's own auto-merge short-circuit (`wrap-up/review-console.md`) and
@@ -478,7 +479,7 @@ dispatch/auto-merge/fetch/staleness/promise-register thresholds the Consumers be
 | `/backlog` | `refine` mode is the human gate — grants `auto:build`/`auto:merge` over the `ready` queue, and suggests `priority:*`/`**Related:**` (human-confirmed); its headless posture (`--source routine\|sweep`, or the deprecated `grant` alias) is the one machine-grant path — see Grant semantics above and `backlog/refine-headless.md`. `overview` mode is read-only — distribution views plus a "what to build next" recommendation. |
 | `/dispatch` | Queue consumer — selects authorized records, mints the run directory, hands off to `/flow` (which claims its own named targets at Step 2.8), settles (release / revoke / report); also files `by:dispatch`-labeled backlog records when its own headless `next` firing hits a Preflight failure with nobody present to see it (`skills/dispatch/SKILL.md`'s Preflight, "Headless self-report") |
 | `/flow`, `/build` | Executors — materialize the record into `{run-dir}/work/{n}-spec.md` and build it |
-| `/wrap-up` | Closes the loop — carrier commit (close-via-merge), claim release, leftover records; applies `demo:pending` + posts the Verification Brief |
+| `/wrap-up` | Closes the loop — carrier commit (close-via-merge), claim release, leftover records; posts the acceptance packet, with `demo:pending` above the oversight floor (a decomposition parent's gate: `demo:pending` + the Verification Brief) |
 | `/demo` | Resolves the Acceptance axis — `demo:pending` → `demo:approved`/`demo:changes-requested`; files a linked follow-up backlog record on changes-requested |
 | `/tidy` | Hygiene — stale backlog records, parked-trigger wakes, unsynced local records, `bot:blocked` / `bot:parked` surfacing; also the two acceptance backstops, each of which is a `github-pr-scan-acceptance.md` scope under `github-issues` and a Step 1 shape (`tidy/step-1-records.md`) under `local-files` — `acceptance-gap` surfaces closed records with no disposition and mutates nothing, while `parent-gate` surfaces complete-but-un-gated parent issues and carries the `Open parent gate` action, which applies `demo:pending` to the parent and attaches its Verification Brief above the oversight floor (below it, closes the parent) |
 | `/help` | Dashboard — live counts by stage / grants / bot state / acceptance |

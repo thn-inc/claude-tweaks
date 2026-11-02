@@ -11,7 +11,7 @@ files:
 # Trust a Singleton Auto-Merge to Refuse Without a Verdict
 
 **Persona:** A claude-tweaks maintainer who granted `auto:merge` on a single record, let `/claude-tweaks:dispatch` (or a direct `/claude-tweaks:flow #N`) run it unattended overnight, and the next morning reads `decisions.md` and `git log` to decide whether the fast lane can keep that grant — after once finding a PR merged with no `merge-check` ever run (#2938).
-**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance brief posted, no ledger deletion pushed, no merge.
+**Goal:** The single-record fast lane merges only when this record's own `assess-agent-autonomy merge-check` verdict is confirmed `auto-merge` in this run's `decisions.md`; when it isn't, the run lands in the Review Console exactly as a `needs-human` verdict would — no acceptance packet or brief posted, no ledger deletion pushed, no merge.
 **Entry point:** `/claude-tweaks:wrap-up`'s Review Console reaching `wrap-up/auto-merge-short-circuit.md` for a record whose live labels carry `auto:merge` (or a matured `auto:merge-pending`, or a `merge-authorization: pre-authorized` run).
 **Success state:** `decisions.md` shows `Auto-merge short-circuit: #N assess-agent-autonomy verdict auto-merge` before any acceptance-labeling or merge line, and the merge landed — or it shows `Auto-merge short-circuit: #N merge-check verdict not confirmed in decisions.md (latest: …) — treated as needs-human` and the PR is still open, awaiting the maintainer, with the console resolved to `leave-open`.
 
@@ -43,9 +43,10 @@ files:
 - **Action:** The run logs the refusal (and does not also write a fabricated `assess-agent-autonomy verdict needs-human` line), skips acceptance labeling, ledger deletion, and the merge, and renders the Review Console normally.
 - **Should feel:** Safe and legible — the record is exactly where a real `needs-human` would have left it, and the refusal line says why.
 - **Should understand:** The refusal line carries both `merge-check` and `needs-human`, so `bin/console-resolve.js`'s `needsHumanVerdict` resolves the merge half to `leave-open` even under `consoleAutoResolve`. `{detail}` is `, error: {error}` when `decisions.md` was unreadable, `, snippet exited {code} with no output` when the check crashed, and empty otherwise — so the morning reader can tell a broken path or a crash from a Layer 2 that never ran.
-- **Red flags:** A posted Verification Brief or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
+- **Red flags:** A posted acceptance packet or `demo:pending` label on a record whose run refused — the backstop ran after the pass branch's side effects instead of before them.
 
 ## Origin
+- Step 3b's red flag updated during build of #4611 (acceptance labeling now posts the acceptance packet in place of the Verification Brief)
 - Created during build of #2941
 - Steps 1-3b built in this session
 - Related specs: #2429 (bundle-path backstop this ports), #2853 / PR #2938 (the incident)
