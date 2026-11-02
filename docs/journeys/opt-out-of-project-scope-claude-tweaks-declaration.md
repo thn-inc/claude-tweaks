@@ -10,7 +10,7 @@ files:
 **Persona:** Maintainer of a repo that runs claude-tweaks from a user-scope install. They deliberately took `claude-tweaks@claude-tweaks-marketplace` out of the committed `.claude/settings.json` (and its marketplace entry and setup-script lines), as #4841 did across six repos, and want `/init` to stop putting it back.
 **Goal:** Make the removal stick: re-running `/claude-tweaks:init` leaves claude-tweaks undeclared, and `/claude-tweaks:routine fleet on` reports the consequence instead of treating the absence as a fault.
 **Entry point:** `.claude-tweaks/policy.yml`, then `/claude-tweaks:init` (Step 14, Cloud/Routine Parity Setup)
-**Success state:** The committed settings and the generated `scripts/claude-cloud-setup.sh` carry no claude-tweaks line, while superpowers is still declared. The maintainer knows exactly what cloud sessions and Routines will and won't get.
+**Success state:** `/init` adds no claude-tweaks line to the committed settings (an entry already there is left as it is) and the generated `scripts/claude-cloud-setup.sh` carries none, while superpowers is still declared. The maintainer knows exactly what cloud sessions and Routines will and won't get.
 
 ## Steps
 

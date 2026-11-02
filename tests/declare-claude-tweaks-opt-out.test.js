@@ -175,6 +175,8 @@ const COPY_FACTS = [
   ['Present options read as superpowers alone', STEP14, 'every "claude-tweaks + superpowers" and "claude-tweaks and superpowers" phrase in the options above, and "the two hard deps"'],
   ['header comment names the key', STEP14, '# declare-claude-tweaks: false in .claude-tweaks/policy.yml leaves claude-tweaks out of this script.'],
   ['authoring notes are never written out', STEP14, 'Every `# (authoring: …)` note in the template is an authoring note, never written into the generated script; every other comment, `# (claude-tweaks #129: …` included, is written as it stands.'],
+  ['authoring note wrap rule', STEP14, 'An authoring note may wrap onto further lines: it runs through the first line that ends in `)`.'],
+  ['Apply adds both entries by default', STEP14, 'add `claude-tweaks@claude-tweaks-marketplace: true` and `superpowers@claude-plugins-official: true` under `enabledPlugins`'],
   ['opted-out script omits the declaration region', STEP14, 'also omit the lines between the begin and end claude-tweaks declaration notes, and drop `claude-tweaks@claude-tweaks-marketplace` from `PLUGIN_SPECS`'],
   ['Apply ensures the marketplace entry unless opted out', STEP14, 'always (unless opted out above) ensure a `claude-tweaks-marketplace` entry'],
   ['Anti-Patterns row names the key', INIT_SKILL, 'Regenerated on every `/init` run from `.claude/settings.json` (and `declare-claude-tweaks`)'],
@@ -264,6 +266,7 @@ test('AC1.1: default fleet path unchanged', () => {
   assert.ok(step2.includes('confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared'));
   assert.ok(step2.includes('Both checks passing is a silent pass-through'));
   assert.ok(step2.includes('At `true` (the default) the check is as written'), 'missing: the default-branch sentence');
+  assert.ok(fleetStep5(FLEET).includes('"OK — claude-tweaks + superpowers declared, setup script present."'), 'missing: the default Step 5 OK alternative');
 });
 
 // Ordering pins (final review): each marker must exist, then positions must increase. The
