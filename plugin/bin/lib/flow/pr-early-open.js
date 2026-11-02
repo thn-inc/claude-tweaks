@@ -184,6 +184,18 @@ async function openPrEarly(opts, deps) {
     return { outcome: 'reused', number: open.number, url: open.url };
   }
 
+  // Re-list after a reopen that exited 0: null when the PR reads OPEN, else the
+  // cause line for the create path.
+  const unconfirmedReopenLine = (number) => {
+    try {
+      const now = listPrs().find((p) => p.number === number);
+      if (now && now.state === 'OPEN') return null;
+      return `reopen of closed PR #${number} for ${branch} exited 0 but the PR still reads ${now ? now.state : 'ABSENT'}; creating`;
+    } catch (e) {
+      return `could not confirm reopen of closed PR #${number} for ${branch} (${oneLine(errText(e).replace(/failed/gi, 'errored'))}); creating`;
+    }
+  };
+
   const closed = prs.filter((p) => p.state === 'CLOSED');
   let reopenRejected = null;
   // The picked CLOSED PR's number, kept for the landed-PR rebind after creation.
@@ -204,14 +216,7 @@ async function openPrEarly(opts, deps) {
     // #4833: a reopen that exits 0 proves nothing. Only a re-list that reads
     // the picked PR OPEN confirms it; anything else falls through to creation.
     if (reopenRejected === null) {
-      try {
-        const now = listPrs().find((p) => p.number === pick.number);
-        if (!now || now.state !== 'OPEN') {
-          unconfirmedLine = `reopen of closed PR #${pick.number} for ${branch} exited 0 but the PR still reads ${now ? now.state : 'ABSENT'}; creating`;
-        }
-      } catch (e) {
-        unconfirmedLine = `could not confirm reopen of closed PR #${pick.number} for ${branch} (${oneLine(errText(e).replace(/failed/gi, 'errored'))}); creating`;
-      }
+      unconfirmedLine = unconfirmedReopenLine(pick.number);
       if (unconfirmedLine !== null) reopenRejected = pick.number;
     }
     if (reopenRejected === null) {

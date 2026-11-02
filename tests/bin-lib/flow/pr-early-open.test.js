@@ -303,8 +303,8 @@ test('AC1.1: the four rebind log lines pr-early-open.js writes equal pr-early-ru
   const runs = [
     { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }] },
     { list: [{ number: 7, url: URL7, state: 'OPEN', body: bodyFor(OTHER_RUN) }], edit: new Error('HTTP 422') },
-    { lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]], decisions: closedDecisions },
-    { lists: [[{ number: 7, url: URL7, state: 'CLOSED' }], [{ number: 7, url: URL7, state: 'OPEN' }]], decisions: closedDecisions, edit: new Error('HTTP 422') },
+    { lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: closedDecisions },
+    { lists: [[PR7_CLOSED], [PR7_OPEN]], decisions: closedDecisions, edit: new Error('HTTP 422') },
   ];
   const emitted = [];
   for (const script of runs) {
@@ -817,10 +817,9 @@ for (const [label, over] of [
 for (const state of ['OPEN', 'CLOSED']) {
   test(`CLI: a ${state} match followed by a failed push exits 3 with the PR still recorded and its number on stdout`, async () => {
     const fx = cliFixture();
-    const closed = { number: 7, url: URL7, state: 'CLOSED' };
     const h = cliDeps(fx, {
       list: [{ number: 7, url: URL7, state }],
-      lists: state === 'CLOSED' ? [[closed], [{ ...closed, state: 'OPEN' }]] : null,
+      lists: state === 'CLOSED' ? [[PR7_CLOSED], [PR7_OPEN]] : null,
       push: new Error('fatal: Authentication failed'),
     });
     assert.equal(await run(cliArgv(fx), h.deps), 3, h.err.join(''));
