@@ -1333,7 +1333,7 @@ const STEP_40B_SKIP_SENTENCES = [
   ['Then write one summary line', OUTSIDE('outside the mirror: logging')],
   ['On the no-`closingSet[]` path above', OUTSIDE('outside the mirror: logging')],
   ['Route a `no-parent` verdict first', OUTSIDE('no reason: a no-parent record is a silent no-op in the module (resolveParent returns null)')],
-  ["Route every other verdict in the reconciler's order", OUTSIDE('no reason: the routing order the module\'s skipReason checks follow')],
+  ["Route every other verdict in the reconciler's order", OUTSIDE("no reason: the routing order the module's skipReason checks follow")],
   ['The verdict reports it as `parentIssue: false`', OUTSIDE('no reason: the field the parent-level check reads')],
   ['On `due` with `exceeds: false`, run', OUTSIDE('no reason: the close path, not a skip')],
 ];
