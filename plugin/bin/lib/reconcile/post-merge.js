@@ -100,8 +100,9 @@ const TRANSIENT_PR_FAILURE = 'network-failure';
 // `unreadable-policy` (this file's policySkipOf) / `invalid-risk-floor`, and any reason added later — is a
 // failure, so a new skip surfaces loudly rather than reading as a clean close.
 const DELIBERATE_PARENT_SKIPS = new Set(DELIBERATE_SKIP_REASONS);
-// The single-run path's routing (postMergeOne's `verdict` and `next`, which wrap-up/merge-mode.md reads):
-// classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
+// The routing of a `postMerge` or `postMergeOne` entry (postMergeOne's `verdict` and `next`, which
+// wrap-up/merge-mode.md reads; the verdict hooks.js's background summary and format-summary.js read off a loop
+// entry): classified here, never in the prose ([IL-168]). Both lists run in the deny direction, like
 // DELIBERATE_PARENT_SKIPS: a Step 4.0 action word not in CLEAN_CLOSING_LINKS — a failure word, the `exit {n}` /
 // `an unreadable envelope` stand-ins, a word closing-links.js adds later — is a `failed` run, and a skip reason
 // not named below gets `next: none`.
@@ -429,7 +430,7 @@ function archivedRetryHint(runDir) {
   return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
 }
 
-// Pure: a single-run entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran` entry whose Step
+// Pure: a `postMerge` or `postMergeOne` entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran` entry whose Step
 // 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or
 // `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —

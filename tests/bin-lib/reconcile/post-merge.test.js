@@ -1437,7 +1437,7 @@ test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, ne
   }
 });
 
-test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; postMerge entries never do', async () => {
+test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; a postMerge entry carries it only for a non-clean word (#4897)', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const entry = await postMergeOne(oneArgs(root, dir, {
@@ -1458,5 +1458,12 @@ test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; postMerge e
   const other = mainCheckout();
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents() });
-  assert.ok(!('logFailed' in loop.entries[0]));
+  assert.ok(!('logFailed' in loop.entries[0]), 'a clean word: the loop entry stays short');
+
+  const failing = mainCheckout();
+  addRun(failing, '2026-10-30T090000-spec-1');
+  const failingLoop = await run(failing, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, action: 'reopen-failed', logFailed: true }), close: fakeCloseParents(),
+  });
+  assert.equal(failingLoop.entries[0].logFailed, true, 'a non-clean word: the loop entry carries logFailed');
 });

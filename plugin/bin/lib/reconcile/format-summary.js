@@ -34,7 +34,12 @@
 //     failure-legible in the compact default rather than reading as a
 //     clean no-op.
 'use strict';
-const { classifyEntry } = require('./post-merge');
+
+// post-merge.js's classifyEntry judges a post-merge entry. Loaded on first use, never at module load: `bin/hooks.js
+// reconcile` requires this file outside the try that turns a module-load fault into the `reconcile-threw`
+// fallback, so a module-level require of post-merge.js would make that fault silent. The fallback result carries
+// `postMerge: null`, so no filter below runs on it and this loader is never reached.
+const verdictOf = (entry) => require('./post-merge').classifyEntry(entry).verdict;
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
 // that count as "taken" for that field, and the skip action value(s) whose
@@ -53,11 +58,11 @@ const CATEGORIES = [
   { key: 'worktrees', unit: 'worktree', verb: 'reaped', takenActions: ['reaped'], skipActions: ['skipped'] },
   { key: 'claims', unit: 'claim', verb: 'released', takenActions: ['released'], skipActions: ['skipped'] },
   // Row one's filter keeps every non-`ran` entry, because it also feeds the aggregated skip line.
-  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps run', takenActions: ['ran'], skipActions: ['skipped'], kindFilter: (e) => e.action !== 'ran' || classifyEntry(e).verdict === 'clean' },
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps run', takenActions: ['ran'], skipActions: ['skipped'], kindFilter: (e) => e.action !== 'ran' || verdictOf(e) === 'clean' },
   // post-merge.js's classifyEntry judges a `ran` entry failed when Step 4.0 failed (a SKIP marker, Step 4.0b
   // never run) or its word is not clean (close-failed, ...), or Step 4.0b reported a parent failure: it is
   // reported on its own line, never as a run that ran.
-  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.action === 'ran' && classifyEntry(e).verdict === 'failed' },
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.action === 'ran' && verdictOf(e) === 'failed' },
   { key: 'runs', unit: 'run dir', verb: 'archived', takenActions: ['archived'], skipActions: ['skipped'] },
   { key: 'branches', unit: 'branch', verb: 'archived', takenActions: ['delete', 'tag-and-delete'], skipActions: ['skip'], kindFilter: (e) => e.kind !== 'tag' },
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },

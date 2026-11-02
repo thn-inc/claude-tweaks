@@ -2618,6 +2618,30 @@ test('unscoped CLI: a module-load failure still prints the reconcile-threw JSON 
   }
 });
 
+test('reconcile verb: a post-merge.js load fault still renders the reconcile-threw line in the compact output, not a silent exit 0 (#4897)', () => {
+  // A child process, so the fault is planted in its module loader only: the child preloads a script that makes any
+  // require resolving to reconcile/post-merge.js throw. format-summary.js is required outside hooks.js's try, so a
+  // module-level require of post-merge.js there would throw past the fallback and main's catch would exit 0 silently.
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-recon-loadfault-'));
+  const preload = path.join(scratch, 'fault.js');
+  fs.writeFileSync(preload, [
+    "const Module = require('module');",
+    "const path = require('path');",
+    'const load = Module._load;',
+    'Module._load = function (request, parent, isMain) {',
+    '  let file = null;',
+    '  try { file = Module._resolveFilename(request, parent, isMain); } catch { /* the real loader reports it */ }',
+    "  if (file && file.endsWith(path.join('reconcile', 'post-merge.js'))) throw new Error('planted load fault');",
+    '  return load.apply(this, arguments);',
+    '};',
+    '',
+  ].join('\n'));
+  const dir = noRemoteFixture('ct-recon-loadfault-repo-');
+  const r = runHook(['reconcile', '--dry-run'], { cwd: dir, env: { NODE_OPTIONS: `--require ${JSON.stringify(preload)}` } });
+  assert.strictEqual(r.code, 0);
+  assert.match(r.stdout, /^skipped: all — reconcile-threw$/m);
+});
+
 test('unscoped CLI still defers and spawns when the pass carries a report-only non-canonical-run-dir skip (#4032)', async () => {
   const reportOnly = { check: 'all', reason: 'non-canonical-run-dir', names: ['20260911T101010-x'] };
   const { spawnCalls, outputs } = await runReconcileVerbStubbed([['reconcile', '--json']], {
