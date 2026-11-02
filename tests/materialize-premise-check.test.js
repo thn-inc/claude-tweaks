@@ -15,6 +15,7 @@ const assert = require('node:assert');
 const fs = require('fs');
 const path = require('path');
 const { gitRepo } = require('./helpers/git-fixtures');
+const { readText } = require('./helpers/read-skill');
 const wtDetect = require('../plugin/bin/lib/hooks/worktree-detect');
 const { run, runPremiseCheckDefault, resolveCheckoutRoot } = require('../plugin/bin/materialize');
 const { buildPremiseCheck } = require('../plugin/bin/lib/harness-health/issue-payload');
@@ -529,6 +530,6 @@ test("AC2.1 (#4795): materialize runs the Premise-check command with the user's 
 });
 
 test('#4795: materialize no longer defines an env restore for the Premise-check command', () => {
-  const src = fs.readFileSync(path.join(__dirname, '..', 'plugin', 'bin', 'materialize.js'), 'utf8');
+  const src = readText(path.join(__dirname, '..', 'plugin', 'bin', 'materialize.js'));
   assert.doesNotMatch(src, /envBeforeGhHostPin|pinnedGhHost/);
 });
