@@ -8,9 +8,11 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, no new dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T141744-record-4612/work/4612-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-02T223727-record-4612/work/4612-spec.md`
 
-**Scope keywords:** recording url refused, renderRecordingSection, decideExposure
+**Scope keywords:** recording url refused, renderRecordingSection, decideExposure, evidence-route, demo-evidence
+
+**Plan Review Decisions (the spec's own section, which wins over its earlier text):** the exposure rules bind every Recording link, legacy image URLs are refused, the public evidence-commit route is retired, and no 40-hex exemption is added (Tasks 2, 3, 7, 8). The packet names a location that stays resolvable after archiving (Tasks 3, 4).
 
 ## Global Constraints
 
@@ -42,10 +44,11 @@ Waived `plugin/bin/walkthrough-encode.js`: read-only; the spec says confirm it n
 Waived `plugin/bin/lib/walkthrough/encode.js`: consumed through `encodeWalkthrough`; Task 1 pins `captionList` byte-identical.
 
 **Known spec interactions the tasks resolve:**
-- The spec's "no prefix leaks" vs `checkLink`'s new bearer rule on `verification-brief.md`'s raw evidence URLs: a 40-hex commit SHA is a bearer-shaped segment. Task 2 exempts exactly the third path segment on a `raw.` host when it is 40 lowercase hex, so that route keeps working.
+- `--recordings` stays on the CLI as the one entry for a future private store's landing page (AC4's link rule needs a `url` input path), and no skill passes it once Task 7 retires the route. Every entry meets the full rule set: credential screens, the bearer rule with no exemption, and the non-image rule.
+- The two committed `docs/demo-evidence/1336/*.jpg` files stay: the decision retires the route, not history. Task 8 logs them as an observation in `decisions.md`.
 - AC5's "`not recorded` with the reason" vs the contract decision's `no-story` plain line: the contract decision is the specific rule and wins.
 - `inline()` escapes both brackets. The section post-processes `\[redacted\]` to `\[redacted]`: it renders `[redacted]`, the raw comment still contains the fixed token, and the escaped opener means a `[redacted]: x` line can never become a link reference definition.
-- The local path renders relative to the checkout root, so a public comment leaks no home directory.
+- The local path renders relative to the checkout root, so a public comment leaks no home directory. It always names both locations, live and `archive/`, so it never goes stale however the run dir moves.
 
 ## Review Focus
 
@@ -54,6 +57,8 @@ Waived `plugin/bin/lib/walkthrough/encode.js`: consumed through `encodeWalkthrou
 3. `snapshot` re-run from the main checkout after the merge: the earlier GIF and manifest stay. Pinned in Task 4.
 4. A GIF write or encode failure never fails `snapshot`: it becomes `encoder-failed`, exit 0. Pinned in Task 4.
 5. A long unterminated token through the redactor stays linear. Pinned in Task 1's perf file.
+6. A multi-spec run's GIF (`{run-id}/spec-{N}/packet-inputs/`), gathered live or after archiving, names the same two locations. Pinned in Task 4.
+7. A legacy image link with a query string or an uppercase extension (`https://h/r.PNG?x=1`) is still refused. Pinned in Task 2.
 
 ---
 
@@ -124,7 +129,7 @@ Expected: PASS, `fail 0`.
 - Test: `tests/bin-lib/wrap-up/packet-links.test.js`, `tests/bin-lib/walkthrough/exposure.test.js`
 
 **Interfaces:**
-- Produces: `isCredentialRefusal(reason: string) -> boolean` (true for `checkLink` reasons starting `credential`); `checkLink` reason `credential in path segment`; `EXPOSURES = ['local-only', 'linked-private', 'withheld']`; `decideExposure({ repoVisibility, storeProbe }) -> exposure`; `readRepoVisibility(gh) -> 'public' | 'private'`.
+- Produces: `isCredentialRefusal(reason: string) -> boolean` (true for `checkLink` reasons starting `credential`); `isImageUrl(url: string) -> boolean` (`packet-links.js`: the parsed pathname, case-insensitive, ends in an image extension; an unparseable url is `false`, since `checkLink` already refuses it); `checkLink` reason `credential in path segment`; `EXPOSURES = ['local-only', 'linked-private', 'withheld']`; `decideExposure({ repoVisibility, storeProbe }) -> exposure`; `readRepoVisibility(gh) -> 'public' | 'private'`.
 - `storeProbe` shape: `null` or `{ anonymousFetch: 'refused' | 'allowed' | 'unreachable', url: string, store?: string }`.
 
 - [ ] **Step 1: Write the failing tests.** In `packet-links.test.js`, with `const ok = (url) => checkLink(url, { allowedHosts: ['host', 'raw.githubusercontent.com'] })`:
@@ -141,8 +146,8 @@ test('AC4.3: a benign path naming the word is not withheld', () => assert.equal(
 test('a bearer-shaped path segment is refused', () => assert.equal(ok('https://host/a/Xk3j9f8s7d6f5g4h3j2k1/b').reason, 'credential in path segment'));
 test('a 20-character segment with no digit, or no letter, is not bearer-shaped', ...); // 'abcdefghijklmnopqrst', '12345678901234567890'
 test('a 19-character segment is not bearer-shaped', ...);
-test('a commit sha third segment on a raw host stays allowed', () => assert.equal(ok(`https://raw.githubusercontent.com/o/r/${'a1'.repeat(20)}/docs/x.png`).ok, true));
-test('the sha exemption is that segment on that host only', ...); // same 40-hex as segment 2, and same path on 'host': refused
+test('no exemption: a 40-hex commit sha segment on a raw host is refused', () => assert.equal(ok(`https://raw.githubusercontent.com/o/r/${'a1'.repeat(20)}/docs/x.png`).reason, 'credential in path segment'));
+test('isImageUrl reads the pathname only', ...); // true: 'https://h/r.gif', 'https://h/r.PNG?x=1', 'https://h/a/r.webp#f'; false: 'https://h/r.gif/landing', 'https://h/landing?f=r.png', 'not a url'
 ```
 In `exposure.test.js`, one test per branch of the list in Step 3, plus `AC2.3`: `for v of ['public','private','unknown', undefined, null]: decideExposure({ repoVisibility: v, storeProbe: null }) === 'local-only'`. `readRepoVisibility`: `{"isPrivate":true}` → private; `{"isPrivate":false}`, `{}`, `{"isPrivate":"yes"}`, `not json`, a throwing runner → public; the runner receives `['repo','view','--json','isPrivate']`.
 
@@ -151,7 +156,7 @@ In `exposure.test.js`, one test per branch of the list in Step 3, plus `AC2.3`: 
 Run: `node --test tests/bin-lib/walkthrough/exposure.test.js`
 Expected: FAIL with `Cannot find module`.
 
-- [ ] **Step 3: Implement.** `checkLink`: after the userinfo check, split `parsed.pathname` on `/`, `decodeText` each segment, refuse a bearer-shaped one; the exemption is index 3 of the split (third segment), `/^[0-9a-f]{40}$/`, hostname starting `raw.`. `decideExposure`, in order: no probe, or `anonymousFetch !== 'refused'` → `local-only`; url refused with `isCredentialRefusal` (checked with its own hostname allowed) → `withheld`; a url that fails any other way → `local-only`; pathname ending `.gif|.png|.jpg|.jpeg|.webp|.svg|.avif|.bmp` (non-image landing page rule) → `local-only`; `store === 'secret-gist'` → `local-only`; `store === 'actions-artifact'` with visibility not exactly `private` → `local-only`; otherwise `linked-private`. Fail closed: any visibility other than `private` counts as public.
+- [ ] **Step 3: Implement.** `checkLink`: after the userinfo check, split `parsed.pathname` on `/`, `decodeText` each segment, refuse a bearer-shaped one, with no exemption. `isImageUrl` tests the extensions `.gif|.png|.jpg|.jpeg|.webp|.svg|.avif|.bmp`. `decideExposure`, in order: no probe, or `anonymousFetch !== 'refused'` → `local-only`; url refused with `isCredentialRefusal` (checked with its own hostname allowed) → `withheld`; a url that fails any other way → `local-only`; `isImageUrl(url)` (non-image landing page rule) → `local-only`; `store === 'secret-gist'` → `local-only`; `store === 'actions-artifact'` with visibility not exactly `private` → `local-only`; otherwise `linked-private`. Fail closed: any visibility other than `private` counts as public.
 
 - [ ] **Step 4: Run** `node --test tests/bin-lib/walkthrough/exposure.test.js tests/bin-lib/wrap-up/packet-links.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/acceptance-packet-contract-conformance.test.js`. Expected: PASS, `fail 0`.
 
@@ -170,17 +175,20 @@ Expected: FAIL with `Cannot find module`.
 - Test: `tests/bin-lib/wrap-up/packet-render.test.js` (two re-pointed pins), `tests/bin-lib/wrap-up/packet-validate.test.js`, `tests/acceptance-packet-contract-conformance.test.js`
 
 **Interfaces:**
-- Consumes: `redactText`, `isCredentialRefusal`, `EXPOSURES`.
-- Produces: exported `renderRecordingSection(recordingFacts: Fact[]) -> Array<{ text, droppable }>`. Passed fact: `{ id, kind: 'recording', status: 'passed', source, text, url_or_path, captions: string[], label?, redactions: int, exposure }`. Not-recorded fact: `{ id, kind: 'recording', status: 'not-run', source, reason, failure? }`. Legacy `--recordings` facts keep `{ text, url }`.
+- Consumes: `redactText`, `isCredentialRefusal`, `isImageUrl`, `EXPOSURES`.
+- Produces: exported `renderRecordingSection(recordingFacts: Fact[]) -> Array<{ text, droppable }>`. Passed fact: `{ id, kind: 'recording', status: 'passed', source, text, url_or_path, archive_path, captions: string[], label?, redactions: int, exposure }`, where `url_or_path` is the live location and `archive_path` the archived one. Not-recorded fact: `{ id, kind: 'recording', status: 'not-run', source, reason, failure? }`. `--recordings` facts keep `{ text, url }`, and an image url among them is refused.
 
 - [ ] **Step 1: Write the failing tests** in the new `packet-recording.test.js`, with `fact`, `render` and `sectionLines` helpers shaped like `packet-render.test.js`'s:
 
 ```js
 const REC = 'recording:walkthrough';
-const passed = (extra) => fact(REC, 'passed', { text: 'Walkthrough of Sign in', url_or_path: '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif', captions: ['sign-in'], exposure: 'local-only', redactions: 0, ...extra });
-test('AC1.1: a recording links the encoded path, never an image', ...);
-// lines: ['- Walkthrough of Sign in: `.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif` (local-only)', '  1. sign-in']
-test('AC2.1: no image syntax for any exposure', ...); // for each of local-only/linked-private/withheld plus a legacy .png url: markdown has no `![` and no `<img`
+const passed = (extra) => fact(REC, 'passed', { text: 'Walkthrough of Sign in', url_or_path: '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif', archive_path: '.claude-tweaks/pipelines/archive/r/packet-inputs/walkthrough.gif', captions: ['sign-in'], exposure: 'local-only', redactions: 0, ...extra });
+test('AC1.1: a recording links the encoded path, never an image, and names where it moves', ...);
+// lines: ['- Walkthrough of Sign in: `.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif` (local-only)', '  once archived: `.claude-tweaks/pipelines/archive/r/packet-inputs/walkthrough.gif`', '  1. sign-in']
+test('AC2.1: no image syntax for any exposure', ...); // for each of local-only/linked-private/withheld plus a .png url: markdown has no `![` and no `<img`
+test('Reading B: an image url on a recording fact is refused', ...); // 'https://cdn.example/r.gif', 'https://raw.githubusercontent.com/o/r/abc/docs/demo-evidence/1/01-a.png', 'https://h/r.PNG?x=1' -> '- Rec: (recording url refused)'; a live '<' link to the url absent
+test('Reading B: a non-image landing page still links', ...); // 'https://store.example/rec/1' -> '- Rec: <https://store.example/rec/1>'
+test('Reading B: a commit sha in a recording url is a credential-shaped segment', ...); // raw url with a 40-hex segment and a non-image tail -> the withheld line
 test('AC3.1: every secret shape is replaced in all four channels', ...);
 // SHAPES = the six from Task 1 incl. the e-mail; channels: text, captions[0], label on a linked-private fact, failure on a not-run fact.
 // For each: the value is absent from the whole section, section contains '[redacted]'.
@@ -195,16 +203,16 @@ test('AC5.2: each impossible recording states its reason twice', ...);
 // for each of the three: Recording ['not recorded: {reason}'], Couldn't test includes '- `recording:walkthrough` — not run: {reason}'
 test('a legacy recording beside no-story drops the placeholder', ...);
 ```
-Re-point the two existing pins: line 631's test keeps decision/deploy/refused/partial screening, and its recording row becomes `- the password=\\[redacted]: <https://cdn.example/r.gif>`; line 948's test now expects the withheld line and still asserts `cdn.example` absent. In `packet-validate.test.js`: a `recording` fact with `exposure: 'bogus'`, `redactions: -1`, `redactions: 1.5`, `captions: 'x'`, `captions: [1]`, `url_or_path: 3`, `failure: 3` each fails `validateFactsShape`. In the contract conformance test add pins: the contract names `renderRecordingSection`, the four reasons, the three exposure values read from `EXPOSURES`, and `recording withheld: link contained a credential-shaped value`, each proven red by a `body.replace` control that calls the same assertion function.
+Re-point the two existing `packet-render.test.js` pins, located by the `cdn.example` literal: the screening test keeps decision/deploy/refused/partial screening, and its recording row becomes `- the password=\\[redacted]: (recording url refused)`, its `r.gif` now refused under Reading B; the credential test now expects the withheld line and still asserts `cdn.example` absent. Re-point `tests/acceptance-packet-contract-conformance.test.js`'s `an evidence screenshot renders as a plain link` to `a recording link is a plain link to a non-image page`, with a non-image url. In `packet-validate.test.js`: a `recording` fact with `exposure: 'bogus'`, `redactions: -1`, `redactions: 1.5`, `captions: 'x'`, `captions: [1]`, `url_or_path: 3`, `archive_path: 3`, `failure: 3` each fails `validateFactsShape`. In the contract conformance test add pins: the contract names `renderRecordingSection`, the four reasons, the three exposure values read from `EXPOSURES`, and `recording withheld: link contained a credential-shaped value`, each proven red by a `body.replace` control that calls the same assertion function.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/wrap-up/packet-recording.test.js`
 Expected: FAIL (`renderRecordingSection` is not exported, and the rows differ).
 
-- [ ] **Step 3: Implement.** In `checkFact`, add `url_or_path` and `failure` to `OPTIONAL_TEXT_FIELDS` and the three checks above, with `exposure` against `EXPOSURES`. In `packet-render.js`: `recordingText(raw)` = `redactText`, then `findCredentialInText(residual) ? WITHHELD_TEXT : inline(text)` with `\[redacted\]` → `\[redacted]`; the empty case keeps `factText`'s `idSpan` fallback. `recordingHref` returns the withheld line when `isCredentialRefusal(checkLink(...).reason)`, else today's refused text. `renderRecordingSection` makes one droppable item per fact (a multi-line text: head line, numbered caption lines at two spaces, a `  redacted values: {n}` line when the count it computed is above 0). A `no-story` fact renders nothing; no items at all gives `note('not recorded')`. Replace `SECTION_BODIES.recording` with a call to it and `rowPlace`'s caller so a `recording` fact with `status: 'not-run'` and `reason !== 'no-story'` joins `rowsIn('couldnt-test')`: keep `ROW_KINDS` for check/story and add the recording rows explicitly to the `couldnt-test` body. The path line screens `findCredentialInText(url_or_path)` to the withheld line. Export `renderRecordingSection`.
+- [ ] **Step 3: Implement.** In `checkFact`, add `url_or_path`, `archive_path` and `failure` to `OPTIONAL_TEXT_FIELDS` and the three checks above, with `exposure` against `EXPOSURES`. In `packet-render.js`: `recordingText(raw)` = `redactText`, then `findCredentialInText(residual) ? WITHHELD_TEXT : inline(text)` with `\[redacted\]` → `\[redacted]`; the empty case keeps `factText`'s `idSpan` fallback. `recordingHref`, in order: the withheld line when `isCredentialRefusal(checkLink(...).reason)`; today's refused text when `checkLink` refuses otherwise or `isImageUrl(url)`; else the live link. `renderRecordingSection` makes one droppable item per fact (a multi-line text: head line, a `  once archived: {archive_path code span}` line when the fact has one, numbered caption lines at two spaces, a `  redacted values: {n}` line when the count it computed is above 0). A `no-story` fact renders nothing; no items at all gives `note('not recorded')`. Replace `SECTION_BODIES.recording` with a call to it and `rowPlace`'s caller so a `recording` fact with `status: 'not-run'` and `reason !== 'no-story'` joins `rowsIn('couldnt-test')`: keep `ROW_KINDS` for check/story and add the recording rows explicitly to the `couldnt-test` body. The path line screens `findCredentialInText(url_or_path)` and `findCredentialInText(archive_path)` to the withheld line. Export `renderRecordingSection`.
 
-Contract edits in `acceptance-packet.md`: section 2's line; fact render-field list adds `url_or_path`, `captions`, `failure`, `redactions`, `exposure`; `## Pipeline` says `snapshot` also encodes the recording; a new `## Recording` section states source of frames, local base URL, storage and exposure, redaction (including that it cannot scan pixels, the stored GIF is unredacted and local-only, and stories must run against seed data and throwaway credentials), the not-recorded fact, and the link rule; `**In text.**`'s list drops "recording" ("decision and deploy text"), with a sentence that the Recording section redacts instead; `## Links and credentials`'s refused-recording sentence gains the withheld line and the bearer-segment rule; Row placement notes the recording row. Measure `wc -c` first: rail is 52,500 B.
+Contract edits in `acceptance-packet.md`: section 2's line; fact render-field list adds `url_or_path`, `archive_path`, `captions`, `failure`, `redactions`, `exposure`; `## Reader rules` gains: a Recording path is local to the machine that ran the pipeline, the reader checks the live location first and then the `once archived:` one, and a file in neither is gone, never a failed packet; `## Untrusted content`'s "An evidence screenshot is therefore a plain link and not an embedded image" sentence becomes "A recording is therefore a path or a plain link to a non-image page and never an embedded image"; `## Links and credentials`' Host rule states that a `recording` fact's `url` gets the credential screen and the non-image rule with no host rule; `## Pipeline` says `snapshot` also encodes the recording; a new `## Recording` section states source of frames, local base URL, storage and exposure, redaction (including that it cannot scan pixels, the stored GIF is unredacted and local-only, and stories must run against seed data and throwaway credentials), the not-recorded fact, and the link rule; `**In text.**`'s list drops "recording" ("decision and deploy text"), with a sentence that the Recording section redacts instead; `## Links and credentials`'s refused-recording sentence gains the withheld line and the bearer-segment rule; Row placement notes the recording row. Measure `wc -c` first: rail is 52,500 B.
 
 - [ ] **Step 4: Run** `node --test tests/bin-lib/wrap-up/packet-recording.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js`. Expected: PASS, `fail 0`.
 
@@ -225,7 +233,7 @@ Contract edits in `acceptance-packet.md`: section 2's line; fact render-field li
 
 **Interfaces:**
 - Consumes: `encodeWalkthrough`, `planFrames` (`encode.js`); `decideExposure`, `readRepoVisibility` (Task 2); `redactText` (Task 1).
-- Produces: `planRecording({ report, storyIndexLost, storyIndex, listFrames }) -> { status:'not-run', reason } | { status:'ready', text, frames: string[], captions: string[] }`; `isLocalBaseUrl(url) -> boolean`; manifest key `recording: { status:'passed', file:'walkthrough.gif', text, captions, exposure, frames } | { status:'not-run', reason, failure? }`; gather input `recording` + `recordingPath`; fact id `recording:walkthrough`.
+- Produces: `planRecording({ report, storyIndexLost, storyIndex, listFrames }) -> { status:'not-run', reason } | { status:'ready', text, frames: string[], captions: string[] }`; `isLocalBaseUrl(url) -> boolean`; `recordingLocations(relPath: string) -> { live: string, archived: string }` (`record.js`, pure, forward slashes: inserts or removes the `archive/` segment directly after `.claude-tweaks/pipelines/`); manifest key `recording: { status:'passed', file:'walkthrough.gif', text, captions, exposure, frames } | { status:'not-run', reason, failure? }`; gather input `recording` + `recordingPath`; fact id `recording:walkthrough`.
 
 - [ ] **Step 1: Write the failing tests** in `record.test.js` (pure, fake `listFrames`):
 
@@ -243,15 +251,20 @@ test('no-local-base-url', ...); // for 'https://dev.example', undefined, 'not a 
 test('local hosts', ...); // localhost, 127.0.0.1, [::1] with ports
 test('a lost story index records nothing', ...); // storyIndexLost: true -> no-happy-path-screenshots
 test('a missing screenshot dir is no-happy-path-screenshots', ...); // listFrames throws
+test('recordingLocations gives the same pair from either location', ...);
+// '.claude-tweaks/pipelines/r/packet-inputs/w.gif' and '.claude-tweaks/pipelines/archive/r/packet-inputs/w.gif' both ->
+// { live: '.claude-tweaks/pipelines/r/packet-inputs/w.gif', archived: '.claude-tweaks/pipelines/archive/r/packet-inputs/w.gif' }
+test('recordingLocations keeps a multi-spec segment', ...); // '.claude-tweaks/pipelines/r/spec-7/packet-inputs/w.gif' -> archived '.claude-tweaks/pipelines/archive/r/spec-7/packet-inputs/w.gif'
+test('recordingLocations leaves a run id holding the word archive alone', ...); // '.claude-tweaks/pipelines/archive-run/packet-inputs/w.gif' -> live unchanged, archived '.claude-tweaks/pipelines/archive/archive-run/packet-inputs/w.gif'
 ```
-In `tests/acceptance-packet-cli.test.js`, extending its existing `snapshot` fixture with `deps.encodeWalkthrough` stub returning `{ buffer: Buffer.from('GIF') }`, `deps.gh` and a QA report with `base_url`/`screenshot_dir`: `AC1.2: snapshot encodes and gather links the path` (the stub's `framePaths` count equals the happy steps; `packet-inputs/walkthrough.gif` holds its bytes; the gather facts hold `recording:walkthrough` with `url_or_path` relative to the checkout root ending `packet-inputs/walkthrough.gif`, `exposure: 'local-only'`, integer `redactions`; `render` shows it); `AC2.2: public, private and failed visibility` (`deps.gh` answering each of the three; rendered Recording section holds no `![`, no `<img`, manifest `exposure` is `local-only` in all three); `the stub throwing gives encoder-failed and exit 0` (fact status `not-run`, `failure` is the message); `a failed GIF write gives encoder-failed and exit 0`; `no QA report gives no-story`; `re-run from the main checkout keeps the GIF` (existing skip path, bytes unchanged); `a manifest with no recording key adds no fact` (an older run dir); `a run archived after the snapshot links the archive path` (gather `--run` on an `archive/{id}` dir). In `packet-gather.test.js`: `redactions` counts text, captions and failure. In `compose.test.js`: `base_url` passes through, and absent is `null`. One repo-only test, `the GIF path is gitignored live and archived`: `git check-ignore --no-index -q` exits 0 on both `.claude-tweaks/pipelines/x/packet-inputs/walkthrough.gif` and `.claude-tweaks/pipelines/archive/x/packet-inputs/walkthrough.gif`.
+In `tests/acceptance-packet-cli.test.js`, extending its existing `snapshot` fixture with `deps.encodeWalkthrough` stub returning `{ buffer: Buffer.from('GIF') }`, `deps.gh` and a QA report with `base_url`/`screenshot_dir`: `AC1.2: snapshot encodes and gather links the path` (the stub's `framePaths` count equals the happy steps; `packet-inputs/walkthrough.gif` holds its bytes; the gather facts hold `recording:walkthrough` with `url_or_path` and `archive_path` relative to the checkout root, each ending `packet-inputs/walkthrough.gif`, `exposure: 'local-only'`, integer `redactions`; `render` shows it); `AC2.2: public, private and failed visibility` (`deps.gh` answering each of the three; rendered Recording section holds no `![`, no `<img`, manifest `exposure` is `local-only` in all three); `the stub throwing gives encoder-failed and exit 0` (fact status `not-run`, `failure` is the message); `a failed GIF write gives encoder-failed and exit 0`; `no QA report gives no-story`; `re-run from the main checkout keeps the GIF` (existing skip path, bytes unchanged); `a manifest with no recording key adds no fact` (an older run dir); `Decision 2: a gather live and a gather after archiving name the same two locations` (gather once with `--run` on the live dir, move the dir under `archive/{id}` with the real `fs.renameSync`, gather again with `--run` on the `archive/{id}` dir, then `assert.deepEqual` the two `recording:walkthrough` facts, and assert the GIF reads at `archive_path` afterwards). In `packet-gather.test.js`: `redactions` counts text, captions and failure. In `compose.test.js`: `base_url` passes through, and absent is `null`. One repo-only test, `the GIF path is gitignored live and archived`: `git check-ignore --no-index -q` exits 0 on both `.claude-tweaks/pipelines/x/packet-inputs/walkthrough.gif` and `.claude-tweaks/pipelines/archive/x/packet-inputs/walkthrough.gif`.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/walkthrough/record.test.js`
 Expected: FAIL with `Cannot find module`.
 
-- [ ] **Step 3: Implement.** `record.js`: reason order is no happy-path story (no report, or none non-negative) → `no-story`; base url not local → `no-local-base-url`; lost index, or no frames from `PASS`/`PASS_WITH_CAVEATS` stories → `no-happy-path-screenshots`. Frame names match `/^\d+_(.+)\.png$/`, excluding `-raw.png`, sorted; the caption is the name part; `text` is `Walkthrough of {names joined ', '}`. Use `FRAME_WIDTH = 960` and `BUDGET_BYTES = 8 * 1024 * 1024`. `runSnapshot`, after the two skip branches and after `qaReport` is read: resolves `report.stories_dir` (else `stories`) against `deps.cwd()` through `readStoryIndex`, and `screenshot_dir` the same way; never starts a server or a browser. It encodes through `deps.encodeWalkthrough`, whose real value reads frames with `fs.readFileSync` (a Buffer: `deps.readFile` is utf8), writes with `deps.writeAtomic`, calls `decideExposure({ repoVisibility: readRepoVisibility(deps.gh), storeProbe: null })` only once a GIF exists, and turns any encoder or write throw into `{ status:'not-run', reason:'encoder-failed', failure: messageOf(err) }`. The manifest gains `recording`. `readSnapshot` returns `recording`. `gatherToFile` passes `recording` and `recordingPath = path.relative(findGitRoot(runDir).dir, path.join(runDir, PACKET_INPUTS, file))` with forward slashes. `gatherPacketFacts` builds the fact with `source: 'walkthrough'` and `redactions` summed through `redactText` over `text`, `captions`, `failure`; `recording` absent adds no fact. `compose.js` adds `base_url: orNull(input.base_url)`. `qa-reporting.md`: payload and report samples gain `"base_url": "{APP_URL}"`, and the metadata sentence names it.
+- [ ] **Step 3: Implement.** `record.js`: reason order is no happy-path story (no report, or none non-negative) → `no-story`; base url not local → `no-local-base-url`; lost index, or no frames from `PASS`/`PASS_WITH_CAVEATS` stories → `no-happy-path-screenshots`. Frame names match `/^\d+_(.+)\.png$/`, excluding `-raw.png`, sorted; the caption is the name part; `text` is `Walkthrough of {names joined ', '}`. Use `FRAME_WIDTH = 960` and `BUDGET_BYTES = 8 * 1024 * 1024`. `runSnapshot`, after the two skip branches and after `qaReport` is read: resolves `report.stories_dir` (else `stories`) against `deps.cwd()` through `readStoryIndex`, and `screenshot_dir` the same way; never starts a server or a browser. It encodes through `deps.encodeWalkthrough`, whose real value reads frames with `fs.readFileSync` (a Buffer: `deps.readFile` is utf8), writes with `deps.writeAtomic`, calls `decideExposure({ repoVisibility: readRepoVisibility(deps.gh), storeProbe: null })` only once a GIF exists, and turns any encoder or write throw into `{ status:'not-run', reason:'encoder-failed', failure: messageOf(err) }`. The manifest gains `recording`. `readSnapshot` returns `recording`. `gatherToFile` passes `recording` and `recordingLocations(path.relative(findGitRoot(runDir).dir, path.join(runDir, PACKET_INPUTS, file)))` with forward slashes. `gatherPacketFacts` builds the fact with `source: 'walkthrough'`, `url_or_path: live`, `archive_path: archived` and `redactions` summed through `redactText` over `text`, `captions`, `failure`; `recording` absent adds no fact. `compose.js` adds `base_url: orNull(input.base_url)`. `qa-reporting.md`: payload and report samples gain `"base_url": "{APP_URL}"`, and the metadata sentence names it.
 
 - [ ] **Step 4: Run** `node --test tests/bin-lib/walkthrough/record.test.js tests/acceptance-packet-cli.test.js tests/bin-lib/wrap-up/packet-gather.test.js tests/bin-lib/qa-report/compose.test.js`, plus each file `git grep -l composeQaReport tests` names. Expected: PASS, `fail 0`.
 
@@ -287,15 +300,87 @@ Expected: FAIL with `Cannot find module`.
 **Interfaces:**
 - Consumes: the contract's `## Recording` section from Task 3.
 
-- [ ] **Step 1: Write failing pins.** `walkthrough-conformance.test.js`: `the skill names the automatic path and leaves standalone unredacted`: contains `_shared/acceptance-packet.md`, `## Recording`-citing sentence, "applies no redaction", "never uploaded". `acceptance-packet-wrap-up-conformance.test.js`: `snapshot encodes the recording`: the Phase 1 paragraph names the recording; `gather reads the recording from the snapshot`: the `--recordings` bullet says the automatic recording needs no flag. Keep the existing `only when the embeds survive the route above` pin.
+- [ ] **Step 1: Write failing pins.** `walkthrough-conformance.test.js`: `the skill names the automatic path and leaves standalone unredacted`: contains `_shared/acceptance-packet.md`, `## Recording`-citing sentence, "applies no redaction", "never uploaded". `acceptance-packet-wrap-up-conformance.test.js`: `snapshot encodes the recording`: the Phase 1 paragraph names the recording; `gather reads the recording from the snapshot`: the gather list says the automatic recording arrives through the snapshot with no flag (Task 7 removes the `--recordings` bullet, so this pin reads the `--run` bullet).
 
 - [ ] **Step 2: Run** `node --test tests/walkthrough-conformance.test.js tests/acceptance-packet-wrap-up-conformance.test.js`. Expected: FAIL on the new tests.
 
-- [ ] **Step 3: Edit the prose.** `walkthrough/SKILL.md`, after the When to Use section: a short `## Automatic path` paragraph (wrap-up's `snapshot` builds a GIF from the pipeline's own happy-path screenshots through `encodeWalkthrough`, never this skill and never a browser run; exposure and redaction rules live in `_shared/acceptance-packet.md`'s `## Recording`; this standalone path applies no redaction, and the human choosing the destination owns what it shows). The Component-Skill Contract stays: no lifecycle skill invokes this skill. `verification-brief.md`'s `--recordings` bullet gains: the automatic recording arrives through the snapshot with no flag. `wrap-up/SKILL.md`'s snapshot paragraph gains one clause: it also encodes the recording while the QA screenshots are on disk. `docs/plugin-structure.md`'s CLI row: `snapshot` also encodes the recording. Then `docs/skill-graph.md` only if `tests` require an edge (no skill edge changes).
+- [ ] **Step 3: Edit the prose.** `walkthrough/SKILL.md`, after the When to Use section: a short `## Automatic path` paragraph (wrap-up's `snapshot` builds a GIF from the pipeline's own happy-path screenshots through `encodeWalkthrough`, never this skill and never a browser run; exposure and redaction rules live in `_shared/acceptance-packet.md`'s `## Recording`; this standalone path applies no redaction, and the human choosing the destination owns what it shows). The Component-Skill Contract stays: no lifecycle skill invokes this skill. `verification-brief.md`'s `--run` bullet gains: the automatic recording arrives through the snapshot with no flag. `wrap-up/SKILL.md`'s snapshot paragraph gains one clause: it also encodes the recording while the QA screenshots are on disk. `docs/plugin-structure.md`'s CLI row: `snapshot` also encodes the recording. Then `docs/skill-graph.md` only if `tests` require an edge (no skill edge changes).
 
 - [ ] **Step 4: Run** the Step 2 command plus `node --test tests/try-it-contract-conformance.test.js tests/verification-brief-evidence-routing.test.js`. Expected: PASS, `fail 0`.
 
 - [ ] **Step 5: Commit** `Document the automatic recording path — refs #4612`.
+
+### Task 7: Retire the evidence route from the procedure
+
+**Role:** judgment
+
+**Files:**
+- Modify: `plugin/skills/wrap-up/verification-brief.md`, `plugin/skills/wrap-up/verification-brief-parent-gate.md`, `plugin/skills/wrap-up/summary-template.md`, `plugin/skills/dispatch/settle-and-merge.md`
+- Delete: `tests/verification-brief-evidence-routing.test.js`
+- Test: `tests/acceptance-packet-wrap-up-conformance.test.js`, `tests/log-decision-text-file-sites-conformance.test.js`
+
+**Interfaces:**
+- Consumes: the contract's `## Recording` section from Task 3.
+- Produces: a Step 4 with no commit, no route and no `--recordings`; Task 8 relies on nothing in `plugin/skills/` citing `bin/evidence-route.js`.
+
+- [ ] **Step 1: Write the failing pin** in `tests/acceptance-packet-wrap-up-conformance.test.js`, replacing `--recordings follows the route, not the commit` and `evidence screenshots are links, with no image fence left to match`:
+
+```js
+test('Decision 1: the procedure commits no evidence and passes no recording link', () => {
+  const doc = brief();
+  for (const gone of ['docs/demo-evidence', 'evidence-route.js', 'evidence-pr', '--recordings', '{RECORDINGS}', 'raw.githubusercontent.com']) {
+    assert.ok(!doc.includes(gone), `still names ${gone}`);
+  }
+});
+```
+Also: take `--recordings` out of `gather call names every flag`'s list and out of `Step 3 feeds gather from the same evidence sources`'s; `a claim citing the Entry point link names its group` drops its `'the evidence PR note'` assertion; `gather inputs resolve after cleanup` drops the now-stale comment about screenshot routing.
+
+- [ ] **Step 2: Run to verify it fails**
+
+Run: `node --test tests/acceptance-packet-wrap-up-conformance.test.js`
+Expected: FAIL on `Decision 1`.
+
+- [ ] **Step 3: Edit the prose.** `verification-brief.md`:
+  - Step 3's walk branch keeps item 1 (the headline as a `test-guide` claim). Item 2 becomes: the walk's screenshots stay in the run's local artifacts and are never committed or linked, since the packet's media is the automatic recording (`_shared/acceptance-packet.md`'s `## Recording`).
+  - Step 4 loses its opening "embed" sentence fragment (`an "embed" is a --recordings entry`), everything from `**Screenshot commit**` through the `work-backend: local-files` screenshot paragraph (route, CLI call, log line, evidence-PR note, commit fence, raw URL, `{RECORDINGS}` entry shape), the `RECORDINGS=` pair in the temp-path resolve, `--recordings` in the gather fence, and the `--recordings` bullet. It keeps `**Branch**` and everything after it.
+  - The grammar sentence stays: it never named these.
+  Measure `wc -c`: the file is 42,496 B against the 52,500 B rail, and this only shrinks it.
+
+  `verification-brief-parent-gate.md`: delete line 559's template slot `{screenshot embeds from above, 1-3}` and its blank line. Nothing else in that template changes. `summary-template.md`: delete the `Opened evidence PR` row and the `the acceptance packet's evidence PR (when Step 4 opened one)` clause, and re-read the surrounding sentence so it still parses. `settle-and-merge.md` line 25: drop `its evidence-pr `gh pr create` is the PR create exception (#929), and`, keeping `and its Step 1 runs`. `tests/log-decision-text-file-sites-conformance.test.js`: delete row `V1` and fix any count the file derives from its rows.
+
+  Delete `tests/verification-brief-evidence-routing.test.js`: every test in it pins the retired route or the deleted summary row.
+
+- [ ] **Step 4: Run** `node --test tests/acceptance-packet-wrap-up-conformance.test.js tests/log-decision-text-file-sites-conformance.test.js tests/try-it-contract-conformance.test.js tests/ceremony-profile-roster.test.js`. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Commit** `Retire the public demo-evidence route from wrap-up — refs #4612`.
+
+### Task 8: Delete the route's CLI and sweep its citations
+
+**Role:** integration
+
+**Files:**
+- Delete: `plugin/bin/evidence-route.js`, `plugin/bin/lib/wrap-up/evidence-route.js`, `tests/bin-lib/wrap-up/evidence-route.test.js`, `docs/journeys/land-demo-evidence-after-the-pr-merged-4039.md`
+- Modify: `docs/journeys/close-out-a-parked-pr-whose-labeling-never-landed-3783.md`, `docs/REGISTRY.md`, `docs/plugin-structure.md`, `docs/skill-graph.md`, `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md`, `.claude/skills/merge-shape-landed-proof/SKILL.md`
+
+**Interfaces:**
+- Consumes: Task 7's clean `plugin/skills/`.
+
+- [ ] **Step 1: Delete the four files** with `git rm`, one per Bash call.
+
+- [ ] **Step 2: Sweep each hit.** `close-out-a-parked-pr-…-3783.md` line 51: the bullet goes, since a close-out labeling run commits no screenshots. `docs/REGISTRY.md` line 33: delete the `docs/demo-evidence/{record}/*` row. `docs/plugin-structure.md`: in line 24, remove family (6) and make the count "Six module families", renumbering (7) to (6); delete the line 212 CLI row. `docs/skill-graph.md` line 735: delete the row, and read line 736's row in case it leans on it. `cli-wrapper-contract.md` line 54: keep the rule and restate its instance in the past tense (#4125's CLI, retired by #4612); `merge-shape-landed-proof/SKILL.md` lines 232-233: the same treatment, keeping the rule the instance teaches. Do not edit `docs/incident-log.md` or `CHANGELOG.md`: append-only history.
+
+- [ ] **Step 3: Verify the sweep**, each its own call. Every command below must print nothing except the named history:
+
+Run: `git grep -n -i -e "evidence-route" -e "decideEvidenceRoute" -e "branchReadState" -e "evidence-pr" -e "evidence PR" -e "evidence-only" -e "demo-evidence" -- . ":!.claude-tweaks/pipelines" ":!docs/superpowers/plans" ":!docs/plans" ":!CHANGELOG.md" ":!docs/incident-log.md"`
+Expected: only `cli-wrapper-contract.md`'s and `merge-shape-landed-proof/SKILL.md`'s past-tense instances, and the Task 3 test's sample `demo-evidence` url.
+
+The control, per the absence-grep check: the same `git grep` at the merge base (`git grep -n -i -e "evidence-route" {merge-base} -- plugin/bin`) matches, so the search can find its target.
+
+- [ ] **Step 4: Run** the suites naming journeys and the bin tree: `node --test tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/skill-catalog-completeness.test.js`, plus any suite `git grep -l "land-demo-evidence" tests` names. Expected: PASS, `fail 0`.
+
+- [ ] **Step 5: Log the retained history**: `log-decision.js --status AUTO` with the text `Decision 1 retired the evidence route; docs/demo-evidence/1336/*.jpg stay as committed history` and `--reversibility high`.
+
+- [ ] **Step 6: Commit** `Delete the evidence route CLI and its citations — refs #4612`.
 
 ## Spec coverage map
 
@@ -312,3 +397,5 @@ Expected: FAIL with `Cannot find module`.
 | AC5 | Task 3 `AC5.1`, `AC5.2`; Task 4 `no QA report gives no-story` |
 | AC6.1 | `tests/bin-lib/walkthrough/encode-cli.test.js` passes untouched |
 | AC7.1 | Common Step 5's full run |
+| Decision 1 (exposure rules and `--recordings`) | Task 2 `no exemption`, Task 3 `Reading B`, Task 7 `Decision 1`, Task 8's sweep |
+| Decision 2 (link after archiving) | Task 3 `AC1.1`, Task 4 `recordingLocations` and `Decision 2` |
