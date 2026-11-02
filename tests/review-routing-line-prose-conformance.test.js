@@ -265,6 +265,12 @@ test('#4637: the raw --stack-stderr value reaches the logged STAGED line verbati
   assert.ok(text.includes(`(${raw})`), `the raw stderr must be logged verbatim: ${text}`);
 });
 
+test('#4637: the "Staging a patch" paragraph points its --stack-stderr usage back at the quoting rule', () => {
+  const paragraph = md.split('\n').find((l) => l.startsWith('**Staging a patch'));
+  assert.ok(paragraph, 'step3-routing.md must carry the "Staging a patch" paragraph');
+  assert.ok(paragraph.includes('follow the quoting rule above'), `the --stack-stderr usage must cite the quoting rule: ${paragraph}`);
+});
+
 test('step3-routing.md carries no hand-typed Step 3 Routing template', () => {
   assert.doesNotMatch(md, /`[^`\n]*\{time\} — Step 3 Routing:/);
 });
