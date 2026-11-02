@@ -365,9 +365,8 @@ test('AC1.1: the local-files close fence appends the section once and closes the
   const { readRecord } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
   const heading = '## Closed below the oversight floor';
   const t = localFixture();
-  const fresh = t.parent(1, 'Fresh');
-  const marked = t.parent(2, 'Marked', { body: 'Parent body.\n\n' + MARKER });
-  for (const file of [fresh, marked]) {
+  const parents = [t.parent(1, 'Fresh'), t.parent(2, 'Marked', { body: 'Parent body.\n\n' + MARKER })];
+  for (const file of parents) {
     const r = spawnSync('node', ['-e', script, '--', file], { cwd: t.cwd, encoding: 'utf8' });
     assert.equal(r.status, 0, r.stderr);
     const rec = readRecord(file);
