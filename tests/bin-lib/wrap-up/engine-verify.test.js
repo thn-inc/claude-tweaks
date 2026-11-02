@@ -2000,7 +2000,7 @@ test('acceptance-labeling pass detail carries the not-due skip reason of a sibli
   assert.match(row.detail, /parent gate #898 not due — 1 sibling sub-issue\(s\) open/);
 });
 
-test('acceptance-labeling fail detail carries the not-due skip reason alongside the missing demo:pending line', () => {
+test('acceptance-labeling fail detail carries the not-due skip reason alongside the missing pending-label line', () => {
   const row = twoParentRow({ dueParentLabels: [], dueParentComments: [] });
   assert.strictEqual(row.result, 'fail', row.detail);
   assert.match(row.detail, /#899: missing demo:pending or accept:pending label/);
