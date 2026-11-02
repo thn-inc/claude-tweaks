@@ -61,7 +61,7 @@ test('go-red (a): SKILL.md without the read pointer fails', () => {
   const phrase = "read `manual-steps.md` in this skill's directory";
   assert.ok(t.skill.includes(phrase));
   const mutated = { ...t, skill: t.skill.replace(phrase, '') };
-  assert.notDeepStrictEqual(mutated.skill, t.skill);
+  assert.notStrictEqual(mutated.skill, t.skill);
   assert.ok(missing(mutated).length > 0);
 });
 
