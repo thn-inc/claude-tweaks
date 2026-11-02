@@ -316,7 +316,10 @@ test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every ca
 // by the case's run dir), setup?: (repo) => void, acceptsRepo: the CLI takes
 // --repo, typedRepoLines?: (line) => boolean (AC6.1 asserts host reachability
 // only on the lines it selects; default every network line), canned?: gh answers
-// replacing CANNED entries for the row's cases, printsResolutionNote?: the CLI
+// replacing CANNED entries for the row's cases, hostnameLines?: (line) => boolean
+// (the GH_HOST-exported case requires --hostname only on the `gh api` lines it selects;
+// default every `gh api` line -- a CLI whose GraphQL calls thread no host selects its
+// REST calls), printsResolutionNote?: the CLI
 // prints a repoResolutionNote (AC7.2 then requires `{cli}: resolved repo ...
 // acme.ghe.com` on stderr), variant?: a suffix on the test titles when one CLI has
 // several rows }. describeOriginGate(row)
@@ -336,6 +339,7 @@ function runGated(t, row, { origin, extraArgs = [], ghHost, hostsYml }) {
   if (hostsYml !== undefined) fs.writeFileSync(path.join(cfgDir, 'hosts.yml'), hostsYml);
   const env = childEnv();
   delete env.GH_REPO;
+  delete env.CLAUDE_CODE_SESSION_ID; // no session-scoped record snapshot (backlog-grant-gate.js)
   env.GH_ENTERPRISE_TOKEN = 't';
   env.GH_CONFIG_DIR = cfgDir;
   env.GIT_ALLOW_PROTOCOL = 'file';
@@ -387,7 +391,7 @@ function describeOriginGate(row) {
         const net = networkLines(r.lines);
         assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
         assert.ok(net.some((l) => argvReachesHost(l, host)), `no gh call names ${host} in its argv, log:\n${log}`);
-        for (const line of net.filter((l) => / ARGS=api /.test(l))) {
+        for (const line of net.filter((l) => / ARGS=api /.test(l) && (!row.hostnameLines || row.hostnameLines(l)))) {
           assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
         }
       } else {
@@ -459,6 +463,22 @@ function writeWorkLinksPolicy(value) {
   return (repo) => fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'), `work-links: ${value}\n`);
 }
 
+function writeJsonFile(name, value) {
+  return (repo) => fs.writeFileSync(path.join(repo, name), JSON.stringify(value));
+}
+
+// backlog-grant-gate.js: the policy and initial commit grantGateLines uses.
+function setupGrantGate(repo) {
+  git(repo, ['symbolic-ref', 'HEAD', 'refs/heads/main']);
+  git(repo, ['-c', 'user.email=t@example.invalid', '-c', 'user.name=t', '-c', 'commit.gpgsign=false', 'commit', '--allow-empty', '-q', '-m', 'init']);
+  fs.writeFileSync(path.join(repo, '.claude-tweaks', 'policy.yml'),
+    'autonomy: unattended\ngrant-origination-enabled: true\nwork-links: native\nintegration-branch: main\n');
+}
+
+// fetch-sub-issues.js: answers both the schema probe (subIssues present) and the
+// batch (no `i7` alias, so parent 7 lands in `retry`).
+const FETCH_SUB_ISSUES_GRAPHQL = JSON.stringify({ data: { __type: { fields: [{ name: 'subIssues' }] }, repository: {} } });
+
 const CLI_TABLE = [
   { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, printsResolutionNote: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
   { cli: 'compose-subject.js', argv: ['7', '--tag', 'human-approved'], acceptsRepo: true },
@@ -469,6 +489,17 @@ const CLI_TABLE = [
   { cli: 'parent-gate.js', argv: ['--sub-issue', '7', '--work-links', 'body-text', '--risk-floor', 'high'], acceptsRepo: false },
   { cli: 'resolved-refusal.js', argv: ['7'], acceptsRepo: true },
   { cli: 'link-records.js', argv: ['--parent', '7', '--subs', '8'], acceptsRepo: true },
+  // fetch-sub-issues.js: the canned graphql answer serves the schema probe and the
+  // batch (parent 7 absent from `repository` -> retry), so --resolve-retries reaches
+  // the REST call that carries --hostname.
+  { cli: 'fetch-sub-issues.js', argv: ['7', '--resolve-retries'], acceptsRepo: true, hostnameLines: (l) => / ARGS=api --paginate /.test(l), canned: { 'api-graphql': FETCH_SUB_ISSUES_GRAPHQL } },
+  // backlog-grant-gate.js reads origin only under work-links: native. Its typed --repo
+  // re-routes the native calls only (nativeRunnerFor); the issue lists keep following
+  // the origin through the seam.
+  { cli: 'backlog-grant-gate.js', argv: [], setup: setupGrantGate, acceptsRepo: true, typedRepoLines: (l) => / ARGS=api (?:graphql|--paginate) /.test(l), hostnameLines: (l) => / ARGS=api --paginate /.test(l), canned: { 'api-graphql': '{"data":{"__type":{"fields":[]}}}', 'issue-list': '[{"number":1,"state":"CLOSED","labels":[]}]' } },
+  { cli: 'apply-refine-labels.js', argv: ['actions.json'], setup: writeJsonFile('actions.json', [{ issue: 7, addLabels: ['ready'] }]), acceptsRepo: true },
+  // --dry-run keeps file-feedback to its one repo-addressed read (the dedup search).
+  { cli: 'file-feedback.js', argv: ['--drafts', 'drafts.json', '--dry-run'], setup: writeJsonFile('drafts.json', [{ title: 'T', body: 'B', fingerprintBasis: { component: 'c', summary: 's' } }]), acceptsRepo: true, canned: { 'issue-list': '[]' } },
 ];
 
 for (const row of CLI_TABLE) describeOriginGate(row);

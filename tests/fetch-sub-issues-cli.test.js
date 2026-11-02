@@ -176,6 +176,7 @@ test('--resolve-retries: a failing REST retry call exits 3, names the parent, an
 test('#2240: --resolve-retries on a GitHub Enterprise Server remote threads --hostname into the REST retry call', () => {
   const d = deps({
     remoteUrl: () => 'git@ghe.example.com:acme/widget.git',
+    gateDeps: { env: { GH_HOST: 'ghe.example.com' } },
     runner(args) {
       d.calls.push(args);
       const q = args.find((a) => a.startsWith('query='));
@@ -254,6 +255,14 @@ test('#2444 fix: a bare --repo owner/repo still resolves to github.com (unchange
 test('--repo owner/.. is rejected before any gh call (review finding: parseRepo accepts ".." segments)', () => {
   const d = deps({ runner: () => { throw new Error('should not be called'); } });
   assert.strictEqual(run(['5', '--repo', 'owner/..'], d), 2);
+  assert.match(d.err.join(''), /invalid --repo value/);
+  assert.deepStrictEqual(d.calls, []);
+});
+
+// #4933: the origin-derived spec passes the host gate and then meets the same guard.
+test('an origin whose owner is ".." is rejected after the host gate, before any gh call', () => {
+  const d = deps({ remoteUrl: () => 'git@github.com:../r.git', runner: () => { throw new Error('should not be called'); } });
+  assert.strictEqual(run(['5'], d), 2);
   assert.match(d.err.join(''), /invalid --repo value/);
   assert.deepStrictEqual(d.calls, []);
 });

@@ -342,6 +342,7 @@ test('#2240: a GitHub Enterprise Server remote passes the host-qualified --repo 
     throw new Error('unexpected ' + args.join(' '));
   };
   const { deps, out } = cliDeps({ runner, remoteUrl: 'https://ghe.example.com/acme/w.git', readDraftsFile: () => [draft] });
+  deps.gateDeps = { env: { GH_HOST: 'ghe.example.com' } };
   const code = run(['--drafts', 'drafts.json'], deps);
   assert.equal(code, 0);
   assert.deepEqual(out.join('').trim().split('\n'), ['filed #900']);

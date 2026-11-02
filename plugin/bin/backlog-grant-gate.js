@@ -30,7 +30,8 @@
 // short-circuit is a normal outcome, not a failure). Exit 1: a required `gh`
 // or `git` call failed (message names which one). Exit 2: malformed
 // invocation, `gh` absent, or (native work-links only) owner/repo could not
-// be resolved.
+// be resolved or the origin host has no GitHub signal (refused before any
+// gh call, #4933).
 'use strict';
 
 const fs = require('fs');
@@ -38,8 +39,8 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { resolvePolicyKeys } = require('./lib/policy-schema');
 const {
-  parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost,
-} = require('./lib/repo-resolve');
+  parseRepo, ghAvailable, remoteUrl, ghOptions, explicitRepoGhHost, gateOriginRepo,
+} =require('./lib/repo-resolve');
 const { computeOutlook } = require('./lib/backlog-grant-gate/backlog-grant-gate');
 const { LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 
@@ -155,7 +156,13 @@ function run(argv, deps = realDeps) {
   if (workLinks === 'native') {
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    const repoSpec = parseRepo(opts.repo ? (opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : remote);
+    let repoSpec;
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`backlog-grant-gate.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr('backlog-grant-gate.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     // #1443: parseRepo's regex accepts any non-'/' owner/repo segment, including '.'/'..'
     // (#1153 review finding). resolveSubIssueNumbers's REST fallback (lib/backlog-grant-gate/
