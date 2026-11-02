@@ -44,6 +44,7 @@ const MIGRATED_FILES = [
   // #923's remaining skills/** sweep:
   '_shared/github-pr-scan-acceptance.md',
   '_shared/github-pr-scan.md',
+  '_shared/github-pr-scan-triage.md', // #4820: the triage-queue scope split out of github-pr-scan.md
   '_shared/harness-health-analysis.md',
   '_shared/label-bootstrap.md',
   'capture/SKILL.md',

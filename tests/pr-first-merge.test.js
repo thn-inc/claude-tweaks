@@ -61,7 +61,7 @@ test('the precondition gate is the same one condition pr-run-comments.md already
 
 test('the tag mapping preserves both pre-#411 tags plus #715\'s manifesto-authorized tag for /help\'s metric', () => {
   assert.match(MERGE, /`\{tag\}` is `auto-merge`.*`fast-lane`.*`manifesto-authorized`/s);
-  assert.match(MERGE, /github-pr-scan\.md.*triage-queue.*item 3/s);
+  assert.match(MERGE, /github-pr-scan-triage\.md.*triage-queue.*item 3/s);
 });
 
 test('an unrecognized gh pr merge error always takes the conservative ready+comment branch, never a guessed one', () => {
@@ -396,7 +396,7 @@ test('#3028: human-approved is registered in Step 3, named at close-out step 5, 
   const closeOut = read('plugin', 'skills', 'dispatch', 'close-out.md');
   const step5 = closeOut.split('5. **On confirmation — merge.**')[1].split('\n6. ')[0];
   assert.match(step5, /`\{tag\}` = `human-approved`/, 'close-out step 5 names its tag');
-  const scan = read('plugin', 'skills', '_shared', 'github-pr-scan.md');
+  const scan = read('plugin', 'skills', '_shared', 'github-pr-scan-triage.md');
   const item3 = scan.split('3. **Auto-merged this week**')[1].split('```bash')[0];
   assert.match(item3, /`\[human-approved\]`[\s\S]*excluded/, 'triage-queue item 3 documents the exclusion');
   const jq = scan.split('3. **Auto-merged this week**')[1].split('```bash')[1].split('```')[0];

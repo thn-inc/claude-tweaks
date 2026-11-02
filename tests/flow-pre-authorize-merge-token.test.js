@@ -93,7 +93,7 @@ test('every restatement of how lever 13 is set names the token alongside confirm
     'plugin/skills/_shared/auto-mode-contract.md',
     'plugin/skills/_shared/policy-schema.md',
     'plugin/skills/help/policy.md',
-    'plugin/skills/_shared/github-pr-scan.md',
+    'plugin/skills/_shared/github-pr-scan-triage.md',
   ];
   for (const rel of SITES) {
     const text = read(rel);

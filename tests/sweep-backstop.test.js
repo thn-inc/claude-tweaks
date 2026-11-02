@@ -69,7 +69,8 @@ function assertAllSyntaxValid(scripts, label) {
   assert.ok(scripts.length > 0, `expected at least one node -e script in ${label}`);
   for (const [i, script] of scripts.entries()) {
     const tmp = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-syntax-')), `script-${i}.js`);
-    fs.writeFileSync(tmp, script);
+    // A scan fence carries the `{resolved-limit}` placeholder an agent substitutes literally (#4820); `node --check` needs a number.
+    fs.writeFileSync(tmp, script.replaceAll('{resolved-limit}', '1000'));
     assert.doesNotThrow(
       () => execFileSync('node', ['--check', tmp], { stdio: 'pipe' }),
       `${label} script #${i} has a syntax error:\n${script}`,

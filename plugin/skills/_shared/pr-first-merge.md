@@ -321,7 +321,7 @@ gate), `fast-lane` for the interactive single-record short-circuit triggered by 
 label, or `manifesto-authorized` for the same short-circuit triggered instead by the
 `merge-authorization` Manifesto lever with no label present (`wrap-up/review-console.md`,
 `wrap-up/manifesto-authorized-merge.md`) — preserving all three tags' meanings — `/help`'s
-auto-merged-this-week metric (`_shared/github-pr-scan.md` `triage-queue` item 3) keys on all
+auto-merged-this-week metric (`_shared/github-pr-scan-triage.md` `triage-queue` item 3) keys on all
 three. `{issue-list}` is the record numbers — the manifest's `complete` specs only for a bundle
 (#2015; rest release via their own `never-started:`/`abandoned:` reason). `human-approved`:
 `dispatch/close-out.md`'s human-confirmed merge (that metric excludes it). `{scope}`
