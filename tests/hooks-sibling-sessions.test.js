@@ -4,7 +4,9 @@ const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { findConflictingSession, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize } = require('../plugin/bin/lib/hooks/sibling-sessions');
+const {
+  findConflictingSession, findSessionOnWorktree, findLiveClaim, matchesRecordRef, normalizeRecordRef, tokenize,
+} = require('../plugin/bin/lib/hooks/sibling-sessions');
 
 // Frozen `git worktree list --porcelain` fixtures — never live command output,
 // per [IL-80]: the lock-reason format is git's own unversioned implementation
@@ -206,6 +208,79 @@ test('findConflictingSession: self-exclusion survives a symlink in the worktree 
 });
 
 // ─── unit coverage for the token-matching helpers themselves ───────────────
+
+// ---- findSessionOnWorktree: exact branch or path, never tokens ----
+
+const LIVE_LOCK = `locked claude session x (pid ${process.pid} start Fri Aug  7 14:40:15 2026)`;
+const WT_FIX = '/repo/.claude/worktrees/fix';
+const WT_LOGIN = '/repo/.claude/worktrees/fix-login';
+// `branch: null` is a detached worktree. Real porcelain shape, more than one worktree entry.
+function porcelainOf(...entries) {
+  return [
+    'worktree /repo', 'HEAD 1111111111111111111111111111111111111111', 'branch refs/heads/main', '',
+    ...entries.flatMap(({ path: p, branch, lock = LIVE_LOCK }) => [
+      `worktree ${p}`,
+      'HEAD 2222222222222222222222222222222222222222',
+      branch === null ? 'detached' : `branch refs/heads/${branch}`,
+      ...(lock ? [lock] : []),
+      '',
+    ]),
+  ].join('\n');
+}
+const onWorktree = (target, porcelain, opts = {}) => findSessionOnWorktree(target, { run: stubRun(porcelain), sessionId: null, ...opts });
+const LOGIN = { path: WT_LOGIN, branch: 'worktree-fix-login' };
+
+test('findSessionOnWorktree: head worktree-fix versus an in-use worktree-fix-login is null, though the tokens match', () => {
+  const porcelain = porcelainOf(LOGIN);
+  assert.strictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, porcelain), null);
+  assert.ok(findConflictingSession('worktree-fix', { run: stubRun(porcelain), sessionId: null }), 'control: the token read does hit');
+});
+
+test('findSessionOnWorktree: the same head on its own in-use worktree is a hit, past an earlier token match', () => {
+  const porcelain = porcelainOf(LOGIN, { path: WT_FIX, branch: 'worktree-fix' });
+  assert.deepStrictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, porcelain), {
+    path: WT_FIX, branch: 'worktree-fix', pid: process.pid,
+  });
+});
+
+test('findSessionOnWorktree: a branch checked out at another path is a hit', () => {
+  const porcelain = porcelainOf({ path: '/elsewhere/wt', branch: 'worktree-fix' });
+  assert.strictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, porcelain).path, '/elsewhere/wt');
+});
+
+test('findSessionOnWorktree: a path-only match is a hit, with no branch, and on a detached worktree', () => {
+  for (const branch of ['some-other-branch', null]) {
+    const porcelain = porcelainOf({ path: WT_FIX, branch });
+    assert.strictEqual(onWorktree({ branch: null, worktreePath: WT_FIX }, porcelain).path, WT_FIX, String(branch));
+    assert.strictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, porcelain).path, WT_FIX, String(branch));
+  }
+});
+
+test('findSessionOnWorktree: a null branch never matches a detached worktree elsewhere', () => {
+  assert.strictEqual(onWorktree({ branch: null, worktreePath: WT_FIX }, porcelainOf({ path: '/elsewhere/wt', branch: null })), null);
+});
+
+test('findSessionOnWorktree: a stale lock, an unparseable lock and no lock are null', () => {
+  for (const lock of [`locked claude session x (pid ${DEAD_PID} start Fri Aug  7 09:00:00 2026)`, 'locked being edited by hand', null]) {
+    const porcelain = porcelainOf({ path: WT_FIX, branch: 'worktree-fix', lock });
+    assert.strictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, porcelain), null, String(lock));
+  }
+});
+
+test('findSessionOnWorktree: this session\'s own run-state worktree is excluded, an ad-hoc dir\'s is not', () => {
+  const porcelain = porcelainOf({ path: WT_FIX, branch: 'worktree-fix' });
+  const target = { branch: 'worktree-fix', worktreePath: WT_FIX };
+  const listed = (dir, sessionId) => () => [{ dir, state: { sessionId, worktree: WT_FIX } }];
+  const opts = (listRunDirsWithState) => ({ sessionId: 'me', listRunDirsWithState });
+  assert.strictEqual(onWorktree(target, porcelain, opts(listed('/r/2026-10-31T120000-record-1', 'me'))), null);
+  assert.ok(onWorktree(target, porcelain, opts(listed('/r/2026-10-31T120000-record-1', 'other'))), 'another session\'s run');
+  assert.ok(onWorktree(target, porcelain, opts(listed('/r/2026-10-31T120000-adhoc-standalone', 'me'))), 'an ad-hoc dir is no claim');
+});
+
+test('findSessionOnWorktree: fails open on a failed git read, and on an empty target', () => {
+  assert.strictEqual(onWorktree({ branch: 'worktree-fix', worktreePath: WT_FIX }, null), null);
+  assert.strictEqual(onWorktree({ branch: null, worktreePath: null }, porcelainOf({ path: WT_FIX, branch: null })), null);
+});
 
 test('tokenize splits on both "/" and "-" and drops empty segments', () => {
   assert.deepStrictEqual(tokenize('flow-spec-192-193'), ['flow', 'spec', '192', '193']);

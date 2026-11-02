@@ -11,7 +11,7 @@ const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
-const { findConflictingSession } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
+const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
 const { resumeEligibility, refusalDetail } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { MAX_PID } = require('../../../plugin/bin/lib/run-liveness/owner-pid-probe');
 
@@ -92,7 +92,7 @@ function makeEnv(over = {}) {
     cfg.dirs[WT] = ['x'];
   }
   const calls = {
-    gh: [], git: [], fs: [], findSibling: [], readClaim: [], native: [], out: [], err: [],
+    gh: [], git: [], fs: [], findSibling: [], findSiblingOnWorktree: [], readClaim: [], native: [], out: [], err: [],
   };
   const deps = {
     stdout: (s) => calls.out.push(s),
@@ -151,6 +151,10 @@ function makeEnv(over = {}) {
     findSibling: (ref, opts) => {
       calls.findSibling.push({ ref, opts });
       return cfg.sibling ? cfg.sibling(ref, opts) : null;
+    },
+    findSiblingOnWorktree: (target, opts) => {
+      calls.findSiblingOnWorktree.push({ target, opts });
+      return cfg.siblingOnWorktree ? cfg.siblingOnWorktree(target, opts) : null;
     },
     listRunDirsWithState: () => cfg.runDirs,
     probes: {
@@ -242,11 +246,13 @@ test('a head with no worktree- prefix derives its worktree, each slash a path se
   assert.equal(r.json.worktreePath, wt);
 });
 
-test('AC2.1: no open closing PR returns no-pr, and a mention-only PR never reaches the connection', () => {
+test('AC2.1: the read asks only the closing connection, and a connection with no PR returns no-pr', () => {
   const env = makeEnv();
   env.cfg.prs = [];
-  env.cfg.mentionOnly = [prEntry()]; // a PR that says "see #N": GitHub lists it on the timeline, not this connection
   const r = exec(env);
+  const q = env.calls.gh.find((a) => a[0] === 'api').find((a) => a.startsWith('query='));
+  assert.match(q, /closedByPullRequestsReferences/);
+  assert.doesNotMatch(q, /timelineItems|CROSS_REFERENCED/);
   assert.equal(r.code, 3);
   assert.deepStrictEqual(r.json, {
     eligible: false, issue: N, reason: 'no-pr',
@@ -305,6 +311,8 @@ test('a connection reply that cannot prove its shape is a failed read, exit 4, n
     connection({ pageInfo: { hasNextPage: false }, nodes: null }),
     connection({ nodes: [] }),
     connection({ pageInfo: { hasNextPage: false }, nodes: [null] }),
+    connection({ pageInfo: { hasNextPage: false }, nodes: [{ number: PR }] }),
+    connection({ pageInfo: { hasNextPage: false }, nodes: [{ number: PR, state: null }] }),
   ]) {
     const env = makeEnv();
     env.cfg.prs = prs;
@@ -424,7 +432,7 @@ test('two same-repo PRs on the head branch pass through: exit 3 multiple-prs nam
   assert.deepStrictEqual(env.calls.readClaim, []);
 });
 
-test('a non-array listing -> exit 4', () => {
+test('a reply with no issue in it -> exit 4', () => {
   const env = makeEnv();
   env.cfg.prs = '{"not":"an array"}';
   assert.equal(exec(env).code, 4);
@@ -1134,35 +1142,57 @@ test('worktree present: neither rev-parse nor worktree list is called', () => {
 
 // ---- sibling sessions ----
 
-test('the sibling check reads #N, then the PR head, each with the main root as cwd, the session id and a listing seam', () => {
+test('the sibling check reads #N, then the exact head and worktree, each with the main root as cwd, the session id and a listing seam', () => {
   const env = makeEnv();
   exec(env);
-  assert.deepStrictEqual(env.calls.findSibling.map((c) => c.ref), [`#${N}`, HEAD]);
-  for (const { opts } of env.calls.findSibling) {
+  assert.deepStrictEqual(env.calls.findSibling.map((c) => c.ref), [`#${N}`]);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree.map((c) => c.target), [{ branch: HEAD, worktreePath: WT }]);
+  for (const { opts } of [...env.calls.findSibling, ...env.calls.findSiblingOnWorktree]) {
     assert.equal(opts.cwd, MAIN);
     assert.equal(opts.sessionId, SESSION);
     assert.equal(typeof opts.listRunDirsWithState, 'function');
   }
 });
 
-test('a sibling conflict -> exit 3 live-sibling with the open-pr line, and a #N hit never reads the head', () => {
+test('a sibling conflict -> exit 3 live-sibling with the open-pr line, and a #N hit never runs the exact read', () => {
   const env = makeEnv();
   env.cfg.sibling = () => ({ path: '/elsewhere' });
   const r = exec(env);
   assert.equal(r.code, 3);
   assert.equal(r.json.reason, 'live-sibling');
   assert.match(r.json.line, /already has an open PR/);
-  assert.deepStrictEqual(env.calls.findSibling.map((c) => c.ref), [`#${N}`]);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree, []);
 });
 
-test('a sibling matching only a head with no record number -> live-sibling', () => {
+test('a session exactly on a head with no record number -> live-sibling', () => {
   const env = makeEnv();
   env.cfg.prs = [prEntry({ headRefName: 'fix/thing' })];
-  env.cfg.sibling = (ref) => (ref === 'fix/thing' ? { path: '/elsewhere' } : null);
+  env.cfg.siblingOnWorktree = ({ branch }) => (branch === 'fix/thing' ? { path: '/elsewhere' } : null);
   const r = exec(env);
   assert.equal(r.code, 3);
   assert.equal(r.json.reason, 'live-sibling');
   assert.equal(r.json.headRefName, 'fix/thing');
+});
+
+test('a throwing exact sibling read -> exit 4', () => {
+  const env = makeEnv();
+  env.cfg.siblingOnWorktree = () => { throw new Error('x'); };
+  assert.equal(exec(env).code, 4);
+});
+
+test('the exact sibling read keeps the prior run\'s own-lock exclusion, through the real function', () => {
+  const lock = `locked claude (pid ${process.pid})`;
+  const porcelain = [`worktree ${MAIN}`, `HEAD ${OID}`, 'branch refs/heads/main', '', `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, ''].join('\n');
+  const real = (env) => {
+    env.deps.findSiblingOnWorktree = (target, opts) => findSessionOnWorktree(target, { ...opts, run: () => porcelain });
+  };
+  const own = makeEnv();
+  own.cfg.files[ARCH_STATE] = JSON.stringify({ status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT });
+  real(own);
+  assert.equal(exec(own).code, 0);
+  const other = makeEnv();
+  real(other);
+  assert.equal(exec(other).json.reason, 'live-sibling', 'control: the prior run recorded another session');
 });
 
 test('a throwing sibling check -> exit 4', () => {
@@ -1336,28 +1366,30 @@ test('--bound-run with no worktree stamped on the bound run, or no entry for it,
   }
 });
 
-test('--bound-run: a sibling matching only the bound worktree\'s relative path -> exit 3 live-sibling', () => {
+test('--bound-run: a session exactly on the stamped worktree -> exit 3 live-sibling; the read names the path and no branch', () => {
   const wt = path.join(MAIN, '.claude', 'worktrees', 'fix', 'thing');
   const env = makeEnv();
   env.cfg.runDirs = [{ dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: wt } }];
-  env.cfg.sibling = (ref) => (ref === 'fix/thing' ? { path: wt } : null);
+  env.cfg.siblingOnWorktree = ({ worktreePath }) => (worktreePath === wt ? { path: wt } : null);
   const r = exec(env, BOUND);
   assert.equal(r.code, 3);
   assert.equal(r.json.reason, 'live-sibling');
-  assert.deepStrictEqual(env.calls.findSibling.map((c) => c.ref), [`#${N}`, 'fix/thing']);
+  assert.equal(r.json.line, `#${N} has another worktree in use by a live session (${wt}) — stop this resume, then run /claude-tweaks:dispatch resume #${N} once that session ends`);
+  assert.deepStrictEqual(env.calls.findSiblingOnWorktree.map((c) => c.target), [{ branch: null, worktreePath: wt }]);
+  assert.equal(env.calls.findSiblingOnWorktree[0].opts.cwd, MAIN);
 });
 
-test('--bound-run: a #N sibling hit never reads the worktree name, and a worktree outside .claude/worktrees has none to read', () => {
+test('--bound-run: a #N sibling hit never runs the exact read; a throwing exact read -> exit 4', () => {
   const hit = makeEnv();
   hit.cfg.runDirs = [NEW_RUN_ENTRY];
   hit.cfg.sibling = () => ({ path: WT });
   assert.equal(exec(hit, BOUND).json.reason, 'live-sibling');
-  assert.deepStrictEqual(hit.calls.findSibling.map((c) => c.ref), [`#${N}`]);
+  assert.deepStrictEqual(hit.calls.findSiblingOnWorktree, []);
 
-  const outside = makeEnv();
-  outside.cfg.runDirs = [{ dir: NEW_RUN, state: { status: 'active', sessionId: SESSION, worktree: '/elsewhere/wt' } }];
-  assert.equal(exec(outside, BOUND).code, 0);
-  assert.deepStrictEqual(outside.calls.findSibling.map((c) => c.ref), [`#${N}`]);
+  const thrown = makeEnv();
+  thrown.cfg.runDirs = [NEW_RUN_ENTRY];
+  thrown.cfg.siblingOnWorktree = () => { throw new Error('x'); };
+  assert.equal(exec(thrown, BOUND).code, 4);
 });
 
 test('--bound-run with nothing else bound -> exit 0 {concurrent:false}; no gh, no verdict', () => {
@@ -1576,7 +1608,7 @@ test('--bound-run refused by resolveTarget (not anchored / missing) -> exit 2', 
 
 test('realDeps carries the production seams the CLI needs', () => {
   for (const key of ['ghAvailable', 'gh', 'git', 'mainRoot', 'readClaim', 'exists', 'readdir', 'readFile', 'findSibling',
-    'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
+    'findSiblingOnWorktree', 'listRunDirsWithState', 'probes', 'workLinks', 'fetchNative', 'resolveTarget', 'now', 'stdout', 'stderr']) {
     assert.ok(realDeps[key] !== undefined, key);
   }
   assert.equal(typeof realDeps.probes.pidAlive, 'function');

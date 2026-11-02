@@ -23,8 +23,9 @@
 //                .claude-tweaks/pipelines/ (a worktree-local shadow is refused, [IL-127]); the run's
 //                own binding excludes its worktree lock from the sibling check, so a second resume
 //                that bound first shows up in the run-dir scan.
-//   The sibling check reads `#N`, then, on no hit, the head (verdict) or the bound worktree's path
-//   relative to .claude/worktrees (--bound-run), so a worktree with no record number is still seen.
+//   The sibling check reads `#N` by token, then, on no hit, an exact read of the head and derived
+//   worktree (verdict) or the stamped worktree (--bound-run), so a worktree with no record number is
+//   still seen and a head sharing tokens with an unrelated session is not refused over it.
 //   The run-dir scan: a non-terminal top-level run dir (never an ad-hoc one) bound to the stalled
 //   worktree is `concurrent-resume`, or `stale-bound-run` — naming hooks.js close-run on that dir —
 //   when its owner is provably dead by the same owner ladder the prior run's probe uses (an owner
@@ -61,7 +62,7 @@ const { ghAvailable, ghOptions } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS, GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES } = require('./lib/shared-primitives');
 const { mainCheckoutRoot, safeReal } = require('./lib/hooks/worktree-detect');
 const { parseWorktreeList } = require('./lib/hooks/worktree-reap');
-const { findConflictingSession } = require('./lib/hooks/sibling-sessions');
+const { findConflictingSession, findSessionOnWorktree } = require('./lib/hooks/sibling-sessions');
 const { listRunDirsWithState, isAdHocRunDir } = require('./lib/hooks/context');
 const { NON_TERMINAL } = require('./lib/hooks/run-integrity');
 const { DEFAULT_PROBES } = require('./lib/run-liveness/probes');
@@ -74,9 +75,9 @@ const {
 
 const USAGE = 'usage: dispatch-resume.js --issue <N> [--bound-run <run-dir>] [--help]\n'
   + '  prints one JSON line: {eligible:true,…} (exit 0) or\n'
-  + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName} (exit 3)\n'
+  + '  {eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName[, liveRun]} (exit 3)\n'
   + '  --bound-run <dir>  re-check concurrency after the new run dir is bound: {concurrent:false} (exit 0)\n'
-  + '                     or {concurrent:true, reason, line} (exit 3)\n'
+  + '                     or {concurrent:true, reason, line[, liveRun]} (exit 3)\n'
   + '  exit 2 malformed invocation / gh absent / repo or main checkout unresolved; exit 4 transient read failure\n';
 
 // The closing connection, so a PR that only mentions the record is never listed and any head resolves.
@@ -136,6 +137,7 @@ const realDeps = {
   readdir: (p) => fs.readdirSync(p),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   findSibling: findConflictingSession,
+  findSiblingOnWorktree: findSessionOnWorktree,
   listRunDirsWithState,
   probes: DEFAULT_PROBES,
   sessionId: process.env.CLAUDE_CODE_SESSION_ID || '',
@@ -207,7 +209,9 @@ function listPrs(ctx) {
   const connection = issue.closedByPullRequestsReferences;
   if (!isObject(connection) || !Array.isArray(connection.nodes)) throw new Exit(4, 'closing PR read: nodes was not an array');
   if (connection.pageInfo?.hasNextPage !== false) throw new Exit(4, `closing PR read: more than 100 PRs close #${ctx.issue}, or the page state is missing`);
-  if (!connection.nodes.every(isObject)) throw new Exit(4, 'closing PR read: a node was unreadable');
+  if (!connection.nodes.every((node) => isObject(node) && typeof node.state === 'string')) {
+    throw new Exit(4, 'closing PR read: a node was unreadable or carried no state');
+  }
   const thisRepo = `${owner}/${repo}`.toLowerCase();
   return connection.nodes.filter((node) => node.state === 'OPEN').map((node) => ({
     url: node.url,
@@ -428,18 +432,15 @@ function listingWithPriorRun(ctx, prior) {
   return (cwd) => [...deps.listRunDirsWithState(cwd), ...entry];
 }
 
-function siblingConflict(ctx, listing, ref) {
-  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId };
-  if (listing) opts.listRunDirsWithState = listing;
-  return read('sibling-session check', () => ctx.deps.findSibling(ref, opts));
+function siblingConflict(ctx, listing) {
+  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId, listRunDirsWithState: listing };
+  return read('sibling-session check', () => ctx.deps.findSibling(`#${ctx.issue}`, opts));
 }
 
-// The worktree's path relative to .claude/worktrees, in the `/` form the sibling check tokenizes on;
-// null for a worktree outside it, which has no such name to match on.
-function worktreeRelativeName(ctx, worktree) {
-  const rel = path.relative(normalizePath(path.join(ctx.mainRoot, '.claude', 'worktrees')), normalizePath(worktree));
-  if (rel === '' || rel === '..' || rel.startsWith(`..${path.sep}`) || path.isAbsolute(rel)) return null;
-  return rel.split(path.sep).join('/');
+// The exact read, for a worktree with no record number to match: `branch` null reads the path alone.
+function siblingOnWorktree(ctx, listing, branch, worktreePath) {
+  const opts = { cwd: ctx.mainRoot, sessionId: ctx.deps.sessionId, listRunDirsWithState: listing };
+  return read('sibling-session check', () => ctx.deps.findSiblingOnWorktree({ branch, worktreePath }, opts));
 }
 
 function parseBranchHeader(header) {
@@ -559,8 +560,8 @@ function runVerdict(ctx) {
 
   const prior = classifyPriorRun(ctx, runId);
   const priorListing = listingWithPriorRun(ctx, prior);
-  const siblingLive = siblingConflict(ctx, priorListing, `#${issue}`) !== null
-    || siblingConflict(ctx, priorListing, pr.headRefName) !== null;
+  const siblingLive = siblingConflict(ctx, priorListing) !== null
+    || siblingOnWorktree(ctx, priorListing, pr.headRefName, ctx.worktreePath) !== null;
   const wt = readWorktreeState(ctx);
   const local = wt.exists ? { localBranchSha: null, branchCheckedOutAt: null } : readLocalBranch(ctx, pr.headRefName);
 
@@ -628,7 +629,7 @@ function runBound(ctx, boundRun) {
     });
     return 3;
   };
-  const conflict = siblingConflict(ctx, deps.listRunDirsWithState, `#${issue}`);
+  const conflict = siblingConflict(ctx, deps.listRunDirsWithState);
   if (conflict !== null) return liveSibling(conflict);
 
   const listing = listRuns(ctx);
@@ -638,9 +639,8 @@ function runBound(ctx, boundRun) {
   if (worktree === null) throw new Exit(4, `--bound-run ${boundRun}: the run has no stamped worktree to re-check`);
   ctx.worktreePath = worktree;
 
-  const name = worktreeRelativeName(ctx, worktree);
-  const headConflict = name === null ? null : siblingConflict(ctx, deps.listRunDirsWithState, name);
-  if (headConflict !== null) return liveSibling(headConflict);
+  const onWorktree = siblingOnWorktree(ctx, deps.listRunDirsWithState, null, worktree);
+  if (onWorktree !== null) return liveSibling(onWorktree);
 
   const hit = boundRunConflict(ctx, [bound], listing);
   if (hit !== null) {
