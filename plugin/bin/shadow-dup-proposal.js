@@ -24,6 +24,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const { lstatType } = require('./lib/path-guard');
 const { resolveTarget, sanitizeId } = require('./lib/stage-item/write');
 const { composeShadowDupProposal } = require('./lib/console/shadow-dup-proposal');
 const { SHADOW_DUP_RE, runIdOf } = require('./lib/console/resolve');
@@ -48,11 +49,29 @@ function parseArgs(argv) {
 
 // The copy and anchor are quoted verbatim into a filed record, so a leaf symlink
 // in staged/ must never pull an outside file in: O_NOFOLLOW makes opening one fail
-// (ELOOP), which reads as an unreadable copy or a missing anchor. (0 where the
-// platform has no such flag.)
-function readNoFollow(p) {
-  const fd = fs.openSync(p, fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW || 0));
-  try { return fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+// (ELOOP), which reads as an unreadable copy or a missing anchor. Where the platform
+// defines no O_NOFOLLOW (win32), the leaf is lstat'd before the open and refused if
+// it is a symlink; after the open the fd's dev/ino (bigint, so a 64-bit win32 file
+// ID is not rounded) is compared with a fresh lstat of the leaf, so a leaf swapped
+// for a symlink in the window is refused, as writeInsideRoot does on the write side.
+function readNoFollow(p, { constants = fs.constants } = {}) {
+  const { O_RDONLY, O_NOFOLLOW } = constants;
+  if (typeof O_NOFOLLOW === 'number') {
+    const fd = fs.openSync(p, O_RDONLY | O_NOFOLLOW);
+    try { return fs.readFileSync(fd, 'utf8'); } finally { fs.closeSync(fd); }
+  }
+  const before = lstatType(p);
+  if (before.type === 'symlink') throw new Error(`refusing to read ${p}: it is a symlink`);
+  if (before.type === 'unreadable') throw new Error(`refusing to read ${p}: cannot inspect it (${before.code})`);
+  const fd = fs.openSync(p, O_RDONLY);
+  try {
+    const opened = fs.fstatSync(fd, { bigint: true });
+    const after = fs.lstatSync(p, { bigint: true });
+    if (after.isSymbolicLink() || opened.dev !== after.dev || opened.ino !== after.ino) {
+      throw new Error(`refusing to read ${p}: it is a symlink`);
+    }
+    return fs.readFileSync(fd, 'utf8');
+  } finally { fs.closeSync(fd); }
 }
 
 const realDeps = {
