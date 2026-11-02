@@ -160,8 +160,9 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" delete-ledger --run "$RUN_DIR"
 This is a delete, so it takes the rule's writer branch: `delete-ledger` resolves through
 `bin/lib/wrap-up/ledger-write.js`'s `resolveLedgerPath` — ownership-aware, never a glob, failing
 closed on a ledger it cannot attribute to this run. Handle its printed report exactly as
-`cleanup-procedures.md`'s Item 2 paragraph does (the verb always exits 0 — read the report, not
-the exit code). On `deleted ledger {path}`, take `{path}` as `LEDGER_FILE` and test it with
+`cleanup-procedures.md`'s Item 2 paragraph does (the verb exits 0 on every printed report — read
+the report, not the exit code; an exception exit 1 with no report on stdout is handled like a
+non-`deleted` report, #4932). On `deleted ledger {path}`, take `{path}` as `LEDGER_FILE` and test it with
 `git -C "$WORKTREE_PATH" ls-files --error-unmatch -- "$LEDGER_FILE"` (the verb has already unlinked the
 file, but a tracked path stays in the index, so exit 0 means tracked). Only a tracked
 `docs/plans/` path gets the deletion staged and committed; a run-dir `ledger.md` is gitignored and
