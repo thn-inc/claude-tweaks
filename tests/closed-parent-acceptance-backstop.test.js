@@ -339,6 +339,68 @@ test('AC2.1: Shape 7 prints no row for a #4466-closed or below-floor local paren
   assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
 });
 
+// #4802: a local-files reader of the close heading requires the one exported regex. The excerpts
+// are the bytes each fence carried before the change, so a green pin is proven able to go red.
+const PRE_4802_SHAPE_7 = `  const { TIERS } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/record.js');
+      belowFloorClose: /^## Closed below the oversight floor\\s*$/m.test(p.body || ''),`;
+const PRE_4802_CLOSE = `const { readRecord, writeRecord, closeRecord } = require('\${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');
+  if (!/^## Closed below the oversight floor\\s*$/m.test(parentRecord.body)) {`;
+const SHARED_REQUIRE = "const { HEADING_LINE_RE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');";
+
+function localFilesCloseSection() {
+  return section(read('wrap-up/verification-brief-parent-gate.md'), '**5. `work-backend: local-files`**', 'A parent whose `facets.closed` is already set');
+}
+
+function assertSharedHeadingRe(text, use) {
+  assert.ok(!text.includes('/^## Closed below the oversight floor'), 'inline copy of the heading regex');
+  assert.ok(text.includes(SHARED_REQUIRE), 'require of the exported regex');
+  assert.ok(text.includes(use), 'the fence tests through the exported regex');
+}
+
+test('AC1.1: Shape 7 requires the exported heading regex, not a literal', () => {
+  const use = "belowFloorClose: HEADING_LINE_RE.test(p.body || ''),";
+  assertSharedHeadingRe(LOCAL, use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_SHAPE_7, use), /inline copy of the heading regex/);
+});
+
+test('AC1.1: the local-files close requires the exported heading regex, not a literal', () => {
+  const use = 'if (!HEADING_LINE_RE.test(parentRecord.body)) {';
+  assertSharedHeadingRe(localFilesCloseSection(), use);
+  assert.throws(() => assertSharedHeadingRe(PRE_4802_CLOSE, use), /inline copy of the heading regex/);
+});
+
+test('AC1.1: the local-files close fence appends the section once and closes the parent', () => {
+  const m = /```js\r?\n([\s\S]*?)\r?\n```/.exec(localFilesCloseSection());
+  assert.ok(m, 'the local-files close section carries a js fence');
+  const commentFile = path.join(mkTmp('cp-close-'), 'comment.md');
+  fs.writeFileSync(commentFile, MARKER);
+  const script = 'const parentPath = process.argv[1];\n' + m[1]
+    .split('${CLAUDE_PLUGIN_ROOT}').join(PLUGIN_ROOT.replace(/\\/g, '/'))
+    .split('{parent-close-comment}').join(commentFile.replace(/\\/g, '/'));
+  const { readRecord } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'local-store.js'));
+  const heading = '## Closed below the oversight floor';
+  const t = localFixture();
+  const parents = [t.parent(1, 'Fresh'), t.parent(2, 'Marked', { body: 'Parent body.\n\n' + MARKER })];
+  for (const file of parents) {
+    const r = spawnSync('node', ['-e', script, '--', file], { cwd: t.cwd, encoding: 'utf8' });
+    assert.equal(r.status, 0, r.stderr);
+    const rec = readRecord(file);
+    assert.equal(rec.facets.closed, true, file);
+    assert.equal(rec.body.split(heading).length - 1, 1, file);
+  }
+});
+
+test('AC2.1: Shape 7 loads the exported heading regex with no gh on PATH', () => {
+  const t = localFixture();
+  t.parent(9, 'Closed above floor', { closed: true });
+  t.subIssue(91, 9, 'high');
+  const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.toLowerCase() !== 'path'));
+  env.PATH = mkTmp('cp-nopath-');
+  const r = spawnSync(process.execPath, ['-e', scanScript(LOCAL, "'\\t[parent-gate] '"), '--', 'high'], { cwd: t.cwd, env, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.deepEqual(localCols(r.stdout).map((c) => c[1]), [localRow(9, 'Closed above floor')]);
+});
+
 test('Q2: Shape 7 counts a closed local parent with no sub-issues in one warning line', () => {
   const t = localFixture();
   t.parent(10, 'No subs A', { closed: true });

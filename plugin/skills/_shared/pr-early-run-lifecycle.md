@@ -121,6 +121,9 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   gh pr reopen {number} --repo {host}/{owner}/{repo}
   ```
 
+  A zero exit is not proof (#4833): re-run Step 1's `gh pr list` and require the picked PR to read
+  `state: OPEN`.
+
   **Reopen succeeds:** record via `record-pr` and skip creation, same as the OPEN branch above.
   **This log line is mandatory, not optional, for the same reason the reuse-open and no-match
   lines are (#1800)** — and it names `{branch}`, not just `{number}`, so the bookkeeping-stamps
@@ -144,14 +147,23 @@ gh pr list --repo {host}/{owner}/{repo} --head {branch} --state all --json numbe
   {run-id}. Reversibility: n/a.`
 
   **Reopen fails** (the branch was force-pushed out from under it, or some other state GitHub
-  rejects): fall through to creation below. The fresh PR reuses the same title/body template;
-  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a pointer
-  comment already exists on the issue from an earlier attempt that reached far enough to post one
-  (Verification Brief routing, `_shared/pr-run-comments.md`) — update that pointer comment to the
-  new PR via the same find-and-update-by-marker shape, since it would otherwise link to a closed,
-  now-orphaned PR. A failed HARD-GATE run never reaches the brief, so this update is usually a
-  no-op — stated for the rare case a later phase's own failure follows an earlier phase's partial
-  progress.
+  rejects, or the re-list does not read `state: OPEN`): fall through to creation below. A rejected
+  reopen logs the first line; a zero exit whose re-list reads otherwise, or fails, logs the second
+  or third instead (`{error}` writes `failed` as `errored`, so it never reads as a degrade):
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} was rejected; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: reopen of closed PR #{number} for {branch} exited 0 but the PR still reads {state}; creating. Reversibility: n/a.`
+
+  `AUTO {time} — PR-early run lifecycle: could not confirm reopen of closed PR #{number} for {branch} ({error}); creating. Reversibility: n/a.`
+
+  An adopted picked PR is rebound as above. The fresh PR reuses the same title/body template;
+  its new number/url overwrites the stale one via `record-pr` (Step 4), and — only if a legacy
+  pointer comment already exists on the issue, left by a run from before the acceptance packet
+  (new runs post none: the packet sits on the record, `_shared/acceptance-packet.md`) — update that
+  pointer comment to the new PR via the same find-and-update-by-marker shape, since it would
+  otherwise link to a closed, now-orphaned PR. This update is usually a no-op — stated for the
+  rare record that carries one.
 - **A match with `state: MERGED`**: this branch's PR already merged — the record is done. Treat
   as no match and fall through to creation; a fresh run against an already-merged branch is an
   unexpected precondition this file does not need to specially handle beyond not erroring.

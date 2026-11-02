@@ -11,6 +11,7 @@ const { dispositionState, approvalProvenance } = require('../plugin/bin/lib/issu
 const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-breaker');
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
+const { publishPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
@@ -143,6 +144,11 @@ const DEMO_LABEL_READERS = {
     run: (labels) => acceptanceLabelingResult(labels),
     expect: { pending: 'pass', approved: 'fail', 'changes-requested': 'fail', none: 'fail' },
   },
+  'lib/wrap-up/packet-post.js': {
+    what: 'the failed-publish clear, which removes a pending label in either spelling',
+    run: (labels) => failedPublishLabelRemoval(labels),
+    expect: { pending: 'removed', approved: 'absent', 'changes-requested': 'absent', none: 'absent' },
+  },
 };
 
 // Modules that name a demo:* label only inside copy they write for a human to read,
@@ -156,7 +162,11 @@ const DEMO_LABEL_COPY_ONLY = {
   },
 };
 
-const DEMO_MATCH_RE = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/g;
+// One matcher source for both walks. Any DEMO_* identifier counts except the two named
+// non-label constants. The global regex is for matchAll; demoLabelUse builds its own
+// non-global one so exec carries no lastIndex state between calls.
+const DEMO_LABEL_SOURCE = String.raw`\bDEMO_(?!CREDENTIAL_RE\b|ACCOUNT\b)[A-Z0-9_]+\b|\bdemo:`;
+const DEMO_MATCH_RE = new RegExp(DEMO_LABEL_SOURCE, 'g');
 
 // -> [{ line, text }] for every demo:* match in `raw`'s code that is not inside the
 // pinned `copy` text. The copy is removed from its line before matching, so a
@@ -203,16 +213,32 @@ function acceptanceLabelingResult(labels) {
   }
 }
 
+// The packet post fails, so publishPacket clears the pending label. The fake gh refuses
+// --remove-label of an absent label as the real one does, so a clear that reads a
+// spelling wrong reports 'failed' or 'absent', never 'removed'.
+function failedPublishLabelRemoval(labels) {
+  const runner = (args) => {
+    if (args.includes('comments')) return JSON.stringify({ comments: [] });
+    if (args[1] === 'comment') throw new Error('post failed');
+    if (args.includes('labels')) return JSON.stringify({ labels: labels.map((name) => ({ name })) });
+    const at = args.indexOf('--remove-label');
+    if (at !== -1 && labels.includes(args[at + 1])) return '';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  return publishPacket({ issue: 7, bodyFile: 'unused', runner }).labelRemoval;
+}
+
 // -> null when `raw` names no demo:* label, else a short description of how. A
 // stripper mis-parse is reported as a use, never as "this file names nothing".
 function demoLabelUse(raw) {
   const src = stripComments(raw);
   const verdict = stripperVerdict(raw, src);
   if (verdict !== 'ok') return STRIPPER_VERDICT_MESSAGES[verdict];
-  // A bare demo: catches a startsWith / concatenation reader; the bare DEMO_ names
-  // catch a destructured LABELS member. Not DEMO_ alone: candidates-app-store-readiness.js
-  // names DEMO_CREDENTIAL_RE and DEMO_ACCOUNT.
-  const m = /\bDEMO_(?:PENDING|APPROVED|CHANGES_REQUESTED)\b|\bdemo:/.exec(src);
+  // A bare demo: catches a startsWith / concatenation reader; a DEMO_* identifier
+  // catches a destructured LABELS member. Only the exact names DEMO_CREDENTIAL_RE and
+  // DEMO_ACCOUNT (named in candidates-app-store-readiness.js, not labels) are excluded,
+  // so a new label-shaped name such as DEMO_PENDING_BATCH must be classified.
+  const m = new RegExp(DEMO_LABEL_SOURCE).exec(src);
   return m ? m[0] : null;
 }
 
@@ -246,6 +272,7 @@ test('guard self-test: a copy-only module gains a reader outside, or on, the cop
   assert.deepEqual(copyOnlyViolations(copyLine, copy), []);
   assert.deepEqual(copyOnlyViolations(copyLine + "\nconst r = (l) => l.startsWith('demo:');", copy), [{ line: 2, text: 'demo:' }]);
   assert.deepEqual(copyOnlyViolations(copyLine + '\nconst p = LABELS.DEMO_PENDING;', copy), [{ line: 2, text: 'DEMO_PENDING' }]);
+  assert.deepEqual(copyOnlyViolations(copyLine + '\nconst b = DEMO_PENDING_BATCH;', copy), [{ line: 2, text: 'DEMO_PENDING_BATCH' }]);
   assert.deepEqual(copyOnlyViolations(copyLine.replace('.`;', ".`; const r = (l) => l.includes('demo:approved');"), copy), [{ line: 1, text: 'demo:' }]);
 });
 
@@ -324,6 +351,12 @@ test('guard self-test: the reader walk names a planted mis-parse, not "no label 
   assert.equal(demoLabelUse("const r = (labels, s) => labels.includes('demo:' + s);"), 'demo:');
   assert.equal(demoLabelUse('const { DEMO_PENDING } = LABELS;'), 'DEMO_PENDING');
   assert.equal(demoLabelUse('const { DEMO_CHANGES_REQUESTED: bad } = LABELS;'), 'DEMO_CHANGES_REQUESTED');
+  // A new label-shaped name outside the three known ones must be classified too.
+  assert.equal(demoLabelUse('const DEMO_PENDING_BATCH = 1;'), 'DEMO_PENDING_BATCH');
+  assert.equal(demoLabelUse('const n = LABELS.DEMO_LABEL_BATCH;'), 'DEMO_LABEL_BATCH');
+  // The exclusion is exact: a name that merely starts with an excluded constant still counts.
+  assert.equal(demoLabelUse('const DEMO_ACCOUNT_PENDING = 1;'), 'DEMO_ACCOUNT_PENDING');
+  assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE_BATCH = 1;'), 'DEMO_CREDENTIAL_RE_BATCH');
   // Unrelated DEMO_ names are not label readers.
   assert.equal(demoLabelUse('const DEMO_CREDENTIAL_RE = /x/; const DEMO_ACCOUNT = 1;'), null);
   assert.equal(demoLabelUse("// LABELS.DEMO_PENDING and demo:pending in a comment\nconst ok = 1;"), null);
