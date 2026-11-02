@@ -271,10 +271,11 @@ function sha7(sha) {
 }
 
 // `reason` is a claim tombstone's release reason, '' when it carries none. These three end a build
-// without finishing it while its PR stays open: `failed:` (a gate stopped the run), `abandoned:` (the
-// run was discarded unmerged) and `swept: stale claim` (/tidy cleared a dead run's claim). `merged:`
-// and `pr-opened:` finished the build, `shaped:`/`routed:` ran none, and `swept: issue closed` closed
-// the record, so none of those is a resumable stall (_shared/issue-claims.md's Release triggers).
+// without finishing it while its PR stays open: `failed:` (a gate stopped the run; a `failed: shaping`
+// release matches too, but shaping opens no PR), `abandoned:` (the run was discarded unmerged) and
+// `swept: stale claim` (/tidy cleared a dead run's claim). `merged:` and `pr-opened:` finished the
+// build, `shaped:`/`routed:`/`never-started:` ran none, and `swept: issue closed` closed the record,
+// so none of those is a resumable stall (_shared/issue-claims.md's Release triggers).
 function resumableTombstoneReason(reason) {
   return reason.startsWith('failed:') || reason.startsWith('abandoned:') || reason.startsWith('swept: stale claim');
 }
