@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T23:26:42.944Z",
+  "computedAt": "2026-11-02T23:37:27.094Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -585,7 +585,7 @@
       },
       {
         "number": 4350,
-        "updatedAt": "2026-10-31T09:57:56Z",
+        "updatedAt": "2026-11-02T23:36:49Z",
         "state": "OPEN"
       },
       {
@@ -6863,7 +6863,7 @@
         "number": 4350,
         "state": "OPEN",
         "title": "Align the shared fence rule with CommonMark indentation and info-string rules",
-        "updatedAt": "2026-10-31T09:57:56Z",
+        "updatedAt": "2026-11-02T23:36:49Z",
         "facets": {
           "origin": null,
           "risk": "low",
