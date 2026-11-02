@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T21:00:59.388Z",
+  "computedAt": "2026-11-02T21:02:37.543Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -920,7 +920,7 @@
       },
       {
         "number": 3721,
-        "updatedAt": "2026-11-02T20:22:33Z",
+        "updatedAt": "2026-11-02T21:01:33Z",
         "state": "OPEN"
       },
       {
@@ -9976,102 +9976,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
-        "body": "Surface: terminal\n\n## Current State\n\n`hooks.js archive-run --run <dir>` calls `archiveRunDir` (`plugin/bin/lib/reconcile/archive-merged.js`). When the run's `work/` is git-tracked, that function `git mv`s it into `.claude-tweaks/pipelines/archive/` and commits on the main checkout's current branch (`archive-merged.js:1302`, `[reconcile] archive run {runId}`, scoped to its own paths per #2241). The function returns only `{ ok: true, movedEntries }` (`archive-merged.js:1503`), so the CLI (`plugin/bin/hooks.js:1249-1252`) prints the `moved: …` lines and `claude-tweaks: archived {run-id}`. Nothing tells the caller that a commit landed, on which branch, or that it is unpushed.\n\nObserved twice:\n- In a consuming project (the original request below): the silent commit left local `master` ahead of origin, and a deploy script hard-stops on that.\n- In this repo on 2026-10-21: a `/claude-tweaks:sweep` run archived 69 run dirs via `archive-run`. Four of them carried tracked `work/` and produced four unreported `[reconcile] archive run` commits on local `main` (`d48c523e0`, `6cf4efb34`, `325facfe8`, `d447003fe`). They were only noticed through a manual `git log`.\n\n#3396 tracks the broader mechanism (unpushed reconcile archive commits on the main checkout). This record is the output gap only, which is separately fixable.\n\n## Deliverables\n\n1. `archiveRunDir` reports the commit it made: on success with a commit, its return value carries `commit: { sha, branch }` (short sha of the `[reconcile] archive run` commit, plus the checked-out branch name). `commit` is absent when no tracked content moved and no commit ran.\n2. `hooks.js archive-run` prints one line after `archived {run-id}` whenever `commit` is present: `claude-tweaks: committed {sha} on {branch} (not pushed — {n} ahead of {upstream})`. When the branch has no upstream, the parenthetical reads `(no upstream configured)`. When the ahead-count probe fails, it reads `(push state unknown)`. The line never fails the verb.\n3. The reconcile archival path that calls `archiveRunDir` surfaces the same `commit` field in its per-run result entry, so `hooks.js reconcile --json` consumers see it too.\n\n## Acceptance Criteria\n\n1. Archiving a fixture run with tracked `work/` returns `commit.sha` matching `git rev-parse --short HEAD` after the call, and `commit.branch` matching the checked-out branch. Archiving a fixture with no tracked content returns no `commit` field.\n2. `archive-run` stdout on a tracked-work fixture contains a line matching `/^claude-tweaks: committed [0-9a-f]{7,} on \\S+ \\((not pushed — \\d+ ahead of \\S+|no upstream configured|push state unknown)\\)$/m`. On an untracked-only fixture, stdout contains no `committed` line.\n3. The ahead count is correct: a fixture whose branch tracks an upstream at the pre-archive commit reports `1 ahead`.\n4. The reconcile `--json` run entry for an archived tracked-work run includes the `commit` object.\n5. Existing `tests/archive-run-verb.test.js` cases still pass unchanged, including the `moved:`-line cases.\n\n## Release Note\n\narchive-run now tells you when it commits the archive move, on which branch, and whether that commit is still unpushed.\n\n## Technical Approach\n\nCapture the commit's sha right after the successful `commitGit` call in `archiveRunDir`, using `git rev-parse --short HEAD` plus `git symbolic-ref --quiet --short HEAD` through the same `runGit` seam, and thread it into the success return. In `hooks.js`, compute the ahead count with `git rev-list --count @{upstream}..HEAD` (anchored `-C mainRoot`), degrading to the two fallback parentheticals. Reconcile's archive call site copies the field into its result entry. Pushing, or skipping the commit on the integration branch (the request's optional alternatives), is out of scope. Those are behavior changes that belong to #3396's mechanism decision.\n\n### Key Files\n\n- `plugin/bin/lib/reconcile/archive-merged.js` — `archiveRunDir` returns `commit: { sha, branch }` after a successful commit; the reconcile call site (around line 1870) carries it into the run entry\n- `plugin/bin/hooks.js` — `archive-run` prints the committed/ahead line\n- `tests/archive-run-verb.test.js` — new stdout assertions for the committed line\n- `tests/reconcile.test.js` — `archiveRunDir` return-shape assertion for `commit`\n\n## Gotchas\n\n- `archive-run`'s stdout is documented as informational human text that no caller parses (`hooks.js` comment above `archiveRunDir`), so adding a line is not a contract change. The `--json` run-entry field is additive.\n- Resolve the ahead count from `mainRoot`, not from `process.cwd()`. A worktree cwd has a different HEAD (`[IL-127]`-style shadowing).\n- An unborn or detached HEAD has no symbolic ref. Report the branch as `detached` rather than throwing.\n\n## Original request\n\narchive-run: commits the archive move on the current branch without reporting the commit or that it is unpushed\n\n**Summary:** `hooks.js archive-run` commits the archive move on the main checkout's current branch, but its output never mentions the commit or that it is unpushed.\n\n**Kind:** Gap\n\n**Affected component:** `bin/hooks.js archive-run` → `bin/lib/reconcile/archive-merged.js` (around line 1169)\n\n**Use case:**\nAfter `close-run`, `hooks.js archive-run --run <dir>` was run in the main checkout, which was on the integration branch (`master`). It `git mv`'d the run's `work/*-spec.md` files into `pipelines/archive/` and committed them as `[reconcile] archive run <run-id>`. The commit is correctly scoped to its own paths (#2241). The CLI output listed only `moved: …` lines and `archived <run-id>`. It never said that a commit was made, on which branch, or that the commit was not pushed.\n\nIn this project, local `master` being ahead of `origin/master` is a hard stop for the deploy script, which refuses to run until the commit is pushed. The remote host's nightly backup also commits and pushes without pulling, so a push made later, but not deployed, can leave that backup's push rejected. The commit was only noticed by chance (`git worktree list` showed `master` at a new SHA), and it took a push plus a deploy to clear.\n\nRepro:\n1. Main checkout on the integration branch, in sync with origin.\n2. `hooks.js close-run --run <run-dir>`, then `hooks.js archive-run --run <run-dir>` for a run whose `work/` holds tracked spec files.\n3. `git status -sb` now shows `ahead 1`, but nothing in the archive-run output said so.\n\nSuggested change: have `archive-run` (and the reconcile pass that calls the same code) report the commit in its output, for example `committed <short-sha> on <branch> (not pushed — <n> ahead of <upstream>)`. Optionally, offer a `--push` flag, or skip the commit when the checked-out branch is the integration branch and leave the moves staged with a note. At minimum, say that the commit exists.\n\nRelated: #3396 tracks the same symptom in this repo: unpushed `[reconcile] archive run` commits on the main checkout's local `main`. Its Deliverable 2 asks which mechanism leaves them there. This report is that mechanism seen from a consuming project, plus the output gap, which is fixable separately.\n\n**Definition:** Clear\n\n**Plugin version:** 6.145.0\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-07ce1823 -->\n\n## Plan Review Decisions\n\nDecided by the maintainer on 2026-11-02, who accepted these readings in session. Where a decision conflicts with the text above, the decision wins.\n\n- **A commit followed by a refusal: Reading B.** Declare `archiveCommit` before the commit, have `refuseAfterMarker` carry it, have `archive-run` print the committed line on refusal too, and have reconcile's `skipped` entries copy it. Add a test using the stray-file fixture. This extends Deliverable 1 beyond the success path.\n- **`commit` when a post-commit probe fails: Reading A.** AC2 stays as written, so no placeholder sha may reach the line. On a failed sha probe, retry or print a different line. Use `detached` only on `exitCode === 1`.\n",
-        "createdAt": "2026-10-20T12:45:08Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-KA",
-            "name": "enhancement",
-            "description": "New feature or request",
-            "color": "a2eeef"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2oaA",
-            "name": "type:feature",
-            "description": "Type: new capability or enhancement",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEquA",
-            "name": "auto:merge",
-            "description": "Grant: a clean autonomous run may merge unreviewed (stacks on auto:build; alone inert)",
-            "color": "BFDADC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 3721,
-        "state": "OPEN",
-        "title": "archive-run: commits the archive move on the current branch without reporting the commit or that it is unpushed",
-        "updatedAt": "2026-11-02T20:22:33Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": true
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
         }
       }
     ],
