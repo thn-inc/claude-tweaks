@@ -6,8 +6,9 @@
 // (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
 // _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
-// anywhere in the message), a required `Release-Note: {line}` paragraph
-// (single-line by construction — see the inline comment at its push site),
+// anywhere in the message), a required `Release-Note:` paragraph — one
+// `Release-Note: {line}` per bundled record, a bundled note collapsed to one
+// line and a single-record note verbatim (see the inline comment at its push site),
 // `Fixes #n` footer lines (`Refs #n` for a `keepOpen` number: it still counts
 // for everything else, but the merge never closes it, #4199), and a trailing
 // `BREAKING CHANGE: {note}` footer when `breaking` is set. release-please and
@@ -52,7 +53,7 @@ function truncateHead(head, prefix, suffixLength) {
   return cut.replace(/[\s.,;:—-]+$/u, '') + ELLIPSIS;
 }
 
-// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote, fixes?, keepOpen?, tag?, breakingRecords? } -> { title, body }
+// { type, title, number, scope?, breaking?, summary?, migrationNote?, releaseNote (string|string[]), fixes?, keepOpen?, tag?, breakingRecords? } -> { title, body }
 // `scope` is Conventional Commits' optional `type(scope):` noun (#3028) — for a
 // project whose own commit convention requires one; omitted or blank, the
 // subject is unscoped. One token only: `(`/`)`/whitespace would break the
@@ -72,8 +73,13 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
     throw usage(`breaking is true for ${who} but migrationNote is empty — the record needs a non-empty "## Breaking Change" section`);
   }
 
-  const cleanReleaseNote = typeof releaseNote === 'string' ? releaseNote.trim() : '';
-  if (!cleanReleaseNote) throw usage(`releaseNote must be a non-empty string for #${number}`);
+  // releaseNote is one note (string) or one note per bundled record (array, lowest number first, #4634).
+  const noteList = typeof releaseNote === 'string' ? [releaseNote] : Array.isArray(releaseNote) ? releaseNote : [];
+  const trimmedNotes = noteList.map((n) => (typeof n === 'string' ? n.trim() : ''));
+  if (trimmedNotes.length === 0 || trimmedNotes.some((n) => !n)) throw usage(`releaseNote must be a non-empty string for #${number}`);
+  // A single note is written verbatim (multi-line included); a bundle's notes each collapse to one line so
+  // no continuation or blank line can split the one-line-per-record paragraph.
+  const releaseNotes = trimmedNotes.length > 1 ? trimmedNotes.map((n) => n.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).join(' ')) : trimmedNotes;
 
   const cleanScope = typeof scope === 'string' ? scope.trim() : '';
   if (cleanScope && !/^[A-Za-z0-9._/-]+$/.test(cleanScope)) {
@@ -100,12 +106,11 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   const cleanSummary = typeof summary === 'string' ? summary.trim() : '';
   if (cleanSummary) paragraphs.push(cleanSummary);
   if (typeof tag === 'string' && tag.trim()) paragraphs.push(`[${tag.trim()}]`);
-  // Release-Note is a single-line trailer by construction, same as BREAKING CHANGE: below — the
-  // read-side Release-Note: footer regex (bin/lib/release-notes.js, a sibling unit) only ever
-  // captures the first line, regardless of how many lines cleanReleaseNote actually has. This
-  // function performs no truncation itself: it writes cleanReleaseNote verbatim (multi-line
+  // One `Release-Note:` line per bundled record (#4634), all in this one paragraph; the read side
+  // (bin/lib/release-notes.js's extractReleaseNotes) reads one note per line. A bundle's notes were
+  // collapsed to one line each above; a single-record note is written verbatim (multi-line
   // included), exactly like migrationNote/BREAKING CHANGE: already does.
-  paragraphs.push(`Release-Note: ${cleanReleaseNote}`);
+  paragraphs.push(releaseNotes.map((n) => `Release-Note: ${n}`).join('\n'));
   paragraphs.push(fixList.map((n) => `${keep.has(n) ? 'Refs' : 'Fixes'} #${n}`).join('\n'));
   if (breaking) paragraphs.push(`BREAKING CHANGE: ${note}`);
 
