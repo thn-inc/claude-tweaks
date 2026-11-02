@@ -485,7 +485,7 @@ node -e "
   const { IDENTITY_PROBE_FAILED_NOTE } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/parent-gate.js');
   const fetched = ['$PI_NEW', '$PI_LEG', '$PC_NEW', '$PC_LEG'].map(require);
   const login = fs.readFileSync('$PARENTS.login', 'utf8').trim();
-  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login; open-parent rows are unaffected.');
+  if (!login) console.error('WARNING: ' + IDENTITY_PROBE_FAILED_NOTE + ' — gh api user printed no login; open-parent rows are unaffected, an [acceptance-gap] row may be a false positive.');
   const parents = [...new Map(fetched.flat().filter((p) => p.state !== 'CLOSED' || Date.now() - Date.parse(p.closedAt) < 30 * 864e5).map((p) => [p.number, { ...p, comments: undefined, belowFloorClose: (p.comments || []).some((c) => isCloseMarkerComment(c, login)) }])).values()];
   fs.writeFileSync('$PARENTS', JSON.stringify(parents));
   const states = require('$ALL_STATES');
@@ -512,7 +512,7 @@ pre-filter below read each sub-issue's `risk:*` label from data already fetched 
 `gh` round-trip per parent or per sub-issue.
 
 **Report every warning emitted above verbatim beside this scope's rows, and never suppress
-either of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
+any of them.** Both truncations fail in the *quiet* direction — fewer rows, not wrong ones —
 which is exactly the direction a backstop must never fail in silently, since a scope that emits
 nothing is indistinguishable from a repo with no un-gated parents.
 

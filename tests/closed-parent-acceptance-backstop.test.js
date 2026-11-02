@@ -181,7 +181,11 @@ function runFetchBlock(login, { raw = false } = {}) {
 }
 
 test('AC1.1: the parent-gate fetch block merges open and closed parents inside the 30-day window and marks the #4466 close', () => {
-  const parents = runFetchBlock('bot-self');
+  const { res, parentsFile } = runFetchBlock('bot-self', { raw: true });
+  assert.equal(res.status, 0, res.stderr);
+  // A healthy login degrades nothing, so the identity WARNING must not print.
+  assert.deepEqual(lines(res.stderr).filter((l) => l.startsWith('WARNING: ')), [], res.stderr);
+  const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
   assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20]);
   const marked = parents.filter((x) => x.belowFloorClose === true).map((x) => x.number).sort((a, b) => a - b);
   assert.deepEqual(marked, [11, 17]);
@@ -204,6 +208,7 @@ test('AC2.1: the parent-gate fetch block degrades an empty gh login to trusted-a
     const warnings = lines(res.stderr).filter((l) => l.startsWith('WARNING: '));
     assert.equal(warnings.length, 1, JSON.stringify(login) + ': ' + res.stderr);
     assert.ok(warnings[0].includes(IDENTITY_PROBE_FAILED_NOTE), warnings[0]);
+    assert.ok(warnings[0].includes('[acceptance-gap] row may be a false positive'), warnings[0]);
   }
 });
 
