@@ -47,7 +47,7 @@ test('writeJsonFile: creates the containing directory, writes to a tmp path, the
   assert.equal(renameCalls[0].to, '/x/y/store.json');
 });
 
-test('writeJsonFile: two calls use distinct tmp paths within the same process (pid-suffixed, not a fixed name)', () => {
+test('writeJsonFile: the tmp path is derived from the real path and pid-suffixed (two same-process calls reuse one name)', () => {
   const writes = [];
   const mkdirSync = () => {};
   const writeFile = (p) => writes.push(p);
