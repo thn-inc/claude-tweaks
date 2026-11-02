@@ -364,7 +364,10 @@ stays best-effort and the claim read stays the authoritative hold check:
   Next: check the token's access to this repository and the `claims-registry` branch.
   ```
 
-  No `AskUserQuestion` — nothing to choose between. This is the `gh` transport only:
+  `{target}` is `permissionDenied.issue`; `{operation}` and `{reason}` are the same-named fields.
+  No `AskUserQuestion` — nothing to choose between. A dispatched run (`dispatched: true`) also
+  reports `OUTCOME: build-test-blocked`, `ISSUE #{n}: failed:claim-permission-denied` and
+  `STATUS: BLOCKED`, which stops the dispatching firing (`dispatch/SKILL.md`'s Claim permission stop). This is the `gh` transport only:
   the gh-absent MCP claim procedure does not reach this stop, and a refused claim there stays the transient `## Flow: Claim failed` card (#4899).
 - **2** — malformed invocation or missing dependency (a bad `--run-id`/`--targets` value, `gh`
   absent, or a non-timeout repo-slug resolution failure — a real auth error or 404, never a

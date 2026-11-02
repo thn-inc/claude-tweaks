@@ -36,9 +36,11 @@ via `log-decision.js --status AUTO --step "Artifact check" --text "config.yml mi
 
    **`cleanup-only` still does what #298 shipped it to do.** Skips Phase 1 (ESTABLISH/reflection), Phase 2 (ROUTE), Phase 3 (SETTLE), and Phase 4's decide/execute/hand-off logic entirely — runs only `cleanup-procedures.md`'s cleanup items (A-E). `[IL-116]`'s constraint (Section C step 3.5's transitional guard) is unaffected — `cleanup-only` never relaxes it, only the reflection/routing/settle/close content and (when reached via `/flow`) `/flow` Step 5's ledger gate that this teardown call never needed. A materialize-gate failure means no `work/{n}-spec.md` was ever written for this record; `cleanup-procedures.md`'s worktree/carrier-commit check (item 4) already handles that — under `pr-first` it is skipped outright, and otherwise it resolves the run's records (`wrap-up-pack.json`'s `inputs.closingRecords` — Section E produces the pack before item 4 on a `cleanup-only` run — or the worktree mirror's `work/*-spec.md` when the pack could not be produced) and treats an empty result as the no-commits case, no carrier commit, nothing to stamp.
 
+   **Claim permission stop (#4899).** When the first call reported `ISSUE #{n}: failed:claim-permission-denied`, Settle ran no release (`settle-and-merge.md`'s special case: skip steps 1-7), so the paragraph below does not apply, and the firing ends after this call (`SKILL.md`'s Claim permission stop). Append the parenthetical `(claim-permission-denied: skip the claim release)` to the cleanup-only invocation above; `wrap-up/cleanup-procedures-execution.md` Section E skips its release when the invocation names that, because `release-claim.js` would post a false release comment on an absent blob or tombstone for a record this run never claimed.
+
    Settle has already released this group's claim and adjusted its labels by this point, so `cleanup-only`'s Section E release step may run against an already-released claim. That overlap is accepted and recorded here so a duplicate release comment is not later read as a defect — the alternative is the `[IL-116]` hazard above.
 
-Only once that cleanup call returns does this session enter the next group's worktree.
+Only once that cleanup call returns does this session enter the next group's worktree (none after a Claim permission stop: the firing ends).
 
 ## 6. Terminal path when the second call's status line is missing or malformed
 

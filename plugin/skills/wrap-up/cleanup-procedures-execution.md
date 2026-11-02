@@ -330,6 +330,8 @@ If no `ephemeral-server.txt` exists, skip this section silently (the run used an
 
 ## E. Issue claim release (v5.3.0)
 
+**Skip this whole section when the invocation names `claim-permission-denied: skip the claim release` (#4899)** — `/claude-tweaks:dispatch`'s teardown after a `claim-targets.js` exit 7: the CLI already attempted any release, and `release-claim.js` would post a false release comment on a record this run never claimed. Note the skip in the wrap-up summary.
+
 This spec's record is identified whenever this section runs (`SKILL.md` Phase 1 — an argument, a
 branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a materialized header's
 `record:` field). Call that number `<n>`: the pipeline may hold `claims/issue-<n>.json` on

@@ -363,13 +363,19 @@ test('AC6.1: settle-and-merge.md treats the claim permission denied stop as a pr
   assert.match(section, /Claim permission denied/);
   assert.match(section, /flow-step-2\.8-claim-permission-denied/);
   assert.match(section, /failed:claim-permission-denied/);
-  assert.match(section, /claim-permission-denied stop, skip steps 1-7/);
-  assert.match(section, /no release/);
-  assert.match(section, /dispatch-retry-ceiling/);
-  assert.match(section, /no failure comment/);
-  assert.match(section, /no `bot:blocked`/);
-  assert.match(section, /grants untouched/);
   assert.match(section, /since the four are different stop shapes/);
+  assert.match(section, /the claim-permission-denied stop is the exception/);
+  // The exit-6 sentence earlier in the section already carries "dispatch-retry-ceiling" and
+  // "no failure comment", so this stop's own sentence is sliced out before asserting on it.
+  const stopStart = section.indexOf('For the claim-permission-denied stop');
+  assert.ok(stopStart !== -1, 'the claim-permission-denied sentence should exist');
+  const stop = section.slice(stopStart);
+  assert.match(stop, /skip steps 1-7/);
+  assert.match(stop, /no release/);
+  assert.match(stop, /dispatch-retry-ceiling/);
+  assert.match(stop, /no failure comment/);
+  assert.match(stop, /no `bot:blocked`/);
+  assert.match(stop, /grants untouched/);
 });
 
 test('the express call reports the claim permission denied line (#4899)', () => {
@@ -384,7 +390,33 @@ test('flow/claim-targets.md states the MCP claim path is not this stop (#4899)',
   const start = content.indexOf('- **7**');
   assert.ok(start !== -1, 'exit-7 bullet should exist');
   const bullet = content.slice(start, content.indexOf('\n- **2**', start));
-  assert.match(bullet, /gh-absent[^\n]*this stop|MCP[^\n]*transient[^\n]*#4899/);
+  assert.match(bullet, /gh-absent[^\n]*this stop/);
+  assert.match(bullet, /MCP[^\n]*transient/);
+  assert.match(bullet, /OUTCOME: build-test-blocked/);
+  assert.match(bullet, /ISSUE #\{n\}: failed:claim-permission-denied/);
+  assert.match(bullet, /STATUS: BLOCKED/);
+  assert.match(bullet, /`\{target\}` is `permissionDenied\.issue`/);
+});
+
+test('a dispatched first call learns the exact gate value, and teardown skips the claim release (#4899)', () => {
+  assert.match(read('plugin/skills/dispatch/task-prompt.md'), /exit 7 uses the gate value `claim-permission-denied`, exactly/);
+  const gate = read('plugin/skills/dispatch/two-call-gate.md');
+  const start = gate.indexOf('**Claim permission stop (#4899).**');
+  assert.ok(start !== -1, 'two-call-gate.md should carry the Claim permission stop paragraph');
+  const paragraph = gate.slice(start, gate.indexOf('\n\n', start));
+  assert.match(paragraph, /\(claim-permission-denied: skip the claim release\)/);
+  assert.match(paragraph, /does not apply/);
+  assert.match(gate, /none after a Claim permission stop/);
+  const sectionE = read('plugin/skills/wrap-up/cleanup-procedures-execution.md');
+  assert.match(sectionE, /Skip this whole section when the invocation names `claim-permission-denied: skip the claim release`/);
+});
+
+test('dispatch/SKILL.md loop, move-on and close-out sites carve out the Claim permission stop (#4899)', () => {
+  const skill = read('plugin/skills/dispatch/SKILL.md');
+  assert.match(skill, /the ranking returns `null`, or a Claim permission stop ends the firing/);
+  assert.match(skill, /move straight to the next group \(none after a Claim permission stop\)/);
+  assert.match(skill, /the repo-wide infra-outage stop, the Claim permission stop, a queue-pull/);
+  assert.ok(Buffer.byteLength(skill) < 52500, 'dispatch/SKILL.md must stay under 52,500 B');
 });
 
 test('AC7.1: dispatch/SKILL.md stops the firing on a claim permission denied stop, in every selection form (#4899)', () => {
@@ -415,8 +447,8 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
     return entry.name.endsWith(ext) ? [full] : [];
   });
   const files = [
-    ...walk(path.join(REPO_ROOT, 'plugin/skills'), '.md'),
-    ...walk(path.join(REPO_ROOT, 'plugin/bin'), '.js'),
+    ...walk(path.join(REPO_ROOT, 'plugin'), '.md'),
+    ...walk(path.join(REPO_ROOT, 'plugin'), '.js'),
     path.join(REPO_ROOT, 'docs/plugin-structure.md'),
     path.join(REPO_ROOT, 'docs/journeys/act-on-a-contested-claim.md'),
   ];
@@ -424,7 +456,10 @@ test('AC8.1: no prose says a claim read or write 401/403 exits 4 (#4899)', () =>
   const offenders = [];
   for (const file of files) {
     readText(file).split('\n').forEach((line, i) => {
-      if (/(claim read( or write)?|claim write|401\/403)[^.\n]{0,80}\bexits? 4\b/i.test(line)) {
+      if (
+        /(claim read( or write)?|claim write|401\/403)[^.\n]{0,80}\bexits? 4\b/i.test(line)
+        || /\bexits? 4\b[^.\n]{0,80}(refused|401\/403)[^.\n]{0,80}claim/i.test(line)
+      ) {
         offenders.push(`${path.relative(REPO_ROOT, file)}:${i + 1}`);
       }
     });
