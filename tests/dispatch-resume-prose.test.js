@@ -387,6 +387,7 @@ const STEP_2_CLAIMS = [
   ['refusal shape', /\{eligible:false, issue, reason, line, prNumbers, disposition, remedy, headRefName\}/],
   ['liveRun on a refusal', /\(plus `liveRun: true` when a provably live owner refused it\)/],
   ['a non-draft PR never takes close', /a non-draft PR is never told to close, so a foreign, multi-record or cross-repo one reads `close-out` or review-by-hand/],
+  ['a non-draft among several PRs reads review by hand', /more than one open PR closes it \(close the extra one; a non-draft among them reads review by hand\)/],
   ['no-pr keeps the plain dispatch remedy', /no open PR closes it \(a plain dispatch applies\)/],
   ['exact head and worktree sibling read', /an exact match on the PR's head and worktree \(`findSessionOnWorktree`\)/],
 ];
@@ -410,11 +411,35 @@ test('resume.md no longer finds the PR from the fixed head', () => {
   }
 });
 
-test('close-out.md: close-out #N works with no claim held, taking the PR from the resume verdict', () => {
-  const rows = CLOSE_OUT.split(/\r?\n/).filter((l) => l.startsWith('| `close-out #N[,#M,...]` |'));
+const closeOutRow = (text) => {
+  const rows = text.split(/\r?\n/).filter((l) => l.startsWith('| `close-out #N[,#M,...]` |'));
   assert.strictEqual(rows.length, 1, 'expected exactly one `close-out #N` table row');
-  assertPinned(rows[0], /with no claim held \(a stuck record's released claim\), take the PR from `bin\/dispatch-resume\.js --issue \{N\}`: `prNumber` when eligible, else its single `prNumbers` entry, and report and stop when it names none/, 'no-claim route');
-  assertPinned(rows[0], /from its still-held claim/, 'the held-claim route is kept');
+  return rows[0];
+};
+// The no-claim route (amendment 6, narrowed by the fix-round-1 ruling): one pin per clause.
+const NO_CLAIM_CLAIMS = [
+  ['the held-claim route is kept', /from its still-held claim/],
+  ['the no-claim route takes the PR from the verdict', /with no claim held \(a stuck record's released claim\), take the PR from `bin\/dispatch-resume\.js --issue \{N\}` — `prNumber` when eligible, else its single `prNumbers` entry/],
+  ['a refused verdict is accepted only when its remedy names close-out', /only when the refused verdict's `remedy` names `\/claude-tweaks:dispatch close-out #\{N\}`/],
+  ['any other verdict prints its remedy or line and stops', /any other verdict \(several PRs, a by-hand or close remedy, no PR, a failed read\) prints the verdict's `remedy` or `line` and stops for that record/],
+  ['the whole-list search stays ruled out', /rather than searching the whole open-PR list: from its still-held claim/],
+];
+for (const [label, re] of NO_CLAIM_CLAIMS) {
+  test(`close-out.md close-out #N: ${label}`, () => assertPinned(closeOutRow(CLOSE_OUT), re, label));
+}
+
+test('close-out.md close-out #N: dropping the remedy condition or the stop goes red with its own message', () => {
+  const row = closeOutRow(CLOSE_OUT);
+  const drop = (clause) => {
+    const mutated = row.replace(clause, '');
+    assert.notStrictEqual(mutated, row, 'control: the clause must be present to be dropped');
+    return mutated;
+  };
+  const [, , [, conditionRe], [, stopRe]] = NO_CLAIM_CLAIMS;
+  const condition = row.match(/ only when the refused verdict's `remedy` names `[^`]+`/)[0];
+  const stop = row.match(/; any other verdict \([^)]*\) prints the verdict's `remedy` or `line` and stops for that record/)[0];
+  assert.throws(() => assertPinned(drop(condition), conditionRe, 'remedy condition'), /remedy condition: missing/);
+  assert.throws(() => assertPinned(drop(stop), stopRe, 'stop'), /stop: missing/);
 });
 
 // ---- task-prompt.md ---------------------------------------------------------------------------
