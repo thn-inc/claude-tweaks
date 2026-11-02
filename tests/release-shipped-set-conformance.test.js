@@ -22,8 +22,9 @@ function assertShippedSetRule(text, label) {
   for (const [name, clause] of Object.entries(CLAUSES)) {
     assert.ok(text.includes(clause), `${label}: shipped-set clause "${name}" missing`);
   }
-  assert.ok(!text.includes('One line per `(#N)` suffix'), `${label}: still states the suffix-only rule`);
-  assert.ok(!text.includes('one entry per distinct `(#N)` suffix'), `${label}: still states the suffix-only rule`);
+  const flat = text.replace(/\s+/g, ' ');
+  assert.ok(!flat.includes('One line per `(#N)` suffix'), `${label}: still states the suffix-only rule`);
+  assert.ok(!flat.includes('one entry per distinct `(#N)` suffix'), `${label}: still states the suffix-only rule`);
 }
 
 function assertKeptOpenRendering(text, label) {
@@ -41,17 +42,26 @@ test('AC8.2: console.md renders unbooked Refs numbers on one nested Kept open (n
 
 test('go-red: dropping any one clause, or restoring the suffix-only rule, fails the assertion', () => {
   for (const [label, text] of [['console.md', CONSOLE], ['bookkeeping.md', BOOKKEEPING]]) {
-    for (const clause of Object.values(CLAUSES)) {
-      assert.throws(() => assertShippedSetRule(text.replace(clause, ''), label));
+    for (const [name, clause] of Object.entries(CLAUSES)) {
+      const mutated = text.replace(clause, '');
+      assert.notStrictEqual(mutated, text, `${label}: clause "${name}" not found to remove`);
+      assert.throws(() => assertShippedSetRule(mutated, label), new RegExp(`clause "${name}" missing`));
     }
-    for (const stale of ['One line per `(#N)` suffix', 'one entry per distinct `(#N)` suffix']) {
-      assert.throws(() => assertShippedSetRule(`${text}\n${stale}`, label));
+    for (const stale of ['One line per `(#N)` suffix', 'one entry per distinct\n`(#N)` suffix']) {
+      assert.throws(() => assertShippedSetRule(`${text}\n${stale}`, label), /still states the suffix-only rule/);
     }
   }
 });
 
+test('AC8: bookkeeping.md holds a number whose Step 4 lookup failed, and a failed re-read writes nothing', () => {
+  assert.ok(BOOKKEEPING.includes('except a number whose Step 4 lookup failed, which Read state below re-reads'));
+  assert.ok(BOOKKEEPING.includes('A re-read that fails the same way is a per-record `FAILED` with the verb `read`, and no write is attempted'));
+});
+
 test('go-red: removing the Kept open line, the unshipped-Refs-numbers phrase or the failed-Refs-lookup sentence fails the AC8.2 assertion', () => {
   for (const part of [KEPT_OPEN_LINE, REFS_NUMBERS_PHRASE, FAILED_REFS_LOOKUP]) {
-    assert.throws(() => assertKeptOpenRendering(CONSOLE.replace(part, ''), 'console.md'));
+    const mutated = CONSOLE.replace(part, '');
+    assert.notStrictEqual(mutated, CONSOLE, `console.md: "${part}" not found to remove`);
+    assert.throws(() => assertKeptOpenRendering(mutated, 'console.md'), /console\.md: .* missing/);
   }
 });

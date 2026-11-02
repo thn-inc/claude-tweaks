@@ -79,8 +79,9 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   else if (Array.isArray(releaseNote)) noteList = releaseNote;
   const trimmedNotes = noteList.map((n) => (typeof n === 'string' ? n.trim() : ''));
   if (trimmedNotes.length === 0 || trimmedNotes.some((n) => !n)) throw usage(`releaseNote must be a non-empty string for #${number}`);
-  // A single note is written verbatim (multi-line included); a bundle's notes each collapse to one line so
-  // no continuation or blank line can split the one-line-per-record paragraph.
+  // A single note is written verbatim (multi-line included), so a single-record merge stays byte-identical to
+  // every earlier one (#4634 AC 2); a bundle's notes each collapse to one line so no continuation or blank line
+  // can split the one-line-per-record paragraph.
   const releaseNotes = trimmedNotes.length > 1 ? trimmedNotes.map((n) => n.split(/[\r\n]+/).map((l) => l.trim()).filter(Boolean).join(' ')) : trimmedNotes;
 
   const cleanScope = typeof scope === 'string' ? scope.trim() : '';
@@ -111,7 +112,8 @@ function composeSubject({ type, title, number, scope, breaking = false, summary,
   // One `Release-Note:` line per bundled record (#4634), all in this one paragraph; the read side
   // (bin/lib/release-notes.js's extractReleaseNotes) reads one note per line. A bundle's notes were
   // collapsed to one line each above; a single-record note is written verbatim (multi-line
-  // included), exactly like migrationNote/BREAKING CHANGE: already does.
+  // included), exactly like migrationNote/BREAKING CHANGE: already does, so the read side only ever
+  // captures its first line.
   paragraphs.push(releaseNotes.map((n) => `Release-Note: ${n}`).join('\n'));
   paragraphs.push(fixList.map((n) => `${keep.has(n) ? 'Refs' : 'Fixes'} #${n}`).join('\n'));
   if (breaking) paragraphs.push(`BREAKING CHANGE: ${note}`);

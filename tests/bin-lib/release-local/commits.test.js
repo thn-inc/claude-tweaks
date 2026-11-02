@@ -150,7 +150,7 @@ test('parseCommit reads whole-line Fixes #N and Refs #N into fixes and refs, in 
   assert.deepStrictEqual([c.fixes, c.refs], [[10, 12], [11]]);
 });
 
-test('parseCommit ignores Fixes/Refs that are not whole lines, and lowercase forms', () => {
+test('parseCommit ignores a Fixes line with trailing text, a Refs not opening its line, and lowercase forms', () => {
   const c = parseCommit({ sha: 'l'.repeat(40), subject: 'fix: y', body: 'Fixes #13 and more\nfixes #14\nSee Refs #15\nrefs #16' });
   assert.deepStrictEqual([c.fixes, c.refs], [[], []]);
 });
@@ -159,6 +159,21 @@ test('parseCommit reads Fixes/Refs lines from a CRLF body', () => {
   const c = parseCommit({ sha: 'm'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\r\n\r\nFixes #10\r\nRefs #11\r\n' });
   assert.deepStrictEqual([c.fixes, c.refs], [[10], [11]]);
 });
+
+test('parseCommit reads a Refs line with trailing text as kept open, so its record is never booked', () => {
+  const c = parseCommit({ sha: 'o'.repeat(40), subject: 'chore: y (#20)', body: 'Refs #3351 — wrap-up cleanup item 2.\nRefs #4847 (opt-out).\nRefs #15x\nSee Refs #16' });
+  assert.deepStrictEqual([c.fixes, c.refs], [[], [3351, 4847]]);
+});
+
+for (const [name, sep] of [['U+2028', ' '], ['U+2029', ' ']]) {
+  test(`parseCommit reads no footer behind ${name}, which git and GitHub keep inside the line`, () => {
+    const body = `Release-Note: A${sep}Fixes #99${sep}Refs #98${sep}Release-Note: fake${sep}BREAKING CHANGE: x\n\nFixes #10`;
+    const c = parseCommit({ sha: 'p'.repeat(40), subject: 'fix: y', body });
+    assert.deepStrictEqual([c.fixes, c.refs], [[10], []]);
+    assert.strictEqual(c.releaseNotes.length, 1);
+    assert.strictEqual(c.breaking, false);
+  });
+}
 
 test('parseCommit tolerates trailing spaces and tabs after a Fixes/Refs number', () => {
   const c = parseCommit({ sha: 'n'.repeat(40), subject: 'fix: y', body: 'Release-Note: A.\n\nFixes #10  \nRefs #11\t\n' });

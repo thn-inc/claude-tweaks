@@ -14,19 +14,24 @@ const { compareVersions } = require('../changelog.js');
 
 const HEADER_RE = /^(\w+)(\([^)]*\))?(!)?: (.+)$/;
 // Conventional Commits declares `BREAKING CHANGE:` and `BREAKING-CHANGE:` equivalent.
-const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE: ?(.*)$/m;
+const BREAKING_FOOTER_RE = /^BREAKING[ -]CHANGE: ?([^\n]*)$/;
 const RECORD = '\x1e';
 const FIELD = '\x1f';
 const SEMVER_RE = /^\d+\.\d+\.\d+$/;
-// Whole-line closing/reference footers a bundled merge commit carries, one per
-// bundled record (#4634): `Fixes #N` closes it, `Refs #N` keeps it open. Not
+// Closing/reference footers a bundled merge commit carries, one per bundled
+// record (#4634): `Fixes #N` closes it, `Refs #N` keeps it open. Not
 // closing-links.js's parseFixesSpan — that reads PR-body span markers a commit
-// body never has. Case-sensitive, anchored, CR-tolerant, so prose never matches.
-const FIXES_RE = /^Fixes #(\d+)[ \t]*\r?$/gm;
-const REFS_RE = /^Refs #(\d+)[ \t]*\r?$/gm;
+// body never has. Case-sensitive and anchored, so prose never matches. `Fixes` must
+// fill its line (CR-tolerant); `Refs` may carry trailing text, as hand-written
+// footers on main do (`Refs #3351 — …`), because reading one only keeps a record open.
+const FIXES_RE = /^Fixes #(\d+)[ \t]*\r?$/;
+const REFS_RE = /^Refs #(\d+)\b/;
 
-function issueNumbers(re, body) {
-  return Array.from(body.matchAll(re), (m) => Number(m[1]));
+// git and GitHub split a commit body on LF alone, while JS `^`/`$` under `m` also break
+// on U+2028/U+2029. Footers match per LF line, so text behind those separators stays in
+// its line and a release note cannot smuggle a footer the forge never saw (#4634).
+function lineMatches(re, lines) {
+  return lines.map((line) => re.exec(line)).filter(Boolean);
 }
 
 // The highest v* tag reachable as an ancestor of `ref` (`git tag --merged`,
@@ -61,10 +66,11 @@ function lastTag(git, ref = 'HEAD') {
 
 function parseCommit({ sha, subject, body = '' }) {
   const m = HEADER_RE.exec(subject);
-  const footer = BREAKING_FOOTER_RE.exec(body);
-  // Each `Release-Note:` line is single-line by construction (#2580/#2581); a
-  // bundled merge commit carries one per bundled record (#4634), so every line
-  // is read, not the first.
+  const lines = body.split('\n');
+  const footer = lineMatches(BREAKING_FOOTER_RE, lines)[0] || null;
+  // A bundled merge commit carries one `Release-Note:` line per bundled record
+  // (#4634), so every line is read, not the first. A single-record note written
+  // over several lines reads back as its first line only (#2580/#2581).
   const releaseNotes = extractReleaseNotes(body);
   // An unconventional subject IS its own description — which is also what an
   // empty `BREAKING CHANGE:` footer (no description of its own) falls back to,
@@ -84,8 +90,8 @@ function parseCommit({ sha, subject, body = '' }) {
     description,
     unconventional: m === null,
     releaseNotes,
-    fixes: issueNumbers(FIXES_RE, body),
-    refs: issueNumbers(REFS_RE, body),
+    fixes: lineMatches(FIXES_RE, lines).map((m) => Number(m[1])),
+    refs: lineMatches(REFS_RE, lines).map((m) => Number(m[1])),
   };
 }
 

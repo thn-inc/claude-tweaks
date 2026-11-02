@@ -12,10 +12,10 @@
 // are a flat list where the leading verb already carries the category (see
 // #2581's Non-Goals).
 
-// Module-internal and `/gm`: the global flag makes `String.prototype.matchAll`
-// yield every line, and matchAll clones the regex so `lastIndex` never leaks
-// between calls.
-const RELEASE_NOTE_LINE_RE = /^Release-Note: ?(.*)$/gm;
+// Module-internal and matched per LF line: git and GitHub split a commit body on
+// LF alone, while JS `^`, `$` and `.` also break on U+2028/U+2029, so text behind
+// those separators stays in its note instead of truncating it or opening a new one.
+const RELEASE_NOTE_LINE_RE = /^Release-Note: ?([^\n]*)$/;
 
 // A note that says nothing a reader of the release notes needs (the
 // "No user-visible change." filler every record must carry, #2660) is dropped
@@ -26,13 +26,18 @@ const NO_CHANGE_RE = /^no user-visible change/i;
 // dropped, in body order. A non-string body yields [].
 function extractReleaseNotes(body) {
   if (typeof body !== 'string') return [];
-  return Array.from(body.matchAll(RELEASE_NOTE_LINE_RE), (m) => m[1].trim()).filter((note) => note !== '');
+  return body.split('\n')
+    .map((line) => RELEASE_NOTE_LINE_RE.exec(line))
+    .filter(Boolean)
+    .map((m) => m[1].trim())
+    .filter((note) => note !== '');
 }
 
 // Pure. Flattens each commit's `releaseNotes` in commit order then note order,
 // trims, drops empty notes, "No user-visible change" notes and exact duplicates
-// (first occurrence kept), renders one `* {note}` bullet per remaining note,
-// and returns null (never '' or undefined) when nothing remains — changelog.js
+// (first occurrence kept; a kept-open `Refs` record that ships in two merges
+// carries the same note twice, #4634), renders one `* {note}` bullet per remaining
+// note, and returns null (never '' or undefined) when nothing remains — changelog.js
 // branches on `!== null` to decide whether to render the ### Highlights block
 // at all. A commit without a `releaseNotes` array contributes nothing.
 function renderReleaseNotes(commits) {

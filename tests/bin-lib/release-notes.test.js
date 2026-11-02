@@ -3,6 +3,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('../helpers/read-skill');
+const { stripComments, stripperVerdict, STRIPPER_VERDICT_MESSAGES } = require('../helpers/strip-comments');
 const { renderReleaseNotes, extractReleaseNotes } = require('../../plugin/bin/lib/release-notes.js');
 const { parseCommit } = require('../../plugin/bin/lib/release-local/commits.js');
 const { parseReleaseNotesFromLog } = require('../../plugin/bin/lib/release-notes-publish.js');
@@ -81,10 +82,37 @@ test('AC5.3: renderReleaseNotes returns null when every note was dropped', () =>
   assert.strictEqual(renderReleaseNotes([{ releaseNotes: ['No user-visible change.'] }, { releaseNotes: [] }, {}]), null);
 });
 
-test('neither commits.js nor release-notes-publish.js restates the Release-Note: pattern — both import extractReleaseNotes', () => {
+test('extractReleaseNotes keeps text behind U+2028 or U+2029 inside its note, which git and GitHub read as one line', () => {
+  assert.deepStrictEqual(extractReleaseNotes('Release-Note: a Release-Note: fake\nRelease-Note: b c'), ['a Release-Note: fake', 'b c']);
+});
+
+// A regex literal or RegExp argument naming the trailer restates the pattern; a message string does not.
+const RESTATED_PATTERN_RES = [/\/[^/\n]*Release-Note:/, /RegExp\([^)\n]*Release-Note:/];
+const CALLS_EXTRACTOR_RE = /\bextractReleaseNotes\s*\(/;
+
+function extractorScanOffenses(raw) {
+  const stripped = stripComments(raw);
+  const offenses = [];
+  const verdict = stripperVerdict(raw, stripped);
+  if (verdict !== 'ok') offenses.push(STRIPPER_VERDICT_MESSAGES[verdict]);
+  if (RESTATED_PATTERN_RES.some((re) => re.test(stripped))) offenses.push('restates the Release-Note: pattern');
+  if (!CALLS_EXTRACTOR_RE.test(stripped)) offenses.push('never calls extractReleaseNotes');
+  return offenses;
+}
+
+test('neither commits.js nor release-notes-publish.js restates the Release-Note: pattern — both call extractReleaseNotes', () => {
   for (const rel of ['plugin/bin/lib/release-local/commits.js', 'plugin/bin/lib/release-notes-publish.js']) {
-    const src = readText(path.join(__dirname, '..', '..', rel));
-    assert.match(src, /extractReleaseNotes/, rel);
-    assert.ok(!/\/\^?Release-Note:/.test(src), `${rel} declares its own Release-Note: regex literal`);
+    assert.deepStrictEqual(extractorScanOffenses(readText(path.join(__dirname, '..', '..', rel))), [], rel);
   }
+});
+
+test('go-red: the extractor scan flags a restated pattern, a comment-only call and an unparseable file, and passes a message string', () => {
+  const CALL = 'extractReleaseNotes(b);\n';
+  const RESTATED = 'restates the Release-Note: pattern';
+  assert.deepStrictEqual(extractorScanOffenses(`${CALL}const r = /^Release-Note: ?(.*)$/m;\n`), [RESTATED]);
+  assert.deepStrictEqual(extractorScanOffenses(`${CALL}const r = /^\\s*Release-Note:/;\n`), [RESTATED]);
+  assert.deepStrictEqual(extractorScanOffenses(`${CALL}const r = new RegExp('^Release-Note:');\n`), [RESTATED]);
+  assert.deepStrictEqual(extractorScanOffenses('// extractReleaseNotes(b)\n'), ['never calls extractReleaseNotes']);
+  assert.deepStrictEqual(extractorScanOffenses(`${CALL}log('no Release-Note: trailers');\n`), []);
+  assert.deepStrictEqual(extractorScanOffenses(`${CALL}const = ;\n`), [STRIPPER_VERDICT_MESSAGES.unparseable]);
 });
