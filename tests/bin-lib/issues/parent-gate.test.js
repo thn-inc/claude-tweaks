@@ -5,8 +5,9 @@ const {
   CLOSE_HEADING, VERDICT_FIELDS, IDEMPOTENCE_VALUES, VALID_RISK_FLOORS, GhFailure, ghCaller,
   enumerateSubIssues, gatherGateFacts, gatherIdempotenceFacts, evaluateParentGate,
   evaluateIdempotence, evaluateGateWithIdempotence, needsIdempotenceReads, parseClosingTokens, positive,
-  listOmitsSubIssue,
+  IDENTITY_PROBE_FAILED_NOTE, readLogin, listOmitsSubIssue,
 } = require('../../../plugin/bin/lib/issues/parent-gate');
+const { untrustedSkipNote } = require('../../../plugin/bin/lib/issues/comment-trust');
 const { run: runFetchSubIssues, EXIT_SUBISSUES_UNAVAILABLE } = require('../../../plugin/bin/fetch-sub-issues');
 const { buildNativeParentQuery, buildNativeSubIssuesQuery } = require('../../../plugin/bin/lib/issues/record');
 
@@ -74,7 +75,7 @@ function makeGh(world) {
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m && world.liveRaw && m[1] in world.liveRaw) return world.liveRaw[m[1]];
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
-    if (key === 'api user --jq .login') return `${world.login || 'bot'}\n`;
+    if (key === 'api user --jq .login') return `${'login' in world ? world.login : 'bot'}\n`;
     throw new Error(`unexpected gh call: ${key}`);
   };
   return { gh, calls, caller: ghCaller(gh) };
@@ -314,6 +315,33 @@ test('the facts shape is the explicit source, never sniffed from a body field', 
   for (const source of ['Body', 'local-files', '', null]) {
     assert.throws(() => evaluateIdempotence(facts, { source }), TypeError, String(source));
   }
+});
+
+test('#4770 AC1.2: evaluateIdempotence adds the degrade note when login is empty and nothing counted', () => {
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [], login: '' }),
+    { idempotence: 'comment-and-close', skipped: [IDENTITY_PROBE_FAILED_NOTE] },
+  );
+});
+
+test("#4770 AC2.1: a trusted marker with login '' is close-only and carries no note", () => {
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [headingComment()], login: '' }),
+    { idempotence: 'close-only', skipped: [] },
+  );
+});
+
+test("#4770 AC3.1: an untrusted own-bot marker with login '' reads as no comment", () => {
+  const c = headingComment({ authorAssociation: 'NONE', author: { login: 'bot' }, url: 'u5' });
+  assert.deepEqual(
+    evaluateIdempotence({ state: 'OPEN', stateReason: '', comments: [c], login: '' }),
+    { idempotence: 'comment-and-close', skipped: [untrustedSkipNote(c), IDENTITY_PROBE_FAILED_NOTE] },
+  );
+});
+
+test('#4770 the degrade note never applies to a CLOSED or REOPENED parent', () => {
+  assert.deepEqual(evaluateIdempotence({ state: 'CLOSED', stateReason: '', comments: [], login: '' }), { idempotence: 'already-closed', skipped: [] });
+  assert.deepEqual(evaluateIdempotence({ state: 'OPEN', stateReason: 'REOPENED', comments: [], login: '' }), { idempotence: 'reopened', skipped: [] });
 });
 
 test('needsIdempotenceReads: only a parent neither CLOSED nor REOPENED reads comments and login', () => {
@@ -661,6 +689,45 @@ test('gatherIdempotenceFacts reads the login only for an open, non-reopened pare
   assert.equal(reopened.login, null);
   assert.deepEqual(reopened.comments, []);
   assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
+});
+
+test("#4770 AC1.1: gatherIdempotenceFacts reads login '' when the probe throws", () => {
+  const gh = makeGh({ throwWhen: (k) => k.startsWith('api user') });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments: [], login: '' });
+});
+
+test("#4770 AC4.1: an empty probe line reads as login ''", () => {
+  const gh = makeGh({ login: '' });
+  assert.deepEqual(gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), { state: 'OPEN', stateReason: '', comments: [], login: '' });
+});
+
+test('#4770 gatherIdempotenceFacts still throws when the comments read fails', () => {
+  const gh = makeGh({ throwWhen: (k) => k.includes('state,stateReason,comments') });
+  assert.throws(() => gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller }), ghFailure('gh issue view 10:'));
+});
+
+test('#4770 gatherIdempotenceFacts uses an injected readLogin', () => {
+  const gh = makeGh({});
+  const out = gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => 'x' });
+  assert.equal(out.login, 'x');
+  assert.deepEqual(argvOf(gh.calls), [SHAPE.live(10)]);
+  const failing = gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => { throw new GhFailure('x'); } });
+  assert.equal(failing.login, '');
+  assert.throws(
+    () => gatherIdempotenceFacts({ parent: 10, ...OR, caller: gh.caller, readLogin: () => { throw new TypeError('x'); } }),
+    TypeError,
+  );
+});
+
+test('#4770 readLogin trims the line, sends --hostname for a GHE host, and lets the caller error propagate', () => {
+  const seen = [];
+  const caller = { call: (args) => { seen.push(args); return '  bot \n'; } };
+  assert.equal(readLogin({ caller, host: 'ghe.example.com' }), 'bot');
+  assert.deepEqual(seen[0], ['api', 'user', '--jq', '.login', '--hostname', 'ghe.example.com']);
+  assert.equal(readLogin({ caller, host: undefined }), 'bot');
+  assert.deepEqual(seen[1], ['api', 'user', '--jq', '.login']);
+  const boom = new GhFailure('gh api user: boom');
+  assert.throws(() => readLogin({ caller: { call: () => { throw boom; } }, host: 'ghe.example.com' }), (err) => err === boom);
 });
 
 // --- the origin host (GitHub Enterprise Server) ---

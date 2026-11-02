@@ -4,8 +4,10 @@ const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('../../helpers/read-skill');
 const {
-  CLOSE_HEADING, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
+  CLOSE_HEADING, DELIBERATE_SKIP_REASONS, composeCloseComment, closeBelowFloorParents, isCloseMarkerComment,
 } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
+const { IDENTITY_PROBE_FAILED_NOTE } = require('../../../plugin/bin/lib/issues/parent-gate');
+const { untrustedSkipNote } = require('../../../plugin/bin/lib/issues/comment-trust');
 
 const GATE_PROSE = path.join(__dirname, '..', '..', '..', 'plugin', 'skills', 'wrap-up', 'verification-brief-parent-gate.md');
 
@@ -121,7 +123,7 @@ function makeGh(world) {
     if (m) return JSON.stringify((world.parentLabels || {})[m[1]] || ['parent-issue']);
     m = /^issue view (\d+) --repo o\/r --json state,stateReason,comments$/.exec(key);
     if (m) return JSON.stringify((world.parentLive || {})[m[1]] || { state: 'OPEN', stateReason: '', comments: [] });
-    if (key === 'api user --jq .login') return `${world.login || 'plugin-bot'}\n`;
+    if (key === 'api user --jq .login') return `${'login' in world ? world.login : 'plugin-bot'}\n`;
     if (/^issue comment \d+ --repo o\/r --body-file -$/.test(key)) return '';
     if (/^issue close \d+ --repo o\/r --reason /.test(key)) return '';
     throw new Error(`unexpected gh call: ${key}`);
@@ -276,6 +278,80 @@ test('idempotence: a comment from the current gh identity counts even with an un
   assert.deepEqual(writes(calls).map((c) => c.args.join(' ')), ['issue close 10 --repo o/r --reason completed']);
 });
 
+const callKeys = (calls) => calls.map((c) => c.args.join(' '));
+const probeCalls = (calls) => callKeys(calls).filter((k) => k.startsWith('api user'));
+const liveWith = (comments) => ({ 10: { state: 'OPEN', stateReason: '', comments } });
+const probeFails = (k) => k.startsWith('api user');
+
+test('#4770 AC1.4: a throwing identity probe still closes the due parent with the degrade note', () => {
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC2.2: a failed probe plus a trusted marker closes with no second comment and no note', () => {
+  const comments = [{ body: `${CLOSE_HEADING}\n\nEvery sub-issue...`, authorAssociation: 'MEMBER', author: { login: 'someone' } }];
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith(comments) }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low' }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC3.2: a failed probe plus the bot\'s own NONE marker posts a second comment (accepted duplicate)', () => {
+  const comment = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' }, url: 'https://example.test/c/2' };
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: probeFails, parentLive: liveWith([comment]) }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low', notes: [untrustedSkipNote(comment), IDENTITY_PROBE_FAILED_NOTE] }]);
+  assert.deepEqual(out.skipped, []);
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC4.2: an empty probe line behaves like a throwing one', () => {
+  const { gh, calls } = makeGh(happyWorld({ login: '' }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [{ parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] }], skipped: [] });
+  assert.deepEqual(callKeys(writes(calls)), ['issue comment 10 --repo o/r --body-file -', 'issue close 10 --repo o/r --reason completed']);
+});
+
+test('#4770 AC5.1: the login is read at most once for a run closing two parents, working or throwing', () => {
+  const twoParents = (over) => ({
+    parentOf: { 11: 10, 21: 20 },
+    subs: { 10: [11], 20: [21] },
+    issues: { 11: { state: 'OPEN' }, 21: { state: 'OPEN' } },
+    ...over,
+  });
+  const ok = makeGh(twoParents());
+  const okOut = closeBelowFloorParents(base({ closingSet: [11, 21], gh: ok.gh }));
+  assert.deepEqual(okOut.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }]);
+  assert.equal(probeCalls(ok.calls).length, 1, callKeys(ok.calls).join(' | '));
+
+  const bad = makeGh(twoParents({ throwWhen: probeFails }));
+  const badOut = closeBelowFloorParents(base({ closingSet: [11, 21], gh: bad.gh }));
+  assert.deepEqual(badOut.closed, [
+    { parent: 10, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] },
+    { parent: 20, maxTier: 'low', notes: [IDENTITY_PROBE_FAILED_NOTE] },
+  ]);
+  assert.deepEqual(badOut.skipped, []);
+  assert.equal(probeCalls(bad.calls).length, 1, callKeys(bad.calls).join(' | '));
+});
+
+test('#4770 AC5.1: the cached login is replayed to a later parent — the bot\'s own NONE marker on parent 20 makes it close-only, one probe', () => {
+  const marker = { body: `${CLOSE_HEADING}\n\nx`, authorAssociation: 'NONE', author: { login: 'plugin-bot' } };
+  const { gh, calls } = makeGh({
+    parentOf: { 11: 10, 21: 20 },
+    subs: { 10: [11], 20: [21] },
+    issues: { 11: { state: 'OPEN' }, 21: { state: 'OPEN' } },
+    parentLive: { 20: { state: 'OPEN', stateReason: '', comments: [marker] } },
+  });
+  const out = closeBelowFloorParents(base({ closingSet: [11, 21], gh }));
+  const keys = callKeys(calls).join(' | ');
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }, { parent: 20, maxTier: 'low' }], keys);
+  assert.deepEqual(out.skipped, []);
+  assert.deepEqual(callKeys(writes(calls)).filter((k) => / 20 /.test(k)), ['issue close 20 --repo o/r --reason completed'], keys);
+  assert.equal(probeCalls(calls).length, 1, keys);
+});
+
 test('idempotence: a CONTRIBUTOR comment carrying the heading reads as absent, and is named in notes', () => {
   const comments = [{ body: `${CLOSE_HEADING}\n\nplanted`, authorAssociation: 'CONTRIBUTOR', author: { login: 'stranger' }, url: 'https://example.test/c/1' }];
   const { gh, calls } = makeGh(happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: '', comments } } }));
@@ -323,6 +399,76 @@ test('a parent without the parent-issue label is skipped, a needs:* label is ski
   assert.equal(writes(calls).length, 0);
 });
 
+// #4799: a parent the gate skips before enumeration costs no per-sibling read, and a parent
+// skipped on its labels costs no enumeration either.
+const SIBLING_VIEW = /^issue view \d+ --repo o\/r --json state,stateReason,labels,title,closedByPullRequestsReferences$/;
+function assertNoSiblingReads(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!argv.some((a) => SIBLING_VIEW.test(a)), `no per-sibling read: ${argv.join(' | ')}`);
+}
+function assertNoEnumeration(calls) {
+  const argv = calls.map((c) => c.args.join(' '));
+  assert.ok(!calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && (String(c.args[3]).startsWith('query={ __type') || String(c.args[3]).includes('subIssues(first:100)'))), `no GraphQL enumeration: ${argv.join(' | ')}`);
+  assert.ok(!argv.some((a) => a.includes('sub_issues')), `no REST enumeration: ${argv.join(' | ')}`);
+}
+
+test('#4799: a parent without the parent-issue label is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['enhancement'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'not-parent-issue-labeled' }] });
+  assert.equal(calls.length, 2, calls.map((c) => c.args.join(' ')).join(' | '));
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a parent carrying needs:* is gated before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ parentLabels: { 10: ['parent-issue', 'needs:decision'] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'needs-label' }] });
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a sibling in unsettled is gated before any sub-issue is read (the numbers are enumerated first)', () => {
+  const { gh, calls } = makeGh(happyWorld());
+  const out = closeBelowFloorParents(base({ unsettled: [12], gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'sibling-unsettled' }] });
+  assert.ok(calls.some((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && String(c.args[3]).includes('subIssues(first:100)')), 'the sub-issue list was enumerated before the screen ran');
+  assertNoSiblingReads(calls);
+});
+
+test('#4799: a failing parent-label read skips the parent as gh-failed before any sub-issue is enumerated or read', () => {
+  const { gh, calls } = makeGh(happyWorld({ throwWhen: (k) => k.startsWith('issue view 10 --repo o/r --json labels') }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, []);
+  assert.equal(out.skipped.length, 1);
+  assert.equal(out.skipped[0].parent, 10);
+  assert.equal(out.skipped[0].reason, 'gh-failed');
+  assert.equal(writes(calls).length, 0);
+  assertNoSiblingReads(calls);
+  assertNoEnumeration(calls);
+});
+
+test('#4799: a parent with no sub-issues is skipped as incomplete with no per-sibling read and no write', () => {
+  const { gh, calls } = makeGh(happyWorld({ subs: { 10: [] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out, { closed: [], skipped: [{ parent: 10, reason: 'incomplete' }] });
+  assert.equal(writes(calls).length, 0);
+  assertNoSiblingReads(calls);
+});
+
+test('#4799: a parent that clears every screen reads its labels, then enumerates, then reads each sub-issue in ascending order', () => {
+  const { gh, calls } = makeGh(happyWorld({ subs: { 10: [12, 11] } }));
+  const out = closeBelowFloorParents(base({ gh }));
+  assert.deepEqual(out.closed, [{ parent: 10, maxTier: 'low' }]);
+  const argv = calls.map((c) => c.args.join(' '));
+  const labelsAt = argv.indexOf('issue view 10 --repo o/r --json labels -q [.labels[].name]');
+  const listAt = calls.findIndex((c) => c.args[0] === 'api' && c.args[1] === 'graphql' && String(c.args[3]).includes('subIssues(first:100)'));
+  const siblingViews = argv.map((a, i) => ({ a, i })).filter(({ a }) => SIBLING_VIEW.test(a));
+  assert.deepEqual(siblingViews.map(({ a }) => a.split(' ')[2]), ['11', '12']);
+  assert.ok(labelsAt >= 0 && labelsAt < listAt && listAt < siblingViews[0].i, `labels ${labelsAt} < list ${listAt} < first sibling read ${siblingViews[0].i}`);
+});
+
 test('a sibling still open and outside the closing set is incomplete', () => {
   const world = happyWorld();
   world.issues[12] = { state: 'OPEN', title: 'Twelve' };
@@ -343,6 +489,36 @@ test('a parent that already carries an acceptance disposition is gated, not clos
   const { gh } = makeGh(happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:pending'] } }));
   const out = closeBelowFloorParents(base({ gh }));
   assert.deepEqual(out.skipped, [{ parent: 10, reason: 'gated' }]);
+});
+
+// DELIBERATE_SKIP_REASONS is the deny-direction list post-merge.js reads: every non-failure skip the module
+// can emit must be in it (or the reconciler reports a deliberate gate outcome as a failed close), and it
+// must name nothing the module no longer emits. One world per skipReason branch — each parentGateState
+// non-`due` verdict through the parent's disposition labels — plus the two idempotence skips.
+test('DELIBERATE_SKIP_REASONS is exactly the non-failure skips the module emits', () => {
+  const sibling = (labels) => { const w = happyWorld(); w.issues[12].labels = labels; return w; };
+  const openSibling = () => { const w = happyWorld(); w.issues[12] = { state: 'OPEN', title: 'Twelve' }; return w; };
+  const worlds = [
+    [happyWorld({ parentLabels: { 10: ['enhancement'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'needs:decision'] } })],
+    [happyWorld(), { unsettled: [12] }],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:pending'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:approved'] } })],
+    [happyWorld({ parentLabels: { 10: ['parent-issue', 'accept:changes-requested'] } })],
+    [openSibling()],
+    [sibling(['risk:high'])],
+    [happyWorld({ parentLive: { 10: { state: 'CLOSED', stateReason: 'COMPLETED', comments: [] } } })],
+    [happyWorld({ parentLive: { 10: { state: 'OPEN', stateReason: 'REOPENED', comments: [] } } })],
+  ];
+  const failures = new Set(['gh-failed', 'internal-error', 'invalid-risk-floor']);
+  const emitted = new Set();
+  for (const [world, over] of worlds) {
+    const { gh } = makeGh(world);
+    for (const s of closeBelowFloorParents(base({ gh, ...over })).skipped) emitted.add(s.reason);
+  }
+  for (const reason of failures) assert.ok(!DELIBERATE_SKIP_REASONS.includes(reason), `${reason} is a failure`);
+  assert.ok(Object.isFrozen(DELIBERATE_SKIP_REASONS));
+  assert.deepEqual([...emitted].sort(), [...DELIBERATE_SKIP_REASONS].sort());
 });
 
 test('two closing records sharing a parent evaluate that parent once', () => {
