@@ -344,17 +344,18 @@ async function run(ctx) {
         if (s.postMergeRan) {
           lines.push(`post-merge steps ran for ${s.postMergeRan} merged run(s)${ranClosed ? `, closing ${ranClosed} parent record(s) below the oversight floor` : ''}`);
         } else if (ranClosed) {
-          // Every run that closed a parent failed its Step 4.0: the closes still happened and are not dropped.
+          // Every run that closed a parent read failed: the closes still happened and are not dropped.
           lines.push(`post-merge steps closed ${ranClosed} parent record(s) below the oversight floor`);
         }
         // The parents are closed on GitHub; only the run's decisions.md marker is missing.
         if (unmarkedClosed) lines.push(`post-merge steps closed ${unmarkedClosed} parent record(s) below the oversight floor in run(s) whose decisions.md marker could not be written`);
         // A step failed, or the check threw, for these (counted apart from `postMergeRan`). Tidy's
         // parent-gate backstop recovers the parents; the records Step 4.0 listed (`postMergeFailedRecords`,
-        // absent from an older status file) get no retry, so they are named for a hand reopen or close.
+        // absent from an older status file) get no retry, so they are named for a hand reopen or close; closing-links
+        // logged each one's hand action to the run's decisions.md.
         if (s.postMergeFailed) {
           const failedRecords = Array.isArray(s.postMergeFailedRecords) && s.postMergeFailedRecords.length
-            ? `records ${s.postMergeFailedRecords.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, and no later pass retries them; `
+            ? `records ${s.postMergeFailedRecords.map((n) => `#${n}`).join(', ')} need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the run's decisions.md, and no later pass retries them; `
             : '';
           lines.push(`post-merge steps failed for ${s.postMergeFailed} merged run(s) (${failedRecords}tidy's parent-gate backstop recovers the parents)`);
         }

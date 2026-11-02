@@ -756,7 +756,7 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   seed({ postMergeRan: 0, postMergeFailed: 1, postMergeFailedRecords: [101, 102] });
   const named = (await runSessionStart({ input: {}, runDir: null, runState: null, cwd: project })).json.hookSpecificOutput.additionalContext;
   assert.match(named, /records #101, #102 need a hand reopen or close per _shared\/pr-first-merge-post-merge\.md Step 4\.0/);
-  assert.match(named, /no later pass retries them/);
+  assert.match(named, /Step 4\.0, each with its action in the run's decisions\.md, and no later pass retries them/);
   assert.match(named, /tidy's parent-gate backstop recovers the parents/);
 
   // AC6.1 AC6.2: an older status file, and a non-array value

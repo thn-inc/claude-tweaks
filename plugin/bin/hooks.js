@@ -1870,7 +1870,7 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
-    const { classifyEntry } = require('./lib/reconcile/post-merge');
+    const { classifyEntry, failedRecordNumbers } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
     // Only a `ran` entry is judged: classifyEntry reads every `skipped` entry as failed, `transient-failure` included.
     const ranVerdict = (e) => (e.action === 'ran' ? classifyEntry(e).verdict : null);
@@ -1887,15 +1887,12 @@ async function runReconcileBackground(argv) {
       // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
       // failed (non-zero exit, unreadable envelope, or a non-clean word such as close-failed), Step 4.0b
       // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
-      // counted as ran. The parent of a failed Step 4.0 waits for tidy's backstop; a Step 4.0b failure is a
-      // parent a late close could not close, which that backstop also recovers.
+      // counted as ran. A failed Step 4.0 with no closing set skips Step 4.0b, so that parent waits for tidy's
+      // backstop; with a closing set Step 4.0b still runs and the parent stays open only if a record is unsettled.
       postMergeFailed: failedRanEntries.length + postMergeEntries.filter((e) => e.reason === 'error').length,
-      // The record numbers those failed runs name (Step 4.0's four lists, carried on a non-clean loop entry),
-      // sorted and unique; empty when no failed run carried any.
-      postMergeFailedRecords: [...new Set(failedRanEntries.flatMap((e) => {
-        const records = e.records || {};
-        return [records.failed, records.closeFailed, records.pendingClose, records.unchecked].flatMap((list) => (Array.isArray(list) ? list : []));
-      }))].sort((a, b) => a - b),
+      // The record numbers those failed runs name (Step 4.0's four lists, carried on a loop entry whose Step 4.0
+      // printed a non-clean word), sorted and unique; empty when no failed run carried any.
+      postMergeFailedRecords: failedRecordNumbers(postMergeEntries),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
       // (closed on GitHub all the same, only the decisions.md marker is missing).

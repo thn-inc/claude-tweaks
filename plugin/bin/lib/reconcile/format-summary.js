@@ -35,11 +35,19 @@
 //     clean no-op.
 'use strict';
 
-// post-merge.js's classifyEntry judges a post-merge entry. Loaded on first use, never at module load: `bin/hooks.js
-// reconcile` requires this file outside the try that turns a module-load fault into the `reconcile-threw`
-// fallback, so a module-level require of post-merge.js would make that fault silent. The fallback result carries
-// `postMerge: null`, so no filter below runs on it and this loader is never reached.
+// post-merge.js's classifyEntry judges a post-merge entry, and its
+// failedRecordNumbers names the records a failed run left. Both are
+// loaded on first use, never at module load: `bin/hooks.js reconcile`
+// requires this file outside the try that turns a module-load fault
+// into the `reconcile-threw` fallback, so a module-level require of
+// post-merge.js would make that fault silent. The fallback result
+// carries `postMerge: null`, so no filter below runs on it and these
+// loaders are never reached.
 const verdictOf = (entry) => require('./post-merge').classifyEntry(entry).verdict;
+const failedRecordsSuffix = (taken) => {
+  const numbers = require('./post-merge').failedRecordNumbers(taken);
+  return numbers.length ? ` (records ${numbers.map((n) => `#${n}`).join(', ')})` : '';
+};
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
 // that count as "taken" for that field, and the skip action value(s) whose
@@ -53,7 +61,8 @@ const verdictOf = (entry) => require('./post-merge').classifyEntry(entry).verdic
 // `aged-out` / `skip`), so one CATEGORIES row per kind keeps a tag's
 // `aged-out` action from being silently dropped (it matches neither the
 // branch row's takenActions nor skipActions) and keeps a tag's `skip`
-// reason out of the branch row's aggregated skip count.
+// reason out of the branch row's aggregated skip count. `suffix(taken)`
+// appends text to the taken-line.
 const CATEGORIES = [
   { key: 'worktrees', unit: 'worktree', verb: 'reaped', takenActions: ['reaped'], skipActions: ['skipped'] },
   { key: 'claims', unit: 'claim', verb: 'released', takenActions: ['released'], skipActions: ['skipped'] },
@@ -62,7 +71,7 @@ const CATEGORIES = [
   // post-merge.js's classifyEntry judges a `ran` entry failed when Step 4.0 failed (a SKIP marker, Step 4.0b
   // never run) or its word is not clean (close-failed, ...), or Step 4.0b reported a parent failure: it is
   // reported on its own line, never as a run that ran.
-  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.action === 'ran' && verdictOf(e) === 'failed' },
+  { key: 'postMerge', unit: 'merged run', verb: 'post-merge steps failed', takenActions: ['ran'], skipActions: [], kindFilter: (e) => e.action === 'ran' && verdictOf(e) === 'failed', suffix: failedRecordsSuffix },
   { key: 'runs', unit: 'run dir', verb: 'archived', takenActions: ['archived'], skipActions: ['skipped'] },
   { key: 'branches', unit: 'branch', verb: 'archived', takenActions: ['delete', 'tag-and-delete'], skipActions: ['skip'], kindFilter: (e) => e.kind !== 'tag' },
   { key: 'branches', unit: 'tag', verb: 'aged out', takenActions: ['aged-out'], skipActions: ['skip'], kindFilter: (e) => e.kind === 'tag' },
@@ -223,7 +232,7 @@ function formatSummary(result) {
     const arr = result[cat.key];
     if (!Array.isArray(arr) || arr.length === 0) continue;
     const taken = scopedEntries(cat, arr).filter((e) => cat.takenActions.includes(e.action));
-    if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}`);
+    if (taken.length) lines.push(`${cat.verb}: ${taken.length} ${pluralize(cat.unit, taken.length)}${cat.suffix ? cat.suffix(taken) : ''}`);
   }
 
   const residuePlanLine = formatResiduePlanLine(result.residuePlan);

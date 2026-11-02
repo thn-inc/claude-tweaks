@@ -430,9 +430,9 @@ function archivedRetryHint(runDir) {
   return `the next /claude-tweaks:wrap-up ${spec ? `#${spec} ` : ''}merge retries Steps 4.0 and 4.0b`;
 }
 
-// Pure: a `postMerge` or `postMergeOne` entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran` entry whose Step
-// 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`, `in-flight`, or
-// `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
+// Pure: a `postMerge` or `postMergeOne` entry -> { verdict, next, failedSteps? }. `verdict`: `clean` (a `ran`
+// entry whose Step 4.0 word is clean, with no `step40Failed` and no `parentFailures` element), `already-done`,
+// `in-flight`, or `failed` (every other entry). A `failed` `ran` entry adds `failedSteps`, the steps that failed in order:
 // `4.0` when `step40Failed` is set or its word is not clean, `4.0b` when `parentFailures` is non-empty —
 // so a caller reports only the step that failed. `next`: `rerun` (a marker-less skip a re-run retries),
 // `rerun-where-gh`, `rerun-after-stale-claim` (an archived run's `in-flight`: its holder can only be another
@@ -451,6 +451,19 @@ function classifyEntry(entry, { archived = false } = {}) {
   if (RERUN_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun' };
   if (RERUN_WHERE_GH_REASONS.has(entry.reason)) return { verdict: 'failed', next: 'rerun-where-gh' };
   return { verdict: 'failed', next: 'none' };
+}
+
+// Pure: postMerge entries -> the sorted, unique issue numbers across the four `records` lists (Step 4.0's
+// `failed`, `closeFailed`, `pendingClose`, `unchecked`) of the `ran` entries classifyEntry reads `failed`. A
+// missing `records`, or a list that is not an array, contributes nothing.
+function failedRecordNumbers(entries) {
+  const numbersOf = (e) => {
+    const records = e.records || {};
+    return [records.failed, records.closeFailed, records.pendingClose, records.unchecked].flatMap((list) => (Array.isArray(list) ? list : []));
+  };
+  return [...new Set((entries || [])
+    .filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'failed')
+    .flatMap(numbersOf))].sort((a, b) => a - b);
 }
 
 // The single-run path (see the header): one named run dir, archived included. -> one entry:
@@ -495,9 +508,10 @@ function processRun({
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
   // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
-  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`) or when the
-  // envelope's word is not clean, so the background summary can name the records a failed close left (#4897);
-  // omitted with no envelope, and with an envelope that carries no `action` (the unreadable case).
+  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`: any parsed
+  // envelope, a JSON object with no `action` included, which gets empty lists) or when the envelope's word is
+  // not clean, so the background summary can name the records a failed close left (#4897); omitted with no
+  // envelope (a non-zero exit or unparseable output).
   const recordsOf = (env) => (env && (includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action))) ? {
     records: {
       failed: issuesOf(env.failed),
@@ -603,7 +617,7 @@ function processRun({
 }
 
 module.exports = {
-  postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
+  postMerge, postMergeOne, classifyEntry, failedRecordNumbers, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim,
   composeSkipText, composeSummaryText, boundDetail,
   CLEAN_CLOSING_LINKS, RERUN_REASONS, RERUN_WHERE_GH_REASONS,
   MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,

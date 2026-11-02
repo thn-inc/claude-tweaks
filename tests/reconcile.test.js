@@ -1983,6 +1983,22 @@ test('AC8.1: a close-failed entry renders under post-merge steps failed, never s
   assert.strictEqual(formatSummary({ ...base, postMerge: [entry] }), 'post-merge steps failed: 1 merged run');
 });
 
+test('formatSummary: the failed row names the records the failed runs left, sorted and unique (#4897)', () => {
+  const base = { mirror: null, redTip: null, worktrees: null, claims: null, runs: null, branches: null, remoteBranches: null, console: null, skipped: null };
+  const closeFailed = { runDir: 'r1', pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [102], pendingClose: [], unchecked: [] } };
+  const reopenFailed = { runDir: 'r2', pr: 12, action: 'ran', closingLinks: 'reopen-failed', parentsClosed: 0, records: { failed: [101], closeFailed: [], pendingClose: [], unchecked: [] } };
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [closeFailed, reopenFailed] }),
+    'post-merge steps failed: 2 merged runs (records #101, #102)',
+  );
+  // A clean entry's records never join the list; a failed entry with no records keeps the bare row.
+  const clean = { runDir: 'r3', pr: 13, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, records: { failed: [103] } };
+  assert.strictEqual(
+    formatSummary({ ...base, postMerge: [clean, { runDir: 'r4', pr: 14, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 }] }),
+    ['post-merge steps run: 1 merged run', 'post-merge steps failed: 1 merged run'].join('\n'),
+  );
+});
+
 test('formatSummary: a repaired origin/HEAD renders inline (#3132)', () => {
   const result = {
     mirror: null, redTip: null, worktrees: null, claims: null, runs: null,

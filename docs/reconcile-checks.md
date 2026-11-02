@@ -727,10 +727,10 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   marker is written and Step 4.0b is skipped, so the parent waits for tidy's backstop. For a
   non-clean word whose envelope carries a `closingSet`, Step 4.0b still runs: the records Step 4.0
   could not settle (`failed`, `closeFailed`, `pendingClose`) hold their parent open, the summary
-  marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed` when Step
-  4.0b reported a parent failure (`parentFailures`; #4798 adds that field to loop entries, so until
-  it lands only Step 4.0 can fail one). An envelope that merely carries no closing set, such as
-  `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
+  marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed`
+  when Step 4.0b reported a parent failure (`parentFailures`; #4798 adds that field to loop entries,
+  so until it lands only Step 4.0 can fail one). An envelope that merely carries no closing set,
+  such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
   `transient-failure` retry is in none of them. `postMergeFailedRecords` is the sorted, unique
   record numbers of Step 4.0's `failed`, `closeFailed`, `pendingClose` and `unchecked` lists across
   the failed `ran` entries (`[]` when none carried any); a loop entry whose Step 4.0 printed a
@@ -742,12 +742,18 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   M parent record(s) below the oversight floor`; then `post-merge steps closed M parent record(s)
   below the oversight floor in run(s) whose decisions.md marker could not be written` for the
   rest). The failed line reads `post-merge steps failed for N merged run(s) (records #101, #102 need a
-  hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, and no later pass retries
-  them; tidy's parent-gate backstop recovers the parents)`: the record clause renders only when
-  `postMergeFailedRecords` is a non-empty array, so an older status file or a non-array value gets
-  the bare `(tidy's parent-gate backstop recovers the parents)`. The backstop recovers parents only;
-  the listed records are the ones nothing retries. Without these a background parent close, or a
-  failed attempt, would never be visible outside GitHub and `decisions.md`.
+  hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the
+  run's decisions.md, and no later pass retries them; tidy's parent-gate backstop recovers the
+  parents)`: the record clause renders only when `postMergeFailedRecords` is a non-empty array, so
+  an older status file or a non-array value gets the bare `(tidy's parent-gate backstop recovers the
+  parents)`. The backstop recovers parents only; the listed records are the ones nothing retries.
+  `closing-links.js` logs each one's hand action as a `Closing links (degraded)` SKIP line (one line
+  per record for `failed`, `closeFailed` and `pendingClose`; one line for the `unchecked` set, which
+  names every record in it). The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
+  renders the same records on its compact failed row, `post-merge steps failed: 2 merged runs
+  (records #101, #102)`, through the same `failedRecordNumbers`; with no records the row stays
+  `post-merge steps failed: 2 merged runs`. Without these a background parent close, or a failed
+  attempt, would never be visible outside GitHub and `decisions.md`.
 - **Single-run path (#4692).** The pass above walks the live run dirs only, so a run `/wrap-up`
   already archived is never reached by it. `postMergeOne` (exported from `post-merge.js`) is the
   same guarded path (setup, marker check, merged check, claim, Steps 4.0 and 4.0b, marker last) for
