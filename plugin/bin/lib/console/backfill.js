@@ -13,8 +13,9 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const {
-  classifyStagedItem, SHADOW_DUP_RE, SECTIONS, runIdOf, parseTiebreakLine, FINDING_PATH,
+  classifyStagedItem, SHADOW_DUP_RE, SECTIONS, runIdOf, parseTiebreakLine,
 } = require('./resolve');
+const { FINDING_PATH } = require('./finding-path');
 const { digestTextOf } = require('./staged-digest-text');
 const { UNRESOLVED_RESOLUTIONS } = require('./residue');
 const { readRunState, isStaleClaim, RUN_ID_RE } = require('../hooks/context');
