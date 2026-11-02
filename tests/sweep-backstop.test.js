@@ -79,6 +79,12 @@ function assertAllSyntaxValid(scripts, label) {
 
 const ITEM9 = extractItemSection(SCAN, '9. **Unarmed ready PR**', '10. **Unsettled run**');
 const ITEM10 = extractItemSection(SCAN, '10. **Unsettled run**', '\nFindings and recommendations');
+// #4804: ITEM10 above runs on through item 11 (its node -e syntax check covers both); the pins on item 10's own text read this narrower slice.
+const ITEM10_OWN = extractItemSection(SCAN, '10. **Unsettled run**', '11. **Stale pending-review PR**');
+// #4804: item 10's resume procedure moved to a sibling file; the tidy Step 4.8 dispatcher inlines it.
+const RESUME = read('plugin', 'skills', '_shared', 'github-pr-scan-unsettled-resume.md');
+const TIDY_SCAN_PROCEDURES = read('plugin', 'skills', 'tidy', 'scan-procedures.md');
+const STEP48_REPO_WIDE = TIDY_SCAN_PROCEDURES.split('\n').find((l) => l.startsWith('Scan per `_shared/github-pr-scan.md`, **`repo-wide`** scope'));
 
 test('item 9 (unarmed ready PR): every embedded node -e script is syntactically valid', () => {
   assertAllSyntaxValid(extractNodeScripts(ITEM9), 'item 9');
@@ -236,22 +242,255 @@ test('item 10: no PR at all qualifies unconditionally; a PR qualifies only when 
   assert.match(ITEM10, /no more recent than the claim's `claimedAt`/);
 });
 
-test('item 10 resume command is read from the PR body when a PR exists, reconstructed only when none exists', () => {
-  assert.match(ITEM10, /read through `bin\/pr-resume-line\.js` rather than reconstructing it/);
-  assert.match(ITEM10, /the reconstructed command above starts from `reconcile`/);
+test('the resume file reads the resume command from the PR body when a PR exists, reconstructed only when none exists', () => {
+  assert.match(RESUME, /read through `bin\/pr-resume-line\.js` rather than reconstructing it/);
+  assert.match(RESUME, /the reconstructed command in item 10's `\[unsettled\]` print lines \(its `no PR found … resume: node … reconcile` line\) starts from `reconcile`/);
 });
 
-test('item 10 routes the PR body Resume line through pr-resume-line.js, not a restated template', () => {
-  assert.ok(ITEM10.includes('pr-resume-line.js'), 'item 10 must name pr-resume-line.js');
+// #4804 review: the resume file cites item 10's print line by shape; pin that item 10 still prints it.
+test('item 10 still prints the reconstructed `no PR found … resume: node … reconcile` line the resume file cites (#4804)', () => {
+  assert.match(ITEM10_OWN, /no PR found '[^\n]*resume: node [^\n]*hooks\.js[^\n]*reconcile/);
+});
+
+test('the resume file routes the PR body Resume line through pr-resume-line.js, not a restated template', () => {
+  assert.ok(RESUME.includes('pr-resume-line.js'), 'the resume file must name pr-resume-line.js');
   assert.ok(!ITEM10.includes('/claude-tweaks:flow "{target}" {next-step}'), 'item 10 must not restate the composed Resume-line template');
+  assert.ok(!RESUME.includes('/claude-tweaks:flow "{target}" {next-step}'), 'the resume file must not restate the composed Resume-line template');
   // the claim blob is untrusted: its runId is shape-checked before it reaches a shell command, and never re-stated here
-  assert.match(ITEM10, /validate `\{run-id\}` against the canonical run-id shape before it enters the command/);
-  assert.match(ITEM10, /Report the `resume` line it prints only when the verdict is `resume`/);
+  assert.match(RESUME, /validate `\{run-id\}` against the canonical run-id shape before it enters the command/);
+  assert.match(RESUME, /Report the `resume` line it prints only when the verdict is `resume`/);
 });
 
-test("item 10 takes {run-id} from the claim blob runId, never from the PR body's own marker", () => {
-  assert.match(ITEM10, /`\{run-id\}` being the `runId` of the record's claim blob/);
-  assert.match(ITEM10, /Never take `\{run-id\}` from the PR body's own marker here/);
+test('item 10 points [unsettled] resume commands at the sibling resume file, with or without a PR (#4804)', () => {
+  assert.ok(ITEM10_OWN.includes('github-pr-scan-unsettled-resume.md'), 'item 10 must name github-pr-scan-unsettled-resume.md');
+  assert.match(ITEM10_OWN, /before reporting its resume command, whether or not a PR exists/);
+});
+
+test("tidy's Step 4.8 dispatcher enumeration names the resume file, so the scan agent's prompt carries the moved procedure (#4804)", () => {
+  assert.ok(STEP48_REPO_WIDE, "scan-procedures.md's Step 4.8 repo-wide paragraph must be found");
+  const enumeration = STEP48_REPO_WIDE.match(/The dispatcher inlines [^\n]*?into this agent's prompt/);
+  assert.ok(enumeration, "the Step 4.8 dispatcher's inlining enumeration must be found");
+  assert.ok(enumeration[0].includes('`github-pr-scan-unsettled-resume.md`'), 'the inlining enumeration must name github-pr-scan-unsettled-resume.md');
+});
+
+// #4804 review (M1): the moved procedure must not drift back into item 10. Whitespace is collapsed
+// before each check, so a line-wrapped copy of a literal still matches and goes red. The RESUME
+// control proves each literal is spelled that way in the file it moved to, so the absence check
+// cannot pass vacuously on a misspelled literal.
+const collapseWhitespace = (s) => s.replace(/\s+/g, ' ');
+test('item 10 carries no moved resume-procedure literal, line-wrapped or not (#4804)', () => {
+  const resumeText = collapseWhitespace(RESUME);
+  const item10Text = collapseWhitespace(ITEM10_OWN);
+  for (const literal of ['Save the body with', 'validate `{run-id}` against the canonical run-id shape', 'Never take `{run-id}` from the PR body\'s own marker', 'Report the `resume` line it prints only when the verdict is `resume`']) {
+    assert.ok(resumeText.includes(literal), `control: "${literal}" must be in the resume file`);
+    assert.ok(!item10Text.includes(literal), `item 10 must not carry the moved literal "${literal}"`);
+  }
+});
+
+// #4804: this run-id rule moved with item 10's resume procedure into the resume file.
+test("the resume file takes {run-id} from the claim blob runId, never from the PR body's own marker", () => {
+  assert.match(RESUME, /`\{run-id\}` being the `runId` of the record's claim blob/);
+  assert.match(RESUME, /Never take `\{run-id\}` from the PR body's own marker here/);
+});
+
+// #4818: item 10's evaluation script, run against fixture files. The three
+// $PR_SCAN_UNSETTLED_* placeholders become temp paths (the isolateItem9 pattern),
+// UNSETTLED_AGE=24 is set, and the PR list is empty so no `gh pr view` runs.
+function runItem10Evaluation({ claimRows, labelled = [], labelledText, prsText = '[]', extraEnv = {} }) {
+  const scripts = extractNodeScripts(ITEM10).filter((s) => s.includes('$PR_SCAN_UNSETTLED_CLAIMS'));
+  assert.equal(scripts.length, 1, 'item 10 must carry exactly one evaluation script');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-item10-'));
+  try {
+    const claimsPath = path.join(dir, 'claims.jsonl');
+    const labelledPath = path.join(dir, 'labelled.json');
+    const prsPath = path.join(dir, 'prs.json');
+    fs.writeFileSync(claimsPath, claimRows.map((r) => `${JSON.stringify(r)}\n`).join(''));
+    fs.writeFileSync(labelledPath, labelledText ?? JSON.stringify(labelled));
+    fs.writeFileSync(prsPath, prsText);
+    const script = scripts[0]
+      .split('$PR_SCAN_UNSETTLED_LABELLED').join(toPosix(labelledPath))
+      .split('$PR_SCAN_UNSETTLED_CLAIMS').join(toPosix(claimsPath))
+      .split('$PR_SCAN_UNSETTLED_PRS').join(toPosix(prsPath));
+    const file = path.join(dir, 'item10-eval.js');
+    fs.writeFileSync(file, script);
+    return execFileSync(process.execPath, [file], { encoding: 'utf8', env: { ...process.env, UNSETTLED_AGE: '24', ...extraEnv } });
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+const HOURS_AGO = (hours) => new Date(Date.now() - hours * 3600000).toISOString();
+// read-claims.js's terminator: present on every completed read, absent on a failed or cut-off one.
+const COMPLETE = (count) => ({ number: null, state: 'complete', count });
+
+test('item 10 reads claims in one git batch through bin/read-claims.js, never a per-blob contents call (#4818)', () => {
+  assert.ok(!ITEM10.includes('contents/claims/'), 'item 10 must not read a claim blob per call');
+  assert.ok(ITEM10.includes('bin/read-claims.js'), 'item 10 must name bin/read-claims.js');
+});
+
+test('item 10 characterization: a live claim 25h old with no PR still reports no PR found', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    labelled: [],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: a could-not-read registry row reports the registry and judges no label-only candidate (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: null, state: 'could-not-read', reason: 'transport-failure' }],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a could-not-read blob reports the blob, and its labelled issue is not label drift (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'could-not-read', reason: 'transport-failure' }, COMPLETE(1)],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: claim blob could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /#12: no PR found/);
+});
+
+test('item 10: an EMPTY claims file is an unread registry, never silence (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(no completion row\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: an empty registry (terminator count 0) is a real answer, so a label-only candidate is judged', () => {
+  const out = runItem10Evaluation({
+    claimRows: [COMPLETE(0)],
+    labelled: [{ number: 12, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.doesNotMatch(out, /could not be read/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+});
+
+test('item 10: an unreadable bot:in-progress list judges no label-only candidate, but still judges the claims (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, { number: 13, state: 'live', claimedAt: HOURS_AGO(1) }, COMPLETE(2)],
+    labelledText: '',
+  });
+  assert.match(out, /\[unsettled\] bot:in-progress list could not be read — label-only candidates not judged/);
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  // #13 is a fresh claim (1h old, under the 24h threshold): the age gate must skip it.
+  assert.doesNotMatch(out, /#13/);
+});
+
+test('item 10: an unreadable PR list judges no candidate, so a stale claim is not reported as no PR found (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+    prsText: '',
+  });
+  assert.match(out, /\[unsettled\] PR list could not be read — no candidate judged/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10: a stale claim past the threshold with no PR is judged like a live one (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [{ number: 15, state: 'stale', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+  });
+  assert.match(out, /\[unsettled\] #15: no PR found/);
+});
+
+// #4818: the PR-progress comparison runs only through `gh pr view`. A fake `gh` shim first on
+// PATH prints one fixed commit date per case, so the real gh is never called. Skipped on
+// win32: a `#!/bin/sh` shim does not run there.
+function runItem10WithFakeGh(committedDate) {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-sweep-fakegh-'));
+  try {
+    const gh = path.join(binDir, 'gh');
+    const progress = JSON.stringify({ comments: [], commits: [{ committedDate }] });
+    fs.writeFileSync(gh, `#!/bin/sh\necho '${progress}'\n`);
+    fs.chmodSync(gh, 0o755); // root-safe: makes the shim executable, not a denial simulation
+    return runItem10Evaluation({
+      claimRows: [{ number: 12, state: 'live', claimedAt: HOURS_AGO(25) }, COMPLETE(1)],
+      prsText: JSON.stringify([{ number: 40, url: 'https://example.test/pull/40', closingIssuesReferences: [{ number: 12 }] }]),
+      extraEnv: { PATH: `${binDir}${path.delimiter}${process.env.PATH}` },
+    });
+  } finally {
+    fs.rmSync(binDir, { recursive: true, force: true });
+  }
+}
+
+test('item 10: PR progress newer than claimedAt means the claim is not unsettled (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(1));
+  assert.doesNotMatch(out, /#12/);
+});
+
+test('item 10: PR progress older than claimedAt reports the PR as silent (#4818)', { skip: process.platform === 'win32' }, () => {
+  const out = runItem10WithFakeGh(HOURS_AGO(30));
+  assert.match(out, /\[unsettled\] #12: PR #40 silent 25h after claim/);
+});
+
+test('item 10: without git access the registry read is reported unreadable, with no MCP fallback promised (#4818)', () => {
+  assert.match(SCAN, /without git access to `claims-registry` it prints a registry `could-not-read` row and item 10 reports the registry unreadable, never empty/);
+  assert.ok(!SCAN.includes('List all claims'), 'no unrouted fallback to issue-claims.md "List all claims" — that section writes none of the rows item 10 reads');
+});
+
+// The producer/consumer seam: run bin/read-claims.js's real run() against a faked git, and hand the
+// rows it actually prints to the evaluation script, so a row-vocabulary drift on either side goes red.
+function printedByReadClaims({ fetchFails = false, missingBlob = false } = {}) {
+  const { run } = require('../plugin/bin/read-claims');
+  const live = JSON.stringify({ issueNumber: 12, claimedAt: HOURS_AGO(25), runId: 'r12' });
+  const lsTree = ['12', '13'].map((n) => `100644 blob sha${n}\tclaims/issue-${n}.json\0`).join('');
+  const git = (args, opts = {}) => {
+    if (args[0] === 'fetch' && fetchFails) throw Object.assign(new Error('Command failed: git fetch'), { stderr: 'fatal: 403\n' });
+    if (args[0] === 'ls-tree') return lsTree;
+    if (args[0] === 'rev-parse') return 'tip\n';
+    if (args[0] === 'cat-file') {
+      const shas = Buffer.from(opts.input).toString('utf8').split('\n').filter(Boolean);
+      return Buffer.concat(shas.map((sha) => (sha === 'sha13' && missingBlob
+        ? Buffer.from(`${sha} missing\n`)
+        : Buffer.from(`${sha} blob ${Buffer.byteLength(live)}\n${live}\n`))));
+    }
+    return '';
+  };
+  const lines = [];
+  run([], { runner: git, now: () => Date.now(), stdout: (s) => lines.push(s), stderr: () => {} });
+  return lines.join('').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+}
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a refused fetch reports the registry unreadable (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ fetchFails: true }), labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }] });
+  assert.match(out, /\[unsettled\] claims-registry could not be read \(transport-failure\)/);
+  assert.doesNotMatch(out, /no PR found/);
+});
+
+test('item 10 evaluates the rows bin/read-claims.js really prints: a missing blob is named, its sibling still judged (#4818)', () => {
+  const out = runItem10Evaluation({ claimRows: printedByReadClaims({ missingBlob: true }) });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+});
+
+test('item 10: a readable live claim is still judged when another blob could not be read (#4818)', () => {
+  const out = runItem10Evaluation({
+    claimRows: [
+      { number: 12, state: 'live', claimedAt: HOURS_AGO(25) },
+      { number: 13, state: 'could-not-read', reason: 'transport-failure' },
+      COMPLETE(2),
+    ],
+    labelled: [{ number: 14, updatedAt: HOURS_AGO(25) }],
+  });
+  assert.match(out, /\[unsettled\] #12: no PR found/);
+  assert.match(out, /\[unsettled\] #13: claim blob could not be read \(transport-failure\)/);
+  assert.match(out, /\[unsettled\] #14: no PR found/);
+  assert.doesNotMatch(out, /claims-registry could not be read/);
+});
+
+test('item 10: the evaluation fence resolves unsettled-age-hours itself, since a fresh bash invocation inherits no variable (#4818)', () => {
+  assert.match(
+    ITEM10,
+    /UNSETTLED_AGE=\$\(node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/resolve-policy\.js" --values unsettled-age-hours\) node -e "/,
+    'an unset UNSETTLED_AGE makes AGE_HOURS NaN, which skips no candidate by age',
+  );
 });
 
 test('the anti-pattern entry names self-scheduled per-PR check-in loops and states the replacement', () => {

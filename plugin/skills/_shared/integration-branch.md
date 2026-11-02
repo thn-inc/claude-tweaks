@@ -58,7 +58,7 @@ Record which source won — consumers that surface a preview name it.
 
 ## Per-consumer fallback
 
-Rank 6 is deliberately per-consumer, because they degrade differently. In every case the unresolved path reproduces the behavior that consumer had before this fragment existed, so a project that sets nothing sees no change.
+Rank 6 is deliberately per-consumer, because they degrade differently. In every case the unresolved path reproduces the behavior that consumer had before this fragment existed, so a project that sets nothing sees no change. The Merge-Provenance Check row is the one deliberate exception: its pre-fragment rule excluded files on a first-parent walk that dropped shipping work (#4639), so unresolved it excludes nothing.
 
 | Consumer | Uses it for | Fallback when nothing resolved |
 |---|---|---|
@@ -68,6 +68,7 @@ Rank 6 is deliberately per-consumer, because they degrade differently. In every 
 | `bin/lib/release-preflight/pack.js` (`/claude-tweaks:release` Step 1 fact pack) | Release-target branch and tip ref | `git symbolic-ref --short refs/remotes/origin/HEAD`, then `git remote show origin`'s "HEAD branch:" line, then — last resort only, never ahead of either origin-derived read — `git branch --show-current` for a repo with no `origin` remote at all; unresolved by all three degrades the whole pack (ruling 13's preamble-failure envelope) rather than guessing `'main'` (#2422) |
 | `bin/docs-health.js verify-commit` (`bin/lib/docs-health/commit-ref.js`, #2866) | The ref a cited commit hash must be an ancestor of to classify `reachable` | `--integration-branch`, else the `integration-branch` policy key, else the `<remote>/HEAD` symbolic ref; unresolved by all three makes every hash `unverifiable`, never a guessed `main` |
 | `bin/load-delta.js` (`/claude-tweaks:review` step 3j) | The merge-base the skill load delta is measured from | `--integration-branch` (review passes the branch its Step 2 resolved), else the shared resolver (`worktree-reap.js`'s `resolveIntegrationBranch`: policy key, then `origin/HEAD`); unresolved → `no-baseline`, never a guessed `main` |
+| `/claude-tweaks:review` (Merge-Provenance Check) | The fork point a file's content is compared at before it may be excluded from a branch-scope review | **Exclude nothing.** The raw `git diff` scope stands, since an exclusion needs positive evidence, and a wrong one drops shipping work from review |
 | `bin/closing-links.js` (`--mode post-merge`, #4549) | GitHub's own default branch on the PR's own host (`gh repo view {host}/{owner}/{repo}`) — the branch where closing keywords fire — compared against the PR's `baseRefName`; deliberately not the project's integration branch, so none of the ladder's ranks apply | **`base-unchecked`:** nothing is closed and no `closingSet` is emitted; the run says so and names the Fixes records to check by hand — never a guessed `main`, never an assumed non-default |
 | `/claude-tweaks:assess-agent-autonomy` | `merge-base` for blast radius | `gh api default_branch`, as today; an unresolvable value is already the documented `needs-human` inconclusive-read case |
 | `/claude-tweaks:build`, `/claude-tweaks:flow` | Expected fork point | Upstream of the current branch, else `origin/HEAD`, as today |
