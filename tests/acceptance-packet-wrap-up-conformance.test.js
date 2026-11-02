@@ -9,8 +9,9 @@ const test = require('node:test');
 const assert = require('node:assert');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { readPacket } = require('../plugin/bin/lib/wrap-up/packet-gather');
 
-const SKILLS = path.join(__dirname, '..', 'plugin', 'skills');
+const SKILLS =path.join(__dirname, '..', 'plugin', 'skills');
 const read = (rel) => readText(path.join(SKILLS, rel));
 const PARENT_GATE = 'wrap-up/verification-brief-parent-gate.md';
 
@@ -333,6 +334,41 @@ test('on local-files the record file itself is --spec and {record-file}', () => 
   assert.ok(local.includes('`{record-file}` is the record file itself'), local);
 });
 
+test('an Entry point already a full URL is used as is', () => {
+  const bullet = linksBullet();
+  assert.ok(bullet.includes('An Entry point already a full URL'), bullet);
+  assert.ok(bullet.includes('is used as is'), bullet);
+  const schema = read('_shared/observation-plan.md');
+  assert.ok(schema.includes('Entry point: {deep link URL/route'), 'the schema still allows one');
+});
+
+test('a claim citing the Entry point link names its group', () => {
+  const doc = flat(brief());
+  assert.ok(!doc.includes('citing the Entry point link'), 'ambiguous with entry-point-{n}');
+  assert.ok(flat(step3()).includes("citing the first group's `link:entry-point-1`"), 'the browser-unavailable note');
+  assert.ok(flat(step4()).includes("citing the first group's `link:entry-point-1`, the URL in its text"), 'the evidence PR note');
+});
+
+test('{record-file} comes from a listing that holds closed records too', () => {
+  const local = flat(step4().slice(step4().indexOf('`work-backend: local-files` — run')));
+  assert.ok(local.includes("combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing"), local);
+});
+
+test('--surface falls back to the record body, so a no-header record keeps the commands-only rule', () => {
+  const bullet = between(gatherList(), '- `--surface` —', '- `--local-base-url`');
+  assert.ok(bullet.includes("the materialized header's `surface:`, else the record body's `Surface:` line"), bullet);
+  assert.ok(bullet.includes('omitted with neither'), bullet);
+  assert.ok(!bullet.includes('omitted with no header'), bullet);
+});
+
+test('evidence screenshots are links, with no image fence left to match', () => {
+  const body = step4();
+  assert.ok(!body.includes('![{description}]'), 'the fence is the plain url');
+  assert.ok(body.includes('\nhttps://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png\n'), 'the plain url');
+  assert.ok(flat(body).includes('The packet renders it as a plain link, not an embedded image'), 'states it');
+  assert.ok(!flat(body).includes('the embedded image'), 'no embedded image left to fail');
+});
+
 test('the snapshot paragraph cites where {integration-branch} comes from', () => {
   const skill = read('wrap-up/SKILL.md');
   const snapshot = flat(between(skill, '**Snapshot the packet inputs', '\n\n'));
@@ -465,6 +501,42 @@ test('demo #N names the packet marker before any legacy brief form and takes the
   }
 });
 
+test('demo selects by a marker of any version, as readPacket does, and reads only v1', () => {
+  const paragraph = packetRead();
+  assert.ok(paragraph.includes('whose first line is exactly an acceptance-packet marker of any version'), paragraph);
+  assert.ok(paragraph.includes('matching `readPacket`'), paragraph);
+  assert.ok(paragraph.includes(`Read it if that line is \`${MARKER}\``), paragraph);
+  assert.ok(paragraph.includes('even with a v1 comment later'), paragraph);
+  const comment = (body, createdAt) => ({ body, createdAt, authorAssociation: 'OWNER', url: body });
+  const read2 = readPacket([comment(MARKER, '2021-01-01T00:00:00Z'), comment('<!-- acceptance-packet: v2 -->', '2020-01-01T00:00:00Z')]);
+  assert.strictEqual(read2.status, 'unreadable', 'the earliest marker of any version decides');
+  assert.strictEqual(read2.version, 2);
+});
+
+test('a failed comment read falls through to the label and closing-commit recovery only', () => {
+  const paragraph = packetRead();
+  assert.ok(paragraph.includes('falls through only to the label check and the closing-commit recovery below, never to the legacy brief forms'), paragraph);
+  assert.ok(!paragraph.includes('the lookup continues below'), paragraph);
+});
+
+test('the Skip text tells a below-floor record the truth: no scan resurfaces it', () => {
+  const doc = flat(read(DEMO));
+  const option = between(doc, '- Option 3 — for a label-backed entry', 'For a session-recall entry');
+  assert.ok(option.includes('`exceedsOversightFloor`'), 'names the predicate that decides');
+  const above = between(option, 'Above the floor:', 'Below the floor');
+  assert.ok(above.includes("acceptance-gap scan will surface it again"), above);
+  const below = option.slice(option.indexOf('Below the floor'));
+  assert.ok(below.includes('below the oversight floor no disposition is owed'), below);
+  assert.ok(below.includes('/claude-tweaks:demo #N still reads the packet'), below);
+  assert.ok(!below.includes('acceptance-gap scan will surface'), below);
+  const scan = flat(read('_shared/github-pr-scan-acceptance.md'));
+  assert.ok(scan.includes('a record that closed below the floor never needed a disposition in the first place'), 'the premise stays true');
+  assert.ok(flat(read('tidy/step-1-records.md')).includes('Shape 8 filters out below-floor candidates'), 'the premise stays true');
+  const recovery = flat(between(recordLookup(), 'If the record carries **no** pending acceptance label', 'on disk'));
+  assert.ok(recovery.includes('Above the oversight floor this is the population'), recovery);
+  assert.ok(recovery.includes('both filter a below-floor record out, since it owes no disposition'), recovery);
+});
+
 test('the packet stands in for the brief, and the legacy forms are reached only with no trusted packet', () => {
   const paragraph = packetRead();
   assert.ok(paragraph.includes('its Test guide stands in for the Try it block'), paragraph);
@@ -485,7 +557,7 @@ test('the packet read does not depend on a pending label, so a below-floor packe
 
 test('an unreadable packet stops the ref and a failed read is stated', () => {
   const paragraph = packetRead();
-  assert.ok(paragraph.includes('is an `unreadable` packet'), paragraph);
+  assert.ok(paragraph.includes('makes it an `unreadable` packet'), paragraph);
   assert.ok(paragraph.includes('stop this ref'), paragraph);
   assert.ok(paragraph.includes('a legacy brief beside it never stands in'), paragraph);
   assert.ok(paragraph.includes('A failed read states so in one plain line above the verdict'), paragraph);
@@ -557,6 +629,32 @@ test('the stale template citations are gone from the demo readers', () => {
   assert.ok(entry.includes("the same shape `wrap-up/verification-brief-parent-gate.md`'s template renders"), entry);
   assert.ok(entry.includes('**No comment anywhere carries the packet, the heading or the pointer**'), entry);
   assert.ok(entry.includes('a parent-linked sub-issue, or a below-floor record closed before the acceptance packet, had its walkthrough posted alone'), entry);
+});
+
+test('the stale brief wording is gone from the docs a reader meets first', () => {
+  const readme = flat(readText(path.join(__dirname, '..', 'README.md')));
+  assert.ok(readme.includes('posts an acceptance packet on the record, with demo:pending above the oversight floor'), 'README');
+  assert.ok(!readme.includes('applies demo:pending + posts a Verification Brief on the record'), 'README');
+  const card = read('help/reference-card.md');
+  assert.ok(card.includes('| `/claude-tweaks:wrap-up` | Learnings (CLAUDE.md), acceptance packet (a parent\'s gate: Verification Brief) |'), 'the /help card');
+  const ledger = flat(read('_shared/work-record.md'));
+  assert.ok(!ledger.includes('applies `demo:pending` + posts the Verification Brief |'), 'the ledger row');
+  assert.ok(ledger.includes('posts the acceptance packet, with `demo:pending` above the oversight floor'), 'the ledger row');
+  assert.ok(ledger.includes('and posts an acceptance packet (`_shared/acceptance-packet.md`'), 'the axis bullet');
+  assert.ok(!ledger.includes('and posts a Verification Brief (an issue comment'), 'the axis bullet');
+  const lifecycle = flat(read('_shared/pr-early-run-lifecycle.md'));
+  assert.ok(lifecycle.includes('only if a legacy pointer comment already exists on the issue'), lifecycle.slice(0, 80));
+  assert.ok(lifecycle.includes('new runs post none'), 'names why');
+  assert.ok(!lifecycle.includes('(Verification Brief routing,'), 'the routing it cited is gone');
+});
+
+test('the parent gate and comments prose no longer describe the retired below-floor path', () => {
+  const gate = flat(read(PARENT_GATE));
+  assert.ok(!gate.includes('same as a below-floor sub-issue record on the non-parent path'), 'Q5 retired it');
+  assert.ok(gate.includes("like the non-parent path's below-floor record, no label"), 'the below-floor path');
+  const comments = flat(read('_shared/pr-run-comments.md'));
+  assert.ok(!comments.includes('which still post the plain marker'), 'new runs post no brief');
+  assert.ok(comments.includes('single-spec runs, which posted the plain marker'));
 });
 
 test('the skill graph states the packet edges and no longer describes the brief as what wrap-up posts', () => {

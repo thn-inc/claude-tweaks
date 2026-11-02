@@ -88,8 +88,9 @@ available, `gh` is present but unauthenticated (the Detection rule picks `gh` on
 there is no fallback to MCP), the repo has no GitHub remote, or any parent-gate `gh` call below
 fails: a **sub-issue-side** entry skips the Parent-Gate Procedure entirely and falls back to
 the no-parent path (`verification-brief.md`'s Oversight-floor gate, then the Steps it routes to on
-this record itself: a packet either way, with the pending label only above the floor) — never blocking the wrap-up, the auto-merge short-circuit, or
-the dispatched group's merge gate. The post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
+this record itself: a packet either way, with the pending label only above the floor) — never
+blocking the wrap-up, the auto-merge short-circuit, or the dispatched group's merge gate. The
+post-merge `_shared/pr-first-merge-post-merge.md` Step 4.0b
 entry is the sub-issue-side exception: on any failing `gh` call it skips that parent — or the
 whole step, when the call is Step 4.0b's default-branch check — names each skipped parent in the
 closing summary, and never falls back to the no-parent path — its merge has already landed, so
@@ -349,8 +350,8 @@ size axis is never evaluated (`#366`): parents carry no scoring of their own
 `exceeds` only: `parentIssue`, `needs` and `held` are Step 4.0b's
 (`_shared/pr-first-merge-post-merge.md`).
 
-- **`exceeds: false`** — no `demo:pending`, no brief, same as a below-floor sub-issue record on
-  the non-parent path. Do not compose the parent brief. The parent still has to be closed, and
+- **`exceeds: false`** — no `demo:pending`, no brief: like the non-parent path's below-floor
+  record, no label. Do not compose the parent brief. The parent still has to be closed, and
   the entry decides when:
   - **Sub-issue-side entry, `work-backend: github-issues`:** a pre-merge caller leaves the parent
     open, because this run's merge has not landed yet. `_shared/pr-first-merge-post-merge.md`'s

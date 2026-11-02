@@ -56,13 +56,15 @@ gh issue view {n} --json number,title,body,labels,url,state
 **Read the acceptance packet first** (`_shared/acceptance-packet.md`'s Reader rules), whatever the
 record's labels: a below-floor record with no parent carries a packet and no pending label (Decision
 Q5). Fetch every comment (`gh issue view {n} --json comments`) and take the earliest trusted comment by
-`createdAt` whose first line is exactly `<!-- acceptance-packet: v1 -->` — trusted per
+`createdAt` whose first line is exactly an acceptance-packet marker of any version — trusted per
 `_shared/pr-run-comments.md`'s Trusted authors, each untrusted one named in that section's skip notice, one
-line above the verdict. That comment is what Step 2 renders: its Test guide stands in for the Try it block and
-its `### Observation plan` appendix is the plan Step 2 walks; go straight to Step 2 with it. A trusted
-first line naming another schema version (`<!-- acceptance-packet: v2 -->`) is an `unreadable` packet:
+line above the verdict — matching `readPacket`. Read it if that line is `<!-- acceptance-packet: v1 -->`.
+That comment is what Step 2 renders: its Test guide stands in for the Try it block and
+its `### Observation plan` appendix is the plan Step 2 walks; go straight to Step 2 with it. A first line
+naming another schema version (`<!-- acceptance-packet: v2 -->`) makes it an `unreadable` packet, even
+with a v1 comment later:
 report it by that version and stop this ref, since a legacy brief beside it never stands in. A failed read states so in
-one plain line above the verdict and the lookup continues below. Only when no trusted packet exists does the lookup fall back to the
+one plain line above the verdict and falls through only to the label check and the closing-commit recovery below, never to the legacy brief forms, which read the same comments. Only when no trusted packet exists does the lookup fall back to the
 legacy forms below, unchanged: a decomposition parent's brief, and runs from before the packet.
 
 If the labels just fetched carry a pending acceptance label in either spelling
@@ -111,9 +113,9 @@ If the record carries **no** pending acceptance label (e.g. it was built ad hoc 
 and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Phase 4 execution step
 — **or it reached Phase 4 before the packet and simply didn't clear the oversight floor, per `#367`** — a normal
 case, not an anomaly), recover that **closing
-commit** before reaching for session recall. This is the population `/claude-tweaks:tidy`'s
+commit** before reaching for session recall. Above the oversight floor this is the population `/claude-tweaks:tidy`'s
 `acceptance-gap` sweep surfaces — its `github-pr-scan-acceptance.md` scope under `work-backend:
-github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent — and it is by construction
+github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent; both filter a below-floor record out, since it owes no disposition. Either way it is by construction
 *other* sessions' work. Recall will have nothing, but the commit that closed the record is still
 on disk, and this recovery reads git rather than the backend, so it is identical on both drivers:
 

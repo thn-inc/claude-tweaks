@@ -244,7 +244,8 @@ Write each with the Write tool:
   each with its own id `entry-point-{n}`:
   `[{ "id": "entry-point-1", "label": "{feature}", "url": "{local base URL}{route}" }]`. An Entry
   point is a route, and gather refuses a bare one, so `url` is `APP_URL` (`_shared/dev-url-detection.md`,
-  do not re-derive URL discovery), the same value `--local-base-url` carries, plus the route. Write
+  do not re-derive URL discovery), the same value `--local-base-url` carries, plus the route. An Entry
+  point already a full URL, which `_shared/observation-plan.md`'s schema allows, is used as is. Write
   `"command"` in place of `"url"`, holding the Entry point as the Try it block states it, for
   `cli`/`flow` plans and a `diff` plan's file path, on an `infra` or `backend` surface, and
   when no base URL resolves or the host would be refused: a refused link leaves the Test guide with
@@ -269,7 +270,7 @@ the browser-unavailable fallback, or a below-floor record, where Step 2.5 did no
    larger diffs the stat summary plus the 2-3 hunks most central to the record's Acceptance
    Criteria. Gather's `change` facts are what the claims cite.
 3. Under the browser-unavailable fallback, the narrative states that visual verification wasn't
-   available in this environment, as a `test-guide` claim citing the Entry point link.
+   available in this environment, as a `test-guide` claim citing the first group's `link:entry-point-1`.
 
 ## Step 4: Compose and post the brief
 
@@ -325,7 +326,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "{run-dir}" --section "/w
 `{text-file}` holds one line, `screenshot commit for #{record}: PR state {state} → {current branch | evidence PR #{m} ({url})}`, written per `_shared/auto-decision-log.md`'s Text from git or a user paragraph — `{url}` comes back from the forge, so it never passes through shell quoting.
 
 On the evidence-PR route, name the evidence PR's URL in the packet's Test guide (a `test-guide`
-claim citing the Entry point link, the URL in its text) and in wrap-up's Actions Performed
+claim citing the first group's `link:entry-point-1`, the URL in its text) and in wrap-up's Actions Performed
 (`summary-template.md`'s evidence-PR row).
 
 The commit, for the `current-branch` route and the `local-merge` / `current-branch` integration modes:
@@ -335,22 +336,23 @@ git add docs/demo-evidence/{record}/
 git commit -m "Add demo evidence screenshots for #{record}"
 ```
 
-Embed via a commit-SHA-pinned raw URL (not branch-pinned — resolves regardless of which branch
+Link via a commit-SHA-pinned raw URL (not branch-pinned — resolves regardless of which branch
 this lands on, as soon as the commit is pushed to origin, sidestepping any question of "which
-branch is this brief rendering against"):
+branch is this brief rendering against"). The packet renders it as a plain link, not an embedded
+image (`_shared/acceptance-packet.md`'s `## Untrusted content`):
 
 ```
-![{description}](https://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png)
+https://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png
 ```
 
 Resolve `{owner}/{repo}` from `git remote get-url origin`; `{commit-sha}` is the screenshot
 commit's own SHA (`git rev-parse HEAD` immediately after the commit above). This resolves once
 that commit is pushed to origin — the normal case for `github-issues`-backend work (which always
 eventually pushes for the record to close via merge). If this run's work is later discarded
-without ever pushing, the embedded image simply won't resolve, same as any broken link — the
+without ever pushing, the link simply won't resolve, same as any broken link — the
 brief's text content is unaffected.
 
-Each embed's URL, bare of the image syntax, is one entry of Step 4's `{RECORDINGS}` input below:
+Each URL is one entry of Step 4's `{RECORDINGS}` input below:
 `[{ "id": "{NN}-{description}", "text": "{description}", "url": "{raw url}" }]`.
 
 `work-backend: local-files` — no comment mechanism (existing constraint, per
@@ -381,7 +383,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" gather --record {N} --out 
 - `--base` — `origin/{integration-branch}` (`_shared/integration-branch.md`).
 - `--head` — the PR's head sha when `run-state.json` carries a `pr` object, read as its own call with `gh pr view {pr-number} --json headRefOid` (MCP `pull_request_read`). Omitted with no PR or a failed read: gather then takes the snapshot's `head`, else `HEAD`. When `git cat-file -e {sha}` fails, run `git fetch origin pull/{pr-number}/head` as its own call first (a fresh sandbox or a pruned branch); a diff that still fails becomes gather's stated `git changes not gathered`.
 - `--links` — Step 3's `{LINKS}`.
-- `--surface` — the materialized header's `surface:`, omitted with no header.
+- `--surface` — the materialized header's `surface:`, else the record body's `Surface:` line, so a no-header record keeps the commands-only rule; omitted with neither.
 - `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces and `app-route`/`rendered-page` plans, omitted when none resolves.
 - `--recordings` — `{RECORDINGS}`, only when the embeds survive the route above.
 
@@ -429,7 +431,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" post --record {N} --body-f
   - None: post `{PACKET}`'s text with `add_issue_comment`, per `_shared/github-write-transport.md`'s Marker comments on the MCP path; a failure there is reported and followed by the same clearing. Then, above the floor only, apply the label through `issue_write`'s read-merge-write. Then, when the run has a PR, read its body with `pull_request_read` and append the `Acceptance packet: {comment url}` line through MCP `update_pull_request` unless the line is already present, matching `publishPacket`'s step 4. A failed label write leaves the packet in place and skips the PR line, reported as the `gh` path's `labelApplied: false` is. A failed PR-line write does not fail the publish, reported as the `gh` path's `prLink` with `ok: false` is.
   - Clearing the label is `issue_read` (`get_labels`) immediately before the write, then, only when `demo:pending` or `accept:pending` is present, `issue_write` with the complete array `mergeLabelNames` computes, per `_shared/github-write-transport.md`'s Full-replace hazard, and no write when neither is present. A failed clearing gets the same needs-human line.
 
-`work-backend: local-files` — run `local` as its own Bash call, with `--pending` omitted below the floor (Decision Q5). `{record-file}` is the record file itself, the `.path` of its `queryRecords('specs', {})` entry. A non-zero exit means the record is unchanged: report it in the summary and log it.
+`work-backend: local-files` — run `local` as its own Bash call, with `--pending` omitted below the floor (Decision Q5). `{record-file}` is the record file itself, the `.path` of its entry in a combined open+closed `queryRecords('specs', {})` / `queryRecords('specs', { closed: true })` listing, since the record may have closed by now. A non-zero exit means the record is unchanged: report it in the summary and log it.
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/acceptance-packet.js" local --record-file "{record-file}" --body-file "{PACKET}" --pending
