@@ -188,7 +188,7 @@ git commit -m "Host-qualify reconcile's residue-escalation --repo on a GHE origi
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/claim-store.test.js tests/bin-lib/claim-targets/claim-targets.test.js tests/stale-claim-pr-cli.test.js tests/gh-host-seam-behavior.test.js`
-Expected: FAIL on every new GHE assertion. The AC2.1 argv pins pass before and after.
+Expected: FAIL after Step 1 on every new GHE assertion. The AC2.1 argv pins pass before and after.
 
 - [ ] **Step 3: Implement** the signatures and wiring from the Interfaces block. Replace `stale-claim-pr.js`'s "github.com only" header paragraph with the new rule: an explicit host-qualified `--repo` is trusted, an origin host is used only when the gh seam knows it, and anything else is the failure verdict.
 
@@ -235,7 +235,7 @@ git commit -m "Send claim-store PR listing and stale-claim matching to the origi
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `node --test tests/bin-lib/reconcile/post-merge.test.js tests/hooks-teardown-run.test.js tests/gh-host-seam-behavior.test.js`
-Expected: FAIL. The alias and unknown-host cases get `'github-work'` / `'ghe.example.com'`, the github.com cases get `'github.com'`, and the `GH_HOST` case gets `'acme.ghe.com'`.
+Expected: FAIL after Step 1. The alias and unknown-host cases get `'github-work'` / `'ghe.example.com'`, the github.com cases get `'github.com'`, and the `GH_HOST` case gets `'acme.ghe.com'`.
 
 - [ ] **Step 3: Implement** the two host swaps from the Interfaces block.
 
