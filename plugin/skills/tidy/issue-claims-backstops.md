@@ -80,8 +80,8 @@ The text goes at the end of the `[claim]` row's `{recommendation}`.
 `resume` is `/claude-tweaks:dispatch resume #{n}`; a PR body's own resume line stands, with no
 verdict run. For the dispatch form, run the same command: exit 0 keeps the printed command; on
 exit 3 with reason `no-pr` render `Resolve open PR #{number} ({url}) before any release` instead;
-any other exit 3 renders `PR #{number}: {disposition} — dispatch-resume.js --issue {n} prints the steps`
-in place of the Resume rendering; on exit 2 or 4 it keeps the command and appends the same unknown note. That row stays
+any other exit 3 renders `{disposition}: dispatch-resume {n}` in place of the Resume rendering (the
+verdict CLI, `dispatch-resume.js --issue {n}`, prints the steps); on exit 2 or 4 it keeps the command and appends the same unknown note. That row stays
 never staged and its claim never released. This is a read only: nothing here closes or touches a PR.
 
 ### Backstop: missed `parked` restoration
