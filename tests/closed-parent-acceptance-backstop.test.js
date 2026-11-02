@@ -181,7 +181,11 @@ function runFetchBlock(login, { raw = false } = {}) {
 }
 
 test('AC1.1: the parent-gate fetch block merges open and closed parents inside the 30-day window and marks the #4466 close', () => {
-  const parents = runFetchBlock('bot-self');
+  const { res, parentsFile } = runFetchBlock('bot-self', { raw: true });
+  assert.equal(res.status, 0, res.stderr);
+  // A healthy login degrades nothing, so the identity WARNING must not print.
+  assert.deepEqual(lines(res.stderr).filter((l) => l.startsWith('WARNING: ')), [], res.stderr);
+  const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
   assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20]);
   const marked = parents.filter((x) => x.belowFloorClose === true).map((x) => x.number).sort((a, b) => a - b);
   assert.deepEqual(marked, [11, 17]);
@@ -189,13 +193,24 @@ test('AC1.1: the parent-gate fetch block merges open and closed parents inside t
   for (const x of parents) assert.ok(!('comments' in x), '#' + x.number + ' carries no comments key');
 });
 
-test('AC2.1: the parent-gate fetch block stops, writing no parents, when the gh login is empty', () => {
-  // A failed `gh api user` leaves the login file empty; with no login a #4466 marker posted by the
-  // current identity would go unrecognised and a below-floor close would read as a gap.
-  const { res, parentsFile } = runFetchBlock('', { raw: true });
-  assert.notEqual(res.status, 0);
-  assert.match(res.stderr, /gh api user returned no login/);
-  assert.equal(fs.existsSync(parentsFile), false, 'no parents file is written on the stop');
+test('AC2.1: the parent-gate fetch block degrades an empty gh login to trusted-author marker matching, keeps every row, and warns', () => {
+  // A failed `gh api user` leaves the login file empty. The block does not stop: with no login only
+  // trusted-author close markers match, so #11's MEMBER marker still counts and #17's NONE-association
+  // marker (posted by the current identity) reads as absent, and one WARNING names the cause.
+  const { IDENTITY_PROBE_FAILED_NOTE } = require(path.join(PLUGIN_ROOT, 'bin', 'lib', 'issues', 'parent-gate.js'));
+  // A whitespace-only login trims to empty, so it takes the same degraded path as an empty one.
+  for (const login of ['', '   ']) {
+    const label = JSON.stringify(login);
+    const { res, parentsFile } = runFetchBlock(login, { raw: true });
+    assert.equal(res.status, 0, label + ': ' + res.stderr);
+    const parents = JSON.parse(fs.readFileSync(parentsFile, 'utf8'));
+    assert.deepEqual(parents.map((x) => x.number).sort((a, b) => a - b), [10, 11, 13, 15, 17, 18, 19, 20], label);
+    assert.deepEqual(parents.filter((x) => x.belowFloorClose === true).map((x) => x.number), [11], label);
+    const warnings = lines(res.stderr).filter((l) => l.startsWith('WARNING: '));
+    assert.equal(warnings.length, 1, label + ': ' + res.stderr);
+    assert.ok(warnings[0].includes(IDENTITY_PROBE_FAILED_NOTE), warnings[0]);
+    assert.ok(warnings[0].includes('[acceptance-gap] row may be a false positive'), warnings[0]);
+  }
 });
 
 test('AC1.1: the closed-parent fetches are bounded to the window and carry what the gate reads', () => {
