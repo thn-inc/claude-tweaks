@@ -11,6 +11,7 @@ const { dispositionState, approvalProvenance } = require('../plugin/bin/lib/issu
 const { classifyWatchedRecord } = require('../plugin/bin/lib/issues/merge-lane-breaker');
 const { trustRows } = require('../plugin/bin/lib/issues/trust');
 const { runVerify } = require('../plugin/bin/lib/wrap-up/engine-verify');
+const { publishPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 
 // #4610 expand step: the acceptance verdict labels are read under two spellings,
 // demo:* (legacy) and accept:* (successor), until the contract step removes the
@@ -143,6 +144,11 @@ const DEMO_LABEL_READERS = {
     run: (labels) => acceptanceLabelingResult(labels),
     expect: { pending: 'pass', approved: 'fail', 'changes-requested': 'fail', none: 'fail' },
   },
+  'lib/wrap-up/packet-post.js': {
+    what: 'the failed-publish clear, which removes a pending label in either spelling',
+    run: (labels) => failedPublishLabelRemoval(labels),
+    expect: { pending: 'removed', approved: 'absent', 'changes-requested': 'absent', none: 'absent' },
+  },
 };
 
 // Modules that name a demo:* label only inside copy they write for a human to read,
@@ -201,6 +207,21 @@ function acceptanceLabelingResult(labels) {
   } finally {
     fs.rmSync(runDir, { recursive: true, force: true });
   }
+}
+
+// The packet post fails, so publishPacket clears the pending label. The fake gh refuses
+// --remove-label of an absent label as the real one does, so a clear that reads a
+// spelling wrong reports 'failed' or 'absent', never 'removed'.
+function failedPublishLabelRemoval(labels) {
+  const runner = (args) => {
+    if (args.includes('comments')) return JSON.stringify({ comments: [] });
+    if (args[1] === 'comment') throw new Error('post failed');
+    if (args.includes('labels')) return JSON.stringify({ labels: labels.map((name) => ({ name })) });
+    const at = args.indexOf('--remove-label');
+    if (at !== -1 && labels.includes(args[at + 1])) return '';
+    throw new Error(`unexpected gh call: ${args.join(' ')}`);
+  };
+  return publishPacket({ issue: 7, bodyFile: 'unused', runner }).labelRemoval;
 }
 
 // -> null when `raw` names no demo:* label, else a short description of how. A

@@ -61,3 +61,39 @@ test('the fail-open fallback lands the Try it block in the packet, with the labe
   assert.ok(!fallback.includes('Posting it alone'), 'the below-floor post is retired on this path');
   assert.ok(!fallback.includes("Step 4's template"), 'the fallback no longer points at the brief template');
 });
+
+test('the no-parent descriptions state the packet, with the label only above the floor (Decision Q5)', () => {
+  const doc = read(PARENT_GATE);
+  const failOpen = paragraphAt(doc, '**Fail open on every `gh` call').replace(/\s+/g, ' ');
+  assert.ok(failOpen.includes('a packet either way, with the pending label only above the floor'), 'Fail open states the packet');
+  assert.ok(!failOpen.includes('when it clears the floor'), 'Fail open no longer limits the fallback to above the floor');
+  const noParent = paragraphAt(doc, '**No parent resolvable**').replace(/\s+/g, ' ');
+  assert.ok(noParent.includes('gets a packet, with the pending label only above the floor'), 'the no-parent branch states the packet');
+  assert.ok(!noParent.includes('exactly as today'), 'the no-parent branch no longer describes the old path');
+});
+
+test('a note ahead of the template says whose sections its references mean, and those sections exist', () => {
+  const compose = section(read(PARENT_GATE), '## Compose the parent brief', '## Apply the gate');
+  const fence = compose.indexOf('\n```markdown\n');
+  const note = compose.slice(compose.lastIndexOf('\n\n', fence - 2), fence);
+  for (const literal of ['**Try it block**', 'Step 2', 'Step 3', '`verification-brief.md`', '`## Try it block`']) {
+    assert.ok(note.includes(literal), `the note names ${literal}`);
+  }
+  const brief = read('wrap-up/verification-brief.md');
+  for (const heading of ['\n## Try it block', '\n## Step 2:', '\n## Step 3:']) {
+    assert.ok(brief.includes(heading), `verification-brief.md keeps ${heading.trim()}`);
+  }
+});
+
+test('the parent gate no longer cites Step 4 for a template or a write it does not hold', () => {
+  const doc = read(PARENT_GATE);
+  const compose = section(doc, '## Compose the parent brief', '## Apply the gate');
+  for (const stale of ["Step 4's kind-keyed", "Step 4's per-record", 'same condition Step 4']) {
+    assert.ok(!compose.includes(stale), `Compose no longer says ${stale}`);
+  }
+  assert.ok(compose.includes('composes no `### Branch` section'), 'Compose states the Branch rule itself');
+  const apply = doc.slice(doc.indexOf('\n## Apply the gate\n')).replace(/\s+/g, ' ');
+  assert.ok(!apply.includes('same write Step 4'), 'Apply no longer cites Step 4 for the local-files write');
+  assert.ok(!apply.includes("Step 4 (`verification-brief.md`)'s existing invariant"), 'Apply no longer cites a brief invariant in Step 4');
+  assert.ok(apply.includes('the same order Step 4 (`verification-brief.md`) keeps for its own comment'), 'Apply keeps the post-before-label citation');
+});
