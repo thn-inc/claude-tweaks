@@ -163,16 +163,26 @@ function publishPacket({ issue, bodyFile, repo, prNumber = null, label = null, r
   return result;
 }
 
-// Delimiters count only as whole lines, whatever surrounds them on the line, so prose
-// naming one in a code span is not an anchor but an indented one is. The block runs from
-// the first start through the last end, so near-delimiter shapes and a repeated block
-// all collapse into one packet. An orphan start, with no end below it, is the block's
-// start alone: nothing marks where its text stops, and what follows may be a human's.
-function findLocalBlock(lines) {
-  const start = lines.findIndex((line) => line.trim() === LOCAL_START);
-  if (start === -1) return null;
-  const end = lines.findLastIndex((line) => line.trim() === LOCAL_END);
-  return { start, end: end > start ? end : start };
+// The line spans an upsert replaces, in order. Delimiters count only as whole lines,
+// whatever whitespace surrounds them, so prose naming one in a code span is not an anchor
+// but an indented one is. An end closes the nearest start above it. Any other start is an
+// orphan, a span of its own delimiter line alone: nothing marks where its text stops, and
+// what follows may be a human's. An end with no start stays as text.
+function findLocalSpans(lines) {
+  const spans = [];
+  let open = null;
+  for (const [index, line] of lines.entries()) {
+    const text = line.trim();
+    if (text === LOCAL_START) {
+      if (open !== null) spans.push({ start: open, end: open });
+      open = index;
+    } else if (text === LOCAL_END && open !== null) {
+      spans.push({ start: open, end: index });
+      open = null;
+    }
+  }
+  if (open !== null) spans.push({ start: open, end: open });
+  return spans;
 }
 
 function renderLocalBlock(packetMarkdown, eol) {
@@ -181,12 +191,19 @@ function renderLocalBlock(packetMarkdown, eol) {
 
 function upsertLocalPacket(recordBody, packetMarkdown) {
   const lines = recordBody.split('\n');
-  const found = findLocalBlock(lines);
-  if (found !== null) {
-    const eol = lines[found.start].endsWith('\r') ? '\r\n' : '\n';
-    const closing = lines[found.end].endsWith('\r') ? '\r' : '';
-    const block = `${renderLocalBlock(packetMarkdown, eol)}${closing}`;
-    return [...lines.slice(0, found.start), block, ...lines.slice(found.end + 1)].join('\n');
+  const spans = findLocalSpans(lines);
+  if (spans.length > 0) {
+    // The one block takes the first span's place; every other span only goes.
+    const [first] = spans;
+    const eol = lines[first.start].endsWith('\r') ? '\r\n' : '\n';
+    const closing = lines[first.end].endsWith('\r') ? '\r' : '';
+    const kept = [...lines.slice(0, first.start), `${renderLocalBlock(packetMarkdown, eol)}${closing}`];
+    let at = first.end + 1;
+    for (const { start, end } of spans.slice(1)) {
+      kept.push(...lines.slice(at, start));
+      at = end + 1;
+    }
+    return [...kept, ...lines.slice(at)].join('\n');
   }
   const eol = recordBody.includes('\r\n') ? '\r\n' : '\n';
   const head = recordBody.replace(/[\r\n]+$/, '');

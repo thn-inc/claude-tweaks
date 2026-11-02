@@ -649,9 +649,20 @@ describe('upsertLocalPacket', () => {
     }
   });
 
-  test('two complete blocks collapse from the first start through the last end', () => {
+  test('a block then an orphan start leaves one block, no stray start, and the text kept', () => {
+    const body = `${block('A')}\nhuman\n${LOCAL_START}\nB\n`;
+    const once = upsertLocalPacket(body, 'NEW');
+    assert.equal(once, `${block('NEW')}\nhuman\nB\n`);
+    assert.equal(upsertLocalPacket(once, 'NEWER'), `${block('NEWER')}\nhuman\nB\n`);
+  });
+
+  test('a stray start above a complete block goes alone, and the text between stays', () => {
+    assert.equal(upsertLocalPacket(`${LOCAL_START}\nnotes\n${block('A')}\ntail`, 'NEW'), `${block('NEW')}\nnotes\ntail`);
+  });
+
+  test('two complete blocks collapse into the first one\'s place, keeping the text between them', () => {
     const result = upsertLocalPacket(`intro\n${block('A')}\nbetween\n${block('B')}\ntail\n`, 'NEW');
-    assert.equal(result, `intro\n${block('NEW')}\ntail\n`);
+    assert.equal(result, `intro\n${block('NEW')}\nbetween\ntail\n`);
     const crlf = upsertLocalPacket(`${LOCAL_START}\r\nA\r\n${LOCAL_END}\r\n${LOCAL_START}\r\nB\r\n${LOCAL_END}\r\ntail\r\n`, 'NEW');
     assert.equal(crlf, `${LOCAL_START}\r\nNEW\r\n${LOCAL_END}\r\ntail\r\n`);
   });
