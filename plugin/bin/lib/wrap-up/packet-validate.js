@@ -17,6 +17,7 @@ const {
 const { findCredentialInText } = require('./packet-links');
 
 const ROUTED_KINDS = Object.freeze(['check', 'story']);
+const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label']);
 const isObject = (value) => value !== null && typeof value === 'object';
 
 class SchemaError extends Error {
@@ -40,8 +41,8 @@ function checkFact(fact, at, seenIds, errors) {
     errors.push({ path: at, message: 'not an object' });
     return;
   }
-  if (typeof fact.id !== 'string' || !FACT_ID_RE.test(fact.id)) {
-    errors.push({ path: `${at}.id`, message: 'must be {kind}:{key} with an encoded key' });
+  if (typeof fact.id !== 'string' || !FACT_ID_RE.test(fact.id) || !fact.id.startsWith(`${fact.kind}:`)) {
+    errors.push({ path: `${at}.id`, message: 'must be {kind}:{key} with the fact\'s own kind and an encoded key' });
   } else if (seenIds.has(fact.id)) {
     errors.push({ path: `${at}.id`, message: 'repeats an earlier fact id' });
   }
@@ -54,6 +55,11 @@ function checkFact(fact, at, seenIds, errors) {
   }
   if (typeof fact.source !== 'string') {
     errors.push({ path: `${at}.source`, message: 'must be a string' });
+  }
+  for (const field of OPTIONAL_TEXT_FIELDS) {
+    if (fact[field] !== undefined && typeof fact[field] !== 'string') {
+      errors.push({ path: `${at}.${field}`, message: 'must be a string when present' });
+    }
   }
 }
 
@@ -88,7 +94,9 @@ function checkClaim(claim, at, errors) {
     return;
   }
   if (typeof claim.section !== 'string') errors.push({ path: `${at}.section`, message: 'must be a string' });
-  if (typeof claim.text !== 'string') errors.push({ path: `${at}.text`, message: 'must be a string' });
+  if (typeof claim.text !== 'string' || claim.text.trim() === '') {
+    errors.push({ path: `${at}.text`, message: 'must be a non-empty string' });
+  }
   checkStringArray(claim.refs, `${at}.refs`, errors);
 }
 
@@ -129,13 +137,18 @@ function placeClaim(claim, factsById, result) {
   if (section === 'risk-proofs' && !cited.some((fact) => fact.kind === 'flag')) {
     return drop('risk proof cites no flag');
   }
+  if (section === 'risk-proofs' && cited.every((fact) => fact.kind === 'flag')) {
+    return drop('risk proof cites no proof fact');
+  }
   if (section === 'tried-to-break' && !cited.some(isFailed)) {
     const negatives = cited.filter((fact) => fact.negative === true);
     if (negatives.length === 0) return drop('tried-to-break claim cites no negative or failed fact');
     if (negatives.every(isUntested)) return move('couldnt-test', negatives[0]);
   }
 
-  if (VERIFICATION_CLAIM_RE.test(text)) {
+  // A risk proof asserts its proof whatever the wording; Decision Q12 limits Q9's
+  // plain-wording exemption to Test-guide manual steps.
+  if (section === 'risk-proofs' || VERIFICATION_CLAIM_RE.test(text)) {
     const routed = cited.filter((fact) => ROUTED_KINDS.includes(fact.kind));
     const failed = routed.find(isFailed);
     if (failed && section !== 'tried-to-break') return move('tried-to-break', failed);

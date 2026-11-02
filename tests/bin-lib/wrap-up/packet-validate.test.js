@@ -188,6 +188,15 @@ test('only check and story facts route', () => {
     'flag:auth': { status: 'failed' },
   });
   assertOnly(flag, 'kept');
+
+  for (const status of ['failed', 'skipped', 'not-run']) {
+    const recording = validate(
+      [claim('risk-proofs', 'Auth verified', ['flag:auth', 'recording:demo'])],
+      {},
+      [fact('recording:demo', status)],
+    );
+    assertOnly(recording, 'kept');
+  }
 });
 
 test('risk-proofs needs a flag', () => {
@@ -200,6 +209,55 @@ test('a risk proof still routes on its proof fact', () => {
     validate([claim('risk-proofs', 'Auth verified', ['flag:auth', 'check:lint'])]),
     'tried-to-break',
     'check:lint',
+  );
+});
+
+test('a risk proof needs a proof fact', () => {
+  assertDropped(validate([claim('risk-proofs', 'Auth is risky', ['flag:auth'])]), 'risk proof cites no proof fact');
+  assertDropped(
+    validate([claim('risk-proofs', 'Both are risky', ['flag:auth', 'flag:billing'])], {}, [fact('flag:billing', 'passed')]),
+    'risk proof cites no proof fact',
+  );
+});
+
+test('a risk proof routes on its check or story proof, whatever its wording', () => {
+  const text = 'Signed in with an expired session';
+  assertMoved(validate([claim('risk-proofs', text, ['flag:auth', 'check:lint'])]), 'tried-to-break', 'check:lint');
+  assertMoved(
+    validate([claim('risk-proofs', text, ['flag:auth', 'story:login#negative-2'])]),
+    'couldnt-test',
+    'story:login#negative-2',
+  );
+  assertMoved(validate([claim('risk-proofs', text, ['flag:auth', 'story:signup'])], {}, [SIGNUP_NOT_RUN]), 'couldnt-test', 'story:signup');
+  assertMoved(
+    validate([claim('risk-proofs', text, ['flag:auth', 'story:login#negative-2', 'check:lint'])]),
+    'tried-to-break',
+    'check:lint',
+  );
+  assertOnly(validate([claim('risk-proofs', text, ['flag:auth', 'story:login'])]), 'kept');
+});
+
+test('a risk proof citing a failed link or recording stays kept', () => {
+  const text = 'Signed in with an expired session';
+  const recording = fact('recording:demo', 'failed');
+  assertOnly(validate([claim('risk-proofs', text, ['flag:auth', 'recording:demo'])], {}, [recording]), 'kept');
+  assertOnly(
+    validate([claim('risk-proofs', text, ['flag:auth', 'link:settings'])], { 'link:settings': { status: 'failed' } }),
+    'kept',
+  );
+});
+
+test('incompatibility runs before the risk-proof and tried-to-break rules', () => {
+  assertDropped(
+    validate([claim('risk-proofs', 'Changed the guard', ['change:src/a.js'])]),
+    'incompatible fact change:src/a.js (change) for risk-proofs',
+  );
+  assertDropped(
+    validate(
+      [claim('tried-to-break', 'Submitted it twice', ['finding:1', 'story:login#negative-2'])],
+      { 'story:login#negative-2': { negative: true } },
+    ),
+    'incompatible fact finding:1 (finding) for tried-to-break',
   );
 });
 
@@ -364,9 +422,21 @@ test('validateFactsShape names each fact field', () => {
   assert.deepEqual(one(null), ['facts.facts[0]']);
   assert.deepEqual(one({ ...good, id: 'no-colon' }), ['facts.facts[0].id']);
   assert.deepEqual(one({ ...good, id: ['story:login'] }), ['facts.facts[0].id']);
-  assert.deepEqual(one({ ...good, kind: 'nope' }), ['facts.facts[0].kind']);
+  assert.deepEqual(one({ ...good, id: 'nope:login', kind: 'nope' }), ['facts.facts[0].kind']);
+  assert.deepEqual(one({ ...good, kind: 'check' }), ['facts.facts[0].id']);
+  assert.deepEqual(one({ ...good, id: 'story-x:login' }), ['facts.facts[0].id']);
   assert.deepEqual(one({ ...good, status: 'PASS' }), ['facts.facts[0].status']);
   assert.deepEqual(one({ ...good, source: 3 }), ['facts.facts[0].source']);
+});
+
+test('validateFactsShape refuses an optional text field that is not a string', () => {
+  const one = (entry) => factsErrorPaths({ ...factsDoc(), facts: [entry] });
+  const good = fact('story:login', 'passed');
+  for (const field of ['reason', 'text', 'url', 'command', 'label']) {
+    assert.deepEqual(one({ ...good, [field]: 'a string' }), [], field);
+    assert.deepEqual(one({ ...good, [field]: 3 }), [`facts.facts[0].${field}`], field);
+    assert.deepEqual(one({ ...good, [field]: null }), [`facts.facts[0].${field}`], field);
+  }
 });
 
 test('validateFactsShape refuses a repeated id', () => {
@@ -384,6 +454,8 @@ test('validateNarrativeShape names each field', () => {
   assert.deepEqual(one(null), ['narrative.claims[0]']);
   assert.deepEqual(one({ ...good, section: 3 }), ['narrative.claims[0].section']);
   assert.deepEqual(one({ ...good, text: null }), ['narrative.claims[0].text']);
+  assert.deepEqual(one({ ...good, text: '' }), ['narrative.claims[0].text']);
+  assert.deepEqual(one({ ...good, text: ' \n\t ' }), ['narrative.claims[0].text']);
   assert.deepEqual(one({ ...good, refs: 'link:settings' }), ['narrative.claims[0].refs']);
   assert.deepEqual(one({ ...good, refs: ['link:settings', 3] }), ['narrative.claims[0].refs[1]']);
 });
