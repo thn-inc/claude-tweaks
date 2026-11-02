@@ -295,8 +295,10 @@ const branchFact = (label, pattern) => ({
 });
 
 const STASH_GUARD_FACTS = [
-  stanzaFact('AC6.1 snapshot command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" snapshot --repo/),
-  stanzaFact('AC6.1 compare --restore command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" compare --repo .* --restore/),
+  // Both commands are pinned through their whole argument list, so a dropped --out, --baseline or --run (which silently
+  // loses the logged restore) goes red (#4785 review).
+  stanzaFact('AC6.1 snapshot command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" snapshot --repo "\{worktree\}" --out "\{snapshot\}"/),
+  stanzaFact('AC6.1 compare --restore command', /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/stash-guard\.js" compare --repo "\{worktree\}" --baseline "\{snapshot\}" --restore --run "\$PIPELINE_RUN_DIR" \{dispatch id\}/),
   stanzaFact('AC6.1 snapshot immediately before the dispatch', /immediately before (the|each) dispatch/),
   stanzaFact("AC6.1 compare before the task's review", /before (that|the) task's review/),
   stanzaFact('AC11.1 per-task implementer dispatch', /per-task implementer dispatch/),
@@ -315,6 +317,12 @@ const STASH_GUARD_FACTS = [
   stanzaFact('AC2.1 the stanza points to stash-guard.md', /on exit 3 or 2 from either command, read `\$\{CLAUDE_PLUGIN_ROOT\}\/skills\/build\/stash-guard\.md` before the next dispatch/),
   stanzaFact('snapshot path is conditional on the run dir', /`\$PIPELINE_RUN_DIR\/stash-guard-\{id\}\.json` when `\$PIPELINE_RUN_DIR` resolves, else/),
   stanzaFact('the exit code is authoritative', /The exit code is authoritative: exit 0 means nothing to do/),
+  // Review fix wave (#4785): the command arguments and the dispatch-id derivation the stanza now carries alone.
+  stanzaFact("{dispatch id} is --task {k} for a task's first implementer", /`\{dispatch id\}` is `--task \{k\}` for a task's first implementer/),
+  stanzaFact('other dispatch labels', /\(`fix-\{r\}`, `redispatch-\{r\}`, `review`, `re-review-\{r\}`\)/),
+  stanzaFact('{id} derivation', /`\{id\}` is `task-\{k\}`, `task-\{k\}-\{role\}` or `\{role\}`/),
+  stanzaFact('standalone snapshot path via session-tmp-resolve.js', /else the path `node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/session-tmp-resolve\.js" --value stash-guard-\{id\}\.json` prints/),
+  stanzaFact('a standalone build omits --run and the dispatch id', /a standalone `\/build` omits `--run` and the dispatch id/),
   outcomesFact('AC6.2 AUTO line', /AUTO \{time\} — Stash guard: \{who\} removed stash entr/),
   outcomesFact('AC6.2 FAILED line carries the shell-escaped restoreFailed[].command', /a failed restore is logged as a `FAILED` line carrying its shell-escaped `restoreFailed\[\]\.command` \(also on stderr\)/),
   outcomesFact('AC6.2 failed restores and added entries go to the handoff', /every `restoreFailed` command and `added` entry also goes into Common Step 7's handoff/),
@@ -330,6 +338,12 @@ const STASH_GUARD_FACTS = [
   outcomesFact('dirty note standalone carrier is the handoff', /a standalone `\/build` with no run dir lists the line in the handoff only/),
   outcomesFact('exit 2 SKIP follows the degrade-trace shape', /--status SKIP --section "\/build" --step "Stash guard \(degraded\)" --text "condition: \{id\} \{snapshot\|compare\} exited 2 → fallback: stash change undetected for this dispatch" --reversibility n\/a/),
   outcomesFact('failed snapshot skips that dispatch compare', /after a failed `snapshot`, skip that dispatch's compare/),
+  outcomesFact('exit 2 standalone destination is the handoff Skipped steps', /\(`_shared\/auto-decision-log\.md`'s Degrade-trace rule; standalone: the handoff's Skipped steps\)/),
+  outcomesFact('the stash change is named in the next review of that work', /the stash change \(shas and subjects from `removed`\/`added`\) is named in the next review of that work/),
+  outcomesFact('the stash change never upgrades a failed dispatch into a reviewed one', /the stash change never upgrades a failed dispatch into a reviewed one/),
+  outcomesFact('a failed dispatch names the stash change in its re-dispatch', /the stash change is named in its re-dispatch instead/),
+  outcomesFact('the retry runs under a fresh snapshot/compare pair', /under a fresh snapshot\/compare pair \(role `\{role\}-retry`\)/),
+  outcomesFact('the retry second dirty-note form', /changed the stash again on retry/),
   outcomesFact('AC6.2 DONE becomes DONE_WITH_CONCERNS', /a `DONE` result becomes `DONE_WITH_CONCERNS`/),
   outcomesFact('AC6.2 NEEDS_CONTEXT or BLOCKED keeps its status', /a `NEEDS_CONTEXT` or `BLOCKED` result keeps its status/),
   outcomesFact('AC6.2 never popped', /never popped/),
