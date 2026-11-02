@@ -1487,8 +1487,9 @@ test('#4800 go-red: removing the needs sentence from Step 4.0b fails its anchor'
   // Matched whitespace-tolerantly on the raw text, since the sentence wraps in the file and the
   // fenced blocks the enumerator drops must stay fenced.
   const sentence = "Skip a parent whose verdict lists `needs` (its `needs:*` labels) and name it in the closing summary, per `_shared/work-record.md`'s Worklist rule.";
-  assert.ok(wrapRe(sentence).test(live.step40b), 'the needs sentence is in the live text');
-  const doctored = live.step40b.replace(wrapRe(sentence), '');
+  const needsSentence = wrapRe(sentence);
+  assert.ok(needsSentence.test(live.step40b), 'the needs sentence is in the live text');
+  const doctored = live.step40b.replace(needsSentence, '');
   assert.throws(() => assertSkipSetsPinned({ ...live, step40b: doctored }, live.moduleRaw), /anchor matches no skip sentence: Skip a parent whose verdict lists `needs`/);
 });
 
