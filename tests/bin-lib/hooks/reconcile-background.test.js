@@ -262,9 +262,48 @@ test('reconcile-background summary: counts post-merge runs and the parents they 
     const none = await backgroundSummaryFor(result);
     assert.equal(none.postMergeRan, 0);
     assert.equal(none.postMergeFailed, 0);
+    assert.deepEqual(none.postMergeFailedRecords, []);
     assert.equal(none.postMergeParentsClosed, 0);
     assert.equal(none.postMergeUnmarkedParentsClosed, 0);
   }
+});
+
+test('AC1.1 AC1.2 AC1.3: a close-failed ran entry counts as failed and names its records (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0, records: { failed: [], closeFailed: [101], pendingClose: [], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, [101]);
+});
+
+test('AC2.1 AC2.2: a clean word with parentFailures counts as failed (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, parentFailures: [{ parent: 9, reason: 'gh-failed' }] },
+  ] });
+  assert.equal(summary.postMergeFailed, 1);
+  assert.equal(summary.postMergeRan, 0);
+  assert.deepEqual(summary.postMergeFailedRecords, []);
+});
+
+test('AC3.1: transient-failure and marker-write-failed stay out of both counts (#4897)', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'skipped', reason: 'transient-failure' },
+    { runDir: '/r/b', pr: 2, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 1 },
+  ] });
+  assert.equal(summary.postMergeFailed, 0);
+  assert.equal(summary.postMergeRan, 0);
+});
+
+test('#4897: failed entries with no records, a word added later, and a record in two runs', async () => {
+  const summary = await backgroundSummaryFor({ postMerge: [
+    { runDir: '/r/a', pr: 1, action: 'ran', closingLinks: 'exit 5', parentsClosed: 0, step40Failed: true },
+    { runDir: '/r/b', pr: 2, action: 'ran', closingLinks: 'a-word-added-later', parentsClosed: 0 },
+    { runDir: '/r/c', pr: 3, action: 'ran', closingLinks: 'reopen-failed', parentsClosed: 0, records: { failed: [7], closeFailed: [], pendingClose: [3], unchecked: [] } },
+    { runDir: '/r/d', pr: 4, action: 'ran', closingLinks: 'close-pending', parentsClosed: 0, records: { failed: [], closeFailed: [], pendingClose: [3], unchecked: [] } },
+  ] });
+  assert.equal(summary.postMergeFailed, 4);
+  assert.deepEqual(summary.postMergeFailedRecords, [3, 7]);
 });
 
 test('reconcile-background summary: ledger-residue PRs opened and notable per-path skips (#3812)', async () => {

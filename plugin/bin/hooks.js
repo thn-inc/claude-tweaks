@@ -1870,7 +1870,11 @@ async function runReconcileBackground(argv) {
   let summary = {};
   try {
     const r = await reconcile({ cwd, checks: BACKGROUND_CHECKS, sessionId, budgetMs: BACKGROUND_BUDGET_MS });
+    const { classifyEntry } = require('./lib/reconcile/post-merge');
     const postMergeEntries = r.postMerge || [];
+    // Only a `ran` entry is judged: classifyEntry reads every `skipped` entry as failed, `transient-failure` included.
+    const ranVerdict = (e) => (e.action === 'ran' ? classifyEntry(e).verdict : null);
+    const failedRanEntries = postMergeEntries.filter((e) => ranVerdict(e) === 'failed');
     const parentsClosedBy = (counts) => postMergeEntries
       .filter(counts)
       .reduce((n, e) => n + (Number.isInteger(e.parentsClosed) ? e.parentsClosed : 0), 0);
@@ -1879,11 +1883,19 @@ async function runReconcileBackground(argv) {
       // Merged runs whose Steps 4.0/4.0b this pass ran late (#4599) and the parents it closed below
       // the oversight floor: the background pass is the only place those closes happen unattended,
       // so without a count the next SessionStart would never mention one.
-      postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && !e.step40Failed).length,
-      // Runs whose steps did not complete: Step 4.0 itself failed (non-zero exit, unreadable envelope: a SKIP
-      // marker was written, Step 4.0b never ran), or the check threw (no marker, and the run is not deferred).
-      // Either way the parent waits for tidy's backstop, so they are never counted as ran.
-      postMergeFailed: postMergeEntries.filter((e) => (e.action === 'ran' && e.step40Failed) || e.reason === 'error').length,
+      postMergeRan: postMergeEntries.filter((e) => ranVerdict(e) === 'clean').length,
+      // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
+      // failed (non-zero exit, unreadable envelope, or a non-clean word such as close-failed), Step 4.0b
+      // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
+      // counted as ran. The parent of a failed Step 4.0 waits for tidy's backstop; a Step 4.0b failure is a
+      // parent a late close could not close, which that backstop also recovers.
+      postMergeFailed: failedRanEntries.length + postMergeEntries.filter((e) => e.reason === 'error').length,
+      // The record numbers those failed runs name (Step 4.0's four lists, carried on a non-clean loop entry),
+      // sorted and unique; empty when no failed run carried any.
+      postMergeFailedRecords: [...new Set(failedRanEntries.flatMap((e) => {
+        const records = e.records || {};
+        return [records.failed, records.closeFailed, records.pendingClose, records.unchecked].flatMap((list) => (Array.isArray(list) ? list : []));
+      }))].sort((a, b) => a - b),
       // Two disjoint counts, so SessionStart credits each close once and does no arithmetic: the parents
       // closed by runs that wrote their marker, and those closed by runs whose marker write failed
       // (closed on GitHub all the same, only the decisions.md marker is missing).

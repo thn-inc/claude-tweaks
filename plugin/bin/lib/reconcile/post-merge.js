@@ -475,7 +475,8 @@ async function postMergeOne({
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
 // of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed`, and Step 4.0b's
-// `parentFailures`, to a `ran` entry (postMergeOne only).
+// `parentFailures`, to a `ran` entry (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
+// carries the record lists and `logFailed` too (#4897); a clean one keeps its short shape.
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
@@ -493,8 +494,10 @@ function processRun({
   );
   const envelope = code === 0 ? parseEnvelope(out) : null;
   // Step 4.0's record lists (issue numbers) and its `logFailed` flag (a decisions.md line it could not
-  // append), for a caller that surfaces them; omitted with no envelope.
-  const recordsOf = (env) => (includeRecords && env ? {
+  // append), for a caller that surfaces them. Emitted when the caller asked (`includeRecords`) or when the
+  // envelope's word is not clean, so the background summary can name the records a failed close left (#4897);
+  // omitted with no envelope, and with an envelope that carries no `action` (the unreadable case).
+  const recordsOf = (env) => (env && (includeRecords || (env.action && !CLEAN_CLOSING_LINKS.has(env.action))) ? {
     records: {
       failed: issuesOf(env.failed),
       closeFailed: issuesOf(env.closeFailed),
