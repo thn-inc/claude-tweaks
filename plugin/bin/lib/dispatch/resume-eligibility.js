@@ -16,7 +16,6 @@ const path = require('path');
 const { classifyClaimBlob } = require('../issues/claims');
 const { RUN_ID_SHAPE } = require('../issues/claim-store');
 const { parseEntry } = require('../log-decision/append');
-const { sanitizeWorktreeName } = require('../worktree/name');
 
 // The vocabulary has one home. `concurrent-resume` and `stale-bound-run` are produced only by
 // bin/dispatch-resume.js's run-dir scan (one this pure function cannot make).
@@ -71,13 +70,27 @@ function openPrLine(n, pr) {
 const refuse = (reason, line, disposition = 'resume') => ({ eligible: false, reason, line, disposition });
 const noPick = (reason, line, disposition = 'resume') => ({ ok: false, reason, line, disposition });
 
-// The worktree a head's build lives in: one leading `worktree-` stripped, or null when the rest could
-// not be that worktree's name, so no path or command is ever composed from it.
+// The worktree a head's build lives in: one leading `worktree-` stripped, or null when the rest is
+// not safe to compose into a path or a pasted command.
 function worktreeNameForHead(head) {
   if (typeof head !== 'string') return null;
   const rest = head.startsWith('worktree-') ? head.slice('worktree-'.length) : head;
-  if (!/^[A-Za-z0-9]/.test(rest) || sanitizeWorktreeName(rest) !== rest) return null;
+  if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(rest)) return null;
   return rest.split('/').every((seg) => seg !== '' && !seg.startsWith('.')) ? rest : null;
+}
+
+// Does the PR's run marker name this record? The slug check, exactly: `record-{issue}`.
+function markerNamesRecord(pr, issue) {
+  const runId = runIdFromPrBody(pr.body);
+  return runId !== null && runId.slice(RUN_ID_PREFIX_LENGTH) === `record-${issue}`;
+}
+
+// The ending of a line whose listing holds non-draft PRs: a human takes those, and only those, by hand.
+function nonDraftByHand(prs) {
+  const numbers = prs.filter((p) => p.isDraft !== true).map((p) => p.number).sort((a, b) => a - b).map((n) => `#${n}`);
+  return numbers.length === 1
+    ? `${numbers[0]} is not a draft — review and merge it by hand`
+    : `${numbers.join(', ')} are not drafts — review and merge them by hand`;
 }
 
 // The open closing PRs split on whose branch they are. `kept` states isCrossRepository === false;
@@ -88,13 +101,20 @@ function splitListing(prs) {
 }
 
 // A foreign or bundled PR: `close` only for a draft. A non-draft PR may await review, so it is never
-// told to close -- close-out takes it when it carries the marker close-out needs, a human otherwise.
+// told to close -- close-out takes it when its marker names this record, a human otherwise.
 function closeUnlessReviewable(reason, issue, pr, draftLine) {
   if (pr.isDraft === true) return noPick(reason, draftLine, 'close');
-  const line = runIdFromPrBody(pr.body) !== null
+  const line = markerNamesRecord(pr, issue)
     ? `#${issue}'s PR #${pr.number} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #${issue}`
-    : `#${issue}'s PR #${pr.number} is not a draft and carries no claude-tweaks-run marker, which close-out needs — review and merge it by hand`;
+    : `#${issue}'s PR #${pr.number} is not a draft and carries no claude-tweaks-run marker for this record, which close-out needs — review and merge it by hand`;
   return noPick(reason, line, 'close-out');
+}
+
+const isPositiveInteger = (v) => Number.isInteger(v) && v > 0;
+
+function invalidPick(issue, what, value) {
+  const bad = invalidInput(issue, what, value);
+  return noPick(bad.reason, bad.line, bad.disposition);
 }
 
 function crossRepoRefusal(issue, forks) {
@@ -103,7 +123,8 @@ function crossRepoRefusal(issue, forks) {
   const one = sorted.length === 1;
   const subject = `#${issue}'s open closing ${one ? 'PR' : 'PRs'} ${named} ${one ? 'comes' : 'come'} from a fork or another repository`;
   if (sorted.some((p) => p.isDraft !== true)) {
-    return noPick('cross-repo-pr', `${subject} and ${one ? 'is not a draft' : 'not all are drafts'} — review and merge ${one ? 'it' : 'them'} by hand`, 'close-out');
+    const byHand = one ? 'is not a draft — review and merge it by hand' : nonDraftByHand(sorted);
+    return noPick('cross-repo-pr', `${subject} and ${byHand}`, 'close-out');
   }
   return noPick('cross-repo-pr', `${subject} — dispatch resume only restarts a build on this repository's own branch; merge or close ${one ? 'it' : 'them'}, then run /claude-tweaks:dispatch #${issue}`, 'close');
 }
@@ -113,27 +134,28 @@ function crossRepoRefusal(issue, forks) {
 // this record exactly.
 function selectResumePr(issue, prs) {
   const { kept, forks } = splitListing(prs);
+  const unnumbered = [...kept, ...forks].find((p) => !isPositiveInteger(p.number));
+  if (unnumbered !== undefined) return invalidPick(issue, 'PR number', unnumbered.number);
   if (kept.length === 0) {
     if (forks.length > 0) return crossRepoRefusal(issue, forks);
     return noPick('no-pr', `#${issue} has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #${issue}`, null);
   }
   if (kept.length > 1) {
     const numbers = kept.map((p) => p.number).sort((a, b) => a - b).map((n) => `#${n}`).join(', ');
+    if (kept.some((p) => p.isDraft !== true)) {
+      return noPick('multiple-prs', `#${issue} has ${kept.length} open PRs that close it (${numbers} in ascending number order) and ${nonDraftByHand(kept)}`, 'close-out');
+    }
     return noPick('multiple-prs', `#${issue} has ${kept.length} open PRs that close it (${numbers} in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #${issue}`);
   }
   const pr = kept[0];
-  if (!Number.isInteger(pr.closingRecords) || pr.closingRecords < 1) {
-    const bad = invalidInput(issue, 'PR closing-record count', pr.closingRecords);
-    return noPick(bad.reason, bad.line, bad.disposition);
-  }
+  if (!isPositiveInteger(pr.closingRecords)) return invalidPick(issue, 'PR closing-record count', pr.closingRecords);
   if (pr.closingRecords > 1) {
     return closeUnlessReviewable('multi-record-pr', issue, pr, `#${issue}'s PR #${pr.number} closes ${pr.closingRecords} records — dispatch resume restarts one record's build, never a bundle; merge or close PR #${pr.number} by hand, then run /claude-tweaks:dispatch #${issue}`);
   }
-  const runId = runIdFromPrBody(pr.body);
-  if (worktreeNameForHead(pr.headRefName) === null || runId === null || runId.slice(RUN_ID_PREFIX_LENGTH) !== `record-${issue}`) {
+  if (worktreeNameForHead(pr.headRefName) === null || !markerNamesRecord(pr, issue)) {
     return closeUnlessReviewable('foreign-pr', issue, pr, openPrLine(issue, pr.number));
   }
-  return { ok: true, pr, runId };
+  return { ok: true, pr, runId: runIdFromPrBody(pr.body) };
 }
 
 // Every step a fresh dispatch of the record needs: its open-pr exclusion goes with the PR, and a kept
@@ -147,19 +169,24 @@ function closeRedispatchRemedy({ issue, prNumber, headRefName, mainRoot }) {
   return `${closePr}, remove its worktree if one exists (git worktree remove "${worktree}"), delete the local and remote branch (git branch -D ${headRefName}; git push origin --delete ${headRefName}), ${redispatch}`;
 }
 
+// Refusals whose own line fits better than the close steps: a closed record needs no fresh dispatch, a
+// fork's branch is not ours to delete, and a bundle holds other records' work.
+const NO_CLOSE_STEPS = new Set(['record-closed', 'cross-repo-pr', 'multi-record-pr']);
+
 // What a caller reports for a refused verdict. `prNumbers` are the refusal's subject (the kept PRs, or
-// the fork PRs when none is kept), ascending; `headRefName` is the one kept PR's head, else null.
+// the fork PRs when none is kept), ascending; `headRefName` is the one kept PR's head, else null. The
+// close steps destroy a branch, so they print only for a PR whose marker names this record.
 function refusalDetail({ issue, verdict, prs, mainRoot }) {
   const { kept, forks } = splitListing(prs);
   const subject = kept.length > 0 ? kept : forks;
   const only = kept.length === 1 ? kept[0] : null;
   let remedy = verdict.line;
   if (verdict.reason === 'no-pr') remedy = null;
-  else if (verdict.disposition === 'close' && only !== null && verdict.reason !== 'record-closed' && verdict.reason !== 'cross-repo-pr') {
+  else if (verdict.disposition === 'close' && !NO_CLOSE_STEPS.has(verdict.reason) && only !== null && markerNamesRecord(only, issue)) {
     remedy = closeRedispatchRemedy({ issue, prNumber: only.number, headRefName: only.headRefName, mainRoot });
   }
   return {
-    prNumbers: subject.map((p) => p.number).sort((a, b) => a - b),
+    prNumbers: subject.map((p) => p.number).filter(isPositiveInteger).sort((a, b) => a - b),
     disposition: verdict.disposition === undefined ? null : verdict.disposition,
     remedy,
     headRefName: only === null ? null : only.headRefName,

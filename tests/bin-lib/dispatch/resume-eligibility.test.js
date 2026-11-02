@@ -277,89 +277,89 @@ test('foreign-pr and live-sibling lines equal openPrLine and never name dispatch
 const invalidLine = (what, kind) => `#4589's ${what} was not usable (${kind}) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #4589 again, and report it if it repeats`;
 const REFUSALS = [
   ['no PR', { prs: [] }, 'no-pr',
-    '#4589 has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #4589'],
+    '#4589 has no open PR that closes it — nothing to resume; run /claude-tweaks:dispatch #4589', null],
   ['fork-only listing', { prs: [prEntry({ isCrossRepository: true })] }, 'cross-repo-pr',
-    "#4589's open closing PR #4604 (https://github.com/o/r/pull/4604) comes from a fork or another repository — dispatch resume only restarts a build on this repository's own branch; merge or close it, then run /claude-tweaks:dispatch #4589"],
+    "#4589's open closing PR #4604 (https://github.com/o/r/pull/4604) comes from a fork or another repository — dispatch resume only restarts a build on this repository's own branch; merge or close it, then run /claude-tweaks:dispatch #4589", 'close'],
   ['two same-repo PRs', { prs: [prEntry(), prEntry({ number: 4610 })] }, 'multiple-prs',
-    '#4589 has 2 open PRs that close it (#4604, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 has 2 open PRs that close it (#4604, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['PR closing several records', { prs: [prEntry({ closingRecords: 2 })] }, 'multi-record-pr',
-    "#4589's PR #4604 closes 2 records — dispatch resume restarts one record's build, never a bundle; merge or close PR #4604 by hand, then run /claude-tweaks:dispatch #4589"],
-  ['foreign head', { prs: [prEntry({ headRefName: 'a$(x)' })] }, 'foreign-pr', openPrLine(N, PR)],
-  ['foreign marker record', { prs: [prEntry({ body: 'claude-tweaks-run: 2026-10-30T101632-record-12\n' })] }, 'foreign-pr', openPrLine(N, PR)],
-  ['malformed marker', { prs: [prEntry({ body: 'claude-tweaks-run: nope\n' })] }, 'foreign-pr', openPrLine(N, PR)],
+    "#4589's PR #4604 closes 2 records — dispatch resume restarts one record's build, never a bundle; merge or close PR #4604 by hand, then run /claude-tweaks:dispatch #4589", 'close'],
+  ['foreign head', { prs: [prEntry({ headRefName: 'a$(x)' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
+  ['foreign marker record', { prs: [prEntry({ body: 'claude-tweaks-run: 2026-10-30T101632-record-12\n' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
+  ['malformed marker', { prs: [prEntry({ body: 'claude-tweaks-run: nope\n' })] }, 'foreign-pr', openPrLine(N, PR), 'close'],
   ['non-draft PR', { prs: [prEntry({ isDraft: false })] }, 'not-draft',
-    "#4589's PR #4604 is not a draft — dispatch resume only restarts a stalled build's draft PR; if it awaits review, run /claude-tweaks:dispatch close-out #4589"],
-  ['live sibling', { siblingLive: true }, 'live-sibling', openPrLine(N, PR)],
+    "#4589's PR #4604 is not a draft — dispatch resume only restarts a stalled build's draft PR; if it awaits review, run /claude-tweaks:dispatch close-out #4589", 'close-out'],
+  ['live sibling', { siblingLive: true }, 'live-sibling', openPrLine(N, PR), 'resume'],
   ['pr-opened tombstone', { claimContent: tombstone('pr-opened: PR #4604 awaiting review', { link: URL }) }, 'pr-opened',
-    "#4589's PR #4604 finished its build and awaits review — run /claude-tweaks:dispatch close-out #4589"],
+    "#4589's PR #4604 finished its build and awaits review — run /claude-tweaks:dispatch close-out #4589", 'close-out'],
   ['live claim', { claimContent: LIVE() }, 'live-claim',
-    '#4589 is already claimed by a live run — not resumable; wait for that run to finish or its claim to expire, then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 is already claimed by a live run — not resumable; wait for that run to finish or its claim to expire, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['absent claim', { claimContent: null }, 'claim-not-resumable',
-    `#4589's claim is absent — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`],
+    `#4589's claim is absent — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`, 'close'],
   ['unreadable claim', { claimContent: 'not json' }, 'claim-not-resumable',
-    `#4589's claim is unreadable — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`],
+    `#4589's claim is unreadable — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`, 'close'],
   ['other tombstone', { claimContent: tombstone('merged: PR #4604') }, 'claim-not-resumable',
-    `#4589's claim is tombstone (merged: PR #4604) — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`],
+    `#4589's claim is tombstone (merged: PR #4604) — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`, 'close'],
   ['reasonless tombstone', { claimContent: JSON.stringify({ released: true, runId: RUN }) }, 'claim-not-resumable',
-    `#4589's claim is tombstone (no reason) — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`],
+    `#4589's claim is tombstone (no reason) — not resumable: ${CLAIM_HINT}; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh`, 'close'],
   ['stale claim of another run', { claimContent: STALE('2026-10-31T090000-record-4589') }, 'run-mismatch',
-    "#4589's claim names run 2026-10-31T090000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-31T090000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's claim names run 2026-10-31T090000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-31T090000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['failed tombstone of another run', { claimContent: tombstone('failed: x', { runId: '2026-10-31T090000-record-4589' }) }, 'run-mismatch',
-    "#4589's claim names run 2026-10-31T090000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-31T090000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's claim names run 2026-10-31T090000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-31T090000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['swept tombstone whose sweptFrom differs', { claimContent: tombstone('swept: stale claim', { runId: '2026-10-31T080000-tidy-sweep', sweptFrom: '2026-10-29T000000-record-4589' }) }, 'run-mismatch',
-    "#4589's claim names run 2026-10-29T000000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-29T000000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's claim names run 2026-10-29T000000-record-4589 but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable while they disagree; rebind PR #4604's claude-tweaks-run: marker to 2026-10-29T000000-record-4589 by hand (the run that claimed #4589 last), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['tombstone with no run id', { claimContent: JSON.stringify({ released: true, reason: 'failed: x' }) }, 'run-mismatch',
-    "#4589's claim names no run id but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh"],
+    "#4589's claim names no run id but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh", 'close'],
   ['swept tombstone with no sweptFrom', { claimContent: tombstone('swept: stale claim', { runId: RUN }) }, 'run-mismatch',
-    "#4589's claim names no run id but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh"],
+    "#4589's claim names no run id but PR #4604's claude-tweaks-run: marker names 2026-10-30T101632-record-4589 — not resumable; close PR #4604 and run /claude-tweaks:dispatch #4589 to rebuild it fresh", 'close'],
   ['closed issue', { issueState: 'CLOSED' }, 'record-closed',
-    '#4589 is closed — not resumable; reopen it first if the work is still wanted, or close PR #4604'],
+    '#4589 is closed — not resumable; reopen it first if the work is still wanted, or close PR #4604', 'close'],
   ['open blockers', { openBlockers: [4500, 4501] }, 'blocked-by',
-    '#4589 is blocked by open #4500, #4501 — not resumable until they close; then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 is blocked by open #4500, #4501 — not resumable until they close; then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['bot:blocked', { labels: ['auto:build', 'bot:blocked'] }, 'not-granted',
-    '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 carries bot:blocked — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['no auto:build', { labels: ['ready', 'type:task'] }, 'not-granted',
-    '#4589 lacks auto:build — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 lacks auto:build — re-grant it with /claude-tweaks:backlog refine #4589, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['in-progress with a failed tombstone', { labels: ['auto:build', 'bot:in-progress'] }, 'label-drift',
-    '#4589 carries bot:in-progress without a stale claim — remove that label (gh issue edit 4589 --remove-label bot:in-progress), then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 carries bot:in-progress without a stale claim — remove that label (gh issue edit 4589 --remove-label bot:in-progress), then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['bot:parked', { labels: ['auto:build', 'bot:parked'] }, 'unlisted-label',
-    '#4589 carries bot:parked — not resumable while it is set; clear it (gh issue edit 4589 --remove-label bot:parked) once its trigger has fired, then run /claude-tweaks:dispatch resume #4589'],
+    '#4589 carries bot:parked — not resumable while it is set; clear it (gh issue edit 4589 --remove-label bot:parked) once its trigger has fired, then run /claude-tweaks:dispatch resume #4589', 'resume'],
   ['unknown prior-run class', { priorRunDir: 'weird-class' }, 'unlisted-state',
-    `#4589's prior run ${RUN} is in an unrecognised state (weird-class) — not resumable; inspect .claude-tweaks/pipelines/${RUN} by hand, archive it with hooks.js archive-run if its owner is gone, then run /claude-tweaks:dispatch resume #4589`],
+    `#4589's prior run ${RUN} is in an unrecognised state (weird-class) — not resumable; inspect .claude-tweaks/pipelines/${RUN} by hand, archive it with hooks.js archive-run if its owner is gone, then run /claude-tweaks:dispatch resume #4589`, 'resume'],
   ['live owner', { priorRunDir: 'live-owner' }, 'prior-run-live',
-    `#4589's prior run ${RUN} has an owner that is not provably dead (live) — not resumable while it may still be running; wait for it to exit, then run /claude-tweaks:dispatch resume #4589`],
+    `#4589's prior run ${RUN} has an owner that is not provably dead (live) — not resumable while it may still be running; wait for it to exit, then run /claude-tweaks:dispatch resume #4589`, 'resume'],
   ['unknown owner', { priorRunDir: 'unknown-owner' }, 'prior-run-live',
-    `#4589's prior run ${RUN} has an owner that is not provably dead (unknown) — not resumable while it may still be running; wait for it to exit, then run /claude-tweaks:dispatch resume #4589`],
+    `#4589's prior run ${RUN} has an owner that is not provably dead (unknown) — not resumable while it may still be running; wait for it to exit, then run /claude-tweaks:dispatch resume #4589`, 'resume'],
   ['other-host owner', { priorRunDir: 'other-host-owner', priorRunOwnerHost: 'other-mac.local' }, 'prior-run-other-host',
-    `#4589's prior run ${RUN} is owned by a session on another host (other-mac.local) — its death cannot be proven from this machine; run /claude-tweaks:dispatch resume #4589 on other-mac.local`],
+    `#4589's prior run ${RUN} is owned by a session on another host (other-mac.local) — its death cannot be proven from this machine; run /claude-tweaks:dispatch resume #4589 on other-mac.local`, 'resume'],
   ['dirty worktree', { worktreeDirty: ['plugin/x.js', 'docs/y.md'] }, 'dirty-worktree',
-    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 has uncommitted edits: plugin/x.js, docs/y.md — commit or discard them, then run /claude-tweaks:dispatch resume #4589; resume never commits or pushes them"],
+    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 has uncommitted edits: plugin/x.js, docs/y.md — commit or discard them, then run /claude-tweaks:dispatch resume #4589; resume never commits or pushes them", 'resume'],
   ['worktree on another branch', { worktreeBranch: 'main' }, 'worktree-branch',
-    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 is on branch main, not worktree-dispatch-record-4589 — check out worktree-dispatch-record-4589 there, or remove the worktree so resume recreates it, then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 is on branch main, not worktree-dispatch-record-4589 — check out worktree-dispatch-record-4589 there, or remove the worktree so resume recreates it, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['worktree detached', { worktreeBranch: '' }, 'worktree-branch',
-    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 is on a detached HEAD, not worktree-dispatch-record-4589 — check out worktree-dispatch-record-4589 there, or remove the worktree so resume recreates it, then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's stalled worktree /repo/.claude/worktrees/dispatch-record-4589 is on a detached HEAD, not worktree-dispatch-record-4589 — check out worktree-dispatch-record-4589 there, or remove the worktree so resume recreates it, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['branch checked out elsewhere', { worktreeBranch: null, branchCheckedOutAt: '/repo/.claude/worktrees/other' }, 'branch-checked-out',
-    "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's branch worktree-dispatch-record-4589 is checked out at /repo/.claude/worktrees/other — remove that worktree (or resume from it), then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['branch still registered to the missing stalled worktree', { worktreeBranch: null, branchCheckedOutAt: WT }, 'branch-checked-out',
-    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C /repo worktree prune, then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's branch worktree-dispatch-record-4589 is still registered to the missing worktree /repo/.claude/worktrees/dispatch-record-4589 — prune it with git -C /repo worktree prune, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   ['local branch diverged', { worktreeBranch: null, localBranchSha: 'b'.repeat(40) }, 'branch-diverged',
-    "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589"],
+    "#4589's local branch worktree-dispatch-record-4589 is at bbbbbbb, not PR #4604's head aaaaaaa — push its commits or reset it to origin/worktree-dispatch-record-4589, then run /claude-tweaks:dispatch resume #4589", 'resume'],
   // A guard input the gatherer forgot or mistyped is a refusal, never "nothing to refuse" (Closed rule).
-  ['siblingLive omitted', { siblingLive: undefined }, 'invalid-input', invalidLine('sibling-session check', 'undefined')],
-  ['siblingLive not a boolean', { siblingLive: 'false' }, 'invalid-input', invalidLine('sibling-session check', 'string')],
-  ['openBlockers omitted', { openBlockers: undefined }, 'invalid-input', invalidLine('open-blocker list', 'undefined')],
-  ['openBlockers a bare number', { openBlockers: 4500 }, 'invalid-input', invalidLine('open-blocker list', 'number')],
-  ['worktreeDirty omitted', { worktreeDirty: undefined }, 'invalid-input', invalidLine('dirty-path list', 'undefined')],
-  ['worktreeDirty raw porcelain text', { worktreeDirty: 'plugin/x.js' }, 'invalid-input', invalidLine('dirty-path list', 'string')],
-  ['worktreeDirty null', { worktreeDirty: null }, 'invalid-input', invalidLine('dirty-path list', 'null')],
+  ['siblingLive omitted', { siblingLive: undefined }, 'invalid-input', invalidLine('sibling-session check', 'undefined'), 'resume'],
+  ['siblingLive not a boolean', { siblingLive: 'false' }, 'invalid-input', invalidLine('sibling-session check', 'string'), 'resume'],
+  ['openBlockers omitted', { openBlockers: undefined }, 'invalid-input', invalidLine('open-blocker list', 'undefined'), 'resume'],
+  ['openBlockers a bare number', { openBlockers: 4500 }, 'invalid-input', invalidLine('open-blocker list', 'number'), 'resume'],
+  ['worktreeDirty omitted', { worktreeDirty: undefined }, 'invalid-input', invalidLine('dirty-path list', 'undefined'), 'resume'],
+  ['worktreeDirty raw porcelain text', { worktreeDirty: 'plugin/x.js' }, 'invalid-input', invalidLine('dirty-path list', 'string'), 'resume'],
+  ['worktreeDirty null', { worktreeDirty: null }, 'invalid-input', invalidLine('dirty-path list', 'null'), 'resume'],
 ];
 
-for (const [name, over, reason, line] of REFUSALS) {
+for (const [name, over, reason, line, disposition] of REFUSALS) {
   test(`refusal: ${name} -> ${reason}`, () => {
     const v = verdict(over);
-    assert.equal(v.eligible, false);
-    assert.equal(v.reason, reason);
-    assert.equal(v.line, line);
+    assert.deepStrictEqual(v, {
+      eligible: false, reason, line, disposition, ...(over.priorRunDir === 'live-owner' ? { liveRun: true } : {}),
+    });
     assert.ok(v.line.includes('#4589'), v.line);
     assert.match(v.line, REMEDY);
     assert.ok(REFUSAL_REASONS.includes(v.reason), v.reason);
@@ -519,6 +519,20 @@ test('a missing closingRecords is invalid-input, never read as one record', () =
     assert.equal(r.disposition, 'resume', String(bad));
   }
 });
+test('an entry whose number is not a positive integer is invalid-input, never a #undefined line', () => {
+  const empty = selectResumePr(N, [{}]);
+  assert.equal(empty.reason, 'invalid-input');
+  assert.equal(empty.line, `#${N}'s PR number was not usable (undefined) — not resumable on a malformed check; run /claude-tweaks:dispatch resume #${N} again, and report it if it repeats`);
+  assert.equal(empty.disposition, 'resume');
+  for (const number of [0, -1, 1.5, '7', null]) {
+    assert.equal(selectResumePr(N, [prEntry({ number })]).reason, 'invalid-input', String(number));
+    assert.equal(selectResumePr(N, [prEntry({ number, isCrossRepository: true })]).reason, 'invalid-input', String(number));
+  }
+  assert.equal(selectResumePr(N, [prEntry(), prEntry({ number: 'x', isCrossRepository: true })]).reason, 'invalid-input');
+  const d = refusalDetail({ issue: N, verdict: verdict({ prs: [{}] }), prs: [{}], mainRoot: '/repo' });
+  assert.deepStrictEqual(d.prNumbers, []);
+  assert.doesNotMatch(d.remedy, /#undefined/);
+});
 test('a head outside the worktree-name character set refuses foreign-pr', () => {
   for (const head of ['a$(touch x)', '-rf', 'worktree-', 'a b', 'a/../b']) {
     assert.equal(selectResumePr(N, [prEntry({ headRefName: head })]).reason, 'foreign-pr', head);
@@ -534,7 +548,14 @@ test('worktreeNameForHead strips the worktree- prefix and passes a plain head th
   assert.equal(worktreeNameForHead('worktree-record-3942'), 'record-3942');
   assert.equal(worktreeNameForHead('worktree-dispatch-record-3977'), 'dispatch-record-3977');
   assert.equal(worktreeNameForHead('fix/thing'), 'fix/thing');
-  for (const bad of ['a$(x)', '-rf', 'worktree-', 'a/../b', '.hidden', 'a//b', 'a/.b', undefined, null, 7]) assert.equal(worktreeNameForHead(bad), null, String(bad));
+  for (const bad of ['a$(x)', '-rf', 'worktree-', 'a/../b', '.hidden', 'a//b', 'a/.b', 'a/', 'a b', undefined, null, 7]) assert.equal(worktreeNameForHead(bad), null, String(bad));
+});
+test('worktreeNameForHead resolves a doubled hyphen and a name over 64 characters', () => {
+  assert.equal(worktreeNameForHead('fix--thing'), 'fix--thing');
+  const long = 'x'.repeat(70);
+  assert.equal(worktreeNameForHead(long), long);
+  assert.equal(worktreeNameForHead(`worktree-${long}`), long);
+  assert.equal(selectResumePr(N, [prEntry({ headRefName: 'fix--thing' })]).ok, true);
 });
 test('each refusal disposition follows what its line tells the human to do', () => {
   assert.equal(verdict({ prs: [prEntry({ isDraft: false })] }).disposition, 'close-out');
@@ -578,12 +599,13 @@ test('AC5.1: a non-draft or pr-opened refusal names close-out and never a close 
 });
 const OTHER_MARKER = 'claude-tweaks-run: 2026-10-30T101632-record-999\n';
 const NOT_DRAFT_MARKED = `#${N}'s PR #${PR} is not a draft and awaits review — run /claude-tweaks:dispatch close-out #${N}`;
-const NOT_DRAFT_UNMARKED = `#${N}'s PR #${PR} is not a draft and carries no claude-tweaks-run marker, which close-out needs — review and merge it by hand`;
+const NOT_DRAFT_UNMARKED = `#${N}'s PR #${PR} is not a draft and carries no claude-tweaks-run marker for this record, which close-out needs — review and merge it by hand`;
 const NON_DRAFT_SHAPES = [
-  ['foreign marker', { body: OTHER_MARKER }, 'foreign-pr', NOT_DRAFT_MARKED],
+  ['foreign marker', { body: OTHER_MARKER }, 'foreign-pr', NOT_DRAFT_UNMARKED],
   ['unsafe head, own marker', { headRefName: 'a$(x)' }, 'foreign-pr', NOT_DRAFT_MARKED],
   ['no marker', { body: 'no marker here' }, 'foreign-pr', NOT_DRAFT_UNMARKED],
-  ['bundle with a marker', { closingRecords: 2 }, 'multi-record-pr', NOT_DRAFT_MARKED],
+  ['bundle with its own marker', { closingRecords: 2 }, 'multi-record-pr', NOT_DRAFT_MARKED],
+  ['bundle with a foreign marker', { closingRecords: 2, body: OTHER_MARKER }, 'multi-record-pr', NOT_DRAFT_UNMARKED],
   ['bundle with no marker', { closingRecords: 2, body: 'no marker here' }, 'multi-record-pr', NOT_DRAFT_UNMARKED],
   ['fork', { isCrossRepository: true }, 'cross-repo-pr',
     `#${N}'s open closing PR #${PR} (${URL}) comes from a fork or another repository and is not a draft — review and merge it by hand`],
@@ -606,12 +628,51 @@ test('a fork listing holding any non-draft PR takes close-out, never a close ins
   const r = selectResumePr(N, prs);
   assert.equal(r.reason, 'cross-repo-pr');
   assert.equal(r.disposition, 'close-out');
-  assert.equal(r.line, `#${N}'s open closing PRs #${PR} (u1), #4610 (u2) come from a fork or another repository and not all are drafts — review and merge them by hand`);
+  assert.equal(r.line, `#${N}'s open closing PRs #${PR} (u1), #4610 (u2) come from a fork or another repository and #4610 is not a draft — review and merge it by hand`);
+  const both = selectResumePr(N, [prEntry({ isCrossRepository: true, url: 'u1', isDraft: false }), prEntry({ number: 4610, url: 'u2', isCrossRepository: true, isDraft: false })]);
+  assert.equal(both.disposition, 'close-out');
+  assert.equal(both.line, `#${N}'s open closing PRs #${PR} (u1), #4610 (u2) come from a fork or another repository and #${PR}, #4610 are not drafts — review and merge them by hand`);
 });
-test('refusalDetail: close uses the steps, except a closed record and a fork, whose lines fit', () => {
-  const closing = refusalDetail({ issue: N, verdict: selectResumePr(N, [prEntry({ closingRecords: 2 })]), prs: [prEntry({ closingRecords: 2 })], mainRoot: '/repo' });
-  assert.deepStrictEqual(closing.prNumbers, [PR]);
-  assert.match(closing.remedy, /gh pr close 4604/);
+test('multiple-prs holding a non-draft PR names it and never a close instruction; all drafts keep the line', () => {
+  const prs = [prEntry({ number: 4610, isDraft: false }), prEntry()];
+  const v = verdict({ prs });
+  assert.equal(v.reason, 'multiple-prs');
+  assert.equal(v.disposition, 'close-out');
+  assert.equal(v.line, `#${N} has 2 open PRs that close it (#${PR}, #4610 in ascending number order) and #4610 is not a draft — review and merge it by hand`);
+  assert.doesNotMatch(refusalDetail({ issue: N, verdict: v, prs, mainRoot: '/repo' }).remedy, /gh pr close|close PR/);
+  const two = [prEntry({ number: 4610, isDraft: false }), prEntry({ isDraft: false })];
+  assert.equal(verdict({ prs: two }).line, `#${N} has 2 open PRs that close it (#${PR}, #4610 in ascending number order) and #${PR}, #4610 are not drafts — review and merge them by hand`);
+  const drafts = verdict({ prs: [prEntry({ number: 4610 }), prEntry()] });
+  assert.equal(drafts.disposition, 'resume');
+  assert.equal(drafts.line, `#${N} has 2 open PRs that close it (#${PR}, #4610 in ascending number order) — not resumable until only one remains; close the extra PR, then run /claude-tweaks:dispatch resume #${N}`);
+});
+// Ruling 2: destructive steps only for a PR this record owns alone.
+const STEPS = /git branch -D|git push origin --delete|gh pr close/;
+const NOT_OWNED = [
+  ['no marker', { body: 'no marker here' }],
+  ['a marker naming record 999', { body: OTHER_MARKER }],
+  ['a bundle with its own marker', { closingRecords: 3 }],
+  ['a bundle with a foreign marker', { closingRecords: 3, body: OTHER_MARKER }],
+];
+for (const [name, over] of NOT_OWNED) {
+  test(`refusalDetail prints no close steps for a draft with ${name}`, () => {
+    const prs = [prEntry(over)];
+    const v = verdict({ prs });
+    assert.equal(v.disposition, 'close');
+    const d = refusalDetail({ issue: N, verdict: v, prs, mainRoot: '/repo' });
+    assert.equal(d.remedy, v.line);
+    assert.doesNotMatch(d.remedy, STEPS);
+  });
+}
+test('refusalDetail: close uses the steps on an own-marker PR, except a closed record and a fork, whose lines fit', () => {
+  for (const over of [{ claimContent: tombstone('merged: x') }, { claimContent: JSON.stringify({ released: true, reason: 'abandoned: x' }) }, { prs: [prEntry({ headRefName: 'a$(x)' })] }]) {
+    const prs = over.prs || [prEntry()];
+    const d = refusalDetail({ issue: N, verdict: verdict(over), prs, mainRoot: '/repo' });
+    assert.deepStrictEqual(d.prNumbers, [PR]);
+    assert.match(d.remedy, /gh pr close 4604/);
+  }
+  const own = refusalDetail({ issue: N, verdict: verdict({ claimContent: tombstone('merged: x') }), prs: [prEntry()], mainRoot: '/repo' });
+  assert.match(own.remedy, /git branch -D worktree-dispatch-record-4589; git push origin --delete worktree-dispatch-record-4589/);
   const closed = verdict({ issueState: 'CLOSED' });
   assert.equal(refusalDetail({ issue: N, verdict: closed, prs: [prEntry()], mainRoot: '/repo' }).remedy, closed.line);
   const forkPrs = [prEntry({ isCrossRepository: true })];
