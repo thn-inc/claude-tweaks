@@ -106,6 +106,47 @@ const CASES = [
   [String.raw`{\\\"token\\\":\\\"abc\\\"}`, String.raw`{\\\"token\\\":[redacted]}`],
   [String.raw`{\\\"Authorization\\\":\\\"Digest abc\\\"}`, String.raw`{\\\"Authorization\\\":[redacted]}`],
   [String.raw`{\\\"token\\\":\\\"abc def`, String.raw`{\\\"token\\\":[redacted]`],
+  // A value starting with a backslash.
+  [String.raw`password=\hunter2`, 'password=[redacted]'],
+  [String.raw`password=\$ecret123`, 'password=[redacted]'],
+  [String.raw`--password \!abc`, '--password [redacted]'],
+  [String.raw`api_key: \abc`, 'api_key: [redacted]'],
+  [String.raw`"token":\abc`, '"token":[redacted]'],
+  [String.raw`token=\\abc`, 'token=[redacted]'],
+  [String.raw`authorization=\abc`, 'authorization=[redacted]'],
+  [String.raw`token: Bearer \abc`, 'token: [redacted]'],
+  [String.raw`sk_\abc`, '[redacted]'],
+  [String.raw`ghp_\abc`, '[redacted]'],
+  [String.raw`--token=\abc`, '--token=[redacted]'],
+  // A quoted bearer value keeps what surrounds it.
+  ['"bearer eyJa.b.c"', '"bearer [redacted]"'],
+  ['{"h":"bearer eyJa.b.c","x":1}', '{"h":"bearer [redacted]","x":1}'],
+  [String.raw`{\"h\":\"bearer eyJa.b.c\",\"x\":1}`, String.raw`{\"h\":\"bearer [redacted]\",\"x\":1}`],
+  ['"bearer abc"', '"[redacted]"'],
+  ['{"h":"bearer abc","x":1}', '{"h":"[redacted]","x":1}'],
+  ['bearer abc, next', '[redacted], next'],
+  ['bearer eyJa.b.c"secretpart', '[redacted]'],
+  ['bearer "abc def" next', '[redacted] next'],
+  // Text glued to a value.
+  [String.raw`token=[redacted]\secretpart`, 'token=[redacted]'],
+  ['token=[redacted]"secretpart', 'token=[redacted]'],
+  [String.raw`--token="abc"\def`, '--token=[redacted]'],
+  ['token="abc"def', 'token=[redacted]'],
+  [String.raw`token="abc"\def`, 'token=[redacted]'],
+  [String.raw`token=\"abc\"def`, 'token=[redacted]'],
+  ['token="abc". next', 'token=[redacted]. next'],
+  ['{"token":"abc"},{"x":1}', '{"token":[redacted]},{"x":1}'],
+  ['<a title="token=abc">', '<a title="token=[redacted]">'],
+  [`--password "ab"'cd'`, '--password [redacted]'],
+  [`token="ab"'cd'`, 'token=[redacted]'],
+  // The flag rule's separator run.
+  ['--token => abc', '--token => [redacted]'],
+  ['--token = abc', '--token = [redacted]'],
+  ['--token := "abc def"', '--token := [redacted]'],
+  // Case and whitespace limits.
+  ['bearer EYJa.b.c', '[redacted]'],
+  ['authorization=token\nnext line', 'authorization=[redacted]\nnext line'],
+  ['token: bearer\nnext line', 'token: [redacted]\nnext line'],
 ];
 
 const words = (text) => text.split(/[^A-Za-z0-9]+/).filter((word) => word.length > 1);
@@ -251,6 +292,16 @@ test('a later rule does not run on past a placeholder an earlier rule wrote', ()
   assert.deepEqual([text, count], ['--client-secret=[redacted], next', 1]);
   const header = redactText('"Authorization": "Digest abc", "x": 1');
   assert.deepEqual([redactText(header.text).text, redactText(header.text).count], [header.text, 0]);
+});
+
+test('a bearer value no value form takes still goes, up to its whitespace', () => {
+  assert.equal(redactText('bearer "abc def').text, '[redacted] def');
+});
+
+test('a JWT starts with a case-sensitive eyJ', () => {
+  for (const raw of ['eyjafjallajokull.is', 'EYJa.b']) {
+    assert.deepEqual((({ text, count }) => [text, count])(redactText(raw)), [raw, 0], raw);
+  }
 });
 
 test('only a backslash makes a leading n, r or t a boundary', () => {

@@ -26,7 +26,7 @@ const REST_OF_LINE = '[^\\r\\n]*';
 const BARE_PLAIN = '[^\\s,;&"\'`)\\\\]';
 const BARE_BACKSLASHES = '\\\\+(?!["\'`\\\\])';
 const BARE_JOINT = `(?:[,;)](?=\\S)|${BARE_BACKSLASHES}|\\\\*${OPEN_QUOTE}(?=[^\\s,;&)}\\]>]))`;
-const BARE_VALUE = `(?:${BARE_PLAIN}+|${BARE_BACKSLASHES})(?:${BARE_JOINT}${BARE_PLAIN}*)*`;
+const BARE_VALUE = `(?:${BARE_PLAIN}+|${BARE_BACKSLASHES}${BARE_PLAIN}*)(?:${BARE_JOINT}${BARE_PLAIN}*)*`;
 // Unrolled, so one run of plain characters has one way to match. An unterminated quote
 // matches nothing: redacting one word of it would leave the rest looking clean to the screen.
 const quoted = (quote) => `${quote}[^${quote}\\\\]*(?:\\\\[\\s\\S][^${quote}\\\\]*)*${quote}`;
@@ -36,18 +36,26 @@ const onceEscapedQuoted = (quote) => `\\\\${quote}[^${quote}]*(?:(?<=\\\\\\\\)${
 // Escaped more than once, as in `{\\\"token\\\":\\\"abc\\\"}`: a quote after two or more closes.
 const multiEscapedQuoted = (quote) => `\\\\{2,}${quote}[^${quote}]*(?:(?<!\\\\\\\\)${quote}[^${quote}]*)*(?<=\\\\\\\\)${quote}`;
 const QUOTES = ['"', "'", '`'];
-const QUOTED_VALUE = `(?:${[quoted, onceEscapedQuoted, multiEscapedQuoted].flatMap((form) => QUOTES.map(form)).join('|')})`;
+const PLAIN_QUOTED = `(?:${QUOTES.map(quoted).join('|')})`;
+const ESCAPED_QUOTED = `(?:${[onceEscapedQuoted, multiEscapedQuoted].flatMap((form) => QUOTES.map(form)).join('|')})`;
+const QUOTED_VALUE = `(?:${PLAIN_QUOTED}|${ESCAPED_QUOTED})`;
+// Text glued to a closing quote is part of the value, as in `"abc"def` or shell's `"ab"'cd'`.
+// Closing punctuation is not: `{"token":"abc"}` and `token="abc". next` keep theirs.
+const GLUED_QUOTED_VALUE = `(?:${PLAIN_QUOTED}+|${ESCAPED_QUOTED})(?:(?![}\\]>])(?!\\.+(?:\\s|$))${BARE_VALUE})?`;
 // Punctuation a placeholder or a JWT may be followed by and still be the whole value.
 const CLOSERS = '[\\]})>,;.]*';
+// What ends a placeholder or a JWT: whitespace, the end of the input, or a closing quote.
+const VALUE_END = `(?:\\s|$|\\\\*${OPEN_QUOTE}(?:[\\s,;&)}\\]>]|$))`;
 // A placeholder an earlier rule wrote is a value of its own, so a bare value does not run on
 // through `[redacted],"b":2}`. Followed by anything else it is ordinary text.
-const PLACEHOLDER_VALUE = `${escapeRegExp(REDACTED)}(?=${CLOSERS}(?:\\s|$|\\\\|${OPEN_QUOTE}))`;
+const PLACEHOLDER_VALUE = `${escapeRegExp(REDACTED)}(?=${CLOSERS}${VALUE_END}|,\\\\*${OPEN_QUOTE}|[}\\]>])`;
 // The screen cannot read a key before an escaped quote, so an escaped quote left open cannot be
 // left for it: it takes the line.
-const VALUE = `(?:${PLACEHOLDER_VALUE}|${QUOTED_VALUE}|\\\\+${OPEN_QUOTE}${REST_OF_LINE}|${BARE_VALUE})`;
+const VALUE = `(?:${PLACEHOLDER_VALUE}|${GLUED_QUOTED_VALUE}|\\\\+${OPEN_QUOTE}${REST_OF_LINE}|${BARE_VALUE})`;
 // A scheme word goes with the value after it. Before an unterminated quote nothing matches, so
-// the word is not spent as the value with the credential left behind it.
-const SCHEME = '(?:bearer|basic|digest|token|negotiate|ntlm|apikey|oauth)\\s+';
+// the word is not spent as the value with the credential left behind it. The word and its value
+// share a line: `authorization=token` followed by a real newline keeps the next line.
+const SCHEME = '(?:bearer|basic|digest|token|negotiate|ntlm|apikey|oauth)[ \\t]+';
 const KEYED_VALUE = `(?:${SCHEME}${VALUE}|(?!${SCHEME}${OPEN_QUOTE})${VALUE})`;
 // A header's scheme and parameters vary, so its value is the rest of the line. A quoted value
 // ends at its quote only where the quote plainly closes it, as in `"Authorization": "x", "y": 1`.
@@ -66,6 +74,9 @@ const JWT_SEGMENT = '[A-Za-z0-9_-]';
 // A JWT of two or three segments and nothing after it, which the JWT rule replaces alone. Any
 // other value after `bearer` goes whole, with the word, so no tail survives.
 const PLAIN_JWT = `eyJ${JWT_SEGMENT}*\\.${JWT_SEGMENT}+(?:\\.${JWT_SEGMENT}+)?`;
+// Spelled out rather than the `i` flag: `eyJ` in the guard must stay as case-sensitive as the
+// JWT rule, or the guard would hand `bearer EYJa.b` to a rule that does not take it.
+const BEARER = '[Bb][Ee][Aa][Rr][Ee][Rr]';
 
 function nameIsCredential(name, suffix, charBefore) {
   if (findCredentialInText(`${name}${suffix}`) !== null) return true;
@@ -117,12 +128,14 @@ const RULES = [
   patternRule(`${TOKEN_START}(?<key>${AUTHORIZATION_NAME}=${SEPARATOR_TAIL}\\s*)(?<value>(?:${SCHEME}\\S${REST_OF_LINE}|${VALUE}|${OPEN_QUOTE}${REST_OF_LINE}))`, 'gi', ':'),
   patternRule('(?<key>://)(?<value>[^\\s/?#]+)(?<close>@)', 'g'),
   // A value never starts with `--`, so `--verbose --api-key abc` does not spend the second flag as the first's value.
-  patternRule(`${TOKEN_START}(?<key>(?<name>--[A-Za-z0-9_-]+)(?:=|\\s+))(?!--)(?<value>${KEYED_VALUE})`, 'gi'),
+  patternRule(`${TOKEN_START}(?<key>(?<name>--[A-Za-z0-9_-]+)(?:\\s*[=:]${SEPARATOR_TAIL}\\s*|\\s+))(?!--)(?<value>${KEYED_VALUE})`, 'gi'),
   assignmentRule,
   // Before the JWT rule, so a JWT with a tail goes whole as one replacement. A plain JWT is left
   // to the JWT rule below, and the placeholder guard keeps a second pass from changing anything.
-  patternRule(`${TOKEN_START}(?<value>bearer\\s+(?!(?:${escapeRegExp(REDACTED)}|${PLAIN_JWT})${CLOSERS}(?:\\s|$))\\S+)`, 'gi'),
-  patternRule(`${TOKEN_START}(?<value>eyJ${JWT_SEGMENT}*(?:\\.${JWT_SEGMENT}+)+)`, 'gi'),
+  // Its value ends as any other does, so `"bearer abc", "x"` keeps what surrounds it. The `\S+` is
+  // for what no value form takes, such as an unterminated quote.
+  patternRule(`${TOKEN_START}(?<value>${BEARER}\\s+(?!(?:${escapeRegExp(REDACTED)}|${PLAIN_JWT})${CLOSERS}${VALUE_END})(?:${VALUE}|\\S+))`, 'g'),
+  patternRule(`${TOKEN_START}(?<value>eyJ${JWT_SEGMENT}*(?:\\.${JWT_SEGMENT}+)+)`, 'g'),
   // `_` and `-` count as boundaries, as they do in packet-links.js, so `prefix_sk_live_abc` keeps
   // only `prefix_`. A letter or digit does not, so `task_list` is left alone.
   patternRule(`(?:(?<![A-Za-z0-9])|${AFTER_ESCAPE})(?<value>(?:sk[-_]|ghp_|gho_)${BARE_VALUE})`, 'gi'),
