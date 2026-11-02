@@ -133,11 +133,16 @@ function networkLines(lines) {
   return lines.filter((l) => !/ ARGS=--version$/.test(l));
 }
 
-function reachesHost(line, host) {
-  if (line.startsWith(`GH_HOST=${host} `)) return true;
+// The argv alone names the host (a host-qualified --repo or a --hostname), whatever
+// GH_HOST the call was spawned with.
+function argvReachesHost(line, host) {
   const args = line.slice(line.indexOf(' ARGS=') + 6);
   const h = host.replace(/\./g, '\\.');
   return new RegExp(`(?:^| )(?:-R|--repo)[ =]${h}/`).test(args) || new RegExp(`(?:^| )--hostname[ =]${h}(?: |$)`).test(args);
+}
+
+function reachesHost(line, host) {
+  return line.startsWith(`GH_HOST=${host} `) || argvReachesHost(line, host);
 }
 
 function assertEveryLineReaches(lines, host) {
@@ -311,7 +316,9 @@ test('final review: backlog-grant-gate.js leaves an exported GH_HOST on every ca
 // by the case's run dir), setup?: (repo) => void, acceptsRepo: the CLI takes
 // --repo, typedRepoLines?: (line) => boolean (AC6.1 asserts host reachability
 // only on the lines it selects; default every network line), canned?: gh answers
-// replacing CANNED entries for the row's cases }. describeOriginGate(row)
+// replacing CANNED entries for the row's cases, printsResolutionNote?: the CLI
+// prints a repoResolutionNote (AC7.2 then requires `{cli}: resolved repo ...
+// acme.ghe.com` on stderr) }. describeOriginGate(row)
 // registers every case for one row, so a later task adds a CLI by adding a row.
 const UNKNOWN_HOST = 'git.corp.invalid';
 const NOT_KNOWN_MSG = 'is not a known GitHub host';
@@ -362,17 +369,29 @@ function describeOriginGate(row) {
     assert.ok(!repoValues(r.lines).includes('o/r'), `a gh call carries a bare --repo o/r:\n${log}`);
   });
 
+  // argvOnly: the exported GH_HOST prefixes every log line, so the host must be
+  // proven by the argv (the CLI's host-qualified slug), never by that prefix.
   const passThrough = [
     ['an acme.ghe.com origin', 'acme.ghe.com', { origin: 'https://acme.ghe.com/o/r.git' }],
     ['a hosts.yml-key origin', 'ghes.corp.invalid', { origin: 'https://ghes.corp.invalid/o/r.git', hostsYml: 'ghes.corp.invalid:\n' }],
-    [`a ${UNKNOWN_HOST} origin with GH_HOST exported`, UNKNOWN_HOST, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST }],
+    [`a ${UNKNOWN_HOST} origin with GH_HOST exported`, UNKNOWN_HOST, { origin: `https://${UNKNOWN_HOST}/o/r.git`, ghHost: UNKNOWN_HOST }, true],
   ];
-  for (const [label, host, caseOpts] of passThrough) {
+  for (const [label, host, caseOpts, argvOnly] of passThrough) {
     test(`AC4.1 ${name}: ${label} keeps the host-qualified repo`, opts, (t) => {
       const r = runGated(t, row, caseOpts);
+      const log = r.lines.join('\n');
       assert.ok(!r.stderr.includes(NOT_KNOWN_MSG), `refused:\n${r.stderr}`);
-      assertEveryLineReaches(r.lines, host);
-      for (const value of repoValues(r.lines)) assert.equal(value, `${host}/o/r`, `--repo value:\n${r.lines.join('\n')}`);
+      if (argvOnly) {
+        const net = networkLines(r.lines);
+        assert.ok(net.length >= 1, `expected at least one network-bound gh call, log:\n${log}`);
+        assert.ok(net.some((l) => argvReachesHost(l, host)), `no gh call names ${host} in its argv, log:\n${log}`);
+        for (const line of net.filter((l) => / ARGS=api /.test(l))) {
+          assert.ok(new RegExp(` --hostname ${host.replace(/\./g, '\\.')}(?: |$)`).test(line), `gh api call lacks --hostname ${host}: ${line}`);
+        }
+      } else {
+        assertEveryLineReaches(r.lines, host);
+      }
+      for (const value of repoValues(r.lines)) assert.equal(value, `${host}/o/r`, `--repo value:\n${log}`);
     });
   }
 
@@ -421,14 +440,20 @@ function describeOriginGate(row) {
       assert.ok(/ --hostname acme\.ghe\.com(?: |$)/.test(line) || line.startsWith('GH_HOST=acme.ghe.com '), `gh api call does not name acme.ghe.com: ${line}`);
     }
     assert.ok(!/ACME|ghe\.com\./.test(log), `a gh call carries the un-normalized host:\n${log}`);
-    for (const note of r.stderr.split('\n').filter((l) => l.includes('resolved repo'))) {
+    const notes = r.stderr.split('\n').filter((l) => l.includes('resolved repo'));
+    for (const note of notes) {
       assert.ok(note.includes('acme.ghe.com') && !/ACME|ghe\.com\./.test(note), `resolution note does not name acme.ghe.com: ${note}`);
+    }
+    // printsResolutionNote: the CLI's own repoResolutionNote line (not the seam's
+    // `claude-tweaks: resolved repo` note) must be there.
+    if (row.printsResolutionNote) {
+      assert.ok(notes.some((l) => l.startsWith(`${name}: resolved repo `)), `${name} printed no resolution note naming acme.ghe.com:\n${r.stderr}`);
     }
   });
 }
 
 const CLI_TABLE = [
-  { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
+  { cli: 'materialize.js', argv: ['7', '--run-dir', '{runDir}'], acceptsRepo: true, printsResolutionNote: true, canned: { 'issue-view': MATERIALIZE_RECORD } },
   { cli: 'compose-subject.js', argv: ['7', '--tag', 'human-approved'], acceptsRepo: true },
   { cli: 'release-claim.js', argv: ['7', '--run', '{runDir}', '--reason', 'done'], acceptsRepo: true },
   { cli: 'repair-claim.js', argv: ['7', '--run', '{runDir}', '--mode', 'release', '--reason', 'unreadable'], acceptsRepo: true },
