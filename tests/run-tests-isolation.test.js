@@ -400,6 +400,27 @@ test('#4333 a foreign ticket at our own path makes us rejoin and is left in plac
   });
 });
 
+test('#4333 a ticket of ours overwritten with JSON null makes us rejoin instead of crashing', () => {
+  withTempDir((dir) => {
+    const lockPath = writeLock(dir, 0, 333);
+    const nulled = path.join(dir, 'ticket-1.json');
+    let sleeps = 0;
+    const sleep = () => {
+      sleeps += 1;
+      if (sleeps === 1) {
+        fs.writeFileSync(nulled, 'null');
+        return;
+      }
+      // The fresh `null` file counts as an unidentified holder ahead of the new ticket; clear it with the lock.
+      fs.unlinkSync(nulled);
+      fs.unlinkSync(lockPath);
+    };
+    const lock = acquireSlot(slotArgs(dir, { sleep, isAlive: (pid) => pid === 333 }));
+    assert.strictEqual(lock, lockPath);
+    assert.strictEqual(sleeps, 2);
+  });
+});
+
 test('#4333 acquireSlot never deletes a ticket at its path that no longer names it', () => {
   withTempDir((dir) => {
     writeLock(dir, 0, 333);
@@ -916,38 +937,77 @@ async function withWaiters(fn) {
   const outFile = path.join(root, 'out.txt');
   const events = () => (fs.existsSync(outFile) ? fs.readFileSync(outFile, 'utf8').split('\n').filter(Boolean) : []);
   const start = (name, slots, pollMs) => {
-    const child = spawn(
-      process.execPath, ['-e', WAITER, RUNNER, path.join(root, 'slots'), String(slots), String(pollMs), name, outFile],
-      { stdio: 'ignore' },
-    );
-    const waiter = { name, child, exitCode: undefined };
+    // stderr goes to a file so a crashing waiter can be quoted instead of timing out naming nothing.
+    const stderrPath = path.join(root, `stderr-${name}.txt`);
+    const stderrFd = fs.openSync(stderrPath, 'w');
+    let child;
+    try {
+      child = spawn(
+        process.execPath, ['-e', WAITER, RUNNER, path.join(root, 'slots'), String(slots), String(pollMs), name, outFile],
+        { stdio: ['ignore', 'ignore', stderrFd] },
+      );
+    } finally {
+      fs.closeSync(stderrFd);
+    }
+    const waiter = { name, child, exitCode: undefined, stderrPath };
     child.on('exit', (code, signal) => { waiter.exitCode = code === null ? signal : code; });
     children.push(waiter);
     return waiter;
   };
   const release = (name) => fs.writeFileSync(path.join(root, `release-${name}`), '');
+  const stderrOf = (waiter) => {
+    try {
+      return fs.readFileSync(waiter.stderrPath, 'utf8').trim() || '(empty)';
+    } catch (_) {
+      return '(unreadable)';
+    }
+  };
+  // Like `until`, but fails at once, quoting its stderr, when a watched waiter exits before the
+  // predicate holds. Watch only waiters that are not expected to exit in the meantime.
+  const waitFor = async (predicate, timeoutMs, what, watched = []) => {
+    await until(() => predicate() || watched.some((w) => w.exitCode !== undefined), timeoutMs, what);
+    if (predicate()) return;
+    const gone = watched.find((w) => w.exitCode !== undefined);
+    throw new Error(`waiter ${gone.name} exited (${gone.exitCode}) before ${what}; its stderr: ${stderrOf(gone)}`);
+  };
+  let failed = false;
   try {
-    await fn({ root, events, start, release });
+    await fn({ root, events, start, release, waitFor });
+  } catch (err) {
+    failed = true;
+    throw err;
   } finally {
-    for (const { child } of children) child.kill('SIGKILL');
-    await until(() => children.every((w) => w.exitCode !== undefined), 10000, 'every waiter to be gone');
-    fs.rmSync(root, { recursive: true, force: true });
+    let waitError = null;
+    try {
+      for (const { child } of children) child.kill('SIGKILL');
+      await until(() => children.every((w) => w.exitCode !== undefined), 10000, 'every waiter to be gone');
+    } catch (err) {
+      waitError = err; // never replaces the test's own error; rmSync below still runs
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+    if (waitError && !failed) throw waitError;
   }
 }
 
 test('#4333 AC1.1: N+2 waiters against N slots acquire in arrival order', async () => {
-  await withWaiters(async ({ events, start, release }) => {
+  await withWaiters(async ({ events, start, release, waitFor }) => {
     const waiters = [];
     // A and B take the two free slots. C polls slowly and D fast, so a poll-and-take-first
-    // implementation hands the first freed slot to the later arrival D.
+    // implementation hands the first freed slot to the later arrival D. That discrimination is
+    // probabilistic: against the pre-change runner D (20 ms poll) beats C (1000 ms poll) only most of
+    // the time (~2% of reverted runs come out green), so one green run of the reverted runner does
+    // not show this test fails to discriminate.
     for (const [name, pollMs, reported] of [['A', 20, 'acquired A'], ['B', 20, 'acquired B'], ['C', 1000, 'waiting C'], ['D', 20, 'waiting D']]) {
-      waiters.push(start(name, 2, pollMs));
-      await until(() => events().includes(reported), 60000, reported);
+      const waiter = start(name, 2, pollMs);
+      waiters.push(waiter);
+      await waitFor(() => events().includes(reported), 60000, reported, [waiter]);
     }
+    const [, b, c, d] = waiters;
     release('A');
-    await until(() => events().filter((e) => e.startsWith('acquired ')).length >= 3, 60000, 'a third acquisition');
+    await waitFor(() => events().filter((e) => e.startsWith('acquired ')).length >= 3, 60000, 'a third acquisition', [b, c, d]);
     release('B');
-    await until(() => events().filter((e) => e.startsWith('acquired ')).length >= 4, 60000, 'a fourth acquisition');
+    await waitFor(() => events().filter((e) => e.startsWith('acquired ')).length >= 4, 60000, 'a fourth acquisition', [c, d]);
     assert.deepStrictEqual(
       events().filter((e) => e.startsWith('acquired ')).map((e) => e.slice('acquired '.length)),
       ['A', 'B', 'C', 'D'],
@@ -961,7 +1021,7 @@ test('#4333 AC1.1: N+2 waiters against N slots acquire in arrival order', async 
 });
 
 test('#4333 AC3.1: a waiter killed in the queue does not block the one behind it', async () => {
-  await withWaiters(async ({ root, events, start, release }) => {
+  await withWaiters(async ({ root, events, start, release, waitFor }) => {
     const slotDir = path.join(root, 'slots');
     fs.mkdirSync(slotDir, { recursive: true, mode: 0o700 });
     fs.writeFileSync(
@@ -969,13 +1029,13 @@ test('#4333 AC3.1: a waiter killed in the queue does not block the one behind it
       JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString(), cwd: ROOT }),
     );
     const a = start('A', 1, 20);
-    await until(() => events().includes('waiting A'), 60000, 'waiting A');
+    await waitFor(() => events().includes('waiting A'), 60000, 'waiting A', [a]);
     const b = start('B', 1, 20);
-    await until(() => events().includes('waiting B'), 60000, 'waiting B');
+    await waitFor(() => events().includes('waiting B'), 60000, 'waiting B', [b]);
     a.child.kill('SIGKILL');
     await until(() => a.exitCode !== undefined, 60000, 'A to be killed');
     fs.unlinkSync(path.join(slotDir, 'slot-0.lock'));
-    await until(() => events().includes('acquired B'), 60000, 'acquired B');
+    await waitFor(() => events().includes('acquired B'), 60000, 'acquired B', [b]);
     assert.strictEqual(events().includes('acquired A'), false);
     release('B');
     await until(() => b.exitCode !== undefined, 60000, 'B to exit');

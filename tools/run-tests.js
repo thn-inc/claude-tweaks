@@ -369,11 +369,12 @@ function ticketsAhead(dir, seq, holderOpts) {
   return { floor, first };
 }
 
-// Whether the ticket at `ticketPath` still names `pid`: false when it was deleted, is unparseable,
-// or a newcomer was numbered into its seq.
+// Whether the ticket at `ticketPath` still names `pid`: false when it was deleted, is unparseable or
+// not an object (`null` included), or a newcomer was numbered into its seq.
 function ticketIsOurs(ticketPath, pid) {
   try {
-    return JSON.parse(fs.readFileSync(ticketPath, 'utf8')).pid === pid;
+    const held = JSON.parse(fs.readFileSync(ticketPath, 'utf8'));
+    return !!held && held.pid === pid;
   } catch (err) {
     if (err.code === 'ENOENT' || err instanceof SyntaxError) return false;
     throw err;
@@ -388,11 +389,18 @@ function ticketIsOurs(ticketPath, pid) {
 // so a later arrival with a higher limit still takes an index the waiters ahead of it cannot use,
 // and a ticket whose limit is unreadable counts as unlimited and blocks every index. A ticket is
 // stale by pid liveness, never by age — a live waiter's ticket may legitimately be hours old. A
-// number below a live ticket is never reissued (a later arrival lists the directory while every
-// earlier live waiter's ticket exists), so reaping a stale ticket ahead cannot delete a newer one.
+// number below a live ticket is practically never reissued (a later arrival lists the directory
+// while every earlier live waiter's ticket exists), so reaping a stale ticket ahead practically never
+// deletes a newer one. Two races remain: `takeTicket`'s list-then-create is not atomic (P lists none,
+// W1 and W2 create tickets 1 and 2, W1 acquires and removes ticket 1, P creates ticket 1 below live
+// ticket 2), and `ticketsAhead`'s read-then-unlink is not atomic (two reapers judging ticket k stale
+// can delete a fresh ticket reissued at k in between). The affected waiter's own-ticket check
+// (`ticketIsOurs`) fails on its next poll and it rejoins at the tail.
 // Residual risk: a ticket whose pid was reused by an unrelated process, or whose waiter is stopped
 // rather than dead, blocks the queue until a human deletes the ticket the log line names — the same
-// risk slot locks already accept. A lock held by a dead pid is reclaimed immediately, so a crashed
+// risk slot locks already accept. The usual source of an orphan ticket is an interrupted wait: a
+// default SIGINT/SIGTERM during the synchronous `Atomics.wait` skips `finally`, and such a ticket is
+// reaped once its pid is dead unless the pid has been reused (the case above). A lock held by a dead pid is reclaimed immediately, so a crashed
 // run never wedges the queue. The wait message is logged once per call.
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
 // A lock or ticket naming our own `pid` is stale by definition — a prior run that crashed and whose
