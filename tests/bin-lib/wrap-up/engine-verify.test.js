@@ -2447,7 +2447,7 @@ function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentCo
   const fakeGh = (args) => {
     calls.push(args);
     if (args[0] === '--version') return 'gh version 2.0.0';
-    if (isGraphqlCall(args) && !isSubIssuesPage(args) && !sameArgs(args, SCHEMA_PROBE_ARGS)) throw new Error('graphql must not be reached on body-text');
+    if (isGraphqlCall(args) && !sameArgs(args, SCHEMA_PROBE_ARGS)) throw new Error('graphql must not be reached on body-text');
     const bodyRead = /^issue view (\d+) --repo \S+ --json body( -q \.body)?$/.exec(args.join(' '));
     if (bodyRead && (bodyThrows || bodyThrowsFor.includes(Number(bodyRead[1])))) throw new Error('gh: body fetch failed');
     const gate = parentGateReply(args, world, { slug: ghHost === 'github.com' ? 'org/repo' : `${ghHost}/org/repo`, host: ghHost });
@@ -3208,12 +3208,18 @@ test('acceptance-labeling renders unknown for a non-parent body-text record when
   assert.ok(!calls.some((a) => a.includes('body')), 'no body read');
 });
 
-test('acceptance-labeling refuses an origin of . or ..', () => {
-  const { row, calls } = refusalRow({ origin: 'https://github.com/../repo.git' });
-  assert.strictEqual(row.result, 'unknown', row.detail);
-  assert.match(row.detail, /#900: could not resolve owner\/repo/);
-  assert.deepStrictEqual(calls, [], 'no gh call beyond --version');
-});
+for (const origin of [
+  'https://github.com/./repo.git',
+  'https://github.com/../repo.git',
+  'https://github.com/org/..',
+]) {
+  test(`acceptance-labeling refuses the dot-segment origin ${origin}`, () => {
+    const { row, calls } = refusalRow({ origin });
+    assert.strictEqual(row.result, 'unknown', row.detail);
+    assert.match(row.detail, /#900: could not resolve owner\/repo/);
+    assert.deepStrictEqual(calls, [], 'no gh call beyond --version');
+  });
+}
 
 test('acceptance-labeling renders unknown when policy.yml sets an invalid work-links', () => {
   const { row, calls } = refusalRow({ policyRaw: 'work-links: bogus\n' });
