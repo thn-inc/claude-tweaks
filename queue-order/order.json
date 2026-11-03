@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-03T01:50:25.302Z",
+  "computedAt": "2026-11-03T01:58:15.873Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -535,7 +535,7 @@
       },
       {
         "number": 4395,
-        "updatedAt": "2026-10-28T07:12:06Z",
+        "updatedAt": "2026-11-03T01:52:16Z",
         "state": "OPEN"
       },
       {
@@ -6101,78 +6101,6 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
-        "body": "Origin: reflect full from #4288\n\nDefer-reason: tangential\n\n## Current State\n\nTwo pipeline gates read the same bookkeeping-only delta and reach opposite answers.\n- `/claude-tweaks:test`'s Skip-if-recent (`plugin/skills/test/verification.md`) sees `VERIFICATION_SHA` ≠ HEAD. It classifies every changed path against `.claude-tweaks/verify-scope.json`, and when all of them are bookkeeping-only (`suites: []`) it skips verification and writes no stamp.\n- `/claude-tweaks:review` Step 1.5 (`plugin/skills/review/code-mode-steps.md`) then reads `verify.js --stamp-status`. It gets `verifiedHead: false`, because the full-pass stamp names the pre-ledger-commit SHA. Its gate row says \"re-trigger `/claude-tweaks:test`, re-check\", but the re-triggered `/test` takes the same bookkeeping-only skip and still writes no stamp, so the gate names no terminal outcome.\n- A `/flow` run reaches this state whenever a bookkeeping-only commit lands between `/build` Common Step 5's full verify and `/test` (for example, run-ledger rows recording AC results, which only exist after verify). #4288's run hit it: build verified 65fd6e5, a ledger-only commit moved HEAD to 81a3dc6, and the review got past the gate only by hand-running a scoped `verify.js --scope .claude-tweaks/verify-scope.json --integration-branch origin/main` (`scope: none`, `still-verified: bookkeeping-only delta`), which wrote a `none` stamp verifying HEAD.\n\n## Deliverables\n\n- [ ] Make `/claude-tweaks:test`'s bookkeeping-only Skip-if-recent branch run the scoped `verify.js` invocation the Re-verify scoping table already gives the multi-spec spec-N step (`none` on a bookkeeping-only delta), so the skip leaves a stamp that verifies HEAD instead of writing nothing.\n- [ ] Give `/claude-tweaks:review` Step 1.5's `verifiedHead: false` row a terminal outcome: after one re-trigger, a still-unverified stamp either stops the review with a named cause or passes on a recorded bookkeeping-only classification. It must never loop.\n\n## Acceptance Criteria\n\n1. In a `/flow` run whose only change after build's full verify is the run ledger commit, `/claude-tweaks:test` exits Skip-if-recent with `verify.js --stamp-status` reporting `verifiedHead: true` (`scope: none`) at the new HEAD.\n2. `/claude-tweaks:review` Step 1.5 then passes its test gate with no hand-run `verify.js` and no second `/test` re-trigger.\n3. A delta with any non-bookkeeping path still runs the scoped or full re-verify exactly as today.\n\n## Release Note\n\nA pipeline run no longer stalls at the review test gate after build commits its own ledger: the test step's bookkeeping-only skip now leaves a verification stamp for the new commit.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/test/verification.md` — bookkeeping-only Skip-if-recent branch runs the scoped none-stamp verify\n- `plugin/skills/review/code-mode-steps.md` — Step 1.5 verifiedHead:false row gets a terminal outcome\n\n_Filed by `reflect` via specShapedBody._",
-        "createdAt": "2026-10-26T10:20:17Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyq1w",
-            "name": "risk:low",
-            "description": "Scoring: low blast radius — safe for autonomous build",
-            "color": "0E8A16"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyrJA",
-            "name": "size:low",
-            "description": "Scoring: small, agent-sized change",
-            "color": "D4C5F9"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          }
-        ],
-        "number": 4395,
-        "state": "OPEN",
-        "title": "Leave a verification stamp on /test's bookkeeping-only skip so review Step 1.5 passes after the ledger commit",
-        "updatedAt": "2026-10-28T07:12:06Z",
-        "facets": {
-          "origin": null,
-          "risk": "low",
-          "size": "low",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
         }
       }
     ],
