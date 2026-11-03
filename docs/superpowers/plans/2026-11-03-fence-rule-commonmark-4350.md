@@ -17,6 +17,7 @@
 - The parse problem reads exactly `unclosed-fence at line N`. N is the 1-based line where `scanFences` opened the trailing unclosed fence, counted on the split `findSection` uses (`body.replace(/\r\n/g, '\n').split('\n')`), so a CRLF body and its LF twin give the same N (answer 1).
 - A section is hidden only when `findSection` returns `null` under the normal rule and non-null with `unclosedAsText: true`. A section that is present but empty is never "hidden", even with an unclosed fence elsewhere in the body.
 - A rejected opener (a backtick run with a backtick later on the same line) is prose. It gets no report and no warning (answer 1).
+- A stray opener closed by a later block's closer is a closed fence to `scanFences`, so it gets no report; the sections it hides stay missing by name (spec `## Plan Review Clarifications`, from answer 1's "covers only an **unterminated** fence"). Known limit, named in the wrap-up backlog record (ledger row 2).
 - `shapeGate`'s pass/fail verdict does not change for any body. Only the contents of `missing` change.
 - Answer 6 (round 2): when the gate **already fails** because a required section is missing or empty, and the authored region (the text before `## Original request`, the same prefix the placeholder check reads) holds an unterminated fence, `missing` also carries `unclosed-fence at line N` for that fence, even when it hides no required section. The fence entry still appears at most once. A placeholder-only failure does not trigger it. This changes the verdict for no body: `UNTERMINATED_FENCE_BODY` goes from `['Release Note']` to `['Release Note', 'unclosed-fence at line 13']`, which is not `release-note-only`, so it routes to `/claude-tweaks:specify` instead of to `/claude-tweaks:tidy`, whose `applyReleaseNote` refuses it.
 - In scope: `shapeGate` and everything that goes through it, plus `compose-subject.js`'s `## Release Note` and `## Breaking Change` refusals (answer 2). Out of scope: silent readers (`grouping.js` Key Files, `decomposition-crossref.js`, `compose-subject.js`'s summary fallback), and `/backlog refine`'s missing-sections flag-back (`refine-mode.md` Step 3.5, `refine-headless.md` Step 3 — answer 7; leave both unchanged). One backlog record names both at wrap-up (ledger row 2; `Defer-reason: genuinely-larger`).
@@ -175,6 +176,7 @@ Expected: PASS
 ### Task 3: validateShaped prints the fence gap; tidy's Release-Note-only verdict does not claim it
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/compose-record/compose.js` (`validateShaped`, lines 40-63)
