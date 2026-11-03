@@ -22,7 +22,8 @@ const path = require('path');
 
 const UNRESOLVED_RESOLUTIONS = new Set(['pending', 'keep-staged']);
 // #4172: a PR console's item whose filing or reverse failed is residue too; its
-// `outcome` is the failed word, and its id names a PR row, not a staged file.
+// `outcome` is the failed word, and its id names a PR row or a ruling's staged file
+// (#3942: a ratified deferral whose record failed to land reads `filing-failed` too).
 const FAILED_OUTCOMES = new Set(['filing-failed', 'reverse-failed']);
 const MISSING_RESOLUTION = 'missing';
 const FILING_PENDING_RESOLUTION = 'filing-pending';
@@ -84,7 +85,7 @@ function consoleResidueItems(consoleJson, decisions = '') {
 // (`docs:CLAUDE.md` — a `{row}:{label}` item with no staged file of its own),
 // or an id that is not a bare file name is never classified missing — only a
 // plain staged-file id can be proven absent. A failed PR outcome (#4172) is never
-// missing either: its id is a PR row, so there is no staged file to be absent. Nor is a
+// missing either: it is residue whether or not its staged file (a ruling row's id) exists. Nor is a
 // `filing-pending` item (#4170): its absent record is the residue, whatever its id looks like.
 function splitMissing(items, consoleDir, exists = fs.existsSync) {
   const kept = [];
