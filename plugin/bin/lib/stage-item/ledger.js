@@ -15,12 +15,20 @@
 // first read is never overwritten: the staged file this call created is
 // renumbered to the next free row instead, and never keeps pointing at a number
 // someone else owns.
+//
+// The module also exports the plain-row writer behind `hooks.js ledger-row`
+// (#4439): checkLedgerStatus (the status/Resolution rules a caller validates
+// with first), appendRow and settleRow (the locked append and settle, under the
+// same `.ledger.lock`, fail-closed). Neither write function validates the
+// status itself — the CLI calls checkLedgerStatus before them.
 'use strict';
 
 const fs = require('fs');
 const path = require('path');
-const { parseLedgerTable, serializeLedgerTable } = require('../wrap-up/ledger-write');
-const { escapeLedgerCell } = require('../wrap-up/ledger-cells');
+const {
+  TERMINAL_STATUSES, parseLedgerTable, serializeLedgerTable, rewriteLedgerRow,
+} = require('../wrap-up/ledger-write');
+const { escapeLedgerCell, ledgerRowCells } = require('../wrap-up/ledger-cells');
 const { writeStagedItem } = require('./write');
 const { formatEntry, appendEntry } = require('../log-decision/append');
 const { withLock } = require('../file-lock');
@@ -76,7 +84,9 @@ const NUMBERED_ROW_RE = /^\|\s*(\d+)\s*\|/;
 // would reuse a number or drop a row: numbered rows outside the contiguous
 // table, or duplicate numbers inside it (the table parser's Map collapses them
 // on write-back).
-function appendLedgerRow(ledgerText, { phase, item, status }) {
+function appendLedgerRow(ledgerText, {
+  phase, item, status, resolution,
+}) {
   const table = parseLedgerTable(ledgerText);
   const numbered = ledgerText.split('\n').map((l) => NUMBERED_ROW_RE.exec(l)).filter(Boolean).map((m) => parseInt(m[1], 10));
   const outside = [...table.preamble, ...table.trailer].filter((l) => NUMBERED_ROW_RE.test(l)).length;
@@ -84,8 +94,13 @@ function appendLedgerRow(ledgerText, { phase, item, status }) {
   if (outside > 0) throw unsafe('numbered rows exist outside the contiguous table (a row after a blank or non-table line) — fix the ledger by hand');
   if (numbered.length !== table.rows.size) throw unsafe('duplicate row numbers in the ledger table — fix the ledger by hand');
   const number = Math.max(0, ...numbered) + 1;
-  table.rows.set(String(number), `| ${number} | ${ledgerCell(phase)} | ${ledgerCell(item)} | ${status} | — |`);
+  table.rows.set(String(number), `| ${number} | ${ledgerCell(phase)} | ${ledgerCell(item)} | ${status} | ${ledgerCell(resolution == null ? '' : resolution) || '—'} |`);
   return { text: serializeLedgerTable(table), number };
+}
+
+// The lock every ledger writer in a run takes (carryForward, appendRow, settleRow).
+function ledgerLockPath(runDir) {
+  return path.join(runDir, '.ledger.lock');
 }
 
 function carryForward({
@@ -93,7 +108,7 @@ function carryForward({
   readLedger = (p) => fs.readFileSync(p, 'utf8'), // test seam: lets a test take a row between the reads
   unlink = fs.unlinkSync, // test seam: lets a test fail the staged file's removal
 }) {
-  return withLock(path.join(runDir, '.ledger.lock'), () => {
+  return withLock(ledgerLockPath(runDir), () => {
     const warnings = [];
     const summary = headerField(content, 'Title') || item;
     const log = (status, step, text, reversibility) => {
@@ -174,6 +189,130 @@ function carryForward({
   });
 }
 
+// ---- The plain-row writer behind `hooks.js ledger-row` (#4439) ----
+
+// _shared/ledger-format.md's Status enum.
+const LEDGER_STATUSES = ['open', ...TERMINAL_STATUSES];
+// The note wrap-up/refused-proposals.md's Ledger origin writes when it reopens a refused proposal's row.
+const REFUSED_PROPOSAL_NOTE = 'proposal refused — no defer reason';
+
+// Loaded on first use: bin/stage-item.js requires this module and must not pay for pack.js.
+const wrapUpPack = () => require('../wrap-up/pack');
+
+// Every pattern below runs over an unbounded Resolution (.claude/skills/regex-scan-linearity):
+// single-character classes only, nothing repeated before a literal that can fail.
+const URL_SPAN_RE = /https?:\/\/\S+/g;
+const SHA_RE = /\b(?=[0-9a-f]{0,39}[0-9])[0-9a-f]{6,40}\b/g; // a digit-free run ("facade") is a word
+const FILENAME_RE = /\w\.[A-Za-z]{2}[A-Za-z0-9]{0,4}\b/; // two or more letters: "e.g." is not a file
+const PR_REF_RE = /\bPR #\d+\b/;
+const PULL_URL_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(\d+)(?:[/?#]\S*)?$/;
+
+// A sha not immediately preceded by `#` (a bare `#123456` is an item number). Checked by hand, not a
+// lookbehind, so the regex keeps one shape.
+function hasSha(text) {
+  for (const m of text.matchAll(SHA_RE)) {
+    if (m.index === 0 || text[m.index - 1] !== '#') return true;
+  }
+  return false;
+}
+
+// Two or more `/` with a non-empty segment between them ("plugin/bin/x"; not "n/a" or "and/or").
+function hasPath(text) {
+  for (const token of text.split(/\s+/)) {
+    const parts = token.split('/');
+    if (parts.length >= 3 && parts.slice(1, -1).some((segment) => segment !== '')) return true;
+  }
+  return false;
+}
+
+const sameText = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+
+// `repo` is repo-resolve.js's parseRepo shape ({ host, owner, repo }) or null (origin unresolvable).
+function checkFixed(resolution, repo) {
+  const urls = resolution.match(URL_SPAN_RE) || [];
+  const bare = resolution.replace(URL_SPAN_RE, ' ');
+  if (hasSha(bare) || hasPath(bare) || FILENAME_RE.test(bare) || PR_REF_RE.test(resolution)) return null;
+  const pulls = urls.map((url) => PULL_URL_RE.exec(url)).filter(Boolean);
+  if (repo && pulls.some((m) => sameText(m[1], repo.host) && sameText(m[2], repo.owner) && sameText(m[3], repo.repo))) return null;
+  const accepted = 'a commit sha, file reference, or resolving PR (`PR #N` or this repo\'s /pull/N URL)';
+  if (!repo && pulls.length > 0) {
+    return `status 'fixed' needs ${accepted}; origin repo unresolvable, so a /pull/N URL cannot be matched to it — name the PR as \`PR #N\``;
+  }
+  return `status 'fixed' needs ${accepted} in the Resolution`;
+}
+
+function isIncompleteDeferral(resolution, excludeRecords) {
+  const { LEDGER_DEFERRED_STAGED_RE, namesRecordReference } = wrapUpPack();
+  return !LEDGER_DEFERRED_STAGED_RE.test(resolution) && !namesRecordReference(resolution, excludeRecords);
+}
+
+// The rules a status/Resolution pair owes before a row is written — the sanctioned writer's half of
+// _shared/ledger-format.md's Resolution-text requirements. `incompleteDeferral` marks a `deferred`
+// row that carries only a valid `Defer-reason:`: accepted, but settleRow may later resolve it.
+function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null } = {}) {
+  const text = String(resolution == null ? '' : resolution);
+  const ok = { refusal: null, incompleteDeferral: false };
+  if (!LEDGER_STATUSES.includes(status)) {
+    return { ...ok, refusal: `invalid status '${status}' (expected one of ${LEDGER_STATUSES.join(', ')})` };
+  }
+  if (status === 'fixed') return { ...ok, refusal: checkFixed(text, repo) };
+  if (status === 'deferred') {
+    if (!isIncompleteDeferral(text, excludeRecords)) return ok;
+    if (wrapUpPack().hasValidDeferReason(text)) return { refusal: null, incompleteDeferral: true };
+    return {
+      ...ok,
+      refusal: 'status \'deferred\' needs the Resolution to name a `staged/` path, a record reference (issue/PR URL or `#N`), or exactly one valid `Defer-reason:` token (_shared/deferral-gate.md)',
+    };
+  }
+  if ((status === 'accepted' || status === 'acknowledged') && !text.trim()) {
+    return { ...ok, refusal: `status '${status}' needs a non-blank resolution` };
+  }
+  return ok;
+}
+
+// Appends one row under the ledger lock, fail-closed: a held lock throws LOCK_TIMEOUT instead of
+// racing. Throws on an unreadable ledger, no table, and LEDGER_UNSAFE (see appendLedgerRow).
+function appendRow({
+  runDir, ledgerPath, phase, item, status, resolution,
+}) {
+  return withLock(ledgerLockPath(runDir), () => {
+    const appended = appendLedgerRow(fs.readFileSync(ledgerPath, 'utf8'), {
+      phase, item, status, resolution,
+    });
+    writeFileAtomic(ledgerPath, appended.text);
+    return { number: appended.number };
+  }, { failClosed: true });
+}
+
+// Rewrites row `row`'s Status and Resolution under the ledger lock, fail-closed. The status guards
+// read the row's current state first: a terminal row is final ("a wrong resolution gets a new
+// item") except an incomplete `deferred` one, and `open` is reachable only from `open` or by the
+// refused-proposal reopen. The row is looked up before any guard runs, so a missing or
+// non-5-column row throws rewriteLedgerRow's own message, never a guard reading a shifted cell.
+function settleRow({
+  runDir, ledgerPath, row, status, resolution, excludeRecords = [],
+}) {
+  return withLock(ledgerLockPath(runDir), () => {
+    const text = fs.readFileSync(ledgerPath, 'utf8');
+    const rewritten = rewriteLedgerRow(text, { item: row, status, resolution });
+    const [, , , currentRaw, currentResolution] = ledgerRowCells(parseLedgerTable(text).rows.get(String(row)));
+    const current = (currentRaw || '').toLowerCase();
+    const { LEDGER_DEFERRED_STAGED_RE } = wrapUpPack();
+    if (status === 'open') {
+      const refusedReopen = current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
+        && String(resolution || '').includes(REFUSED_PROPOSAL_NOTE);
+      if (current !== 'open' && !refusedReopen) {
+        throw new Error(`row #${row} is ${current}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
+      }
+    } else if (TERMINAL_STATUSES.includes(current) && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
+      throw new Error(`row #${row} is already ${current} (terminal) — a wrong resolution gets a new item`);
+    }
+    writeFileAtomic(ledgerPath, rewritten);
+    return { number: Number(row) };
+  }, { failClosed: true });
+}
+
 module.exports = {
   fillLedgerHeader, headerField, appendLedgerRow, carryForward,
+  LEDGER_STATUSES, REFUSED_PROPOSAL_NOTE, ledgerLockPath, isIncompleteDeferral, checkLedgerStatus, appendRow, settleRow,
 };

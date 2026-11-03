@@ -170,8 +170,9 @@ function serializeLedgerTable(table) {
 // terminal statuses (`open` is never a valid target here — this function
 // only resolves items, never reopens one. ledger-format.md's one
 // terminal-to-open transition, a `deferred` row whose staged proposal the
-// Review Console refuses, is applied by wrap-up/refused-proposals.md's
-// Ledger origin, not here). `resolution` is required unless `status`
+// Review Console refuses, is specified by wrap-up/refused-proposals.md's
+// Ledger origin and applied through rewriteLedgerRow by stage-item/ledger.js's
+// settleRow, not here). `resolution` is required unless `status`
 // is `observation`, matching ledger-format.md's Resolution-text requirement.
 function flipLedgerRow(text, { item, status, resolution }) {
   if (!TERMINAL_STATUSES.includes(status)) {
@@ -180,6 +181,14 @@ function flipLedgerRow(text, { item, status, resolution }) {
   if (status !== 'observation' && !String(resolution || '').trim()) {
     throw new Error(`resolution text is required for status '${status}'`);
   }
+  return rewriteLedgerRow(text, { item, status, resolution });
+}
+
+// flipLedgerRow's rewrite with no status validation: the caller owns the
+// status rules (`flipLedgerRow` above for the terminal-only flip,
+// stage-item/ledger.js's settleRow for the plain-row writer). A missing row
+// and a row that is not the 5-column shape still throw.
+function rewriteLedgerRow(text, { item, status, resolution }) {
   const table = parseLedgerTable(text);
   const key = String(item);
   const row = table.rows.get(key);
@@ -201,4 +210,4 @@ function flipLedgerRow(text, { item, status, resolution }) {
   return serializeLedgerTable(table);
 }
 
-module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow };
+module.exports = { TERMINAL_STATUSES, resolveLedgerPath, describeRunLedgers, formatLedgerReport, parseLedgerTable, serializeLedgerTable, flipLedgerRow, rewriteLedgerRow };

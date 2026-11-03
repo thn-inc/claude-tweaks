@@ -769,6 +769,14 @@ async function gatherPack({ runDir, cwd = process.cwd(), only = null, deps: over
   return pack;
 }
 
+// The run's own record numbers — the `excludeRecords` input the ledger
+// predicates above take (`stage-item/ledger.js`'s checkLedgerStatus/settleRow):
+// the resolveRecords ladder's records, empty when it is `unavailable`.
+function ownRecordNumbers(runDir, worktree) {
+  return resolveRecords(defaultDeps(worktree || process.cwd()), runDir, worktree).records;
+}
+
 module.exports = {
   gatherPack, resolveInputs, resolveWorktreeBase, wrapProbe, withTimeout, parseLedger, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, worktreeMirror,
+  LEDGER_DEFERRED_STAGED_RE, namesRecordReference, hasValidDeferReason, ownRecordNumbers,
 };
