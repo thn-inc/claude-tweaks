@@ -28,6 +28,7 @@ const MSG_SCOPE_ORDER = 'the scope sentence comes before the stop rule';
 const MSG_GREP = 'every line the AC grep matches carries --repo';
 
 const collapse = (s) => s.replace(/\s+/g, ' ');
+const occurrences = (text, phrase) => text.split(phrase).length - 1;
 // A phrase as it may sit in the raw file: hard-wrapped, so any run of whitespace stands for a space.
 const wrapTolerant = (phrase) => new RegExp(escapeRegExp(phrase).replace(/ /g, '\\s+'));
 const RULE_RE = wrapTolerant(STOP_RULE);
@@ -65,8 +66,8 @@ function runSection(text) {
 // The stop rule is present once, sits in the Run the gate CLI section, and comes before the first gh issue fence.
 function assertStopRuleBeforeGhLines(text) {
   const flat = collapse(text);
-  assert.ok(flat.split(STOP_RULE).length - 1 === 1, MSG_PRESENT);
-  assert.ok(flat.split(SCOPE).length - 1 === 1, MSG_SCOPE_PRESENT);
+  assert.ok(occurrences(flat, STOP_RULE) === 1, MSG_PRESENT);
+  assert.ok(occurrences(flat, SCOPE) === 1, MSG_SCOPE_PRESENT);
   assert.ok(flat.includes(`${SCOPE} ${STOP_RULE}`), MSG_SCOPE_ORDER); // adjacent: the sentence introduces the rule, not merely precedes it
   assert.ok(collapse(runSection(text)).includes(STOP_RULE), MSG_PLACED);
   const firstGh = text.split('\n').slice(0, fencedGhIssueLines(text)[0].i).join('\n').length; // raw index of that line's start (less the newline)
