@@ -53,6 +53,22 @@ function writeRunState(runDir, state) {
   fs.writeFileSync(path.join(runDir, 'run-state.json'), JSON.stringify(state));
 }
 
+// Runs fn with the given process.env keys set (a value of undefined deletes the key), then restores them.
+function withEnv(vars, fn) {
+  const saved = {};
+  for (const k of Object.keys(vars)) saved[k] = process.env[k];
+  try {
+    for (const [k, v] of Object.entries(vars)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    return fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+  }
+}
+
 function fakeGhApiDelete(calls, result) {
   return (args) => { calls.push(args); return result; };
 }
@@ -358,14 +374,39 @@ test('AC15 (#2747): teardown-run resolves the GHE host from the origin remote an
   writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
 
   const calls = [];
-  const result = teardownRun(runDir, {
+  // #4933: ghe.example.com is not a known GitHub host unless GH_HOST opts it in; teardownRun has no
+  // gate-deps seam, so the opt-in goes through the process env for the call.
+  const result = withEnv({ GH_HOST: 'ghe.example.com' }, () => teardownRun(runDir, {
     mode: 'merged',
     sessionId: 'me',
     deps: { ghApiDelete: (args, host) => { calls.push({ args, host }); return { ok: true }; } },
-  });
+  }));
 
   assert.match(result.lines.join('\n'), /remote ref: deleted refs\/heads\/feat-branch/);
   assert.deepStrictEqual(calls, [{ args: ['repos/acme/widgets/git/refs/heads/feat-branch'], host: 'ghe.example.com' }]);
+});
+
+test('AC8.1 teardown (#4933): an unknown origin host issues no gh DELETE and skips with the refusal', (t) => {
+  const { root, wt, runDir } = fixtureRepo();
+  git(root, 'remote', 'set-url', 'origin', 'https://git.corp.invalid/o/r.git');
+  writeRunState(runDir, { status: 'active', worktree: wt, sessionId: 'me' });
+
+  const emptyGhConfig = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-td-ghcfg-')));
+  t.after(() => fs.rmSync(emptyGhConfig, { recursive: true, force: true }));
+  const calls = [];
+  let result;
+  assert.doesNotThrow(() => {
+    result = withEnv({ GH_HOST: undefined, GH_CONFIG_DIR: emptyGhConfig }, () => teardownRun(runDir, {
+      mode: 'merged', sessionId: 'me', deps: { ghApiDelete: fakeGhApiDelete(calls, { ok: true }) },
+    }));
+  });
+
+  assert.deepStrictEqual(calls, [], 'no gh DELETE is issued for an unknown host');
+  const refLines = result.lines.filter((l) => l.startsWith('remote ref: skipped —'));
+  assert.strictEqual(refLines.length, 1, result.lines.join('\n'));
+  assert.match(refLines[0], /git\.corp\.invalid/);
+  assert.match(refLines[0], /GH_HOST=git\.corp\.invalid/);
+  assert.ok(!result.lines.some((l) => l.startsWith('remote ref: deleted')));
 });
 
 test('AC16 (#3088): own-worktree teardown — no worktree recorded, local branch already deleted (ExitWorktree), but run-state.json pr.branch is set -> remote ref delete is still attempted', () => {

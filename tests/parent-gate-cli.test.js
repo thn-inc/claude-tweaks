@@ -330,7 +330,7 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
       if (args[0] === 'api' && args[n - 2] === '--hostname' && args[n - 1] === GHE) return gh(args.slice(0, -2));
       return gh(args.map((a) => (a === `${GHE}/o/r` ? 'o/r' : a)));
     };
-    const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner });
+    const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner, gateDeps: { env: { GH_HOST: GHE } } });
     assert.equal(r.code, 0, r.stderr);
     assert.deepEqual(r.verdict, go(argv, world).verdict);
     assert.ok(sent.some(isShape8), 'the login read is reached');
@@ -582,6 +582,20 @@ test('--facts-json reads no remote without a qualified closing token', (t) => {
   assert.equal(qualified.code, 2);
   assert.equal(qualified.stdout, '');
   assert.match(qualified.stderr, /owner\/repo/);
+});
+
+// #4933: the facts path makes no gh call, so an origin host with no GitHub signal is not refused;
+// the origin is read only to judge a qualified --closing token.
+test('facts-json path: the facts path is not refused for an unknown origin host', (t) => {
+  const file = writeFacts(t, worldAsMcp({ issues: { 12: OPEN } }, 11)); // 12 is open: only a closing token covers it
+  const over = { ...NO_GH, remoteUrl: () => 'https://Git.Corp.Invalid./o/r.git', gateDeps: { env: {} } };
+  const r = go(['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file], {}, over);
+  assert.equal(r.code, 0, r.stderr);
+  assert.ok(!r.stderr.includes('is not a known GitHub host'), r.stderr);
+  assert.equal(r.verdict.state, 'due'); // both tokens judged this repo's: the closing set is {11, 12}
+  const foreign = go(['--sub-issue', '11', '--closing', 'x/r#11,x/r#12', '--facts-json', file], {}, over);
+  assert.equal(foreign.code, 0, foreign.stderr);
+  assert.notEqual(foreign.verdict.state, 'due'); // a foreign-repo token is still dropped
 });
 
 test('a parent that reads closed needs no comments or me', (t) => {
