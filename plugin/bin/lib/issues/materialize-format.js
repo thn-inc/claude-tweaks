@@ -7,7 +7,7 @@
 'use strict';
 
 const { POLICY_KEYS } = require('../policy-schema');
-const { fencedLineRanges, findSection } = require('../markdown-blocks');
+const { fencedLineRanges, findSection, hiddenByUnclosedFence, unclosedFenceLine } = require('../markdown-blocks');
 
 const REQUIRED_SECTIONS = ['## Current State', '## Deliverables', '## Acceptance Criteria', '## Release Note'];
 // The Design-intent enum, read once from the policy schema (never restated here).
@@ -81,22 +81,42 @@ function sectionText(body, name) {
   return findSection(body, name, { levelPattern: '2', stopPattern: '2', trim: true });
 }
 
+// The parse problem a trailing unclosed fence reports, as `${prefix}${N}` with N the
+// 1-based line of the fence opener (#4350). One definition, shared with compose-record.
+const UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line ';
+
 // body -> { ok: true } | { ok: false, missing: string[] }. `missing` names
 // every failing section by its plain name ("Current State", not "## Current
 // State") plus, when present, the string 'unresolved-placeholder' — the same
 // gate materialize.md's "Materialization hard gate" describes: every
 // section present and non-empty, no TBD/TODO/<!-- ambiguity: marker anywhere
-// outside the verbatim-preserved `## Original request` section.
+// outside the verbatim-preserved `## Original request` section. Between the two
+// sits at most one `unclosed-fence at line N` entry (#4350), pushed when an
+// unclosed fence hides a required section (that section is not also named
+// missing), or, failing that, when a required section is already missing or
+// empty and the authored region holds an unterminated fence (even one hiding
+// nothing required). The verdict (ok) is never changed by it.
 function shapeGate(body) {
   const text = typeof body === 'string' ? body : '';
   const missing = [];
+  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
+  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  const sectionOptions = { levelPattern: '2', stopPattern: '2', trim: true };
+  let fenceLine = null;
   for (const heading of REQUIRED_SECTIONS) {
     const name = heading.replace('## ', '');
     const section = sectionText(text, name);
-    if (section === null || section.length === 0) missing.push(name);
+    if (section === null) {
+      const hiddenAt = hiddenByUnclosedFence(text, name, sectionOptions);
+      if (hiddenAt === null) missing.push(name);
+      else if (fenceLine === null) fenceLine = hiddenAt;
+    } else if (section.length === 0) missing.push(name);
   }
-  const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
-  const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  if (fenceLine === null && missing.length) {
+    const opener = unclosedFenceLine(authored.replace(/\r\n/g, '\n').split('\n'));
+    if (opener !== -1) fenceLine = opener + 1;
+  }
+  if (fenceLine !== null) missing.push(`${UNCLOSED_FENCE_PREFIX}${fenceLine}`);
   if (PLACEHOLDER_RE.test(stripCodeSpans(authored))) missing.push('unresolved-placeholder');
   return missing.length ? { ok: false, missing } : { ok: true, missing: [] };
 }
@@ -204,5 +224,5 @@ function composeFile({ header, n, title, body }) {
 }
 
 module.exports = {
-  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
+  REQUIRED_SECTIONS, PLACEHOLDER_PATTERNS, ORIGINAL_REQUEST_RE, UNCLOSED_FENCE_PREFIX, DESIGN_INTENT_VALUES, sectionText, shapeGate, normalizeDesignIntent, describeDesignIntentError, liftMetadata, composeHeader, composeFile, stripCodeSpans,
 };

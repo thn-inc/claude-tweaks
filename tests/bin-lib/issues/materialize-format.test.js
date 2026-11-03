@@ -665,3 +665,41 @@ test('sectionText: an indented (1–3 space) fence hides quoted headings; a 4-sp
   assert.notEqual(four, null);
   assert.ok(four.startsWith('quoted'));
 });
+
+const HIDDEN = '## Current State\nx\n\n```\nnever closed\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Release Note\nn';
+
+test('AC1.1: a column-0 fence closed by a closer indented 1-3 spaces ends at that closer (#4350)', () => {
+  for (const pad of [' ', '  ', '   ']) {
+    const body = `## Current State\nx\n\n\`\`\`\ncode\n${pad}\`\`\`\n\n## Deliverables\n- [ ] d`;
+    assert.equal(sectionText(body, 'Deliverables'), '- [ ] d', `pad ${pad.length}`);
+  }
+});
+
+test('AC2.1: a line starting with a triple-backtick inline span does not open a fence (#4350)', () => {
+  assert.equal(sectionText('## Current State\n```foo``` is the command\n\n## Deliverables\n- [ ] d', 'Deliverables'), '- [ ] d');
+});
+
+test('shapeGate: an unclosed fence before required sections reports the fence, not the sections it hides (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN), { ok: false, missing: ['unclosed-fence at line 4'] });
+});
+
+test('shapeGate: a CRLF body reports the same line (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace(/\n/g, '\r\n')), { ok: false, missing: ['unclosed-fence at line 4'] });
+});
+
+test('shapeGate: a section absent beside a hidden one stays missing by name (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace('\n\n## Release Note\nn', '')), { ok: false, missing: ['Release Note', 'unclosed-fence at line 4'] });
+});
+
+const NO_RN_TRAILING_FENCE = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
+
+test('shapeGate: a gate that already fails also names an unterminated fence that hides nothing required (#4350 answer 6)', () => {
+  assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });
+});
+
+test('shapeGate: answer 6 reads only the authored region, and a placeholder-only failure does not name the fence (#4350)', () => {
+  const afterOriginal = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed';
+  assert.deepEqual(shapeGate(afterOriginal), { ok: false, missing: ['Release Note'] });
+  const placeholderOnly = SHAPED_BODY.replace('Fixed the thing.', 'Fixed the thing. TODO\n\n```\nnever closed');
+  assert.deepEqual(shapeGate(placeholderOnly), { ok: false, missing: ['unresolved-placeholder'] });
+});
