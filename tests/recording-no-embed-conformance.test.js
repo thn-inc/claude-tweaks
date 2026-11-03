@@ -28,8 +28,30 @@ const SCAN_DIRS = [
 ];
 const MIN_FILES = 10;
 
-const MD_IMAGE = /!\[[^\]\n]*\]\(/;
+const IMAGE_TAILS = ['(', '['];
 const IMG_TAG = /<img\b/i;
+
+// Inline `![alt](url)`, reference `![alt][ref]`, and an alt holding its own brackets or a stray `]`:
+// a `]` before a link tail that closes an image opener, or closes nothing once one has opened on this
+// line. Brackets are matched, not searched for, since a regex's `(?<![a-z])[` holds a `![` and `](`
+// with no image in it. One pass over one line, so a long line stays linear.
+function holdsMarkdownImage(line) {
+  const open = [];
+  let imageSeen = false;
+  for (let at = 0; at < line.length; at += 1) {
+    if (line[at] === '\\') {
+      at += 1;
+    } else if (line[at] === '[') {
+      const isImage = line[at - 1] === '!';
+      open.push(isImage);
+      imageSeen ||= isImage;
+    } else if (line[at] === ']') {
+      const closed = open.pop();
+      if ((closed === true || (closed === undefined && imageSeen)) && IMAGE_TAILS.includes(line[at + 1])) return true;
+    }
+  }
+  return false;
+}
 
 // Manual withFileTypes walk: `{ recursive: true }` is ignored before Node 18.17.
 function listJs(dir) {
@@ -51,7 +73,7 @@ function offendersIn(source) {
   const verdict = stripperVerdict(source, stripped);
   if (verdict !== 'ok') out.push({ line: 0, what: STRIPPER_VERDICT_MESSAGES[verdict] });
   stripped.split('\n').forEach((text, i) => {
-    if (MD_IMAGE.test(text)) out.push({ line: i + 1, what: 'a markdown image `![alt](url)`' });
+    if (holdsMarkdownImage(text)) out.push({ line: i + 1, what: 'a markdown image `![alt](url)`' });
     if (IMG_TAG.test(text)) out.push({ line: i + 1, what: 'an `<img>` tag' });
   });
   return out;
@@ -83,6 +105,35 @@ test('AC2.5: an uppercase <IMG tag and an empty-alt image are flagged', () => {
   assert.deepEqual(offendersIn("const s = '![](u)';").map((o) => o.line), [1]);
 });
 
+test('AC2.5: a reference-style image and a ] inside the alt are flagged', () => {
+  for (const line of [
+    "const s = '![alt][ref]';",
+    "const s = '![alt][]';",
+    "const s = '![a]b](u)';",
+    "const s = '![a[b]c](u)';",
+    "const s = '![a[b]c][ref]';",
+    "const s = '![a\\\\]b](u)';",
+    'const s = `![${alt}][${ref}]`;',
+    'const s = `![${alt[0]}](${url})`;',
+  ]) {
+    assert.deepEqual(offendersIn(line).map((o) => o.line), [1], line);
+  }
+});
+
+test('AC2.5: the image scan stays on one line, and leaves what has no image shape', () => {
+  assert.deepEqual(offendersIn("const a = '![';\nconst b = '](u)';"), [], 'an opener and a tail on two lines are no image');
+  assert.deepEqual(offendersIn("const a = '](u)'; const b = '![';"), [], 'a tail before the opener is no image');
+  for (const line of [
+    'const a = !b[0];',
+    "const a = !['x'].includes(y);",
+    "const a = '[x](u)';",
+    "const a = '[x][y]';",
+    'const re = /(?<![a-z0-9.+-])(?:[a-z][a-z0-9+.-]{0,31}:)/;',
+  ]) {
+    assert.deepEqual(offendersIn(line), [], line);
+  }
+});
+
 test('AC2.5: a comment that names an image flags nothing', () => {
   const source = [
     '// ![a](b)',
@@ -97,6 +148,11 @@ test('AC2.5: a comment that names an image flags nothing', () => {
 
 test('AC2.5: a planted line after a "/*" string is still flagged', () => {
   const source = ["const open = '/*';", "const s = '![a](b)';"].join('\n');
+  assert.deepEqual(offendersIn(source).map((o) => o.line), [2]);
+});
+
+test('AC2.5: a reference-style image after a "/*" string is still flagged', () => {
+  const source = ["const open = '/*';", "const s = '![a][b]';"].join('\n');
   assert.deepEqual(offendersIn(source).map((o) => o.line), [2]);
 });
 

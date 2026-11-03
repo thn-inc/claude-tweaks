@@ -207,6 +207,11 @@ test('gather reads the recording from the snapshot', () => {
   assertClaimGoesRed(bullet, /The automatic recording arrives through the snapshot, with no flag/, 'the --run bullet says the recording needs no flag');
 });
 
+test('the walk branch keeps its screenshots out of the packet', () => {
+  const walk = flat(between(step3(), '**`app-route`/`rendered-page` plans whose', '**Every other plan**'));
+  assertClaimGoesRed(walk, /2\. The walk's screenshots stay in the run's local artifacts and are never committed or linked/, 'Step 3 item 2 never commits or links a screenshot');
+});
+
 test('ac-results shape is stated, with one example of each id kind', () => {
   const body = flat(step3());
   assert.ok(body.includes('{ "1": "met", "2a": "not met", "AC1": "partially met" }'), 'a numbered id and a positional id');

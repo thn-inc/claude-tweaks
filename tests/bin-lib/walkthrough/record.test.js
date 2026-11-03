@@ -41,6 +41,21 @@ test('AC2a.2: a tag-only negative story is excluded', () => {
   assert.deepEqual(result.frames, framesOf('/q/sign-in', '00_open.png', '01_submit.png'));
 });
 
+test('a failed story ahead of a passing one lends no step count to the gap check', () => {
+  const failed = (steps_total) => ({ id: 'failed', name: 'F', status: 'FAIL', steps_total, screenshot_dir: '/q/empty' });
+  const storyIndex = [...INDEX, { id: 'failed', negative: false }];
+  // Two frames: short of its own three steps, though not of the failed story's one.
+  assert.deepEqual(
+    plan({ report: report([failed(1), { ...happy, steps_total: 3 }]), storyIndex }),
+    notRun('no-happy-path-screenshots'),
+  );
+  // Two frames: enough for its own two steps, though short of the failed story's nine.
+  const recorded = plan({ report: report([failed(9), { ...happy, steps_total: 2 }]), storyIndex });
+  assert.equal(recorded.status, 'ready');
+  assert.equal(recorded.text, 'Walkthrough of Sign in');
+  assert.deepEqual(recorded.captions, ['open', 'submit']);
+});
+
 test('frames keep the report order across stories, and the text names each story', () => {
   const second = { id: 'second', name: 'Second', status: 'PASS_WITH_CAVEATS', screenshot_dir: '/q/second' };
   const result = plan({ report: report([happy, second]), storyIndex: [...INDEX, { id: 'second', negative: false }] });
