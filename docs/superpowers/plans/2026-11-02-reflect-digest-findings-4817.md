@@ -29,7 +29,7 @@
 
 Waived AC2.1: already satisfied on the live digest comment (each of the three promoted lines ends with `→ #4817`); no code path to test.
 Waived .github/workflows/test.yml: already installs zsh on base (`10d0ae628`, #4823); no edit owed.
-- **AC1** ("Each deliverable is fixed, or closed out with its reason recorded on this record") is covered by Task 1 (deliverable 1, code half), Task 2 (deliverables 1-3, skill half) and the note above (deliverable 2, workflow half). The record comment is written at wrap-up.
+- **AC1** ("Each deliverable is fixed, or closed out with its reason recorded on this record") is covered by Task 1 (deliverable 1, code half), Task 2 (deliverables 1-3, skill half) and the note above (deliverable 2, workflow half). Task 3 posts the record comment that records each deliverable's disposition on #4817, including the #4823 close-out.
 
 ## Review Focus
 
@@ -252,3 +252,35 @@ Expected: `1`, `1`, `1`, then `0`. The last grep exits 1, which is the expected 
 git add .claude/skills/gh-api-module-pattern/SKILL.md .claude/skills/windows-checkout-test-parity/SKILL.md .claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md
 git commit -m "Record three reflect learnings — run-ownership proof, CI shell install, exit-flipping go-red, refs #4817"
 ```
+
+### Task 3: Record each deliverable's disposition on #4817 (AC1)
+
+**Role:** transcription
+
+**Files:**
+- None in the repository. Writes one comment on record #4817.
+
+**Interfaces:**
+- Consumes: the commit SHAs of Task 1's and Task 2's commits (`git log --format=%h -1` after each), substituted for `{task1-sha}` and `{task2-sha}` below.
+
+- [ ] **Step 1: Confirm no disposition comment exists yet**
+
+Run: `gh issue view 4817 --json comments --jq "[.comments[].body | select(startswith(\"<!-- ac1-dispositions -->\"))] | length"`
+Expected: `0`. If it prints `1` or more, skip Step 2 (the comment is already on the record).
+
+- [ ] **Step 2: Post the comment**
+
+Write this body with the Write tool to a session temp file (`node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value ac1-dispositions-4817.md` prints the path), substituting the two SHAs, then run `gh issue comment 4817 --body-file "{path}"`:
+
+```markdown
+<!-- ac1-dispositions -->
+Deliverable dispositions (AC1):
+
+- **Deliverable 1** (gh-api-module-pattern: a new write path carries the existing run-ownership proof): fixed. `plugin/bin/closing-links.js --mode post-merge` now proves the PR is this run's before any reopen or close on a base known to be non-default ({task1-sha}). The learning is in `.claude/skills/gh-api-module-pattern/SKILL.md` ({task2-sha}).
+- **Deliverable 2** (windows-checkout-test-parity: install the shell a test pins): the skill half is fixed in `.claude/skills/windows-checkout-test-parity/SKILL.md` ({task2-sha}). The workflow half is closed out, not redone: #4823 (`10d0ae628`) already added `sudo apt-get install -y zsh` to `.github/workflows/test.yml`.
+- **Deliverable 3** (executable-snippet-pins: a go-red control must flip the exit outcome): fixed in `.claude/skills/skill-prose-conformance-tests/executable-snippet-pins.md` ({task2-sha}).
+```
+
+- [ ] **Step 3: Verify it landed**
+
+Re-run Step 1's command. Expected: `1`.
