@@ -11,7 +11,7 @@ const { NEGATIVE_ID_PREFIX } = require('../wrap-up/packet-gather');
 
 const RECORDING_FILE = 'walkthrough.gif';
 const FRAME_WIDTH = 960;
-const BUDGET_BYTES = 8 * 1024 * 1024;
+const GIF_MAX_BYTES = 8 * 1024 * 1024;
 
 const NO_STORY = 'no-story';
 const NO_LOCAL_BASE_URL = 'no-local-base-url';
@@ -89,7 +89,7 @@ function encodeSpec(framePaths) {
     framePaths,
     delays: planFrames(framePaths.length).map(({ delayCs }) => delayCs),
     width: FRAME_WIDTH,
-    budgetBytes: BUDGET_BYTES,
+    budgetBytes: GIF_MAX_BYTES,
   };
 }
 
