@@ -48,6 +48,11 @@ const failedRecordsSuffix = (taken) => {
   const numbers = require('./post-merge').failedRecordNumbers(taken);
   return numbers.length ? ` (records ${numbers.map((n) => `#${n}`).join(', ')})` : '';
 };
+// A skip's detail can be multi-line or long (a raw gh error): flattened and bounded exactly as post-merge.js does, so it cannot break the one-line-per-entry summary.
+const boundedDetail = (text) => {
+  const { oneLine, boundDetail } = require('./post-merge');
+  return boundDetail(oneLine(text));
+};
 
 // Array-shaped result fields: unit noun (singular), the action value(s)
 // that count as "taken" for that field, and the skip action value(s) whose
@@ -200,14 +205,17 @@ function formatItemSkippedLine(result) {
 // One line per top-level `result.skipped` entry (index.js's shape:
 // `{check, reason}`, `{check, reason, count}`, or `{check, reason, names}` —
 // #848's non-canonical-run-dir entry, the one shape here that names concrete
-// directories rather than a count) — see the header comment for why these
+// directories rather than a count — any of them with an optional `detail`,
+// e.g. post-merge's `unknown-host` refusal text naming the `GH_HOST=…` opt-in,
+// rendered in parentheses after the reason) — see the header comment for why these
 // render individually rather than folding into the per-item aggregate above.
 function formatCheckSkipLines(result) {
   if (!Array.isArray(result.skipped)) return [];
   return result.skipped.map((e) => {
+    const detailSuffix = e.detail ? ` (${boundedDetail(e.detail)})` : '';
     const countSuffix = e.count > 1 ? ` x${e.count}` : '';
     const namesSuffix = Array.isArray(e.names) && e.names.length ? `: ${e.names.join(', ')}` : '';
-    return `skipped: ${e.check} — ${e.reason}${countSuffix}${namesSuffix}`;
+    return `skipped: ${e.check} — ${e.reason}${detailSuffix}${countSuffix}${namesSuffix}`;
   });
 }
 

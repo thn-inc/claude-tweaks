@@ -342,11 +342,25 @@ test('#2240: a GitHub Enterprise Server remote passes the host-qualified --repo 
     throw new Error('unexpected ' + args.join(' '));
   };
   const { deps, out } = cliDeps({ runner, remoteUrl: 'https://ghe.example.com/acme/w.git', readDraftsFile: () => [draft] });
+  deps.gateDeps = { env: { GH_HOST: 'ghe.example.com' } };
   const code = run(['--drafts', 'drafts.json'], deps);
   assert.equal(code, 0);
   assert.deepEqual(out.join('').trim().split('\n'), ['filed #900']);
   assert.ok(repos.length > 0);
   for (const r of repos) assert.equal(r, 'ghe.example.com/acme/w');
+});
+
+// #4933: the gate returns {spec: null, refusal: null} for an absent origin and falls through to
+// the CLI's own owner/repo check, not to the host refusal.
+test('CLI: no --repo and no readable origin exits 2 with the owner/repo message, no host refusal, no gh call', () => {
+  const calls = [];
+  const { deps, err } = cliDeps({ runner: (args) => { calls.push(args); return '[]'; }, readDraftsFile: () => [makeDraft()] });
+  deps.remoteUrl = () => { throw new Error('no remote'); };
+  const code = run(['--drafts', 'drafts.json'], deps);
+  assert.equal(code, 2);
+  assert.match(err.join(''), /could not resolve owner\/repo/);
+  assert.doesNotMatch(err.join(''), /is not a known GitHub host/);
+  assert.deepEqual(calls, []);
 });
 
 // #2444 review fix: a caller-supplied --repo can itself already be a

@@ -177,6 +177,53 @@ test('#2444 fix: a bare --repo owner/repo still resolves to github.com (unchange
   assert.doesNotMatch(get.join(' '), /--hostname/);
 });
 
+// #4933: an origin-derived repo goes through gateOriginRepo before any gh call; the
+// checks behind it (own message for an unreadable origin, the "."/".." owner guard)
+// stay reachable and are pinned here, since the gate now sits ahead of both.
+const noHostsYml = () => { throw new Error('ENOENT'); };
+
+test('#4933: an unknown origin host is refused before any gh call, naming the host and GH_HOST', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => 'https://git.corp.invalid/acme/w.git';
+  d.gateDeps = { env: {}, readFile: noHostsYml };
+  assert.equal(run(['999', '--run', runDir, '--reason', 'r'], d), 2);
+  assert.match(stderrOf(out), /git\.corp\.invalid.*GH_HOST=git\.corp\.invalid/);
+  assert.deepEqual(calls, []);
+});
+
+test('#4933: an unknown origin host with GH_HOST naming it threads --hostname onto the get/put calls', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => 'https://git.corp.invalid/acme/w.git';
+  d.gateDeps = { env: { GH_HOST: 'git.corp.invalid' }, readFile: noHostsYml };
+  assert.equal(run(['999', '--run', runDir, '--reason', 'r'], d), 0);
+  assert.deepEqual(calls.find(isGet).slice(-2), ['--hostname', 'git.corp.invalid']);
+  assert.deepEqual(calls.find(isPut).slice(-2), ['--hostname', 'git.corp.invalid']);
+});
+
+test('#4933: an unreadable origin keeps the CLI\'s own could-not-resolve message (exit 2, no gh call)', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => { throw new Error('not a git repo'); };
+  assert.equal(run(['999', '--run', runDir, '--reason', 'r'], d), 2);
+  assert.match(stderrOf(out), /could not resolve owner\/repo/);
+  assert.deepEqual(calls, []);
+});
+
+test('#1443: an owner of ".." from a github.com origin is rejected before any gh call, behind the gate', () => {
+  const runDir = mkRun();
+  const out = [];
+  const { calls, d } = deps({ content: live(RUN_DIR_NAME), out, mainRoot: rootOf(runDir) });
+  d.remoteUrl = () => 'https://github.com/../w.git';
+  assert.equal(run(['999', '--run', runDir, '--reason', 'r'], d), 2);
+  assert.match(stderrOf(out), /invalid --repo value/);
+  assert.deepEqual(calls, []);
+});
+
 test('a failed label removal (issue edit throws) warns to stderr and logs "label removal failed"; exit unchanged', () => {
   const runDir = mkRun();
   const out = [];

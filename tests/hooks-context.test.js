@@ -929,9 +929,11 @@ test('readRunStateWithParent: missing, malformed, and non-object files never thr
 test('readRunStateWithParent: reads through the injected reader, and a throwing reader degrades to null', () => {
   const seen = [];
   const read = (dir) => { seen.push(dir); return path.basename(dir) === 'spec-7' ? { status: 'active' } : { pr: { number: 5 } }; };
-  const r = ctx.readRunStateWithParent(path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), { read });
+  const parent = path.join('/runs/2026-07-01T090000-spec-7-8');
+  const child = path.join(parent, 'spec-7');
+  const r = ctx.readRunStateWithParent(child, { read });
   assert.deepStrictEqual(r.state, { status: 'active', pr: { number: 5 } });
-  assert.deepStrictEqual(seen, [path.join('/runs/2026-07-01T090000-spec-7-8', 'spec-7'), '/runs/2026-07-01T090000-spec-7-8']);
+  assert.deepStrictEqual(seen, [child, parent]);
   const thrown = ctx.readRunStateWithParent('/runs/x/spec-7', { read: () => { throw new Error('boom'); } });
   assert.deepStrictEqual(thrown, { state: null, parentRunDir: '/runs/x', filled: [] });
 });
