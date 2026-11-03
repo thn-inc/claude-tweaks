@@ -4,7 +4,7 @@
 
 **Goal:** `/claude-tweaks:specify` classifies work against invisible-risk categories, records the flags on the record through one sanctioned writer, and `plan-audit` fails a plan that carries no specific proof for a kept flag.
 
-**Architecture:** One pure module (`record-risk-flags.js`) owns the `Risk-flags:` line grammar, reader and writers. A deterministic classifier plus a thin CLI (`bin/risk-flags.js`) give `/specify` its floor and its settle step; a new gating Check G in `plan-audit` reads the same line from the materialized spec. The acceptance packet (#4611, shipped) gains a `proof` fact kind, and its validator files a claim backed only by a planned proof under `planned`, rendered in Risk proofs as not verified. Skill prose calls the CLI and never edits the line by hand.
+**Architecture:** One pure module (`record-risk-flags.js`) owns the `Risk-flags:` line grammar, reader and writers. A deterministic classifier plus a thin CLI (`bin/risk-flags.js`) give `/specify` its floor and its settle step; a new gating Check G in `plan-audit` reads the same line from the materialized spec. The acceptance packet (#4611, shipped) gains a `proof` fact kind, and its validator files a claim backed only by a planned proof under `planned`, rendered in Risk proofs as not verified. Wrap-up's Phase 1 snapshot keeps a copy of the plan, and at Step 4 `risk-flags.js facts` writes the gather's `--flags` (with `unconfirmed`) and new `--proofs` inputs from the spec and that copy. Skill prose calls the CLI and never edits the line by hand.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
@@ -24,9 +24,10 @@
 - `gh-api-module-pattern/cli-wrapper-contract.md`, verbatim: "Logic lives in an exported `run(argv, deps)`; every side effect ... goes through `deps`". "`require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`...)". "An existence or type check goes through `plugin/bin/lib/path-guard`'s `lstatType`, never a bare `fs.existsSync`". "A file the CLI is about to read is read directly with `ENOENT`/`ENOTDIR` caught as "absent"".
 - `skill-prose-conformance-tests`: read live skill text through `readText`; a negative control runs the same assertion function as the positive test against mutated text and expects it to throw.
 - `plugin/skills/build/plan-authoring-checks.md` is 52,497 B, 3 B under the rail, so this plan adds no paragraph there: the `## Gotchas` bullet `appendRiskProofGotcha` writes is what tells the planner, and Check G enforces it.
-- Byte headroom against `RAIL_BYTES` (52,500, `plugin/bin/lib/skill-audit/budgets.js`), re-measured with `wc -c` after the 2026-11-03 merge of `origin/main`: `plugin/skills/build/SKILL.md` 52,235 (265 left); `plugin/skills/_shared/policy-schema.md` 52,283 (217 left); `plugin/skills/backlog/refine-mode.md` 43,379; `plugin/skills/_shared/work-record.md` 40,268; `plugin/skills/build/plan-audit.md` 28,567; `plugin/skills/specify/spec-template.md` 28,444; `plugin/skills/specify/record-creation-subissues.md` 28,300; `plugin/skills/specify/shaping-mode-stamping.md` 23,993; `plugin/skills/_shared/acceptance-packet.md` 23,162; `plugin/skills/specify/shaping-mode.md` 21,157; `plugin/skills/_shared/express-lane.md` 18,101; `plugin/skills/build/micro-plan.md` 7,809.
+- Byte headroom against `RAIL_BYTES` (52,500, `plugin/bin/lib/skill-audit/budgets.js`), re-measured with `wc -c` after the 2026-11-03 merge of `origin/main`: `plugin/skills/build/SKILL.md` 52,235 (265 left); `plugin/skills/_shared/policy-schema.md` 52,283 (217 left); `plugin/skills/backlog/refine-mode.md` 43,379; `plugin/skills/_shared/work-record.md` 40,268; `plugin/skills/build/plan-audit.md` 28,567; `plugin/skills/specify/spec-template.md` 28,444; `plugin/skills/specify/record-creation-subissues.md` 28,300; `plugin/skills/specify/shaping-mode-stamping.md` 23,993; `plugin/skills/_shared/acceptance-packet.md` 23,162; `plugin/skills/specify/shaping-mode.md` 21,157; `plugin/skills/_shared/express-lane.md` 18,101; `plugin/skills/build/micro-plan.md` 7,809; `plugin/skills/wrap-up/verification-brief.md` 42,496 (10,004 left); `plugin/skills/wrap-up/SKILL.md` 43,070 (9,430 left).
+- The packet gather's input rules, verbatim: `tests/bin-lib/wrap-up/packet-gather.test.js` line 936, "a pass-through record cannot set its own status, kind or source"; `acceptance-packet.js` header, "Every input gather can name is optional. One that will not read becomes a note in the facts' `partial` list ... so a lost input is never read as an empty one."
 - The acceptance packet contract: `packet-contract.js` says "Every packet module imports these, so a value is stated here once", and `_shared/acceptance-packet.md` says "Later records extend the schema only by adding rows to the table." `tests/acceptance-packet-contract-conformance.test.js` pins the doc's `**Fact kinds:**` list and section-to-kind table equal to `FACT_KINDS` and `SECTION_KINDS`, so a constant and its doc row change in the same task.
-- Task dependencies, no chain deeper than three: Task 2 on 1; Task 4 on 1 and 3; Tasks 10 and 11 on 4; Task 5 on 1 and 3; Task 6 on 5; Task 7 on 1; Task 8 on none; Task 9 on 1, 3, 5 and 8. Each new prose suite is its own file (Tasks 6, 7, 10, 11), so no task waits on another task's test file.
+- Task dependencies, no chain deeper than three: Task 2 on 1; Task 4 on 1 and 3; Tasks 10 and 11 on 4; Task 5 on 1 and 3; Task 6 on 5; Task 7 on 1; Task 8 on none; Task 9 on 8; Task 12 on 8; Task 13 on 1, 3, 4, 5 and 12. Task 14 is prose plus a prose suite that executes no new code, so its place after 13 is for naming the verbs 12 and 13 ship, not a build dependency; counted as one, its chain (1, 4, 13, 14) is four deep, the one exception. Each new prose suite is its own file (Tasks 6, 7, 10, 11), so no task waits on another task's test file.
 - Implementers run only the targeted suites named in their task. The full suite runs centrally. Commit messages say `refs #4618`, never `closes`.
 
 Waived AC7.1: the full suite runs centrally at Common Step 5 and through `/claude-tweaks:test`, never inside a task.
@@ -42,6 +43,8 @@ Waived `_shared/auto-mode-contract.md`: read by Task 10's step 2 of the Risk fla
 6. A human removal on a line that reads `status: 'unknown'` is refused at every layer, and nothing is logged: Task 1's writer tests, Task 4's `settle` and `confirm` tests, and the prose in Tasks 10 and 11.
 7. A planned proof (`proof` fact, status `not-run`) never reads as verified: Task 8's validator tests and Task 9's render test and real-validator fixture.
 8. An `already shaped, no-op` record gets a body write only from an explicit single-record `/specify #N`, never from a batch path: Task 10's batch-exclusion tests.
+9. `unconfirmed` and a planned proof survive the real path from the record and plan to the rendered packet, and no gather input can set a proof's status: Task 12's gather tests and Task 13's end-to-end test.
+10. Step 4 runs from the main checkout after cleanup, so the plan reaches it only through Phase 1's snapshot copy: Task 14's prose and its conformance pins.
 
 ## Decisions the spec leaves to the builder
 
@@ -59,7 +62,12 @@ Waived `_shared/auto-mode-contract.md`: read by Task 10's step 2 of the Risk fla
   - `/claude-tweaks:backlog refine`, headless (`refine-headless.md`): never runs `risk-flags.js`;
   - `/claude-tweaks:backlog refine`, human present: Step 3.7 runs `risk-flags.js confirm` only on records already carrying `Risk-flags-unconfirmed: true`, with no classifier, so a record with no flag line is never touched.
   Decomposition creates new records, and its Origin-set carve-out (`record-creation-subissues.md`) shapes the origin record in place as one unit of that decomposition, so neither is a batch reclassification of an already-shaped record.
-- **Gather wiring is out of this plan (open, reported to the controller).** The packet module shipped (#4611) after this plan was first written. `acceptance-packet.js gather --flags <file>` is reserved for this record (`plugin/skills/wrap-up/verification-brief.md` line 392), but `packet-gather.js`'s `passThroughFacts` writes each entry as `{ id, kind, status: 'passed', source, text?, url? }`: it drops `unconfirmed` and has no input for `proof` facts. Feeding `riskFacts` into the gather is a packet input-contract change (a widened `--flags` entry or a new input, and a `verification-brief.md` producer step whose plan-file timing needs the Consumer-timing check), so it is not planned here.
+- **Gather wiring is in scope (controller ruling, 2026-11-03, intent-resolved).** The packet module (#4611) shipped after this plan was first written. Three passages settle it. The spec's Overview says the packet's Risk-proofs input is "a `flag` fact carrying `unconfirmed: true`, produced by this record into the packet gather, so no separate accept code is needed". Deliverable 4 says "A `flag` fact producer feeding the packet gather (including `unconfirmed`), and the proof fact (the `Proof(<slug>)` line) for the packet's Risk-proofs section"; its "if the packet module has not shipped" clause no longer applies. And `plugin/skills/wrap-up/verification-brief.md` line 392 says "`--dev-base-url`, `--deploy`, `--flags` and `--decision-items` are filled by the dev-target, risk-flag and control-mode records". The round-2 Q1 Reading B decision already authorizes an additive packet-contract widening for `proof`. Today `packet-gather.js`'s `passThroughFacts` writes each `--flags` entry as `{ id, kind, status: 'passed', source, text?, url? }`, dropping `unconfirmed`, and the gather has no input for `proof` facts. Tasks 12-14 wire it; the shape:
+  - **Timing (Consumer-timing and Step-position checks).** `verification-brief.md`'s Step 4 runs "after wrap-up's cleanup items" (its Route-the-commit paragraph, lines 290-296): on the console's "Approve all + merge" path and `dispatch/close-out.md` step 3, item 4 "has already removed the merged run's worktree and branch and item 8 has archived its run directory, so Step 4 runs from the main checkout on the integration branch". So at Step 4 the cwd is the main checkout. The worktree's `work/{N}-spec.md` mirror and the plan may be gone. The spec still resolves through Step 4's own `--spec` chain (line 381: the current checkout's `work/{N}-spec.md`, then `{run-dir}/work/{N}-spec.md`, else the record body). The record body carries the `Risk-flags:` lines, so the flags always derive at Step 4. The plan does not: the worktree is gone on the merge path, and `superpowers-plans-retention: prune-after-wrapup` deletes it in cleanup item 1. Wrap-up Phase 1 (`wrap-up/SKILL.md` line 112's **Snapshot the packet inputs**) runs before every cleanup item, from the run's own checkout, with the worktree and plan present under `pr-first`, before the merge. That is where the plan is captured.
+  - **Capture: `snapshot --plan <file>`.** `acceptance-packet.js snapshot` already exists "because ... Step 4 can run after the worktree holding them is gone" (`_shared/acceptance-packet.md`'s `## Pipeline`), and it is the sanctioned, run-dir-anchored writer of `{run-dir}/packet-inputs/`, which survives archival as `archive/{run-id}/packet-inputs/`. An optional `--plan <file>` copies the plan's text to `packet-inputs/plan.md`. The manifest gains `files.plan` (`copied` | `absent` | `unreadable`) only when `--plan` is given, so a call without it writes today's manifest byte for byte. Rejected: a producer run at Phase 1 writing straight into the run dir needs a second sanctioned run-dir writer; a session-temp file is lost when `/claude-tweaks:wrap-up resume` re-enters from another session.
+  - **Producer: `risk-flags.js facts`.** `facts --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]`, run at Step 4 just before the gather, with `{spec}` and the snapshot's `plan.md`. It writes the two gather input files. It is a verb on the existing CLI, not a new bin, because that CLI already owns `--repo-root` policy resolution (`readRiskPolicy`) and the exit-code contract.
+  - **Gather inputs: `--flags` keeps `unconfirmed`, plus a new `--proofs`.** A `--flags` entry gains an optional boolean `unconfirmed`, carried onto the fact only when `true`, so every existing `--flags` caller's facts are byte-identical. `proof` facts arrive through a new optional `--proofs <file>` (entries `{ id, text }`). The gather, not the input, sets each proof fact's `kind: 'proof'`, `status: 'not-run'`, `reason: 'planned in the plan, not yet run'` and `source: 'proofs'`. One input per kind keeps the gather's rule "a pass-through record cannot set its own status, kind or source" (`tests/bin-lib/wrap-up/packet-gather.test.js` line 936), so no input file can plant a `passed` proof. A `--flags` that took both kinds would need an entry-level `kind`, which that rule forbids.
+  - **Fail direction.** With no plan copy (no plan, an ambiguous one, a failed snapshot), `facts` writes `[]` proofs and reports `plan: 'absent'`. The flags still reach the packet. A narrated risk proof then cites no proof fact and drops visibly (`1 claim was dropped for missing evidence`), and Step 4's summary names the missing plan. It is never a silent pass.
 
 ---
 
@@ -841,87 +849,60 @@ git add plugin/bin/lib/wrap-up/packet-contract.js plugin/bin/lib/wrap-up/packet-
 git commit -m "Add the packet proof fact kind and file planned proofs apart — refs #4618"
 ```
 
-### Task 9: Produce the risk facts and render planned proofs
+### Task 9: Render planned proofs in Risk proofs
 
 **Role:** integration
 
 **Files:**
-- Create: `plugin/bin/lib/issues/risk-flag-facts.js`
 - Modify: `plugin/bin/lib/wrap-up/packet-render.js`
-- Modify: `docs/plugin-structure.md`
-- Test: `tests/bin-lib/issues/risk-flag-facts.test.js`
 - Test: `tests/bin-lib/wrap-up/packet-render.test.js`
 
+The risk-fact producer moved to Task 13, which feeds it through the real gather (Decisions: Gather wiring). This task is the renderer half of Task 8's ruling only, kept apart because Task 8 is already at six files and the render has its own reviewable behavior and test.
+
 **Interfaces:**
-- Consumes: `parseRiskFlags` (Task 1), `inertEvidence` (Task 3), `extractProofLines` and `isSubstantiveProof` (Task 5), the `proof` kind and the `planned` bucket (Task 8), `encodeFactKey` (`packet-contract.js`).
-- Produces `riskFacts(specText, planText, { extraCategories = [] } = {}) -> Fact[]`, the fact shape `_shared/acceptance-packet.md` pins (`{ id, kind, status, reason?, source }`) plus fields the validator ignores:
-  - `{ id: 'flag:{slug}', kind: 'flag', status: 'not-run', source: 'record', slug, unconfirmed }`; `reason: 'unreadable flag line'` when the line read `unknown`.
-  - `{ id: 'proof:{slug}', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'plan', slug, text, task }`, `text` through `inertEvidence`, `task` the plan's task number. No fact for a slug with no proof, or one failing `isSubstantiveProof`. `status` is `not-run` because a planned proof is not a passed check, and Task 8's `planned` bucket is what keeps it from reading as verified.
-  - `[]` for `unclassified` or a clean `none`.
-  - Each key goes through `encodeFactKey`, so every id passes `FACT_ID_RE`.
+- Consumes: the `planned` bucket (Task 8).
 - `packet-render.js`: `renderPacket` destructures `planned` too, and the `risk-proofs` body lists kept claims, then planned ones as `- {text} (planned, not verified: cites {id} — {status}: {reason})` through the existing `inline`, `idSpan` and `statusWithReason` helpers, droppable like any item. The placeholder `not applicable: no kept risk flags` still renders only when both lists are empty.
 
 - [ ] **Step 1: Write the failing test**
 
-`tests/bin-lib/issues/risk-flag-facts.test.js`:
+`tests/bin-lib/wrap-up/packet-render.test.js`, appended:
 
 ```js
-const { validatePacket, validateFactsShape } = require('../../../plugin/bin/lib/wrap-up/packet-validate');
-const { renderPacket } = require('../../../plugin/bin/lib/wrap-up/packet-render');
-test('a flag fact carries unconfirmed, a proof fact its neutralized text', () => {
-  const spec = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n';
-  const plan = '### Task 1: x\n\nProof(auth): An unauthenticated request [still](x) returns 401.\n';
-  const [flag, proof] = riskFacts(spec, plan);
-  assert.deepStrictEqual(flag, { id: 'flag:auth', kind: 'flag', status: 'not-run', source: 'record', slug: 'auth', unconfirmed: true });
-  assert.deepStrictEqual([proof.id, proof.kind, proof.status, proof.reason, proof.task], ['proof:auth', 'proof', 'not-run', 'planned in the plan, not yet run', 1]);
-  assert.match(proof.text, /\\\[still\\\]/);
+const PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a planned risk proof renders in Risk proofs as not verified, after the kept claims', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\)\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
 });
-test('real-writer fixture: riskFacts output passes the real validator, and a planned proof never reads as verified', () => {
-  const facts = { schemaVersion: 1, record: 4618, surface: 'infra', allowedHosts: [], partial: [], refused: [], facts: riskFacts('Risk-flags: auth\n\n## O\n', '### Task 1: x\n\nProof(auth): An unauthenticated request to the route still returns 401.\n') };
-  assert.deepStrictEqual(validateFactsShape(facts).errors, []);
-  const narrative = { schemaVersion: 1, claims: [{ section: 'risk-proofs', text: 'Auth verified', refs: ['flag:auth', 'proof:auth'] }] };
-  const result = validatePacket(facts, narrative);
-  assert.deepStrictEqual([result.kept.length, result.planned.length], [0, 1]);
-  const { markdown } = renderPacket(facts, narrative);
-  assert.match(markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
-});
-test('an unclassified or clean record produces no facts', () => {
-  assert.deepStrictEqual(riskFacts('Surface: x\n', ''), []);
-  assert.deepStrictEqual(riskFacts('Risk-flags: none\n', ''), []);
-});
-test('an unknown line produces a flag fact per widened flag with a reason', () => {
-  const facts = riskFacts('Risk-flags: Bad\n', '');
-  assert.strictEqual(facts.length, 4);
-  assert.strictEqual(facts[0].reason, 'unreadable flag line');
-});
-test('a slug with a too-short proof has no proof fact', () => {
-  assert.strictEqual(riskFacts('Risk-flags: auth\n', '### Task 1: x\n\nProof(auth): short\n').length, 1);
+test('Reading B: one planned claim and no kept one does not render the no-kept-flags placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), PLANNED], [claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])]);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
 });
 ```
 
-The regex follows `packet-render.js` line 336, which writes each section as `'', '### {heading}'` and then its body lines with no blank line between; `idSpan` renders the id as a code span and `statusWithReason` writes `not-run` as `not run`.
-
-`tests/bin-lib/wrap-up/packet-render.test.js`, appended: a planned claim renders under Risk proofs with `planned, not verified`, after the kept claims; with one planned claim and no kept one, the `not applicable: no kept risk flags` placeholder is absent.
+`fact`, `render` and `claim` are the file's own helpers (lines 9-32: `fact(id, status, extra)` takes the kind from the id; `render(facts, claims)` wraps `renderPacket`). The regex follows `packet-render.js` line 336, which writes each section as `'', '### {heading}'` and then its body lines with no blank line between; `idSpan` renders the id as a code span and `statusWithReason` writes `not-run` as `not run`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js`
-Expected: FAIL with `Cannot find module`
+Run: `node --test tests/bin-lib/wrap-up/packet-render.test.js`
+Expected: FAIL after Step 1 with the Risk proofs regex unmatched
 
 - [ ] **Step 3: Implement**
 
-`risk-flag-facts.js` holds no `Risk-flags` line literal (Task 2's scan): it reads through `parseRiskFlags`. `packet-render.js`: the `planned` destructure, a `plannedLine` beside `movedLine`, and the `risk-proofs` body. Add a `plugin/bin/lib/issues/` clause to `docs/plugin-structure.md` naming `risk-flag-facts.js` as the producer of the packet's `flag` and `proof` facts. Do not say the gather consumes it: it does not yet (Decisions: Gather wiring).
+`packet-render.js`: the `planned` destructure, a `plannedLine` beside `movedLine`, and the `risk-proofs` body.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js tests/risk-flags-writer-conformance.test.js`
+Run: `node --test tests/bin-lib/wrap-up/packet-render.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/risk-flag-facts.js plugin/bin/lib/wrap-up/packet-render.js docs/plugin-structure.md tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/wrap-up/packet-render.test.js
-git commit -m "Produce risk-flag packet facts and render planned proofs — refs #4618"
+git add plugin/bin/lib/wrap-up/packet-render.js tests/bin-lib/wrap-up/packet-render.test.js
+git commit -m "Render planned risk proofs as not verified — refs #4618"
 ```
 
 ### Task 10: `/specify` prose
@@ -1039,4 +1020,251 @@ Expected: PASS
 ```bash
 git add plugin/skills/backlog/refine-mode.md plugin/skills/_shared/work-record.md plugin/skills/_shared/policy-schema.md tests/risk-flags-refine-prose.test.js
 git commit -m "Surface unconfirmed risk flags in backlog refine — refs #4618"
+```
+
+### Task 12: Widen the packet gather and snapshot for risk facts
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/acceptance-packet.js`
+- Modify: `plugin/bin/lib/wrap-up/packet-gather.js`
+- Modify: `plugin/skills/_shared/acceptance-packet.md`
+- Modify: `docs/plugin-structure.md`
+- Test: `tests/bin-lib/wrap-up/packet-gather.test.js`
+- Test: `tests/acceptance-packet-cli.test.js`
+
+**Interfaces:**
+- Consumes: the `proof` kind (Task 8), so a gathered proof fact passes `validateFactsShape`.
+- `gatherPacketFacts` gains an optional `proofs` input beside `flags`. `passThroughFacts(kind, source, entries, { status = 'passed', reason } = {})`:
+  - `flag` entries copy `unconfirmed: true` onto the fact only when the entry's `unconfirmed === true`. With `false` or no field, the fact is exactly today's `{ id, kind, status: 'passed', source: 'flags', text?, url? }`.
+  - `proof` entries become `{ id: 'proof:{key}', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text? }`. `status` and `reason` come from the call, never from the entry, so an entry's own `status`, `kind` or `source` is ignored, as for every pass-through.
+- `acceptance-packet.js`:
+  - `gather` gains `--proofs <file>`, read through `optionalJson('--proofs', isEntryList)`.
+  - `--flags` is read through `isFlagEntryList`: `isEntryList` plus `unconfirmed` absent or boolean. A mis-shaped list is the existing `--flags input not read — treated as absent` partial.
+  - `snapshot` gains `--plan <file>`. Its text is read through `deps.readFile` (any text, not JSON) and written to `packet-inputs/plan.md` with `deps.writeAtomic`. The manifest gains `files.plan`: `copied`, `absent` (`ENOENT`/`ENOTDIR`) or `unreadable`, and only when `--plan` is given, so today's manifest is unchanged without it. Both skip paths (nothing ahead of the base; an earlier snapshot from the main checkout) keep the earlier copy, as they keep the reports.
+  - `USAGE`: `snapshot --run <dir> --base <ref> [--plan <file>]`, and `[--proofs <file>]` after `[--flags <file>]`. `SUBCOMMANDS.snapshot.optional` gains `--plan`, and `gather.optional` gains `--proofs`.
+- Sites that pin `--flags`, `USAGE` or `passThroughFacts`, from `git grep -n -e "--flags" -e "passThroughFacts" -e "isEntryList" -e "inputs.flags" -- plugin tests docs` plus `git grep -n -e "acceptance-packet.js " -- docs plugin/skills tests`, classified:
+  - `plugin/bin/acceptance-packet.js` lines 68, 83, 454-457 and 514: changed here.
+  - `plugin/bin/lib/wrap-up/packet-gather.js` lines 451-461 and 512: changed here.
+  - `tests/bin-lib/wrap-up/packet-gather.test.js`: lines 924-934 (pass-through shape) and 936-939 (no self-set status) stay as they are and prove old callers unchanged. Lines 968-990 ("every gathered fact carries a source") gain a `proofs` entry: line 986's exact kind list gains `'proof'`, and line 989's "every non-check/story fact is `passed`" filter also excludes `proof`, which is `not-run` by design (changed here).
+  - `tests/acceptance-packet-cli.test.js`: lines 384-411 (`--flags` reaches the facts) stay; line 413's per-input partial-note loop gains `--proofs`; lines 588 and 713 deep-equal the manifest's `files` and stay green, since no `--plan` is passed; lines 107-126 (`--help`) stay green (changed here: new tests appended).
+  - `plugin/skills/_shared/acceptance-packet.md`: the `## Pipeline` snapshot paragraph (lines 197-202) and the facts section (line 90) (changed here).
+  - `docs/plugin-structure.md` line 186, the `acceptance-packet.js` command line naming `snapshot --run --base` and `gather` (changed here).
+  - `plugin/skills/wrap-up/verification-brief.md` lines 369, 375 and 392, and `plugin/skills/wrap-up/SKILL.md` line 115: Task 14.
+  - No change: `tests/acceptance-packet-contract-conformance.test.js` lists the subcommands and partial notes, and `--proofs input not read — treated as absent` is the existing `{flag} input not read — treated as absent` template, so Step 4 only runs it. `tests/acceptance-packet-wrap-up-conformance.test.js` pins the prose (Task 14). The `acceptance-packet.js --help` strings in `tests/bin-lib/wrap-up/packet-links.test.js` line 345 and `tests/bin-lib/wrap-up/packet-render.test.js` lines 397-403 are fixture text, not the `USAGE` pin.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/bin-lib/wrap-up/packet-gather.test.js`, appended:
+
+```js
+test('a flag entry keeps unconfirmed only when true, so old callers are unchanged', () => {
+  const result = gather({ flags: [{ id: 'auth', unconfirmed: true }, { id: 'pii', unconfirmed: false }, { id: 'migrations' }] });
+  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', unconfirmed: true });
+  assert.deepEqual(factOf(result, 'flag:pii'), { id: 'flag:pii', kind: 'flag', status: 'passed', source: 'flags' });
+  assert.deepEqual(factOf(result, 'flag:migrations'), { id: 'flag:migrations', kind: 'flag', status: 'passed', source: 'flags' });
+  assertShapeOk(result);
+});
+test('a proof entry is a not-run proof fact, whatever status, kind or source it claims', () => {
+  const result = gather({ proofs: [{ id: 'auth', text: 'Refuses an unauthenticated request', status: 'passed', kind: 'check', source: 'forged' }] });
+  assert.deepEqual(factOf(result, 'proof:auth'), { id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 'Refuses an unauthenticated request' });
+  assertShapeOk(result);
+});
+```
+
+and in the "every gathered fact carries a source" test: `proofs: [{ id: 'p', text: 't' }]` in the fixture, `'proof'` in line 986's sorted list, and line 989's filter `!['check', 'story', 'proof'].includes(x.kind)`, plus `assert.equal(factOf(result, 'proof:p').status, 'not-run')`.
+
+`tests/acceptance-packet-cli.test.js`, appended: `--flags` with `[{ id: 'f1', unconfirmed: true }]` gives `flag:f1` with `unconfirmed: true`; `[{ id: 'f1', unconfirmed: 'yes' }]` gives the `--flags input not read — treated as absent` partial; `--proofs` with `[{ id: 'auth', text: 't' }]` gives a `not-run` `proof:auth`; line 413's loop also covers `--proofs`. Snapshot: `snapshot --run --base --plan {file}` writes `packet-inputs/plan.md` byte-identical to the file and `files.plan: 'copied'`; a missing plan gives `files.plan: 'absent'` and no `plan.md`; a directory as `--plan` gives `'unreadable'`; `--plan` with no value exits 2; a re-run from the main checkout that finds an earlier manifest keeps the earlier `plan.md`. `--help` names `--proofs` and `--plan`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/bin-lib/wrap-up/packet-gather.test.js`
+Expected: FAIL after Step 1 with `flag:auth` missing `unconfirmed`
+
+- [ ] **Step 3: Implement**
+
+`packet-gather.js`: the `passThroughFacts` options and the `proofs` input. `acceptance-packet.js`: `isFlagEntryList`, `--proofs`, `snapshot --plan`, `USAGE`, `SUBCOMMANDS`, and a header line naming `plan.md` among the snapshot copies. Snapshot reads every source through `deps`, so the path-guard rule holds: no bare `fs.existsSync`. `_shared/acceptance-packet.md` (23,162 B before Task 8's sentence): line 90's fact sentence names `unconfirmed` as a `flag` field; the `## Pipeline` snapshot paragraph adds "and, given `--plan`, the run's plan, which `risk-flags.js facts` reads at Step 4 for the `--proofs` input" without changing the pinned clause "an input to gather, never a packet copy any reader consults". `docs/plugin-structure.md` line 186: `snapshot --run --base [--plan]` and the `--flags`/`--proofs` pair.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/bin-lib/wrap-up/packet-gather.test.js tests/acceptance-packet-cli.test.js tests/acceptance-packet-contract-conformance.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/acceptance-packet.js plugin/bin/lib/wrap-up/packet-gather.js plugin/skills/_shared/acceptance-packet.md docs/plugin-structure.md tests/bin-lib/wrap-up/packet-gather.test.js tests/acceptance-packet-cli.test.js
+git commit -m "Carry unconfirmed flags, planned proofs and the plan copy through the packet gather — refs #4618"
+```
+
+### Task 13: The `risk-flags.js facts` producer and the end-to-end packet test
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Create: `plugin/bin/lib/issues/risk-flag-facts.js`
+- Modify: `plugin/bin/risk-flags.js`
+- Modify: `docs/plugin-structure.md`
+- Test: `tests/bin-lib/issues/risk-flag-facts.test.js`
+- Test: `tests/risk-flags-cli.test.js`
+- Test: `tests/risk-flags-packet-e2e.test.js`
+
+**Interfaces:**
+- Consumes: `parseRiskFlags` (Task 1), `inertEvidence` and `readRiskPolicy` (Task 3), the CLI's `run(argv, deps)` and exit contract (Task 4), `extractProofLines` and `isSubstantiveProof` (Task 5), the gather's `--flags`/`--proofs` inputs (Task 12).
+- `riskFlagEntries(specText, planText, { extraCategories = [] } = {}) -> { status, flags: [{ id, text?, unconfirmed? }], proofs: [{ id, text }] }`:
+  - `status` is `parseRiskFlags(specText, { extraCategories }).status`.
+  - `flags`: one entry per parsed flag, `id` the bare slug (the gather adds `flag:` and `encodeFactKey`s it), `unconfirmed: true` only when the marker reads true, `text: 'unreadable flag line'` only when `status` is `unknown`.
+  - `proofs`: per flag, the first `extractProofLines(planText).proofs` entry for that slug with `isSubstantiveProof(slug, text) === null`, as `{ id: slug, text: inertEvidence(text) }`. `planText` `null` gives `[]`.
+  - `unclassified` and a clean `none` give `[]` for both.
+  - The module holds no `Risk-flags` line literal (Task 2's scan): it reads through `parseRiskFlags`.
+- `risk-flags.js facts --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]`:
+  - Writes `flags` and `proofs` as two JSON arrays.
+  - Prints `{ status, flags: <count>, proofs: <count>, plan: 'read' | 'absent' }`.
+  - A plan file that is absent (`ENOENT`/`ENOTDIR`), or no `--plan-file`, is `plan: 'absent'` and `[]` proofs. An unreadable spec, or a plan that fails to read for any other reason, exits 1.
+  - Usage errors exit 2. An output that cannot be written exits 3 (Task 4's exit 3 widens from "the body file" to "a named output file"; the header and `USAGE` say so).
+  - On any non-zero exit it removes both outputs if present (the stale-output rule `acceptance-packet.js`'s `runGather` follows), so the gather states `--flags input not read — treated as absent` instead of reading a stale or empty list as "no flags".
+  - Extras come from `readRiskPolicy(repoRoot)`, as `classify` does.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/bin-lib/issues/risk-flag-facts.test.js`:
+
+```js
+test('flag entries carry unconfirmed only when marked, proof entries their neutralized text', () => {
+  const r = riskFlagEntries('Risk-flags: auth, migrations\nRisk-flags-unconfirmed: true\n\n## O\n', '### Task 1: x\n\nProof(auth): An unauthenticated request [still](x) returns 401.\n');
+  assert.deepStrictEqual(r.flags, [{ id: 'migrations', unconfirmed: true }, { id: 'auth', unconfirmed: true }]);
+  assert.deepStrictEqual(r.proofs.map((p) => p.id), ['auth']);
+  assert.match(r.proofs[0].text, /\\\[still\\\]/);
+});
+test('an unclassified or clean record produces no entries', () => {
+  assert.deepStrictEqual(riskFlagEntries('Surface: x\n', ''), { status: 'unclassified', flags: [], proofs: [] });
+  assert.deepStrictEqual(riskFlagEntries('Risk-flags: none\n', ''), { status: 'ok', flags: [], proofs: [] });
+});
+test('an unknown line produces an entry per widened flag, each saying the line is unreadable', () => {
+  const r = riskFlagEntries('Risk-flags: Bad\n', null);
+  assert.strictEqual(r.flags.length, 4);
+  assert.ok(r.flags.every((f) => f.text === 'unreadable flag line'));
+});
+test('a too-short proof, a fenced proof and no plan give no proof entry', () => {
+  assert.deepStrictEqual(riskFlagEntries('Risk-flags: auth\n', '### Task 1: x\n\nProof(auth): short\n').proofs, []);
+  assert.deepStrictEqual(riskFlagEntries('Risk-flags: auth\n', '### Task 1: x\n\n```\nProof(auth): An unauthenticated request still returns 401.\n```\n').proofs, []);
+  assert.deepStrictEqual(riskFlagEntries('Risk-flags: auth\n', null).proofs, []);
+});
+```
+
+`tests/risk-flags-cli.test.js`, appended: `facts` writes both files and prints the counts; no `--plan-file` and a missing plan are both `plan: 'absent'` with `[]` proofs, exit 0; an unreadable spec exits 1 and leaves neither output (an earlier output planted first is removed); a missing `--flags-out` or `--proofs-out` exits 2; an unwritable output exits 3.
+
+`tests/risk-flags-packet-e2e.test.js`, real subprocesses of both bins (`execFileSync(process.execPath, [bin, ...], { cwd: dir, windowsHide: true })`) in an `fs.mkdtempSync` directory, with no `--run`:
+
+```js
+test('end to end: unconfirmed and a planned proof survive the producer files, the real gather, the validator and the renderer', () => {
+  const spec = writeText(dir, 'spec.md', 'Surface: infra\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Acceptance Criteria\n\n1. x\n');
+  const plan = writeText(dir, 'plan.md', '### Task 1: x\n\n- [ ] **Step 1: y**\n\nProof(auth): An unauthenticated request to the route still returns 401.\n');
+  riskFlags(['facts', '--spec-file', spec, '--plan-file', plan, '--flags-out', FLAGS, '--proofs-out', PROOFS, '--repo-root', dir]);
+  packet(['gather', '--record', '4618', '--out', FACTS, '--spec', spec, '--flags', FLAGS, '--proofs', PROOFS]);
+  const facts = JSON.parse(fs.readFileSync(FACTS, 'utf8'));
+  assert.deepStrictEqual(facts.facts.find((f) => f.id === 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', unconfirmed: true });
+  const proof = facts.facts.find((f) => f.id === 'proof:auth');
+  assert.deepStrictEqual([proof.kind, proof.status, proof.reason, proof.source], ['proof', 'not-run', 'planned in the plan, not yet run', 'proofs']);
+  assert.deepStrictEqual(validateFactsShape(facts).errors, []);
+  const narrative = { schemaVersion: 1, claims: [{ section: 'risk-proofs', text: 'Auth verified', refs: ['flag:auth', 'proof:auth'] }] };
+  const result = validatePacket(facts, narrative);
+  assert.deepStrictEqual([result.kept.length, result.planned.length], [0, 1]);
+  assert.match(renderPacket(facts, narrative).markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
+});
+test('end to end: a failed producer makes the gather state the lost input, never an empty flag list', () => {
+  // facts on an unreadable spec exits 1 and leaves no FLAGS file; gather with --flags FLAGS then lists `--flags input not read — treated as absent` in partial.
+});
+```
+
+`riskFlags` and `packet` assert exit 0 and return stdout. The gather runs outside a git checkout here, so its `partial` may hold `git changes not gathered`; the test does not assert `partial` except in the second case. The implementer finishes the second body.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js`
+Expected: FAIL with `Cannot find module`
+
+- [ ] **Step 3: Implement**
+
+`risk-flag-facts.js` and the `facts` verb in `risk-flags.js` (parsing through the existing `parseArgs` value-flag rule, every read and write through `deps`). `docs/plugin-structure.md`: the `risk-flags.js` command line gains `facts`, and the `plugin/bin/lib/issues/` clause names `risk-flag-facts.js` as the producer of the gather's `--flags` and `--proofs` inputs.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js tests/risk-flags-cli.test.js tests/risk-flags-packet-e2e.test.js tests/risk-flags-writer-conformance.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/bin-lib/exit-code-conformance.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/issues/risk-flag-facts.js plugin/bin/risk-flags.js docs/plugin-structure.md tests/bin-lib/issues/risk-flag-facts.test.js tests/risk-flags-cli.test.js tests/risk-flags-packet-e2e.test.js
+git commit -m "Add the risk-flags facts producer and prove it end to end — refs #4618"
+```
+
+### Task 14: Wire the risk facts into wrap-up
+
+**Role:** judgment
+
+**Files:**
+- Modify: `plugin/skills/wrap-up/SKILL.md`
+- Modify: `plugin/skills/wrap-up/verification-brief.md`
+- Test: `tests/acceptance-packet-wrap-up-conformance.test.js`
+
+**Interfaces:**
+- Consumes: `snapshot --plan` and the gather's `--flags`/`--proofs` (Task 12), `risk-flags.js facts` (Task 13).
+- Step position, from the files: Phase 1's **Snapshot the packet inputs** (`wrap-up/SKILL.md` line 112) runs before every cleanup item, from the run's own checkout (the worktree under `pr-first`, before the merge), with `work/{N}-spec.md` and the plan present. `verification-brief.md` Step 4 runs after cleanup. On the "Approve all + merge" path the worktree and branch are already gone and the run dir is archived, so its cwd is the main checkout on the integration branch (lines 290-296). The plan therefore crosses through the snapshot. The spec does not need to, because Step 4's `--spec` chain (line 381) ends at the record body, which carries the flag lines.
+- `wrap-up/SKILL.md` Phase 1 (9,430 B under the rail): before the snapshot fence, resolve `{plan-file}` with `git diff --name-only --diff-filter=AM "origin/{integration-branch}...HEAD" -- docs/superpowers/plans/` as its own call. Exactly one path is `{plan-file}`. Two or more (a multi-spec branch) narrow to the one whose text names `{N}-spec.md`. None, or still not one: omit `--plan` and log one `SKIP` line through `log-decision.js` (`--text-file`). The fence appends ` --plan "{plan-file}"` after `--base "origin/{integration-branch}"`, so the pinned call (`tests/acceptance-packet-wrap-up-conformance.test.js` line 178) still matches by `includes`. `{plan-file}` is a path: none of `"`, backtick, `$`, `\` or a line break.
+- `verification-brief.md` Step 4 (10,004 B under the rail):
+  - The session-temp resolve (line 369) appends `FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json` after `SPEC=packet-spec-{N}.md`, so the test at line 135 still matches by `includes`.
+  - A **Risk facts** paragraph and fence go just before the **Gather** paragraph (line 372), as its own Bash call: `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"`. `{spec}` is the same value the gather gets. `--plan-file` is passed only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied`. When the envelope says `plan: 'absent'` and `flags` is non-zero, the summary says the risk proofs were not read because no plan copy exists. A non-zero exit is reported and logged and does not stop the packet: the gather below still passes `--flags`/`--proofs`, and the missing files become its stated partial.
+  - The gather fence (line 375) appends `--flags "{FLAGS}" --proofs "{PROOFS}"`. These are uppercase session-temp placeholders, which the lowercase-placeholder grammar check at test line 491 does not govern, matching `{FACTS}` and `{RECORDINGS}`. The input list gains `- \`--flags\` and \`--proofs\` — \`{FLAGS}\` and \`{PROOFS}\` from the Risk facts call above, always`.
+  - Line 392's last sentence becomes: "`--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above." The `--flags` part is the only change to it.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/acceptance-packet-wrap-up-conformance.test.js`, appended (each test's assertion function also run against a copy with its literal removed, expecting the throw):
+
+```js
+test('Phase 1 snapshots the run plan for the risk proofs', () => {
+  const phase1 = section(read('wrap-up/SKILL.md'), '## Phase 1: ESTABLISH — what happened here?', '## Phase 2: ROUTE — where does each learning belong?');
+  assert.ok(phase1.includes('snapshot --run "{run-dir}" --base "origin/{integration-branch}" --plan "{plan-file}"'));
+  assert.ok(phase1.includes('--diff-filter=AM'));
+  assert.ok(phase1.indexOf('--diff-filter=AM') < phase1.indexOf('acceptance-packet.js" snapshot'), 'the plan resolves before the snapshot');
+});
+test('Step 4 runs the risk facts producer before the gather and passes both files', () => {
+  const body = step4();
+  const facts = body.indexOf('risk-flags.js" facts --spec-file "{spec}"');
+  assert.ok(facts !== -1 && facts < body.indexOf('acceptance-packet.js" gather'), 'producer before gather');
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.includes('packet-inputs/plan.md'), 'the plan comes from the snapshot copy');
+});
+test('line 392 no longer says the risk-flag inputs go unpassed', () => {
+  const sentence = flat(between(step4(), 'Pass no `--scope`', 'Gather non-zero'));
+  assert.ok(!/`--flags`[^.]*passes none of them/.test(sentence), sentence);
+  assert.ok(sentence.includes('`--flags` and `--proofs` come from the Risk facts call above'), sentence);
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/acceptance-packet-wrap-up-conformance.test.js`
+Expected: FAIL after Step 1 with the `--plan "{plan-file}"` snapshot call absent
+
+- [ ] **Step 3: Write the prose**
+
+Follow `docs/skill-authoring.md`. Use `${CLAUDE_PLUGIN_ROOT}` in command lines. Keep every literal the existing suite pins (lines 126-185, 268-360, 475-497 of the test file) byte-identical. Measure both files with `wc -c` after the edit and keep each under 52,500 B.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/acceptance-packet-wrap-up-conformance.test.js tests/acceptance-packet-contract-conformance.test.js tests/log-decision-text-file-sites-conformance.test.js tests/bin-lib/skill-audit/context-cost.test.js tests/skill-conventions.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/skills/wrap-up/SKILL.md plugin/skills/wrap-up/verification-brief.md tests/acceptance-packet-wrap-up-conformance.test.js
+git commit -m "Feed risk flags and planned proofs into the acceptance packet at wrap-up — refs #4618"
 ```
