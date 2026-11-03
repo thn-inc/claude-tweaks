@@ -317,11 +317,32 @@ test('whatever spelling new URL reads as remote meets the link rules, on either 
     assert.deepEqual(sectionLines(asArchive, 'Recording'), [local, `  once archived: ${REFUSED}`], spelled);
     for (const markdown of [asPath, asArchive]) assert.ok(!/r\.png|bucket|base64/.test(markdown), spelled);
   }
+  // What new URL throws on, or reads as non-http, is still a URL to the reader.
+  for (const spelled of [
+    `https://h.example:99999/${segment}/a`,
+    `https://exa mple.com/${segment}/a`,
+    `https://[bad/${segment}/a`,
+    `https://%zz/${segment}/a`,
+    `x://h.example/${segment}/a`,
+    `C://h.example/${segment}/a`,
+    `//h.example/${segment}/a`,
+    `https:/h.example:99999/${segment}/a`,
+    `https:\\\\h.example:99999\\${segment}\\a`,
+    `https:h.example:99999/${segment}/a`,
+    `\u0001https://h.example:99999/${segment}/a`,
+    `ht\ttps://h.example:99999/${segment}/a`,
+  ]) {
+    const asPath = render([rec({ url_or_path: spelled })]).markdown;
+    assert.deepEqual(sectionLines(asPath, 'Recording'), [`- Rec: ${REFUSED}`], JSON.stringify(spelled));
+    const asArchive = render([rec({ archive_path: spelled })]).markdown;
+    assert.deepEqual(sectionLines(asArchive, 'Recording'), [local, `  once archived: ${REFUSED}`], JSON.stringify(spelled));
+    for (const markdown of [asPath, asArchive]) assert.ok(!markdown.includes(segment), JSON.stringify(spelled));
+  }
 });
 
 test('a plain local path keeps to the path screen, never the link rules', () => {
   const real = '.claude-tweaks/pipelines/2026-11-02T223727-record-4612/packet-inputs/walkthrough.gif';
-  for (const path of [real, 'runs/Xk3j9f8s7d6f5g4h3j2k1/w.gif', 'C:\\runs\\w.gif', 'C:\\x\\w.gif', '/tmp/2026-11-02-acceptance-recording/w.gif']) {
+  for (const path of [real, 'runs/Xk3j9f8s7d6f5g4h3j2k1/w.gif', 'C:\\runs\\w.gif', 'C:\\x\\w.gif', 'C:/x/w.gif', '/tmp/2026-11-02-acceptance-recording/w.gif']) {
     assert.deepEqual(
       recordingLines(passed({ url_or_path: path, archive_path: path, captions: undefined })),
       [`- Walkthrough of Sign in: \`${path}\` (local-only)`, `  once archived: \`${path}\``],

@@ -177,16 +177,12 @@ function recordingHref(url, exposure) {
 // A blank value is an absent one.
 const filled = (value) => (value?.trim() ? value : undefined);
 
-// `new URL` as the reader sees it, since it also takes `https:/h`, `https:\\h` and a control
-// character in the scheme. A one-letter scheme, `c:` with its colon, is a Windows drive.
-const DRIVE_PROTOCOL_CHARS = 2;
-function isRemotePath(path) {
-  try {
-    return new URL(path).protocol.length > DRIVE_PROTOCOL_CHARS;
-  } catch {
-    return false;
-  }
-}
+// A shape, not a parse: `new URL` throws on `https://h:99999/x`, which is still a URL to the
+// reader. A scheme of one letter is a Windows drive unless `//` follows it. The two strips are
+// what `new URL` itself ignores, so `ht\ttps://h` and a leading control character read the same.
+const URL_IGNORED_RE = /[\t\r\n]/g;
+const REMOTE_PATH_RE = /^[\s\u0000-\u001f]*(?:[a-z][a-z0-9+.-]+:|(?:[a-z]:)?\/\/)/i;
+const isRemotePath = (path) => REMOTE_PATH_RE.test(path.replace(URL_IGNORED_RE, ''));
 
 const WITHHELD_PLACE = Object.freeze({ place: RECORDING_WITHHELD, live: false });
 
