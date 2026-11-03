@@ -4,8 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { spawnSync, execFileSync } = require('node:child_process');
+const { spawnSync } = require('node:child_process');
 const store = require('../../../plugin/bin/lib/declined-learning/store');
+const { fixtureGit } = require('../../helpers/git-fixtures');
 
 // storePath() anchors at the main checkout whenever cwd is inside a git repo (store.js header).
 // The in-process cases below key their fakes on the relative path, so run this file from a fresh
@@ -39,7 +40,7 @@ const STORE_REL = path.join('.claude-tweaks', 'declined-learning', 'store.json')
 
 // ---- storePath ---------------------------------------------------------
 
-test('storePath: fixed location under .claude-tweaks/declined-learning/', () => {
+test('storePath: outside a git repository, the relative location under .claude-tweaks/declined-learning/', () => {
   assert.equal(store.storePath(), STORE_REL);
 });
 
@@ -376,7 +377,7 @@ function pinnedEnv() {
 }
 
 function git(args, cwd) {
-  execFileSync('git', args, { cwd, env: pinnedEnv(), stdio: 'pipe' });
+  fixtureGit(args, { cwd, env: pinnedEnv(), stdio: 'pipe' });
 }
 
 // Runs `body` in a child process whose cwd is `cwd` and returns its stdout.
@@ -431,6 +432,20 @@ test('#4360 a cwd in a subdirectory of a linked worktree resolves to the same ma
   assert.equal(fs.existsSync(path.join(linked, '.claude-tweaks')), false, 'no store under the worktree');
   const found = JSON.parse(runStore(main, 'process.stdout.write(JSON.stringify(store.lookupDecline("feedback-from-sub")));'));
   assert.equal(found.source, 'feedback');
+}));
+
+test('#4360 recordDecline from a linked worktree holds the store lock under the main checkout, not the worktree', () => withWorktreeFixture(({ main, linked }) => {
+  const lockRel = path.join('.claude-tweaks', 'declined-learning', '.store.lock');
+  const seen = JSON.parse(runStore(linked, `const fs = require('node:fs');
+const seen = {};
+store.recordDecline("feedback-lock", { source: "feedback" }, { readFile: (p, enc) => {
+  seen.main = fs.existsSync(${JSON.stringify(path.join(main, lockRel))});
+  seen.linked = fs.existsSync(${JSON.stringify(path.join(linked, lockRel))});
+  return fs.readFileSync(p, enc);
+} });
+process.stdout.write(JSON.stringify(seen));`));
+
+  assert.deepEqual(seen, { main: true, linked: false });
 }));
 
 test('#4360 outside a git repository storePath() stays the relative path and recordDecline writes under the cwd', () => {

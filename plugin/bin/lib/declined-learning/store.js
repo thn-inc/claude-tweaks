@@ -20,12 +20,18 @@
 // The store and its lock live under the main checkout's .claude-tweaks/, resolved per call from
 // cwd, so a decline recorded from a linked worktree lands where every later reader finds it and
 // survives that worktree's removal (#4360); outside a git repository the paths stay cwd-relative.
+// So does a worktree whose parent repo is bare or keeps a separate git dir: its .git file names no
+// /.git/worktrees/ admin dir, mainCheckoutRoot resolves no root, and the store keeps the
+// cwd-relative path it had before #4360 (a decline recorded there is lost with the worktree).
 //
 // readStore degrades open: a missing or corrupt store file returns {}, never a throw — the same
 // contract as watermark.js's readWatermark (both now go through ../json-store.js's shared
 // read/write pair). writeStore (and therefore recordDecline/clearDecline, which read-modify-write
 // through it) lets a real write failure propagate; the caller decides how to degrade. Every fs
-// call is an injectable default param so tests never touch real disk.
+// call in readStore/writeStore is an injectable default param so tests never touch real disk. The
+// checkout anchoring is the exception: anchorRoot() reads process.cwd() and, through
+// mainCheckoutRoot, the real .git, so a test that fakes the other fs calls first moves the process
+// to a directory outside any repository, where every path stays cwd-relative.
 //
 // recordDecline/clearDecline hold ../file-lock.js's mkdir-based mutex around their
 // read-modify-write, the same mechanism bin/lib/hooks/context.js's writeRunState uses for
@@ -57,15 +63,27 @@ const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 const STORE_REL = path.join('.claude-tweaks', 'declined-learning', 'store.json');
 const LOCK_REL = path.join('.claude-tweaks', 'declined-learning', '.store.lock');
 
-// Joins a checkout-relative path onto the main checkout (#4360). Resolved per call, not at module
+// The main checkout root the store lives under (#4360), or null. Resolved per call, not at module
 // load, so the anchor follows the process's current cwd. A null root (no repo, or a .git that
-// can't be parsed) and a deleted cwd (process.cwd() throws) both keep the relative path: the
-// store degrades open on read rather than throwing.
-function anchored(relPath) {
+// can't be parsed) and a deleted cwd (process.cwd() throws) both give null, and `anchored` then
+// keeps the relative path: the store degrades open on read rather than throwing.
+function anchorRoot() {
   let cwd;
-  try { cwd = process.cwd(); } catch { return relPath; }
-  const root = mainCheckoutRoot(cwd);
+  try { cwd = process.cwd(); } catch { return null; }
+  return mainCheckoutRoot(cwd) || null;
+}
+
+// Joins a checkout-relative path onto `root`, or keeps it relative when there is none.
+function anchored(relPath, root = anchorRoot()) {
   return root ? path.join(root, relPath) : relPath;
+}
+
+// Runs `fn` under the store lock with the store file already resolved. A read-modify-write
+// resolves the anchor once, so its lock, read and write can never target different checkouts if a
+// later resolution fails transiently.
+function locked(deps, fn) {
+  const root = anchorRoot();
+  return withLock(anchored(LOCK_REL, root), () => fn({ ...deps, storeFile: anchored(STORE_REL, root) }));
 }
 
 // Age-based pruning default (#1399): the store has no expiry, so every decline ever recorded
@@ -108,15 +126,15 @@ function storePath() {
 // Returns the parsed store object, or {} when none exists (ENOENT), the file is present but not
 // valid JSON, or the parsed value isn't a plain object (corrupt/foreign content == empty store,
 // degrade-open contract).
-function readStore({ readFile = fs.readFileSync } = {}) {
-  const parsed = readJsonFile(storePath(), { readFile, fallback: {} });
+function readStore({ readFile = fs.readFileSync, storeFile = storePath() } = {}) {
+  const parsed = readJsonFile(storeFile, { readFile, fallback: {} });
   return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
 }
 
 // Overwrites the whole store with `data`. Creates the containing directory if needed. Throws on
 // a real failure (permissions, disk full, etc.) — this module doesn't silently eat the error.
-function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSync, rename = fs.renameSync } = {}) {
-  writeJsonFile(storePath(), data, { mkdirSync, writeFile, rename });
+function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSync, rename = fs.renameSync, storeFile = storePath() } = {}) {
+  writeJsonFile(storeFile, data, { mkdirSync, writeFile, rename });
 }
 
 // Records (or overwrites) a decline entry for `fingerprint`. Read-modify-write through
@@ -133,12 +151,12 @@ function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSy
 function recordDecline(fingerprint, {
   reason = null, source, subject, declinedAt = new Date().toISOString(),
 } = {}, deps = {}) {
-  return withLock(anchored(LOCK_REL), () => {
-    const current = readStore(deps);
+  return locked(deps, (resolved) => {
+    const current = readStore(resolved);
     const entry = { declinedAt, reason, source };
     if (subject !== undefined) entry.subject = truncateSubject(subject);
     current[fingerprint] = entry;
-    writeStore(current, deps);
+    writeStore(current, resolved);
     return entry;
   });
 }
@@ -182,11 +200,11 @@ function listDeclined({ source } = {}, deps = {}) {
 // staying annotated forever). No-op (no write) when the fingerprint has no entry, so an
 // idempotent clear never touches disk twice. Returns whether an entry was actually removed.
 function clearDecline(fingerprint, deps = {}) {
-  return withLock(anchored(LOCK_REL), () => {
-    const current = readStore(deps);
+  return locked(deps, (resolved) => {
+    const current = readStore(resolved);
     if (!Object.prototype.hasOwnProperty.call(current, fingerprint)) return false;
     delete current[fingerprint];
-    writeStore(current, deps);
+    writeStore(current, resolved);
     return true;
   });
 }
@@ -199,8 +217,8 @@ function clearDecline(fingerprint, deps = {}) {
 // discards data it can't judge the age of. Mirrors clearDecline's idempotent-no-write behavior:
 // a clean sweep (nothing to remove) never touches disk. Returns the number of entries removed.
 function pruneDeclines({ maxAgeDays = DEFAULT_PRUNE_MAX_AGE_DAYS, now = Date.now() } = {}, deps = {}) {
-  return withLock(anchored(LOCK_REL), () => {
-    const current = readStore(deps);
+  return locked(deps, (resolved) => {
+    const current = readStore(resolved);
     const cutoffMs = now - maxAgeDays * 24 * 60 * 60 * 1000;
     const next = {};
     let removed = 0;
@@ -212,7 +230,7 @@ function pruneDeclines({ maxAgeDays = DEFAULT_PRUNE_MAX_AGE_DAYS, now = Date.now
         next[fingerprint] = entry;
       }
     }
-    if (removed > 0) writeStore(next, deps);
+    if (removed > 0) writeStore(next, resolved);
     return removed;
   });
 }

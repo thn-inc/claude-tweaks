@@ -24,6 +24,13 @@ const { STUB_SKIP, installStub } = require('./helpers/path-stub');
 const { requireOption } = require('../tools/test-impact/node-options');
 const { toPosix } = require('../plugin/bin/lib/shared-primitives');
 
+// Every non-dry reconcile() pass prunes the declined-learning store (#1399), and that store resolves
+// from process.cwd() to the main checkout (#4360). The in-process passes below pass `cwd: <fixture>`,
+// which does not move process.cwd(), so left real they would lock and rewrite the maintainer's own
+// store whenever the suite runs from a linked worktree. Stub the prune for the whole file; node --test
+// gives each file its own process, and the #4180 prune test installs its own counting stub on top.
+require('../plugin/bin/lib/declined-learning/store').pruneDeclines = () => 0;
+
 const HOOKS =path.join(__dirname, '..', 'plugin', 'bin', 'hooks.js');
 
 // #1130: never let an omitted cwd fall through to the spawned subprocess's
