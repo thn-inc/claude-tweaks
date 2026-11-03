@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T084445-record-4618/work/4618-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T101348-record-4618/work/4618-spec.md`
 
 ## Global Constraints
 
@@ -45,6 +45,7 @@ Waived `_shared/auto-mode-contract.md`: read by Task 10's step 2 of the Risk fla
 8. An `already shaped, no-op` record gets a body write only from an explicit single-record `/specify #N`, never from a batch path: Task 10's batch-exclusion tests.
 9. `unconfirmed` and a planned proof survive the real path from the record and plan to the rendered packet, and no gather input can set a proof's status: Task 12's gather tests and Task 13's end-to-end test.
 10. Step 4 runs from the main checkout after cleanup, so the plan reaches it only through Phase 1's snapshot copy: Task 14's prose and its conformance pins.
+11. An unconfirmed flag is labelled on every Risk-proofs line that cites it, by the renderer from the fact, so no narrator can leave it out (round 3, Reading A), and a human removal is logged `KEPT-PROMPT`, never `AUTO` (round 3, Reading B): Task 9's label tests, Task 13's end-to-end render assertion, and Task 4's removal test.
 
 ## Decisions the spec leaves to the builder
 
@@ -53,6 +54,7 @@ Waived `_shared/auto-mode-contract.md`: read by Task 10's step 2 of the Risk fla
 - **The skip gate.** Check G is gating, so unlike Checks E and F it must not share Common Step 1.5's skip gate: a trivial plan or a fast-lane record would otherwise skip the proof. A new read-only verb `--risk-proofs` (requires `--spec`) runs Check G alone on that path. The micro-plan path and the express lane write no audited plan, so a flagged record is ineligible for both.
 - **Removal on an `unknown` line (Plan Review Decisions, Reading A): the writers throw.** `removeRiskFlag` and `confirmRiskFlags` on a body whose line reads `status: 'unknown'` throw an `Error` with `code: 'RISK_FLAGS_UNKNOWN'` and a message starting `removeRiskFlag refused: unreadable Risk-flags line` (or `confirmRiskFlags refused: ...`), checked after the `humanConfirmed` refusal. Throwing, not returning the body unchanged, because an unchanged return reads exactly like a successful no-op: a caller that logs after the call would write a removal line for a flag that was never removed, and only a re-parse would tell. The CLI catches by `code`, never by message, so no `Risk-flags` literal leaves the writer module (Task 2's scan). The refusal is decided on the line as it reads when the verb starts (the body and, for `settle`, the prior body): then no `remove` or `keep` answer is applied, the widened set is kept, the marker is written or kept, and no removal is logged. **Repaired** means the line reads `ok` at entry. A malformed line is repaired by `settle`'s own `addRiskFlags` call, which rewrites it as the widened, well-formed set (adding caution, never removing), so the next interactive touch can remove. A line naming an unknown slug stays `unknown` until the slug becomes known (policy `risk-categories` with control mode on) or a human corrects the record's line, since `addRiskFlags` keeps every slug the line named.
 - **A `proof` fact with status `not-run` (round 2, Reading B): a fifth validator outcome, `planned`.** The validator today has four buckets (`kept`, `moved`, `dropped`, `screened`) and routes a risk proof on its `check`/`story` facts only (`ROUTED_KINDS`). Routing a `proof` like a `check` would move every proof-only claim to Couldn't test, and Risk proofs would then render its placeholder `not applicable: no kept risk flags` on a record that keeps flags. So when a `risk-proofs` claim's only refs besides `flag` facts are `proof` facts, the claim moves to Tried to break when one of those is `failed`, otherwise it lands in `result.planned` as `{ claim, because }` when one of those is `skipped` or `not-run`, and it is kept only when every one is `passed`. A claim that also cites a `check`, `story`, `recording` or `link` keeps today's routing on those facts. The renderer lists a planned claim in Risk proofs as `- {text} (planned, not verified: cites {id} — {status}: {reason})`.
+- **Round 3 (maintainer, 2026-11-03).** Reading A: `packet-render.js` appends ` (flag unconfirmed)` to every Risk-proofs line, kept or planned, that cites a `flag` fact carrying `unconfirmed: true` (Task 9). Reading B: a human removal is logged with status `KEPT-PROMPT`, the status for a decision a human answered inline, never `AUTO`; the removal text is unchanged (Task 4). The same-family decisions (planned bucket, `--proofs` input, `snapshot --plan` with its `SKIP`, the `RISK_FLAGS_UNKNOWN` throw) are accepted as this plan already has them.
 - **Logging.** `bin/risk-flags.js settle --run` appends the removal through `require('./log-decision').run` in-process (the best-effort audit-line shape `dream-scan.js` uses), reporting `logged: false` in its envelope on failure. It does not join the self-logging roster, because it never reads `append.js` directly and the skill owns the fallback.
 - **Already-shaped records (round 2, Reading B).** An explicit single-record invocation runs the Risk flags step even when `compose-record.js --check` exits 0: a lone `#N`, a range whose bounds are equal (`SKILL.md`'s Range form resolves it as a single record reference), and `#N --chained` (headless, so step 4). When `settle` changes the body, the record is written through Compose-then-write-once with only the flag lines and the Gotcha bullet changed, and reports `shaped`. When it leaves the body byte-identical, the record stays `already shaped, no-op`. Every batch path leaves an exit-0 record untouched (AC6); Task 10 names each path and pins the exclusion:
   - a comma list `#N,#M` (`SKILL.md`'s Comma-list batch form, `shaping-mode.md`'s per-record loop): an exit-0 element moves on without the step;
@@ -427,7 +429,7 @@ git commit -m "Add the risk-flag classifier floor — refs #4618"
   - `--answers-file` (entry status not `unknown`; an `unknown` one takes the Reading A path above): for each flag in the kept set, `remove` calls `removeRiskFlag(..., { humanConfirmed: true })`, `keep` keeps. A flag with no answer, or an unreadable, unparseable or non-object answers file, or a value other than `keep`/`remove`, leaves the flag kept and sets `unconfirmed: true` with one stderr warning, exit 0: that is the fail direction, not a usage error. Only when every flag was answered is the marker cleared (`confirmRiskFlags`).
   - An empty kept set writes `Risk-flags: none`, no marker, no Gotcha.
   - A non-empty kept set after removals gets `appendRiskProofGotcha`.
-  - Each removal with `--run` logs `--status AUTO --section /specify --step "Risk flags" --text "Risk flag {slug} removed by the maintainer during shaping" --reversibility low`. A non-zero return or throw pushes the slug to `logFailures` and sets `logged: false`; never changes the exit code.
+  - Each removal with `--run` logs `--status KEPT-PROMPT --section /specify --step "Risk flags" --text "Risk flag {slug} removed by the maintainer during shaping" --reversibility low` (round 3, Reading B: a human answered it inline, so never `AUTO`). A non-zero return or throw pushes the slug to `logFailures` and sets `logged: false`; never changes the exit code.
 - `--repo-root` defaults to `git rev-parse --show-toplevel` through deps, with the `windowsHide` option, falling back to `cwd`.
 
 - [ ] **Step 1: Write the failing test**
@@ -450,7 +452,8 @@ test('AC2.1: a remove answer drops the flag and writes the removal entry to deci
   const { out, body } = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', run]);
   assert.deepStrictEqual([out.flags, out.removed, out.logged], [[], ['migrations'], true]);
   assert.match(body, /^Risk-flags: none$/m);
-  assert.match(readDecisions(run), /Risk flag migrations removed by the maintainer during shaping/);
+  assert.match(readDecisions(run), /^- KEPT-PROMPT \S+ — .*Risk flag migrations removed by the maintainer during shaping/m);
+  assert.doesNotMatch(readDecisions(run), /^- AUTO .*removed by the maintainer/m);
 });
 test('AC2.2: a keep answer leaves the flag and clears the marker', () => {
   const { out, body } = settle(withUnconfirmed(SPEC_WITH_MIGRATIONS_PATH), ['--answers-file', answers({ migrations: 'keep' })]);
@@ -862,6 +865,7 @@ The risk-fact producer moved to Task 13, which feeds it through the real gather 
 **Interfaces:**
 - Consumes: the `planned` bucket (Task 8).
 - `packet-render.js`: `renderPacket` destructures `planned` too, and the `risk-proofs` body lists kept claims, then planned ones as `- {text} (planned, not verified: cites {id} — {status}: {reason})` through the existing `inline`, `idSpan` and `statusWithReason` helpers, droppable like any item. The placeholder `not applicable: no kept risk flags` still renders only when both lists are empty.
+- Round 3, Reading A: every line the `risk-proofs` body renders, kept or planned, gains the suffix ` (flag unconfirmed)` when any of its claim's refs resolves (through the body context's `factsById`) to a `flag` fact whose `unconfirmed === true`. The label is decided from the fact, never from claim text, so a narrator cannot leave it out or forge it: a claim whose own text says `(flag unconfirmed)` on a confirmed flag gets no suffix. Only the Risk-proofs section carries it; a risk-proofs claim moved to Couldn't test or Tried to break renders as today.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -880,6 +884,21 @@ test('Reading B: one planned claim and no kept one does not render the no-kept-f
   const { markdown } = render([fact('flag:auth', 'passed'), PLANNED], [claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])]);
   assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
 });
+test('Round 3 Reading A: a Risk-proofs line citing an unconfirmed flag is labelled, kept and planned alike', () => {
+  const UNCONFIRMED = fact('flag:auth', 'passed', { unconfirmed: true });
+  const { markdown } = render([UNCONFIRMED, fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\) \(flag unconfirmed\)\n- Auth verified \(planned, not verified: [^\n]*\) \(flag unconfirmed\)\n/);
+});
+test('Round 3 Reading A: a confirmed flag gets no label, and claim text cannot forge one', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed')], [
+    claim('risk-proofs', 'Auth covered (flag unconfirmed)', ['flag:auth', 'check:unit']),
+  ]);
+  const line = markdown.split('\n').find((l) => l.startsWith('- Auth covered'));
+  assert.ok(line && !/\) \(flag unconfirmed\)$/.test(line), line);
+});
 ```
 
 `fact`, `render` and `claim` are the file's own helpers (lines 9-32: `fact(id, status, extra)` takes the kind from the id; `render(facts, claims)` wraps `renderPacket`). The regex follows `packet-render.js` line 336, which writes each section as `'', '### {heading}'` and then its body lines with no blank line between; `idSpan` renders the id as a code span and `statusWithReason` writes `not-run` as `not run`.
@@ -891,7 +910,7 @@ Expected: FAIL after Step 1 with the Risk proofs regex unmatched
 
 - [ ] **Step 3: Implement**
 
-`packet-render.js`: the `planned` destructure, a `plannedLine` beside `movedLine`, and the `risk-proofs` body.
+`packet-render.js`: the `planned` destructure, a `plannedLine` beside `movedLine`, the `risk-proofs` body, and the ` (flag unconfirmed)` suffix decided from `factsById`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -902,7 +921,7 @@ Expected: PASS
 
 ```bash
 git add plugin/bin/lib/wrap-up/packet-render.js tests/bin-lib/wrap-up/packet-render.test.js
-git commit -m "Render planned risk proofs as not verified — refs #4618"
+git commit -m "Render planned risk proofs as not verified and label unconfirmed flags — refs #4618"
 ```
 
 ### Task 10: `/specify` prose
@@ -1173,7 +1192,7 @@ test('end to end: unconfirmed and a planned proof survive the producer files, th
   const narrative = { schemaVersion: 1, claims: [{ section: 'risk-proofs', text: 'Auth verified', refs: ['flag:auth', 'proof:auth'] }] };
   const result = validatePacket(facts, narrative);
   assert.deepStrictEqual([result.kept.length, result.planned.length], [0, 1]);
-  assert.match(renderPacket(facts, narrative).markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
+  assert.match(renderPacket(facts, narrative).markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\) \(flag unconfirmed\)/);
 });
 test('end to end: a failed producer makes the gather state the lost input, never an empty flag list', () => {
   // facts on an unreadable spec exits 1 and leaves no FLAGS file; gather with --flags FLAGS then lists `--flags input not read — treated as absent` in partial.
