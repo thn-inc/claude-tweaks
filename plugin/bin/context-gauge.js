@@ -5,7 +5,7 @@
 // procedure is lib/timing/context-gauge.js.
 //
 //   node bin/context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>]
-//     [--next-steps <step,...>] [--help]
+//     [--next-steps <step,...> | --record-steps <#N:steps;...> [--keep-going]] [--help]
 //
 // The transcript is --transcript when given, else found from
 // CLAUDE_CODE_SESSION_ID (the parent session's id inside a subagent) under
@@ -19,10 +19,13 @@
 // (`caller-not-identified: …`); a fallback never hands off: over the cap it prints
 // handoff: null and a reason saying so. --cap overrides CONTEXT_CAP_TOKENS (200000).
 // --next-steps is the steps still to run, each one of /flow's step names
-// (claim-targets' FLOW_STEPS).
+// (claim-targets' FLOW_STEPS). --record-steps is its multi-spec form, each
+// record's own remaining steps (`#A:none;#B:build,test`, lib/flow/record-steps.js);
+// the two are mutually exclusive. --keep-going, valid only with --record-steps,
+// carries that run's keep-going token into `resume`.
 //
 // Stdout: one JSON line, {contextTokens, cap, over, transcript, handoff, reason}.
-// over is contextTokens > cap. When over, --next-steps was given and the caller was
+// over is contextTokens > cap. When over, --next-steps or --record-steps was given and the caller was
 // identified (in-flight or --transcript),
 // {run}/handoff.json = {nextSteps, contextTokens, cap, mode, handoffCount, writtenAt, resume}
 // is written atomically and `handoff` is its path. `handoffCount` is the
@@ -37,10 +40,16 @@
 // resolveTargetRecords). `mode` is config.yml's mode (null without one); the
 // ` auto` token is emitted for auto, confirm and hybrid (all run as auto past
 // the Manifesto) and omitted for interactive or no recorded mode.
+// With --record-steps the records are manifest.yml's (lib's manifestRecords, a
+// later spec has no spec-{N}/ dir yet) and must be the flag's as a set. handoff.json
+// adds recordSteps ({'#N': [steps]}, manifest order), nextSteps is the union, and
+// `resume` is `PIPELINE_RUN_DIR="{run}" /claude-tweaks:flow "{target}"
+// record-steps={#N:steps;...}[ keep-going][ auto]`.
 // Fail-open: a missing or unreadable transcript, one with no assistant turn,
 // or any other measurement failure prints over: false, contextTokens: null and
 // a `reason`; a handoff that cannot be written (no target records, a failed
-// write, a multi-record run) prints over: true, handoff: null and a `reason`.
+// write, a multi-record run under --next-steps, --record-steps with no manifest
+// or naming other records than it lists) prints over: true, handoff: null and a `reason`.
 // Neither ever stops a run. Several reasons are joined with "; ". Every
 // non-null `reason` is also logged to the run's decisions.md as a SKIP
 // (_shared/auto-decision-log.md's degrade trace), so a gauge that cannot work
@@ -49,9 +58,10 @@
 // Exit 0 in every measured state — status is data, the JSON is the answer
 //        (bin/verify.js --stamp-status's posture).
 //      2 malformed invocation: an unknown flag, a value-less flag, a --cap that
-//        is not a positive integer, a --next-steps entry outside FLOW_STEPS, or
-//        a --run that is missing, not anchored under the main checkout (a
-//        worktree-local shadow, or outside every checkout — [IL-127]), or whose
+//        is not a positive integer, a --next-steps entry outside FLOW_STEPS, an
+//        invalid --record-steps value, --record-steps beside --next-steps,
+//        --keep-going without --record-steps, or a --run that is missing, not
+//        anchored under the main checkout (a worktree-local shadow, or outside every checkout — [IL-127]), or whose
 //        basename is not a run id. Nothing is written.
 // --run is anchored strictly through lib/stage-item/write.js's resolveTarget
 // (deps-injected, mainRoot injectable): handoff.json is a run-dir write, and
@@ -66,24 +76,28 @@ const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { FLOW_STEPS } = require('./lib/claim-targets/claim-targets');
 const {
-  CONTEXT_CAP_TOKENS, findAgentTranscript, gauge, resolveTargetRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
+  CONTEXT_CAP_TOKENS, findAgentTranscript, gauge, resolveTargetRecords, manifestRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
 } = require('./lib/timing/context-gauge');
+const { parseRecordSteps } = require('./lib/flow/record-steps');
 const { readRunMode } = require('./lib/flow/run-mode');
 
-const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...>] [--help]\n'
-  + '  measures this agent\'s context from its transcript; past the cap, writes {run}/handoff.json (with --next-steps)\n'
+const USAGE = 'usage: context-gauge.js --run <run-dir> [--transcript <path>] [--cap <n>] [--next-steps <step,...> | --record-steps <#N:steps;...> [--keep-going]] [--help]\n'
+  + '  measures this agent\'s context from its transcript; past the cap, writes {run}/handoff.json (with --next-steps or --record-steps)\n'
   + '  prints {contextTokens, cap, over, transcript, handoff, reason}; a missing/unreadable transcript prints over: false + reason\n'
   + `  --cap defaults to ${CONTEXT_CAP_TOKENS}; --next-steps entries: ${FLOW_STEPS.join(', ')}\n`
+  + '  --record-steps is a multi-spec run\'s form, every manifest.yml record with its own steps: #A:none;#B:build,test\n'
+  + '  --keep-going (only with --record-steps) carries the run\'s keep-going token into the resume line\n'
   + '  exit 0 in every measured state (the JSON is the answer)\n'
   + '       2 malformed invocation or bad --run (missing, not anchored under the main checkout, not a run id)\n';
 
-const FLAGS = { '--run': 'run', '--transcript': 'transcript', '--cap': 'cap', '--next-steps': 'nextSteps' };
+const FLAGS = { '--run': 'run', '--transcript': 'transcript', '--cap': 'cap', '--next-steps': 'nextSteps', '--record-steps': 'recordSteps' };
 
 function parseArgs(argv) {
   const o = { help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--help' || a === '-h') { o.help = true; continue; }
+    if (a === '--keep-going') { o.keepGoing = true; continue; }
     if (!Object.hasOwn(FLAGS, a)) return { error: `unknown argument: ${a}` };
     const v = argv[i + 1];
     if (typeof v !== 'string' || !v.trim() || v.startsWith('--')) return { error: `${a} needs a value` };
@@ -114,6 +128,7 @@ const realDeps = {
   findAgentTranscript,
   gauge,
   resolveTargetRecords,
+  manifestRecords: (runDir) => manifestRecords(runDir),
   readRunMode: (runDir) => readRunMode(runDir),
   readHandoffCount: (runDir) => readHandoffCount(runDir),
   writeFile: (p, text) => writeFileAtomic(p, text),
@@ -142,7 +157,7 @@ const NOT_IDENTIFIED_REASON = 'handoff.json not written: the caller was not iden
 
 // Measure, and write the handoff when over. Never throws: every failure is a
 // `reason` on the result (the fail-open contract); several join with '; '.
-async function measure({ runDir, runId, cwd, cap, nextSteps, transcriptArg }, deps) {
+async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps = null, keepGoing = false, transcriptArg }, deps) {
   const result = { contextTokens: null, cap, over: false, transcript: null, handoff: null, reason: null };
   const reasons = [];
   const done = (why) => {
@@ -184,19 +199,34 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, transcriptArg }, de
   try {
     const previous = deps.readHandoffCount(runDir);
     if (previous >= HANDOFF_BOUND) return done(`handoff bound reached (${HANDOFF_BOUND} handoffs this run): continue in place`);
-    let state = null;
-    try { state = deps.readRunState(runDir); } catch { state = null; }
-    const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
-    const targets = deps.resolveTargetRecords({ runDir, worktree, gitRoot: deps.gitRootOf(runDir) });
-    if (!targets || targets.length === 0) {
-      return done(`handoff.json not written: no target records (no spec-{N}/ dir, no work/{n}-spec.md in ${runDir}${worktree ? ' or its worktree copy' : ''})`);
+    let targets;
+    let recordSteps = null;
+    if (parsedRecordSteps) {
+      // The manifest, not the spec-{N}/ dirs: a later spec has no dir until its turn comes.
+      const listed = deps.manifestRecords(runDir);
+      if (!listed) return done(`handoff.json not written: --record-steps needs a manifest.yml listing the run's records (none in ${runDir}): continue in place`);
+      // Both are duplicate-free, so equal length plus membership is set equality.
+      const named = parsedRecordSteps.records;
+      if (named.length !== listed.length || !named.every((r) => listed.includes(r))) {
+        return done(`handoff.json not written: --record-steps names ${named.join(', ')} but manifest.yml lists ${listed.join(', ')}: continue in place`);
+      }
+      targets = listed;
+      recordSteps = Object.fromEntries(listed.map((r) => [r, parsedRecordSteps.recordSteps[r]]));
+    } else {
+      let state = null;
+      try { state = deps.readRunState(runDir); } catch { state = null; }
+      const worktree = state && typeof state.worktree === 'string' ? state.worktree : null;
+      targets = deps.resolveTargetRecords({ runDir, worktree, gitRoot: deps.gitRootOf(runDir) });
+      if (!targets || targets.length === 0) {
+        return done(`handoff.json not written: no target records (no spec-{N}/ dir, no work/{n}-spec.md in ${runDir}${worktree ? ' or its worktree copy' : ''})`);
+      }
+      // --next-steps names one record's remaining steps, so a resume over several records would
+      // skip the later ones' earlier steps. --record-steps names each record's own.
+      if (targets.length > 1) return done(`handoff.json not written: a multi-record run (${targets.join(', ')}) — a multi-record handoff needs --record-steps: continue in place`);
     }
-    // --next-steps names one record's remaining steps, so a resume over several records would
-    // skip the later ones' earlier steps. Multi-spec handoff is #4358; until then continue in place.
-    if (targets.length > 1) return done(`handoff.json not written: a multi-record run (${targets.join(', ')}) — handoff is single-record (#4358): continue in place`);
     const handoffPath = path.join(runDir, 'handoff.json');
     const mode = deps.readRunMode(runDir);
-    const handoff = buildHandoff({ runDir, nextSteps, contextTokens: result.contextTokens, cap, targets, mode, handoffCount: previous + 1, now: deps.now() });
+    const handoff = buildHandoff({ runDir, nextSteps, contextTokens: result.contextTokens, cap, targets, mode, handoffCount: previous + 1, now: deps.now(), recordSteps, keepGoing });
     deps.writeFile(handoffPath, `${JSON.stringify(handoff, null, 2)}\n`);
     result.handoff = handoffPath;
   } catch (e) {
@@ -225,6 +255,14 @@ async function run(argv, overrides = {}) {
     if (parsed.error) return usageError(parsed.error);
     nextSteps = parsed.steps;
   }
+  if (o.recordSteps !== undefined && o.nextSteps !== undefined) return usageError('--record-steps and --next-steps are mutually exclusive');
+  if (o.keepGoing && o.recordSteps === undefined) return usageError('--keep-going is valid only with --record-steps');
+  let parsedRecordSteps = null;
+  if (o.recordSteps !== undefined) {
+    parsedRecordSteps = parseRecordSteps(o.recordSteps);
+    if (!parsedRecordSteps.ok) return usageError(`invalid --record-steps: ${parsedRecordSteps.message}`);
+    nextSteps = parsedRecordSteps.steps;
+  }
 
   let cwd;
   let target;
@@ -243,7 +281,7 @@ async function run(argv, overrides = {}) {
   const runId = path.basename(runDir);
   if (!ctxLib.RUN_ID_RE.test(runId)) return usageError(`--run basename is not a run id (a spec- subdir answers for its parent run): ${runId}`);
 
-  const result = await measure({ runDir, runId, cwd, cap, nextSteps, transcriptArg: o.transcript }, deps);
+  const result = await measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps, keepGoing: Boolean(o.keepGoing), transcriptArg: o.transcript }, deps);
   if (result.reason) {
     try {
       deps.appendDecision(runDir, formatEntry({

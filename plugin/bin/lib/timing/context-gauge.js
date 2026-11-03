@@ -33,6 +33,7 @@ const path = require('path');
 const { lstatType } = require('../path-guard');
 const { isPathContained } = require('../shared-primitives');
 const { readManifest } = require('../flow/manifest');
+const { formatRecordSteps } = require('../flow/record-steps');
 const { locateTranscripts, subagentsDirFor, readUsage } = require('./transcript');
 
 // #4027's measured latency curve: 5.0 s per turn under 100k context and
@@ -313,6 +314,17 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   return null;
 }
 
+// (runDir, { manifest? }) -> ['#N', ...] in manifest.yml's order | null when the
+// file is absent or lists none. Unlike resolveTargetRecords this ignores the
+// spec-{N}/ dirs: a per-record handoff names every record of the run, and a
+// later spec has no dir until its turn comes. `manifest` is the parsed manifest
+// (readManifest's shape); undefined reads {runDir}/manifest.yml.
+function manifestRecords(runDir, { manifest } = {}) {
+  const m = manifest === undefined ? readManifest(runDir) : manifest;
+  const specs = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs : [];
+  return specs.length ? [...new Set(specs.map((s) => `#${s.id}`))] : null;
+}
+
 // The resume line's mode token: auto, confirm and hybrid all run as auto once
 // the Manifesto is past, so they resume as auto; interactive, an unknown
 // value, or no recorded mode resumes with no token, so an interactive run
@@ -346,20 +358,26 @@ function readHandoffCount(runDir, { fsImpl = fs } = {}) {
 
 // -> the handoff.json object a fresh agent resumes from. `mode` is the run's
 // recorded mode (null when none); `handoffCount` counts this handoff too.
-function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = null, handoffCount = 1, now }) {
+// `recordSteps` ({'#N': [steps]}, targets' order) makes it per-record: the key
+// is added and `resume` carries a record-steps= token instead of the step list.
+// `keepGoing` adds the keep-going token, which lives only in /flow's $ARGUMENTS,
+// so a resumed run would otherwise revert to stop-on-first-failure.
+function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = null, handoffCount = 1, now, recordSteps = null, keepGoing = false }) {
   const modeToken = RESUME_AS_AUTO.has(mode) ? ' auto' : '';
+  const stepsToken = recordSteps ? `record-steps=${formatRecordSteps(recordSteps)}` : nextSteps.join(',');
   return {
     nextSteps: [...nextSteps],
+    ...(recordSteps ? { recordSteps } : {}),
     contextTokens,
     cap,
     mode,
     handoffCount,
     writtenAt: new Date(now).toISOString(),
-    resume: `PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow "${targets.join(',')}" ${nextSteps.join(',')}${modeToken}`,
+    resume: `PIPELINE_RUN_DIR="${runDir}" /claude-tweaks:flow "${targets.join(',')}" ${stepsToken}${keepGoing ? ' keep-going' : ''}${modeToken}`,
   };
 }
 
 module.exports = {
   CONTEXT_CAP_TOKENS, FIRST_USER_SCAN_BYTES, CALLER_TAIL_BYTES, GAUGE_TAIL_BYTES, firstUserText, hasInFlightGaugeCall, findAgentTranscript, gauge,
-  resolveTargetRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
+  resolveTargetRecords, manifestRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
 };

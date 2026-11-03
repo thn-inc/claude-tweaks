@@ -5,8 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords,
+  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords, manifestRecords,
 } = require('../../../plugin/bin/lib/timing/context-gauge');
+const { manifestInit } = require('../../../plugin/bin/lib/flow/manifest');
 const { slugForCwd } = require('../../../plugin/bin/lib/timing/transcript');
 const { run } = require('../../../plugin/bin/context-gauge');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
@@ -488,15 +489,15 @@ test('CLI: target records — the run dir\'s work/ when no worktree is recorded;
   assert.strictEqual(await run(['--run', own.runDir, '--transcript', t, '--next-steps', 'test,review'], c.deps), 0);
   assert.strictEqual(JSON.parse(fs.readFileSync(path.join(own.runDir, 'handoff.json'), 'utf8')).resume, RESUME(own.runDir, '#4027', 'test,review'));
 
-  // A multi-spec run's targets resolve in ascending order, but the gauge hands off a single record only
-  // (--next-steps names one record's remaining steps; multi-spec handoff is #4358).
+  // A multi-spec run's targets resolve in ascending order, but --next-steps hands off a single record only
+  // (it names one record's remaining steps; a multi-record handoff takes --record-steps, #4358).
   const multi = runFixture({ spec: 'none', specDirs: [3817, 3926, 945] });
   assert.deepStrictEqual(resolveTargetRecords({ runDir: multi.runDir }), ['#945', '#3817', '#3926']);
   c = cli(multi);
   assert.strictEqual(await run(['--run', multi.runDir, '--transcript', t, '--next-steps', 'test'], c.deps), 0);
   assert.strictEqual(c.json().over, true);
   assert.strictEqual(c.json().handoff, null);
-  assert.match(c.json().reason, /^handoff\.json not written: a multi-record run \(#945, #3817, #3926\) — handoff is single-record \(#4358\): continue in place$/);
+  assert.match(c.json().reason, /^handoff\.json not written: a multi-record run \(#945, #3817, #3926\) — a multi-record handoff needs --record-steps: continue in place$/);
   assert.ok(!fs.readdirSync(multi.runDir).includes('handoff.json'));
 
   const none = runFixture({ spec: 'none' });
@@ -531,7 +532,7 @@ test('CLI: a multi-spec run with manifest.yml orders its targets by the manifest
   const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
   const fx = runFixture({ spec: 'none', specDirs: [3817, 3926, 3945, 12, 7] });
   fs.writeFileSync(path.join(fx.runDir, 'manifest.yml'), MANIFEST(RUN_ID, [3926, 3817, 3945]));
-  // The order is the resolver's (the CLI refuses a multi-record handoff, see above).
+  // The order is the resolver's (the CLI refuses a flat multi-record handoff, see above).
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir }), ['#3926', '#3817', '#3945', '#7', '#12']);
   // A manifest entry with no spec dir is not a target.
   assert.deepStrictEqual(resolveTargetRecords({ runDir: fx.runDir, manifest: { multispec: { parent: 'x', specs: [{ id: 99 }, { id: 3945 }] } } }), ['#3945', '#7', '#12', '#3817', '#3926']);
@@ -579,6 +580,166 @@ test('CLI: malformed invocations exit 2 and write nothing', async () => {
   // a well-formed call on the same fixture still succeeds (the cases above are not all-red by accident)
   const ok = cli(fx);
   assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'review-console'], ok.deps), 0);
+});
+
+// #4358: the flat form stays byte-identical, key order included, with no recordSteps key.
+test('CLI: a flat --next-steps handoff.json is byte-pinned — same keys, same order, no recordSteps', async () => {
+  const fx = runFixture();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--next-steps', 'test,review'], c.deps), 0, c.err.join(''));
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'), `${JSON.stringify({
+    nextSteps: ['test', 'review'], contextTokens: 250000, cap: 200000, mode: 'auto', handoffCount: 1, writtenAt: '2026-10-25T18:00:00.000Z',
+    resume: RESUME(fx.runDir, '#4027', 'test,review'),
+  }, null, 2)}\n`);
+});
+
+// #4358: --record-steps, a multi-spec run's per-record handoff. The record set is the manifest's,
+// not the spec-{N}/ dirs': a later spec has no dir yet when an earlier one hits the cap.
+const RECORD_STEPS = '#12:none;#34:build,test';
+
+function multiRun({ specs = [12, 34], specDirs = [12], mode = 'auto' } = {}) {
+  const fx = runFixture({ spec: 'none', specDirs, mode });
+  assert.strictEqual(manifestInit({ runDir: fx.runDir, specs }).ok, true);
+  return fx;
+}
+
+test('CLI: AC1.1 --record-steps over the cap writes recordSteps, the union, and a per-record resume; a spec with no dir yet still counts', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  const handoffPath = path.join(fx.runDir, 'handoff.json');
+  assert.deepStrictEqual(c.json(), { contextTokens: 250000, cap: 200000, over: true, transcript: t, handoff: handoffPath, reason: null });
+  assert.deepStrictEqual(readHandoff(fx.runDir), {
+    nextSteps: ['build', 'test'], recordSteps: { '#12': [], '#34': ['build', 'test'] },
+    contextTokens: 250000, cap: 200000, mode: 'auto', handoffCount: 1, writtenAt: '2026-10-25T18:00:00.000Z',
+    resume: `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" record-steps=#12:none;#34:build,test auto`,
+  });
+});
+
+test('CLI: --record-steps keys follow the manifest when the flag lists them in another order', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const fx = multiRun({ specs: [34, 12] });
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  const h = readHandoff(fx.runDir);
+  assert.deepStrictEqual(Object.keys(h.recordSteps), ['#34', '#12']);
+  assert.strictEqual(h.resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#34,#12" record-steps=#34:build,test;#12:none auto`);
+  // The CLI reads the set through its seam.
+  const seamed = runFixture({ spec: 'none' });
+  const s = cli(seamed, { manifestRecords: () => ['#34', '#12'] });
+  assert.strictEqual(await run(['--run', seamed.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], s.deps), 0);
+  assert.deepStrictEqual(Object.keys(readHandoff(seamed.runDir).recordSteps), ['#34', '#12']);
+});
+
+test('CLI: --record-steps disagreeing with the manifest writes nothing — over: true, handoff: null', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const value of ['#34:build,test', '#12:none;#34:build,test;#56:test', '#12:none;#56:test']) {
+    const fx = multiRun();
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', value], c.deps), 0, value);
+    assert.strictEqual(c.json().over, true, value);
+    assert.strictEqual(c.json().handoff, null, value);
+    assert.match(c.json().reason, /^handoff\.json not written: --record-steps names /, value);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), value);
+  }
+});
+
+test('CLI: --record-steps with no manifest writes nothing, even with every spec dir on disk', async () => {
+  const fx = runFixture({ spec: 'none', specDirs: [12, 34] });
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.match(c.json().reason, /^handoff\.json not written: .*manifest\.yml/);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --record-steps at the bound writes nothing, with the bound reason', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const prior = `${JSON.stringify({ nextSteps: ['test'], handoffCount: 3 })}\n`;
+  fs.writeFileSync(path.join(fx.runDir, 'handoff.json'), prior);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, 'handoff bound reached (3 handoffs this run): continue in place');
+  assert.strictEqual(fs.readFileSync(path.join(fx.runDir, 'handoff.json'), 'utf8'), prior);
+});
+
+test('CLI: --record-steps from a fallback-identified caller writes nothing', async () => {
+  const s = store();
+  agent(s.subagents, 'anew', dispatchPrompt(RUN_ID), 2000, { input: 2, cacheRead: 249000, cacheCreate: 998 });
+  const fx = multiRun();
+  const c = cli(fx, { env: { CLAUDE_CODE_SESSION_ID: SID, CLAUDE_CONFIG_DIR: s.configDir } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+  assert.strictEqual(c.json().over, true);
+  assert.strictEqual(c.json().handoff, null);
+  assert.strictEqual(c.json().reason, `caller-not-identified: fell back to first-message match; ${NOT_IDENTIFIED_HANDOFF}`);
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --record-steps under the cap writes nothing', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 150000);
+  const c = cli(fx);
+  assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], c.deps), 0);
+  assert.deepStrictEqual(c.json(), { contextTokens: 150000, cap: 200000, over: false, transcript: t, handoff: null, reason: null });
+  assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'));
+});
+
+test('CLI: --keep-going puts its token before the mode token, with no mode token after it on an interactive run; without the flag it is absent', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const cases = [
+    ['auto', ['--keep-going'], 'record-steps=#12:none;#34:build,test keep-going auto'],
+    ['auto', [], 'record-steps=#12:none;#34:build,test auto'],
+    ['interactive', ['--keep-going'], 'record-steps=#12:none;#34:build,test keep-going'],
+  ];
+  for (const [mode, flags, tail] of cases) {
+    const fx = multiRun({ mode });
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, ...flags, '--record-steps', RECORD_STEPS], c.deps), 0, c.err.join(''));
+    assert.strictEqual(readHandoff(fx.runDir).resume, `PIPELINE_RUN_DIR="${fx.runDir}" /claude-tweaks:flow "#12,#34" ${tail}`);
+  }
+});
+
+test('CLI: malformed --record-steps and --keep-going invocations exit 2 and write nothing', async () => {
+  const fx = multiRun();
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  const base = ['--run', fx.runDir, '--transcript', t];
+  const cases = [
+    [...base, '--record-steps', RECORD_STEPS, '--next-steps', 'test'],
+    [...base, '--record-steps'],
+    [...base, '--record-steps', ''],
+    [...base, '--record-steps', '--keep-going'],
+    [...base, '--record-steps', '#12:tset'],
+    [...base, '--record-steps', '#12:none;#34:none'],
+    [...base, '--record-steps', '#12:none;#34:review-console'],
+    [...base, '--keep-going'],
+    [...base, '--keep-going', '--next-steps', 'test'],
+  ];
+  for (const argv of cases) {
+    const c = cli(fx);
+    assert.strictEqual(await run(argv, c.deps), 2, JSON.stringify(argv));
+    assert.strictEqual(c.out.join(''), '', JSON.stringify(argv));
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), JSON.stringify(argv));
+  }
+  // The same fixture hands off once the value is right (the cases above are not all-red by accident).
+  const ok = cli(fx);
+  assert.strictEqual(await run([...base, '--record-steps', RECORD_STEPS], ok.deps), 0);
+  assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'));
+});
+
+test('manifestRecords: the manifest\'s spec ids as #N in manifest order; null when absent or listing none', () => {
+  const fx = runFixture({ spec: 'none' });
+  assert.strictEqual(manifestRecords(fx.runDir), null, 'no manifest.yml');
+  assert.strictEqual(manifestInit({ runDir: fx.runDir, specs: [34, 12] }).ok, true);
+  assert.deepStrictEqual(manifestRecords(fx.runDir), ['#34', '#12']);
+  assert.deepStrictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [{ id: 7 }, { id: 9 }] } } }), ['#7', '#9']);
+  assert.strictEqual(manifestRecords(fx.runDir, { manifest: null }), null);
+  assert.strictEqual(manifestRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [] } } }), null);
 });
 
 test('CLI: --run is anchored strictly — outside every checkout and a worktree-local shadow both exit 2', async () => {
