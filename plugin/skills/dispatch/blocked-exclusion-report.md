@@ -18,6 +18,17 @@ record, under the same exception and empty-array rules below:
 
 `#{number} excluded — named target {path} no longer exists at the integration tip (Close proposal staged)`
 
+Then read the same file's `reason: 'unlanded-blocker'` entries (`records: [number], detail:
+{blockers: [{blocker, commit}]}` each, #4792 — `queue-pull-script.md`'s unlanded-blocker pass) and
+render one line per record, under the same exception and empty-array rules below:
+
+`#{number} excluded — blocker not landed: #{blocker} (closing commit {commit}), … — eligible again once it reaches the integration branch`
+
+Then its `reason: 'malformed-blocker'` entries (`records: [number], detail: {cause}` each, #4792 —
+the same pass), one line per record, under the same rules:
+
+`#{number} excluded — malformed blocker declaration: {cause} — eligible again once its blocker declaration can be checked`
+
 **Exception — the headless drain steady state.** When this is drain (or `next`) and the
 zero-eligible-groups case (`SKILL.md` Step 3) applies, render nothing here either, same as that
 case's rule — a persistently-blocked queue must not turn an intended-silent Routine firing into

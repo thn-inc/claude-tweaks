@@ -61,6 +61,17 @@ test('AC6.1: the ruling sub-file states all five branches', () => {
   assert.doesNotMatch(textArg[1], /`/, 'SKIP --text must be shell-safe: no backticks inside the double-quoted argument');
 });
 
+test('the exit-1 paragraph names the one native GraphQL failure that does name a record (#4792)', () => {
+  const NAMED = /naming no record unless `gh` reported a candidate NOT_FOUND \(`missing dependency data for #n`\)/;
+  const exit1Of = (t) => t.split('\n').find((l) => l.startsWith('**Exit 1')) || '';
+  const live = read(RULING);
+  assert.match(exit1Of(live), NAMED, 'exit 1 says a native GraphQL failure names no record unless gh reported a candidate NOT_FOUND');
+  // Go-red control on a mutated copy: the pre-fix wording ("with no record named").
+  const mutated = live.replace(NAMED, 'with no record named');
+  assert.notEqual(mutated, live, 'the mutation matched nothing');
+  assert.doesNotMatch(exit1Of(mutated), NAMED, 'the pin goes red when the clause is reverted to the pre-fix wording');
+});
+
 test('AC6.2: multi-spec.md step 3 points to the ruling', () => {
   const step3 = read(MULTI_SPEC).match(/^3\. \*\*Pre-flight\*\*.*$/m);
   assert.ok(step3, 'step 3 line present');
