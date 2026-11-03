@@ -46,8 +46,7 @@ function writeReleaseTimes(file, candidates, linkedPRs, deps = {}) {
       try {
         result = reader.read(number);
       } catch {
-        unreadable.push(number);
-        continue;
+        result = null;
       }
       if (!result || !Object.prototype.hasOwnProperty.call(result, 'content')) {
         unreadable.push(number);

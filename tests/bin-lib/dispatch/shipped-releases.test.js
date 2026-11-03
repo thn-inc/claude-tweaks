@@ -76,8 +76,6 @@ test('a failed read, a throwing read and a corrupt blob are logged and yield no 
   });
   assert.deepStrictEqual(returned, {});
   assert.strictEqual(logged.length, 1);
-  assert.match(logged[0], /#7, #8, #9/);
-  assert.match(logged[0], /release time unknown/);
   assert.strictEqual(
     logged[0],
     'AUTO — dispatch: shipped-candidate claim read failed for #7, #8, #9; release time unknown, no downgrade',

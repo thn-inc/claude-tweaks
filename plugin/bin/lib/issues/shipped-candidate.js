@@ -13,6 +13,15 @@
 const { extractKeyFiles } = require('./grouping');
 const { tokenizeTitle, jaccard, DEFAULT_TITLE_SIMILARITY_THRESHOLD } = require('./near-duplicate');
 
+const PREDATES_CLAIM_RELEASE = 'predates-claim-release';
+
+// strong > weak > weak-that-predates-the-release > none
+function rankOf(tier, predatesRelease) {
+  if (tier === 'strong') return 3;
+  if (tier === 'weak') return predatesRelease ? 1 : 2;
+  return 0;
+}
+
 // record: { number, title, body, createdAt, labels }. mentions: the
 // per-record `mentions` array `fetchLinkedPRs` returns — every same-repo PR
 // that has ever cross-referenced this issue, closing keyword or not.
@@ -60,15 +69,6 @@ const { tokenizeTitle, jaccard, DEFAULT_TITLE_SIMILARITY_THRESHOLD } = require('
 // ties, the first qualifying mention in array order is reported — mentions is
 // small (dispatch fetches at most 20 per record) and the exact PR named
 // matters far less than the tier itself.
-const PREDATES_CLAIM_RELEASE = 'predates-claim-release';
-
-// strong > weak > weak-that-predates-the-release > none
-function rankOf(tier, predatesRelease) {
-  if (tier === 'strong') return 3;
-  if (tier === 'weak') return predatesRelease ? 1 : 2;
-  return 0;
-}
-
 function classifyShipped(record, mentions, opts = {}) {
   const titleThreshold = opts.titleSimilarityThreshold ?? DEFAULT_TITLE_SIMILARITY_THRESHOLD;
   const prFiles = opts.prFiles || new Map();
@@ -83,10 +83,8 @@ function classifyShipped(record, mentions, opts = {}) {
 
   for (const mention of mentions || []) {
     if (!mention || !mention.merged) continue;
-    if (recordCreatedAtMs !== null && mention.mergedAt) {
-      const mergedAtMs = new Date(mention.mergedAt).getTime();
-      if (!(mergedAtMs > recordCreatedAtMs)) continue;
-    }
+    const mergedAtMs = mention.mergedAt ? new Date(mention.mergedAt).getTime() : NaN;
+    if (recordCreatedAtMs !== null && mention.mergedAt && !(mergedAtMs > recordCreatedAtMs)) continue;
     if (recordCreatedAtMs !== null && mention.createdAt) {
       const prCreatedAtMs = new Date(mention.createdAt).getTime();
       if (prCreatedAtMs < recordCreatedAtMs) continue;
@@ -104,7 +102,6 @@ function classifyShipped(record, mentions, opts = {}) {
       && recordKeyFiles.every((f) => files.includes(f));
     if (filesCoverAll) signals.push('key-files-covered');
 
-    const mergedAtMs = mention.mergedAt ? new Date(mention.mergedAt).getTime() : NaN;
     const predatesRelease = mergedAtMs < lastReleasedAtMs; // false when either side is NaN
     if (predatesRelease) signals.push(PREDATES_CLAIM_RELEASE);
 
