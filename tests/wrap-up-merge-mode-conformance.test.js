@@ -3,24 +3,19 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
 const flat = (s) => s.replace(/\s+/g, ' ');
 
-// Returns the names of facts whose pattern does not match `text`.
-function missingFactsOf(text, facts) {
-  return Object.entries(facts).filter(([, re]) => !re.test(text)).map(([name]) => name);
-}
-
-// Per fact: strip only that fact's first match and assert exactly [name] goes missing.
-function assertEachFactGoesRed(text, facts) {
-  for (const [name, re] of Object.entries(facts)) {
-    const doctored = text.replace(re, '');
-    assert.notEqual(doctored, text, `${name}: pattern matched nothing to strip`);
-    assert.deepStrictEqual(missingFactsOf(doctored, facts), [name], `${name}: stripping it must report exactly itself`);
-  }
-}
+// This file keys its fact lists by name; the shared helpers take [pattern, fact] pairs.
+const factPairs = (facts) => Object.entries(facts).map(([name, re]) => [re, name]);
+const factsMissingFrom = (text, facts) => missingFactsOf(factPairs(facts))(text);
+const assertEachFactGoesRed = (text, facts) => {
+  const pairs = factPairs(facts);
+  assertEachPatternGoesRed(text, pairs, missingFactsOf(pairs));
+};
 
 const HINT = '[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]';
 
@@ -125,7 +120,7 @@ function mergeModeRegion() {
 }
 
 test('merge-mode.md carries every merge-mode fact before its Conflict heading', () => {
-  assert.deepStrictEqual(missingFactsOf(mergeModeRegion(), MERGE_MODE_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(mergeModeRegion(), MERGE_MODE_FACTS), []);
 });
 
 test('merge-mode.md facts each go red when stripped', () => {
@@ -212,7 +207,7 @@ const POST_MERGE_EXCEPTION = {
 
 test('pr-first-merge-post-merge.md Step 4.0 names merge mode as an in-session caller', () => {
   const text = flat(read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md'));
-  assert.deepStrictEqual(missingFactsOf(text, POST_MERGE_EXCEPTION), []);
+  assert.deepStrictEqual(factsMissingFrom(text, POST_MERGE_EXCEPTION), []);
   assertEachFactGoesRed(text, POST_MERGE_EXCEPTION);
 });
 
@@ -276,7 +271,7 @@ test('wrap-up grammar surfaces carry the merge token', () => {
   assert.ok(parseLine, 'SKILL.md ## Input has a parse-line code span');
   assert.strictEqual(parseLine[1], HINT);
 
-  assert.deepStrictEqual(missingFactsOf(flat(skill), ROUTER_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(flat(skill), ROUTER_FACTS), []);
   assertEachFactGoesRed(flat(skill), ROUTER_FACTS);
 
   // `merge` is not a flag: the flag strip list must not name it.
@@ -337,7 +332,7 @@ function conflictPathRegion() {
 }
 
 test('merge-mode.md Conflict section carries the attended procedure', () => {
-  assert.deepStrictEqual(missingFactsOf(conflictRegion(), ATTENDED_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(conflictRegion(), ATTENDED_FACTS), []);
 });
 
 test('attended Conflict facts each go red when stripped', () => {
@@ -345,7 +340,7 @@ test('attended Conflict facts each go red when stripped', () => {
 });
 
 test('pr-first-merge.md Conflict path carries the pointer and keeps the headless bullet', () => {
-  assert.deepStrictEqual(missingFactsOf(conflictPathRegion(), POINTER_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(conflictPathRegion(), POINTER_FACTS), []);
 });
 
 test('pointer facts each go red when stripped', () => {
@@ -359,7 +354,7 @@ test('the pointer bullet carries none of the attended procedure', () => {
     read('plugin', 'skills', '_shared', 'pr-first-merge.md'),
   );
   assert.ok(m, 'pointer bullet present');
-  const leaked = missingFactsOf(flat(m[0]), ATTENDED_FACTS);
+  const leaked = factsMissingFrom(flat(m[0]), ATTENDED_FACTS);
   assert.deepStrictEqual(leaked.sort(), Object.keys(ATTENDED_FACTS).sort(), 'pointer restates attended-procedure text');
 });
 
@@ -419,7 +414,7 @@ function summaryNextActionsRegion() {
 }
 
 test('summary-template.md Resume-to-merge paragraph carries the consoleAutoResolve merge row', () => {
-  assert.deepStrictEqual(missingFactsOf(summaryParagraphRegion(), SUMMARY_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(summaryParagraphRegion(), SUMMARY_FACTS), []);
 });
 
 test('summary-template.md consoleAutoResolve facts each go red when stripped', () => {
@@ -474,7 +469,7 @@ const CLEANUP_ONLY_FACTS = {
 
 test('AC6.1: flags.md states cleanup-only\'s run-dir lookup', () => {
   const flags = flat(read('plugin', 'skills', 'wrap-up', 'flags.md'));
-  assert.deepStrictEqual(missingFactsOf(flags, CLEANUP_ONLY_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(flags, CLEANUP_ONLY_FACTS), []);
 });
 
 test('AC6.1: cleanup-only facts each go red when stripped', () => {
