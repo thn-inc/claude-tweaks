@@ -664,8 +664,13 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
   or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
   are deterministic, as is an unreadable exit-0 envelope; exit 4 (run marker mismatch: pre-merge, or
-  post-merge on a base known to be non-default) is deterministic too. An exit-0 `baseUnchecked: true`
-  envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base or the default branch
+  post-merge on a base known to be non-default) is deterministic too. A post-merge exit 4 for an
+  earlier run that a later one superseded (the PR body now names the later run) is an accepted
+  limit, reported as the ordinary failure it is (`step40Failed`, verdict `failed`) with no distinct
+  outcome word (#4817). It is reachable only when the superseded run is left unarchived, since the
+  reconciler never scans `archive/` and `dispatch resume` archives the prior run first, and it is
+  loud, not silent: nothing is closed or reopened for a PR the run cannot prove is its own. An
+  exit-0 `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base or the default branch
   could not be read, so Step 4.0 closed nothing and printed no closing set, #4549) is a failed read,
   so it is transient too; once its retries are spent its marker entry carries `step40Failed: true`.
   A `gh-failed` skip for one parent or record in Step 4.0b is that parent's, and the marker is

@@ -1288,6 +1288,8 @@ test('#4817 AC1.1 (no marker): a non-default-base body with no run-marker line i
   assert.equal(run(['--run', runDir, ...POST], h.deps), 4);
   assert.match(h.err.join(''), /body names run none, expected 2026-10-25T000001-record-4199/);
   assert.equal(h.closes().length, 0);
+  // The SKIP names both ids too: the reconciler discards stderr, so this line is the only trace.
+  assert.match(h.log(runDir), /condition: closing-links\.js exit 4 run marker mismatch \(body names run none, expected 2026-10-25T000001-record-4199\)/);
 });
 
 test('#4817 guard: a default-base post-merge does not check the marker — a foreign body still reopens a deferred record', () => {
@@ -1353,13 +1355,13 @@ const EXIT_SITES = [
     name: 'exit 4 run marker mismatch (pre-merge)', code: 4, mode: 'pre-merge',
     opts: { prReads: [preView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])] },
     stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
-    condition: 'exit 4 run marker mismatch',
+    condition: `exit 4 run marker mismatch (body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID})`,
   },
   {
     name: 'exit 4 run marker mismatch (post-merge, non-default base)', code: 4, mode: 'post-merge',
     opts: { prReads: [mergedView(body({ runId: FOREIGN_RUN_ID, span: FIXES_ONLY }), [], NON_DEFAULT)], issues: { 3997: [OPEN_ISSUE] } },
     stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
-    condition: 'exit 4 run marker mismatch',
+    condition: `exit 4 run marker mismatch (body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID})`,
   },
   {
     name: 'exit 5 pr view failed (pre-merge)', code: 5, mode: 'pre-merge',

@@ -236,12 +236,15 @@ function run(argv, overrides = {}) {
     return EXIT_GH_FAILURE;
   };
   // Exit 4: the PR body's first line must name this run. Null when it does;
-  // otherwise the stderr line, a SKIP, and the exit code to return.
+  // otherwise the stderr line, a SKIP, and the exit code to return. The SKIP
+  // names both run ids (the found one capped, it is PR-body text): the
+  // reconciler and post-merge-run.js discard stderr, so the decisions.md line
+  // is the only trace of whose PR this was (#4817).
   const refuseForeignPr = (text) => {
     const found = firstLineRunId(text);
     if (found === runId) return null;
     deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
-    unchecked('exit 4 run marker mismatch');
+    unchecked(`exit 4 run marker mismatch (body names run ${found ? found.slice(0, 80) : 'none'}, expected ${runId})`);
     return 4;
   };
 
@@ -386,11 +389,15 @@ function run(argv, overrides = {}) {
   const baseUnchecked = !base || !defaultBranch;
   const nonDefaultBase = !baseUnchecked && base !== defaultBranch;
 
-  // 7c. GitHub closes nothing on a non-default base, so this pass writes there:
-  // its reopens and the 9b closes. Prove the PR is this run's first, as 7a does
-  // (#4817). A default or unreadable base skips the proof: an unreadable base
-  // is usually a transient gh failure, and the reconciler reads exit 4 as
-  // deterministic.
+  // 7c. GitHub closes nothing on a non-default base, so this pass closes the
+  // Fixes records itself (9b) as well as reopening: prove the PR is this run's
+  // before either, as 7a does (#4817). The proof is scoped to that new write
+  // path, deliberately (the spec's Reading A): a default base keeps the step 8b
+  // reopens unproven (#4199), so the common path, the reconciler's late runs
+  // included, gains no new exit 4. An unreadable base is treated like the
+  // default one: it is usually a transient gh failure, and the reconciler
+  // reads exit 4 as deterministic. Do not widen the proof to those paths
+  // without that decision.
   if (nonDefaultBase) {
     const refused = refuseForeignPr(pr.body);
     if (refused !== null) return refused;
