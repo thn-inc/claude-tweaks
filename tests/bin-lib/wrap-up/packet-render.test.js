@@ -891,6 +891,22 @@ test('a plan line whose bearer URL carries a later URL is screened', () => {
   }
 });
 
+test('a command naming bare localhost, a bracketed IPv6 host or a signed scheme is refused at render, never shown', () => {
+  for (const command of [
+    `curl localhost/reset/${BEARER}`,
+    `curl [::1]:3000/reset/${BEARER}`,
+    `-https://h.example/${BEARER}`,
+    `+https://h.example/${BEARER}`,
+  ]) {
+    const { markdown } = render(
+      [fact('link:cmd', 'passed', { command })],
+      [claim('test-guide', 'Run', ['link:cmd'])],
+    );
+    assert.ok(markdown.includes('(link refused: credential in path segment)'), command);
+    assert.ok(!markdown.includes(BEARER), command);
+  }
+});
+
 test('the {id} form of that command renders', () => {
   const { markdown } = render(
     [fact('link:cmd', 'passed', { command: 'curl http://localhost:3000/reset/{id}' })],

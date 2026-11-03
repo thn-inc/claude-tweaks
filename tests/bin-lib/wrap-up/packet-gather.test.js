@@ -959,6 +959,19 @@ test('a command whose bearer URL carries a later URL is refused, never a fact', 
   }
 });
 
+test('a command naming bare localhost, a bracketed IPv6 host or a signed scheme is refused, never a fact', () => {
+  for (const command of [
+    'curl localhost/reset/Xk3j9f8s7d6f5g4h3j2k1',
+    'curl [::1]:3000/reset/Xk3j9f8s7d6f5g4h3j2k1',
+    '-https://h.example/Xk3j9f8s7d6f5g4h3j2k1',
+    '+https://h.example/Xk3j9f8s7d6f5g4h3j2k1',
+  ]) {
+    const result = gather({ links: [{ id: 'd', label: 'd', command }] });
+    assert.deepEqual(result.refused, [{ id: 'link:d', reason: 'credential in path segment' }], command);
+    assert.ok(!JSON.stringify(result).includes('Xk3j9f8s7d6f5g4h3j2k1'), command);
+  }
+});
+
 test('the {id} form of that command is a fact, and so is a bare route', () => {
   const placeholder = gather({ links: [{ id: 'd', label: 'd', command: `curl ${LOCAL}/reset/{id}` }] });
   assert.deepEqual(placeholder.refused, []);

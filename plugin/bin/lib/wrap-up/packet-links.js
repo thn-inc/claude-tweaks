@@ -185,10 +185,12 @@ function trimTrailing(text, isDropped) {
 }
 const isSlashOrSpace = (char) => char === '/' || /\s/.test(char);
 
-// A URL in free text: a scheme, `www.`, or a `host:port/`, starting a word. The repeats before the
-// tail are bounded, so a long word costs one bounded try. A bare path is no URL: a local run path
-// holds a dated slug, and the bearer rule does not bind it.
-const URL_TOKEN_RE = /(?<![a-z0-9.+-])(?:[a-z][a-z0-9+.-]{0,31}:\/\/|www\.|[a-z0-9.-]{1,253}:\d{1,5}(?=\/))[^\s"'`<>]*/gi;
+// A URL in free text: a scheme, `www.`, a `host:port/`, a bare `localhost/` or an `[::1]:port/`,
+// starting a word. A scheme may also follow a `-` or `+`, as in `-https://h/x`, so a dashed word
+// costs one try per dash; every repeat before the tail is bounded, so each try is too. A bare path
+// is no URL: a local run path holds a dated slug, and the bearer rule does not bind it, so a
+// `localhost` directory in one (`/tmp/localhost/x`) is not read as the host.
+const URL_TOKEN_RE = /(?:(?<![a-z0-9.])[a-z][a-z0-9+.-]{0,31}:\/\/|(?<![a-z0-9.+-])(?:www\.|(?<!\/)localhost(?=\/)|\[::1\]:\d{1,5}(?=\/)|[a-z0-9.-]{1,253}:\d{1,5}(?=\/)))[^\s"'`<>]*/gi;
 const LEADING_SCHEME_RE = /^[a-z][a-z0-9+.-]{0,31}:\/\//i;
 const QUERY_OR_FRAGMENT_RE = /[?#]/;
 const SENTENCE_CLOSERS = ').,;:!]}';

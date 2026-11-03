@@ -50,6 +50,17 @@ test('the URL-token scan stays linear on long adversarial input (#4612), and kee
     [`https://h/${')'.repeat(100000)}a`, false],
     ['https://h/a '.repeat(20000), false],
     [`${'https://h/a '.repeat(20000)}https://h/Xk3j9f8s7d6f5g4h3j2k1`, true],
+    // A scheme may now start after `-` or `+`, so a dashed word restarts once per dash, each try bounded.
+    ['a-'.repeat(100000), false],
+    ['a+'.repeat(100000), false],
+    ['-'.repeat(200000), false],
+    ['+'.repeat(200000), false],
+    [`${'a-'.repeat(100000)}https://h/Xk3j9f8s7d6f5g4h3j2k1`, true],
+    ['localhost'.repeat(20000), false],
+    ['localhost '.repeat(20000), false],
+    ['[::1]:'.repeat(30000), false],
+    ['[::1]:3000 '.repeat(20000), false],
+    [`https://h/a;${';'.repeat(200000)}`, false],
   ]) {
     const { value, ms } = timed(() => hasBearerUrl(input));
     assert.ok(ms < BUDGET_MS, `took ${ms.toFixed(0)} ms`);

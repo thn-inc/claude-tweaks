@@ -89,6 +89,34 @@ test('hasBearerUrl judges the token\'s own path when a URL sits later in the tok
   }
 });
 
+test('hasBearerUrl reads bare localhost, a bracketed IPv6 host and a signed scheme as URL tokens', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  for (const text of [
+    `curl localhost/reset/${bearer}`,
+    `LOCALHOST/${bearer}`,
+    `curl [::1]:3000/reset/${bearer}`,
+    `-https://h.example/${bearer}`,
+    `+https://h.example/${bearer}`,
+    `--https://h.example/${bearer}`,
+    `${'a-'.repeat(20)}https://h.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), true, text);
+  }
+  for (const text of [
+    'curl localhost/reset/{id}',
+    'curl [::1]:3000/reset/{id}',
+    '-https://h.example/a',
+    'localhost',
+    '/tmp/localhost/2026-11-02-acceptance-recording/w.gif',
+    'runs/localhost/2026-11-02-acceptance-recording/w.gif',
+    `my-localhost/${bearer}`,
+    `notlocalhost/${bearer}`,
+    `localhost.example/${bearer}`,
+  ]) {
+    assert.equal(hasBearerUrl(text), false, text);
+  }
+});
+
 test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
   assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });
