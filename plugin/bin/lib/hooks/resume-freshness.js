@@ -70,6 +70,11 @@ function checkResumeFreshness(runDir, opts = {}) {
 
   const worktree = typeof state.worktree === 'string' ? state.worktree : null;
   if (!worktree) return { safe: true, verdict: 'no-worktree' };
+  // `missing` here is path-guard's ENOENT/ENOTDIR only — do not simplify back to
+  // `fs.existsSync`, which also returns false on EACCES/ELOOP/EIO and would read an
+  // unreadable worktree path as `worktree-gone`, resuming an interrupted run over a
+  // possibly live one (#4435). An unreadable path falls through to `runLiveness`,
+  // whose `error` entry blocks as `indeterminate`.
   if (lstatType(worktree).type === 'missing') return { safe: true, verdict: 'worktree-gone' };
 
   // The worktree lock and last-commit answers come from run-liveness's

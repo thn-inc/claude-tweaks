@@ -367,7 +367,7 @@ When mechanizing a prose heuristic into a deterministic check:
     arm, classified by the thrown error's shape, and pin "main probe times out, precondition probe
     succeeds" with its own assertion (`tests/verify-run-bookends.test.js`'s
     `catFileTimeoutRevParseOk`).
-Items 17-26 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
+Items 17-27 live in `fix-shape-late-items.md` in this skill's directory, with their numbers
 kept. Read it when your case matches one of these:
 
 17. **A start/end snapshot guard sees only the window between its two reads, and each value it records has an unsafe direction.**
@@ -380,6 +380,7 @@ kept. Read it when your case matches one of these:
 24. **A composer's validator owes its reader's sentinels and delimiters too, not only its skip set (item 18).**
 25. **An unanchored extractor with a narrow character class truncates instead of failing, so an out-of-class input yields a confident wrong value, not "no match".**
 26. **A recogniser that must ignore a marker shown as code owes a rule the host format guarantees, not a home-made model of that format.**
+27. **A parse problem that hides content owes its own report, found by a second read under the relaxed reading and credited only to a cause the author can edit.**
 
 ## When to use
 
