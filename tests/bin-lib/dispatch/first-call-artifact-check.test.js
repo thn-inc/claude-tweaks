@@ -624,32 +624,36 @@ test('parseNextSteps: a flat value returns exactly { ok, steps }; its refusals a
 
 test('AC1.2: a real gauge handoff round-trips through the parse -- same steps per record, the same record-steps= token as its resume', async () => {
   const root = gitRepo();
-  const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
-  fs.mkdirSync(runDir, { recursive: true });
-  fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
-  assert.equal(manifestInit({ runDir, specs: [12, 34] }).ok, true);
-  const usage = { input_tokens: 2, cache_read_input_tokens: 249998, cache_creation_input_tokens: 0, output_tokens: 10 };
-  const transcript = path.join(root, 'agent-t.jsonl');
-  fs.writeFileSync(transcript, `${[
-    JSON.stringify({ type: 'user', timestamp: '2026-11-03T10:00:00.000Z', message: { role: 'user', content: 'dispatch prompt' } }),
-    JSON.stringify({ type: 'assistant', timestamp: '2026-11-03T10:01:00.000Z', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage } }),
-  ].join('\n')}\n`);
-  const err = [];
-  const code = await runGauge(['--run', runDir, '--transcript', transcript, '--record-steps', '#12:none;#34:build,test'], {
-    cwd: () => root, mainRoot: root, env: {}, now: () => NOW, stdout: () => {}, stderr: (s) => err.push(s),
-  });
-  assert.equal(code, 0, err.join(''));
-  const handoff = JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
-  const token = /(?:^| )(record-steps=\S+)/.exec(handoff.resume)[1];
+  try {
+    const runDir = path.join(root, '.claude-tweaks', 'pipelines', RUN_ID);
+    fs.mkdirSync(runDir, { recursive: true });
+    fs.writeFileSync(path.join(runDir, 'config.yml'), 'mode: auto\n');
+    assert.equal(manifestInit({ runDir, specs: [12, 34] }).ok, true);
+    const usage = { input_tokens: 2, cache_read_input_tokens: 249998, cache_creation_input_tokens: 0, output_tokens: 10 };
+    const transcript = path.join(root, 'agent-t.jsonl');
+    fs.writeFileSync(transcript, `${[
+      JSON.stringify({ type: 'user', timestamp: '2026-11-03T10:00:00.000Z', message: { role: 'user', content: 'dispatch prompt' } }),
+      JSON.stringify({ type: 'assistant', timestamp: '2026-11-03T10:01:00.000Z', message: { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'ok' }], stop_reason: 'end_turn', usage } }),
+    ].join('\n')}\n`);
+    const err = [];
+    const code = await runGauge(['--run', runDir, '--transcript', transcript, '--record-steps', '#12:none;#34:build,test'], {
+      cwd: () => root, mainRoot: root, env: {}, now: () => NOW, stdout: () => {}, stderr: (s) => err.push(s),
+    });
+    assert.equal(code, 0, err.join(''));
+    const handoff = JSON.parse(fs.readFileSync(path.join(runDir, 'handoff.json'), 'utf8'));
+    const token = /(?:^| )(record-steps=\S+)/.exec(handoff.resume)[1];
 
-  const parsed = parseNextSteps(handoffReply(`NEXT_STEPS: ${token.slice('record-steps='.length)}`), FIRST_CALL_STEPS, { targets: ['#12', '#34'] });
-  assert.deepEqual(parsed, {
-    ok: true,
-    steps: handoff.nextSteps,
-    recordSteps: { '#12': [], '#34': ['build', 'test'] },
-    stepArg: token,
-  });
-  assert.deepEqual(parsed.recordSteps, handoff.recordSteps);
+    const parsed = parseNextSteps(handoffReply(`NEXT_STEPS: ${token.slice('record-steps='.length)}`), FIRST_CALL_STEPS, { targets: ['#12', '#34'] });
+    assert.deepEqual(parsed, {
+      ok: true,
+      steps: handoff.nextSteps,
+      recordSteps: { '#12': [], '#34': ['build', 'test'] },
+      stepArg: token,
+    });
+    assert.deepEqual(parsed.recordSteps, handoff.recordSteps);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('parseNextSteps: a second call\'s per-record value parses under SECOND_CALL_STEPS and fails next-steps-invalid-step under FIRST_CALL_STEPS', () => {

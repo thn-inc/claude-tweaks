@@ -382,7 +382,10 @@ function replyLines(reply) {
 // `#N`) go to that grammar, a refusal returns as next-steps-{its reason}, and `steps` is the
 // union; `stepArg` is the `record-steps={canonical}` token a continuation passes to /flow. A
 // flat value under more than one target -> next-steps-flat-multi-record: it cannot say which
-// record each step belongs to. Absent `targets` checks neither.
+// record each step belongs to. Absent `targets` checks neither, by design: the parse has no
+// code caller (two-call-gate.md section 8, run by the dispatching agent, is its only one), so
+// a required argument would enforce nothing; section 8 instead has every group, a
+// single-record one included, pass its records, and a flat value with one target stays flat.
 function parseNextSteps(reply, allowed = FLOW_STEPS, { targets = null } = {}) {
   const line = replyLines(reply).map((l) => NEXT_STEPS_LINE_RE.exec(l)).find(Boolean);
   if (!line) return fail('next-steps-missing', 'handoff without NEXT_STEPS');

@@ -78,7 +78,7 @@ const { formatEntry, appendEntry } = require('./lib/log-decision/append');
 const ctxLib = require('./lib/hooks/context');
 const { FLOW_STEPS } = require('./lib/claim-targets/claim-targets');
 const {
-  CONTEXT_CAP_TOKENS, findAgentTranscript, gauge, resolveTargetRecords, manifestRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
+  CONTEXT_CAP_TOKENS, findAgentTranscript, gauge, resolveTargetRecords, manifestRecords, settledRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
 } = require('./lib/timing/context-gauge');
 const { parseRecordSteps } = require('./lib/flow/record-steps');
 const { readRunMode } = require('./lib/flow/run-mode');
@@ -133,6 +133,7 @@ const realDeps = {
   gauge,
   resolveTargetRecords,
   manifestRecords: (runDir) => manifestRecords(runDir),
+  settledRecords: (runDir) => settledRecords(runDir),
   readRunMode: (runDir) => readRunMode(runDir),
   readHandoffCount: (runDir) => readHandoffCount(runDir),
   writeFile: (p, text) => writeFileAtomic(p, text),
@@ -213,6 +214,13 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
       const named = parsedRecordSteps.records;
       if (named.length !== listed.length || !named.every((r) => listed.includes(r))) {
         return done(`handoff.json not written: --record-steps names ${named.join(', ')} but manifest.yml lists ${listed.join(', ')}: continue in place`);
+      }
+      // A record the manifest marks settled has no step left; a value that gives it one would re-run
+      // a completed step on resume, so it is refused here (the same fail-open refusal as above).
+      const settled = deps.settledRecords(runDir) || [];
+      const rerun = named.filter((r) => settled.includes(r) && parsedRecordSteps.recordSteps[r].length > 0);
+      if (rerun.length) {
+        return done(`handoff.json not written: --record-steps gives steps to ${rerun.join(', ')} but manifest.yml marks ${rerun.length === 1 ? 'it' : 'them'} complete, failed or not-run (write ${rerun.length === 1 ? 'it' : 'them'} as none): continue in place`);
       }
       targets = listed;
       recordSteps = Object.fromEntries(listed.map((r) => [r, parsedRecordSteps.recordSteps[r]]));

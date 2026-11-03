@@ -100,8 +100,8 @@ function bundleContinuationGaps({ firstTemplate, secondTemplate, continuationDoc
     gaps.push('template: the bundle invocation line does not hold the token');
   }
   const c = squash(continuationDoc);
-  if (!c.includes('record-steps={NEXT_STEPS}')) gaps.push('continuation: no record-steps={NEXT_STEPS}');
-  if (!/`stepArg`/.test(c)) gaps.push('continuation: no stepArg');
+  if (c.includes('record-steps={NEXT_STEPS}')) gaps.push('continuation: substitutes the raw record-steps={NEXT_STEPS}, not the canonical stepArg');
+  if (!/take the parse's `stepArg`/.test(c)) gaps.push('continuation: no stepArg');
   if (!/targets unchanged/.test(c)) gaps.push('continuation: targets not held unchanged');
   const s = section8(gateDoc);
   const item1 = s.slice(s.indexOf('1. **Read `NEXT_STEPS`.**'), s.indexOf('2. **Continue.**'));
@@ -133,7 +133,7 @@ test('bundleContinuationGaps goes red on each piece a bundle continuation depend
     ['secondTemplate', (t) => `${t}\nfallback step list: review,polish,wrap-up\n`, /review,polish,wrap-up step list survives/],
     ['secondTemplate', (t) => t.replace('review,polish,wrap-up auto', 'review,polish,wrap-up  auto'), /both invocation lines/],
     ['secondTemplate', (t) => t.split(BUNDLE_LINE).join('/claude-tweaks:flow #{issue}'), /second template: the bundle invocation line/],
-    ['continuationDoc', (t) => t.split('record-steps={NEXT_STEPS}').join('{NEXT_STEPS}'), /no record-steps=/],
+    ['continuationDoc', (t) => t.split('the parse\'s `stepArg`').join('`record-steps={NEXT_STEPS}`'), /raw record-steps=/],
     ['continuationDoc', (t) => t.split('`stepArg`').join('value'), /continuation: no stepArg/],
     ['continuationDoc', (t) => t.split('targets unchanged').join('targets recomputed'), /targets not held/],
     ['gateDoc', (t) => t.split('`{ targets }`').join('the records'), /no \{ targets \}/],

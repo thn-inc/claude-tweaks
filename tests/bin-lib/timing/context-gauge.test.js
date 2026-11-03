@@ -5,9 +5,9 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const {
-  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords, manifestRecords,
+  CONTEXT_CAP_TOKENS, CALLER_TAIL_BYTES, findAgentTranscript, hasInFlightGaugeCall, gauge, resolveTargetRecords, manifestRecords, settledRecords,
 } = require('../../../plugin/bin/lib/timing/context-gauge');
-const { manifestInit } = require('../../../plugin/bin/lib/flow/manifest');
+const { manifestInit, transitionSpec } = require('../../../plugin/bin/lib/flow/manifest');
 const { slugForCwd } = require('../../../plugin/bin/lib/timing/transcript');
 const { run } = require('../../../plugin/bin/context-gauge');
 const { gitRepo, harnessWorktreeOf } = require('../../helpers/git-fixtures');
@@ -568,6 +568,8 @@ test('CLI: malformed invocations exit 2 and write nothing', async () => {
     ['--run', fx.runDir, '--transcript'],
     ['--run', fx.runDir, '--bogus', 'x'],
     ['--run', fx.runDir, 'constructor'],
+    // With a value after it, only the own-property guard refuses an inherited key.
+    ['--run', fx.runDir, 'constructor', 'x'],
     ['--run', path.join(fx.runDir, 'nope')],
     ['--run', path.join(fx.root, '.claude-tweaks')],
   ];
@@ -644,6 +646,42 @@ test('CLI: --record-steps disagreeing with the manifest writes nothing — over:
     assert.match(c.json().reason, /^handoff\.json not written: --record-steps names /, value);
     assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), value);
   }
+});
+
+// A record whose manifest.yml status is complete, failed or not-run has no step left, so a value that
+// gives it one would re-run a completed step on resume (the #4358 AC1 guarantee): refused, fail-open.
+test('CLI: --record-steps giving a settled record a step writes nothing; pending and running records keep theirs', async () => {
+  const t = transcriptAt(tmp('ct-gauge-cli-'), 250000);
+  for (const status of ['complete', 'failed', 'not-run']) {
+    const fx = multiRun();
+    assert.strictEqual(transitionSpec({ runDir: fx.runDir, specId: 12, status, phase: 'wrap-up' }).ok, true);
+    const c = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', '#12:build;#34:test'], c.deps), 0, status);
+    assert.strictEqual(c.json().over, true, status);
+    assert.strictEqual(c.json().handoff, null, status);
+    assert.match(c.json().reason, /^handoff\.json not written: --record-steps gives steps to #12 but manifest\.yml marks it complete, failed or not-run \(write it as none\): continue in place$/, status);
+    assert.ok(!fs.readdirSync(fx.runDir).includes('handoff.json'), status);
+    // Written as none, the same settled record hands off.
+    const ok = cli(fx);
+    assert.strictEqual(await run(['--run', fx.runDir, '--transcript', t, '--record-steps', RECORD_STEPS], ok.deps), 0, status);
+    assert.strictEqual(ok.json().handoff, path.join(fx.runDir, 'handoff.json'), status);
+  }
+  // A running record (and a pending one) still takes steps.
+  const live = multiRun();
+  assert.strictEqual(transitionSpec({ runDir: live.runDir, specId: 12, status: 'running', phase: 'review' }).ok, true);
+  const c = cli(live);
+  assert.strictEqual(await run(['--run', live.runDir, '--transcript', t, '--record-steps', '#12:review,polish;#34:build,test'], c.deps), 0);
+  assert.strictEqual(c.json().handoff, path.join(live.runDir, 'handoff.json'));
+});
+
+test('settledRecords: the manifest\'s complete, failed and not-run records; [] when none; null when absent or listing none', () => {
+  const fx = runFixture({ spec: 'none' });
+  assert.strictEqual(settledRecords(fx.runDir), null, 'no manifest.yml');
+  const specs = [{ id: 1, status: 'complete' }, { id: 2, status: 'failed' }, { id: 3, status: 'not-run' }, { id: 4, status: 'pending' }, { id: 5, status: 'running' }];
+  assert.deepStrictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs } } }), ['#1', '#2', '#3']);
+  assert.deepStrictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: specs.slice(3) } } }), []);
+  assert.strictEqual(settledRecords(fx.runDir, { manifest: null }), null);
+  assert.strictEqual(settledRecords(fx.runDir, { manifest: { multispec: { parent: 'x', specs: [] } } }), null);
 });
 
 test('CLI: --record-steps with no manifest writes nothing, even with every spec dir on disk', async () => {

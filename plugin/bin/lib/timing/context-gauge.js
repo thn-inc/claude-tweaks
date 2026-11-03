@@ -325,6 +325,21 @@ function manifestRecords(runDir, { manifest } = {}) {
   return specs.length ? [...new Set(specs.map((s) => `#${s.id}`))] : null;
 }
 
+// The manifest statuses after which a record has no step left to resume (flow/multi-spec.md's
+// Context cap section writes such a record as `none`): a finished spec, a failed one under
+// keep-going, one the run never started. `pending` and `running` still hold steps.
+const SETTLED_STATUSES = new Set(['complete', 'failed', 'not-run']);
+
+// (runDir, { manifest? }) -> ['#N', ...] the records whose manifest.yml status is settled
+// (SETTLED_STATUSES); [] when none is, null when the file is absent or lists none. The gauge uses it
+// to refuse a --record-steps value that hands a settled record a step: a resume re-running a
+// completed step is the failure the per-record form exists to prevent (#4358 AC1).
+function settledRecords(runDir, { manifest } = {}) {
+  const m = manifest === undefined ? readManifest(runDir) : manifest;
+  const specs = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs : [];
+  return specs.length ? [...new Set(specs.filter((s) => SETTLED_STATUSES.has(s.status)).map((s) => `#${s.id}`))] : null;
+}
+
 // The resume line's mode token: auto, confirm and hybrid all run as auto once
 // the Manifesto is past, so they resume as auto; interactive, an unknown
 // value, or no recorded mode resumes with no token, so an interactive run
@@ -381,5 +396,5 @@ function buildHandoff({ runDir, nextSteps, contextTokens, cap, targets, mode = n
 
 module.exports = {
   CONTEXT_CAP_TOKENS, FIRST_USER_SCAN_BYTES, CALLER_TAIL_BYTES, GAUGE_TAIL_BYTES, firstUserText, hasInFlightGaugeCall, findAgentTranscript, gauge,
-  resolveTargetRecords, manifestRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
+  resolveTargetRecords, manifestRecords, settledRecords, buildHandoff, HANDOFF_BOUND, readHandoffCount,
 };

@@ -149,6 +149,9 @@ const MALFORMED = [
   ['a flag in the value\'s place', ['--value', '--targets', '#1']],
   ['an unknown flag', ['--value', '#1:test', '--nope']],
   ['an inherited key as a flag', ['--value', '#1:test', 'constructor']],
+  // With a value after it, only the own-property guard stops it: a bare `in` lookup finds the
+  // inherited constructor, and the pair would parse as a valid flag.
+  ['an inherited key as a flag, with a value after it', ['--value', '#1:test', 'constructor', 'x']],
   ['no --value', []],
   ['a trailing bare --targets', ['--value', '#1:test', '--targets']],
   ['an empty --targets', ['--value', '#1:test', '--targets', '']],

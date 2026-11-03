@@ -3,6 +3,7 @@ files:
   - plugin/bin/context-gauge.js
   - plugin/bin/lib/timing/context-gauge.js
   - plugin/bin/lib/flow/record-steps.js
+  - plugin/bin/record-steps.js
   - plugin/skills/flow/SKILL.md
   - plugin/skills/flow/context-handoff.md
   - plugin/skills/flow/multi-spec.md
