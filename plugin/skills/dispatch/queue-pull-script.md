@@ -9,6 +9,8 @@ Referenced by `skills/dispatch/SKILL.md` Step 2. Run this verbatim — it produc
 - `reason: 'open-pr'` (`detail: {pr}`, #1224) — every remaining candidate already covered by an open, unmerged PR that will close it (GitHub's own `closedByPullRequestsReferences` connection, a closing keyword in the PR body), via `record.js`'s `partitionByOpenLinkedPR`. Unlike the blocked-by pass above, this one runs unconditionally, independent of `work-links`, and unlike the cross-PR overlap report below it DOES remove excluded candidates from `dispatch-groups.json` before any selection form reads it — a record with an in-flight PR is not a warning, it is not re-dispatch-eligible at all.
 - `reason: 'target-missing'` (`detail: {path}`, #1983) — every remaining candidate whose `namedTarget` (`bin/lib/issues/named-target.js` — today, `by:docs-health` records only) names a file no longer present at the integration tip — a docs-health-filed ledger correction whose target a since-merged tidy sweep already deleted. This one DOES remove excluded candidates from `dispatch-groups.json` too, the same as the open-PR pass: such a record's own Acceptance Criteria is unsatisfiable, so re-dispatching it only burns a build attempt against the retry ceiling for nothing. Also stages one Close proposal in this firing's own run directory (`tidy`'s Close (GitHub) shape) so the next `tidy --approve` closes the record — nothing is written to GitHub by dispatch itself. SKILL.md Step 3's Blocked-exclusion report reads this reason too, under the same non-silent convention.
 - `reason: 'shipped'` (`detail: {pr, signals}`, #1984) — every remaining candidate a merged PR's `strong`-tier mention already ships (see the False-positive posture note in `SKILL.md`). Also stages one Close proposal, exactly like the `target-missing` pass above. A mention from a PR opened before the record was created never counts (#4314).
+- `reason: 'unlanded-blocker'` (`detail: {blockers: [{blocker, commit}]}`, #4792) — every remaining candidate with an out-of-run blocker that `preflight-records.js --blocker-landing` judges `unlanded` (closed, its closing commit not on `origin/{integration-branch}`), the verdict `/flow` Step 2.7b stops on before claiming. This one DOES remove excluded candidates from `dispatch-groups.json`, with no `#N`/`#N,#M,...` bypass, and the record is eligible again on the first pull after its blocker lands. `bin/dispatch-unlanded-blockers.js` runs the pass and fails open: an `undetermined` verdict keeps the candidate, and a failed `preflight-records.js` call excludes no `unlanded-blocker` record.
+- `reason: 'malformed-blocker'` (`detail: {cause}`, #4792) — every remaining candidate whose blocker declaration that pass cannot check, because it would fail the pass's `preflight-records.js` call for the whole pull or names no issue that can exist: a `Blocked by` line naming no valid issue number (`#0`, or above 2147483647, under every `work-links` value), no entry in the native dependency response, or a record the call cannot read. Removed the same way, with no bypass, and eligible again on the first pull after its blocker declaration can be checked; every other candidate is still checked.
 
 One further reason, `firing`, is never written by this script — it is appended incrementally by `SKILL.md`'s Loop between successive re-runs of this script within one firing (`firing-exclusion.md`), which is exactly why this script's own truncation step preserves it rather than dropping it.
 
@@ -298,24 +300,7 @@ NODE_EVAL_EOF
 
 fi
 
-# #2829: not-spec-shaped exclusion. Runs unconditionally, right after
-# grouping/bundling completes (both the cache-hit and cache-miss branches
-# above leave $DISPATCH_GROUPS populated by this point) and before every
-# gh-backed probe below -- a candidate whose cached body fails /flow's
-# Materialization hard gate (shapeGate) would otherwise be claimed and
-# handed to /flow, where it fails mid-build: the failure counts against
-# dispatch-retry-ceiling, and a correctness-classified failure makes Settle
-# revoke auto:merge (#2786's evidence). No gh/network call -- shapeGate is
-# pure, run here against the body already fetched into $DISPATCH_GROUPS.
-# Placed ahead of the #1224 open-PR pass below and the #1984 shipped-
-# candidate classification further below so an excluded candidate costs
-# neither pass's gh calls (the open-PR pass's batched GraphQL call, the
-# shipped pass's up-to-5 live `gh pr view` calls) and never gets a staged
-# Close proposal from the shipped pass. Like the open-pr/target-missing/
-# shipped passes below (and unlike oversized), this removes the excluded
-# candidate from $DISPATCH_GROUPS unconditionally, with no #N/#N,#M,...
-# bypass -- the exclusion is computed once here, before any selection form
-# reads $DISPATCH_GROUPS.
+# #2829: not-spec-shaped exclusion. Why here, and why no #N bypass: queue-pull-notes.md.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_EXCLUSIONS" > "${DISPATCH_GROUPS}.tmp" 2>"$DISPATCH_SHAPE_GATE_ERR" <<NODE_EVAL_EOF
   const { shapeGate } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/materialize-format.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -346,20 +331,7 @@ else
   echo "Warning: not-spec-shaped pass skipped — $(cat "$DISPATCH_SHAPE_GATE_ERR")" >&2
 fi
 
-# #1224: open-linked-PR exclusion. Runs unconditionally (both the cache-hit
-# and cache-miss branches above leave $DISPATCH_GROUPS populated) and
-# independent of $WORK_LINKS -- unlike the native blocked-by check gated
-# above, PR linkage isn't a dependency-tracking policy choice, and unlike
-# the queue-order cache (#1571) a PR opening/closing after the cache was
-# written is exactly the kind of transient state the freshness signal
-# (built from auto:build issues' own updatedAt/state) never observes, so
-# skipping this on a cache hit would silently reintroduce the bug this
-# record exists to fix. One batched aliased GraphQL call across every
-# candidate still in $DISPATCH_GROUPS (post blocked-by/native/oversized/
-# not-spec-shaped filtering -- there is no point checking a candidate
-# already excluded for another reason), via bin/resolve-linked-prs.js
-# (record.js's buildLinkedPRQuery + bin/lib/issues/linked-prs.js's
-# fetchLinkedPRs).
+# #1224: open-linked-PR exclusion. Why it runs unconditionally: queue-pull-notes.md.
 DISPATCH_GROUP_NUMS=$(node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" <<NODE_EVAL_EOF
   const groups = require(process.argv[1]);
   console.log(groups.flat().map((i) => i.number).join(','))
@@ -405,15 +377,7 @@ else
   echo "Warning: open-linked-PR filtering failed — dispatch-groups.json left unfiltered for this exclusion this run: $(cat "$DISPATCH_LINKED_PRS_ERR")" >&2
 fi
 
-# #1983: named-target existence exclusion. Runs unconditionally, right after
-# the open-linked-PR exclusion above and before the (read-only) cross-PR
-# overlap report below -- a record whose named target no longer exists at
-# the integration tip is not merely unlikely to build, its Acceptance
-# Criteria is unsatisfiable by construction (the observed shape: a
-# by:docs-health ledger correction whose flagged doc a since-merged tidy
-# sweep already deleted). Checked at the integration tip, not the working
-# tree (materialize.md's Named-location drift note) -- a worktree session's
-# tree may lag, and a dirty tree must not hide a deletion.
+# #1983: named-target existence exclusion. Why at the integration tip: queue-pull-notes.md.
 DISPATCH_STANDALONE_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug "dispatch-standalone")
 # {integration-branch} resolution follows _shared/integration-branch.md's ladder
 # rank 3 (policy.yml) with a rank-6 git-remote fallback (this call site has no
@@ -612,6 +576,15 @@ if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
 NODE_EVAL_EOF
     node "${CLAUDE_PLUGIN_ROOT}/bin/stage-item.js" --run "$DISPATCH_FIRING_RUN_DIR" --id "shipped-close-$NUM" --file "$FILE" >/dev/null || true
   done
+fi
+
+# #4792: unlanded-blocker and malformed-blocker exclusions. Why here, and why it fails open: queue-pull-notes.md.
+if node "${CLAUDE_PLUGIN_ROOT}/bin/dispatch-unlanded-blockers.js" --groups "$DISPATCH_GROUPS" --exclusions "$DISPATCH_EXCLUSIONS" --integration-branch "$INTEGRATION_BRANCH" --work-links "$WORK_LINKS" > "${DISPATCH_GROUPS}.tmp"; then
+  mv "${DISPATCH_GROUPS}.tmp" "$DISPATCH_GROUPS"
+else
+  rm -f "${DISPATCH_GROUPS}.tmp"
+  echo "dispatch: queue-pull stopped -- unlanded-blocker exclusion pass failed; see error above." >&2
+  exit 1
 fi
 
 # #3278: neighbour-in-flight pass. Neighbour: a linking Key File or a strong

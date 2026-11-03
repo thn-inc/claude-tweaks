@@ -11,6 +11,7 @@ files:
   - plugin/bin/lib/issues/shipped-candidate.js
   - plugin/bin/lib/issues/linked-prs.js
   - plugin/bin/dispatch-resume.js
+  - plugin/bin/dispatch-unlanded-blockers.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -18,7 +19,7 @@ files:
 **Persona:** a maintainer who has just shaped or captured a record, runs `/claude-tweaks:dispatch #N` (or a `#N,#M` list) to build it now, and needs to know what to fix when it doesn't start.
 **Goal:** see the actual reason a named record was excluded from this firing, with the command that fixes it, instead of a wrong reason or silence.
 **Entry point:** `/claude-tweaks:dispatch #N` or `/claude-tweaks:dispatch #N,#M` naming a record that carries `auto:build` and no `bot:*` label.
-**Success state:** the record is reported by the exclusion reason the queue pull actually recorded — `not-spec-shaped` with its `/claude-tweaks:specify #N` (or `/claude-tweaks:tidy` for a missing Release Note only) remedy, `blocked` with its open blocker(s), `open-pr` with the PR number, `target-missing`, or `shipped` — and, in the list form, every other named record still proceeds.
+**Success state:** the record is reported by the exclusion reason the queue pull actually recorded — `not-spec-shaped` with its `/claude-tweaks:specify #N` (or `/claude-tweaks:tidy` for a missing Release Note only) remedy, `blocked` with its open blocker(s), `open-pr` with the PR number, `target-missing`, `shipped`, `unlanded-blocker` with the blocker and closing commit that never landed, or `malformed-blocker` with the cause — and, in the list form, every other named record still proceeds.
 
 ## Steps
 
@@ -26,7 +27,7 @@ files:
 - **URL:** `plugin/skills/dispatch/SKILL.md` Step 3, `#N` / `#N[,#M,#O...]` bullets
 - **Action:** Run `/claude-tweaks:dispatch #N`. The label checks pass (it has `auto:build`, no `bot:*`), but the queue pull already dropped it from `dispatch-groups.json` before any selection form read that file.
 - **Should feel:** Direct — the maintainer named one record and gets one answer about that record.
-- **Should understand:** A record can carry every grant and still be ineligible this firing: the queue pull removes candidates for five reasons (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`) unconditionally, and naming the record does not bypass any of them.
+- **Should understand:** A record can carry every grant and still be ineligible this firing: the queue pull removes candidates for seven reasons (`blocked`, `open-pr`, `not-spec-shaped`, `target-missing`, `shipped`, `unlanded-blocker`, `malformed-blocker`) unconditionally, and naming the record does not bypass any of them.
 - **Red flags:** Dispatch proceeding to claim a record the queue pull excluded; a generic "not found" with no reason.
 
 ### 2. Read the reason by name
@@ -73,3 +74,4 @@ files:
 - Updated during build of #3278: Step 2c covers the non-removing `neighbour-in-flight` reason. `#N` prints the waits line and still dispatches. `neighbour-in-flight-report.md` added to `files:`
 - Updated during build of #4314: Step 2d covers a follow-up record filed during a PR's build, which is no longer read as `shipped` by that PR. `shipped-candidate.js` and `linked-prs.js` added to `files:`
 - Updated during wrap-up of #4588: Step 2 names the open-PR line's `dispatch resume` suffix, appended only when `dispatch-resume.js` exits 0. `dispatch-resume.js` added to `files:`
+- Updated during build of #4792: names `unlanded-blocker` (a closed out-of-run blocker whose closing commit never reached the integration branch) and `malformed-blocker` (a blocker declaration that cannot be checked), the sixth and seventh removing exclusions, in Step 1 and the Success state; `dispatch-unlanded-blockers.js` added to `files:`
