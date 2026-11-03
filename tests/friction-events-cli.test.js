@@ -15,13 +15,21 @@ const { run, readEvents } = require('../plugin/bin/friction-events');
 const { formatEntry, appendEntry } = require('../plugin/bin/lib/log-decision/append');
 const { fixtureGit, FIXTURE_TIMEOUT_MS } = require('./helpers/git-fixtures');
 
+// The CLI resolves --run and --worktree, so the fakes' keys and the expected
+// values are resolved the same way. Sibling run dirs come back from the fakes
+// verbatim and stay literal. deps.cwd() is passed through verbatim, so
+// '/wt/current' stays literal; the #4704 fakes return MAIN from it so one value
+// stands for the main checkout.
+const PRIMARY = path.resolve('/run/primary');
+const MAIN = path.resolve('/main');
+
 function fakeDeps(overrides = {}) {
   const calls = { findRunsByWorktreePath: [], findAdHocRunsBySessionId: [], repoInfo: [], stdout: [], stderr: [] };
   return {
     calls,
     isDirectory: () => true,
     cwd: () => '/wt/current',
-    readEvents: (runDir, source) => (runDir === '/run/primary' ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
+    readEvents: (runDir, source) => (runDir === PRIMARY ? [{ type: 'gate-denial', ts: 't1', _tag: 'primary-fixture' }] : []),
     findRunsByWorktreePath: (cwd, target, excludeDir) => { calls.findRunsByWorktreePath.push({ cwd, target, excludeDir }); return []; },
     sessionId: () => null,
     repoInfo: (p) => { calls.repoInfo.push(p); return { repoRoot: '/wt/current', isLinkedWorktree: true, indeterminate: false }; },
@@ -75,13 +83,13 @@ test('defaults --worktree to deps.cwd() when omitted', () => {
 test('an explicit --worktree overrides deps.cwd()', () => {
   const deps = fakeDeps();
   run(['--run', '/run/primary', '--worktree', '/wt/explicit'], deps);
-  assert.equal(deps.calls.findRunsByWorktreePath[0].target, '/wt/explicit');
+  assert.equal(deps.calls.findRunsByWorktreePath[0].target, path.resolve('/wt/explicit'));
 });
 
 test('excludes the primary run dir from the sibling lookup', () => {
   const deps = fakeDeps();
   run(['--run', '/run/primary'], deps);
-  assert.equal(deps.calls.findRunsByWorktreePath[0].excludeDir, '/run/primary');
+  assert.equal(deps.calls.findRunsByWorktreePath[0].excludeDir, PRIMARY);
 });
 
 // --- output shape ------------------------------------------------------
@@ -106,7 +114,7 @@ test('no primary events and no siblings — empty JSON array, not an error', () 
 test('unions sibling (ad-hoc) run events with the primary run\'s, tagged _source adhoc', () => {
   const deps = fakeDeps({
     findRunsByWorktreePath: () => [{ runDir: '/run/adhoc-1', state: { worktree: '/wt/current' } }],
-    readEvents: (runDir, source) => (runDir === '/run/primary'
+    readEvents: (runDir, source) => (runDir === PRIMARY
       ? [{ type: 'gate-denial', ts: 't1', _source: source }]
       : runDir === '/run/adhoc-1' ? [{ type: 'wd-deny', ts: 't0', _source: source }] : []),
   });
@@ -489,7 +497,7 @@ test('session id defaults to deps.sessionId() (CLAUDE_CODE_SESSION_ID) and exclu
   const deps = fakeDeps({ sessionId: () => 'S-env' });
   run(['--run', '/run/primary'], deps);
   assert.deepStrictEqual(deps.calls.findAdHocRunsBySessionId.map((c) => c.sessionId), ['S-env']);
-  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, '/run/primary');
+  assert.strictEqual(deps.calls.findAdHocRunsBySessionId[0].excludeDir, PRIMARY);
 });
 
 test('no session id at all: the session lookup is not attempted', () => {
@@ -524,27 +532,27 @@ test('an ad-hoc dir found by BOTH the worktree and the session lookup is read on
 const MINE = '/run/2026-10-31T100000-adhoc-standalone';
 const OTHER = '/run/2026-10-31T110000-adhoc-standalone';
 const FORMAL = '/run/2026-10-31T120000-spec-9';
-const MAIN_CHECKOUT = { repoRoot: '/main', isLinkedWorktree: false, indeterminate: false };
+const MAIN_CHECKOUT = { repoRoot: MAIN, isLinkedWorktree: false, indeterminate: false };
 const fixtureEvents = (runDir) => ([MINE, OTHER, FORMAL].includes(runDir)
   ? [{ type: 'wd-deny', ts: 't0', _runDir: runDir }]
-  : (runDir === '/run/primary' ? [{ type: 'gate-denial', ts: 't1', _runDir: runDir }] : []));
+  : (runDir === PRIMARY ? [{ type: 'gate-denial', ts: 't1', _runDir: runDir }] : []));
 const pathSiblings = () => [
-  { runDir: MINE, state: { worktree: '/main', sessionId: 'S1' } },
-  { runDir: OTHER, state: { worktree: '/main', sessionId: 'S2' } },
-  { runDir: FORMAL, state: { worktree: '/main', sessionId: 'S1' } },
+  { runDir: MINE, state: { worktree: MAIN, sessionId: 'S1' } },
+  { runDir: OTHER, state: { worktree: MAIN, sessionId: 'S2' } },
+  { runDir: FORMAL, state: { worktree: MAIN, sessionId: 'S1' } },
 ];
 
 test('#4704: from the main checkout only this session\'s ad-hoc dirs are unioned by path', () => {
   const deps = fakeDeps({
     repoInfo: (p) => { deps.calls.repoInfo.push(p); return MAIN_CHECKOUT; },
-    cwd: () => '/main',
+    cwd: () => MAIN,
     readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
     findRunsByWorktreePath: pathSiblings,
   });
   assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1'], deps), 0);
   const out = JSON.parse(deps.calls.stdout.join(''));
   assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
-  assert.deepStrictEqual(deps.calls.repoInfo, ['/main']);
+  assert.deepStrictEqual(deps.calls.repoInfo, [MAIN]);
 });
 
 test('#4704: a linked worktree still unions another session\'s ad-hoc dir by path (#2783/#1333)', () => {
@@ -562,28 +570,28 @@ test('#4704: a linked worktree still unions another session\'s ad-hoc dir by pat
 test('#4704: from the main checkout with no session id, no path sibling is unioned', () => {
   const deps = fakeDeps({
     repoInfo: () => MAIN_CHECKOUT,
-    cwd: () => '/main',
+    cwd: () => MAIN,
     readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
     // An ad-hoc dir stamped with no session id: with no session id on this side
     // either, `null === null` would match it were it not for the "session id is set" clause.
-    findRunsByWorktreePath: () => [{ runDir: MINE, state: { worktree: '/main', sessionId: null } }],
+    findRunsByWorktreePath: () => [{ runDir: MINE, state: { worktree: MAIN, sessionId: null } }],
   });
   assert.strictEqual(run(['--run', '/run/primary'], deps), 0);
   const out = JSON.parse(deps.calls.stdout.join(''));
-  assert.deepStrictEqual(out.map((e) => e._runDir), ['/run/primary']);
+  assert.deepStrictEqual(out.map((e) => e._runDir), [PRIMARY]);
   assert.ok(!out.some((e) => e._source === 'adhoc'));
 });
 
 test('#4704: from the main checkout with no session id, the skipped path sibling is named on stderr; with a session id it is not', () => {
   const mainCheckoutDeps = () => fakeDeps({
     repoInfo: () => MAIN_CHECKOUT,
-    cwd: () => '/main',
+    cwd: () => MAIN,
     readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
     findRunsByWorktreePath: pathSiblings,
   });
   const noSession = mainCheckoutDeps();
   assert.strictEqual(run(['--run', '/run/primary'], noSession), 0);
-  assert.deepStrictEqual(JSON.parse(noSession.calls.stdout.join('')).map((e) => e._runDir), ['/run/primary']);
+  assert.deepStrictEqual(JSON.parse(noSession.calls.stdout.join('')).map((e) => e._runDir), [PRIMARY]);
   assert.match(noSession.calls.stderr.join(''), /^friction-events\.js: main-checkout ad-hoc run dirs skipped .*no session id resolvable.*--session.*CLAUDE_CODE_SESSION_ID\)\n$/);
 
   const withSession = mainCheckoutDeps();
@@ -607,7 +615,7 @@ test('#4704: an indeterminate repoInfo keeps the path-only union', () => {
 function otherSessionUnioned(overrides, extraArgv = []) {
   const deps = fakeDeps({
     readEvents: (runDir, source) => (runDir === OTHER ? [{ type: 'wd-deny', ts: 't0', _source: source, _runDir: runDir }] : []),
-    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: '/main', sessionId: 'S2' } }],
+    findRunsByWorktreePath: () => [{ runDir: OTHER, state: { worktree: MAIN, sessionId: 'S2' } }],
     ...overrides,
   });
   assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', ...extraArgv], deps), 0);
@@ -637,19 +645,19 @@ test('#4704: a --worktree that is not the main checkout\'s root keeps the path-o
 
 test('#4704: a worktree path that does not resolve (realpath fails) keeps the path-only union', () => {
   assert.deepStrictEqual(
-    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT, realpath: () => null }, ['--worktree', '/main']),
+    otherSessionUnioned({ repoInfo: () => MAIN_CHECKOUT, realpath: () => null }, ['--worktree', MAIN]),
     [OTHER],
   );
 });
 
 test('#4704: repoRoot and the worktree path are compared through the same canonicalizer (case-folding fake: /Main vs /main is the main checkout)', () => {
   const deps = fakeDeps({
-    repoInfo: () => ({ repoRoot: '/Main', isLinkedWorktree: false, indeterminate: false }),
+    repoInfo: () => ({ repoRoot: path.resolve('/Main'), isLinkedWorktree: false, indeterminate: false }),
     realpath: (p) => (p ? p.toLowerCase() : null),
     readEvents: (runDir, source) => fixtureEvents(runDir).map((e) => ({ ...e, _source: source })),
     findRunsByWorktreePath: pathSiblings,
   });
-  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', '--worktree', '/main'], deps), 0);
+  assert.strictEqual(run(['--run', '/run/primary', '--session', 'S1', '--worktree', MAIN], deps), 0);
   const out = JSON.parse(deps.calls.stdout.join(''));
   assert.deepStrictEqual(out.filter((e) => e._source === 'adhoc').map((e) => e._runDir), [MINE]);
 });
