@@ -29,7 +29,9 @@
 // resolve but still prints the partial data, so when every error (thrown or
 // on exit-0 stdout) is a NOT_FOUND on a requested `b{n}` alias the call counts
 // as succeeded, and exactly the aliases those errors name read
-// `undetermined`/`not-found`.
+// `undetermined`/`not-found`. `recoveredResponse` is exported for
+// `bin/preflight-records.js`'s native call, which recovers `i{n}` aliases the
+// same way (#4792).
 //
 // Reachability goes through the REST compare API, not local git: the local
 // clone may be shallow or stale (a cloud sandbox's usually is), and answering
@@ -164,14 +166,14 @@ function classifyFromState(blocker, entry) {
   return result(blocker, 'undetermined', null, 'records-json');
 }
 
-// parsed response -> the repository object when `errors` is non-empty and
-// every entry is a NOT_FOUND on a requested b{n} alias; else null.
-function notFoundOnlyRepository(parsed, blockers) {
+// parsed response, requested alias names -> the repository object when `errors`
+// is non-empty and every entry is a NOT_FOUND on a requested alias; else null.
+function notFoundOnlyRepository(parsed, aliases) {
   const repository = parsed && parsed.data && parsed.data.repository;
   if (!repository || typeof repository !== 'object') return null;
   const errors = parsed.errors;
   if (!Array.isArray(errors) || errors.length === 0) return null;
-  const requested = new Set(blockers.map((n) => `b${n}`));
+  const requested = new Set(aliases);
   const ok = errors.every((e) => e && e.type === 'NOT_FOUND'
     && Array.isArray(e.path) && e.path.length === 2 && e.path[0] === 'repository' && requested.has(e.path[1]));
   return ok ? repository : null;
@@ -179,11 +181,11 @@ function notFoundOnlyRepository(parsed, blockers) {
 
 // A thrown GraphQL call -> its parsed stdout when that carries a NOT_FOUND-only
 // error list; else null (a whole-query failure).
-function recoveredResponse(err, blockers) {
+function recoveredResponse(err, aliases) {
   if (!err || err.stdout == null) return null;
   let parsed;
   try { parsed = JSON.parse(String(err.stdout)); } catch { return null; }
-  return notFoundOnlyRepository(parsed, blockers) ? parsed : null;
+  return notFoundOnlyRepository(parsed, aliases) ? parsed : null;
 }
 
 const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type)) || JSON.stringify(e)).join('; ');
@@ -192,11 +194,12 @@ const errorMessages = (errors) => errors.map((e) => (e && (e.message || e.type))
 // whose errors, if any, are all NOT_FOUND on a requested alias) | { error } (a
 // whole-query failure). A thrown call counts only when its stdout recovers.
 function queryRepository(runner, args, blockers) {
+  const aliases = blockers.map((n) => `b${n}`);
   let out;
   try {
     out = runner(args);
   } catch (err) {
-    const recovered = recoveredResponse(err, blockers);
+    const recovered = recoveredResponse(err, aliases);
     return recovered ? { parsed: recovered } : { error: errorText(err) };
   }
   let parsed;
@@ -208,7 +211,7 @@ function queryRepository(runner, args, blockers) {
   if (!data || !data.repository || typeof data.repository !== 'object') {
     return { error: `GraphQL response has no data.repository${errors.length ? `: ${errorMessages(errors)}` : ''}` };
   }
-  if (errors.length && !notFoundOnlyRepository(parsed, blockers)) {
+  if (errors.length && !notFoundOnlyRepository(parsed, aliases)) {
     return { error: `GraphQL errors: ${errorMessages(errors)}` };
   }
   return { parsed };
@@ -269,5 +272,5 @@ function fetchBlockerLanding({ blockers, owner, repo, host, integrationBranch, r
 
 module.exports = {
   buildBlockerLandingQuery, candidateCommits, reachabilityFromStatus, compareArgs,
-  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding,
+  classifyBlocker, undeterminedAll, classifyFromState, fetchBlockerLanding, recoveredResponse,
 };
