@@ -188,6 +188,19 @@ function placeClaim(claim, factsById, result) {
     const untested = routed.find(isUntested);
     if (!failed && untested) return move('couldnt-test', untested);
   }
+
+  // Round-2 decision (Reading B, #4618): a risk proof whose only evidence besides its flags is
+  // `proof` facts routes on them. A claim also citing a check, story, recording or link keeps the
+  // routing above, and its proof refs do not route it. A planned proof is never verified wording.
+  if (section === 'risk-proofs') {
+    const evidence = cited.filter((fact) => fact.kind !== 'flag');
+    if (evidence.every((fact) => fact.kind === 'proof')) {
+      const failed = evidence.find(isFailed);
+      if (failed) return move('tried-to-break', failed);
+      const untested = evidence.find(isUntested);
+      if (untested) return result.planned.push({ claim, because: untested });
+    }
+  }
   return result.kept.push(claim);
 }
 
@@ -195,7 +208,7 @@ function validatePacket(facts, narrative) {
   const errors = [...validateFactsShape(facts).errors, ...validateNarrativeShape(narrative).errors];
   if (errors.length > 0) throw new SchemaError(errors);
   const factsById = new Map(facts.facts.map((fact) => [fact.id, fact]));
-  const result = { kept: [], moved: [], dropped: [], screened: [] };
+  const result = { kept: [], moved: [], dropped: [], screened: [], planned: [] };
   for (const claim of narrative.claims) placeClaim(claim, factsById, result);
   return result;
 }

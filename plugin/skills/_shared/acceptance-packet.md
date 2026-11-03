@@ -90,7 +90,7 @@ negative stories and failures only, and a routine pass never renders there.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
 `command`, `label`, `negative`, `live` and `target`.
 
-**Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`.
+**Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`, `proof`.
 
 **Fact statuses:** `passed`, `failed`, `skipped`, `not-run`.
 
@@ -108,7 +108,7 @@ limits the kinds it may cite:
 | `test-guide` | `story`, `link` |
 | `tried-to-break` | `story`, `check` |
 | `least-confident` | `finding` |
-| `risk-proofs` | `flag`, `check`, `story`, `recording`, `link` |
+| `risk-proofs` | `flag`, `check`, `story`, `recording`, `link`, `proof` |
 
 A `risk-proofs` claim also needs at least one `flag` and at least one proof fact among its refs. Later
 records extend the schema only by adding rows to the table.
@@ -139,7 +139,7 @@ A Tried to break claim must cite a failed fact or a negative story that ran and 
 skipped or not-run negative stories moves to Couldn't test whatever its wording (Decision Q12): the
 plain-wording exemption covers Test-guide manual steps only. One citing neither is dropped.
 
-A risk proof citing no proof fact is dropped. A risk proof citing a failed or skipped `check` or `story`
+A risk proof citing no proof fact is dropped. A risk proof citing only `proof` facts besides its flags routes on them: a failed one moves it to Tried to break, a skipped or not-run one keeps it in Risk proofs labelled `planned, not verified`, and only passed ones keep it as proved. A risk proof citing a failed or skipped `check` or `story`
 proof routes to Tried to break or Couldn't test whatever its wording, because a proof asserts itself.
 
 ## The expected check set

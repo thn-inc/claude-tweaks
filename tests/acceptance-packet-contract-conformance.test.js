@@ -349,6 +349,7 @@ const VALIDATION_FACTS = [
   ['a risk proof routes whatever its wording', /A risk proof citing a failed or skipped `check` or `story` proof routes to Tried to break or Couldn't test whatever its wording/],
   ['the dropped list is in the working copy', /The dropped list lives in the working copy/],
   ['the screen runs ahead of the evidence rules', /goes to `screened` ahead of every evidence rule below, whatever its section/],
+  ['a planned proof is not verified (round 2, Reading B)', /only `proof` facts besides its flags[^.]*`planned, not verified`/],
 ];
 for (const [label, pattern] of VALIDATION_FACTS) {
   test(`Validation policy states: ${label}`, () => assert.match(inSection('## Validation policy'), pattern));
