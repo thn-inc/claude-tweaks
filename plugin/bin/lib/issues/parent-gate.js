@@ -55,7 +55,7 @@ const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
 
 // The verdict's keys, in emission order.
 const VERDICT_FIELDS = [
-  'parent', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
+  'parent', 'repo', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
 ];
 // The idempotence values, in the order they are checked.
 const IDEMPOTENCE_VALUES = ['already-closed', 'reopened', 'close-only', 'comment-and-close'];
@@ -288,14 +288,14 @@ function numberSet(values) {
 // verdict, keys in VERDICT_FIELDS order. `idempotence` and `skipped` are always
 // null and []; a Close-running caller fills them from evaluateIdempotence.
 function evaluateParentGate({
-  parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor,
+  parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor, slug = null,
 } = {}) {
   if (!VALID_RISK_FLOORS.includes(riskFloor)) {
     throw new TypeError(`riskFloor must be one of ${VALID_RISK_FLOORS.join(', ')}; got ${String(riskFloor)}`);
   }
   if (parent === null || parent === undefined) {
     return {
-      parent: null, state: 'no-parent', exceeds: null, closeReason: null, idempotence: null, maxTier: null,
+      parent: null, repo: slug, state: 'no-parent', exceeds: null, closeReason: null, idempotence: null, maxTier: null,
       riskFloor, parentIssue: null, needs: [], held: [], subIssues: [], skipped: [],
     };
   }
@@ -335,6 +335,7 @@ function evaluateParentGate({
   }
   return {
     parent,
+    repo: slug,
     state,
     exceeds,
     closeReason,

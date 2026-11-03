@@ -332,7 +332,8 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
     };
     const r = go(argv, world, { remoteUrl: () => `git@${GHE}:o/r.git`, runner, gateDeps: { env: { GH_HOST: GHE } } });
     assert.equal(r.code, 0, r.stderr);
-    assert.deepEqual(r.verdict, go(argv, world).verdict);
+    assert.equal(r.verdict.repo, `${GHE}/o/r`);
+    assert.deepEqual(r.verdict, { ...go(argv, world).verdict, repo: `${GHE}/o/r` });
     assert.ok(sent.some(isShape8), 'the login read is reached');
     for (const a of sent) {
       if (leadsHost(a)) assert.equal(a.filter((x) => x === '--hostname').length, 1, a.join(' '));
@@ -340,6 +341,25 @@ test('an Enterprise origin puts the host on every gh read; the verdict is the gi
       else assert.deepEqual(a.slice(3, 5), ['--repo', `${GHE}/o/r`], a.join(' '));
     }
   }
+});
+
+test('the verdict names the repository its reads used', (t) => {
+  assert.equal(go(['--sub-issue', '11'], {}).verdict.repo, 'o/r');
+  // The local-files path reads no remote at all.
+  const { dir, parent } = family(t);
+  assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.repo, null);
+  // The reads' host, never the remote's: an Enterprise remote the gh login resolves to github.com stays bare.
+  const reroute = go(['--sub-issue', '11'], {}, { remoteUrl: () => 'git@ghe.example.com:o/r.git', gateDeps: { env: { GH_HOST: 'github.com' } } });
+  assert.equal(reroute.code, 0, reroute.stderr);
+  assert.equal(reroute.verdict.repo, 'o/r');
+  // The facts path reads no remote without a qualified token, so there is no slug to name.
+  const file = writeFacts(t, worldAsMcp({}, 11));
+  const unqualified = go(['--sub-issue', '11', '--closing', '11,12', '--facts-json', file], {}, { ...NO_GH, remoteUrl: boom });
+  assert.equal(unqualified.code, 0, unqualified.stderr);
+  assert.equal(unqualified.verdict.repo, null);
+  const qualified = go(['--sub-issue', '11', '--closing', 'o/r#11,o/r#12', '--facts-json', file], {}, NO_GH);
+  assert.equal(qualified.code, 0, qualified.stderr);
+  assert.equal(qualified.verdict.repo, 'o/r');
 });
 
 test('stdout is one JSON line in VERDICT_FIELDS order', () => {
@@ -557,7 +577,10 @@ test('AC1.6: the gh path and the facts-json path give the same verdict', (t) => 
     const viaFacts = go([...argv, '--idempotence', '--facts-json', file], world, NO_GH);
     assert.equal(viaGh.code, 0, `${label}: ${viaGh.stderr}`);
     assert.equal(viaFacts.code, 0, `${label}: ${viaFacts.stderr}`);
-    assert.deepEqual(viaFacts.verdict, viaGh.verdict, label);
+    // The facts path reads the origin remote only for a qualified --closing token, so only such a
+    // row's verdict names the repository (the table has one: `other/r#11,12`); every other row's is null.
+    const qualified = argv.some((a) => a.includes('#'));
+    assert.deepEqual(viaFacts.verdict, { ...viaGh.verdict, repo: qualified ? 'o/r' : null }, label);
     seenIdempotence.add(viaGh.verdict.idempotence);
     for (const s of viaGh.verdict.subIssues) seenPr.add(s.pr);
   }
@@ -631,7 +654,7 @@ test('--idempotence guards parentComments and requires me only where the verdict
   const r = go(argv(writeFacts(t, incomplete)), {}, NO_GH);
   assert.equal(r.code, 0, r.stderr);
   assert.equal(r.verdict.state, 'incomplete');
-  assert.deepEqual(r.verdict, viaGh.verdict);
+  assert.deepEqual(r.verdict, { ...viaGh.verdict, repo: null });
   // So do a gated parent, one above the floor, and an already-closed parent.
   const above = go(argv(writeFacts(t, { ...worldAsMcp({ issues: { 12: { labels: ['risk:high'] } } }, null), ...errored })), {}, NO_GH);
   assert.equal(above.code, 0, above.stderr);
@@ -799,7 +822,7 @@ test('local-files: due below the floor closes completed', (t) => {
   assert.deepEqual(
     { ...r.verdict, subIssues: undefined },
     {
-      parent: parent.id, state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', maxTier: 'low', riskFloor: 'high', parentIssue: true, needs: [], held: [], subIssues: undefined, skipped: [],
+      parent: parent.id, repo: null, state: 'due', exceeds: false, closeReason: 'completed', idempotence: 'comment-and-close', maxTier: 'low', riskFloor: 'high', parentIssue: true, needs: [], held: [], subIssues: undefined, skipped: [],
     },
   );
   assert.equal(goLocal(['--parent', String(parent.id)], dir).verdict.idempotence, null);
