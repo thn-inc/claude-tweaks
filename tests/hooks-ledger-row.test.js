@@ -340,11 +340,27 @@ test('rejects a --ledger outside the run and worktree', () => {
   assert.equal(fs.readFileSync(outside, 'utf8'), HEAD);
 });
 
-test('a --ledger that does not exist is refused', () => {
+test('a --ledger that does not exist is refused, without a hint to pass the flag it already carries', () => {
   const f = fixture();
   f.snapshot = f.before();
   const r = runHook(['ledger-row', '--run', f.runDir, '--ledger', path.join(f.wt, 'docs', 'plans', 'missing-ledger.md'), ...APPEND], { cwd: f.wt });
   refused(f, r, /not-found/);
+  assert.doesNotMatch(r.stderr, /pass --ledger/);
+});
+
+test('an implicit resolution that finds no ledger keeps the hint to pass --ledger', () => {
+  const f = fixture();
+  fs.rmSync(f.ledger);
+  const r = runHook(['ledger-row', '--run', f.runDir, ...APPEND], { cwd: f.wt });
+  assert.equal(r.code, 1, r.stderr);
+  assert.equal(r.stdout, '');
+  assert.match(r.stderr, /ledger not-found — pass --ledger <path> to name one — nothing written\n$/);
+});
+
+test('refuses an empty --ledger value', () => {
+  const f = fixture();
+  f.snapshot = f.before();
+  refused(f, runHook(['ledger-row', '--run', f.runDir, '--ledger', '', ...APPEND], { cwd: f.wt }), /--ledger needs a path/);
 });
 
 test('a ledger that exists only in the worktree copy is written through an explicit --ledger', () => {
@@ -400,6 +416,8 @@ test('refuses --row with no --resolution, and a non-numeric --row', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
   f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'accepted']), /resolution/);
+  // `open` passes checkLedgerStatus with no resolution, so only the verb's own settle guard refuses it.
+  refused(f, ledgerRow(f, ['--row', '1', '--status', 'open']), /settling row #1 to 'open' needs --resolution or --resolution-file/);
   refused(f, ledgerRow(f, ['--row', 'one', '--status', 'accepted', '--resolution', 'z']), /--row/);
   const observation = ledgerRow(f, ['--row', '1', '--status', 'observation']);
   assert.equal(observation.code, 0, observation.stderr);
@@ -426,7 +444,11 @@ test('refuses an undeclared flag in both orders', () => {
     const r = ledgerRow(f, args);
     assert.equal(r.code, 1);
     assert.equal(r.stdout, '');
-    assert.match(r.stderr, /unknown flag '--bogus'/);
+    // The dispatcher's two-line refusal: the reason, then the verb's usage line.
+    const lines = r.stderr.split('\n');
+    assert.equal(lines[0], "claude-tweaks: ledger-row: unknown flag '--bogus'");
+    assert.ok(lines[1].startsWith('claude-tweaks: usage: ledger-row [--run <dir>]'), lines[1]);
+    assert.equal(lines.length, 3, 'two lines and the trailing newline');
     assert.equal(f.before(), f.snapshot);
   }
 });

@@ -1343,7 +1343,8 @@ async function runLedgerRow(argv) {
   const resolved = resolveLedgerPath({ runDir, worktree, explicit: ledgerArg ? path.resolve(process.cwd(), ledgerArg) : null });
   if (!resolved.ok) {
     const named = resolved.candidates.length > 0 ? `: ${resolved.candidates.join(', ')}` : '';
-    const hint = resolved.reason === 'rejected' ? '' : ' — pass --ledger <path> to name one';
+    // The hint names the flag the caller already passed for an explicit --ledger (rejected, not-found); it only helps an implicit resolution.
+    const hint = ledgerArg ? '' : ' — pass --ledger <path> to name one';
     return refuse(`ledger ${resolved.reason}${resolved.detail ? ` (${resolved.detail})` : ''}${named}${hint}`);
   }
 

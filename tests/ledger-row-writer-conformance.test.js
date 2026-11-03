@@ -57,7 +57,11 @@ const WRITER_ANCHORS = [
 const SITE_VERB_MIN = { 'ledger/SKILL.md': 4, 'review/step3-routing.md': 5, 'wrap-up/residue-sweep.md': 2, 'wrap-up/refused-proposals.md': 2 };
 const PHASE_VERB_MIN = { 1: 1, 2: 2 };
 // Sites whose pipe guidance is "raw with a run dir" must keep the by-hand escape for the standalone path.
-const STANDALONE_QUALIFIED = { 'ledger/SKILL.md': 'standalone no-run-dir path', 'build/dispatch.md': 'standalone no-run-dir path' };
+const STANDALONE_QUALIFIED = {
+  'ledger/SKILL.md': 'standalone no-run-dir path',
+  'build/dispatch.md': 'standalone no-run-dir path',
+  'review/step3-routing.md': 'standalone file-ops write',
+};
 const countOf = (text, literal) => text.split(literal).length - 1;
 
 // A flag token on its own: `--item` must not be satisfied by `--item-file`.
@@ -98,7 +102,7 @@ function assertWriterSites({ format, sites }) {
     const need = SITE_VERB_MIN[file] ?? 1;
     assert.ok(countOf(text, 'ledger-row') >= need, `${file} must name ledger-row at least ${need} time(s)`);
     if (file in STANDALONE_QUALIFIED) {
-      assert.ok(text.includes(STANDALONE_QUALIFIED[file]), `${file} must say the standalone no-run-dir path escapes a pipe by hand`);
+      assert.ok(text.includes(STANDALONE_QUALIFIED[file]), `${file} must say the standalone write escapes a pipe by hand (${STANDALONE_QUALIFIED[file]})`);
     }
     assert.ok(text.includes('Writer section'), `${file} must cite the Writer section`);
     assert.ok(!text.includes('LOCK_TIMEOUT'), `${file} must cite the Writer section's refusal rule, not restate it (LOCK_TIMEOUT)`);
@@ -196,7 +200,7 @@ test('go-red: helper throws when a pipe-guidance site loses its standalone no-ru
     assert.notEqual(mutated, sites[site]);
     assert.throws(
       () => assertWriterSites({ format: realFormat(), sites: { ...sites, [site]: mutated } }),
-      { name: 'AssertionError', message: new RegExp(`${escapeRe(site)} must say the standalone no-run-dir path escapes`) },
+      { name: 'AssertionError', message: new RegExp(`${escapeRe(site)} must say the standalone write escapes a pipe by hand \\(${escapeRe(STANDALONE_QUALIFIED[site])}\\)`) },
     );
   }
 });
