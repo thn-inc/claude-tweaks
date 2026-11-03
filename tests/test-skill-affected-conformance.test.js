@@ -255,9 +255,16 @@ test('go-red: changing the re-run note clause fails the note assertion', () => {
   assert.throws(() => assertMismatchRoute(mutated), /the paragraph ends with the re-run note/);
 });
 
-test('go-red: moving the tail and note clauses out of the paragraph to the end of the file fails the tail assertion', () => {
+test('go-red: moving the tail clause out of the paragraph to the end of the file fails the tail assertion', () => {
   const skill = read('plugin/skills/test/SKILL.md');
-  const mutated = skill.replace(TAIL_CLAUSE + NOTE_CLAUSE, 'once it passes, the QA selection applies') + '\n' + TAIL_CLAUSE + NOTE_CLAUSE + '\n';
+  const mutated = skill.replace(TAIL_CLAUSE, 'once it passes, the QA selection applies') + '\n' + TAIL_CLAUSE + '\n';
   assert.notEqual(mutated, skill);
   assert.throws(() => assertMismatchRoute(mutated), /the tail clause keeps the rest of the bullet/);
+});
+
+test('go-red: moving the note clause out of the paragraph to the end of the file fails the note assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(NOTE_CLAUSE, '.') + '\n' + NOTE_CLAUSE + '\n';
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the paragraph ends with the re-run note/);
 });
