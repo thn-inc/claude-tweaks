@@ -8,3 +8,4 @@
 | 4 | build | SDD ruling — rule-2 mutant survivors are pre-existing test gaps, pinned in this build (Task 2 + final fix wave): ratify or reverse at the Review Console (staged/sdd-ruling-1.md) | open | — |
 | 5 | build | SDD ruling — no test for LEADING_CD's redundant backslash-dollar exclusion (duplicates includes($)): ratify or reverse at the Review Console (staged/sdd-ruling-2.md) | open | — |
 | 6 | build | SDD ruling — record #4292 Release Note replacement stays with ledger row 3 for the merge path: ratify or reverse at the Review Console (staged/sdd-ruling-3.md) | open | — |
+| 7 | build/skill | `pretooluse-updatedinput-normalizer` enrichment: a rule's must-decline pin must use an input every other check accepts (rule 2: a shipped `bin/` path), and be shown red with only that check mutated — #4292 found four rule-2 declines (`hasBareUse`, `inDoubt`, `complexParam`) earned by `shippedUnder` or the runner allowlist instead | observation | — |
