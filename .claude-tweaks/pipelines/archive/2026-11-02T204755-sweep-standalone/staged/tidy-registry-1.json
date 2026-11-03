@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "registry",
+  "record": null,
+  "title": "docs/plans/2689-visual-plan-flowchart.html",
+  "action": "Add registry entry (docs/plans row covers *.md only)",
+  "command": "edit docs/REGISTRY.md: docs/plans/*.md -> docs/plans/*.md, docs/plans/*.html"
+ }
+]
