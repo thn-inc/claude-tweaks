@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-03T01:58:15.873Z",
+  "computedAt": "2026-11-03T02:02:18.138Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -430,7 +430,7 @@
       },
       {
         "number": 4432,
-        "updatedAt": "2026-10-30T04:27:59Z",
+        "updatedAt": "2026-11-03T02:00:11Z",
         "state": "OPEN"
       },
       {
@@ -535,7 +535,7 @@
       },
       {
         "number": 4395,
-        "updatedAt": "2026-11-03T01:52:16Z",
+        "updatedAt": "2026-11-03T02:01:38Z",
         "state": "OPEN"
       },
       {
@@ -4684,96 +4684,6 @@
     ],
     [
       {
-        "body": "Surface: infra\n\n## Current State\n\n`/claude-tweaks:dispatch`'s queue pull runs a shipped-candidate exclusion (#1984, `plugin/skills/dispatch/queue-pull-script.md:505-560`). `classifyShipped` (`plugin/bin/lib/issues/shipped-candidate.js:47`) rates a merged PR that mentions the record, merged after the record was created, as `weak`; with title-similarity or `### Key Files` coverage it becomes `strong`, and a `strong` record is dropped from `dispatch-groups.json` with a staged `staged/shipped-close-N.md` proposing `gh issue close N`. The #4314 fix skips mentions whose PR was opened before the record existed.\n\nObserved on 6.155.0 (rule unchanged in 6.156.1): two records built API-first — PR A shipped the API half with `Refs #N` (a deliberate non-closing reference), the pipeline released the claim with a reason naming the remaining UI half, and the record stayed open with `auto:build`. The next `/claude-tweaks:dispatch #N` logged `#N excluded, shipped by merged PR #A (merged-pr-mention-after-created, title-similarity)` (the second record: `key-files-covered`), removed both records with no bypass, and staged close proposals. Approving them would close unfinished records; the only workaround was `/claude-tweaks:flow #N` directly.\n\nWhat the detector sees: `fetchLinkedPRs` (`plugin/bin/lib/issues/linked-prs.js:69-72`) gives each mention only `{number, title, state, merged, mergedAt, createdAt}` — nothing about whether the reference closes the record, and nothing about the record's own claim history. A non-closing reference alone cannot be the signal: the instances the detector was built for (#1791/#1803, #1484/#1857) were merged PRs that shipped everything without a closing keyword. The distinguishing fact here is that a pipeline **released the record's claim after PR A merged** — `release-claim.js` writes an `agent-claim-release` marker comment and a `released: true` tombstone, both carrying `releasedAt` (`plugin/bin/lib/issues/claims.js:56-66`). A release after the merge means a run saw the merge and deliberately left the record open.\n\n## Deliverables\n\n1. Give `classifyShipped` the record's latest claim-release time (from the claims-registry tombstone `dispatch` already reads, or the latest `agent-claim-release` comment marker). A mention whose `mergedAt` is earlier than that release never rates `strong`; it rates `weak` at most, so the record stays dispatchable.\n2. Feed that value from the queue pull's two `classifyShipped` call sites in `queue-pull-script.md`, via whichever read is cheapest at that point (a claim-reader read for the candidate records, or a `comments` field added to `buildLinkedPRQuery`'s batched GraphQL).\n3. Log the downgrade so the exclusion decision stays auditable, e.g. `#N kept: merged PR #A predates claim release at {releasedAt} — remaining work declared`.\n\n## Acceptance Criteria\n\n- A record mentioned by a merged PR with title-similarity, whose claim was released after that PR's `mergedAt`, classifies `weak` (not excluded, no `shipped-close-N.md` staged).\n- The same record with no release after the merge still classifies `strong`, so the #1791/#1803-style detection is unchanged.\n- A release *before* the PR merged does not downgrade (it predates the PR's evidence).\n- A missing or unreadable release time never downgrades and never upgrades (the prior behavior holds).\n- `tests/bin-lib/issues/shipped-candidate.test.js` covers all four cases; `tests/dispatch-shipped-candidate-prose.test.js` still passes with the updated call sites.\n\n## Release Note\n\nDispatch no longer treats a record as already shipped when a pipeline merged only part of it and released the record to finish the rest.\n\n## Technical Approach\n\nThe reporter offered two signals: a non-closing reference (`Refs #N`) where a closing keyword was available, and a claim-release reason naming remaining work. The release *time* is chosen over both. The keyword alone cannot distinguish this case from the historical no-keyword ships the detector exists for. Parsing the reason text for \"remaining work\" is free-text judgment, while \"released after the merge\" is a timestamp comparison on data the plugin itself writes. Keep `classifyShipped` pure: the caller passes `opts.lastReleasedAt` (ISO or null) the same way it already passes `opts.prFiles`.\n\n### Key Files\n\n- `plugin/bin/lib/issues/shipped-candidate.js` — release-time downgrade rule\n- `plugin/bin/lib/issues/linked-prs.js` — only if the release time is read via the batched GraphQL\n- `plugin/bin/lib/issues/claims.js` — reference: release marker and tombstone shape\n- `plugin/skills/dispatch/queue-pull-script.md` — pass the release time at both `classifyShipped` call sites; log the downgrade\n- `tests/bin-lib/issues/shipped-candidate.test.js` — four-case coverage\n- `tests/dispatch-shipped-candidate-prose.test.js` — prose pins for the call sites\n\n## Gotchas\n\n- Sweeps also release claims (`release-claim.js --reason ... ` from `/claude-tweaks:specify`'s drain and `/claude-tweaks:tidy`'s stale-claim backstop). A shaping-only release after a merge would also downgrade. That is the safe direction (the record stays dispatchable, and the build's own shipped-exit check, `tests/build-already-shipped-exit.test.js`, still catches a truly shipped record), but say so in the code comment.\n- Compare instants, not strings: `mergedAt` and `releasedAt` are both ISO, but normalize through `Date` as the existing createdAt checks do.\n\n## Original request\n\ndispatch: shipped-candidate exclusion treats an API-first half PR's non-closing \"Refs #N\" as shipping the whole record\n\n**Summary:** `bin/lib/issues/shipped-candidate.js`'s `classifyShipped` rated two open records `strong` (already shipped) because a merged PR mentioned each with a non-closing reference (`Refs #N` / `(refs #N)`) plus title-similarity or key-files-covered — but both PRs were the deliberate API-first half of a two-PR record whose UI half was still unbuilt.\n\n**Kind:** Defect\n\n**Affected component:** dispatch queue pull — shipped-candidate exclusion (#1984), `bin/lib/issues/shipped-candidate.js`, `skills/dispatch/queue-pull-script.md`\n\n**Repro steps:**\n1. A record whose Deliverables span an API route and a UI section is built API-first (the project ships the API half in one PR and the UI half in a later one): PR A implements the API half, its body states it references the record without closing it, its fixes block carries `Refs #N` (no closing keyword), and its title matches the record's title (or its changed files cover the record's `### Key Files`). PR A merges.\n2. The pipeline releases the record's claim with a reason naming the remaining work, e.g. agent-claim-release `{\"reason\":\"merged API half: PR A; UI half still to build\"}`, and the record stays open with `auto:build` for the UI half.\n3. Run `/claude-tweaks:dispatch #N` (or an explicit list containing it).\n\n**Expected vs. actual:**\nExpected: a merged PR that only references the record with a non-closing keyword, on a record whose own claim-release reason says work remains, is at most `weak` — the record stays dispatchable.\nActual: queue pull logs `#N excluded, shipped by merged PR #A (merged-pr-mention-after-created, title-similarity)` (second instance: `key-files-covered`), removes the record from `dispatch-groups.json` with no `#N` bypass, and stages `staged/shipped-close-N.md` proposing `gh issue close N --comment \"Deliverables already shipped by #A\"`. Approving that proposal would close an unfinished record. Two records hit this in one firing. The only workaround is to bypass dispatch and run `/claude-tweaks:flow #N` directly.\n\nThe #4314 fix (skip a mention whose PR was opened before the record was created) does not cover this: here the record predates the PR. Possible signals the detector could use: the mention is a non-closing reference while a closing keyword was available (`Refs`/`refs` vs `Fixes`/`Closes`), and/or the record's latest agent-claim-release reason names remaining work.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1 (observed on 6.155.0; `classifyShipped`'s strong-tier rule is unchanged in 6.156.1)\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-44abb271 -->\n\n",
-        "createdAt": "2026-10-26T16:50:24Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACYw9-DQ",
-            "name": "bug",
-            "description": "Something isn't working",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2nbg",
-            "name": "type:bug",
-            "description": "Type: defect in existing behavior",
-            "color": "d73a4a"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACszEEfQ",
-            "name": "ceremony:standard",
-            "description": "Ceremony: default depth — full review & wrap-up ceremony applies",
-            "color": "FEF2C0"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACxyFo1g",
-            "name": "shaped:headless",
-            "description": "Provenance: shaped by /specify's headless next unit — no human reviewed the spec body",
-            "color": "ededed"
-          }
-        ],
-        "number": 4432,
-        "state": "OPEN",
-        "title": "dispatch: shipped-candidate exclusion treats an API-first half PR's non-closing \"Refs #N\" as shipping the whole record",
-        "updatedAt": "2026-10-30T04:27:59Z",
-        "facets": {
-          "origin": null,
-          "risk": "medium",
-          "size": "medium",
-          "ceremony": "standard",
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": true
-        }
-      }
-    ],
-    [
-      {
         "body": "Surface: infra\n\n**Related:** #3813, #4347, #4395\n\n## Current State\n\n`/claude-tweaks:design-wrapper review` mode's Step 5 (`plugin/skills/design-wrapper/modes/review.md:428`) writes its audit findings cache to `docs/plans/YYYY-MM-DD-{feature}-audit.json` (fallback `docs/plans/audit-{spec-slug}.json`). The file is untracked, not gitignored, and not a declared `generated` path, so writing it makes the tree dirty: `verify.js --stamp-status` reports `\"dirty\":true,\"verifiedHead\":false`, and every later consumer of the pass stamp (`plugin/skills/test/verification.md:187` — `/claude-tweaks:review` Step 1.5's Skip-if-recent, polish's re-verify, wrap-up) treats that as \"no recent pass\". The same review call that just relied on the stamp invalidates it.\n\nObserved on 6.155.0 (path unchanged in 6.156.1): a `/claude-tweaks:flow #N review,polish,wrap-up auto` run on a UI record. After design-wrapper review wrote the cache, `git status --short` showed `?? docs/plans/{date}-{feature}-audit.json` and the stamp went dirty. The agent deleted the cache to recover (its findings were all info-level); a run whose findings carry suggestions would have had to commit the cache or pay a full re-verify.\n\nThe cache is per-run, advisory, and never committed: `plugin/skills/design-wrapper/modes/polish.md:50` reads it (an absent cache is a no-op — `plugin/skills/design-wrapper/command-map.md:86`), and wrap-up deletes it after the spec ships (`plugin/skills/wrap-up/cleanup-procedures-execution.md:17`, `plugin/bin/lib/wrap-up/engine-verify.js:318`). `verification.md` defines `generated` as paths the declared checks themselves regenerate, which does not describe this cache.\n\nSurvey mode writes two siblings with the same exposure: `-recommendations.json` (`plugin/skills/design-wrapper/modes/survey.md:68`) and `-declined.json` (`survey.md:42`, written by `/flow`'s decline detection). `-declined.json` is cross-run state (decline tracking per spec); the other two are per-run.\n\n## Deliverables\n\n1. Move the review-mode audit cache to the pipeline run directory (`$PIPELINE_RUN_DIR`, resolved per `_shared/pipeline-run-dir.md`), keeping the `docs/plans/` fallback path only for a review invoked with no run directory — update the writer (`modes/review.md` Step 5) and every reader (`modes/polish.md`, `command-map.md`).\n2. Update wrap-up's design-wrapper cache cleanup (`cleanup-procedures.md` row 3, `cleanup-procedures-execution.md`, `engine-verify.js`'s suffix list) so it still finds and removes the cache at its new location (or drops the per-run cache from cleanup if run-dir archival already covers it), without breaking cleanup of legacy `docs/plans/*-audit.json` files.\n3. Apply the same relocation to the per-run `-recommendations.json` cache. For the cross-run `-declined.json` cache, either move it to a gitignored `.claude-tweaks/` path that survives across runs, or record in this record why it stays where it is.\n\n## Acceptance Criteria\n\n- After design-wrapper review mode writes its audit cache inside a pipeline run with a verified-HEAD stamp, `git status --short` lists no new untracked file and `verify.js --stamp-status` still reports `verifiedHead: true`.\n- Polish mode reads the relocated audit cache and dispatches the same suggestion-driven commands it did from the old path (test with a fixture cache at the new location).\n- Wrap-up cleanup removes the relocated cache, and still removes a legacy `docs/plans/*-audit.json` when one is present.\n- `-declined.json` decline tracking still suppresses a twice-declined recommendation in a later run.\n\n## Release Note\n\nThe design review's findings cache no longer dirties the working tree, so later pipeline steps keep trusting the earlier test pass instead of re-running it.\n\n## Technical Approach\n\nThe record offers two fixes: relocate the cache, or have the stamp's dirty check exempt `docs/plans/*-audit.json`. Relocation is chosen: the cache is per-run advisory state with no reason to live in a tracked directory, and an exemption would teach the stamp about one skill's file names. The run directory is already where per-run artifacts live and is gitignored except for `work/` specs. Keep path resolution in one place (a small resolver both writer and readers call, or a single documented rule in `modes/review.md` that `polish.md` and `command-map.md` cite) so the three files cannot drift.\n\n### Key Files\n\n- `plugin/skills/design-wrapper/modes/review.md` — Step 5 cache path\n- `plugin/skills/design-wrapper/modes/polish.md` — cache read path resolution\n- `plugin/skills/design-wrapper/command-map.md` — suggestion-driven step's cache reference\n- `plugin/skills/design-wrapper/modes/survey.md` — recommendations/declined cache paths\n- `plugin/skills/flow/survey.md` — decline detection, the `-declined.json` writer\n- `plugin/skills/wrap-up/cleanup-procedures.md` — design wrapper cache cleanup row\n- `plugin/skills/wrap-up/cleanup-procedures-execution.md` — cleanup path resolution\n- `plugin/bin/lib/wrap-up/engine-verify.js` — cache suffix list at :318\n\n## Gotchas\n\n- Resolve the run directory under `$RUN_ROOT` (the main checkout), never relative to the worktree cwd — a relative path from a worktree silently shadows the main run dir (`_shared/pipeline-run-dir.md`).\n- Multi-spec runs namespace per-spec artifacts (`plugin/skills/flow/multispec-artifact-namespacing.md`); the audit cache must land in the spec's own run subdirectory so two specs' caches never collide.\n- `survey.md:68`'s note that the cache \"keeps survey state out of `~/.claude-tweaks/`\" refers to the user-home directory, not the project's `.claude-tweaks/`; a project-local gitignored path does not contradict it.\n\n## Original request\n\ndesign-wrapper: review mode's audit cache in docs/plans/ dirties the verification pass stamp\n\n**Summary:** `/claude-tweaks:design-wrapper review` writes its audit findings cache to `docs/plans/{date}-{feature}-audit.json`, an untracked, non-ignored, non-`generated` path, so the write flips `verify.js --stamp-status` to `dirty: true, verifiedHead: false` inside the same review call that just relied on the stamp.\n\n**Kind:** Defect\n\n**Affected component:** design-wrapper (review mode audit cache, `command-map.md` / `modes/polish.md`) and the verification pass stamp (`verify.js --stamp-status`)\n\n**Repro steps:**\n1. Run `/claude-tweaks:flow #N review,polish,wrap-up auto` on a UI record in a project whose verify-scope declaration has no `generated` glob covering `docs/plans/`, with the first call's runner stamp verifying HEAD.\n2. Let review reach design-wrapper review mode, which writes `docs/plans/{date}-{feature}-audit.json`.\n3. Run `git status --short` → `?? docs/plans/{date}-{feature}-audit.json`; run `verify.js --stamp-status` → `\"dirty\":true,\"verifiedHead\":false`.\n\n**Expected vs. actual:**\nExpected: a review that writes its own advisory cache does not invalidate the pass stamp the same review just read (review Step 1.5), so polish and wrap-up can keep trusting it.\nActual: every later gate (polish re-verify, wrap-up) must either commit the cache, delete it, or re-run the full verification. In the observed run the agent deleted the cache (all findings were info-level with no suggestion); a run whose findings carry suggestions would have had to commit it or pay a full re-verify. `verification.md` defines `generated` as paths the declared checks themselves regenerate, which does not describe this cache.\n\nSuggested fix: write the cache under the run directory (or another `.claude-tweaks/` path projects already ignore) — polish already tolerates an absent cache — or have the stamp's dirty check exempt `docs/plans/*-audit.json` the way it exempts declared `generated` paths.\n\n**Definition:** Clear\n\n**Plugin version:** 6.156.1 (observed on 6.155.0; the cache path in `skills/design-wrapper/command-map.md` and `modes/polish.md` is unchanged in 6.156.1)\n\n---\nFiled via /claude-tweaks:feedback.\n<!-- fingerprint: feedback-079924cb -->\n\n",
         "createdAt": "2026-10-26T16:49:53Z",
         "labels": [
@@ -6101,6 +6011,78 @@
           "isParentIssue": false,
           "notPlanned": false,
           "shapedHeadless": true
+        }
+      }
+    ],
+    [
+      {
+        "body": "Origin: reflect full from #4288\n\nDefer-reason: tangential\n\n## Current State\n\nTwo pipeline gates read the same bookkeeping-only delta and reach opposite answers.\n- `/claude-tweaks:test`'s Skip-if-recent (`plugin/skills/test/verification.md`) sees `VERIFICATION_SHA` ≠ HEAD. It classifies every changed path against `.claude-tweaks/verify-scope.json`, and when all of them are bookkeeping-only (`suites: []`) it skips verification and writes no stamp.\n- `/claude-tweaks:review` Step 1.5 (`plugin/skills/review/code-mode-steps.md`) then reads `verify.js --stamp-status`. It gets `verifiedHead: false`, because the full-pass stamp names the pre-ledger-commit SHA. Its gate row says \"re-trigger `/claude-tweaks:test`, re-check\", but the re-triggered `/test` takes the same bookkeeping-only skip and still writes no stamp, so the gate names no terminal outcome.\n- A `/flow` run reaches this state whenever a bookkeeping-only commit lands between `/build` Common Step 5's full verify and `/test` (for example, run-ledger rows recording AC results, which only exist after verify). #4288's run hit it: build verified 65fd6e5, a ledger-only commit moved HEAD to 81a3dc6, and the review got past the gate only by hand-running a scoped `verify.js --scope .claude-tweaks/verify-scope.json --integration-branch origin/main` (`scope: none`, `still-verified: bookkeeping-only delta`), which wrote a `none` stamp verifying HEAD.\n\n## Deliverables\n\n- [ ] Make `/claude-tweaks:test`'s bookkeeping-only Skip-if-recent branch run the scoped `verify.js` invocation the Re-verify scoping table already gives the multi-spec spec-N step (`none` on a bookkeeping-only delta), so the skip leaves a stamp that verifies HEAD instead of writing nothing.\n- [ ] Give `/claude-tweaks:review` Step 1.5's `verifiedHead: false` row a terminal outcome: after one re-trigger, a still-unverified stamp either stops the review with a named cause or passes on a recorded bookkeeping-only classification. It must never loop.\n\n## Acceptance Criteria\n\n1. In a `/flow` run whose only change after build's full verify is the run ledger commit, `/claude-tweaks:test` exits Skip-if-recent with `verify.js --stamp-status` reporting `verifiedHead: true` (`scope: none`) at the new HEAD.\n2. `/claude-tweaks:review` Step 1.5 then passes its test gate with no hand-run `verify.js` and no second `/test` re-trigger.\n3. A delta with any non-bookkeeping path still runs the scoped or full re-verify exactly as today.\n\n## Release Note\n\nA pipeline run no longer stalls at the review test gate after build commits its own ledger: the test step's bookkeeping-only skip now leaves a verification stamp for the new commit.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/skills/test/verification.md` — bookkeeping-only Skip-if-recent branch runs the scoped none-stamp verify\n- `plugin/skills/review/code-mode-steps.md` — Step 1.5 verifiedHead:false row gets a terminal outcome\n\n_Filed by `reflect` via specShapedBody._",
+        "createdAt": "2026-10-26T10:20:17Z",
+        "labels": [
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyqXw",
+            "name": "ready",
+            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
+            "color": "2EA44F"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyq1w",
+            "name": "risk:low",
+            "description": "Scoring: low blast radius — safe for autonomous build",
+            "color": "0E8A16"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACruyrJA",
+            "name": "size:low",
+            "description": "Scoring: small, agent-sized change",
+            "color": "D4C5F9"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACry2nbg",
+            "name": "type:bug",
+            "description": "Type: defect in existing behavior",
+            "color": "d73a4a"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
+            "name": "auto:build",
+            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
+            "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
+            "name": "priority:medium",
+            "description": "Priority: dispatch picks after priority:high",
+            "color": "0052CC"
+          }
+        ],
+        "number": 4395,
+        "state": "OPEN",
+        "title": "Leave a verification stamp on /test's bookkeeping-only skip so review Step 1.5 passes after the ledger commit",
+        "updatedAt": "2026-11-03T02:01:38Z",
+        "facets": {
+          "origin": null,
+          "risk": "low",
+          "size": "low",
+          "ceremony": null,
+          "solutionUnjustified": false,
+          "breaking": false,
+          "needsDefinition": false,
+          "priority": "medium",
+          "stage": "ready",
+          "grants": {
+            "build": true,
+            "merge": false
+          },
+          "bot": {
+            "inProgress": false,
+            "blocked": false,
+            "parked": false
+          },
+          "acceptance": null,
+          "isParentIssue": false,
+          "notPlanned": false,
+          "shapedHeadless": false
         }
       }
     ],
