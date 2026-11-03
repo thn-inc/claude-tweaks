@@ -29,8 +29,8 @@ const bare = (line) => line.replace(/\r?\n$/, '');
 // An unterminated fence (opened, never closed, before the insert point) sets `unterminated` —
 // callers refuse to guess a boundary past that point.
 function fenceInfo(authoredLines) {
-  const b = authoredLines.map(bare);
-  return { inFence: fencedLineMask(b), unterminated: unclosedFenceLine(b) !== -1 };
+  const bareLines = authoredLines.map(bare);
+  return { inFence: fencedLineMask(bareLines), unterminated: unclosedFenceLine(bareLines) !== -1 };
 }
 
 function applyReleaseNote(body, rawLine) {

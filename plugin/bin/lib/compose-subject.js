@@ -168,7 +168,11 @@ function splitHidden(failing, heading) {
   const rest = [];
   for (const r of failing) {
     const line = hiddenLine(r.body, heading);
-    if (line === null) rest.push(r); else hidden.push(`#${r.number} (unclosed-fence at line ${line})`);
+    if (line === null) {
+      rest.push(r);
+    } else {
+      hidden.push(`#${r.number} (unclosed-fence at line ${line})`);
+    }
   }
   return { hidden, rest };
 }

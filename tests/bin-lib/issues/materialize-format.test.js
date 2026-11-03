@@ -700,7 +700,7 @@ test('shapeGate: a section hidden by a fence inside the verbatim Original reques
   assert.deepEqual(shapeGate(body), { ok: false, missing: ['Release Note'] });
 });
 
-const NO_RN_TRAILING_FENCE ='## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
+const NO_RN_TRAILING_FENCE = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
 
 test('shapeGate: a gate that already fails also names an unterminated fence that hides nothing required (#4350 answer 6)', () => {
   assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });
