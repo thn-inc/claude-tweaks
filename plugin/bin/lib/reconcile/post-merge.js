@@ -473,12 +473,15 @@ function failedRecordNumbers(entries) {
 // input, a non-array field and a non-object element contribute nothing.
 function flattenStepFields(entries, field, keys) {
   if (!Array.isArray(entries)) return [];
-  return entries.flatMap((e) => (e && Array.isArray(e[field]) ? e[field] : []).map((item) => ({ e, item })))
-    .filter(({ item }) => item && typeof item === 'object')
-    .map(({ e, item }) => ({
-      pr: e.pr,
-      ...Object.fromEntries(keys.filter((k) => item[k] !== undefined && item[k] !== null).map((k) => [k, item[k]])),
-    }));
+  return entries.flatMap((e) => {
+    const items = e && Array.isArray(e[field]) ? e[field] : [];
+    return items
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        pr: e.pr,
+        ...Object.fromEntries(keys.filter((k) => item[k] !== undefined && item[k] !== null).map((k) => [k, item[k]])),
+      }));
+  });
 }
 
 // Pure: entries -> the parents Step 4.0b left open, `{ pr, parent?, issue?, reason }` per `parentFailures` element.
@@ -494,13 +497,17 @@ function stepSkipsOf(entries) {
 // A line item is a non-null object with an integer `pr` and a string `reason`; anything else is skipped.
 const isLineItem = (item) => item !== null && typeof item === 'object' && Number.isInteger(item.pr) && typeof item.reason === 'string';
 
+// Who a parentsLeftOpen item names: its parent, the parent of its record, or (naming neither) every parent.
+function parentSubject(item) {
+  if (Number.isInteger(item.parent)) return `#${item.parent}`;
+  if (Number.isInteger(item.issue)) return `the parent of record #${item.issue}`;
+  return 'every parent';
+}
+
 // Pure: parentsLeftOpen's items -> the one report line, or null when the input is not an array or holds no valid item.
 function parentsLeftOpenLine(items) {
-  const rendered = (Array.isArray(items) ? items : []).filter(isLineItem).map((item) => {
-    const who = Number.isInteger(item.parent) ? `#${item.parent}`
-      : Number.isInteger(item.issue) ? `the parent of record #${item.issue}` : 'every parent';
-    return `${who} (${item.reason}, PR #${item.pr})`;
-  });
+  const rendered = (Array.isArray(items) ? items : []).filter(isLineItem)
+    .map((item) => `${parentSubject(item)} (${item.reason}, PR #${item.pr})`);
   return rendered.length > 0
     ? `post-merge Step 4.0b left parent record(s) open: ${rendered.join(', ')} — tidy's parent-gate backstop recovers them`
     : null;
@@ -541,9 +548,10 @@ async function postMergeOne({
 // Steps 4.0 and 4.0b for one claimed run; the one place the marker is written.
 // `params` is { settleMs, closeWindowMs, selfInclude } (see LATE_MERGE_PARAMS); `retryHint` the retry clause
 // of an attempt line; `includeRecords` adds Step 4.0's record lists and `logFailed` to a `ran` entry, and makes
-// its `parentFailures` always present on an entry that reached Step 4.0b (postMergeOne only). A loop `ran` entry whose Step 4.0 word is not clean
-// carries the record lists and `logFailed` too (#4897); a clean one keeps its short shape. Step 4.0b's
-// `parentFailures` rides on a loop entry whenever it is non-empty, and `stepSkips` on either path when non-empty.
+// its `parentFailures` always present on an entry that reached Step 4.0b (postMergeOne only). A loop `ran` entry
+// whose Step 4.0 word is not clean carries the record lists and `logFailed` too (#4897); a clean one keeps its
+// short shape. Step 4.0b's `parentFailures` rides on a loop entry whenever it is non-empty, and `stepSkips` on
+// either path when non-empty.
 function processRun({
   dir, pr, root, owner, repo, host, workLinks, riskFloor, policySkip, timedGh, runClosingLinks, closeParents, writeEntries, now,
   params = LATE_MERGE_PARAMS, retryHint = RECONCILE_RETRY_HINT, includeRecords = false,
