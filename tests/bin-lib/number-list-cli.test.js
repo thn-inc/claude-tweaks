@@ -142,7 +142,7 @@ test('success: --repo override is parsed and passed to fetch as owner/repo', () 
 test('#2240: a GitHub Enterprise Server origin remote passes host to fetch', () => {
   let seen = null;
   const { run } = buildCli({ fetch: (args) => { seen = args; return new Map([[720, 'x']]); } });
-  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git', gateDeps: { env: { GH_HOST: 'ghe.example.com' } } });
   const code = run(['720'], deps);
   assert.equal(code, 0);
   assert.equal(seen.host, 'ghe.example.com');

@@ -119,11 +119,17 @@ function wholeArg(blank, open, at, end) {
   return rest.startsWith(',') || rest.startsWith(')');
 }
 
-// -> { verdict, sites: [{ line, text, ok }] } for every `gh` literal site in `raw`.
-function ghSites(raw) {
+// `raw` stripped in both modes, and the first non-ok stripperVerdict of the two texts.
+function stripBoth(raw) {
   const keep = stripComments(raw);
   const blank = stripComments(raw, BLANK);
   const verdict = [keep, blank].map((text) => stripperVerdict(raw, text)).find((v) => v !== 'ok') || 'ok';
+  return { keep, blank, verdict };
+}
+
+// -> { verdict, sites: [{ line, text, ok }] } for every `gh` literal site in `raw`.
+function ghSites(raw) {
+  const { keep, blank, verdict } = stripBoth(raw);
   const sites = [];
   const site = (open, ok, form) => {
     const close = open + 1 + balanced(blank, open, blank[open], blank[open] === '(' ? ')' : ']').length + 1;
@@ -305,4 +311,133 @@ test('review (#4505): every CLI that pins its explicit --repo host keeps both ha
     .map((file) => path.relative(BIN_ROOT, file).replace(/\\/g, '/'))
     .sort();
   assert.deepEqual(wired, [...PIN_WIRED].sort(), 'a CLI wires pinGhHost that PIN_WIRED does not list, or one stopped: settle the roster');
+});
+
+// #4933: a CLI's origin-derived repo goes through repo-resolve.js's gateOriginRepo(remote, deps),
+// which refuses an origin host with no positive GitHub signal before any gh call. A fresh
+// `parseRepo(<origin>)` hands gh a spec for whatever host the remote names, so this scan flags one
+// outside NOT_ORIGIN.
+//
+// A site is a `parseRepo(` call, bare or member (`deps.parseRepo(`), whose balanced argument text
+// matches ORIGIN_ARG. Blank-mode text locates the call and its argument boundaries: a `parseRepo(`
+// in a string or comment is blanked there, and a paren inside a literal moves no boundary.
+// Keep-mode text over the same span supplies the argument's literals (`'get-url'`, `'origin'`). An
+// explicit --repo parse (`parseRepo(opts.repo.split('/')…)`) names none of the tokens and is no site.
+//
+// Recall limits: only the argument's own text is read. A local assigned from `remoteUrl()` or
+// `get-url` under another name and parsed on a later line (`url = deps.remoteUrl(); …
+// parseRepo(url)`, activity-gather.js's shape) is not a site; that two-line shape is an accepted
+// gap. Nor is a parse reached through an alias (`const p = parseRepo; p(remote)`). Nor is a
+// single-expression origin read whose argument avoids the tokens by its naming alone
+// (`parseRepo(remoteOut)`, `parseRepo(originUrl)`, `parseRepo(remoteURL())`): recall rests on
+// the argument being named `remote`, `remoteUrl`, or a `get-url`/`'origin'` literal.
+const ORIGIN_ARG = /\bremote\b|remoteUrl|get-url|['"]origin['"]/;
+
+// -> { verdict, sites: [{ line, text }] } for every origin-reading parseRepo call in `raw`.
+function originReads(raw) {
+  const { keep, blank, verdict } = stripBoth(raw);
+  const sites = [];
+  for (const m of blank.matchAll(/(?<![\w$])parseRepo\s*\(/g)) {
+    const open = m.index + m[0].length - 1;
+    const end = open + 1 + balanced(blank, open).length;
+    if (!ORIGIN_ARG.test(keep.slice(open + 1, end))) continue;
+    const text = keep.slice(m.index, end + 1).replace(/\s+/g, ' ').slice(0, 100);
+    sites.push({ line: lineOf(blank, m.index), text: `origin read without gateOriginRepo: ${text}` });
+  }
+  return { verdict, sites };
+}
+
+// Files that may read the origin through parseRepo, keyed file -> exact site count. Each count
+// was settled by reading the lines. activity-gather.js is not listed: it reads the origin in two
+// lines (the recall gap above), so it has 0 sites, and it stops on any host but github.com anyway.
+const NOT_ORIGIN = {
+  'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges. resolveGhSpec's second parse, `parseRepo(hostPathOf(url))`, names no token and is unmatched; harmless, since this file is the seam" },
+  'stale-claim-pr.js': { count: 1, reason: "`deps.parseRepo(remote)` is followed by a stop on any host but github.com ('stale-claim matching supports github.com only'), so no other origin host reaches gh" },
+  'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
+  'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
+  'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
+};
+
+// The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
+const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
+  'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js'];
+
+// A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
+const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));
+
+test('AC9.1: the origin-read matcher flags a fresh parseRepo(remote) and ignores explicit --repo parsing', () => {
+  const src = [
+    "const { parseRepo } = require('./lib/repo-resolve');",
+    'parseRepo(remote);',                                                            // 2: flagged
+    'deps.parseRepo(remote);',                                                       // 3: flagged (member)
+    "parseRepo(git(['remote', 'get-url', 'origin']));",                              // 4: flagged (get-url literal)
+    'parseRepo(opts.repo ? x : remote);',                                            // 5: flagged (origin in one arm)
+    "parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);", // ok: explicit --repo
+    '// parseRepo(remote)',                                                          // ok: comment
+    "const s = 'parseRepo(remote)';",                                                // ok: string
+    'parseRepo(view && view.url);',                                                  // ok: no origin token
+    'const spec = parseRepo(',                                                       // 10: flagged (multi-line)
+    '  remoteUrl());',
+    "parseRepo(x || ')', remote);",                                                  // 12: flagged, a paren in a literal moves no boundary
+    'parseRepo(url); remote();',                                                     // ok: the token is past the call
+    'const r = gateOriginRepo(remote, deps.gateDeps);',                              // ok: the gate
+  ].join('\n');
+  assert.deepEqual(offendersOf(originReads(src)).map((o) => o.line), [2, 3, 4, 5, 10, 12]);
+  // A mis-parse is an offender: both modes mis-parse the first line, only blank mode the second.
+  assert.deepEqual(offendersOf(originReads("if (cp) /'/.test(cp); const b = 'p//q'; parseRepo(remote);")),
+    [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.misparsed }]);
+  assert.deepEqual(offendersOf(originReads("if (b) /'/.test(b); const c = 'x'; parseRepo(remote);")),
+    [{ line: 0, text: STRIPPER_VERDICT_MESSAGES.misparsed }]);
+});
+
+test('AC9.1 go-red: materialize.js with its gate call swapped for parseRepo(remote) is flagged', () => {
+  const raw = readText(path.join(BIN_ROOT, 'materialize.js'));
+  const from = 'gateOriginRepo(remote, deps.gateDeps)';
+  assert.ok(raw.includes(from), `mutant anchor missing from materialize.js: ${from}`);
+  assert.deepEqual(offendersOf(originReads(raw)), []);
+  const mutant = raw.replace(from, 'parseRepo(remote)');
+  assert.deepEqual(offendersOf(originReads(mutant)).map((o) => o.line), [lineOf(raw, raw.indexOf(from))]);
+  assert.equal(callsGate(mutant), false);
+});
+
+test('AC9.2: no plugin/bin file reads the origin through parseRepo outside NOT_ORIGIN', () => {
+  const files = walk(BIN_ROOT);
+  assert.ok(files.length >= 523, `walked only ${files.length} .js files under plugin/bin/ (floor 523): the walk is broken`);
+  let matched = 0;
+  const offenders = [];
+  const seen = {};
+  for (const file of files) {
+    const rel = path.relative(BIN_ROOT, file).replace(/\\/g, '/');
+    const result = originReads(readText(file));
+    matched += result.sites.length;
+    const bad = offendersOf(result);
+    if (result.verdict === 'ok' && NOT_ORIGIN[rel]) {
+      seen[rel] = bad.length;
+      continue;
+    }
+    for (const o of bad) offenders.push(`${rel}:${o.line}  (${o.text})`);
+  }
+  // Fewer sites means the matcher stopped matching, not that the origin reads went away. The
+  // floor is the NOT_ORIGIN site total: #4933 set it at 9, and #4951 moved stuck-open-prs.js's one
+  // site onto the gate (a deliberate removal, not lost recall), so it is 8; #4805 moved engine-verify.js's
+  // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. Raise it as sites are
+  // added, never lower it otherwise.
+  assert.ok(matched >= 6, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 6): the matcher stopped matching`);
+  for (const [rel, { count }] of Object.entries(NOT_ORIGIN)) {
+    assert.equal(seen[rel], count, `${rel}: expected exactly ${count} origin-reading parseRepo site(s), saw ${seen[rel]} — re-read the lines and settle the entry`);
+  }
+  assert.deepEqual(offenders, [],
+    'route these origin reads through repo-resolve.js\'s gateOriginRepo(remote, deps) — a raw parseRepo sends an unknown origin host\'s calls to gh');
+});
+
+test('AC9.3: ORIGIN_GATED is exactly the set of files calling gateOriginRepo', () => {
+  for (const rel of ORIGIN_GATED) {
+    assert.ok(callsGate(readText(path.join(BIN_ROOT, rel))), `${rel}: no longer calls gateOriginRepo(`);
+  }
+  const gated = walk(BIN_ROOT)
+    .map((file) => path.relative(BIN_ROOT, file).replace(/\\/g, '/'))
+    .filter((rel) => rel !== 'lib/repo-resolve.js' && callsGate(readText(path.join(BIN_ROOT, rel))))
+    .sort();
+  assert.deepEqual(gated, [...ORIGIN_GATED].sort(), 'a file calls gateOriginRepo that ORIGIN_GATED does not list, or one stopped: settle the roster');
 });
