@@ -145,7 +145,12 @@ const LOGGING_PINS = [
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site specify --removed {removed}'],
   ['Risk flags step 3', 'stamping', item3, 'logs nothing: a removal is logged in step 5, once the record write lands'],
   ['Compose --check paragraph', 'stamping', (t) => checkParagraph(t.stamping), 'Once `gh issue edit` succeeds, `### Risk flags` step 5 logs the removals; a failed edit logs none'],
-  ['Compose local-files commit line', 'stamping', (t) => localCommitLine(t.stamping), 'once `writeRecord` succeeds, run `### Risk flags` step 5'],
+  ['Compose local-files commit line', 'stamping', (t) => localCommitLine(t.stamping), 'Run `### Risk flags` step 5 once `writeRecord` succeeds, except that with no run dir its `## Gotchas` bullet is appended to `$SHAPED_BODY` before the `writeRecord` call above'],
+  // Final review residual: a non-zero log-removals exit prints no envelope, so it falls back to comments and never fails the record.
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'A non-zero `log-removals` exit (2 on a malformed call) prints no envelope: treat it as a failure for every `removed` slug and post the comment for each'],
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'The write has already landed, so the exit never fails the record or changes its outcome'],
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'under `local-files` with no run dir, the one exception to "only once the write has landed": append the line instead as a bullet to the body\'s `## Gotchas` in the settled body file before `writeRecord`'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'A non-zero `log-removals` exit falls back to a comment for every `removed` slug and does not change the unit\'s outcome'],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'never for a unit whose create failed'],
 ];
 // Neither writing verb takes --run any more, so a `--run` in step 3 is a log ahead of the write.
@@ -301,8 +306,8 @@ const CLAUSE_PINS = [
   ['Risk flags step 1', 'stamping', (t) => riskItem(t.stamping, 1), 'classify --body-file "{tmp-shaped-body}" --prior-body-file "{tmp-prior-body}"'],
   ['Risk flags step 2', 'stamping', (t) => riskItem(t.stamping, 2), 'In `auto` this step adds no stop (`_shared/auto-mode-contract.md`), so `auto` takes step 4 too'],
   ['Risk flags step 3', 'stamping', item3, "When its `entry.status` is `unknown`, ask nothing: tell the human the record's flag line is unreadable and must be repaired first, and run step 4's headless `settle`"],
-  ['Risk flags intro', 'stamping', (t) => stampingIntro(t.stamping), 'A verb that exits non-zero (1 a body file unreadable, 2 a malformed call or an unreadable or invalid policy, 3 the body file unwritable) writes nothing for this record'],
-  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'A verb that exits non-zero creates nothing for that unit'],
+  ['Risk flags intro', 'stamping', (t) => stampingIntro(t.stamping), 'A `classify`, `settle` or `confirm` verb that exits non-zero (1 a body file unreadable, 2 a malformed call or an unreadable or invalid policy, 3 the body file unwritable) runs before the write and writes nothing for this record (`log-removals`, which runs after the write, is step 5\'s own rule)'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'A `classify`, `settle` or `confirm` verb that exits non-zero creates nothing for that unit'],
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'with `logged: false` (a log write failed), do the same for each slug in `logFailures`'],
   ['Risk flags step 6', 'stamping', (t) => riskItem(t.stamping, 6), 'A headless run also re-marks a still-present confirmed flag unconfirmed, since it cannot tell whether the content changed'],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "runs in the main thread before `mechanical-handoff.md`'s dispatch"],
@@ -350,7 +355,7 @@ test('AC3.1: the headless path keeps every detected flag with no AskUserQuestion
 test('AC1.1: the flag line reaches the created record: settle runs before the write and before --check', () => assertOrder(LIVE.stamping));
 test('AC1.1: decomposition settles per unit before the create call', () => assertDecomposition(LIVE.subissues));
 test('Reading A: a refused settle tells the human the line must be repaired first and logs nothing', () => assertRefusedShaping(LIVE));
-test('AC2.1: a removal is logged through settle, else as a record comment or Gotchas bullet', () => assertLogging(LIVE));
+test('AC2.1: a removal is logged through log-removals, else as a record comment or Gotchas bullet', () => assertLogging(LIVE));
 test('a comma-list or range batch asks one question for every shaped record\'s flags', () => assertBatchQuestion(LIVE));
 test('Reading B: an explicit single-record /specify #N runs the Risk flags step on an already-shaped record', () => assertSingleRecordNoop(LIVE.shapingMode));
 test('AC6.1 AC6.2: every batch path leaves an already-shaped record untouched', () => assertBatchExclusion(LIVE.shapingMode, LIVE.stamping));
@@ -404,6 +409,20 @@ test('go-red (logging): step 3 handing settle a --run again fails', () => {
   const planted = step.replace('--answers-file "{tmp-answers}"`', '--answers-file "{tmp-answers}" --run "$PIPELINE_RUN_DIR"`');
   assert.notStrictEqual(planted, step);
   assert.throws(() => assertLogging({ ...LIVE, stamping: LIVE.stamping.replace(step, planted) }), names('Risk flags step 3: settle passes no --run'));
+});
+
+test('go-red (logging): the pre-reorder local-files wording, step 5 only after writeRecord, fails', () => {
+  const line = localCommitLine(LIVE.stamping);
+  const old = line.replace(/Run `### Risk flags` step 5 once.*?above\./, 'and, once `writeRecord` succeeds, run `### Risk flags` step 5.');
+  assert.notStrictEqual(old, line);
+  assert.throws(() => assertLogging({ ...LIVE, stamping: LIVE.stamping.replace(line, old) }), names('Compose local-files commit line: Run `### Risk flags` step 5 once'));
+});
+
+test('go-red (clauses): the generic non-zero rule restored to cover every verb, log-removals included, fails', () => {
+  const intro = stampingIntro(LIVE.stamping);
+  const old = intro.replace(/A `classify`, `settle` or `confirm` verb that exits non-zero/, 'A verb that exits non-zero');
+  assert.notStrictEqual(old, intro);
+  assert.throws(() => assertClauses({ ...LIVE, stamping: LIVE.stamping.replace(intro, old) }), names('Risk flags intro: A `classify`'));
 });
 
 test('go-red (order): ### Risk flags placed after ### Stamp scoring fails', () => {

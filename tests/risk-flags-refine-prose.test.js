@@ -123,6 +123,10 @@ const REFINE_PINS = [
   ['sub-file Write', 'sub', writeSec, "`shaping-mode-stamping.md`'s `### Risk flags` step 5"],
   ['sub-file Write', 'sub', writeSec, '`logFailures`'],
   ['sub-file Write', 'sub', writeSec, "`--site backlog` logs under `/backlog`'s `Refine risk flags` step"],
+  // Final review residual: a non-zero log-removals exit falls back to comments; the local-files no-run-dir bullet rides step 4's write.
+  ['sub-file Write', 'sub', writeSec, "A non-zero `log-removals` exit falls back to a comment for every `removed` slug and does not change the record's outcome"],
+  ['sub-file Write', 'sub', writeSec, "when no run dir resolved first append each `removed` slug's `## Gotchas` bullet (step 6) to `{tmp-risk-body}`, then `writeRecord`"],
+  ['sub-file Write', 'sub', writeSec, 'step 4 already added it to the body file before its write'],
 ];
 // Re-read, compare, confirm, write, refresh, log, in that order: the reverify precedes the
 // write, the snapshot is refreshed only after it, and a removal is logged last (finding 3).
@@ -143,6 +147,10 @@ function refineFailures(texts) {
   for (let i = 1; i < ORDER.length; i++) {
     if (idx[i - 1] === -1 || idx[i] === -1 || !(idx[i - 1] < idx[i])) out.push(`order: ${ORDER[i - 1]} before ${ORDER[i]}`);
   }
+  // The local-files no-run-dir Gotchas bullet is appended inside step 4, before its writeRecord.
+  const bulletAt = write.indexOf('first append each `removed` slug');
+  const writeRecordAt = write.indexOf('then `writeRecord`');
+  if (bulletAt === -1 || writeRecordAt === -1 || !(bulletAt < writeRecordAt)) out.push('order: the Gotchas bullet is appended before writeRecord');
   // Final review finding 2: refine asks in step 3's chunked shape, never parsing removals from `Other`.
   if (/`Other`|free-text/.test(subSection(texts.sub, 'Ask once'))) out.push('sub-file Ask once: no Other free-text parse');
   // confirm takes no --run: its body file is a temp copy, so logging there would precede the write.
@@ -297,6 +305,13 @@ test('go-red (refine): the log placed before the write fails the order check', (
   const moved = write.replace('1. **Re-read**', `Run \`node ${LOG_CALL}\` now. 1. **Re-read**`);
   assert.notStrictEqual(moved, write);
   assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(write, moved) }), names(`order: Refresh Step 1's snapshot before ${LOG_CALL}`));
+});
+
+test('go-red (refine): the Gotchas bullet appended after writeRecord fails the order check', () => {
+  const write = subSection(LIVE.sub, 'Write each answered record');
+  const moved = write.replace('first append each `removed` slug\'s `## Gotchas` bullet (step 6) to `{tmp-risk-body}`, then `writeRecord`', 'then `writeRecord` and first append each `removed` slug');
+  assert.notStrictEqual(moved, write);
+  assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(write, moved) }), names('order: the Gotchas bullet is appended before writeRecord'));
 });
 
 test('go-red (refine): the snapshot refresh placed before the write fails the order check', () => {
@@ -475,7 +490,7 @@ const VARIANT_MARKER_ROWS = [
   { number: 12, title: 'prose only', body: 'Origin: test\n\n## Current State\n\nThe word risk-flags-unconfirmed appears mid-sentence.' },
 ];
 function prefilterNumbers(fx, prefilter) {
-  const rows = JSON.parse(fs.readFileSync(fx.faceted, 'utf8'));
+  const rows = JSON.parse(bytes(fx.faceted));
   fs.writeFileSync(fx.faceted, JSON.stringify([...rows, ...VARIANT_MARKER_ROWS.map((r) => ({ ...r, facets: {} }))]));
   return sh(prefilter, fx.env).trim().split('\n').filter(Boolean).map((l) => JSON.parse(l).number);
 }
