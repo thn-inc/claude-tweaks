@@ -2,6 +2,7 @@
 files:
   - plugin/bin/lib/wrap-up/engine-verify.js
   - plugin/bin/lib/issues/record-dependencies.js
+  - plugin/bin/lib/issues/parent-gate.js
   - plugin/bin/lib/wrap-up/verify-results.js
   - plugin/bin/lib/wrap-up/pack.js
   - plugin/bin/wrap-up-engine.js
