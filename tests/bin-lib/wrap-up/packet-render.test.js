@@ -438,10 +438,10 @@ test('a deploy fact with no text states its own target', () => {
 test('a decision or recording with blank text falls back to its id', () => {
   const { markdown } = render([
     fact('decision:a', 'passed', { text: '  ' }),
-    fact('recording:b', 'passed', { url: 'https://cdn.example/b.gif' }),
+    fact('recording:b', 'passed', { url: 'https://cdn.example/b', exposure: 'linked-private' }),
   ]);
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), ['- `decision:a`']);
-  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- `recording:b`: <https://cdn.example/b.gif>']);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- `recording:b`: <https://cdn.example/b>']);
 });
 
 test('kept claims cite their ids in the three narrated sections', () => {
@@ -628,7 +628,7 @@ test('a moved claim withholds the reason of the fact that moved it', () => {
   assert.ok(!markdown.includes(SECRET));
 });
 
-test('decision, recording, deploy, refused and partial free text are screened too', () => {
+test('decision, deploy, refused and partial free text are screened too, and recording text is redacted', () => {
   const text = `the password=${SECRET}`;
   const { markdown } = render(
     [
@@ -641,7 +641,7 @@ test('decision, recording, deploy, refused and partial free text are screened to
   );
   assert.ok(!markdown.includes(SECRET));
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), [`- ${WITHHELD_TEXT}`]);
-  assert.deepEqual(sectionLines(markdown, 'Recording'), [`- ${WITHHELD_TEXT}: <https://cdn.example/r.gif>`]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['- the password=\\[redacted]: (recording url refused)', '  redacted values: 1']);
   assert.deepEqual(sectionLines(markdown, 'Deploy status'), [WITHHELD_TEXT]);
   assert.ok(sectionLines(markdown, 'Test guide').includes(`- 1 link(s) refused: link:a (${WITHHELD_REASON})`));
   assert.ok(markdown.includes(`> partial gather: ${WITHHELD_TEXT}; verify report not found`));
@@ -896,14 +896,14 @@ test('an allowed IPv6 host renders as a link', () => {
 
 test('recording rows render an http(s) url inert and refuse the rest', () => {
   const { markdown } = render([
-    fact('recording:a', 'passed', { text: 'Walkthrough [x]', url: 'https://cdn.example/a.gif' }),
-    fact('recording:b', 'passed', { text: 'Bad', url: 'javascript:alert(1)' }),
-    fact('recording:c', 'passed', { text: 'Junk', url: 'not a url' }),
-    fact('recording:d', 'passed', { text: 'Shaped', url: 'https://cdn.example/a)[click](https://evil.example' }),
-    fact('recording:e', 'passed', { text: 'None' }),
+    fact('recording:a', 'passed', { text: 'Walkthrough [x]', url: 'https://cdn.example/a', exposure: 'linked-private' }),
+    fact('recording:b', 'passed', { text: 'Bad', url: 'javascript:alert(1)', exposure: 'linked-private' }),
+    fact('recording:c', 'passed', { text: 'Junk', url: 'not a url', exposure: 'linked-private' }),
+    fact('recording:d', 'passed', { text: 'Shaped', url: 'https://cdn.example/a)[click](https://evil.example', exposure: 'linked-private' }),
+    fact('recording:e', 'passed', { text: 'None', exposure: 'linked-private' }),
   ]);
   assert.deepEqual(sectionLines(markdown, 'Recording'), [
-    '- Walkthrough \\[x\\]: <https://cdn.example/a.gif>',
+    '- Walkthrough \\[x\\]: <https://cdn.example/a>',
     '- Bad: (recording url refused)',
     '- Junk: (recording url refused)',
     '- Shaped: <https://cdn.example/a)[click](https://evil.example>',
@@ -957,7 +957,7 @@ test('an underline escape is whole-line only, on every path through inline', () 
   assert.deepEqual(sectionLines(markdown, 'Decisions left for you'), ['- \\---']);
 });
 
-test('a recording url carrying a credential is refused, never shown', () => {
+test('a recording url carrying a credential is withheld, never shown', () => {
   const urls = [
     'https://u:p@cdn.example/a.gif?X-Amz-Signature=abc&token=def',
     'https://u@cdn.example/a.gif',
@@ -967,7 +967,7 @@ test('a recording url carrying a credential is refused, never shown', () => {
   ];
   for (const url of urls) {
     const { markdown } = render([fact('recording:a', 'passed', { text: 'Rec', url })]);
-    assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Rec: (recording url refused)'], url);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), ['- Rec: recording withheld: link contained a credential-shaped value'], url);
     assert.ok(!markdown.includes('cdn.example'), url);
   }
 });
@@ -975,14 +975,14 @@ test('a recording url carrying a credential is refused, never shown', () => {
 test('a recording url needs no allowed host', () => {
   const { markdown } = render(
     [
-      fact('recording:a', 'passed', { text: 'A', url: 'https://cdn.example/a.gif?t=1#start' }),
-      fact('recording:b', 'passed', { text: 'B', url: 'http://[::1]:3000/b.webm' }),
+      fact('recording:a', 'passed', { text: 'A', url: 'https://cdn.example/a?t=1#start', exposure: 'linked-private' }),
+      fact('recording:b', 'passed', { text: 'B', url: 'http://[::1]:3000/b.webm', exposure: 'linked-private' }),
     ],
     [],
     { extra: { allowedHosts: [] } },
   );
   assert.deepEqual(sectionLines(markdown, 'Recording'), [
-    '- A: <https://cdn.example/a.gif?t=1#start>',
+    '- A: <https://cdn.example/a?t=1#start>',
     '- B: <http://[::1]:3000/b.webm>',
   ]);
 });

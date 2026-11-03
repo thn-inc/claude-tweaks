@@ -12,6 +12,7 @@ const {
   CLAIM_SECTIONS,
   SECTION_KINDS,
   FACT_ID_RE,
+  EXPOSURES,
   VERIFICATION_CLAIM_RE,
 } = require('./packet-contract');
 const { findCredentialInText } = require('./packet-links');
@@ -30,7 +31,7 @@ const REASON_KINDS = Object.freeze({
 });
 
 const ROUTED_KINDS = Object.freeze(['check', 'story']);
-const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label']);
+const OPTIONAL_TEXT_FIELDS = Object.freeze(['reason', 'text', 'url', 'command', 'label', 'url_or_path', 'archive_path', 'failure']);
 const isObject = (value) => value !== null && typeof value === 'object';
 
 class SchemaError extends Error {
@@ -75,6 +76,13 @@ function checkFact(fact, at, seenIds, errors) {
       errors.push({ path: `${at}.${field}`, message: 'must be a string when present' });
     }
   }
+  if (fact.exposure !== undefined && !EXPOSURES.includes(fact.exposure)) {
+    errors.push({ path: `${at}.exposure`, message: `must be one of ${EXPOSURES.join('|')} when present` });
+  }
+  if (fact.redactions !== undefined && !(Number.isInteger(fact.redactions) && fact.redactions >= 0)) {
+    errors.push({ path: `${at}.redactions`, message: 'must be a non-negative integer when present' });
+  }
+  if (fact.captions !== undefined) checkStringArray(fact.captions, `${at}.captions`, errors);
 }
 
 function checkStringArray(value, at, errors) {

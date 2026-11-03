@@ -6,8 +6,9 @@
 'use strict';
 
 const { PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES } = require('./packet-contract');
-const { checkLink, findCredentialInText, normalizeKey } = require('./packet-links');
+const { checkLink, findCredentialInText, isCredentialRefusal, isImageUrl, normalizeKey } = require('./packet-links');
 const { validatePacket } = require('./packet-validate');
+const { redactText } = require('../walkthrough/redact');
 const { escapeRegExp } = require('../shared-primitives');
 
 // Every shape GitHub can turn into a link or a notification. A plain `word:value` is
@@ -37,6 +38,12 @@ const WITHHELD_REASON = '(reason withheld: credential-shaped)';
 const WITHHELD_TEXT = '(text withheld: credential-shaped)';
 const WITHHELD_ID_NOTE = 'id withheld: credential-shaped';
 const WITHHELD_ID = `(${WITHHELD_ID_NOTE})`;
+const RECORDING_WITHHELD = 'recording withheld: link contained a credential-shaped value';
+const RECORDING_REFUSED = '(recording url refused)';
+const NOT_RECORDED = 'not recorded';
+const NO_STORY = 'no-story';
+const LINKED_PRIVATE = 'linked-private';
+const WITHHELD_EXPOSURE = 'withheld';
 
 const PLAN_SECTION = 'observation-plan';
 const PLAN_HEADING = 'Observation plan';
@@ -138,19 +145,73 @@ function rowPlace(fact) {
   return 'checks-passed';
 }
 
+// inline() escapes both brackets. Only the closer comes back, so the raw comment holds the
+// fixed token and the escaped opener keeps a `[redacted]: x` line from defining a link.
+const ESCAPED_PLACEHOLDER = '\\[redacted\\]';
+const RENDERED_PLACEHOLDER = '\\[redacted]';
+
+// Every free string of the section comes through here. The text keeps a shape left for the
+// screen, so the screen reads `residual`, where the placeholders that would trip it are gone.
+function recordingText(raw, tally) {
+  const { text, count, residual } = redactText(raw ?? '');
+  if (findCredentialInText(residual)) return WITHHELD_TEXT;
+  tally.redacted += count;
+  return inline(text).replaceAll(ESCAPED_PLACEHOLDER, RENDERED_PLACEHOLDER);
+}
+
 // A recording may live on any host, so its own hostname is the allowed one: checkLink
 // then screens the scheme, userinfo, path segments, query and fragment with no host rule.
-function recordingHref(url) {
+function recordingHref(url, exposure) {
   let hostname;
   try {
     ({ hostname } = new URL(url));
   } catch {
-    return '(recording url refused)';
+    return { place: RECORDING_REFUSED, live: false };
   }
-  return checkLink(url, { allowedHosts: [hostname] }).ok ? liveLink(url) : '(recording url refused)';
+  const { ok, reason } = checkLink(url, { allowedHosts: [hostname] });
+  if (isCredentialRefusal(reason)) return { place: RECORDING_WITHHELD, live: false };
+  if (!ok || isImageUrl(url) || exposure !== LINKED_PRIVATE) return { place: RECORDING_REFUSED, live: false };
+  return { place: liveLink(url), live: true };
 }
 
-const recordingLine = (fact) => `- ${factText(fact)}: ${recordingHref(fact.url)}`;
+const isScreenedPath = (path) => path !== undefined && findCredentialInText(path) !== null;
+
+// Where the head line points. A withheld place drops the archive line with it, since either
+// path may be what the screen refused.
+function recordingPlace(fact) {
+  if (fact.exposure === WITHHELD_EXPOSURE || isScreenedPath(fact.archive_path)) return { place: RECORDING_WITHHELD, live: false };
+  if (fact.url !== undefined || fact.url_or_path === undefined || fact.exposure === LINKED_PRIVATE) {
+    return recordingHref(fact.url ?? fact.url_or_path, fact.exposure);
+  }
+  if (isScreenedPath(fact.url_or_path)) return { place: RECORDING_WITHHELD, live: false };
+  const exposure = fact.exposure === undefined ? '' : ` (${fact.exposure})`;
+  return { place: `${codeSpan(fact.url_or_path)}${exposure}`, live: false };
+}
+
+function recordingHeadLines(fact, tally) {
+  if (fact.status === 'not-run') {
+    const reason = recordingText(fact.reason, tally);
+    return [reason ? `${NOT_RECORDED}: ${reason}` : NOT_RECORDED];
+  }
+  const { place, live } = recordingPlace(fact);
+  const text = recordingText(live ? fact.label ?? fact.text : fact.text, tally) || idSpan(fact.id);
+  const head = `- ${text}: ${place}`;
+  return place === RECORDING_WITHHELD || fact.archive_path === undefined
+    ? [head]
+    : [head, `  once archived: ${codeSpan(fact.archive_path)}`];
+}
+
+function recordingItem(fact) {
+  const tally = { redacted: 0 };
+  const lines = recordingHeadLines(fact, tally);
+  (fact.captions ?? []).forEach((caption, index) => lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`));
+  if (fact.status === 'not-run' && fact.failure !== undefined) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
+  if (tally.redacted > 0) lines.push(`  redacted values: ${tally.redacted}`);
+  return lines.join('\n');
+}
+
+// A recording that was expected and could not be made also renders a Couldn't test row.
+const recordingCouldNotRun = (fact) => fact.status === 'not-run' && fact.reason !== NO_STORY;
 
 function renderLinkFact(fact, facts, deploy) {
   if (fact.command) {
@@ -169,6 +230,13 @@ function renderLinkFact(fact, facts, deploy) {
 const item = (text) => ({ text, droppable: true });
 const note = (text) => ({ text, droppable: false });
 const itemsOr = (lines, reason) => (lines.length > 0 ? lines.map(item) : [note(reason)]);
+
+// The packet's one redacting choke point (#4612): nothing from a recording fact reaches the
+// markdown except through recordingText, a screened link or a screened code span.
+function renderRecordingSection(recordingFacts) {
+  const rendered = recordingFacts.filter((fact) => !(fact.status === 'not-run' && fact.reason === NO_STORY));
+  return itemsOr(rendered.map(recordingItem), NOT_RECORDED);
+}
 
 function testGuideBody(ctx) {
   const { facts, deploy, factsById, keptIn, rowsIn } = ctx;
@@ -197,10 +265,14 @@ const SECTION_BODIES = Object.freeze({
     keptIn('what-changed').map(claimLine),
     'not applicable: no change facts were gathered',
   ),
-  recording: ({ ofKind }) => itemsOr(ofKind('recording').map(recordingLine), 'not recorded'),
+  recording: ({ ofKind }) => renderRecordingSection(ofKind('recording')),
   'test-guide': testGuideBody,
-  'couldnt-test': ({ rowsIn, movedTo }) => itemsOr(
-    [...rowsIn('couldnt-test').map(rowLine), ...movedTo('couldnt-test').map(movedLine)],
+  'couldnt-test': ({ ofKind, rowsIn, movedTo }) => itemsOr(
+    [
+      ...rowsIn('couldnt-test').map(rowLine),
+      ...ofKind('recording').filter(recordingCouldNotRun).map(rowLine),
+      ...movedTo('couldnt-test').map(movedLine),
+    ],
     'not applicable: every expected check ran',
   ),
   'tried-to-break': ({ keptIn, movedTo, rowsIn }) => itemsOr(
@@ -428,4 +500,5 @@ module.exports = {
   inline,
   codeSpan,
   renderPacket,
+  renderRecordingSection,
 };

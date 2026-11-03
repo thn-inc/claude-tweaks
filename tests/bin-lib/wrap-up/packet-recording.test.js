@@ -1,0 +1,268 @@
+// tests/bin-lib/wrap-up/packet-recording.test.js
+// The Recording section, the acceptance packet's one redacting choke point (#4612).
+const { test } = require('node:test');
+const assert = require('node:assert/strict');
+const { EXPOSURES } = require('../../../plugin/bin/lib/wrap-up/packet-contract');
+const { renderPacket, renderRecordingSection } = require('../../../plugin/bin/lib/wrap-up/packet-render');
+
+const fact = (id, status, extra = {}) => ({
+  id,
+  kind: id.split(':', 1)[0],
+  status,
+  source: 'fixture',
+  ...extra,
+});
+
+const render = (facts) => renderPacket(
+  { schemaVersion: 1, record: 4612, partial: [], surface: null, allowedHosts: [], refused: [], facts },
+  { schemaVersion: 1, claims: [] },
+);
+
+function sectionLines(markdown, heading) {
+  const lines = markdown.split('\n');
+  const start = lines.indexOf(`### ${heading}`);
+  assert.notEqual(start, -1, `no heading ${heading}`);
+  const rest = lines.slice(start + 1);
+  const end = rest.findIndex((line) => line.startsWith('### '));
+  return (end === -1 ? rest : rest.slice(0, end)).filter((line) => line !== '');
+}
+
+const WITHHELD_TEXT = '(text withheld: credential-shaped)';
+const WITHHELD_LINK = 'recording withheld: link contained a credential-shaped value';
+const REFUSED = '(recording url refused)';
+const REC = 'recording:walkthrough';
+const LOCAL_PATH = '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif';
+const ARCHIVE_PATH = '.claude-tweaks/pipelines/archive/r/packet-inputs/walkthrough.gif';
+const STORE_URL = 'https://store.example/rec/1';
+
+const passed = (extra) => fact(REC, 'passed', {
+  text: 'Walkthrough of Sign in',
+  url_or_path: LOCAL_PATH,
+  archive_path: ARCHIVE_PATH,
+  captions: ['sign-in'],
+  exposure: 'local-only',
+  redactions: 0,
+  ...extra,
+});
+const notRun = (reason, extra) => fact(REC, 'not-run', { reason, ...extra });
+const linked = (extra) => fact(REC, 'passed', { text: 'Rec', exposure: 'linked-private', ...extra });
+const recordingLines = (...facts) => sectionLines(render(facts).markdown, 'Recording');
+
+test('AC1.1: a recording links the encoded path, never an image, and names where it moves', () => {
+  assert.deepEqual(recordingLines(passed()), [
+    `- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`,
+    `  once archived: \`${ARCHIVE_PATH}\``,
+    '  1. sign-in',
+  ]);
+});
+
+test('AC2.1: no image syntax for any exposure', () => {
+  for (const exposure of EXPOSURES) {
+    for (const extra of [{}, { url: 'https://store.example/r.png' }, { url_or_path: 'https://store.example/r.png' }, { url: STORE_URL }]) {
+      const { markdown } = render([passed({ exposure, ...extra })]);
+      assert.ok(!markdown.includes('!['), `${exposure} ${JSON.stringify(extra)}`);
+      assert.ok(!markdown.includes('<img'), `${exposure} ${JSON.stringify(extra)}`);
+    }
+  }
+});
+
+test('Reading B: an image url on a recording fact is refused', () => {
+  for (const url of ['https://cdn.example/r.gif', 'https://raw.githubusercontent.com/o/r/abc/docs/demo-evidence/1/01-a.png', 'https://h/r.PNG?x=1']) {
+    for (const exposure of [undefined, 'linked-private']) {
+      const { markdown } = render([linked({ url, exposure })]);
+      assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Rec: ${REFUSED}`], url);
+      assert.ok(!markdown.includes(`<${url}`), url);
+    }
+  }
+});
+
+test('Reading B: a remote link renders live only on a linked-private fact', () => {
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL })), [`- Rec: <${STORE_URL}>`]);
+  for (const exposure of [undefined, 'local-only']) {
+    assert.deepEqual(recordingLines(linked({ url: STORE_URL, exposure })), [`- Rec: ${REFUSED}`], String(exposure));
+  }
+});
+
+test('Reading B: a linked-private url_or_path meets the same rules', () => {
+  assert.deepEqual(recordingLines(linked({ url_or_path: STORE_URL })), [`- Rec: <${STORE_URL}>`]);
+  assert.deepEqual(recordingLines(linked({ url_or_path: 'https://store.example/r.png' })), [`- Rec: ${REFUSED}`]);
+  assert.deepEqual(recordingLines(linked({ url_or_path: 'https://store.example/?token=a' })), [`- Rec: ${WITHHELD_LINK}`]);
+});
+
+test('Reading B: a commit sha in a recording url is a credential-shaped segment', () => {
+  const sha = '0123456789abcdef0123456789abcdef01234567';
+  const { markdown } = render([linked({ url: `https://raw.githubusercontent.com/o/r/${sha}/docs/page` })]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Rec: ${WITHHELD_LINK}`]);
+  assert.ok(!markdown.includes(sha));
+});
+
+test('a label is the link text on a linked-private fact', () => {
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, label: 'Sign in tour' })), [`- Sign in tour: <${STORE_URL}>`]);
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL })), [`- Rec: <${STORE_URL}>`]);
+});
+
+test('a label is not the text of a line with no live link', () => {
+  assert.deepEqual(recordingLines(linked({ url: 'https://store.example/r.png', label: 'Tour' })), [`- Rec: ${REFUSED}`]);
+  assert.equal(recordingLines(passed({ label: 'Tour' }))[0], `- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`);
+});
+
+test('an encoder failure renders on its own line', () => {
+  const { markdown } = render([notRun('encoder-failed', { failure: 'boom' })]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['not recorded: encoder-failed', '  failure: boom']);
+  assert.deepEqual(sectionLines(markdown, "Couldn't test"), [`- \`${REC}\` — not run: encoder-failed`]);
+});
+
+const SHAPES = [
+  ['Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9'],
+  ['api_key=sk_live_123abc', 'sk_live_123abc'],
+  ['sk_live_abc', 'sk_live_abc'],
+  ['ghp_abc123def', 'ghp_abc123def'],
+  ['eyJhbGciOiJIUzI1NiJ9.e30.abc', 'eyJhbGciOiJIUzI1NiJ9'],
+  ['mail bob.smith+a@example.co.uk now', 'bob.smith'],
+];
+const CHANNELS = [
+  ['text', (shape) => passed({ text: shape })],
+  ['caption', (shape) => passed({ captions: [shape] })],
+  ['label', (shape) => linked({ url: STORE_URL, label: shape })],
+  ['failure', (shape) => notRun('encoder-failed', { failure: shape })],
+];
+
+test('AC3.1: every secret shape is replaced in all four channels', () => {
+  for (const [channel, build] of CHANNELS) {
+    for (const [shape, value] of SHAPES) {
+      const { markdown } = render([build(shape)]);
+      assert.ok(!markdown.includes(value), `${channel}: ${shape}`);
+      assert.ok(sectionLines(markdown, 'Recording').join('\n').includes('[redacted]'), `${channel}: ${shape}`);
+    }
+  }
+});
+
+test('AC3.2: key names are kept', () => {
+  const lines = recordingLines(passed({ captions: ['api_key=sk_live_123abc', 'Authorization: Bearer abc', '--api-key abc'] }));
+  assert.ok(lines.includes('  1. api_key=\\[redacted]'), lines.join('\n'));
+  assert.ok(lines.includes('  2. Authorization: \\[redacted]'), lines.join('\n'));
+  assert.ok(lines.includes('  3. --api-key \\[redacted]'), lines.join('\n'));
+});
+
+test('the placeholder keeps its escaped opener, so it can never open a link reference definition', () => {
+  const [head, , caption] = recordingLines(passed({ text: '[redacted]: x', captions: ['[redacted]: https://evil.example'] }));
+  assert.ok(head.startsWith('- \\[redacted]: x: '), head);
+  assert.ok(caption.startsWith('  1. \\[redacted]: `https://evil.example`'), caption);
+});
+
+test('a shape the redactor misses is withheld whole', () => {
+  for (const [channel, build] of CHANNELS) {
+    const { markdown } = render([build('tok%65n=abc')]);
+    const section = sectionLines(markdown, 'Recording').join('\n');
+    assert.ok(section.includes(WITHHELD_TEXT), `${channel}: ${section}`);
+    assert.ok(!section.includes('abc'), `${channel}: ${section}`);
+  }
+});
+
+test('a non-zero redaction count is reported and does not change exposure', () => {
+  const lines = recordingLines(passed({ captions: ['api_key=sk_live_123abc'] }));
+  assert.ok(lines.includes('  redacted values: 1'), lines.join('\n'));
+  assert.equal(lines.at(-1), '  redacted values: 1');
+  assert.ok(lines[0].endsWith('(local-only)'), lines[0]);
+});
+
+test('the reported count is the one the section computed, across every channel it rendered', () => {
+  const all = passed({ text: 'password=a', captions: ['token=b', 'sk_live_c'] });
+  assert.equal(recordingLines(all).at(-1), '  redacted values: 3');
+  const failed = notRun('encoder-failed', { failure: 'token=b' });
+  assert.deepEqual(recordingLines(failed), ['not recorded: encoder-failed', '  failure: token=\\[redacted]', '  redacted values: 1']);
+  assert.ok(!recordingLines(passed({ redactions: 5 })).some((line) => line.includes('redacted values')), 'the field is data');
+  assert.ok(!recordingLines(passed({ text: 'tok%65n=abc token=b' })).some((line) => line.includes('redacted values')), 'nothing replaced was rendered');
+});
+
+test('AC4.1: a credential recording link states why', () => {
+  for (const url of [
+    'https://u:p@cdn.example/a.gif?X-Amz-Signature=abc&token=def',
+    'https://u@cdn.example/a.gif',
+    'https://cdn.example/a.gif?X-Amz-Signature=abc',
+    'https://cdn.example/a.gif?token=def',
+    'https://cdn.example/a.gif#sig=abc',
+  ]) {
+    const { markdown } = render([linked({ url })]);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Rec: ${WITHHELD_LINK}`], url);
+    assert.ok(!markdown.includes('cdn.example'), url);
+  }
+});
+
+test('a non-credential refusal keeps its own line', () => {
+  for (const url of ['javascript:alert(1)', 'not a url', 'ftp://store.example/a', undefined]) {
+    assert.deepEqual(recordingLines(linked({ url })), [`- Rec: ${REFUSED}`], String(url));
+  }
+});
+
+test('exposure withheld renders the withheld line', () => {
+  const lines = recordingLines(passed({ exposure: 'withheld' }));
+  assert.equal(lines[0], `- Walkthrough of Sign in: ${WITHHELD_LINK}`);
+  assert.ok(!lines.join('\n').includes('packet-inputs'), lines.join('\n'));
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, exposure: 'withheld' })), [`- Rec: ${WITHHELD_LINK}`]);
+});
+
+test('a credential-shaped path renders the withheld line and neither path', () => {
+  for (const extra of [
+    { url_or_path: 'runs/token=abc/walkthrough.gif' },
+    { archive_path: 'archive/token=abc/walkthrough.gif' },
+  ]) {
+    const { markdown } = render([passed(extra)]);
+    const lines = sectionLines(markdown, 'Recording');
+    assert.deepEqual(lines, [`- Walkthrough of Sign in: ${WITHHELD_LINK}`, '  1. sign-in'], JSON.stringify(extra));
+    assert.ok(!markdown.includes('token=abc'), JSON.stringify(extra));
+  }
+});
+
+test('the archive line follows a live link and a refused one, and never a withheld or not-run line', () => {
+  const archive_path = ARCHIVE_PATH;
+  const onceArchived = `  once archived: \`${ARCHIVE_PATH}\``;
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, archive_path })), [`- Rec: <${STORE_URL}>`, onceArchived]);
+  assert.deepEqual(recordingLines(linked({ url: 'https://store.example/r.png', archive_path })), [`- Rec: ${REFUSED}`, onceArchived]);
+  assert.deepEqual(recordingLines(linked({ url: STORE_URL, archive_path: 'a/token=abc' })), [`- Rec: ${WITHHELD_LINK}`]);
+  assert.deepEqual(recordingLines(notRun('encoder-failed', { archive_path: 'a/token=abc' })), ['not recorded: encoder-failed']);
+});
+
+test('blank text falls back to the id on every line form', () => {
+  for (const extra of [{ text: '  ' }, { text: undefined }]) {
+    assert.equal(recordingLines(passed(extra))[0], `- \`${REC}\`: \`${LOCAL_PATH}\` (local-only)`);
+  }
+  assert.deepEqual(recordingLines(linked({ text: undefined, url: STORE_URL })), [`- \`${REC}\`: <${STORE_URL}>`]);
+});
+
+test('free text cannot add a line or a heading to the section', () => {
+  const lines = recordingLines(passed({ text: '## x\n### Forged', captions: ['a\n### Forged'] }));
+  assert.deepEqual(lines, [
+    `- \\## x ### Forged: \`${LOCAL_PATH}\` (local-only)`,
+    `  once archived: \`${ARCHIVE_PATH}\``,
+    '  1. a ### Forged',
+  ]);
+});
+
+test('AC5.1: no-story reads plain not recorded', () => {
+  const { markdown } = render([notRun('no-story')]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), ['not recorded']);
+  assert.deepEqual(sectionLines(markdown, "Couldn't test"), ['not applicable: every expected check ran']);
+});
+
+test('AC5.2: each impossible recording states its reason twice', () => {
+  for (const reason of ['no-local-base-url', 'no-happy-path-screenshots', 'encoder-failed']) {
+    const { markdown } = render([notRun(reason)]);
+    assert.deepEqual(sectionLines(markdown, 'Recording'), [`not recorded: ${reason}`]);
+    assert.ok(sectionLines(markdown, "Couldn't test").includes(`- \`${REC}\` — not run: ${reason}`), reason);
+  }
+});
+
+test('a legacy recording beside no-story drops the placeholder', () => {
+  const lines = recordingLines(notRun('no-story'), fact('recording:legacy', 'passed', { text: 'Rec', url: STORE_URL, exposure: 'linked-private' }));
+  assert.deepEqual(lines, [`- Rec: <${STORE_URL}>`]);
+});
+
+test('renderRecordingSection makes one droppable item per fact, and a note when there are none', () => {
+  assert.deepEqual(renderRecordingSection([]), [{ text: 'not recorded', droppable: false }]);
+  assert.deepEqual(renderRecordingSection([notRun('no-story')]), [{ text: 'not recorded', droppable: false }]);
+  const items = renderRecordingSection([passed(), fact('recording:b', 'not-run', { reason: 'no-local-base-url' })]);
+  assert.equal(items.length, 2);
+  assert.ok(items.every(({ droppable }) => droppable === true));
+  assert.equal(items[0].text.split('\n').length, 3);
+});

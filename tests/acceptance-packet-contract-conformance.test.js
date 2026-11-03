@@ -29,11 +29,12 @@ const {
   MAX_PACKET_CHARS,
   COMMANDS_ONLY_SURFACES,
   CREDENTIAL_KEYS,
+  EXPOSURES,
   VERIFICATION_WORDS,
 } = require('../plugin/bin/lib/wrap-up/packet-contract');
 const { checkLink, findCredentialInText } = require('../plugin/bin/lib/wrap-up/packet-links');
 const { validatePacket } = require('../plugin/bin/lib/wrap-up/packet-validate');
-const { renderPacket, inline, codeSpan } = require('../plugin/bin/lib/wrap-up/packet-render');
+const { renderPacket, renderRecordingSection, inline, codeSpan } = require('../plugin/bin/lib/wrap-up/packet-render');
 const { gatherPacketFacts, parseAcceptanceCriteria, readPacket } = require('../plugin/bin/lib/wrap-up/packet-gather');
 const { upsertLocalPacket } = require('../plugin/bin/lib/wrap-up/packet-post');
 const { LABELS } = require('../plugin/bin/lib/issues/record-vocabulary');
@@ -104,6 +105,7 @@ test('the contract carries its headings in the specified order', () => {
     '## Reader rules',
     '## Untrusted content',
     '## Links and credentials',
+    '## Recording',
     '## Facts-poor and infra items',
     '## Size',
     '## Old brief section map',
@@ -507,7 +509,7 @@ const UNTRUSTED_FACTS = [
   ['a leading block marker escapes', /A leading block marker is escaped too, `>`, a list marker, `1\.` or `1\)`/],
   ['a character reference escapes', /a character reference's `&`/],
   ['touching tokens share a span', /tokens that touch sharing one span/],
-  ['a screenshot is a plain link', /An evidence screenshot is therefore a plain link and not an embedded image/],
+  ['a recording is a path or a plain link, never an image', /A recording is therefore a path, or on a `linked-private` fact a plain link to a non-image page, and never an embedded image/],
 ];
 for (const [label, pattern] of UNTRUSTED_FACTS) {
   test(`Untrusted content states: ${label}`, () => assert.match(inSection('## Untrusted content'), pattern));
@@ -535,11 +537,16 @@ test('inline() escapes what the contract says it escapes', () => {
   assert.strictEqual(inline('#12@octocat'), codeSpan('#12@octocat'));
 });
 
-test('an evidence screenshot renders as a plain link, from a recording fact', () => {
-  const url = 'https://raw.githubusercontent.com/o/r/abc/docs/demo-evidence/1/01-a.png';
-  const { markdown } = renderPacket(facts([fact('recording:a', 'recording', 'passed', { text: 'a', url })]), narrative([]));
+test('a recording link is a plain link to a non-image page', () => {
+  const url = 'https://store.example/rec/1';
+  const live = fact('recording:a', 'recording', 'passed', { text: 'a', url, exposure: 'linked-private' });
+  const { markdown } = renderPacket(facts([live]), narrative([]));
   assert.ok(markdown.includes(`- a: <${url}>`), markdown);
   assert.ok(!markdown.includes('!['), markdown);
+  const image = { ...live, url: 'https://raw.githubusercontent.com/o/r/abc/docs/demo-evidence/1/01-a.png' };
+  const refused = renderPacket(facts([image]), narrative([])).markdown;
+  assert.ok(refused.includes('- a: (recording url refused)'), refused);
+  assert.ok(!refused.includes('!['), refused);
 });
 
 // ---- ## Links and credentials ----
@@ -559,7 +566,7 @@ test('a link keeps to the host rule, by hostname and ignoring port', () => {
   const body = inSection('## Links and credentials');
   assert.match(body, /http\(s\) only, and its host must be the local base URL host or the `dev-base-url` host/);
   assert.match(body, /Hosts compare by hostname, ignoring port/);
-  assert.match(body, /`recording` fact's `url` gets the credential screen with no host rule/);
+  assert.match(body, /A `recording` link gets the credential screen and the non-image rule with no host rule/);
 });
 
 test('each URL shape the contract names is refused', () => {
@@ -677,6 +684,120 @@ test('the unverified suffix the contract quotes is the one rendered', () => {
   assert.ok(render('dev', false).includes(suffix), 'dev, not live');
   assert.ok(!render('dev', true).includes(suffix), 'dev, live');
   assert.ok(!render('local', null).includes(suffix), 'local');
+});
+
+// ---- #4612: the Recording contract ----
+//
+// These pins state new prose, so each is proven red in the suite itself: a control
+// strips the one clause from a copy of the text and calls the same assertion, matched
+// on that assertion's own message (skill-prose-conformance-tests).
+
+function assertStates(body, pattern, label) {
+  assert.ok(pattern.test(body), label);
+}
+
+function assertNamesOnce(body, literal) {
+  const label = `\`${literal}\` is stated once in ## Recording`;
+  assert.ok(body.split(`\`${literal}\``).length - 1 === 1, label);
+}
+
+function recordingClauseTest(heading, label, pattern) {
+  test(`${heading} states: ${label}`, () => {
+    const body = inSection(heading);
+    assertStates(body, pattern, label);
+    const mutated = body.replace(pattern, '');
+    assert.notStrictEqual(mutated, body);
+    assert.throws(() => assertStates(mutated, pattern, label), { message: label });
+  });
+}
+
+const RECORDING_VOCABULARY = [
+  'renderRecordingSection',
+  'no-story',
+  'no-local-base-url',
+  'no-happy-path-screenshots',
+  'encoder-failed',
+  ...EXPOSURES,
+  'recording withheld: link contained a credential-shaped value',
+];
+
+test('the exposure values are the three the code decides between', () => {
+  assert.deepStrictEqual([...EXPOSURES], ['local-only', 'linked-private', 'withheld']);
+});
+
+for (const literal of RECORDING_VOCABULARY) {
+  test(`## Recording names ${literal}`, () => {
+    const body = sectionOf(CONTRACT, '## Recording');
+    assertNamesOnce(body, literal);
+    const mutated = body.replace(`\`${literal}\``, '`gone`');
+    assert.notStrictEqual(mutated, body);
+    assert.throws(() => assertNamesOnce(mutated, literal), { message: `\`${literal}\` is stated once in ## Recording` });
+  });
+}
+
+for (const [heading, label, pattern] of [
+  ['## Sections', 'Recording renders through renderRecordingSection', /owner: the recording record\. One item per `recording` fact, through `renderRecordingSection`/],
+  ['## Sections', 'an impossible recording also takes a row', /A `recording` fact with status `not-run` and any reason but `no-story` also renders one row in Couldn't test/],
+  ['## Facts and claims', 'the recording render fields', /`url_or_path`, `archive_path`, `captions`, `failure`, `redactions` and `exposure`/],
+  ['## Pipeline', 'snapshot also encodes the recording', /`snapshot` also encodes the recording/],
+  ['## Reader rules', 'a Recording path is local', /A Recording path is local to the machine that ran the pipeline/],
+  ['## Reader rules', 'the reader checks the live location, then the archived one', /the reader checks the live location first and then the `once archived:` one/],
+  ['## Reader rules', 'a gone file is no failed packet', /a file in neither is gone, never a failed packet/],
+  ['## Links and credentials', 'a recording link renders live only when linked-private', /renders live only when `decideExposure` returned `linked-private`/],
+  ['## Links and credentials', 'a credential recording link states why', /A refused one renders `\(recording url refused\)`, and one refused for a credential, a bearer-shaped path segment included, renders `recording withheld: link contained a credential-shaped value`/],
+  ['## Links and credentials', 'the Recording section redacts instead', /The Recording section redacts its text instead \(`## Recording`\)/],
+  ['## Links and credentials', 'the bearer rule binds link facts too', /The bearer-segment rule binds `link` facts as well as recording links/],
+  ['## Links and credentials', 'a UUID or dated slug is refused', /A UUID-keyed or dated-slug path on an allowed host therefore renders `\(link refused: credential in path segment\)`/],
+  ['## Links and credentials', 'the Try it block still names the route', /the Try it block still names the route/],
+  ['## Links and credentials', 'a gather refusal states the same reason', /A link the gather refused has no fact, so its refusal reads `\{N\} link\(s\) refused: \{id\} \(credential in path segment\)`/],
+  ['## Recording', 'the source of frames', /built from the step screenshots the pipeline's own happy-path stories already wrote[^.]*\. No new browser run/],
+  ['## Recording', 'negative stories never enter it', /Negative stories are excluded/],
+  ['## Recording', 'the local base URL', /the base URL the story run itself was given, whose host is `localhost`, `127\.0\.0\.1` or `::1`/],
+  ['## Recording', 'never uploaded', /stored in the run's local directory and never uploaded, in any repository visibility/],
+  ['## Recording', 'never embedded', /never embeds the recording or any screenshot/],
+  ['## Recording', 'one choke point', /applied at one choke point/],
+  ['## Recording', 'key names stay, the whole value goes', /keeps the key name and replaces the whole value/],
+  ['## Recording', 'the placeholder escape', /renders `\[redacted\]`, the raw comment holds the fixed token, and its escaped opener means a line can never become a link reference definition/],
+  ['## Recording', 'what the redactor misses is withheld', /a shape the redactor misses renders `\(text withheld: credential-shaped\)`/],
+  ['## Recording', 'the count is reported only', /A non-zero count renders as `redacted values: \{n\}` and does not change the exposure/],
+  ['## Recording', 'pixels are not scanned', /cannot scan pixels/],
+  ['## Recording', 'the stored GIF is unredacted', /the stored GIF is unredacted and local-only/],
+  ['## Recording', 'seed data only', /stories must run against seed data and throwaway credentials/],
+  ['## Recording', 'no-story is plain', /The first renders plain `not recorded` only/],
+  ['## Recording', 'the other three are also under Couldn\'t test', /other three also appear under Couldn't test/],
+  ['## Recording', 'an image link is refused', /a link to an image is refused/],
+]) {
+  recordingClauseTest(heading, label, pattern);
+}
+
+test('the recording lines the contract quotes are the ones rendered', () => {
+  const body = inSection('## Links and credentials');
+  const base = { text: 'Rec', exposure: 'linked-private' };
+  const lineFor = (url) => renderRecordingSection([fact('recording:a', 'recording', 'passed', { ...base, url })])[0].text;
+  const withheld = lineFor('https://store.example/?token=a').replace('- Rec: ', '');
+  const refused = lineFor('https://store.example/r.png').replace('- Rec: ', '');
+  assert.ok(body.includes(`\`${withheld}\``), withheld);
+  assert.ok(body.includes(`\`${refused}\``), refused);
+});
+
+test('a UUID-keyed or dated-slug link on an allowed host is refused at render and at gather', () => {
+  const allowedHosts = ['http://localhost:3000'];
+  for (const segment of ['123e4567-e89b-12d3-a456-426614174000', '2026-11-02-acceptance-recording']) {
+    const url = `http://localhost:3000/orders/${segment}`;
+    const { markdown } = renderPacket(
+      facts([fact('link:a', 'link', 'passed', { url })], { allowedHosts }),
+      narrative([{ section: 'test-guide', text: 'Open it', refs: ['link:a'] }]),
+    );
+    assert.ok(markdown.includes('(link refused: credential in path segment)'), markdown);
+    assert.ok(!markdown.includes(segment), markdown);
+
+    const { refused } = gatherPacketFacts({
+      record: 1, specText: null, changes: null, links: [{ id: 'a', url }], localBaseUrl: 'http://localhost:3000',
+    });
+    assert.deepStrictEqual(refused, [{ id: 'link:a', reason: 'credential in path segment' }]);
+    const line = renderPacket(facts([], { refused }), narrative([])).markdown;
+    assert.ok(line.includes('1 link(s) refused: link:a (credential in path segment)'), line);
+  }
 });
 
 // ---- ## Facts-poor and infra items ----

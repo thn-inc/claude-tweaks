@@ -499,6 +499,34 @@ test('validateFactsShape refuses an optional text field that is not a string', (
   }
 });
 
+test('validateFactsShape checks the recording fields', () => {
+  const one = (extra) => factsErrorPaths({ ...factsDoc(), facts: [{ ...fact('recording:r', 'passed'), ...extra }] });
+  assert.deepEqual(one({
+    url_or_path: 'a/b.gif',
+    archive_path: 'archive/a/b.gif',
+    captions: ['one'],
+    failure: 'boom',
+    redactions: 0,
+    exposure: 'local-only',
+  }), []);
+  assert.deepEqual(one({ captions: [] }), []);
+  for (const exposure of ['local-only', 'linked-private', 'withheld']) assert.deepEqual(one({ exposure }), [], exposure);
+  for (const [extra, at] of [
+    [{ exposure: 'bogus' }, 'exposure'],
+    [{ exposure: 3 }, 'exposure'],
+    [{ redactions: -1 }, 'redactions'],
+    [{ redactions: 1.5 }, 'redactions'],
+    [{ redactions: '1' }, 'redactions'],
+    [{ captions: 'x' }, 'captions'],
+    [{ captions: [1] }, 'captions[0]'],
+    [{ url_or_path: 3 }, 'url_or_path'],
+    [{ archive_path: 3 }, 'archive_path'],
+    [{ failure: 3 }, 'failure'],
+  ]) {
+    assert.deepEqual(one(extra), [`facts.facts[0].${at}`], JSON.stringify(extra));
+  }
+});
+
 test('validateFactsShape refuses a repeated id', () => {
   const repeat = fact('story:login', 'failed');
   assert.deepEqual(factsErrorPaths(factsDoc({}, [repeat])), ['facts.facts[8].id']);
