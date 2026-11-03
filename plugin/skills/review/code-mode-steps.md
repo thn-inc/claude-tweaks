@@ -176,7 +176,7 @@ The one exception is the dependency question, which needs manifest *content* rat
 
 Full diff *content* belongs to Step 3's dispatched lens agents, which have their own context windows. See Step 3's dispatch note. It lives in `step3-lens-dispatch.md`.
 
-If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage, with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier embedded in the item description per `_shared/ledger-format.md`'s ops-item rule — an ops item without one is a classification error. This catches ops requirements introduced during review fixes that weren't present in the original build.
+If infrastructure or deployment changes are detected (Terraform, CDK, Docker, CI/CD, database migrations, new environment variables) that aren't already in the ledger as `ops` items, triage each for auto-executability first — most "outside the codebase" tasks have a CLI and get executed, not appended. Append only what survives triage (`hooks.js ledger-row`, `_shared/ledger-format.md`'s Writer section), with phase `ops`, status `open`, and a `(reason-not-auto: {value})` qualifier embedded in the item description per `_shared/ledger-format.md`'s ops-item rule — an ops item without one is a classification error. This catches ops requirements introduced during review fixes that weren't present in the original build.
 
 This classification guides which review lenses to apply — a pure UI change doesn't need a database review.
 
