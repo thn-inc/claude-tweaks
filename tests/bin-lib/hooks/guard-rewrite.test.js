@@ -399,7 +399,7 @@ test('drop-redundant-cd under path.win32 keeps comparing exact spellings: the th
   // The same for the re-cased drive: the fixture's realpath keeps the drive letter's case, which
   // would decline it on its own; a case-folding realpath (the on-disk answer on a real Windows
   // volume) leaves the exact-spelling compare as the only thing that can decline it.
-  const folding ={ ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
+  const folding = { ...fixture, deps: { ...fixture.deps, canonicalRealpath: (p) => path.win32.resolve(p).toLowerCase() } };
   assert.strictEqual(rewriteForGuard({ command: 'cd "d:\\w\\cwd" && ls x', ...folding }), null, 'residual: a re-cased drive');
   assert.deepStrictEqual(rewriteForGuard({ command: 'cd "D:\\w\\cwd" && ls x', ...folding }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'the exact spelling still drops under the folding realpath');
 });
