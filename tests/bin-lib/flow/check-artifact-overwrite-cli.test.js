@@ -293,3 +293,67 @@ test('end-to-end: an untrailered self-edit exits 0 with --run and 1 without it',
   assert.strictEqual(withoutRun.status, 1, withoutRun.stderr);
   assert.match(JSON.parse(withoutRun.stdout).overwrites[0].reason, /unattributable/);
 });
+
+// --- --integration-ref <ref>: integration-branch history leaves the walk (refs #4845) ---
+
+test('--integration-ref is forwarded to the check as integrationRef', () => {
+  let seen;
+  const io = fakeIo();
+  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref', 'origin/main'],
+    { ...io, check: (o) => { seen = o; return { clean: true, overwrites: [] }; } });
+  assert.strictEqual(code, 0);
+  assert.strictEqual(seen.integrationRef, 'origin/main');
+});
+
+test('--integration-ref rejects an empty, a whitespace-only and a dash-leading value (exit 2)', () => {
+  for (const value of ['', '  ', '-x', '--upload-pack=evil']) {
+    const io = fakeIo();
+    const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref', value],
+      { ...io, check: () => { throw new Error('check must not run'); } });
+    assert.strictEqual(code, 2, `value ${JSON.stringify(value)}`);
+    assert.match(io.err(), /--integration-ref requires a ref/);
+    assert.strictEqual(io.out(), '');
+  }
+});
+
+test('a trailing bare --integration-ref is a malformed invocation (exit 2)', () => {
+  const io = fakeIo();
+  const code = run(['node', 'check-artifact-overwrite.js', '--base', 'a', '--integration-ref'],
+    { ...io, check: () => { throw new Error('check must not run'); } });
+  assert.strictEqual(code, 2);
+  assert.match(io.err(), /requires a value/);
+  assert.strictEqual(io.out(), '');
+});
+
+test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integration-ref and 1 without', () => {
+  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-upstream-')));
+  const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
+  const write = (rel, content) => {
+    fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });
+    fs.writeFileSync(path.join(dir, rel), content);
+  };
+  const commit = (message) => { git('add', '-A'); git('commit', '-q', '-m', message); };
+  git('init', '-q');
+  git('config', 'user.email', 't@example.invalid');
+  git('config', 'user.name', 'Test');
+  git('commit', '-q', '--allow-empty', '-m', 'base');
+  const base = git('rev-parse', 'HEAD').trim();
+  git('branch', 'up');
+  git('checkout', '-q', '-b', 'run');
+  write('docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit('Add journey a (refs #1)');
+  git('checkout', '-q', 'up');
+  write('docs/journeys/up.md', '# Up\nline 1\nline 2\n');
+  commit('Upstream adds up.md (refs #999)');
+  git('checkout', '-q', 'run');
+  git('merge', '-q', '--no-ff', '--no-edit', 'up');
+  write('docs/journeys/up.md', '# Up\nline 1 changed\nline 2\n');
+  commit('Spec B edits the upstream journey (refs #2)');
+
+  const withRef = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'up']);
+  assert.strictEqual(withRef.status, 0, withRef.stderr);
+  assert.strictEqual(withRef.stdout.trim(), '{"clean":true,"overwrites":[]}');
+
+  const without = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/']);
+  assert.strictEqual(without.status, 1, without.stderr);
+});
