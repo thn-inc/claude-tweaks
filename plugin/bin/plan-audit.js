@@ -10,7 +10,9 @@
 // `--count-tasks` (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks. `--task-markers`
 // (#3378) is the same kind of read-only verb, printing each task's per-task
-// Role/Review-risk markers for dispatch.md's tier forwarding.
+// Role/Review-risk markers for dispatch.md's tier forwarding. `--risk-proofs`
+// (#4618) is a read-only verb running Check G alone with the full audit's
+// policy read, for Common Step 1.5's skip path.
 'use strict';
 
 const fs = require('node:fs');
@@ -143,8 +145,9 @@ function main() {
     return;
   }
 
-  // #2000: --bytes runs Check D alone (the one check Common Step 1.5's skip
-  // gate doesn't cover) — no repo-root resolution or parsing needed.
+  // #2000: --bytes runs Check D alone (one of the two checks Common Step 1.5's
+  // skip gate doesn't cover; --risk-proofs below is the other) — no repo-root
+  // resolution or parsing needed.
   if (parsed.bytes) {
     const checkDResult = checkD(text);
     process.stdout.write(`${JSON.stringify({ checkD: checkDResult })}\n`);
@@ -179,6 +182,16 @@ function main() {
       process.exitCode = 2;
       return;
     }
+  }
+  // #4618: --risk-proofs runs Check G alone, on the policy read above, so it can never
+  // disagree with the full audit's `checkG`. It exists for the skip path (Common Step 1.5),
+  // where a trivial plan or a fast-lane record skips the full audit but a kept flag still
+  // needs its proof.
+  if (parsed.riskProofs) {
+    const checkGResult = checkG(specText, text, { extraCategories, planPath: parsed.planFile });
+    process.stdout.write(`${JSON.stringify({ checkG: checkGResult })}\n`);
+    process.exitCode = checkGResult.ok ? 0 : 1;
+    return;
   }
   // #2000: Check D runs on the raw text before the parser — a byte scan on
   // text already in memory costs nothing.

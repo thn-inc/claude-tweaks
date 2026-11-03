@@ -112,11 +112,13 @@ function extractTaskBlocks(text) {
 // the author meant but mistyped is never read as "no proof written". CRLF
 // input is normalized to LF here, as extractPathWaivers does.
 //
-// Fences follow CommonMark: an opener is a run of 3+ backticks or tildes (a
-// backtick opener's info string holds no backtick), and only a line of the same
-// character, at least as long, with nothing but whitespace after, closes it. So
-// a ```-fenced example nested inside a four-backtick or `~~~` fence stays
-// fenced. A task whose fence never closes is reported in `unclosedFences`: its
+// Fences follow CommonMark's characters and lengths, not its indentation: an
+// opener is a run of 3+ backticks or tildes (a backtick opener's info string
+// holds no backtick), and only a line of the same character, at least as long,
+// with nothing but whitespace after, closes it. The opener and closer regexes
+// accept any leading indentation (CommonMark stops at 3 spaces; 4+ is an
+// indented code block, not a fence), so an indented fence line still fences. A
+// ```-fenced example nested inside a four-backtick or `~~~` fence stays fenced. A task whose fence never closes is reported in `unclosedFences`: its
 // later lines were swallowed, which must not read as "no proof line" (Check F
 // reports the same state through hasUnclosedFence). AC_FENCE_RE, which Checks E
 // and F share, toggles on any fence-like line and is deliberately not reused.

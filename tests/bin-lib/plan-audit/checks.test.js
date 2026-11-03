@@ -1456,8 +1456,11 @@ test('a proof that restates the category fails', () => {
 });
 
 test('a proof in a fence, or outside any task, does not satisfy', () => {
-  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`\`\`\`\nProof(auth): ${GOOD}\n\`\`\``)).ok, false);
-  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), `Proof(auth): ${GOOD}\n\n${G_PLAN('x')}`).ok, false);
+  const absent = [{ slug: 'auth', plan: null, reason: 'no-proof-line' }];
+  const fenced = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`\`\`\`\nProof(auth): ${GOOD}\n\`\`\``));
+  assert.deepStrictEqual([fenced.ok, fenced.missing, fenced.couldNotParse], [false, absent, []]);
+  const outside = checkG(G_SPEC('Risk-flags: auth'), `Proof(auth): ${GOOD}\n\n${G_PLAN('x')}`);
+  assert.deepStrictEqual([outside.ok, outside.missing, outside.couldNotParse], [false, absent, []]);
 });
 
 test('CRLF plan and spec read the same as LF', () => {
