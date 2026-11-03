@@ -43,9 +43,9 @@ files:
 
 ### 4. Read why there is no recording, when there is none
 - **URL:** The same section, and `Couldn't test`
-- **Action:** Read the reason after `not recorded`: `no-story`, `no-local-base-url`, `no-happy-path-screenshots` or `encoder-failed`.
+- **Action:** Read the reason after `not recorded:` (`no-local-base-url`, `no-happy-path-screenshots` or `encoder-failed`) and the `failure:` line under it when there is one. A plain `not recorded` with no reason means no story ran (`no-story`).
 - **Should feel:** Like a decision that was made, not a step someone forgot.
-- **Should understand:** Each reason but `no-story` also appears under `Couldn't test`, because a recording was expected and could not be made. A link the credential rule refused renders `recording withheld: link contained a credential-shaped value` instead.
+- **Should understand:** Each reason but `no-story` also appears under `Couldn't test`, because a recording was expected and could not be made. A link the credential rule refused renders `recording withheld: link contained a credential-shaped value` instead. `encoder-failed` also covers a write the snapshot held: when git does not ignore the destination, or cannot say whether it does, no GIF is written and the `failure:` line names the path, so the encoder may never have run.
 - **Red flags:** An empty section; `no-story` listed under `Couldn't test`; a GIF from an earlier snapshot still linked next to a `not recorded` line.
 
 ## Origin
