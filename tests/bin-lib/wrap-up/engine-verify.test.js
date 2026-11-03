@@ -105,6 +105,11 @@ function fakeOriginGit(extra) {
   };
 }
 
+const SCHEMA_PROBE_ARGS = ['api', 'graphql', '-f', 'query={ __type(name: "Issue") { fields { name } } }'];
+function sameArgs(args, want) {
+  return args.length === want.length && args.every((a, i) => a === want[i]);
+}
+
 // #4805: acceptance-labeling reads a parent's gate facts through the shared core
 // (issues/parent-gate.js's gatherGateFacts), whose gh call shapes this responder
 // answers (the shapes tests/parent-gate-cli.test.js's makeGh fakes). Owner/repo is
@@ -118,10 +123,6 @@ function fakeOriginGit(extra) {
 // `labels,comments`, engine-verify's own `issue view N --repo org/repo --json body`) still
 // answer. Call it before a fixture's generic `isGraphqlCall` branch: the page query also
 // contains `issue(number:N)`.
-const SCHEMA_PROBE_ARGS = ['api', 'graphql', '-f', 'query={ __type(name: "Issue") { fields { name } } }'];
-function sameArgs(args, want) {
-  return args.length === want.length && args.every((a, i) => a === want[i]);
-}
 function parentGateReply(args, world, { slug = 'org/repo', host = 'github.com' } = {}) {
   let argv = args;
   if (host !== 'github.com') {
@@ -2465,7 +2466,7 @@ function bodyTextRow({ records, bodies, states = {}, parentLabels = [], parentCo
     }
     return '';
   };
-  const deps = { git: gitFake, gh: fakeGh, ...(gateDeps ? { gateDeps } : {}) };
+  const deps = { git: gitFake, gh: fakeGh, gateDeps };
   const result = runVerify({ runDir, base: 'main', repoRoot, deps });
   return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), calls, deps, repoRoot };
 }
@@ -3181,7 +3182,7 @@ function refusalRow({ origin = 'https://github.com/org/repo.git', policyRaw = 'w
     if (args[0] === 'remote') return origin;
     return args[0] === 'log' ? 'Fixes #900\n' : '';
   };
-  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git, gh: fakeGh, ...(gateDeps ? { gateDeps } : {}) } });
+  const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git, gh: fakeGh, gateDeps } });
   return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), calls: calls.filter((a) => a[0] !== '--version') };
 }
 const NO_HOSTS_FILE = { env: {}, readFile: () => { throw new Error('ENOENT'); } };
