@@ -1,0 +1,9 @@
+[
+ {
+  "tag": "digest",
+  "record": null,
+  "title": "Settle 5 below-floor digest findings in hooks",
+  "action": "Propose digest cluster: file 1 record absorbing 5 entries",
+  "command": "file record \"hooks\" cluster, mark 5 lines → #{n}"
+ }
+]

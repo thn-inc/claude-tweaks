@@ -35,9 +35,10 @@
 // malformed invocation (usage on stderr, nothing on stdout). `--help` prints
 // usage and exits 0 before anything else is read.
 //
-// Run it from {REPO_ROOT}: the git first-add probe uses the process cwd, and so
-// does the declined-learning store (`.claude-tweaks/declined-learning/`), which
-// the decline lookup reads in-process rather than through `declined-learning.js`
+// Run it from {REPO_ROOT}: the git first-add probe uses the process cwd, and the
+// declined-learning store (`.claude-tweaks/declined-learning/`) resolves from it
+// to the main checkout. The decline lookup reads that store in-process rather
+// than through `declined-learning.js`
 // (one process instead of a spawn per run; the fingerprint is pinned equal to
 // the verb's by tests/bin-lib/plan-retention/cli.test.js).
 'use strict';
