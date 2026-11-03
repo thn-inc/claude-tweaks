@@ -80,10 +80,9 @@ const unique = (items) => [...new Set(items)];
 // text -> one line safe to quote in a record, a packet or a table cell: C0/DEL/C1 control
 // bytes and the zero-width/bidi format characters dropped, then whitespace (newlines
 // included) collapsed to single spaces, `\`, `[`, `]`, a backtick, `<`, `>` and `|`
-// escaped with a backslash (the backslash too, so a
-// backslash already in the text cannot cancel an escape), and capped at
-// EVIDENCE_CAP characters, an ellipsis marking the cut. A cut never leaves half an
-// escape pair or half a surrogate pair at the end.
+// escaped with a backslash (the backslash too, so a backslash already in the text cannot
+// cancel an escape), and capped at EVIDENCE_CAP characters, an ellipsis marking the cut.
+// A cut never leaves half an escape pair or half a surrogate pair at the end.
 function inertEvidence(text) {
   const flat = String(text ?? '').replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim();
   const escaped = flat.replace(ESCAPE_RE, (ch) => `\\${ch}`);
