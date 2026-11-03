@@ -1489,7 +1489,9 @@ const BALANCED_GROUP_RE = /^[$<]?\([^()\\$`<>"']*\)\d*$/;
 // rule below (no stray, no bare `$`, backtick or `(`), so `$M\ $N>x` stays out as `$N>x` does (#4328).
 function escapedBlankPrefixOk(raw, kinds, k) {
   let blank = -1;
-  for (let j = 0; j < k; j += 1) if (kinds[j] === 'e' && (raw[j] === ' ' || raw[j] === '\t')) blank = j;
+  for (let j = 0; j < k; j += 1) {
+    if (kinds[j] === 'e' && (raw[j] === ' ' || raw[j] === '\t')) blank = j;
+  }
   // No blank (-1): the after-part is the whole prefix, which the caller already found not plain.
   for (let j = blank + 1; j < k; j += 1) {
     if (kinds[j] === 'x' || (kinds[j] === 'b' && '$`('.includes(raw[j]))) return false;
@@ -1540,7 +1542,10 @@ function gluedRedirectOpEnd(raw, kinds, nest) {
     plain = false;
     break;
   }
-  if (!plain && !(kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k))) && !escapedBlankPrefixOk(raw, kinds, k)) return null;
+  if (!plain) {
+    const balancedGroup = kinds.slice(0, k) === 'b'.repeat(k) && BALANCED_GROUP_RE.test(raw.slice(0, k));
+    if (!balancedGroup && !escapedBlankPrefixOk(raw, kinds, k)) return null;
+  }
   const second = raw[k + 1];
   const twoChar = (second === '>' || second === '|') && kinds[k + 1] === 'b';
   return k + (twoChar ? 2 : 1);

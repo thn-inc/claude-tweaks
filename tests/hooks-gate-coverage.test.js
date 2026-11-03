@@ -1114,8 +1114,9 @@ for (const command of [
 
 // Known misses, all tracked in #4328 (its Absorbed table, and its bullet on a glued redirect after a word
 // holding a bare `$`, which covers `echo $M>x`, `echo $M\ $N>x`, `echo ${M}\ ${N}>x` and `echo $M\a>x`):
-// bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x` is the documented gap, and a bare `$`, backtick or non-blank escape after the last
-// escaped blank is the same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
+// bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x` is the
+// documented gap, and a bare `$`, backtick or non-blank escape after the last escaped blank is the
+// same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
 // a `$[ ]` or a backtick holding a blank before the escaped blank is not read as closed, and neither is a
 // `${ }` that closes after the blank. A `$VAR` target behind a second `$` or a backtick is one
 // substituteVars skips: those two write y/x.
