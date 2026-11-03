@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, bash and zsh for the equivalence tests.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T224644-record-4292/work/4292-spec.md`, record #4292.
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T100346-record-4292/work/4292-spec.md`, record #4292 (re-materialized with the record's `## Plan-review answers (2026-11-03)` section, applied below as rules).
 
 **Scope keywords:** guard-rewrite, rewriteForGuard, LEADING_CD
 
@@ -34,13 +34,13 @@ Governing project skills, quoted verbatim:
 
 ## Spec departures
 
-- **Test line 283 changes too.** The spec lists the expected commands at `:119` and `:144`, and AC4 needs 0 failures in the file. `:281`'s `cd ${CWD}/ && ls x` interpolates a native path unquoted, which the spec itself says must decline on win32, so that line fails on Windows after the fix. Task 2 spells it `cd '${CWD}/' && ls x` (the existing single-quoted branch, no platform branch) and moves the unquoted positive to a host-independent `path.posix` pin. Log `premise reversed: tests need changes only at :119 and :144 → :281's unquoted line also changes` in Task 2's step.
-- **ASSUMPTION not verified.** Blocking-verification downgrade: "the guard treats `D:/…` like the native root" needs a live win32 Claude Code session; none exists on this host (decision logged at `Spec Step 3 assumption probe`). The ledger carries it as an `ops` row. Failure mode: the guard refuses as it does today, so the change cannot make a Windows session worse. Waived spec Gotcha's "inline the native root" fallback: not built without evidence.
+- **Test line 283 changes too (approved in the record's Plan-review answers, item 2).** The spec lists the expected commands at `:119` and `:144`, and AC4 needs 0 failures in the file. `:281`'s `cd ${CWD}/ && ls x` interpolates a native path unquoted, which the spec itself says must decline on win32, so that line fails on Windows after the fix. Task 2 spells it `cd '${CWD}/' && ls x` (the existing single-quoted branch, no platform branch) and moves the unquoted positive to a host-independent `path.posix` pin. The controller logged `premise reversed: tests need changes only at :119 and :144 → :281's unquoted line also changes` at Spec Step 3.
+- **Forward-slashed root: Reading B (record's Plan-review answers, item 1).** The spec Gotcha's `ASSUMPTION — verify at build:` is replaced by a rule: Rule 2 inlines only `toPosix(pluginRoot, pathImpl.sep)`. No native-root fallback is built, double-quoted references included. The merge does not wait on a live Windows session. Ledger row 1 stays `open` until wrap-up files it as a backlog record (`Defer-reason: blocked-external`). AC4's Windows CI run proves only that the tests pass, never that the guard accepts the root; no task or evidence file may claim otherwise.
 
 ## Review Focus
 
 1. A POSIX directory whose name really holds a backslash before `$`, a backtick, `"`, `\` or newline: the shell cds elsewhere, so the rule must decline. Task 2's must-decline list runs it under both shells.
-2. A cwd spelled differently from the target (`cd "D:/w/cwd"` or `cd "d:\w\cwd"` with cwd `D:\w\cwd`): resolves alike, spelled differently, declines. Task 2.
+2. A cwd spelled differently from the target (`cd "D:/w/cwd"`, `cd "/d/w/cwd"` or `cd "d:\w\cwd"` with cwd `D:\w\cwd`): resolves alike (or may, under Git Bash), spelled differently, declines. No separator or case normalization. Task 2, which also lists these three as residuals in the module header.
 3. A target ending in a backslash (`cd "D:\w\cwd\" && ls x`): the backslash escapes the quote, so the regex must not match. Task 2.
 4. A win32 root holding a space, a `~`, or a UNC prefix: the space inlines only inside double quotes, `~` declines (`LITERAL_VALUE`), UNC becomes `//srv/share/root`. Task 1.
 5. A rule reading the native root where the forward-slashed one belongs, or the reverse: `shippedUnder` must lstat `D:\p\root\bin\x.js`, and the command text must say `D:/p/root/bin/x.js`. Task 1's recording `lstatType` pins both.
@@ -123,7 +123,7 @@ Expected: FAIL after Step 1: the new `AC2.1, AC2.2` and `bare, spaced` tests get
 
 - [ ] **Step 3: Implement the seams and the inlining**
 
-Require `{ toPosix }` from `../shared-primitives`. In `rewriteForGuard`, read `pathImpl = path` from `opts`, check `pathImpl.isAbsolute(cwd)`, and pass `{ cwd, pluginRoot, pathImpl, lstatType: deps.lstatType || lstatType, canonicalRealpath: deps.canonicalRealpath || canonicalRealpath }` to each rule. In `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstatType })`: `pathImpl.isAbsolute(pluginRoot)`, `const inlined = toPosix(pluginRoot, pathImpl.sep)`, test `LITERAL_VALUE` and `refsInlineSafely` and `replaceSpans` on `inlined`, and call `shippedUnder(pluginRoot, s, r.end, { pathImpl, lstatType })`, which joins with `pathImpl.join`. Parameter names shadow the module-level `lstatType`: rename the injected ones `lstat` and `realpath` if the shadowing reads badly. `isLinkedWorktree`, `guardRewriteOutput` and `DEFAULT_PLUGIN_ROOT` stay on the host `path`.
+Require `{ toPosix }` from `../shared-primitives`. In `rewriteForGuard`, read `pathImpl = path` from `opts`, check `pathImpl.isAbsolute(cwd)`, and pass `{ cwd, pluginRoot, pathImpl, lstatType: deps.lstatType || lstatType, canonicalRealpath: deps.canonicalRealpath || canonicalRealpath }` to each rule. In `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstatType })`: `pathImpl.isAbsolute(pluginRoot)`, `const inlined = toPosix(pluginRoot, pathImpl.sep)`, test `LITERAL_VALUE` and `refsInlineSafely` and `replaceSpans` on `inlined`, and call `shippedUnder(pluginRoot, s, r.end, { pathImpl, lstat })`, which joins with `pathImpl.join`. Rule-context key names are fixed, so the module-level `lstatType`/`canonicalRealpath` imports are never shadowed: `rewriteForGuard` builds the context `{ cwd, pluginRoot, pathImpl, lstat, realpath }`, where `lstat = deps.lstatType || lstatType` and `realpath = deps.canonicalRealpath || canonicalRealpath` (the `deps` keys keep the `path-guard` export names). `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat })` and `dropRedundantCd(s, { cwd, pathImpl, realpath })` destructure those keys. Rules 1, 3 and 4 ignore the context as today. `isLinkedWorktree`, `guardRewriteOutput` and `DEFAULT_PLUGIN_ROOT` stay on the host `path` (the injected `deps.isLinkedWorktree` already covers the linked-worktree check).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -148,7 +148,7 @@ Commit `tests/bin-lib/hooks/guard-rewrite.test.js` and `plugin/bin/lib/hooks/gua
 
 - [ ] **Step 1: Write the failing tests**
 
-Replace line 283 with `` assert.deepStrictEqual(rw(`cd '${CWD}/' && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] }); `` and add `` assert.deepStrictEqual(rw(`cd "${CWD}/" && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] }); ``. Log the premise-reversed line named under Spec departures with `log-decision.js --status AUTO --step "Spec Step 3"`.
+Replace line 283 with `` assert.deepStrictEqual(rw(`cd '${CWD}/' && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] }); `` and add `` assert.deepStrictEqual(rw(`cd "${CWD}/" && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] }); ``.
 
 New test `AC2.3, AC2.4: drop-redundant-cd under path.win32`:
 
@@ -158,11 +158,18 @@ assert.deepStrictEqual(run('cd "D:\\w\\cwd" && ls x'), { command: 'ls x', applie
 assert.strictEqual(run('cd D:\\w\\cwd && ls x'), null, 'bash strips an unquoted backslash');
 assert.strictEqual(run('cd "D:\\w\\$X" && ls x'), null, 'a backslash before $');
 assert.strictEqual(run('cd "D:\\w\\cwd\\" && ls x'), null, 'a trailing backslash escapes the quote');
-assert.strictEqual(run('cd "D:/w/cwd" && ls x'), null, 'the same directory, spelled differently');
-assert.strictEqual(run('cd "d:\\w\\cwd" && ls x'), null, 'a re-cased drive');
 assert.strictEqual(run('cd "D:\\w\\other" && ls x'), null, 'a different directory');
 assert.strictEqual(run('cd "E:\\w\\cwd" && ls x'), null, 'another drive');
 assert.deepStrictEqual(rewriteForGuard({ command: 'cd /w/cwd/ && ls x', cwd: '/w/cwd', pluginRoot: ROOT, pathImpl: path.posix, deps: { isLinkedWorktree: () => true, canonicalRealpath: (p) => path.posix.resolve(p) } }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'an unquoted target with no backslash');
+```
+
+New test `drop-redundant-cd under path.win32 keeps comparing exact spellings: the three residual declines`, one assertion per residual the module header lists (record's Plan-review answers, item 2):
+
+```js
+const run = (command) => rewriteForGuard({ command, ...win32().opts });
+assert.strictEqual(run('cd "D:/w/cwd" && ls x'), null, 'residual: a forward-slashed spelling of the cwd');
+assert.strictEqual(run('cd "/d/w/cwd" && ls x'), null, 'residual: a Git Bash /d/ spelling of the cwd');
+assert.strictEqual(run('cd "d:\\w\\cwd" && ls x'), null, 'residual: a re-cased drive');
 ```
 
 New tests, each `{ skip: process.platform === 'win32' || !SHELLS.includes('bash') }`:
@@ -183,7 +190,7 @@ Expected: FAIL after Step 1: the first assertion of the new `AC2.3, AC2.4` and `
 
 - [ ] **Step 3: Implement**
 
-`LEADING_CD`'s double-quoted branch becomes `"((?:[^"$`\\]|\\[^$`"\\\n])*)"`, the other two branches unchanged. `dropRedundantCd(s, { cwd, pathImpl, canonicalRealpath })` uses `pathImpl.isAbsolute(target)`; the exact-spelling compare and both realpath calls keep their logic, through the injected `canonicalRealpath`. Update the comment above the rule to say why a backslash is admitted only in the double-quoted branch.
+`LEADING_CD`'s double-quoted branch becomes `"((?:[^"$`\\]|\\[^$`"\\\n])*)"`, the other two branches unchanged. `dropRedundantCd(s, { cwd, pathImpl, realpath })` uses `pathImpl.isAbsolute(target)`; the exact-spelling compare and both realpath calls keep their logic, through the injected `realpath`. No separator or case normalization is added. Update the comment above the rule to say why a backslash is admitted only in the double-quoted branch. In the module header's residual-risk paragraph, add one sentence listing the Windows exact-spelling declines: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how Git Bash sets `$PWD` for those spellings is unmeasured.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -196,7 +203,7 @@ Commit the same two files: `Accept a backslash-spelled double-quoted cd target �
 
 ### Task 3: Prose that states the old behavior
 
-**Role:** transcription
+**Role:** integration
 
 **Files:**
 - Modify: `plugin/bin/lib/hooks/guard-rewrite.js:36-39` (module header's "requires only")
@@ -237,4 +244,4 @@ Expected: every hit names `shared-primitives`. Control: `git grep -n -F "require
 | AC2.3 | Task 2 `AC2.3, AC2.4` test |
 | AC2.4 | Task 2 `AC2.3, AC2.4` test |
 | AC3.1, AC3.2 | Controller scratch check after Task 2: revert `toPosix` to the bare root and `LEADING_CD` to its old branch one at a time, run the AC2 tests, require `null`. Evidence: `$PIPELINE_RUN_DIR/evidence/ac3-go-red.txt`, one `AC evidence` entry via `log-decision.js --text-file` |
-| AC4.1 | Controller, after Common Step 3 and after any later code change: `gh workflow run windows-regression.yml --ref {branch}`, then the run's `verify-report.json` `failingFiles` plus the isolated log for `tests/bin-lib/hooks/guard-rewrite.test.js`. Evidence: `$PIPELINE_RUN_DIR/evidence/ac4-windows-run.txt`, one `AC evidence` entry |
+| AC4.1 | Controller, after Common Step 3 and after any later code change: `gh workflow run windows-regression.yml --ref {branch}`, then the run's `verify-report.json` `failingFiles` plus the isolated log for `tests/bin-lib/hooks/guard-rewrite.test.js`. Evidence: `$PIPELINE_RUN_DIR/evidence/ac4-windows-run.txt`, one `AC evidence` entry. It proves the tests pass on Windows only, never that the guard accepts the forward-slashed root |
