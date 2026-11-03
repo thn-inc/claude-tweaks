@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 
 const MOD = path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'console', 'item-resolution');
-const { CONSOLE_LOCK, REWRITE_FROM, rewriteItemResolution } = require(MOD);
+const { CONSOLE_LOCK, REWRITE_FROM, REWRITE_ONLY_IN, rewriteItemResolution } = require(MOD);
 
 const AT = '2026-10-25T12:00:00.000Z';
 const REASON = 'record create failed (exit 1)';
@@ -119,4 +119,16 @@ test('#4636: rewrites an approve item to pending, recording what it replaced', (
   assert.strictEqual(after.resolution, 'pending');
   assert.strictEqual(after.reason, 'reference-repair-stale');
   assert.strictEqual(after.rewrittenFrom, 'approve');
+});
+
+test('#4636: an approve item outside Reference repairs is refused for pending and the file is unchanged', () => {
+  assert.deepStrictEqual(REWRITE_ONLY_IN, { pending: 'Reference repairs' });
+  const stored = STORED();
+  stored.items[0] = { id: 'wrap-up-skill-1.md', section: 'Skill updates', resolution: 'approve', reason: 'stance' };
+  const consolePath = consoleFile(stored);
+  const bytes = fs.readFileSync(consolePath, 'utf8');
+  const r = call(consolePath, { id: 'wrap-up-skill-1.md', resolution: 'pending', reason: 'reference-repair-stale' });
+  assert.strictEqual(r.status, 'refused');
+  assert.match(r.why, /section Skill updates, not rewritable to pending \(only a Reference repairs item\)/);
+  assert.strictEqual(fs.readFileSync(consolePath, 'utf8'), bytes);
 });

@@ -53,7 +53,7 @@ the ceiling were `supervised`:
 | Budget | At most **3** fixes per run. |
 | Size | At most **2 files** and **20 changed lines** per fix. |
 | Tests | Never a test file. Retargeting a test's assertion at a renamed path makes a failing test pass, which is the one shape that turns "repair" into "silence the check". |
-| Merge-sensitive | Never a path matching `merge-sensitive-paths` (`_shared/policy-schema.md`). |
+| Merge-sensitive | Never a path matching `merge-sensitive-paths` (`_shared/policy-schema.md`); the match is also made case-folded (lower-cased path against lower-cased globs), and a `sensitivePaths` that is not an array of glob strings is unreadable, which denies and holds. |
 
 The budget is per run, not per skill or per commit — three repairs across a whole run, so a run
 that finds a fourth stages it like any other proposal rather than starting a fresh allowance.

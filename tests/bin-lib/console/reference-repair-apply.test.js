@@ -4,7 +4,7 @@
 // the three proved bypasses plus a traditional patch, each shown to change a test file under git
 // apply before the parser is asked about it. The prose half pins the Phase 4 bullet and every
 // console path that reaches it.
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert');
 const fs = require('fs');
 const os = require('os');
@@ -26,7 +26,9 @@ const git = (repo, ...args) => {
   assert.strictEqual(r.status, 0, `git ${args.join(' ')}: ${r.stderr}`);
   return r.stdout;
 };
-const tmp = (prefix) => fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)));
+const made = [];
+const tmp = (prefix) => { const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix))); made.push(dir); return dir; };
+after(() => { for (const dir of made) fs.rmSync(dir, { recursive: true, force: true }); });
 
 function repoWith(rel, text) {
   const repo = tmp('ref-repair-apply-');
@@ -44,7 +46,8 @@ function repoWith(rel, text) {
 // reference-sweep.md Step 4's recipe: a fresh directory outside the repo, `a/{rel}` copied from the
 // repo, `b/{rel}` a mode-preserving copy of it with the repaired text written in, then
 // `git diff --no-index` from there. Exit 1 (the files differ) is the success.
-function compose(repo, rel, next) {
+const RECIPE_ARGS = ['-c', 'core.quotePath=false', 'diff', '--no-index', '--no-color', '--no-ext-diff', '--no-textconv', '--no-prefix'];
+function compose(repo, rel, next, recipeArgs = RECIPE_ARGS) {
   const dir = tmp('ref-repair-compose-');
   const source = path.join(repo, rel);
   const mode = fs.statSync(source).mode & 0o777;
@@ -55,7 +58,7 @@ function compose(repo, rel, next) {
     fs.chmodSync(copy, mode); // root-safe: copies the source mode onto the composed copy, simulates no denial
   }
   fs.writeFileSync(path.join(dir, 'b', rel), next);
-  const r = sh(dir, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-prefix', '--', `a/${rel}`, `b/${rel}`]);
+  const r = sh(dir, [...recipeArgs, '--', `a/${rel}`, `b/${rel}`]);
   assert.strictEqual(r.status, 1, r.stderr);
   return r.stdout;
 }
@@ -78,13 +81,38 @@ test('#4636: the composition recipe names the real path and leaves the repo unto
 });
 
 test('#4636: what the resolver checked is what git apply lands', () => {
-  const rel = 'docs/a.md';
+  for (const rel of ['docs/a.md', 'docs/sub dir/my guide.md']) {
+    const repo = repoWith(rel, 'one\nold\nthree\n');
+    const staged = stagedFile(`Hold: no\nTarget: ${rel}\n\n${compose(repo, rel, 'one\nnew\nthree\n')}`);
+    const text = fs.readFileSync(staged, 'utf8');
+    assert.deepStrictEqual(stagedDiffPaths(text), [rel], `${rel}: the parser reads the path git apply will touch`);
+    assert.strictEqual(referenceRepairFloorReason(text, []), null, `${rel}: the floor clears the very text applied below`);
+    assert.strictEqual(apply(repo, '--check', staged), 0, rel);
+    assert.strictEqual(apply(repo, staged), 0, rel);
+    assert.strictEqual(fs.readFileSync(path.join(repo, rel), 'utf8'), 'one\nnew\nthree\n', rel);
+    assert.strictEqual(git(repo, 'diff', '--name-only').trimEnd(), rel, `${rel}: the one file git apply touched`);
+    assert.strictEqual(git(repo, 'status', '--porcelain').trimEnd().split('\n').length, 1, `${rel}: nothing else changed`);
+  }
+});
+
+test('#4636: a non-ASCII path composed by the recipe parses and applies; git quotes it without core.quotePath=false', () => {
+  const rel = 'docs/blåbær.md';
   const repo = repoWith(rel, 'one\nold\nthree\n');
-  const staged = stagedFile(`Hold: no\nTarget: ${rel}\n\n${compose(repo, rel, 'one\nnew\nthree\n')}`);
+  const text = `Hold: no\nTarget: ${rel}\n\n${compose(repo, rel, 'one\nnew\nthree\n')}`;
+  assert.deepStrictEqual(stagedDiffPaths(text), [rel]);
+  assert.strictEqual(referenceRepairFloorReason(text, []), null);
+  const staged = stagedFile(text);
   assert.strictEqual(apply(repo, '--check', staged), 0);
   assert.strictEqual(apply(repo, staged), 0);
   assert.strictEqual(fs.readFileSync(path.join(repo, rel), 'utf8'), 'one\nnew\nthree\n');
-  assert.deepStrictEqual(git(repo, 'status', '--porcelain').trimEnd().split('\n'), [` M ${rel}`]);
+  const quoted = compose(repo, rel, 'one\nagain\nthree\n', RECIPE_ARGS.slice(2)); // the recipe without its leading -c core.quotePath=false
+  assert.ok(quoted.includes('"a/docs/bl\\303\\245b\\303\\246r.md"'), 'git quotes the path by default');
+  assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${quoted}`), null, 'the parser refuses a quoted path, which is why the recipe sets the flag');
+});
+
+test('#4636: reference-sweep.md Step 4 gives the recipe the tests compose with', () => {
+  const sweep = readText(path.join(ROOT, 'plugin', 'skills', 'wrap-up', 'reference-sweep.md'));
+  assert.ok(sweep.includes(`git ${RECIPE_ARGS.join(' ')} -- a/{path} b/{path}\n`), 'the fenced recipe line is the argv compose() runs');
 });
 
 test('#4636: a diff that no longer applies is refused and changes nothing', () => {
@@ -144,6 +172,17 @@ test('#4636: the Reference repairs bullet applies from the staged diff and route
   assert.ok(bullet.includes('--check-repair "{staged path}" --full'), 're-runs the whole hold rule, not the floor alone, on an auto-resolved row');
   assert.ok(bullet.includes('any other exit'), 'an exit other than 0 and 5 applies nothing');
   assert.ok(/exit 3/.test(bullet) && /exit 5/.test(bullet), 'routes both refusals');
+  assert.ok(bullet.includes('on the `--full` path, runs the `--set-item` below with `--reason` the reason word it printed'), 'the printed reason word belongs to the --full path');
+  assert.ok(bullet.includes('On an `apply --check` failure the reason is that fixed literal'), 'the fixed literal belongs to the apply --check failure');
+});
+
+test('#4636: a human-named target is logged at the console stop and read back by the Phase 4 bullet', () => {
+  const bullet = EXECUTION.split('\n').find((l) => l.startsWith('- **Reference repairs**'));
+  const para = INTERACTIVE.split('\n').find((l) => l.startsWith('**Reference repairs rows'));
+  const line = 'repair target {staged file name} → {target}';
+  assert.ok(para.includes(line) && bullet.includes(line), 'both sides name the same line shape');
+  assert.ok(para.includes('`Write` one line') && para.includes('log-decision.js --run "{item-run-dir}" --text-file') && para.includes('one `AUTO`'), 'the console stop writes it as a file and logs one AUTO');
+  assert.ok(bullet.includes('`AUTO` line in `{item-run-dir}`\'s `decisions.md`') && bullet.includes('no longer holds it'), 'Phase 4 reads it from decisions.md when the session lost the answer');
 });
 
 const between = (text, start, end) => { const i = text.indexOf(start); assert.ok(i >= 0, start); const j = text.indexOf(end, i + start.length); return text.slice(i, j < 0 ? undefined : j); };

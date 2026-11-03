@@ -833,6 +833,20 @@ test('#4636: --check-repair needs no unattended ceiling', async () => {
   assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], baseDeps(fx, []).d), 0);
 });
 
+test('#4636: --check-repair holds a clean diff as unclassified when the policy read throws', async () => {
+  const fx = mainCheckoutWithRun({ staged: {} });
+  const p = path.join(fx.runDir, 'clean.md');
+  fs.writeFileSync(p, 'Hold: no\n\ndiff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n');
+  const control = baseDeps(fx, []);
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], control.d), 0, 'the same file is clear when the policy reads');
+  // run() reads the cwd dep once to anchor --run; the second read is the policy read's own.
+  let reads = 0;
+  const { d, out } = baseDeps(fx, [], { cwd: () => { reads += 1; if (reads > 1) throw new Error('simulated policy read failure'); return fx.root; } });
+  assert.strictEqual(await run(['--run', fx.runDir, '--check-repair', p], d), 5);
+  assert.ok(reads > 1, 'the policy read was reached');
+  assert.match(out(), /reference-repair-unclassified/);
+});
+
 test('#4636: --check-repair --full re-runs the whole hold rule on a staged file', async () => {
   const fx = mainCheckoutWithRun({ staged: {}, policyExtra: '' });
   const diff = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';

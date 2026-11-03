@@ -101,10 +101,10 @@ be mode 644 and turn a 100755 file's diff into `old mode`/`new mode` lines, whic
 refuses), then run from that directory:
 
 ```bash
-git diff --no-index --no-color --no-ext-diff --no-prefix -- a/{path} b/{path}
+git -c core.quotePath=false diff --no-index --no-color --no-ext-diff --no-textconv --no-prefix -- a/{path} b/{path}
 ```
 
-Its exit 1 is success. Paste its output verbatim under the header, never hand-typed and never
+Its exit 1 is success. `core.quotePath=false` keeps a non-ASCII path unquoted, which the resolver's parser would otherwise refuse. Paste its output verbatim under the header, never hand-typed and never
 wrapped in a code fence (a fence line after the last hunk holds the repair as
 `reference-repair-unclassified`), so a staged candidate leaves the shared worktree untouched,
 including under `--dry-run`. Then run `_shared/staged-patch.md`'s Staging-time gate on the file
