@@ -117,6 +117,29 @@ test('hasBearerUrl reads bare localhost, a bracketed IPv6 host and a signed sche
   }
 });
 
+test('a ; parameter does not defeat the bearer segment: each segment is judged up to its first ;', () => {
+  const bearer = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const refused = { ok: false, reason: 'credential in path segment' };
+  for (const path of [
+    `/${bearer};x=1`,
+    `/a/${bearer};x=1/b`,
+    `/${bearer};`,
+    `/${bearer}%3Bx=1`,
+    `/${bearer};x=1;y=2`,
+  ]) {
+    const url = `http://localhost:3000${path}`;
+    assert.deepEqual(check(url), refused, url);
+    assert.equal(hasBearerUrl(`curl ${url}`), true, url);
+  }
+  assert.equal(hasBearerUrl(`see https://h.example/${bearer});x=1.`), true);
+  for (const path of ['/a;x=1', '/reset/{id};x=1', '/;jsessionid=abc', `/short;${'y'.repeat(25)}`]) {
+    const url = `http://localhost:3000${path}`;
+    assert.equal(hasBearerUrl(`curl ${url}`), false, url);
+  }
+  assert.deepEqual(check('http://localhost:3000/a;x=1'), { ok: true });
+  assert.deepEqual(check('http://localhost:3000/;jsessionid=abc'), { ok: true });
+});
+
 test('checkLink accepts an allowed host, and a path that only names a key word', () => {
   assert.deepEqual(check('http://localhost:3000/settings?role=admin'), { ok: true });
   assert.deepEqual(check('https://dev.example.com/docs/token-guide'), { ok: true });

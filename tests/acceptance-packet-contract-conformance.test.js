@@ -757,6 +757,7 @@ for (const [heading, label, pattern] of [
   ['## Links and credentials', 'a credential recording link states why', /A refused one renders `\(recording url refused\)`, and one refused for a credential, a bearer-shaped path segment included, renders `recording withheld: link contained a credential-shaped value`/],
   ['## Links and credentials', 'the Recording section redacts instead', /The Recording section redacts its text instead \(`## Recording`\)/],
   ['## Links and credentials', 'the bearer rule binds link facts too', /The bearer-segment rule binds `link` facts as well as recording links/],
+  ['## Links and credentials', 'a segment is judged up to its first ;', /A segment is judged up to its first `;`/],
   ['## Links and credentials', 'a UUID or dated slug is refused', /A UUID-keyed or dated-slug path on an allowed host therefore renders `\(link refused: credential in path segment\)`/],
   ['## Links and credentials', 'the Try it block still names the route', /the Try it block still names the route/],
   ['## Links and credentials', 'a command or a plan line meets the bearer rule on its URLs', /A `command` or observation-plan line holding a URL with such a segment is refused or screened too, so a route carrying one reaches the Test guide as a command with that segment replaced by `\{id\}`/],

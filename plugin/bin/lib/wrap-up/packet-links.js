@@ -172,6 +172,9 @@ function isBearerSegment(segment) {
   return BEARER_SEGMENT_RE.test(segment) && HAS_LETTER_RE.test(segment) && HAS_DIGIT_RE.test(segment);
 }
 
+// What a path segment names: a `;` parameter (`/{value};x=1`) must not hide the value before it.
+const beforeParameter = (segment) => segment.split(';', 1)[0];
+
 // Every reason checkLink gives for a credential starts with this word.
 function isCredentialRefusal(reason) {
   return typeof reason === 'string' && reason.startsWith('credential');
@@ -200,7 +203,7 @@ function tokenHasBearerSegment(token) {
   const [hostAndPath] = token.replace(LEADING_SCHEME_RE, '').split(QUERY_OR_FRAGMENT_RE, 1);
   const slash = hostAndPath.indexOf('/');
   if (slash === -1) return false;
-  return decodeText(hostAndPath.slice(slash)).split('/').some((segment) => isBearerSegment(trimTrailing(segment, isSentenceCloser)));
+  return decodeText(hostAndPath.slice(slash)).split('/').some((segment) => isBearerSegment(trimTrailing(beforeParameter(segment), isSentenceCloser)));
 }
 
 // Whether a command or plan line holds a URL `checkLink` would refuse for its path. Only the
@@ -258,7 +261,7 @@ function checkLink(url, options) {
     return { ok: false, reason: 'credential in userinfo' };
   }
   // Decoded before splitting: an encoded slash (`/a%2FXk3...`) is a segment boundary too.
-  if (decodeText(parsed.pathname).split('/').some(isBearerSegment)) {
+  if (decodeText(parsed.pathname).split('/').some((segment) => isBearerSegment(beforeParameter(segment)))) {
     return { ok: false, reason: BEARER_SEGMENT_REASON };
   }
   // `+` is a space in a query, so `?token+=abc` is the key `token`. Replaced before
