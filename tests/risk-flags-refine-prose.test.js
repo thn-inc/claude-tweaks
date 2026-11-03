@@ -350,7 +350,7 @@ function fixture() {
 const sh = (cmd, env) => execSync(cmd, { encoding: 'utf8', shell: 'bash', env, windowsHide: true });
 // Temp fixture files, read as exact bytes: the compare under test is `cmp -s`, so a CR must
 // count (readText would normalize it away). None of these is a tracked repo file.
-const bytes = (tmpFile) => fs.readFileSync(tmpFile).toString('utf8');
+const bytes = (tmpFile) => String(fs.readFileSync(tmpFile));
 
 // The local-files path end to end: pre-filter, re-read, compare, confirm, write.
 // -> { lines, equal, after, before, line, liveBody }
