@@ -21,10 +21,17 @@ const RUN_CLI = '## Run the gate CLI';
 const MSG_PRESENT = 'the stop rule appears exactly once in the parent gate';
 const MSG_PLACED = 'the stop rule sits in the Run the gate CLI section';
 const MSG_ORDER = 'the stop rule precedes the first fenced gh issue line';
+// The sentence that scopes the rule to the gh path, so the null cases above it (local-files, the MCP path) are not read as failures.
+const SCOPE = 'The rule below binds the `gh` path only.';
+const MSG_SCOPE_PRESENT = 'the scope sentence appears exactly once in the parent gate';
+const MSG_SCOPE_ORDER = 'the scope sentence comes before the stop rule';
+const MSG_GREP = 'every line the AC grep matches carries --repo';
 
 const collapse = (s) => s.replace(/\s+/g, ' ');
-// The rule as it may sit in the raw file: hard-wrapped, so any run of whitespace stands for a space.
-const RULE_RE = new RegExp(escapeRegExp(STOP_RULE).replace(/ /g, '\\s+'));
+// A phrase as it may sit in the raw file: hard-wrapped, so any run of whitespace stands for a space.
+const wrapTolerant = (phrase) => new RegExp(escapeRegExp(phrase).replace(/ /g, '\\s+'));
+const RULE_RE = wrapTolerant(STOP_RULE);
+const SCOPE_RE = wrapTolerant(SCOPE);
 
 // Every fenced `gh issue <verb>` line of `text`, with its 0-based line number.
 function fencedGhIssueLines(text) {
@@ -57,26 +64,36 @@ function runSection(text) {
 
 // The stop rule is present once, sits in the Run the gate CLI section, and comes before the first gh issue fence.
 function assertStopRuleBeforeGhLines(text) {
-  assert.ok(collapse(text).split(STOP_RULE).length - 1 === 1, MSG_PRESENT);
+  const flat = collapse(text);
+  assert.ok(flat.split(STOP_RULE).length - 1 === 1, MSG_PRESENT);
+  assert.ok(flat.split(SCOPE).length - 1 === 1, MSG_SCOPE_PRESENT);
+  assert.ok(flat.indexOf(SCOPE) < flat.indexOf(STOP_RULE), MSG_SCOPE_ORDER);
   assert.ok(collapse(runSection(text)).includes(STOP_RULE), MSG_PLACED);
   const firstGh = text.split('\n').slice(0, fencedGhIssueLines(text)[0].i).join('\n').length; // raw index of that line's start (less the newline)
   const rule = RULE_RE.exec(text);
   assert.ok(text.indexOf(RUN_CLI) < firstGh && rule && rule.index < firstGh, MSG_ORDER);
 }
 
+const AC_GREP = /gh issue (comment|close)/;
+
+// The lines `grep -nE "gh issue (comment|close)"` lists must all carry --repo.
+function assertGrepHitsCarryRepo(text) {
+  const hits = text.split('\n').filter((l) => AC_GREP.test(l));
+  assert.ok(hits.length >= 5, 'the AC grep still matches at least 5 lines');
+  assert.ok(hits.every((l) => l.includes('--repo')), MSG_GREP);
+}
+
 test('AC1.1: every line the AC grep matches in the parent gate contains --repo', () => {
-  const hits = live.split('\n').filter((l) => /gh issue (comment|close)/.test(l));
-  assert.ok(hits.length >= 5, `found ${hits.length} grep hits — the scan still sees the file`);
-  assert.deepEqual(hits.filter((l) => !l.includes('--repo')), []);
+  assertGrepHitsCarryRepo(live);
 });
 
 test('AC1.1 go-red: removing --repo from any grep hit is caught', () => {
-  const hitLines = live.split('\n').flatMap((l, i) => (/gh issue (comment|close)/.test(l) ? [i] : []));
+  const hitLines = live.split('\n').flatMap((l, i) => (AC_GREP.test(l) ? [i] : []));
+  assert.ok(hitLines.length >= 5, 'five or more grep hits to mutate');
   for (const n of hitLines) {
     const mutated = mapLine(live, n, (l) => l.split('--repo').join(''));
     assert.notEqual(mutated, live);
-    const missing = mutated.split('\n').filter((l) => /gh issue (comment|close)/.test(l) && !l.includes('--repo'));
-    assert.deepEqual(missing, [live.split('\n')[n].split('--repo').join('')], `line ${n + 1}`);
+    assert.throws(() => assertGrepHitsCarryRepo(mutated), { message: MSG_GREP }, `line ${n + 1}`);
   }
 });
 
@@ -111,6 +128,13 @@ test('empty-value: the stop rule precedes every gh line', () => {
   const twice = live.replace(RULE_RE, (m) => `${m}\n\n${m}`);
   assert.notEqual(twice, live);
   assert.throws(() => assertStopRuleBeforeGhLines(twice), { message: MSG_PRESENT }, 'go-red: a second copy fails "exactly once"');
+  // go-red: the scope sentence deleted, and moved after the rule.
+  const unscoped = live.replace(SCOPE_RE, '');
+  assert.notEqual(unscoped, live);
+  assert.throws(() => assertStopRuleBeforeGhLines(unscoped), { message: MSG_SCOPE_PRESENT }, 'go-red: deleting the scope sentence fails presence');
+  const scopeAfter = unscoped.replace(RULE_RE, (m) => `${m} ${SCOPE}`);
+  assert.notEqual(scopeAfter, unscoped);
+  assert.throws(() => assertStopRuleBeforeGhLines(scopeAfter), { message: MSG_SCOPE_ORDER }, 'go-red: the scope sentence after the rule fails order');
   // go-red: moved into the Close section, below its first fence.
   const closeAnchor = 'Close with `--reason completed` only when at least one sub-issue closed `COMPLETED`';
   assert.ok(live.includes(closeAnchor), 'anchor for the placement control');
@@ -151,19 +175,21 @@ test('the Apply inline read carries the flag too', () => {
 });
 
 // The verdict's repo bullet, the `{parent-repo}` it fills, and the MCP-path note.
+const BINDING = 'the `{parent-repo}` every `gh` line below passes as `--repo`, filled in from the verdict';
+const MCP_CLAUSE = "the `gh`-absent path's MCP calls take no `{parent-repo}`";
 function assertVerdictRepo(text) {
   const cli = collapse(runSection(text));
   assert.ok(cli.includes('- `repo` —'), 'the verdict list has a repo bullet');
-  assert.ok(cli.includes('{parent-repo}'), 'the repo bullet names {parent-repo}');
-  assert.ok(cli.includes("the `gh`-absent path's MCP calls take no `{parent-repo}`"), 'the repo bullet says the MCP path takes no {parent-repo}');
+  assert.ok(cli.includes(BINDING), 'the repo bullet binds {parent-repo} to the --repo of every gh line');
+  assert.ok(cli.includes(MCP_CLAUSE), 'the repo bullet says the MCP path takes no {parent-repo}');
 }
 
 test('the verdict list names repo as {parent-repo}', () => {
   assertVerdictRepo(live);
   const cuts = [
     ['- `repo` —', 'the verdict list has a repo bullet', (t) => t.split('- `repo` —').join('- repo —')],
-    ['{parent-repo}', 'the repo bullet names {parent-repo}', (t) => t.split('{parent-repo}').join('')],
-    ["the `gh`-absent path's MCP calls take no `{parent-repo}`", 'the repo bullet says the MCP path takes no {parent-repo}', (t) => t.replace(/the\s+`gh`-absent\s+path's\s+MCP\s+calls\s+take\s+no\s+`\{parent-repo\}`/, '')],
+    [BINDING, 'the repo bullet binds {parent-repo} to the --repo of every gh line', (t) => t.replace(wrapTolerant(BINDING), '')],
+    [MCP_CLAUSE, 'the repo bullet says the MCP path takes no {parent-repo}', (t) => t.replace(wrapTolerant(MCP_CLAUSE), '')],
   ];
   for (const [lit, message, mutate] of cuts) {
     const mutated = mutate(live);

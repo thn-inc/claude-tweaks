@@ -295,11 +295,11 @@ The verdict carries one field each:
   fences use.
 - `repo` — the repository the CLI's reads used (`owner/repo`, host-qualified off github.com): the
   `{parent-repo}` every `gh` line below passes as `--repo`, filled in from the verdict, so one gate
-  reads and writes one repository. When `repo` is `null` or empty, run none of the `gh` lines below
-  and report the entry as a failing `gh` call: a `--repo ""` sends the write to `gh`'s default
-  repository. `repo` is `null` under `--backend local-files` and under `--facts-json` without a
-  qualified token; neither path runs a `gh` line, and the `gh`-absent path's MCP calls take no
-  `{parent-repo}`.
+  reads and writes one repository. `repo` is `null` under `--backend local-files` and under
+  `--facts-json` without a qualified token. Neither path runs a `gh` line, and the `gh`-absent
+  path's MCP calls take no `{parent-repo}`. The rule below binds the `gh` path only. When `repo` is
+  `null` or empty, run none of the `gh` lines below and report the entry as a failing `gh` call: a
+  `--repo ""` sends the write to `gh`'s default repository.
 - `state` — `incomplete`, `gated`, `resolved` or `due` (**Evaluate the gate**), or `no-parent`.
 - `exceeds` — the oversight-floor result on `due`; otherwise `null`.
 - `closeReason` — `completed` or `not planned` on `due` with `exceeds: false` (step 3's close
