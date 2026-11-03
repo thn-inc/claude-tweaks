@@ -271,7 +271,7 @@ session-recall fallback, both above — stated once, run from either.
 2. **Enumerate siblings and their state**, from the parent side — one call, run as its own Bash
    call: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --parent $PARENT_NUM`. It prints one JSON
    verdict line: `subIssues[]` — `{number, title, state, stateReason, pr}` in number order,
-   `state` already `OPEN`/`CLOSED` — and the verdict's `state`, the parent-gate value
+   each `subIssues[].state` already `OPEN`/`CLOSED` — and the verdict's `state`, the parent-gate value
    (`parentGateState` over those sub-issues and the parent's labels). The CLI reads
    `work-backend`/`work-links` itself and enumerates per link model, so nothing here composes a
    `gh` call or fetches the parent's labels. Always `--parent`, never `--sub-issue {n}`: the
@@ -280,7 +280,7 @@ session-recall fallback, both above — stated once, run from either.
 
    Two different lists are then in play, built from this one verdict for two different purposes:
    `Pending:` (Step 3 below) is built from `subIssues` with the record in hand **excluded** — it
-   never lists itself as pending — and `state !== 'CLOSED'` means open. The `parent gate {…}`
+   never lists itself as pending — and `subIssues[].state !== 'CLOSED'` means open. The `parent gate {…}`
    value in `Pending: none — …` is the verdict's `state`, which was computed over the **full**
    list, record in hand **included**: never recompute it with `parentGateState` over the
    filtered list, which would wrongly report `due` whenever every *other* sibling has closed but

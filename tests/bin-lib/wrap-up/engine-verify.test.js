@@ -1931,7 +1931,9 @@ test('acceptance-labeling check queries a shared parent exactly once for two sub
 // #3222: a resolvable-parent record's gate is read from the parent's sub-issues
 // (parentGateState) and the oversight floor, not from the parent's demo:pending
 // label alone. Every case resolves its parent to #898.
-function parentGateRow({ records, subIssues = [], parentLabels = [], parentComments = [], throwWhen, issuesOver = {}, policyRaw }) {
+// `viewLabels` (default `parentLabels`) is what the check's own `labels,comments` read returns, apart
+// from the core's shape-6 label read, so a test can make the two reads disagree.
+function parentGateRow({ records, subIssues = [], parentLabels = [], viewLabels = parentLabels, parentComments = [], throwWhen, issuesOver = {}, policyRaw }) {
   const runDir = makeTmpDir('verify-acceptance-parentgate-');
   const repoRoot = makeCleanRepoRoot();
   writePolicy(repoRoot, 'work-links: native\n' + (policyRaw || ''));
@@ -1946,12 +1948,28 @@ function parentGateRow({ records, subIssues = [], parentLabels = [], parentComme
     const gate = parentGateReply(args, world);
     if (gate !== undefined) return gate;
     if (isGraphqlCall(args)) return parentGraphqlResponse(parentQueryNumber(args), 898);
-    if (args.includes('labels,comments')) return JSON.stringify({ labels: parentLabels.map((name) => ({ name })), comments: parentComments });
+    if (args.includes('labels,comments')) return JSON.stringify({ labels: viewLabels.map((name) => ({ name })), comments: parentComments });
     return '';
   };
   const result = runVerify({ runDir, base: 'main', repoRoot, deps: { git: fakeOriginGit(), gh: fakeGh } });
   return { row: result.rows.find((r) => r.check === 'acceptance-labeling'), calls };
 }
+
+// Review finding (#4805): the gate state and the carriesPending/dispositionState decisions follow ONE
+// label read, the check's own `labels,comments`. When the core's shape-6 read still shows the stale
+// demo:pending (gated) but the check's read shows demo:approved, the row is the resolved skip, not a
+// spurious "missing demo:pending".
+test('#4805 the parent gate follows the labels,comments read, not the core\'s separate label read', () => {
+  const { row } = parentGateRow({
+    records: [900],
+    parentLabels: ['demo:pending'],
+    viewLabels: ['demo:approved'],
+    subIssues: closedSubs3508('risk:high'),
+  });
+  assert.strictEqual(row.result, 'skip', row.detail);
+  assert.match(row.detail, /parent #898 already dispositioned/);
+  assert.doesNotMatch(row.detail, /missing demo:pending/);
+});
 
 test('AC1.1/AC1.2: acceptance-labeling skips (never fails) a sub-issue whose parent gate is incomplete', () => {
   const { row } = parentGateRow({
@@ -2553,6 +2571,18 @@ test('body-text sub-issue with a non-string state is a gather failure', () => {
   assert.strictEqual(result.ok, false);
   assert.match(result.error, /^parent-gate gather failed for parent #12 \(gh issue view 21: unexpected output/);
   assert.match(result.error, /state is not a string/);
+});
+
+// Review finding (#4805): only the core's GhFailure is a gather failure; any other throw is a bug and
+// must propagate, not hide behind `unknown`. `parent: null` with no `subIssue` makes the core throw a
+// TypeError before any gh read.
+test('gatherParentFacts lets a non-GhFailure throw from the core propagate', () => {
+  const calls = [];
+  assert.throws(
+    () => gatherParentFacts(null, { gh: (args) => { calls.push(args); return ''; } }, process.cwd(), 'native', ORG_REPO),
+    (err) => err instanceof TypeError && /exactly one of subIssue and parent/.test(err.message),
+  );
+  assert.deepStrictEqual(calls, [], 'the core threw before any gh read');
 });
 
 test('body-text sub-issue with a malformed labels entry renders unknown as a parse failure, not a fetch failure', () => {

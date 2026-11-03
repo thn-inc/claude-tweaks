@@ -689,8 +689,8 @@ function ghAvailable(deps, cwd) {
 // metadata line (`parseParent`) from `gh issue view N --repo {spec} --json
 // body` -- no GraphQL call, since a body-text project has no native
 // relationship to query. `workLinks` is the `work-links` policy value
-// (`readParentGatePolicy`); an absent argument means `native`, so a direct
-// caller that predates it keeps its behavior. A record with no `Parent:` line
+// (`readParentGatePolicy`); any value but `body-text` reads the native
+// relationship. `spec` is required: every read targets it. A record with no `Parent:` line
 // resolves `parent: null` (a collapsed decomposition legitimately produces
 // parentless records), never an error.
 function resolveParent(n, deps, cwd, workLinks, spec) {
@@ -1033,8 +1033,10 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
     const carriesPending = labelNames.includes(LABELS.DEMO_PENDING) || labelNames.includes(LABELS.ACCEPT_PENDING);
     if (parent) {
       // #3222, #4805: the parent gate decides whether this parent is checked at all. The verdict is the
-      // shared core's, with every run record as the closing set (this run closes them).
-      const verdict = evaluateParentGate({ ...parentFacts.get(target), closingSet: issues, riskFloor });
+      // shared core's, with every run record as the closing set (this run closes them). The parent's
+      // labels are this loop's own `labels,comments` read, not the gather's separate one, so the gate
+      // state and the `carriesPending`/`dispositionState` decisions below come from one label read.
+      const verdict = evaluateParentGate({ ...parentFacts.get(target), parentLabels: labelNames, closingSet: issues, riskFloor });
       if (verdict.state === 'incomplete') {
         const openCount = verdict.subIssues.filter((s) => s.state !== 'CLOSED').length;
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
