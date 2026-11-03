@@ -8,56 +8,68 @@
 
 **Tech Stack:** Node 18+, `node --test`, no dependencies.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T133658-record-4344/work/4344-spec.md` (re-materialized 2026-11-03 with the record's `## Plan-review answers (2026-11-03)` section; this revision applies those answers as rules)
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T143504-record-4344/work/4344-spec.md` (materialized 2026-11-03 with both `## Plan-review answers (2026-11-03)` and `## Plan-review answers, round 2 (2026-11-03)`; round 2 amends round-1 answer 2. This revision applies both as rules. The spec's `## Contract changes` list and `## Release Note` already carry round 2's edits, on the record body too.)
 
 ## Global Constraints
 
 - Quoted from `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md`: "Every new exemption needs a regression test proven to go red on revert." and "Widening what a gate accepts as logged evidence is a loosening of the gate, so it gets the same discipline as a new exemption."
 - Quoted from the same skill: "A change to that branch's release conditions changes `prPushReleased` in the same commit, and a new CLI that makes a gated call itself copies this shape." This plan replaces the pair of copies with one call and rewords that paragraph.
 - Quoted from the same skill: "it keeps the gate's posture: a throw from `hasNoUpstreamYet` counts as not released, so the push is skipped."
-- `tests/hooks-bookkeeping-stamps-gate.test.js` passes unchanged: no edit to that file (AC2.1).
+- `tests/hooks-bookkeeping-stamps-gate.test.js` passes unchanged: no edit to that file (AC2.1). Its `prExempt` cases are all Edits, so round 2's narrowed short-circuit does not reach them.
 - Never run `git stash` in any form. Run `tests/path-guard-conformance.test.js` and `tests/windows-hide-spawn-conformance.test.js` alongside the focused tests. No `fs.existsSync`/`fs.realpathSync` in `plugin/bin/` code this plan adds.
 - Commit subject style: `{Verb} {what} — {detail}`, with `refs #4344` in the message, never `closes`/`fixes`.
 
-## The rule, and the three places the two copies disagree today
+## The rule, and the places the two copies disagree today
 
-Read from the current code. The predicate, in order:
+The predicate, in this order (round-2 answer 1):
 
 1. `runState.status === 'clean'` -> true.
-2. `runState.pr` truthy, or `runState.prExempt` truthy -> true.
+2. `Boolean(runState.pr)` -> true. Any truthy stamp releases (round-2 answer 2); `phase-exit.js`'s `hasPr` stays, for `bookkeeping()`'s backfill only.
 3. `model !== 'pr-first'` -> true.
-4. `hasNoUpstream` true -> `Boolean(branch)` and a Step 1 line for `branch` in any evidence dir (`hasLoggedPrEarlyStep1`). A FAILED line does not release a first publish.
-5. Otherwise a FAILED line in any evidence dir (`hasLoggedPrDegrade`).
+4. First-publish rule: `hasNoUpstream` true -> return `Boolean(branch)` and a Step 1 line for `branch` in any evidence dir (`hasLoggedPrEarlyStep1`). Nothing else releases a first publish: not `prExempt`, not a FAILED line.
+5. `runState.prExempt` truthy -> true.
+6. Otherwise a FAILED line in any evidence dir (`hasLoggedPrDegrade`).
 
-The evidence dirs come from one helper, `prEvidenceDirs(runDir)`, that both reads call (record answer 1): `[runDir]`, plus `path.dirname(runDir)` when `runDir`'s basename matches `/^spec-/` and the parent's basename matches `ctxLib.RUN_ID_RE` (the `readRunStateWithParent(..., {requireRunIdParent: true})` rule `precondition.js` uses). `pr-early-open.js` refuses a `spec-` `--run`, so in a multi-spec run both lines only ever land on the parent.
+The evidence dirs come from one helper, `prEvidenceDirs(runDir)`, that both reads call (round-1 answer 1): `[runDir]`, plus `path.dirname(path.resolve(runDir))` when `runDir`'s basename matches `/^spec-/` and the parent's basename matches `ctxLib.RUN_ID_RE` (the `readRunStateWithParent(..., {requireRunIdParent: true})` rule `precondition.js` uses). `pr-early-open.js` refuses a `spec-` `--run`, so in a multi-spec run both lines only ever land on the parent.
 
 `runState` may be null (treated as `{}`).
 
-Run state (record answer 3): the parity test passes both sides the same state object, so parity covers the predicate only. The gate reads `readRunState(ctx.runDir)` and phase exit reads `readRunStateWithParent`; the two never differ in practice, because hooks only resolve top-level run-id dirs. The gate does not gain `readRunStateWithParent`.
+Run state (round-1 answer 3): the parity test passes both sides the same state object, so parity covers the predicate only. The gate reads `readRunState(ctx.runDir)` and phase exit reads `readRunStateWithParent`; the two never differ in practice, because hooks only resolve top-level run-id dirs. The gate does not gain `readRunStateWithParent`.
 
-Each disagreement is settled here, so both sides change on purpose:
+The gate's early short-circuit (round-2 answer 1): today `runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt` returns `{}` before any PR check. It becomes `runState.worktree && (runState.pr || (runState.prExempt && !allPush)) && runState.claimExempt`, where `allPush` is `isGitWrite && commandGitTargets.every((t) => t.action === 'push')`. So a memoized `prExempt` no longer skips an all-push call, and that call reaches the PR branch, where rule 4 decides a first publish. The `prExempt` memo write itself is unchanged.
+
+Each disagreement is settled here, so both sides change on purpose (the spec's `## Contract changes` list is the same set):
 
 | Case | Gate today | `prPushReleased` today | Predicate | Why |
 |---|---|---|---|---|
-| `prExempt` set, pr-first, claim not yet exempt | deny | release | release | `prExempt` is written only once no denial is possible; `precondition.js` also honors it |
+| `prExempt` set, tracked branch, pr-first, claim not yet exempt | deny | release | release | `prExempt` is written only once no tracked-branch denial is possible; `precondition.js` also honors it |
+| `prExempt` set, first publish, FAILED line, no Step 1 line | allow (short-circuit) or deny (`record-pr-step1`) | release | **deny** | Round-2 answer 1: the gate's `record-pr` deny text tells agents to hand-log a FAILED line, so a memoized `prExempt` can precede a first publish that never ran Step 1 (#903) |
 | per-spec dir, FAILED line on parent, tracked branch | deny | release | release | `precondition.js` reads the parent for this line; the degrade is the run's |
 | first publish, FAILED line, no Step 1 line | deny (`record-pr-step1`) | release | **deny** | Keeps #1800. `pr-early-open.js` logs a Step 1 outcome before its push and create, so a real degrade carries both lines |
-| per-spec dir, first publish, Step 1 line on the parent only | deny (`record-pr-step1`) | deny | **release** | Record answer 1: Step 1 evidence follows the parent by the FAILED line's rule |
+| per-spec dir, first publish, Step 1 line on the parent only | deny (`record-pr-step1`) | deny | **release** | Round-1 answer 1: Step 1 evidence follows the parent by the FAILED line's rule |
+| malformed (truthy, non-integer) `pr` stamp | release | deny | release | Round-2 answer 2: the gate's existing rule; both writers reject a malformed stamp |
 
-Also: a truthy non-numeric `pr` stamp now releases `prPushReleased` as it already does the gate (`if (!runState.pr)`); `precondition.js` reads it the same way. And `prPushReleased` now requires a run-id-shaped parent, which it did not before.
+Also: `prPushReleased` now requires a run-id-shaped parent, which it did not before.
 
-The phase-exit SKIP line (record answer 4): today's text "no recorded PR for {branch} and no PR-early run lifecycle FAILED line" is false for a first publish that has a FAILED line but no Step 1 line. It now names the release condition that is missing: on a tracked branch, the FAILED line; on a first publish, the Step 1 line.
+Accepted consequence (round-2 answer 1): a run that already memoized `prExempt` from a hand-logged FAILED line has its first-publish push denied until a Step 1 line is logged.
 
-Leave `_shared/pr-early-run-lifecycle.md` lines 232 and 500 unchanged (record answer 1).
+The phase-exit SKIP line (round-1 answer 4, round-2 answer 3) names the missing release condition, chosen by whether the branch was proven to be a first publish:
+- first publish: `condition: no PR-early run lifecycle Step 1 line for ${pushBranch} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md)`
+- otherwise, including when the `hasNoUpstreamYet` read throws: `condition: no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${pushBranch} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md)`
+
+`env.push.reason` stays `'no recorded PR — open it first (pr-early-run-lifecycle)'` in both cases.
+
+Unchanged on purpose (round-2 answer 5): `plugin/bin/lib/pr-bookkeeping/precondition.js` and `phase-exit.js`'s `bookkeeping()` route at the old line 419 keep reading plain `prExempt`; both answer "is the bookkeeping complete?", not "may this push go ahead?". Leave `_shared/pr-early-run-lifecycle.md` lines 232 and 500 unchanged (round-1 answer 1).
 
 ## Review Focus
 
-- First publish carrying only a FAILED line: expect skipped push / deny on both sides (row in the parity table).
-- A Step 1 line on an already-tracked branch: expect deny on both sides; a Step 1 line must not release a tracked push (row in the parity table).
+- First publish carrying only a FAILED line: deny on both sides, with and without `prExempt` (parity rows).
+- `prExempt` + `claimExempt` + first-publish push with only a FAILED line: the gate's short-circuit must not allow it; the deny is `record-pr-step1` (gate test in Task 1).
+- A Step 1 line on an already-tracked branch: deny on both sides; a Step 1 line must not release a tracked push (parity row).
 - Unreadable run state: `prStampReleased({runState: null, ...})` must not throw (unit test in Task 1).
-- `hasNoUpstreamYet` throwing in `prPushReleased`: reads as tracked, so only the degrade line can release (existing `phase-exit.test.js` seam; add one assertion in Task 1).
+- `hasNoUpstreamYet` throwing in `prPushReleased`: reads as tracked, so only `prExempt` or the degrade line can release, and the SKIP line uses the tracked wording (Task 1 `phase-exit.test.js` case).
 - Per-spec first publish whose Step 1 and FAILED lines sit on the parent: release on both sides; a non-run-id parent is never read (parity row plus unit case).
-- Phase-exit SKIP text on a first publish names the missing Step 1 line, never "no FAILED line" (Task 1 Step 1's phase-exit case).
+- Phase-exit SKIP text on a first publish names the missing Step 1 line, never the FAILED line (Task 1 `phase-exit.test.js` case).
 - Worktree-side rename ` R` in the dirty check: exactly one dirty entry per rename (Task 2).
 
 ---
@@ -68,20 +80,21 @@ Leave `_shared/pr-early-run-lifecycle.md` lines 232 and 500 unchanged (record an
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (new function after `hasLoggedPrEarlyStep1`; the `if (!runState.pr)` branch of `checkBookkeepingStampsGate`; `module.exports`)
-- Modify: `plugin/bin/lib/phase-exit/phase-exit.js` (`prPushReleased`, its require, its comment, header step 5, exports)
-- Modify: `docs/hooks.md` (line 40's closing sentences on `prPushReleased`)
+- Modify: `plugin/bin/lib/hooks/pre-tool-use.js` (new functions after `hasLoggedPrEarlyStep1`; the early short-circuit in `checkBookkeepingStampsGate` and its comment; the header comment's check-4 paragraph; the `if (!runState.pr)` branch; `module.exports`)
+- Modify: `plugin/bin/lib/phase-exit/phase-exit.js` (`prPushReleased`, its require, its comment, the SKIP line at its call site, header step 5, exports)
+- Modify: `docs/hooks.md` (the Bookkeeping-stamps gate bullet, line 40)
+- Modify: `docs/plugin-structure.md` (the `plugin/bin/lib/phase-exit/` row, line 48)
 - Modify: `.claude/skills/pre-tool-use-gate-exemptions/SKILL.md` ("A CLI that makes a gated call itself" paragraph)
 - Test: `tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js` (create)
-- Test: `tests/bin-lib/phase-exit/phase-exit.test.js` (one `hasNoUpstreamYet` throw case)
+- Test: `tests/bin-lib/phase-exit/phase-exit.test.js` (SKIP constants and four cases)
 
-Waived `plugin/bin/lib/pr-bookkeeping/precondition.js`: read only, as the source of the parent-dir rule. Its fail-open posture is deliberate and it is not changed.
+Waived `plugin/bin/lib/pr-bookkeeping/precondition.js`: read only, as the source of the parent-dir rule. Its fail-open posture and its plain `prExempt` read are deliberate and not changed (round-2 answer 5).
 
 **Interfaces:**
 - Produces: `prStampReleased({ runState, runDir, branch, model, hasNoUpstream }) -> boolean`, exported from `pre-tool-use.js`.
 - Produces: `prPushReleased(deps, runDir, wt, branch, state, bookkeepingResult) -> boolean`, now exported from `phase-exit.js`, signature unchanged.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 Create `tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js`. Fixture per scenario, fresh each time: a real repo with a linked worktree, a materialize commit at `.claude-tweaks/pipelines/{RUN_ID}/work/991-spec.md` (or `.../spec-991/work/991-spec.md` for `perSpec`), and a run dir under a separate temp project at `.claude-tweaks/pipelines/{RUN_ID}` (shape: `gitRepo`, `linkedWorktreeOf`, `commitMaterializedSpec`, `mkRunDir` in `tests/hooks-bookkeeping-stamps-gate.test.js`; copy them, that file stays unedited). `tracked: true` adds a bare remote as `origin` and runs `git push -u origin {branch}` from the fixture.
 
@@ -92,6 +105,8 @@ const SCENARIOS = [
   { name: 'recorded PR', state: { pr: { number: 42, url: 'u' } }, tracked: true, released: true },
   { name: 'malformed pr stamp', state: { pr: { number: 'x' } }, tracked: true, released: true },
   { name: 'prExempt', state: { prExempt: true }, tracked: true, released: true },
+  { name: 'prExempt, first publish with only a FAILED line', state: { prExempt: true }, decisions: FAILED, tracked: false, released: false },
+  { name: 'prExempt, first publish with FAILED and Step 1 lines', state: { prExempt: true }, decisions: (b) => FAILED(b) + STEP1(b), tracked: false, released: true },
   { name: 'closed run', state: { status: 'clean' }, tracked: true, released: true },
   { name: 'FAILED degrade line', state: {}, decisions: FAILED, tracked: true, released: true },
   { name: 'nothing logged, tracked', state: {}, tracked: true, released: false },
@@ -117,6 +132,8 @@ assert.equal(!denied, s.released, `gate: ${s.name}`);
 
 Call `prPushReleased` first: the gate may write `prExempt` to the fixture's run dir.
 
+Gate test, same file (round-2 answer 1): `test('gate: a memoized prExempt does not short-circuit a first-publish push that has only a FAILED line', ...)`. State `{ status: 'active', worktree: wt, prExempt: true, claimExempt: true }`, untracked branch, `decisions.md` holding only `FAILED(branch)`, `resolveIntegrationModel: () => 'pr-first'`, command `git push origin {branch}` -> denied, and the run dir's `events.jsonl` gains a `bookkeeping-stamp-deny` event whose `stamp` is `'record-pr-step1'`.
+
 Unit cases, same file:
 
 ```js
@@ -126,12 +143,14 @@ test('prStampReleased: first publish with a null branch does not release', () =>
 test('prStampReleased: a spec-* dir whose parent is not run-id-shaped does not read that parent', () => { /* parent named "other" holds a FAILED line -> false; same parent holding a Step 1 line, hasNoUpstream true -> false */ });
 ```
 
-In `tests/bin-lib/phase-exit/phase-exit.test.js` add:
-- state `{ worktree: '/wt' }`, `prList: []`, `hasNoUpstreamYet: () => { throw new Error('boom'); }`, no decisions -> `env.push.state === 'skipped'`; and with `step1Line` written -> still `'skipped'`; with a FAILED line -> `'pushed'`.
-- The per-spec first-publish row (record answer 1): `runPhaseExit` on `{runDir}/spec-4` with `hasNoUpstreamYet: () => true`, `prList: []`, the parent run dir's `decisions.md` holding the FAILED line and the Step 1 line for `BRANCH` -> `'pushed'`. Prove it discriminates: with the parent read removed from `prEvidenceDirs` the case goes red (revert, run, restore; quote the failing assertion in the task report).
-- The first-publish SKIP text (record answer 4): a `NO_PR_FIRST_PUBLISH_SKIP` constant beside `NO_PR_SKIP`, asserted by a case with `hasNoUpstreamYet: () => true`, `prList: []` and only a FAILED line logged -> skipped, and `entriesOf(runDir)` equals `[NO_PR_FIRST_PUBLISH_SKIP]`. Update `NO_PR_SKIP` to the new tracked-branch text and its comment to say it is the tracked-branch line.
+In `tests/bin-lib/phase-exit/phase-exit.test.js`:
+- Update `NO_PR_SKIP` to the tracked wording, `- SKIP — Phase-exit push: condition: no recorded PR, prExempt or PR-early run lifecycle FAILED line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`, and its comment to say it is the line for a branch not proven to be a first publish. Add `NO_PR_FIRST_PUBLISH_SKIP` beside it: `- SKIP — Phase-exit push: condition: no PR-early run lifecycle Step 1 line for ${BRANCH} → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md). Reversibility: n/a.`
+- Throw case: state `{ worktree: '/wt' }`, `prList: []`, `hasNoUpstreamYet: () => { throw new Error('boom'); }`, no decisions -> `env.push.state === 'skipped'` and `entriesOf(runDir).map(stripTime)` equals `[NO_PR_SKIP]`; with the Step 1 line written -> still `'skipped'`; with a FAILED line -> `'pushed'`.
+- The per-spec first-publish row (round-1 answer 1): `runPhaseExit` on `{runDir}/spec-4` with `hasNoUpstreamYet: () => true`, `prList: []`, the parent run dir's `decisions.md` holding the FAILED line and the Step 1 line for `BRANCH` -> `'pushed'`.
+- First-publish SKIP text: `hasNoUpstreamYet: () => true`, `prList: []`, only a FAILED line logged -> skipped, and `entriesOf(runDir)` (stripped) equals `[NO_PR_FIRST_PUBLISH_SKIP]`.
+- `prExempt` first publish: state `{ worktree: '/wt', prExempt: true }`, `hasNoUpstreamYet: () => true`, `prList: []`, no decisions -> `'skipped'` with `[NO_PR_FIRST_PUBLISH_SKIP]`.
 
-- [ ] **Step 2: Run the test to verify it fails**
+- [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js`
 Expected: FAIL (`prPushReleased` and `prStampReleased` not exported)
@@ -139,6 +158,8 @@ Expected: FAIL (`prPushReleased` and `prStampReleased` not exported)
 - [ ] **Step 3: Implement**
 
 `prEvidenceDirs(runDir)` and `prStampReleased` as "The rule" above, placed right after `hasLoggedPrEarlyStep1`; both reads in `prStampReleased` go through `prEvidenceDirs` (`dirs.some((d) => hasLoggedPrEarlyStep1(d, branch))`, `dirs.some((d) => hasLoggedPrDegrade(d))`). `prEvidenceDirs` returns `[runDir]` for a non-string or empty `runDir` too, so the reads keep their missing-file -> false posture. Add `prStampReleased` to `module.exports` under a comment naming both callers. Remove the `hasLoggedPrEarlyStep1` export (its only outside consumer was phase-exit); keep `hasLoggedPrDegrade` (`precondition.js`) and `hasNoUpstreamYet` (`phase-exit.js`'s seam).
+
+Gate, early short-circuit: compute `allPush` right before it and narrow the condition as "The rule" above states. Reword its comment's closing sentences (the "Purely an optimization; it changes no deny/allow outcome." pair, old lines 2003-2004): `prExempt` short-circuits every call except an all-push one, because a first publish still needs its Step 1 line (round-2 answer 1). Reword the header comment's check-4 sentences (old lines 1943-1946) the same way: `prExempt` records that no tracked-branch PR-stamp denial is possible; an all-push call still reaches the PR branch for the first-publish rule. Behavior-change prose sweep (`grep -n "short-circuit" plugin/bin/lib/hooks/pre-tool-use.js`): the memo-write comment's "every later covered call for this run hits the check-1 short-circuit above" (old line 2269) gets the same all-push exception; no other hit describes the `prExempt` short-circuit.
 
 Gate, inside `if (!runState.pr)` after the model resolution, replacing the #989 block's condition and the `model === 'pr-first' && !hasLoggedPrDegrade` condition. Keep both `stampCheckOutcome` calls byte-identical, and keep the block's comments that still apply:
 
@@ -163,7 +184,7 @@ The `if (modelResolved) ctxLib.writeRunState(ctx.runDir, { prExempt: true })` me
 `prPushReleased`:
 
 ```js
-// A throw reads as tracked (not a first publish): only the degrade line can then release.
+// A throw reads as tracked (not a first publish): only prExempt or the degrade line can then release.
 function firstPublishPush(deps, wt) {
   try { return deps.hasNoUpstreamYet(wt) === true; } catch { return false; }
 }
@@ -174,27 +195,30 @@ function prPushReleased(deps, runDir, wt, branch, state, bookkeepingResult) {
 }
 ```
 
-Its call site is already `pr-first`-only (`model === 'local-merge'` returns earlier). Update the require, export `prPushReleased`, and reword its comment and header step 5 (lines 26-32) to name `prStampReleased` and state that a first publish releases only on its Step 1 line. Keep the `hasPr` helper: `bookkeeping` still uses it.
+Its call site is already `pr-first`-only (`model === 'local-merge'` returns earlier). Update the require, export `prPushReleased`, and reword its comment and header step 5 (lines 26-32) to name `prStampReleased` and state that a first publish releases only on its Step 1 line. Keep the `hasPr` helper: `bookkeeping` still uses it. The SKIP line at the call site picks its wording from `firstPublishPush(deps, wt)` (a second call, on the skip path only), as "The rule" above lists.
 
-The SKIP line at the call site (record answer 4) names the missing condition, chosen by `firstPublishPush(deps, wt)` (a second call, on the skip path only):
-- tracked branch: `condition: no recorded PR for ${pushBranch}, an already-published branch, and no PR-early run lifecycle FAILED line → fallback: no phase-exit push this phase; open the PR first (_shared/pr-early-run-lifecycle.md)`
-- first publish: `condition: first publish of ${pushBranch} with no recorded PR and no PR-early run lifecycle Step 1 line for it → fallback: no phase-exit push this phase; run Step 1 and open the PR first (_shared/pr-early-run-lifecycle.md)`
-
-`env.push.reason` stays `'no recorded PR — open it first (pr-early-run-lifecycle)'` in both cases.
-
-Reword `docs/hooks.md` line 40's last two sentences and the skill's "A CLI that makes a gated call itself" paragraph: phase-exit's `prPushReleased` and the gate both call the exported `prStampReleased`, `tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js` pins them together, and a new release condition goes in that one function. Keep the throw-means-not-released clause. Add to `docs/hooks.md` line 40, with the same words as "The rule" above (record answer 3): the gate reads `readRunState(ctx.runDir)` and phase exit reads `readRunStateWithParent`, which never differ in practice because hooks only resolve top-level run-id dirs. State there that the Step 1 and FAILED reads both follow a run-id-shaped parent of a `spec-` run dir. Grep `docs/hooks.md` line 40 for its other claims about the degrade and #989 exemptions and confirm they still hold. Do not edit `pre-tool-use.js`'s comment at the old line 1320 or `docs/hooks.md` line 41 (#2571's per-spec claims): record answer 5 makes that contradiction a follow-up record, filed at wrap-up.
+Docs:
+- `docs/hooks.md` line 40: reword its closing sentences on `prPushReleased` and the skill's "A CLI that makes a gated call itself" paragraph: phase-exit's `prPushReleased` and the gate both call the exported `prStampReleased`, `tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js` pins them together, and a new release condition goes in that one function. Keep the throw-means-not-released clause. Add to line 40: the gate reads `readRunState(ctx.runDir)` and phase exit reads `readRunStateWithParent`, which never differ in practice because hooks only resolve top-level run-id dirs (round-1 answer 3); the Step 1 and FAILED reads both follow a run-id-shaped parent of a `spec-` run dir; and one sentence for round-2 answer 1: a memoized `prExempt` does not short-circuit an all-push call, so a first publish under it still needs its Step 1 line. Grep line 40 for its other claims about the degrade and #989 exemptions and confirm they still hold. Behavior-change prose sweep (`grep -n "prExempt" docs/hooks.md`) finds two more lines the narrowed short-circuit makes false, and both change in this task: line 46 ("so does `runState.worktree` alone once `runState.prExempt` is set … so every later covered call … skips repoInfo, `hasMaterializeCommit`, and this resolution entirely") gains the all-push exception, and line 47's quoted condition `runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt` becomes the new one.
+- `docs/plugin-structure.md` line 48 (round-2 answer 4): replace "(its exported hasLoggedPrDegrade / hasLoggedPrEarlyStep1 / hasNoUpstreamYet, [IL-131])" with wording that says phase exit calls the exported `prStampReleased` and uses `hasNoUpstreamYet` as its seam ([IL-131] kept).
+- Do not edit `pre-tool-use.js`'s comment above `perSpecPathspec` (old line 1320) or `docs/hooks.md` line 41 (#2571's per-spec claims): round-1 answer 5 makes that contradiction a follow-up record, filed at wrap-up.
 
 Old plans and ledgers under `docs/superpowers/plans/` and `docs/plans/` that mention `prPushReleased` are history: no change.
 
-- [ ] **Step 4: Run the tests to verify they pass**
+- [ ] **Step 4: Run the tests to verify they pass, then prove the new rows discriminate**
 
 Run: `node --test tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js tests/bin-lib/phase-exit/phase-exit.test.js tests/hooks-bookkeeping-stamps-gate.test.js tests/bin-lib/pr-bookkeeping/precondition.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js`
 Expected: PASS. AC2.1 is this run with `git diff --stat` showing no change to `tests/hooks-bookkeeping-stamps-gate.test.js`.
 
+Then revert each rule below in the working tree, run the named test file, quote the failing assertion in the task report, and restore (`git diff` empty for that hunk afterwards):
+- the parent read in `prEvidenceDirs` -> the `phase-exit.test.js` per-spec first-publish case and the parity per-spec first-publish row go red;
+- rule order (move the `prExempt` check above the first-publish rule) -> the parity row "prExempt, first publish with only a FAILED line" and the `phase-exit.test.js` `prExempt` first-publish case go red;
+- the first-publish rule's Step 1 release (return `false` for a first publish) -> the parity row "prExempt, first publish with FAILED and Step 1 lines" goes red;
+- the short-circuit narrowing (back to `runState.pr || runState.prExempt`) -> the gate test goes red.
+
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/hooks/pre-tool-use.js plugin/bin/lib/phase-exit/phase-exit.js docs/hooks.md .claude/skills/pre-tool-use-gate-exemptions/SKILL.md tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js tests/bin-lib/phase-exit/phase-exit.test.js
+git add plugin/bin/lib/hooks/pre-tool-use.js plugin/bin/lib/phase-exit/phase-exit.js docs/hooks.md docs/plugin-structure.md .claude/skills/pre-tool-use-gate-exemptions/SKILL.md tests/bin-lib/phase-exit/pr-stamp-release-parity.test.js tests/bin-lib/phase-exit/phase-exit.test.js
 git commit -m "Extract the PR-stamp release rule into one predicate — the push gate and phase-exit now call it; refs #4344"
 ```
 
