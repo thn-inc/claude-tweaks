@@ -325,8 +325,9 @@ test('a trailing bare --integration-ref is a malformed invocation (exit 2)', () 
   assert.strictEqual(io.out(), '');
 });
 
-test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integration-ref and 1 without', () => {
+test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integration-ref and 1 without', (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-cao-upstream-')));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const git = (...a) => execFileSync('git', a, { cwd: dir, encoding: 'utf8', timeout: 30000, stdio: ['ignore', 'pipe', 'pipe'] });
   const write = (rel, content) => {
     fs.mkdirSync(path.dirname(path.join(dir, rel)), { recursive: true });

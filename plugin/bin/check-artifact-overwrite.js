@@ -32,7 +32,8 @@
 //   2  malformed invocation (missing --base, unknown flag, missing value, a
 //      --run or --integration-ref that is empty or looks like a flag)
 //   3  the walk itself failed (unresolvable ref, an unresolvable
-//      --integration-ref included, git not on PATH, etc.) —
+//      --integration-ref included, an empty walk because --integration-ref
+//      already carries the whole range, git not on PATH, etc.) —
 //      stderr names the failure, nothing meaningful on stdout. Also: a
 //      manifest named by --run that is missing, unreadable or does not parse,
 //      lists no specs, or carries a present-but-invalid transition timestamp.

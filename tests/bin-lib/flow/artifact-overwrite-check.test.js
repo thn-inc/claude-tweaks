@@ -388,19 +388,44 @@ test('the top-level walk guards the interpolated {base}..{head} range with --end
   assert.strictEqual(calls[0][rangeIdx + 1], '--', 'with no integrationRef the pathspec separator follows the range directly');
 });
 
-test('integrationRef appends ^{ref} right after the range, and an empty walk makes no rev-list call', () => {
+test('integrationRef appends ^{ref} right after the range, and an empty walk makes only the two guard count calls', () => {
   const calls = [];
   const fakeGit = (args) => {
     calls.push(args);
-    return ''; // empty name-status log — clean, no A/M events
+    return ''; // empty name-status log and empty counts — clean, no A/M events, no commits at all
   };
   const result = checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' });
   assert.strictEqual(result.clean, true);
-  assert.strictEqual(calls.length, 1, 'rev-list is lazy: an empty walk never reaches the blame loop');
+  assert.strictEqual(calls.length, 3, 'the walk plus the two empty-walk guard counts; the --parents rev-list stays lazy');
+  assert.ok(calls.slice(1).every((c) => c[0] === 'rev-list' && c.includes('--count') && !c.includes('--parents')));
   const rangeIdx = calls[0].indexOf('main..HEAD');
   assert.ok(rangeIdx > 0, 'range token should be present');
   assert.strictEqual(calls[0][rangeIdx + 1], '^up', 'the exclusion token follows the range');
   assert.strictEqual(calls[0][rangeIdx + 2], '--', 'the pathspec separator follows the exclusion token');
+});
+
+test('an empty walk whose whole range is reachable from integrationRef fails closed instead of reading clean', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return ''; // the exclusion swallowed every event
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '0\n' : '3\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.throws(
+    () => checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    (err) => err instanceof ArtifactOverwriteCheckError && /reachable from up/.test(err.message) && /omit --integration-ref/.test(err.message),
+  );
+});
+
+test('an empty walk with run commits outside integrationRef stays clean (no journey edits is not a mis-timed run)', () => {
+  const fakeGit = (args) => {
+    if (args[0] === 'log') return '';
+    if (args[0] === 'rev-list' && args.includes('--count')) return args.includes('^up') ? '2\n' : '5\n';
+    throw new Error(`unexpected git call: ${args.join(' ')}`);
+  };
+  assert.deepStrictEqual(
+    checkArtifactOverwrite({ base: 'main', head: 'HEAD', integrationRef: 'up', git: fakeGit, cwd: '/fake' }),
+    { clean: true, overwrites: [] },
+  );
 });
 
 test('a git-command failure (e.g. an unresolvable --base) throws ArtifactOverwriteCheckError, not a raw Error', () => {
@@ -1407,6 +1432,16 @@ test('Q3: a fast-forward catch-up\'s commits are excluded by integrationRef', ()
 
   assert.strictEqual(check(fx, { integrationRef: 'up' }).clean, true);
   assert.strictEqual(check(fx).clean, false);
+});
+
+test('a run whose commits all reached the integration branch fails closed under integrationRef, not clean', () => {
+  const fx = upstreamRepo();
+  write(fx.dir, 'docs/journeys/a.md', '# A\n\n## Step 1\nFirst content.\n');
+  commit(fx, 'Spec A adds a.md (refs #1)');
+  fx.git('branch', '-f', 'up', 'run');
+
+  assert.throws(() => check(fx, { integrationRef: 'up' }), ArtifactOverwriteCheckError);
+  assert.strictEqual(check(fx).clean, true, 'without the flag the same range is walked and judged (nothing to overwrite here)');
 });
 
 test('AC2.1 (manifest): a line a catch-up merge\'s own resolution wrote fails closed even when a manifest window would attribute the merge', () => {

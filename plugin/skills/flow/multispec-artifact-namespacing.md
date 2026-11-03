@@ -65,7 +65,8 @@ not (the same no-remote case as the raw walk) — the check then keeps upstream 
 events and fails closed on them. Run the check before any of the run's own commits reach
 `origin/{integration-branch}`: a run commit that branch already carries leaves the walk too, and
 the check would pass without judging it (a squash merge never makes the run's own commits
-reachable).
+reachable). When the branch carries the whole range and the walk comes back empty, the tool
+exits 3 instead of passing; a partly landed run is not detected, so the ordering is the guard.
 
 It re-runs the same walk and, for every `A`-then-`M` path it finds, judges each later modifying
 commit's own deletions on that path (via `git log --numstat`). With `--integration-ref`, a path
@@ -128,10 +129,12 @@ no blame names no commit's attribution). A clean run (exit `0`, `overwrites: []`
 `A`-then-`M` path at all) passes with no manual ruling and the console renders normally. Exit `2`
 is a malformed invocation of the tool itself (never a verdict about the walk); exit `3` means the
 walk could not run at all (an unresolvable `{EXPECTED_BASE}`, an unresolvable
-`--integration-ref`, or a missing, unreadable, unparseable or unusable `manifest.yml` named by
+`--integration-ref`, a range the integration ref already carries whole, or a missing, unreadable, unparseable or unusable `manifest.yml` named by
 `--run` — no specs, or a `startedAt`/`phases[].at` that is present but not a valid date) — treat
 both as this check's own failure to run, not as a clean result, and fall back to the raw
-`git log --name-status` walk above plus a manual `git log --numstat` ruling. Algorithm:
+`git log --name-status` walk above plus a manual `git log --numstat` ruling (drop its
+`^origin/{integration-branch}` token when the cause was a range that ref already carries, since
+the token would empty that walk too). Algorithm:
 `bin/lib/flow/artifact-overwrite-check.js`; fixture coverage (append-only, self-correction, list
 reflow, step-markup reformat (pass and drop-a-step), step renumber, reference-preserving Origin
 line, and a genuine cross-spec overwrite, plus live replays of the #1988–#1997 range and the

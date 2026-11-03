@@ -40,7 +40,9 @@
 //      members, merged back --no-ff, stay run events. A deleted line blamed to
 //      a commit outside the run's own commits (the same range, minus the
 //      integration branch) is pre-run content, and the membership check
-//      clears that line.
+//      clears that line. A walk emptied because the exclusion covers the
+//      whole range throws instead of reading clean: the run already reached
+//      the integration branch and nothing was judged.
 //   2. List reflow: every deleted line in the hunk is itself a `- ` list
 //      entry (a YAML frontmatter `files:` item, or a markdown bookkeeping
 //      bullet such as a running "Related specs: ..." line), and the hunk
@@ -482,6 +484,19 @@ function checkArtifactOverwrite(opts) {
   const commits = parseNameStatusLog(nameStatusOut);
   const byPath = groupByPath(commits);
 
+  // An empty walk under `integrationRef` is "no journey edits" (clean) or "the exclusion swallowed the
+  // whole range": the run already reached the integration branch, so nothing was judged. Fail closed on
+  // the second, as the module's header promises; the first costs two `rev-list --count` calls.
+  if (integrationRef && commits.length === 0) {
+    const countRange = (extra) => Number(git(['rev-list', '--count', '--end-of-options', `${base}..${head}`, ...extra], cwd).trim());
+    if (countRange(exclude) === 0 && countRange([]) > 0) {
+      throw new ArtifactOverwriteCheckError(
+        `every commit in ${base}..${head} is reachable from ${integrationRef}, so the walk excluded the whole run and judged nothing — `
+        + 'the check ran after the run reached the integration branch; run it before the merge, or omit --integration-ref',
+      );
+    }
+  }
+
   // The run's own commits, sha -> is-merge: the same {base}..{head} minus the
   // integration branch the walk used, one `rev-list --parents` line per commit
   // (a line with 2+ parent shas is a merge). Lazy, and cached: only a deleted
@@ -563,6 +578,8 @@ function checkArtifactOverwrite(opts) {
             break;
           }
           const inRun = getRunCommits();
+          // Gated on integrationRef on purpose: without it `inRun` is just {base}..{head}, and clearing a line
+          // blamed before the base would change every verdict a caller that omits the flag already gets.
           if (integrationRef && !inRun.has(blamedSha)) continue; // pre-run content, not a run event
           if (inRun.get(blamedSha) === true) {
             overwrite = true;
