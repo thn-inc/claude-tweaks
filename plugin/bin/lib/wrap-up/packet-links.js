@@ -215,7 +215,7 @@ function hasBearerUrl(text) {
   return false;
 }
 
-const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+/;
+const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
 const ENTRY_POINT_FIELD_RE = /^[*_]{0,2}entry point[*_]{0,2}:/i;
 const ROUTE_WORD_BREAK_RE = /[\s"'`<>([]+/;
 
@@ -308,6 +308,7 @@ function findCredentialInText(text) {
 module.exports = {
   normalizeKey,
   BEARER_SEGMENT_REASON,
+  PLAN_LIST_MARKER_RE,
   checkLink,
   entryPointHasBearerRoute,
   hasBearerUrl,

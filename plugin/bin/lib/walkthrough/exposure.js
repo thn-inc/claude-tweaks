@@ -14,7 +14,7 @@ const VISIBILITY_ARGS = ['repo', 'view', '--json', 'isPrivate'];
 function readRepoVisibility(gh) {
   try {
     const answer = JSON.parse(gh(VISIBILITY_ARGS));
-    return answer && answer.isPrivate === true ? 'private' : 'public';
+    return answer?.isPrivate === true ? 'private' : 'public';
   } catch {
     return 'public';
   }

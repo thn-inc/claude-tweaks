@@ -9,8 +9,9 @@ const {
   PACKET_MARKER, SECTIONS, MAX_PACKET_CHARS, COMMANDS_ONLY_SURFACES, WITHHELD_TEXT,
 } = require('./packet-contract');
 const {
-  BEARER_SEGMENT_REASON, checkLink, entryPointHasBearerRoute, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl, normalizeKey,
-} = require('./packet-links');
+  BEARER_SEGMENT_REASON, PLAN_LIST_MARKER_RE, checkLink, entryPointHasBearerRoute, findCredentialInText, hasBearerUrl, isCredentialRefusal, isImageUrl,
+  normalizeKey,
+} =require('./packet-links');
 const { validatePacket } = require('./packet-validate');
 const { redactText, redactOrWithhold } = require('../walkthrough/redact');
 const { escapeRegExp } = require('../shared-primitives');
@@ -55,7 +56,6 @@ const PLAN_ALL_SCREENED = 'all lines omitted for credential-shaped content';
 // An Entry point's bare route counts as that URL.
 const PLAN_BEARER_KEY = 'path segment';
 const PLAN_HEADING_RE = /^#{1,6}[ \t]+observation plan[ \t]*$/i;
-const PLAN_LIST_MARKER_RE = /^(?:[-+*]|\d{1,9}[.)])[ \t]+(?=\S)/;
 // One backtick each side and none inside: a linear scan, since a failed opener reads no
 // further than the next backtick. Any other run stays escaped, and inert either way.
 const PLAN_CODE_SPAN_RE = /(?<!`)`([^`]+)`(?!`)/g;
