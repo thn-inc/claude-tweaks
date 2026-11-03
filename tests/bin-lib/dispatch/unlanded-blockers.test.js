@@ -289,9 +289,10 @@ test('AC4.3: each screened fault, unscreened, fails the whole call or reads unde
     });
 
     // Unscreened: the real run, positionals and input as the pool would give them.
+    const pool = poolRecords(groups);
     const raw = realPreflight(makeWorldFor())(
-      [...poolRecords(groups).map((r) => String(r.number)), '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev', '--work-links', 'body-text'],
-      JSON.stringify(poolRecords(groups)),
+      [...pool.map((r) => String(r.number)), '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev', '--work-links', 'body-text'],
+      JSON.stringify(pool),
     );
     if (bad.body === 'Blocked by #3000000000\n') {
       assert.equal(raw.status, 0, `${label}: ${raw.stderr}`);
