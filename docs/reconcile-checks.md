@@ -688,7 +688,10 @@ unchanged, and every fail-open path below leaves the parent open for it.
   subset runs with an unbounded budget, so it never trips there.
 - **Marker-write failure means "nothing re-closes", not "nothing runs twice".** When appending the
   marker fails, the entry is `skipped` / `marker-write-failed` and the run is not deferred. The entry
-  still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. If
+  still carries `parentsClosed`: those parents are closed on GitHub, only the marker is missing. It
+  also keeps the run's `parentFailures` and `stepSkips` (#4798), so a parent Step 4.0b left open is
+  still named although no count includes that run. A `skipped` / `error` entry from a throw after
+  Step 4.0b's closes ran keeps both fields too. If
   archive archives it in the same pass, archived runs are never walked again and the steps do not
   repeat. If archive leaves the run in place for its own reasons, Steps 4.0 and 4.0b run again on
   each pass while the write keeps failing. That is safe because both are idempotent: a parent
@@ -741,15 +744,23 @@ unchanged, and every fail-open path below leaves the parent open for it.
   non-clean word whose envelope carries a `closingSet`, Step 4.0b still runs: the records Step 4.0
   could not settle (`failed`, `closeFailed`, `pendingClose`) hold their parent open, the summary
   marker is written as for a clean run, and the entry still reads `failed`. It also reads `failed`
-  when Step 4.0b reported a parent failure (`parentFailures`; #4798 adds that field to loop entries,
-  so until it lands only Step 4.0 can fail one). An envelope that merely carries no closing set,
-  such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
+  when Step 4.0b reported a parent failure: a loop entry carries `parentFailures` whenever it is
+  non-empty (#4798), one element per parent Step 4.0b left open. An envelope that merely carries no
+  closing set, such as `not-merged`, is not a failure. A failure is never counted in `postMergeRan`, and a
   `transient-failure` retry is in none of them. `postMergeFailedRecords` is the sorted, unique
   record numbers of Step 4.0's `failed`, `closeFailed`, `pendingClose` and `unchecked` lists across
   the failed `ran` entries (`[]` when none carried any); a loop entry whose Step 4.0 printed a
   non-clean word carries `records` (and `logFailed` when set), where a clean one keeps its short
-  shape; a non-zero exit carries none. The next
-  SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
+  shape; a non-zero exit carries none.
+  A Step 4.0b skip that is not deliberate lands in one of two fields (#4798). A skip naming no parent
+  and no record, on an empty effective closing set (`closingSet` minus `closedAfterWindow`), is a
+  step-wide skip with no parent left to leave open (nothing left to close), and goes to `stepSkips`;
+  every other non-deliberate skip is a `parentFailures` element, a step-wide one on a non-empty
+  closing set included. The summary adds `postMergeParentsLeftOpen` (`[{ pr, parent?, issue?,
+  reason }]`) and `postMergeStepSkips` (`[{ pr, reason }]`), flattened from every entry that carries
+  the field, a `marker-write-failed` one included (its parents stay open although no count includes
+  that run), whatever the entry's verdict. A step skip alone never makes a run read `failed`. The
+  next SessionStart renders them in its prior-pass line (`post-merge steps ran for N merged run(s),
   closing M parent record(s) below the oversight floor`, where M counts every `ran` run's closes, a
   failed run's included; when no run read clean the closes render alone as `post-merge steps closed
   M parent record(s) below the oversight floor`; then `post-merge steps closed M parent record(s)
@@ -764,10 +775,18 @@ unchanged, and every fail-open path below leaves the parent open for it.
   per record for `failed`, `closeFailed` and `pendingClose`; one line for the `unchecked` set, which
   names every record in it). When a failed run's `logFailed` says that append failed, the summary's
   `postMergeFailedLogMissing` drops the `each with its action in the run's decisions.md` clause, so
-  the line never points at an entry that may not exist. The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
+  the line never points at an entry that may not exist. Right after it, two lines of their own
+  (#4798), each printed whatever the entry's verdict and each absent for an older status file or a
+  value that is not a list: `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR
+  #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12);
+  tidy's parent-gate backstop recovers them` (an item reads `#N` for an element naming a `parent`,
+  `the parent of record #N` for one naming an `issue`, and `every parent` for one naming neither),
+  and `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close):
+  invalid-risk-floor (PR #13)`. The unscoped `hooks.js reconcile` CLI runs `post-merge` inline and
   renders the same records on its compact failed row, `post-merge steps failed: 2 merged runs
   (records #101, #102)`, through the same `failedRecordNumbers`; with no records the row stays
-  `post-merge steps failed: 2 merged runs`. Without these a background parent close, or a failed
+  `post-merge steps failed: 2 merged runs`. It prints the same two Step 4.0b lines after the category rows,
+  through the same `parentsLeftOpenLine` and `stepSkipsLine`. Without these a background parent close, or a failed
   attempt, would never be visible outside GitHub and `decisions.md`.
 - **Single-run path (#4692).** The pass above walks the live run dirs only, so a run `/wrap-up`
   already archived is never reached by it. `postMergeOne` (exported from `post-merge.js`) is the
@@ -783,8 +802,9 @@ unchanged, and every fail-open path below leaves the parent open for it.
   merge mode to route on — plus, on a `failed` `ran` entry, `failedSteps` (`4.0` and/or `4.0b`), so
   merge mode reports only the step that failed. A `postMergeOne` `ran` entry carries `records`
   whenever Step 4.0 returned an envelope, and `logFailed` when set; a loop entry whose
-  Step 4.0 printed a non-clean word carries them too, and `parentFailures`, `verdict`, `next` and
-  `failedSteps` stay single-run.
+  Step 4.0 printed a non-clean word carries them too. A loop entry carries `parentFailures` only when
+  it is non-empty (a `postMergeOne` entry always carries it) and `stepSkips`, on either path, only
+  when it is non-empty, while `verdict`, `next` and `failedSteps` stay single-run.
 
 ## Timing contract (#4032)
 
