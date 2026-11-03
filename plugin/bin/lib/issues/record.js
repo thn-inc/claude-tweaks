@@ -12,6 +12,8 @@
 //   - record-payload.js     — recordPayload/specShapedBody composition
 //   - record-fingerprint.js — fingerprint handling
 //   - record-dependencies.js — dependency/blocker/sub-issue query building
+//   - record-risk-flags.js  — the `Risk-flags:` body line: parseRiskFlags and its
+//                             sanctioned writers (#4618)
 // It also re-exports fenceFor/fencedBlock/extractSection, the fence and section
 // primitives that live in ../markdown-blocks.js.
 // New code that only needs one boundary's exports may require that
@@ -40,6 +42,10 @@ const {
   partitionByOpenBodyBlockers, partitionByOpenNativeBlockers, buildLinkedPRQuery, partitionByOpenLinkedPR,
 } = require('./record-dependencies');
 
+const {
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
+} = require('./record-risk-flags');
+
 module.exports = {
   ORIGINS, TYPES, TIERS, PRIORITIES, DEFER_REASONS, LABELS, TYPE_LABELS, recordPayload, specShapedBody, isRepoRelativeKeyFilePath,
   FP_RE_WORK, FP_RE_LEGACY, FP_RE_WORK_PLAIN, extractFingerprint, defuse, checkFingerprint, recordFingerprint, extractVerifiedAsOf, extractPremiseCheck, extractTemplateStamp, normalizeLabelNames, parseRecordFacets,
@@ -47,4 +53,5 @@ module.exports = {
   hasOpenNativeBlocker, CLASSIFICATION_SCORING, fenceFor, fencedBlock, parseSubIssues, parseParent,
   buildNativeSubIssuesQuery, buildNativeParentQuery, partitionByOpenBodyBlockers, partitionByOpenNativeBlockers,
   buildLinkedPRQuery, partitionByOpenLinkedPR, typeOf, extractSection,
+  RISK_FLAGS_NONE, RISK_FLAGS_UNKNOWN, parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha,
 };
