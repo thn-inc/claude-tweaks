@@ -61,7 +61,7 @@ const isBlank = (line) => line.trim() === '';
 const unique = (items) => [...new Set(items)];
 
 function toText(body) {
-  return body === null || body === undefined ? '' : String(body);
+  return String(body ?? '');
 }
 
 function toLines(text) {

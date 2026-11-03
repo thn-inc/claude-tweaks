@@ -81,7 +81,7 @@ const escapeRegExp = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // EVIDENCE_CAP characters, an ellipsis marking the cut. A cut never leaves half an
 // escape pair or half a surrogate pair at the end.
 function inertEvidence(text) {
-  const flat = String(text === null || text === undefined ? '' : text).replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim();
+  const flat = String(text ?? '').replace(CONTROL_RE, '').replace(/\s+/g, ' ').trim();
   const escaped = flat.replace(ESCAPE_RE, (ch) => `\\${ch}`);
   if (escaped.length <= EVIDENCE_CAP) return escaped;
   let cut = escaped.slice(0, EVIDENCE_CAP - ELLIPSIS.length);
@@ -126,7 +126,7 @@ function candidateLines(sections) {
 }
 
 function checkExtras(extraCategories) {
-  const extras = extraCategories === null || extraCategories === undefined ? [] : extraCategories;
+  const extras = extraCategories ?? [];
   if (!Array.isArray(extras)) throw new TypeError(`classifyRiskFlags(): extraCategories must be an array of slugs, got ${JSON.stringify(extras)}`);
   for (const slug of extras) {
     // The schema's own slug rule, read at call time, so this module accepts every
@@ -139,7 +139,7 @@ function checkExtras(extraCategories) {
 // A glob keyed by a slug outside the known set would classify a flag no reader knows,
 // so it is refused rather than dropped.
 function checkGlobs(pathGlobs, slugs) {
-  const globs = pathGlobs === null || pathGlobs === undefined ? {} : pathGlobs;
+  const globs = pathGlobs ?? {};
   if (typeof globs !== 'object' || Array.isArray(globs)) throw new TypeError(`classifyRiskFlags(): pathGlobs must be a slug -> glob list map, got ${JSON.stringify(globs)}`);
   for (const [slug, list] of Object.entries(globs)) {
     if (!slugs.includes(slug)) throw new TypeError(`classifyRiskFlags(): pathGlobs names ${JSON.stringify(slug)}, which is neither a built-in category nor in extraCategories`);
@@ -153,7 +153,7 @@ function ruleFor(slug, globs) {
   return {
     keyword: builtin ? builtin.keyword : new RegExp(`\\b${slug.split('-').map(escapeRegExp).join('[- ]')}\\b`, 'i'),
     paths: builtin ? builtin.paths : [],
-    globs: Object.prototype.hasOwnProperty.call(globs, slug) ? globs[slug] : [],
+    globs: Object.hasOwn(globs, slug) ? globs[slug] : [],
   };
 }
 
