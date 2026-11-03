@@ -556,8 +556,6 @@ checklist; a human returning days later needs to remember *why*, not just *what 
 {app-route/rendered-page, walk completed:}
 Visual review walked {journey/page name} — {clean | "found and fixed: {N} issues — {one line each}"}.
 
-{screenshot embeds from above, 1-3}
-
 {app-route/rendered-page, browser unavailable:}
 _Visual verification wasn't available in this environment._
 
