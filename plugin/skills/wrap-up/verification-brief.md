@@ -369,7 +369,13 @@ file's actual location under `specs/`).
 node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" FACTS=packet-facts-{N}.json NARRATIVE=packet-narrative-{N}.json PACKET=packet-{N}.md DROPPED=packet-dropped-{N}.json RECORDINGS=packet-recordings-{N}.json SPEC=packet-spec-{N}.md FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json
 ```
 
-**Risk facts**, as its own Bash call before the gather: `risk-flags.js facts` reads the record's `Risk-flags:` line from `{spec}` and the plan's `Proof(<slug>):` lines, and writes the gather's `--flags` and `--proofs` inputs. `{spec}` is the value the `--spec` bullet below resolves, the same one the gather gets, so resolve it here. Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied` (read the manifest first: a later snapshot without a plan copy leaves an earlier `plan.md` there); otherwise, or with no run directory, drop it. `{spec}` and `{run-dir}` follow the path grammar below the gather fence. A `{run-dir}` that fails it drops `--plan-file`; a `{spec}` that fails it skips this call, the gather then passes neither `--flags` nor `--proofs`, and the summary says the risk facts were not gathered.
+**Risk facts**, as its own Bash call before the gather: `risk-flags.js facts` reads the record's `Risk-flags:` line from `{spec}` and the plan's `Proof(<slug>):` lines, and writes the gather's `--flags` and `--proofs` inputs. `{spec}` is the value the `--spec` bullet below resolves, the same one the gather gets, so resolve it here. Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied` (read the manifest first: a later snapshot without a plan copy leaves an earlier `plan.md` there); otherwise, or with no run directory, drop it. `{spec}` and `{run-dir}` follow the path grammar below the gather fence. A `{run-dir}` that fails it drops `--plan-file`; a `{spec}` that fails it skips the producer call only, and the gather still passes both inputs, reads two missing files and states both as partial. First remove both outputs, as its own Bash call with the two printed paths pasted, so a file an earlier run left at the same path is never read as this run's:
+
+```bash
+rm -f "{FLAGS}" "{PROOFS}"
+```
+
+Then the producer, as its own Bash call:
 
 ```bash
 node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"
@@ -396,7 +402,7 @@ Several pasted values come from text the plugin did not write — the record bod
 - `--surface` — the materialized header's `surface:`, else the record body's `Surface:` line, so a no-header record keeps the commands-only rule; omitted with neither.
 - `--local-base-url` — the dev URL `_shared/dev-url-detection.md` resolves, on UI surfaces and `app-route`/`rendered-page` plans, omitted when none resolves.
 - `--recordings` — `{RECORDINGS}`, only when the embeds survive the route above.
-- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always, whatever its exit; only a skipped call passes neither.
+- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.
 
 Pass no `--scope` (the CLI reads the default verify-scope declaration itself, Decision Q6), no expected-checks list, and no QA-stamp flag (the CLI reads the QA pass stamp from the checkout's git dir or the snapshot itself, Decision Q13). `--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.
 

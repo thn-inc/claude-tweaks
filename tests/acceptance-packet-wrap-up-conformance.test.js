@@ -726,12 +726,25 @@ const phase1Of = (skill) => section(skill, PHASE_1, PHASE_2);
 const planResolve = (skill) => flat(between(phase1Of(skill), `${PLAN_DIFF}\n\`\`\``, 'acceptance-packet.js" snapshot'));
 const riskFactsOf = (doc) => flat(between(step4Of(doc), '**Risk facts**', '**Gather**'));
 
-function goRed(check, doc, literals) {
-  for (const literal of literals) {
-    assert.ok(doc.includes(literal), `the control literal is in the live text: ${literal}`);
-    assert.throws(() => check(doc.split(literal).join('')), `removing ${literal} must fail the pin`);
+// A control is a literal to remove, or [label, mutate] for a pin a removal cannot reach (an
+// ordering, an exact line, a clause that must stay absent). A mutation must change the text.
+function goRed(check, doc, controls) {
+  for (const control of controls) {
+    if (typeof control === 'string') {
+      assert.ok(doc.includes(control), `the control literal is in the live text: ${control}`);
+      assert.throws(() => check(doc.split(control).join('')), `removing ${control} must fail the pin`);
+      continue;
+    }
+    const [label, mutate] = control;
+    const mutated = mutate(doc);
+    assert.notStrictEqual(mutated, doc, `the ${label} mutation changes the text`);
+    assert.throws(() => check(mutated), `the ${label} mutation must fail the pin`);
   }
 }
+
+const RM_FENCE = '```bash\nrm -f "{FLAGS}" "{PROOFS}"\n```';
+const FACTS_FENCE = `\`\`\`bash\n${FACTS_CALL}\n\`\`\``;
+const FLAGS_BULLET = '- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always.';
 
 function checkPlanSnapshot(skill) {
   const phase1 = phase1Of(skill);
@@ -745,14 +758,46 @@ function checkPlanResolve(skill) {
   const text = planResolve(skill);
   for (const literal of [
     'Exactly one printed path is the plan',
-    'Two or more (a multi-spec branch) narrow to the one whose text names `{n}-spec.md`',
-    'None, or still not exactly one: omit `--plan`',
+    'Two or more (a multi-spec branch) narrow to the one whose text names `work/{n}-spec.md`',
+    'None, still not exactly one, a failed `rev-parse`, or a `{plan-file}` that fails the grammar: omit `--plan`',
     '--status SKIP',
     '--text-file "{text-file}"',
     "`_shared/auto-decision-log.md`'s Text from git or a user paragraph",
     '`{plan-file}`: none of `"`, backtick, `$`, `\\` or a line break',
+    '`condition: no single run plan ({reason}) → fallback: snapshot without --plan, risk proofs not read`',
+    '`{reason}` is the case that fired',
+    '`top level unreadable`',
   ]) {
     assert.ok(text.includes(literal), `the plan resolution states ${literal}`);
+  }
+  // `12-spec.md` is a substring of `112-spec.md`: the spec name is matched with its directory.
+  assert.ok(!/[^/]\{n\}-spec\.md/.test(text), 'every spec name the narrowing matches carries work/');
+  // Every placeholder in the SKIP line is defined in the same paragraph.
+  for (const placeholder of text.match(/\{[a-z-]+\}/g)) {
+    assert.ok(['{n}', '{plan-file}', '{run-dir}', '{integration-branch}', '{text-file}', '{reason}', '{count}'].includes(placeholder), `undefined placeholder ${placeholder}`);
+  }
+}
+
+function checkStaleClear(brief) {
+  const body = step4Of(brief);
+  const rm = body.indexOf(RM_FENCE);
+  assert.ok(rm !== -1, 'the removal is its own fenced call');
+  assert.ok(rm < body.indexOf(FACTS_FENCE), 'the removal precedes the producer');
+  assert.ok(rm > body.indexOf('**Risk facts**'), 'inside the Risk facts step');
+}
+
+function checkGatherAlwaysBoth(brief) {
+  const body = step4Of(brief);
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.split('\n').includes(FLAGS_BULLET), 'the input bullet is exactly the always line');
+  assert.ok(riskFactsOf(brief).includes('skips the producer call only, and the gather still passes both inputs, reads two missing files and states both as partial'), riskFactsOf(brief));
+}
+
+function checkNoNeitherClause(brief) {
+  const body = flat(step4Of(brief));
+  for (const stale of ['passes neither', 'only a skipped call']) {
+    assert.ok(!body.includes(stale), `gone: ${stale}`);
   }
 }
 
@@ -818,7 +863,22 @@ function checkRiskNarration(brief) {
 
 const PINS = [
   ['Phase 1 snapshots the run plan for the risk proofs', SKILL, checkPlanSnapshot, ['--plan "{plan-file}"', '--diff-filter=AM']],
-  ['Phase 1 resolves exactly one plan, else logs one SKIP', SKILL, checkPlanResolve, ['Two or more (a multi-spec branch)', '--status SKIP', 'line break']],
+  ['Phase 1 resolves exactly one plan, else logs one SKIP', SKILL, checkPlanResolve, [
+    'Two or more (a multi-spec branch)', '--status SKIP', 'line break', 'a failed `rev-parse`', '`top level unreadable`',
+    ['bare spec name', (doc) => doc.replace('names `work/{n}-spec.md`', 'names `{n}-spec.md`')],
+    ['undefined {k}', (doc) => doc.replace('no single run plan ({reason})', 'no single run plan ({k} changed)')],
+  ]],
+  ['Step 4 removes both risk outputs before the producer runs', BRIEF, checkStaleClear, [
+    'rm -f "{FLAGS}" "{PROOFS}"',
+    ['removal after the producer', (doc) => doc.replace(`${RM_FENCE}\n`, '').replace(`${FACTS_FENCE}\n`, `${FACTS_FENCE}\n\n${RM_FENCE}\n`)],
+  ]],
+  ['the gather always passes both risk inputs, a skipped producer included', BRIEF, checkGatherAlwaysBoth, [
+    '--flags "{FLAGS}" --proofs "{PROOFS}"', 'the gather still passes both inputs',
+    ['bullet with a condition', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, when the producer ran.'))],
+  ]],
+  ['no clause lets a skipped producer drop the risk inputs', BRIEF, checkNoNeitherClause, [
+    ['the neither clause restored', (doc) => doc.replace(FLAGS_BULLET, FLAGS_BULLET.replace('always.', 'always, whatever its exit; only a skipped call passes neither.'))],
+  ]],
   ['Step 4 runs the risk facts producer before the gather and passes both files', BRIEF, checkFactsBeforeGather, ['risk-flags.js" facts', '--flags "{FLAGS}" --proofs "{PROOFS}"']],
   ['the plan copy is read only when the manifest says copied', BRIEF, checkPlanCopyGate, ["`files.plan` is `copied`", 'leaves an earlier `plan.md` there']],
   ['an absent or unparseable plan copy is never read as no proof written', BRIEF, checkEnvelopeOutcomes, ['because no plan copy exists', 'because the plan copy could not be parsed', 'never as no proof written']],
