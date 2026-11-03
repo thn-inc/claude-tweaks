@@ -431,11 +431,47 @@ test('repoSpecOf: the origin remote parsed with its host — github.com and GitH
   const repo = gitRepo();
   fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'git@github.com:acme/w.git']);
   assert.deepStrictEqual(repoSpecOf(repo), { host: 'github.com', owner: 'acme', repo: 'w' });
+  // #4933: ghe.example.com is a spec only when GH_HOST opts it in.
+  const gateDeps = { env: { GH_HOST: 'ghe.example.com' }, readFile: () => { throw new Error('none'); } };
   for (const url of ['git@ghe.example.com:acme/w.git', 'https://ghe.example.com/acme/w.git']) {
     fixtureGit(['-C', repo, 'remote', 'set-url', 'origin', url]);
-    assert.deepStrictEqual(repoSpecOf(repo), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
+    assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'ghe.example.com', owner: 'acme', repo: 'w' }, url);
     assert.strictEqual(repoSlugOf(repo), 'acme/w', url);
   }
+});
+
+test('repoSpecOf (#4933): an origin on an unknown host returns { refusal } naming the host and the GH_HOST opt-in', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  for (const url of ['git@git.corp.invalid:acme/w.git', 'https://git.corp.invalid/acme/w.git']) {
+    fixtureGit(['-C', repo, 'remote', 'add', 'origin', url]);
+    const got = repoSpecOf(repo, gateDeps);
+    assert.deepStrictEqual(Object.keys(got), ['refusal'], url);
+    assert.match(got.refusal, /origin host git\.corp\.invalid is not a known GitHub host/, url);
+    assert.match(got.refusal, /export GH_HOST=git\.corp\.invalid/, url);
+    fixtureGit(['-C', repo, 'remote', 'remove', 'origin']);
+  }
+});
+
+test('repoSpecOf (#4933): a known GitHub host resolves; a *.ghe.com host needs no opt-in', () => {
+  const repo = gitRepo();
+  const gateDeps = { env: {}, readFile: () => { throw new Error('none'); } };
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://acme.ghe.com/o/r.git']);
+  assert.deepStrictEqual(repoSpecOf(repo, gateDeps), { host: 'acme.ghe.com', owner: 'o', repo: 'r' });
+});
+
+test('repoSpecOf (#4933): an unreadable hosts.yml (readFile throws) is still a refusal, never a throw', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'https://git.corp.invalid/o/r.git']);
+  let got;
+  assert.doesNotThrow(() => { got = repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('EACCES'); } }); });
+  assert.ok(got && typeof got.refusal === 'string' && got.refusal.includes('git.corp.invalid'), JSON.stringify(got));
+});
+
+test('repoSpecOf (#4933): an ssh:// origin on an unknown host still takes the loose fallback — the gate does not read it (#4857)', () => {
+  const repo = gitRepo();
+  fixtureGit(['-C', repo, 'remote', 'add', 'origin', 'ssh://git@git.corp.invalid/acme/w.git']);
+  assert.deepStrictEqual(repoSpecOf(repo, { env: {}, readFile: () => { throw new Error('none'); } }), { host: null, owner: 'acme', repo: 'w' });
 });
 
 test('repoSpecOf: a remote parseRepo does not read (ssh://) still resolves through repoSlugOf\'s parse, host unknown', () => {

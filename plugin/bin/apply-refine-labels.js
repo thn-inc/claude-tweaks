@@ -19,7 +19,8 @@
 // (#790/[IL-127]), refused loudly otherwise, before any `gh` call.
 // Exit 0 with a {ok, failed} JSON summary on stdout — one failed action never
 // aborts the batch; 1 when the actions file can't be read or is malformed;
-// 2 on a bad invocation, an unanchored --run, or a missing `gh`.
+// 2 on a bad invocation, an unanchored --run, a missing `gh`, or an origin
+// host with no GitHub signal (refused before any gh call, #4933).
 'use strict';
 
 const fs = require('fs');
@@ -28,7 +29,7 @@ const { execFileSync } = require('child_process');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const { appendEntry, formatEntry, hms } = require('./lib/log-decision/append');
 const {
-  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions,
+  parseRepo, ghAvailable, remoteUrl, repoSlug, ghOptions, gateOriginRepo,
 } = require('./lib/repo-resolve');
 
 const USAGE = 'usage: apply-refine-labels.js <actions.json> [--run <run-dir>] [--repo owner/name] [--help]\n';
@@ -171,7 +172,13 @@ function run(argv, deps = realDeps) {
 
   let remote = null;
   if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-  const repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+  let repoSpec;
+  if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+  else {
+    const gated = gateOriginRepo(remote, deps.gateDeps);
+    if (gated.refusal) { deps.stderr(`apply-refine-labels.js: ${gated.refusal}\n`); return 2; }
+    repoSpec = gated.spec;
+  }
   if (!repoSpec) { deps.stderr('apply-refine-labels.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
   const repoFlag = repoSlug(repoSpec);
 
