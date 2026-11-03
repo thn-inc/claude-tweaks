@@ -133,7 +133,9 @@ test('AC3.1: every secret shape is replaced in all four channels', () => {
   for (const [channel, build] of CHANNELS) {
     for (const [shape, leaks] of SHAPES) {
       const { markdown } = render([build(shape)]);
-      for (const leak of leaks) assert.ok(!markdown.includes(leak), `${channel}: ${shape} leaked ${leak}`);
+      // Without backticks: inline's mention span would split a kept host (`@example`.co.uk).
+      const plain = markdown.replaceAll('`', '');
+      for (const leak of leaks) assert.ok(!plain.includes(leak), `${channel}: ${shape} leaked ${leak}`);
       assert.ok(sectionLines(markdown, 'Recording').join('\n').includes('[redacted]'), `${channel}: ${shape}`);
     }
   }
@@ -290,9 +292,36 @@ test('a remote archive_path meets the link rules too', () => {
   assert.deepEqual(recordingLines(passed({ captions: undefined, archive_path: BEARER_URL })), [`- Walkthrough of Sign in: ${WITHHELD_LINK}`]);
 });
 
+test('whatever spelling new URL reads as remote meets the link rules, on either path', () => {
+  const segment = 'Xk3j9f8s7d6f5g4h3j2k1';
+  const local = `- Rec: \`${LOCAL_PATH}\` (local-only)`;
+  const rec = (extra) => passed({ text: 'Rec', captions: undefined, archive_path: undefined, ...extra });
+  for (const spelled of [
+    `https:/h.example/${segment}/a`,
+    `https:h.example/${segment}/a`,
+    `https:\\\\h.example\\${segment}\\a`,
+    `ht\ttps://h.example/${segment}/a`,
+    `ht\ntps://h.example/${segment}/a`,
+    `\u0001https://h.example/${segment}/a`,
+  ]) {
+    for (const extra of [{ url_or_path: spelled }, { archive_path: spelled }]) {
+      const { markdown } = render([rec(extra)]);
+      assert.deepEqual(sectionLines(markdown, 'Recording'), [`- Rec: ${WITHHELD_LINK}`], JSON.stringify(extra));
+      assert.ok(!markdown.includes(segment), JSON.stringify(extra));
+    }
+  }
+  for (const spelled of ['HTTPS:/h.example/r.png', 's3:bucket/page', 'data:image/gif;base64,R0lGOD']) {
+    const asPath = render([rec({ url_or_path: spelled })]).markdown;
+    assert.deepEqual(sectionLines(asPath, 'Recording'), [`- Rec: ${REFUSED}`], spelled);
+    const asArchive = render([rec({ archive_path: spelled })]).markdown;
+    assert.deepEqual(sectionLines(asArchive, 'Recording'), [local, `  once archived: ${REFUSED}`], spelled);
+    for (const markdown of [asPath, asArchive]) assert.ok(!/r\.png|bucket|base64/.test(markdown), spelled);
+  }
+});
+
 test('a plain local path keeps to the path screen, never the link rules', () => {
   const real = '.claude-tweaks/pipelines/2026-11-02T223727-record-4612/packet-inputs/walkthrough.gif';
-  for (const path of [real, 'runs/Xk3j9f8s7d6f5g4h3j2k1/w.gif', 'C:\\runs\\w.gif', '/tmp/2026-11-02-acceptance-recording/w.gif']) {
+  for (const path of [real, 'runs/Xk3j9f8s7d6f5g4h3j2k1/w.gif', 'C:\\runs\\w.gif', 'C:\\x\\w.gif', '/tmp/2026-11-02-acceptance-recording/w.gif']) {
     assert.deepEqual(
       recordingLines(passed({ url_or_path: path, archive_path: path, captions: undefined })),
       [`- Walkthrough of Sign in: \`${path}\` (local-only)`, `  once archived: \`${path}\``],
@@ -323,6 +352,21 @@ test('a blank-text fallback withholds an id the redactor would change', () => {
   }
 });
 
+test('an id only the credential screen catches is withheld too', () => {
+  const id = 'recording:tok%65n:abc';
+  const { markdown } = render([passed({ id, text: undefined, captions: undefined, archive_path: undefined })]);
+  assert.deepEqual(sectionLines(markdown, 'Recording'), [`- (id withheld: credential-shaped): \`${LOCAL_PATH}\` (local-only)`]);
+  assert.ok(!markdown.includes('abc'), markdown);
+  const row = render([notRun('encoder-failed', { id })]).markdown;
+  assert.deepEqual(sectionLines(row, "Couldn't test"), ['- (id withheld: credential-shaped) — not run: encoder-failed']);
+  assert.ok(!row.includes('abc'), row);
+});
+
+test('the head line redacts a reason on a fact that skipped validation', () => {
+  const [{ text }] = renderRecordingSection([notRun('sk_live_abc')]);
+  assert.equal(text, 'not recorded: \\[redacted]\n  redacted values: 1');
+});
+
 test('a not-run recording with any other reason fails validation, so no site can print it', () => {
   for (const reason of ['sk_live_abc', 'bogus', '', undefined]) {
     assert.throws(() => render([notRun(reason)]), { name: 'SchemaError' }, String(reason));
@@ -338,7 +382,11 @@ test('blank values render nothing, and a blank label falls to the text', () => {
     assert.deepEqual(recordingLines(linked({ url: STORE_URL, label: blank })), [`- Rec: <${STORE_URL}>`]);
     assert.deepEqual(
       recordingLines(passed({ archive_path: undefined, captions: [blank, 'second'] })),
-      [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`, '  2. second'],
+      [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`, '  1. second'],
+    );
+    assert.deepEqual(
+      recordingLines(passed({ archive_path: undefined, captions: ['a', blank, 'c'] })),
+      [`- Walkthrough of Sign in: \`${LOCAL_PATH}\` (local-only)`, '  1. a', '  2. c'],
     );
   }
 });

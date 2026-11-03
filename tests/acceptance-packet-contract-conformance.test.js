@@ -775,7 +775,7 @@ for (const [heading, label, pattern] of [
   ['## Recording', 'no-story is plain', /The first renders plain `not recorded` only/],
   ['## Recording', 'the other three are also under Couldn\'t test', /other three also appear under Couldn't test/],
   ['## Recording', 'an image link is refused', /a link to an image is refused/],
-  ['## Recording', 'a remote path meets the link rules', /A `url_or_path` or `archive_path` opening with a `scheme:\/\/` meets those link rules whatever its exposure/],
+  ['## Recording', 'a remote path meets the link rules', /A `url_or_path` or `archive_path` that `new URL` parses with a scheme longer than one letter meets those link rules whatever its exposure, so a Windows `C:\\` path and a relative run path stay local/],
   ['## Recording', 'a local path holding a secret shape is withheld', /A local path the credential screen or the redactor would change renders the withheld line/],
   ['## Recording', 'the bearer rule stays off a local path', /the bearer-segment rule does not bind a plain local path, so a run id or a dated slug stays/],
   ['## Recording', 'an id is screened', /A fact id the redactor would change renders `\(id withheld: credential-shaped\)` in the section and in its Couldn't test row/],

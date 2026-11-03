@@ -177,14 +177,23 @@ function recordingHref(url, exposure) {
 // A blank value is an absent one.
 const filled = (value) => (value?.trim() ? value : undefined);
 
-// Not `new URL`, which reads a Windows `C:\` path as a scheme.
-const REMOTE_PATH_RE = /^[a-z][a-z0-9+.-]*:\/\//i;
+// `new URL` as the reader sees it, since it also takes `https:/h`, `https:\\h` and a control
+// character in the scheme. A one-letter scheme, `c:` with its colon, is a Windows drive.
+const DRIVE_PROTOCOL_CHARS = 2;
+function isRemotePath(path) {
+  try {
+    return new URL(path).protocol.length > DRIVE_PROTOCOL_CHARS;
+  } catch {
+    return false;
+  }
+}
+
 const WITHHELD_PLACE = Object.freeze({ place: RECORDING_WITHHELD, live: false });
 
 // A remote location meets the link rules. A local one meets the credential screen and the
 // redactor, and never the bearer rule, which a run id or a dated slug would trip.
 function recordingLocation(path, exposure) {
-  if (REMOTE_PATH_RE.test(path.trimStart())) return recordingHref(path, exposure);
+  if (isRemotePath(path)) return recordingHref(path, exposure);
   if (findCredentialInText(path) || redactText(path).count > 0) return WITHHELD_PLACE;
   return { place: codeSpan(path), live: false, local: true };
 }
@@ -223,9 +232,9 @@ function recordingHeadLines(fact, tally) {
 function recordingItem(fact) {
   const tally = { redacted: 0 };
   const lines = recordingHeadLines(fact, tally);
-  // Numbered by position, so a caption keeps its frame's number when a neighbour is blank.
-  (fact.captions ?? []).forEach((caption, index) => {
-    if (filled(caption)) lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`);
+  // Numbered from 1 with no gap: a list that starts anywhere else cannot interrupt the line above it.
+  (fact.captions ?? []).filter(filled).forEach((caption, index) => {
+    lines.push(`  ${index + 1}. ${recordingText(caption, tally)}`);
   });
   if (fact.status === 'not-run' && filled(fact.failure)) lines.push(`  failure: ${recordingText(fact.failure, tally)}`);
   if (tally.redacted > 0) lines.push(`  redacted values: ${tally.redacted}`);

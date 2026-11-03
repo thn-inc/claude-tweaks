@@ -319,7 +319,7 @@ confirmed live; a `local` target's links carry none. The Deploy status section s
 
 **The not-recorded fact.** `{ id, kind: 'recording', status: 'not-run', reason }`, with `reason` one of `no-story`, `no-local-base-url`, `no-happy-path-screenshots` or `encoder-failed`. The first renders plain `not recorded` only. The other three also appear under Couldn't test, since a recording was expected and impossible, and a failure message renders on its own line. `checkFact` refuses a `not-run` recording with any other reason.
 
-**The link rule.** A link is live only from a store that passed the probe, on the screens of `## Links and credentials`; a link to an image is refused, and a link with a credential-shaped value renders `recording withheld: link contained a credential-shaped value`. A `url_or_path` or `archive_path` opening with a `scheme://` meets those link rules whatever its exposure.
+**The link rule.** A link is live only from a store that passed the probe, on the screens of `## Links and credentials`; a link to an image is refused, and a link with a credential-shaped value renders `recording withheld: link contained a credential-shaped value`. A `url_or_path` or `archive_path` that `new URL` parses with a scheme longer than one letter meets those link rules whatever its exposure, so a Windows `C:\` path and a relative run path stay local.
 
 ## Facts-poor and infra items
 
