@@ -381,6 +381,14 @@ test('native-missing never loops and never blames a record it cannot attribute',
   assert.equal(pf.calls.length, 1);
   assert.match(foreign.stderr, /Warning: unlanded-blocker pass skipped — preflight-records\.js exited 1;/);
   assert.equal(foreign.exclusions, null);
+
+  // Only exit 1 is the writer's missing-data exit; the same line under another status is not read.
+  const pf2 = stub({ status: 2, stdout: '', stderr: 'preflight-records.js: missing dependency data for #13\n' });
+  const wrongStatus = exec(t, { groups, preflight: pf2, workLinks: 'native' });
+  assert.equal(wrongStatus.code, 0, wrongStatus.stderr);
+  assert.equal(pf2.calls.length, 1);
+  assert.match(wrongStatus.stderr, /Warning: unlanded-blocker pass skipped — preflight-records\.js exited 2;/);
+  assert.equal(wrongStatus.exclusions, null);
 });
 
 test('nativeMissingRecords recognises only the writer\'s whole line', () => {
