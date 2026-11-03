@@ -191,12 +191,15 @@ test('the Already merged section routes on exactly the verdict and next values c
 test('#4798: the Already merged section reports stepSkips on every ran and skipped line that carries them, and a skipped line\'s parentFailures; the CLI docs name the fields', () => {
   assert.match(alreadyMergedSection(), /Any line reporting an entry that carries `stepSkips` — a `ran` entry, clean or a failure, or a `skipped` one — also adds `, Step 4\.0b skipped — \{reason\}` per element/);
   assert.match(alreadyMergedSection(), /A `skipped` entry that carries `parentFailures` also adds `, Step 4\.0b \{reason\} on #\{parent\}` per element/);
+  assert.match(alreadyMergedSection(), /naming the `GH_HOST=…` opt-in\. A `skipped` entry that carries `parentFailures`/, 'the parentFailures sentence attaches to the {reason} line, not the unparseable-output one');
   assert.doesNotMatch(alreadyMergedSection(), /stepSkips[^\n]*`unreadable-policy` or `invalid-risk-floor`/, 'Q4: stepSkips are not limited to the two policy reasons');
   for (const file of [['plugin', 'bin', 'post-merge-run.js'], ['docs', 'plugin-structure.md']]) {
-    const text = flat(read(...file));
+    const text = flat(read(...file).replace(/^\/\/ ?/gm, '')); // a header comment's line prefix must not split a phrase
     assert.match(text, /stepSkips\?/, `${file.join('/')}: the entry shape carries stepSkips`);
     assert.match(text, /closing set was empty/, `${file.join('/')}: states when a parentless skip is a stepSkips element`);
-    assert.match(text, /marker-write-failed[^.]*keeps/, `${file.join('/')}: a failed marker write keeps the Step 4.0b fields`);
+    assert.match(text, /`marker-write-failed` or `error` entry[^.]*keeps/, `${file.join('/')}: a failed marker write and an error entry keep the Step 4.0b fields`);
+    assert.match(text, /names neither on a merge whose closing set \(after the close window\) was not empty/, `${file.join('/')}: a step-wide skip on a non-empty closing set is still a parentFailures element (Q2)`);
+    assert.match(text, /naming neither on a merge whose closing set was empty \(after the close window\)/, `${file.join('/')}: the empty-closing-set case goes to stepSkips (Q3)`);
   }
 });
 
