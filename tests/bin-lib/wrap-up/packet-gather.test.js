@@ -75,6 +75,65 @@ function assertShapeOk(result) {
   assert.equal(shape.ok, true);
 }
 
+// the walkthrough recording
+
+const RECORDING_PATH = {
+  live: '.claude-tweaks/pipelines/r/packet-inputs/walkthrough.gif',
+  archived: '.claude-tweaks/pipelines/archive/r/packet-inputs/walkthrough.gif',
+};
+const PASSED_RECORDING = {
+  status: 'passed', file: 'walkthrough.gif', text: 'Walkthrough of Sign in', captions: ['open', 'submit'], exposure: 'local-only', frames: 2,
+};
+
+test('a passed recording is a fact naming both locations', () => {
+  const result = gather({ recording: PASSED_RECORDING, recordingPath: RECORDING_PATH });
+  assert.deepEqual(factOf(result, 'recording:walkthrough'), {
+    id: 'recording:walkthrough',
+    kind: 'recording',
+    status: 'passed',
+    source: 'walkthrough',
+    text: 'Walkthrough of Sign in',
+    url_or_path: RECORDING_PATH.live,
+    archive_path: RECORDING_PATH.archived,
+    captions: ['open', 'submit'],
+    exposure: 'local-only',
+    redactions: 0,
+  });
+  assertShapeOk(result);
+});
+
+test('a not-run recording is a fact with its reason and failure', () => {
+  const result = gather({ recording: { status: 'not-run', reason: 'encoder-failed', failure: 'boom' }, recordingPath: null });
+  assert.deepEqual(factOf(result, 'recording:walkthrough'), {
+    id: 'recording:walkthrough', kind: 'recording', status: 'not-run', source: 'walkthrough', reason: 'encoder-failed', failure: 'boom', redactions: 0,
+  });
+  assertShapeOk(result);
+  assert.ok(!Object.hasOwn(factOf(gather({ recording: { status: 'not-run', reason: 'no-story' } }), 'recording:walkthrough'), 'failure'));
+});
+
+test('redactions counts text, captions and failure', () => {
+  const passed = gather({
+    recording: { ...PASSED_RECORDING, text: 'as me@example.test', captions: ['token=abc', 'plain', 'sk_live_123abc'] },
+    recordingPath: RECORDING_PATH,
+  });
+  assert.equal(factOf(passed, 'recording:walkthrough').redactions, 3);
+  const failed = gather({ recording: { status: 'not-run', reason: 'encoder-failed', failure: 'api_key=abc' } });
+  assert.equal(factOf(failed, 'recording:walkthrough').redactions, 1);
+});
+
+test('no recording adds no fact', () => {
+  assert.deepEqual(idsOf(gather({}), 'recording'), []);
+  assert.deepEqual(idsOf(gather({ recording: null }), 'recording'), []);
+});
+
+test('a hand-listed recording with the same id gives way to the gathered one, and says so', () => {
+  const result = gather({
+    recording: PASSED_RECORDING, recordingPath: RECORDING_PATH, recordings: [{ id: 'walkthrough', url: 'https://x.example/a' }],
+  });
+  assert.equal(factOf(result, 'recording:walkthrough').source, 'walkthrough');
+  assert.ok(result.partial.includes('repeated fact ids, first kept: recording:walkthrough'));
+});
+
 // parseAcceptanceCriteria
 
 test('AC2a expected AC with no result renders not-run', () => {

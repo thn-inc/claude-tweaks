@@ -585,7 +585,13 @@ test('snapshot copies the reports into the run dir', (t) => {
   assert.equal(code, 0, stderr);
   const manifest = JSON.parse(stdout);
   assert.deepEqual(manifest, readJson(inputs(ws, 'manifest.json')));
-  assert.deepEqual(manifest, { schemaVersion: 1, head: H, mergeBase: MB, files: { verifyReport: 'copied', qaReport: 'copied', qaStamp: 'copied' } });
+  assert.deepEqual(manifest, {
+    schemaVersion: 1,
+    head: H,
+    mergeBase: MB,
+    files: { verifyReport: 'copied', qaReport: 'copied', qaStamp: 'copied' },
+    recording: { status: 'not-run', reason: 'no-story' },
+  });
   assert.deepEqual(readJson(inputs(ws, 'verify-report.json')), REPORT);
   assert.equal(readJson(inputs(ws, 'qa-stamp.json')).sha, H);
   assert.deepEqual(readJson(inputs(ws, 'qa-report.json')).stories[0].id, 'neg-x');
@@ -721,6 +727,349 @@ test('a snapshot write failure exits 3', (t) => {
   const { code, stderr } = snapshot(ws, { git });
   assert.equal(code, 3);
   assert.match(stderr, /packet-inputs/);
+});
+
+// ---- the walkthrough recording ----
+
+const GIF_BYTES = 'GIF';
+const LIVE_GIF = '.claude-tweaks/pipelines/run-1/packet-inputs/walkthrough.gif';
+const ARCHIVED_GIF = '.claude-tweaks/pipelines/archive/run-1/packet-inputs/walkthrough.gif';
+const NO_FRAMES = { status: 'not-run', reason: 'no-happy-path-screenshots' };
+const SELECTED = '- AUTO 10:00:00 — QA scoped: 1/1.\n';
+const STORY_FILE = 'stories:\n  - id: sign-in\n    name: Sign in\n  - id: neg-bad\n    name: Bad\n';
+
+// A finished QA run on disk: its report, the stories it read, and each story's screenshots.
+function qaRun(ws, {
+  stories = [
+    { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png', '01_submit.png', '01_submit-raw.png'] },
+    { id: 'neg-bad', name: 'Bad', status: 'PASS', frames: ['00_err.png'] },
+  ],
+  baseUrl = 'http://localhost:3000',
+  storyFile = STORY_FILE,
+} = {}) {
+  const qaDir = path.join(ws.root, '.claude-tweaks', 'artifacts', 'screenshots', 'qa', 'r1');
+  const entries = stories.map(({ frames = [], ...story }) => {
+    const dir = path.join(qaDir, story.id);
+    frames.forEach((name) => writeText(path.join(dir, name), 'png'));
+    return { screenshot_dir: dir, ...story };
+  });
+  writeJson(path.join(qaDir, 'report.json'), { base_url: baseUrl, stories_dir: 'stories', stories: entries });
+  if (storyFile !== null) writeText(path.join(ws.root, 'stories', 'app.yaml'), storyFile);
+  writeText(path.join(ws.runDir, 'decisions.md'), SELECTED);
+  return qaDir;
+}
+
+function encoderStub(impl = () => ({ buffer: Buffer.from(GIF_BYTES) })) {
+  const calls = [];
+  return {
+    calls,
+    encodeWalkthrough: (spec) => {
+      calls.push(spec);
+      return impl(spec);
+    },
+  };
+}
+
+const AHEAD = () => fakeGit({ revParse: { HEAD: H }, mergeBase: MB }).git;
+const PRIVATE_REPO = () => JSON.stringify({ isPrivate: true });
+
+function snapshotRecording(ws, overrides = {}) {
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, ...overrides });
+  assert.equal(result.code, 0, result.stderr);
+  return JSON.parse(result.stdout).recording;
+}
+
+function gatherRecording(ws, run = ws.runDir) {
+  const { facts } = gather(ws, ['--run', run]);
+  return factOf(facts, 'recording:walkthrough');
+}
+
+function recordingSection(ws) {
+  const h = harness(ws);
+  const narrative = writeJson(ws.file('narrative.json'), { schemaVersion: 1, claims: [] });
+  assert.equal(run(['render', '--facts', ws.file('facts.json'), '--narrative', narrative, '--out', ws.file('out.md')], h.deps), 0, h.stderr());
+  const lines = fs.readFileSync(ws.file('out.md'), 'utf8').split('\n');
+  const rest = lines.slice(lines.indexOf('### Recording') + 1);
+  return { section: rest.slice(0, rest.findIndex((line) => line.startsWith('### '))).join('\n'), markdown: lines.join('\n') };
+}
+
+test('AC1.2: snapshot encodes and gather links the path', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+
+  assert.equal(stub.calls.length, 1);
+  assert.deepEqual(stub.calls[0].framePaths, [
+    path.join(qaDir, 'sign-in', '00_open.png'),
+    path.join(qaDir, 'sign-in', '01_submit.png'),
+  ]);
+  assert.deepEqual(stub.calls[0].delays, [200, 400]);
+  assert.equal(stub.calls[0].width, 960);
+  assert.equal(stub.calls[0].budgetBytes, 8 * 1024 * 1024);
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+  assert.deepEqual(recording, {
+    status: 'passed', file: 'walkthrough.gif', text: 'Walkthrough of Sign in', captions: ['open', 'submit'], exposure: 'local-only', frames: 2,
+  });
+  assert.deepEqual(readJson(inputs(ws, 'manifest.json')).recording, recording);
+
+  const fact = gatherRecording(ws);
+  assert.equal(fact.url_or_path, LIVE_GIF);
+  assert.equal(fact.archive_path, ARCHIVED_GIF);
+  assert.equal(fact.exposure, 'local-only');
+  assert.equal(fact.redactions, 0);
+  assert.deepEqual(fact.captions, ['open', 'submit']);
+
+  const { section } = recordingSection(ws);
+  assert.ok(section.includes(`- Walkthrough of Sign in: \`${LIVE_GIF}\` (local-only)`), section);
+  assert.ok(section.includes(`once archived: \`${ARCHIVED_GIF}\``), section);
+});
+
+test('a relative screenshot_dir resolves against the cwd, not the process', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const report = readJson(qaReport);
+  report.stories = report.stories.map((story) => ({ ...story, screenshot_dir: path.relative(ws.root, story.screenshot_dir) }));
+  writeJson(qaReport, report);
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(stub.calls[0].framePaths[0], path.join(qaDir, 'sign-in', '00_open.png'));
+});
+
+for (const [name, gh] of [
+  ['public', () => JSON.stringify({ isPrivate: false })],
+  ['private', PRIVATE_REPO],
+  ['failed', () => { throw new Error('gh failed'); }],
+]) {
+  test(`AC2.2: ${name} visibility stays local-only with nothing embedded`, (t) => {
+    const ws = workspace(t);
+    qaRun(ws);
+    const calls = [];
+    const recording = snapshotRecording(ws, {
+      encodeWalkthrough: encoderStub().encodeWalkthrough,
+      gh: (args) => {
+        calls.push(args);
+        return gh(args);
+      },
+    });
+    assert.deepEqual(calls, [['repo', 'view', '--json', 'isPrivate']]);
+    assert.equal(recording.exposure, 'local-only');
+    gatherRecording(ws);
+    const { section, markdown } = recordingSection(ws);
+    assert.ok(section.includes(LIVE_GIF), section);
+    assert.ok(!markdown.includes('!['), markdown);
+    assert.ok(!markdown.includes('<img'), markdown);
+  });
+}
+
+test('the stub throwing gives encoder-failed and exit 0', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const calls = [];
+  const stub = encoderStub(() => { throw new Error('over budget'); });
+  const recording = snapshotRecording(ws, {
+    encodeWalkthrough: stub.encodeWalkthrough,
+    gh: (args) => { calls.push(args); return PRIVATE_REPO(); },
+  });
+  assert.deepEqual(recording, { status: 'not-run', reason: 'encoder-failed', failure: 'over budget' });
+  assert.deepEqual(calls, [], 'visibility is read only once a GIF exists');
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+  const fact = gatherRecording(ws);
+  assert.equal(fact.status, 'not-run');
+  assert.equal(fact.reason, 'encoder-failed');
+  assert.equal(fact.failure, 'over budget');
+  assert.ok(!Object.hasOwn(fact, 'url_or_path'));
+});
+
+test('a failed GIF write gives encoder-failed and exit 0', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  fs.mkdirSync(inputs(ws, 'walkthrough.gif'), { recursive: true });
+  writeText(path.join(inputs(ws, 'walkthrough.gif'), 'in-the-way'), 'x');
+  const recording = snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough });
+  assert.equal(recording.status, 'not-run');
+  assert.equal(recording.reason, 'encoder-failed');
+  assert.ok(!recording.failure.includes(ws.root), recording.failure);
+  assert.ok(readJson(inputs(ws, 'manifest.json')), 'the manifest still lands');
+});
+
+test('no QA report gives no-story', (t) => {
+  const ws = workspace(t);
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, {
+    encodeWalkthrough: stub.encodeWalkthrough,
+    gh: (args) => { throw new Error(`unexpected gh ${args.join(' ')}`); },
+  });
+  assert.deepEqual(recording, { status: 'not-run', reason: 'no-story' });
+  assert.deepEqual(stub.calls, []);
+  const fact = gatherRecording(ws);
+  assert.equal(fact.reason, 'no-story');
+  const { section, markdown } = recordingSection(ws);
+  assert.equal(section.trim(), 'not recorded');
+  assert.ok(!markdown.includes('recording:walkthrough'), 'no-story is no gap');
+});
+
+test('a non-local base url gives no-local-base-url and no encode', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, { baseUrl: 'https://dev.example' });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), { status: 'not-run', reason: 'no-local-base-url' });
+  assert.deepEqual(stub.calls, []);
+});
+
+test('AC5: an unreadable QA report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  writeText(path.join(qaDir, 'report.json'), '{not json');
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+  gatherRecording(ws);
+  const { markdown } = recordingSection(ws);
+  assert.match(markdown, /recording:walkthrough/, 'a recording expected and impossible is a gap');
+});
+
+test('AC5: a report with no stories list gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  writeJson(path.join(qaDir, 'report.json'), { base_url: 'http://localhost:3000' });
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('AC5: decisions.md selecting stories with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.runDir, 'decisions.md'), SELECTED);
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a stamp at head with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeStamp(ws.gitDir);
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a missing stories directory with a report listing stories gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, { storyFile: null });
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a report with no stories_dir reads the default stories directory', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const { stories_dir: _dropped, ...report } = readJson(qaReport);
+  writeJson(qaReport, report);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+});
+
+test('AC2a.2: a tag-only negative story in the index stays out of the frames', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png'] },
+      { id: 'tagged', name: 'T', status: 'PASS', frames: ['00_err.png'] },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: tagged\n    tags: [negative]\n',
+  });
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }).frames, 1);
+  assert.deepEqual(stub.calls[0].framePaths, [path.join(qaDir, 'sign-in', '00_open.png')]);
+});
+
+test('AC2a: a passing story with no screenshot_dir gives no partial GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', frames: ['00_open.png'] },
+      { id: 'second', name: 'Second', status: 'PASS', screenshot_dir: null },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: second\n',
+  });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), NO_FRAMES);
+  assert.deepEqual(stub.calls, []);
+});
+
+test("the encoder's absolute frame path never reaches the fact", (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const stub = encoderStub(() => { throw new Error('failed at /abs/q/00_a.png'); });
+  snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(gatherRecording(ws).failure, 'failed at 00_a.png');
+});
+
+test('a frame path holding a space never reaches the fact in pieces', (t) => {
+  const ws = workspace(t);
+  const qaDir = qaRun(ws);
+  const qaReport = path.join(qaDir, 'report.json');
+  const report = readJson(qaReport);
+  const spaced = path.join(ws.root, 'Code Workspaces', 'sign-in');
+  writeText(path.join(spaced, '00_open.png'), 'png');
+  report.stories[0].screenshot_dir = spaced;
+  writeJson(qaReport, report);
+  const stub = encoderStub(({ framePaths }) => { throw new Error(`${framePaths[0]}: not a PNG file`); });
+  const { failure } = snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(failure, '00_open.png: not a PNG file');
+});
+
+test('re-run from the main checkout keeps the GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+  const stub = encoderStub(() => ({ buffer: Buffer.from('OTHER') }));
+  const result = snapshot(ws, { git: AHEAD(), encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), MAIN_RERUN);
+  assert.deepEqual(stub.calls, []);
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a manifest with no recording key adds no fact', (t) => {
+  const ws = workspace(t);
+  writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: H, mergeBase: MB, files: {} });
+  const { facts } = gather(ws, ['--run', ws.runDir]);
+  assert.deepEqual(idsOf(facts, 'recording'), []);
+  assert.ok(!facts.partial.some((note) => note.includes('recording')), facts.partial.join(' | '));
+});
+
+for (const [name, recording] of [
+  ['an unknown status', { status: 'weird' }],
+  ['a free not-run reason', { status: 'not-run', reason: 'token=abc' }],
+  ['a file other than the GIF', { status: 'passed', file: '../../secret', text: 'x', captions: [], exposure: 'local-only' }],
+  ['captions that are not strings', { status: 'passed', file: 'walkthrough.gif', text: 'x', captions: [1], exposure: 'local-only' }],
+  ['an unknown exposure', { status: 'passed', file: 'walkthrough.gif', text: 'x', captions: [], exposure: 'public' }],
+  ['a value that is not an object', 'nope'],
+]) {
+  test(`a manifest recording with ${name} adds no fact and states the gap`, (t) => {
+    const ws = workspace(t);
+    writeJson(inputs(ws, 'manifest.json'), { schemaVersion: 1, head: H, mergeBase: MB, files: {}, recording });
+    const { facts } = gather(ws, ['--run', ws.runDir]);
+    assert.deepEqual(idsOf(facts, 'recording'), []);
+    assert.ok(facts.partial.includes('manifest recording entry not read — treated as absent'), facts.partial.join(' | '));
+  });
+}
+
+test('Decision 2: a gather live and a gather after archiving name the same two locations', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough });
+  const live = gatherRecording(ws);
+  const archive = path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive');
+  fs.mkdirSync(archive);
+  const moved = path.join(archive, 'run-1');
+  fs.renameSync(ws.runDir, moved);
+  const archived = gatherRecording(ws, moved);
+  assert.deepEqual(archived, live);
+  assert.equal(fs.readFileSync(path.join(ws.root, ...archived.archive_path.split('/')), 'utf8'), GIF_BYTES);
+});
+
+test('the default encoder refusing a frame that is not a PNG gives encoder-failed', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const recording = snapshotRecording(ws);
+  assert.equal(recording.status, 'not-run');
+  assert.equal(recording.reason, 'encoder-failed');
+  assert.ok(!recording.failure.includes(ws.root), recording.failure);
 });
 
 // ---- gather over a snapshot ----

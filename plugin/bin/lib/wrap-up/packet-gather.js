@@ -13,6 +13,7 @@ const {
   encodeFactKey,
 } = require('./packet-contract');
 const { checkLink, findCredentialInText } = require('./packet-links');
+const { redactText } = require('../walkthrough/redact');
 const { isTrustedComment, untrustedSkipNote } = require('../issues/comment-trust');
 const { SECTIONS: CONSOLE_SECTIONS, decisionLineHash } = require('../console/resolve');
 
@@ -460,6 +461,20 @@ function passThroughFacts(kind, source, entries) {
   }));
 }
 
+// The snapshot's outcome as a fact. The strings stay raw here: the renderer redacts them, and
+// `redactions` counts what it will find. A not-run one has no GIF, so no location.
+function recordingFact(recording, recordingPath) {
+  const { status, text, captions, failure, reason, exposure } = recording;
+  const redactions = [text, ...(captions ?? []), failure]
+    .filter((value) => typeof value === 'string')
+    .reduce((sum, value) => sum + redactText(value).count, 0);
+  const common = { id: 'recording:walkthrough', kind: 'recording', status, source: 'walkthrough' };
+  if (status === 'not-run') return { ...common, reason, ...(failure === undefined ? {} : { failure }), redactions };
+  return {
+    ...common, text, url_or_path: recordingPath.live, archive_path: recordingPath.archived, captions, exposure, redactions,
+  };
+}
+
 function unmatchedAcKeys(acResults, criteria) {
   if (!isObject(acResults)) return [];
   const ids = new Set(criteria.map(({ id }) => id));
@@ -508,6 +523,7 @@ function gatherPacketFacts(inputs) {
     })),
     ...linkOutcomes.flatMap(({ fact }) => (fact ? [fact] : [])),
     deployFact(inputs.deploy),
+    ...(inputs.recording ? [recordingFact(inputs.recording, inputs.recordingPath)] : []),
     ...passThroughFacts('recording', 'recordings', inputs.recordings),
     ...passThroughFacts('flag', 'flags', inputs.flags),
     ...passThroughFacts('decision', 'decision-items', inputs.decisions),
