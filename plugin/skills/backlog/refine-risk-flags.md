@@ -22,7 +22,7 @@ Resolve its two files with `node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.
 
 1. **Re-read** the live body: under `github-issues`, `gh issue view {n} --json body -q .body > "{tmp-risk-body}"`; under `local-files`, and for a `facets.unsynced === true` record under either driver, `node -e "console.log(require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js').readRecord(process.argv[1]).body)" -- "{path}" > "{tmp-risk-body}"` (`readRecord`). A non-zero exit is a failed re-read.
 2. **Compare** with `cmp -s "{tmp-risk-snapshot}" "{tmp-risk-body}"`: any non-zero exit is a changed body.
-3. **Confirm** with `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" confirm --body-file "{tmp-risk-body}" --answers-file "{tmp-risk-answers}" --run "$PIPELINE_RUN_DIR"`, passing `--run` only when this run's run dir resolved. It rewrites the body file and prints `flags`, `removed`, `unconfirmed`, `status`, `refused`, `logged` and `logFailures`. A non-zero exit writes nothing for this record, reported with stderr verbatim.
+3. **Confirm** with `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" confirm --body-file "{tmp-risk-body}" --answers-file "{tmp-risk-answers}"`. It rewrites the body file, prints `flags`, `removed`, `unconfirmed`, `status` and `refused`, and logs nothing (step 6 does, after the write). A non-zero exit writes nothing for this record, reported with stderr verbatim.
 4. **Write**, only when `refused` is `null`: under `github-issues`, `gh issue edit {n} --body-file "{tmp-risk-body}"`; under `local-files`, and for an unsynced record, `writeRecord` on the record's file with its title and `facets` unchanged and the body file less the trailing newline step 1 added, `node -e "const s=require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/local-store.js');const r=s.readRecord(process.argv[1]);s.writeRecord(process.argv[1],{title:r.title,body:require('fs').readFileSync(process.argv[2],'utf8').replace(/\n$/,''),facets:r.facets})" -- "{path}" "{tmp-risk-body}"`, then `git add "{path}"` and `git commit -m "Backlog Refine: confirm risk flags on {id}"`.
 5. **Refresh Step 1's snapshot** once the write succeeded, so Step 5's body reverify for this record compares against the body now on it rather than the one this step replaced. `{ref}` is the line's `number`, or for a local record its `path`; the block re-reads the stored body (`gh issue view`, or `readRecord`) into that record's row of `session-scoped backlog-refine-faceted.json`:
 
@@ -44,7 +44,7 @@ node -e "
 ```
 
 A non-zero exit from that block leaves the snapshot stale, so Step 5 skips this record's body writes as changed (fail closed): report it.
-6. **Log** each `removed` slug as `shaping-mode-stamping.md`'s `### Risk flags` step 5 states (its `logged: false` fallback covers `logFailures`); under `local-files` its Gotchas bullet goes into the body file before step 4's write. `confirm` logs under `/backlog`'s `Refine risk flags` step.
+6. **Log** each `removed` slug, only once step 4's write succeeded, as `shaping-mode-stamping.md`'s `### Risk flags` step 5 states (its `logged: false` fallback covers `logFailures`), with `--site backlog` in place of `--site specify`: `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site backlog --removed {removed}` when this run's run dir resolved. Under `local-files` its Gotchas bullet goes into the body file before step 4's write. `--site backlog` logs under `/backlog`'s `Refine risk flags` step.
 
 ## Refused
 

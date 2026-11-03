@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 // bin/risk-flags.js — the record flag line's CLI (#4618): the one command shaping and
-// refine run to classify a record body, settle the kept flag set, and confirm a flagged
-// record with a human's answers. The writers are lib/issues/record-risk-flags.js's
-// (re-exported by record.js); this file only drives them, so the line has one writer.
+// refine run to classify a record body, settle the kept flag set, confirm a flagged
+// record with a human's answers, and log the removals once the record write landed. The
+// writers are lib/issues/record-risk-flags.js's (re-exported by record.js); this file only
+// drives them, so the line has one writer.
 //
 //   node bin/risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]
-//   node bin/risk-flags.js settle   --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]
-//   node bin/risk-flags.js confirm  --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]
+//   node bin/risk-flags.js settle   --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--repo-root <dir>]
+//   node bin/risk-flags.js confirm  --body-file <f> --answers-file <f> [--repo-root <dir>]
 //   node bin/risk-flags.js facts    --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]
+//   node bin/risk-flags.js log-removals --run <dir> --site specify|backlog [--removed a,b]
 //
 // classify  Writes nothing. Prints { flags, kept, entry, missingSections, controlMode,
 //           extraCategories, globsInvalid, known }: `flags` is the classifier floor only
@@ -23,17 +25,19 @@
 // confirm   The human batch for /backlog refine: answers apply to the body's existing
 //           flags only, no classifier runs, nothing is added. A body with no flag line stays
 //           byte-identical (status `unclassified`).
-// Both writing verbs print { flags, removed, unconfirmed, status, refused, logged,
-// logFailures }. `status` is the entry status (`unknown` when the body's line, or for
-// `settle` the prior body's, is unreadable). Reading A: on an `unknown` entry no answer is
-// applied, the widened set stays, the marker is kept or written, nothing is logged, and
-// `refused` is { reason, raw, answered }; the fail direction is keep, so it still exits 0.
-// Each removal with --run is appended to decisions.md as KEPT-PROMPT (a human answered it
-// inline) through log-decision.js's run, under the verb's own LOG_SITE (settle: /specify's
-// Risk flags step; confirm: /backlog's Refine risk flags step). `logged` is null whenever no removal was attempted
-// (no --run, or --run with nothing removed, a Reading A refusal included), so true always
-// means at least one line was written and false that one failed (`logFailures` names the
-// slugs). A failed log never changes the exit.
+// Both writing verbs print { flags, removed, unconfirmed, status, refused }. `status` is the
+// entry status (`unknown` when the body's line, or for `settle` the prior body's, is
+// unreadable). Reading A: on an `unknown` entry no answer is applied, the widened set
+// stays, the marker is kept or written, and `refused` is { reason, raw, answered }; the
+// fail direction is keep, so it still exits 0. Neither writing verb logs: its body file is
+// only a temp copy, so a removal is logged by `log-removals` once the record write landed.
+// log-removals  Writes nothing to a record. Appends one decisions.md line per --removed slug
+//           as KEPT-PROMPT (a human answered it inline), the text `Risk flag {slug} removed
+//           by the maintainer during shaping`, through log-decision.js's run, under the
+//           --site's LOG_SITE (specify: /specify's Risk flags step; backlog: /backlog's
+//           Refine risk flags step). Prints { logged, logFailures }: `logged` is null when
+//           --removed names nothing (nothing is written), true when every line was written,
+//           false when one failed (`logFailures` names the slugs). A failed log is exit 0.
 // An empty kept set writes the none line and no marker, but a hand-written unconfirmed marker
 // already on the body survives a headless settle: clearing it would need humanConfirmed with
 // no human, the marker is the cautious side, and the next human confirm clears it.
@@ -58,12 +62,12 @@
 //           casing), and the two inputs may be one file.
 //
 // Exit codes (Payload-1/Invocation-2 as qa-report.js, plus 2 for an unreadable policy):
-//   0  done, including an answer refused or left unanswered
+//   0  done, including an answer refused or left unanswered, and a log line that failed
 //   1  --body-file or --prior-body-file unreadable (facts: --spec-file, or a --plan-file
 //      that fails to read for a reason other than being absent)
 //   2  malformed invocation, or the policy (.claude-tweaks/policy.yml) unreadable or invalid
 //   3  a named output file could not be written (--body-file; facts: --flags-out or --proofs-out)
-// --run is a best-effort audit line and is anchored by log-decision.js; it is not an input.
+// log-removals' --run is a best-effort audit line and is anchored by log-decision.js; it is not an input.
 // The body write is an atomic overwrite with no lock: one shaping run owns its body file.
 'use strict';
 
@@ -79,11 +83,13 @@ const logDecision = require('./log-decision');
 const { riskFlagEntries } = require('./lib/issues/risk-flag-facts');
 
 const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]\n'
-  + '       risk-flags.js settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]\n'
-  + '       risk-flags.js confirm --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]\n'
+  + '       risk-flags.js settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--repo-root <dir>]\n'
+  + '       risk-flags.js confirm --body-file <f> --answers-file <f> [--repo-root <dir>]\n'
   + '       risk-flags.js facts --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]\n'
+  + '       risk-flags.js log-removals --run <dir> --site specify|backlog [--removed a,b]\n'
   + '  answers file: JSON object { "<slug>": "keep" | "remove" }\n'
-  + '  exit 0 done (a refused or unanswered flag is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
+  + '  log-removals runs after the record write landed and prints { logged, logFailures }\n'
+  + '  exit 0 done (a refused or unanswered flag, or a failed log line, is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
   + '       2 malformed invocation or unreadable policy, 3 a named output file (--body-file, --flags-out, --proofs-out) unwritable\n'
   + '  facts prints { status, flags, proofs, plan, planParse }, refuses (exit 2) an output that is also an input or the other output, compared on canonical paths,\n'
   + '       and removes both outputs on every non-zero exit\n';
@@ -100,24 +106,42 @@ const FLAG_KEYS = {
   '--plan-file': 'planFile',
   '--flags-out': 'flagsOut',
   '--proofs-out': 'proofsOut',
+  '--site': 'site',
+  '--removed': 'removed',
 };
 const VERB_FLAGS = {
   classify: ['--body-file', '--prior-body-file', '--add', '--repo-root'],
-  settle: ['--body-file', '--prior-body-file', '--add', '--headless', '--answers-file', '--run', '--repo-root'],
-  confirm: ['--body-file', '--answers-file', '--run', '--repo-root'],
+  settle: ['--body-file', '--prior-body-file', '--add', '--headless', '--answers-file', '--repo-root'],
+  confirm: ['--body-file', '--answers-file', '--repo-root'],
   facts: ['--spec-file', '--plan-file', '--flags-out', '--proofs-out', '--repo-root'],
+  'log-removals': ['--run', '--site', '--removed'],
 };
+
+// The skill and step a removal is logged under, by the --site that removed it: /specify's
+// Risk flags step (settle) or /backlog refine's unconfirmed-flag step (confirm).
+const LOG_SITE = {
+  specify: { section: '/specify', step: 'Risk flags' },
+  backlog: { section: '/backlog', step: 'Refine risk flags' },
+};
+
+// 'a,b' | null -> { slugs } | { error }: comma-separated category slugs, never `none`.
+function parseSlugList(flag, value) {
+  const slugs = value === null ? [] : value.split(',').map((slug) => slug.trim());
+  const bad = slugs.find((slug) => !LIST_ELEMENT_PATTERNS.slug.test(slug) || slug === record.RISK_FLAGS_NONE);
+  if (bad !== undefined) return { error: `${flag} names ${JSON.stringify(bad)}, which is not a category slug` };
+  return { slugs: [...new Set(slugs)] };
+}
 
 // -> { help } | { error } | the parsed options. Every value flag is validated here: a
 // missing, empty or flag-shaped value is a usage error, never a `null` that reads as unset.
 function parseArgs(argv) {
   const [verb, ...rest] = argv;
   if (verb === '--help' || verb === '-h') return { help: true };
-  if (verb === undefined) return { error: 'a verb is required: classify, settle, confirm or facts' };
+  if (verb === undefined) return { error: 'a verb is required: classify, settle, confirm, facts or log-removals' };
   if (!Object.hasOwn(VERB_FLAGS, verb)) return { error: `unknown verb: ${verb}` };
   const o = {
     verb, bodyFile: null, priorBodyFile: null, add: null, answersFile: null, run: null, repoRoot: null, headless: false,
-    specFile: null, planFile: null, flagsOut: null, proofsOut: null,
+    specFile: null, planFile: null, flagsOut: null, proofsOut: null, site: null, removed: null,
   };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
@@ -141,13 +165,21 @@ function parseArgs(argv) {
     }
     return o;
   }
+  if (verb === 'log-removals') {
+    if (o.run === null) return { error: '--run <dir> is required' };
+    if (o.site === null) return { error: '--site specify|backlog is required' };
+    if (!Object.hasOwn(LOG_SITE, o.site)) return { error: `--site names ${JSON.stringify(o.site)}: expected ${Object.keys(LOG_SITE).join(' or ')}` };
+    const removed = parseSlugList('--removed', o.removed);
+    if (removed.error) return { error: removed.error };
+    o.removed = removed.slugs;
+    return o;
+  }
   if (o.bodyFile === null) return { error: '--body-file <path> is required' };
   if (verb === 'settle' && o.headless === (o.answersFile !== null)) return { error: 'settle needs exactly one of --headless and --answers-file <path>' };
   if (verb === 'confirm' && o.answersFile === null) return { error: 'confirm needs --answers-file <path>' };
-  const add = o.add === null ? [] : o.add.split(',').map((slug) => slug.trim());
-  const badSlug = add.find((slug) => !LIST_ELEMENT_PATTERNS.slug.test(slug) || slug === record.RISK_FLAGS_NONE);
-  if (badSlug !== undefined) return { error: `--add names ${JSON.stringify(badSlug)}, which is not a category slug` };
-  o.add = [...new Set(add)];
+  const add = parseSlugList('--add', o.add);
+  if (add.error) return { error: add.error };
+  o.add = add.slugs;
   return o;
 }
 
@@ -302,22 +334,15 @@ function confirmBody({ body, answersFile, deps, extraCategories }) {
   return out;
 }
 
-// The skill and step each writing verb's removals are logged under: settle runs inside
-// /specify's Risk flags step, confirm inside /backlog refine's unconfirmed-flag step.
-const LOG_SITE = {
-  settle: { section: '/specify', step: 'Risk flags' },
-  confirm: { section: '/backlog', step: 'Refine risk flags' },
-};
-
-// Best-effort audit line per removal; a refusal or throw is a logFailures entry, never an exit.
-// `logged` is null when no removal was attempted (no --run, or nothing removed), so true
-// always means at least one decisions.md line was written and false that one failed.
-function logRemovals(o, deps, removed) {
-  if (o.run === null || removed.length === 0) return { logged: null, logFailures: [] };
+// The log-removals verb: a best-effort audit line per removed slug; a refusal or throw is a
+// logFailures entry, never an exit. `logged` is null when nothing was named (nothing is
+// written), so true always means every line was written and false that one failed.
+function logRemovals(o, deps) {
+  if (o.removed.length === 0) return { logged: null, logFailures: [] };
   const logDeps = { now: deps.now, cwd: deps.cwd, mainRoot: deps.mainRoot, stdout: () => {}, stderr: deps.stderr };
-  const { section, step } = LOG_SITE[o.verb];
+  const { section, step } = LOG_SITE[o.site];
   const logFailures = [];
-  for (const slug of removed) {
+  for (const slug of o.removed) {
     let code;
     try {
       code = logDecision.run([
@@ -437,6 +462,10 @@ function run(argv, overrides = {}) {
     if (argv[0] === 'facts') namedOutputs(argv, deps).forEach((file) => removeOutput(deps, file));
     return 2;
   }
+  if (o.verb === 'log-removals') {
+    deps.stdout(`${JSON.stringify(logRemovals(o, deps))}\n`);
+    return 0;
+  }
   const fail = (code, reason) => { deps.stderr(`risk-flags.js: ${reason}\n`); return code; };
   const warn = (message) => deps.stderr(`risk-flags.js: ${message}\n`);
 
@@ -492,7 +521,8 @@ function run(argv, overrides = {}) {
     });
   }
 
-  // settle and confirm: work out the new body, then write, log, report.
+  // settle and confirm: work out the new body, then write and report. Neither logs a removal:
+  // the record write that makes it real comes after this, so log-removals runs then.
   let shaped;
   if (o.verb === 'settle') {
     const { kept, entry, raw } = keptSet({ body, priorBody, add: o.add, floor: floor.flags, extraCategories });
@@ -509,9 +539,8 @@ function run(argv, overrides = {}) {
   if (next !== body) {
     try { deps.writeFile(o.bodyFile, next); } catch (err) { return fail(3, `body-unwritable: ${o.bodyFile} (${errMsg(err)})`); }
   }
-  const { logged, logFailures } = logRemovals(o, deps, removed);
   const final = record.parseRiskFlags(next, { extraCategories });
-  return emit({ flags: final.flags, removed, unconfirmed: final.unconfirmed, status, refused, logged, logFailures });
+  return emit({ flags: final.flags, removed, unconfirmed: final.unconfirmed, status, refused });
 }
 
 module.exports = { run, parseArgs, USAGE };

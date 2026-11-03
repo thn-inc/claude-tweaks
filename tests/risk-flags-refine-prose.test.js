@@ -38,6 +38,7 @@ const LIVE = {
 
 const CONFIRM_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" confirm';
 const CLASSIFY_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" classify';
+const LOG_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals';
 // A closing `"`, `'` or backtick may sit between the script name and the verb.
 const VERB_RE = /risk-flags\.js["'`]?\s+(classify|settle|confirm)/g;
 const STEP_HEADING = '\n## Step 3.7: Unconfirmed risk flags\n';
@@ -112,16 +113,18 @@ const REFINE_PINS = [
   ['sub-file Write', 'sub', writeSec, 'gh issue edit {n} --body-file "{tmp-risk-body}"'],
   ['sub-file Write', 'sub', writeSec, '`facets.unsynced === true`'],
   ['sub-file Write', 'sub', writeSec, 'its title and `facets` unchanged'],
-  ['sub-file Write', 'sub', writeSec, '--run "$PIPELINE_RUN_DIR"'],
+  ['sub-file Write', 'sub', writeSec, `${LOG_CALL} --run "$PIPELINE_RUN_DIR" --site backlog --removed {removed}`],
+  ['sub-file Write', 'sub', writeSec, "only once step 4's write succeeded"],
+  ['sub-file Write', 'sub', writeSec, 'and logs nothing (step 6 does, after the write)'],
   ['sub-file Write', 'sub', writeSec, "Refresh Step 1's snapshot"],
   ['sub-file Write', 'sub', writeSec, 'leaves the snapshot stale, so Step 5 skips'],
   ['sub-file Write', 'sub', writeSec, "`shaping-mode-stamping.md`'s `### Risk flags` step 5"],
   ['sub-file Write', 'sub', writeSec, '`logFailures`'],
-  ['sub-file Write', 'sub', writeSec, "`confirm` logs under `/backlog`'s `Refine risk flags` step"],
+  ['sub-file Write', 'sub', writeSec, "`--site backlog` logs under `/backlog`'s `Refine risk flags` step"],
 ];
-// Re-read, compare, confirm, write, refresh, in that order: the reverify precedes the write,
-// and the snapshot is refreshed only after it.
-const ORDER = ['gh issue view {n} --json body -q .body', 'cmp -s "{tmp-risk-snapshot}"', CONFIRM_CALL, 'gh issue edit {n} --body-file', "Refresh Step 1's snapshot"];
+// Re-read, compare, confirm, write, refresh, log, in that order: the reverify precedes the
+// write, the snapshot is refreshed only after it, and a removal is logged last (finding 3).
+const ORDER = ['gh issue view {n} --json body -q .body', 'cmp -s "{tmp-risk-snapshot}"', CONFIRM_CALL, 'gh issue edit {n} --body-file', "Refresh Step 1's snapshot", LOG_CALL];
 function refineFailures(texts) {
   const out = missing(REFINE_PINS, texts);
   const s36 = texts.refine.indexOf('\n## Step 3.6');
@@ -138,6 +141,9 @@ function refineFailures(texts) {
   for (let i = 1; i < ORDER.length; i++) {
     if (idx[i - 1] === -1 || idx[i] === -1 || !(idx[i - 1] < idx[i])) out.push(`order: ${ORDER[i - 1]} before ${ORDER[i]}`);
   }
+  // confirm takes no --run: its body file is a temp copy, so logging there would precede the write.
+  const confirmSpan = write.slice(write.indexOf(CONFIRM_CALL)).split('`')[0];
+  if (write.includes(CONFIRM_CALL) && confirmSpan.includes('--run')) out.push('sub-file Write: confirm passes no --run');
   if (texts.headless.includes('risk-flags.js')) out.push(`${REFINE_HEADLESS} names risk-flags.js`);
   if (texts.headless.includes('refine-risk-flags.md')) out.push(`${REFINE_HEADLESS} names refine-risk-flags.md`);
   return out;
@@ -267,6 +273,19 @@ test('go-red (refine): the write placed before the reverify fails the order chec
   const swapped = write.replace(edit, 'EDIT_SLOT').replace(cmp, edit).replace('EDIT_SLOT', cmp);
   assert.notStrictEqual(swapped, write);
   assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(write, swapped) }), names('order: cmp -s "{tmp-risk-snapshot}" before'));
+});
+
+test('go-red (refine): confirm handed a --run again fails', () => {
+  const planted = LIVE.sub.replace('--answers-file "{tmp-risk-answers}"`', '--answers-file "{tmp-risk-answers}" --run "$PIPELINE_RUN_DIR"`');
+  assert.notStrictEqual(planted, LIVE.sub);
+  assert.throws(() => assertRefine({ ...LIVE, sub: planted }), names('sub-file Write: confirm passes no --run'));
+});
+
+test('go-red (refine): the log placed before the write fails the order check', () => {
+  const write = subSection(LIVE.sub, 'Write each answered record');
+  const moved = write.replace('1. **Re-read**', `Run \`node ${LOG_CALL}\` now. 1. **Re-read**`);
+  assert.notStrictEqual(moved, write);
+  assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(write, moved) }), names(`order: Refresh Step 1's snapshot before ${LOG_CALL}`));
 });
 
 test('go-red (refine): the snapshot refresh placed before the write fails the order check', () => {

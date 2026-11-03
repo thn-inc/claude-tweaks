@@ -56,6 +56,8 @@ const composeSection = (stamping) => between(stamping, '\n### Compose-then-write
 // The slice tests/specify-shaping-noop-check.test.js takes, whitespace-flattened the same way.
 const bornReady = (shapingMode) => between(shapingMode.replace(/\s+/g, ' '), "Absorb the record's existing content", '**Feedback-filing deliverable check.**');
 const subissuesParagraph = (subissues) => lineStarting(subissues, '**Risk flags**');
+const checkParagraph = (stamping) => lineStarting(composeSection(stamping), '`--check` (#2827)');
+const localCommitLine = (stamping) => lineStarting(composeSection(stamping), 'then commit — a local record is a tracked file');
 const templateHead = (template) => between(template, '# Record Body Template', '\n## Overview\n');
 const templateParagraph = (template) => lineStarting(templateHead(template), '`Risk-flags:` and `Risk-flags-unconfirmed:`');
 
@@ -80,7 +82,6 @@ const SHAPING_PINS = [
   ['Risk flags step 3', 'stamping', item3, '--answers-file'],
   ['Risk flags step 3', 'stamping', item3, '--prior-body-file'],
   ['Risk flags step 3', 'stamping', item3, '--add'],
-  ['Risk flags step 3', 'stamping', item3, '--run "$PIPELINE_RUN_DIR"'],
   ['Risk flags step 3', 'stamping', item3, 'multiSelect: true'],
   ['Risk flags step 3', 'stamping', item3, 'one `AskUserQuestion`'],
   ['Risk flags step 3', 'stamping', item3, 'confirmed or not'],
@@ -126,8 +127,18 @@ const LOGGING_PINS = [
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'under `local-files`'],
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), "body's `## Gotchas`"],
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'after the create'],
+  // Final review finding 3: a removal is logged only after the record write lands.
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'only once the record write has landed'],
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'never for a `refused` run or a failed write'],
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" log-removals --run "$PIPELINE_RUN_DIR" --site specify --removed {removed}'],
+  ['Risk flags step 3', 'stamping', item3, 'logs nothing: a removal is logged in step 5, once the record write lands'],
+  ['Compose --check paragraph', 'stamping', (t) => checkParagraph(t.stamping), 'Once `gh issue edit` succeeds, `### Risk flags` step 5 logs the removals; a failed edit logs none'],
+  ['Compose local-files commit line', 'stamping', (t) => localCommitLine(t.stamping), 'once `writeRecord` succeeds, run `### Risk flags` step 5'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'never for a unit whose create failed'],
 ];
-function assertLogging(texts) { fail('removal-logging prose', missing(LOGGING_PINS, texts)); }
+// Neither writing verb takes --run any more, so a `--run` in step 3 is a log ahead of the write.
+const loggingShapeFailures = (texts) => (item3(texts).includes('--run') ? ['Risk flags step 3: settle passes no --run'] : []);
+function assertLogging(texts) { fail('removal-logging prose', [...missing(LOGGING_PINS, texts), ...loggingShapeFailures(texts)]); }
 
 const BATCH_QUESTION_PINS = [
   ['Risk flags batch paragraph', 'stamping', (t) => batchParagraph(t.stamping), 'one batch table and one `AskUserQuestion`'],
@@ -360,6 +371,13 @@ for (const [concern, pins, assertFn] of PIN_CONCERNS) {
     });
   }
 }
+
+test('go-red (logging): step 3 handing settle a --run again fails', () => {
+  const step = item3(LIVE);
+  const planted = step.replace('--answers-file "{tmp-answers}"`', '--answers-file "{tmp-answers}" --run "$PIPELINE_RUN_DIR"`');
+  assert.notStrictEqual(planted, step);
+  assert.throws(() => assertLogging({ ...LIVE, stamping: LIVE.stamping.replace(step, planted) }), names('Risk flags step 3: settle passes no --run'));
+});
 
 test('go-red (order): ### Risk flags placed after ### Stamp scoring fails', () => {
   const section = riskSection(LIVE.stamping);

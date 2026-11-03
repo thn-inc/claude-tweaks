@@ -93,7 +93,8 @@ test('AC3.1: headless shaping never drops a detected flag and writes the marker'
   assert.match(body, /^Risk-flags: migrations$/m);
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
   assert.match(body, /Proof\(migrations\):/);
-  assert.deepStrictEqual([out.removed, out.unconfirmed, out.status, out.refused, out.logged, out.logFailures], [[], true, 'unclassified', null, null, []]);
+  assert.deepStrictEqual([out.removed, out.unconfirmed, out.status, out.refused], [[], true, 'unclassified', null]);
+  assert.deepStrictEqual(Object.keys(out), ['flags', 'removed', 'unconfirmed', 'status', 'refused'], 'a writing verb reports no log fields: it never logs');
 });
 
 test('AC3.1: headless never removes a prior flag the new text no longer implies', () => {
@@ -103,36 +104,74 @@ test('AC3.1: headless never removes a prior flag the new text no longer implies'
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
 });
 
-test('AC2.1: a remove answer drops the flag and writes the removal entry to decisions.md', () => {
+// Final review finding 3: a removal is logged only once the record write landed, by the
+// log-removals verb the skill runs after it; settle and confirm never log.
+const logRemovals = (runDir, site, removed) => exec(['log-removals', '--run', runDir, '--site', site, ...(removed === undefined ? [] : ['--removed', removed])]);
+
+test('AC2.1: a remove answer drops the flag, and log-removals then writes the removal entry to decisions.md', () => {
   const runDir = realAnchoredRunDirFixture();
-  const { out, body } = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]);
-  assert.deepStrictEqual([out.flags, out.removed, out.logged, out.logFailures], [[], ['migrations'], true, []]);
+  const { out, body } = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' })]);
+  assert.deepStrictEqual([out.flags, out.removed], [[], ['migrations']]);
   assert.match(body, /^Risk-flags: none$/m);
   assert.doesNotMatch(body, /Risk-flags-unconfirmed/);
   assert.doesNotMatch(body, /Risk proof required/);
+  assert.strictEqual(readDecisions(runDir), '', 'settle logged nothing: the record write has not landed');
+  const logged = logRemovals(runDir, 'specify', out.removed.join(','));
+  assert.deepStrictEqual([logged.code, logged.out], [0, { logged: true, logFailures: [] }]);
   const log = readDecisions(runDir);
-  assert.match(log, /^- KEPT-PROMPT \S+ — .*Risk flag migrations removed by the maintainer during shaping/m);
+  assert.match(log, /^## \/specify$/m);
+  assert.match(log, /^- KEPT-PROMPT \S+ — Risk flags: Risk flag migrations removed by the maintainer during shaping/m);
   assert.doesNotMatch(log, /^- AUTO .*removed by the maintainer/m);
-  assert.match(log, /\/specify/);
+  assert.doesNotMatch(log, /\/backlog/);
 });
 
-test('a confirm removal is logged under /backlog refine, not /specify, with the same removal text', () => {
+test('log-removals --site backlog logs under /backlog refine, not /specify, with the same removal text', () => {
   const runDir = realAnchoredRunDirFixture();
-  const { out, body } = confirm(withUnconfirmed(SPEC_WITH_MIGRATIONS_PATH), answers({ migrations: 'remove' }), ['--run', runDir]);
-  assert.deepStrictEqual([out.removed, out.logged, out.logFailures], [['migrations'], true, []]);
+  const { out, body } = confirm(withUnconfirmed(SPEC_WITH_MIGRATIONS_PATH), answers({ migrations: 'remove' }));
+  assert.deepStrictEqual(out.removed, ['migrations']);
   assert.match(body, /^Risk-flags: none$/m);
+  assert.strictEqual(readDecisions(runDir), '', 'confirm logged nothing');
+  assert.deepStrictEqual(logRemovals(runDir, 'backlog', 'migrations').out, { logged: true, logFailures: [] });
   const log = readDecisions(runDir);
   assert.match(log, /^## \/backlog$/m);
   assert.match(log, /^- KEPT-PROMPT \S+ — Refine risk flags: Risk flag migrations removed by the maintainer during shaping/m);
   assert.doesNotMatch(log, /\/specify/);
 });
 
+test('log-removals writes one line per slug, in the order named, duplicates once', () => {
+  const runDir = realAnchoredRunDirFixture();
+  assert.deepStrictEqual(logRemovals(runDir, 'specify', 'auth,migrations,auth').out, { logged: true, logFailures: [] });
+  const lines = readDecisions(runDir).split('\n').filter((line) => line.startsWith('- KEPT-PROMPT'));
+  assert.deepStrictEqual(lines.map((line) => line.replace(/^.* — Risk flags: /, '')), [
+    'Risk flag auth removed by the maintainer during shaping. Reversibility: low.',
+    'Risk flag migrations removed by the maintainer during shaping. Reversibility: low.',
+  ]);
+});
+
+test('log-removals with nothing removed writes nothing and reports logged null', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const r = logRemovals(runDir, 'specify');
+  assert.deepStrictEqual([r.code, r.out], [0, { logged: null, logFailures: [] }]);
+  assert.strictEqual(readDecisions(runDir), '');
+});
+
 test('log-decision stays quiet: the JSON envelope is the only thing on stdout', () => {
   const runDir = realAnchoredRunDirFixture();
-  const r = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]);
+  const r = logRemovals(runDir, 'specify', 'migrations,auth');
   assert.strictEqual(r.outChunks.length, 1);
   assert.strictEqual(r.stdout.trim().split('\n').length, 1);
   assert.strictEqual(r.out.logged, true);
+});
+
+test('settle and confirm refuse --run: neither verb logs, so a removal cannot be logged before the write', () => {
+  const runDir = realAnchoredRunDirFixture();
+  const s = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]);
+  const c = confirm(withUnconfirmed(SPEC_WITH_MIGRATIONS_PATH), answers({ migrations: 'remove' }), ['--run', runDir]);
+  for (const r of [s, c]) {
+    assert.strictEqual(r.code, 2);
+    assert.match(r.stderr, /--run is not valid for (settle|confirm)/);
+  }
+  assert.strictEqual(readDecisions(runDir), '');
 });
 
 test('AC2.2: a keep answer leaves the flag and clears the marker', () => {
@@ -184,22 +223,19 @@ test('an empty kept set writes none, no marker and no Gotcha', () => {
   }
 });
 
-test('a removal with an unanchored --run is logged:false and still exits 0', () => {
-  const { out, code, body } = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', '/not/a/run']);
-  assert.deepStrictEqual([code, out.logged, out.logFailures, out.removed], [0, false, ['migrations'], ['migrations']]);
-  assert.match(body, /^Risk-flags: none$/m);
+test('log-removals with an unanchored --run is logged:false, names every slug, and still exits 0', () => {
+  const r = exec(['log-removals', '--run', '/not/a/run', '--site', 'specify', '--removed', 'migrations,auth']);
+  assert.deepStrictEqual([r.code, r.out], [0, { logged: false, logFailures: ['migrations', 'auth'] }]);
 });
 
-test('a body write failure exits 3 and logs nothing', () => {
-  const runDir = realAnchoredRunDirFixture();
+test('a body write failure exits 3', () => {
   const file = rawFile(SPEC_WITH_MIGRATIONS_PATH);
-  const r = exec(['settle', '--body-file', file, '--answers-file', answers({ migrations: 'remove' }), '--run', runDir, ...withRoot([])], {
+  const r = exec(['settle', '--body-file', file, '--answers-file', answers({ migrations: 'remove' }), ...withRoot([])], {
     writeFile: () => { throw Object.assign(new Error('read-only'), { code: 'EROFS' }); },
   });
   assert.strictEqual(r.code, 3);
   assert.strictEqual(r.stdout, '');
   assert.match(r.stderr, /EROFS/);
-  assert.strictEqual(readDecisions(runDir), '');
   assert.strictEqual(fs.readFileSync(file, 'utf8'), SPEC_WITH_MIGRATIONS_PATH);
 });
 
@@ -243,50 +279,43 @@ test('confirm with a missing answer keeps the flag and the marker', () => {
 const ALL = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
 const MALFORMED = 'Surface: infra\nRisk-flags: Auth\nRisk-flags-unconfirmed: true\n\n## Overview\n';
 const UNKNOWN_SLUG = 'Surface: infra\nRisk-flags: auth, pii\nRisk-flags-unconfirmed: true\n\n## Overview\n';
-// Reading A's one assertion: widened set kept, marker kept, nothing removed, no removal line.
-function assertRefused({ out, body, code, stderr }, runDir, reason) {
+// Reading A's one assertion: widened set kept, marker kept, nothing removed (so nothing for
+// log-removals to log).
+function assertRefused({ out, body, code, stderr }, reason) {
   assert.strictEqual(code, 0);
   assert.deepStrictEqual([out.status, out.removed, out.unconfirmed, out.refused.reason], ['unknown', [], true, reason]);
   assert.deepStrictEqual(parseRiskFlags(body, { extraCategories: [] }).flags.slice(0, 4), ALL);
   assert.match(body, /^Risk-flags-unconfirmed: true$/m);
-  assert.doesNotMatch(readDecisions(runDir), /removed by the maintainer during shaping/);
-  assert.strictEqual(out.logged, null, 'nothing was removed, so no log was attempted');
-  assert.deepStrictEqual(out.logFailures, []);
   assert.strictEqual(stderr.trim().split('\n').length, 1, 'one stderr warning');
   assert.match(stderr, /unreadable/);
   assert.doesNotMatch(stderr, /risk[-_ ]?flags\s*:/i);
 }
 
-test('Reading A: settle refuses a remove answer on a malformed line and logs nothing', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = settle(MALFORMED, ['--answers-file', answers({ auth: 'remove' }), '--run', runDir]);
-  assertRefused(r, runDir, 'malformed');
+test('Reading A: settle refuses a remove answer on a malformed line', () => {
+  const r = settle(MALFORMED, ['--answers-file', answers({ auth: 'remove' })]);
+  assertRefused(r, 'malformed');
   assert.deepStrictEqual(r.out.refused.answered, ['auth']);
   assert.strictEqual(r.out.refused.raw, 'Risk-flags: Auth');
 });
 
 test('Reading A: settle refuses a remove answer on a line naming an unknown slug', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = settle(UNKNOWN_SLUG, ['--answers-file', answers({ pii: 'remove', auth: 'keep' }), '--run', runDir]);
-  assertRefused(r, runDir, 'unknown-slug');
+  const r = settle(UNKNOWN_SLUG, ['--answers-file', answers({ pii: 'remove', auth: 'keep' })]);
+  assertRefused(r, 'unknown-slug');
   assert.deepStrictEqual(r.out.refused.answered, ['pii', 'auth']);
   assert.match(r.body, /pii/);
 });
 
 test('Reading A: settle refuses when only the prior body reads unknown', () => {
-  const runDir = realAnchoredRunDirFixture();
-  assertRefused(settle(SPEC_WITH_MIGRATIONS_PATH, ['--prior-body-file', rawFile(MALFORMED), '--answers-file', answers({ migrations: 'remove' }), '--run', runDir]), runDir, 'malformed');
+  assertRefused(settle(SPEC_WITH_MIGRATIONS_PATH, ['--prior-body-file', rawFile(MALFORMED), '--answers-file', answers({ migrations: 'remove' })]), 'malformed');
 });
 
 test('Reading A: a keep-all answer on an unknown line does not clear the marker', () => {
-  const runDir = realAnchoredRunDirFixture();
-  assertRefused(settle(MALFORMED, ['--answers-file', answers(Object.fromEntries(ALL.map((s) => [s, 'keep']))), '--run', runDir]), runDir, 'malformed');
+  assertRefused(settle(MALFORMED, ['--answers-file', answers(Object.fromEntries(ALL.map((s) => [s, 'keep'])))]), 'malformed');
 });
 
 test('Reading A: an unreadable answers file still refuses, naming no answered slug', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = settle(MALFORMED, ['--answers-file', '/nope/missing.json', '--run', runDir]);
-  assertRefused(r, runDir, 'malformed');
+  const r = settle(MALFORMED, ['--answers-file', '/nope/missing.json']);
+  assertRefused(r, 'malformed');
   assert.deepStrictEqual(r.out.refused.answered, []);
 });
 
@@ -297,22 +326,19 @@ test('Reading A: --headless on an unknown line removes nothing and reports no re
 });
 
 test('Reading A: confirm with a partial answer on an unknown line keeps the widened set and the marker', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = confirm(MALFORMED, answers({ auth: 'keep' }), ['--run', runDir]);
-  assertRefused(r, runDir, 'malformed');
+  const r = confirm(MALFORMED, answers({ auth: 'keep' }), []);
+  assertRefused(r, 'malformed');
   assert.strictEqual(r.body, MALFORMED);
 });
 
 test('Reading A: confirm with a remove answer on an unknown line keeps the widened set and the marker', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = confirm(UNKNOWN_SLUG, answers({ auth: 'remove' }), ['--run', runDir]);
-  assertRefused(r, runDir, 'unknown-slug');
+  const r = confirm(UNKNOWN_SLUG, answers({ auth: 'remove' }), []);
+  assertRefused(r, 'unknown-slug');
   assert.strictEqual(r.body, UNKNOWN_SLUG);
 });
 
 test('Reading A: confirm writes the marker on an unknown line that lacks one', () => {
-  const runDir = realAnchoredRunDirFixture();
-  assertRefused(confirm('Risk-flags: Auth\n', answers({ auth: 'remove' }), ['--run', runDir]), runDir, 'malformed');
+  assertRefused(confirm('Risk-flags: Auth\n', answers({ auth: 'remove' }), []), 'malformed');
 });
 
 // A writer refusing a line the entry read as ok cannot happen with real inputs, so the
@@ -326,47 +352,31 @@ function withThrowingRemover(fn) {
     record.removeRiskFlag = original;
   }
 }
-function assertWriterRefused(r, runDir) {
+function assertWriterRefused(r) {
   assert.strictEqual(r.code, 0);
   assert.deepStrictEqual([r.out.status, r.out.removed, r.out.unconfirmed, r.out.refused.reason], ['unknown', [], true, null]);
-  assert.deepStrictEqual([r.out.logged, r.out.logFailures], [null, []]);
   assert.match(r.body, /^Risk-flags-unconfirmed: true$/m);
-  assert.strictEqual(readDecisions(runDir), '');
   assert.strictEqual(r.stderr.trim().split('\n').length, 1, 'one stderr warning');
   assert.match(r.stderr, /writer refused/);
   assert.doesNotMatch(r.stderr, /unreadable|risk[-_ ]?flags\s*:/i);
 }
 
 test('Reading A: a RISK_FLAGS_UNKNOWN throw in settle is caught into the same refusal, status unknown, no invented reason', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = withThrowingRemover(() => settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]));
-  assertWriterRefused(r, runDir);
+  const r = withThrowingRemover(() => settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' })]));
+  assertWriterRefused(r);
   assert.deepStrictEqual([r.out.flags, r.out.refused.answered], [['migrations'], ['migrations']]);
   assert.match(r.body, /^Risk-flags: migrations$/m);
   assert.match(r.body, /Proof\(migrations\):/);
 });
 
 test('Reading A: a RISK_FLAGS_UNKNOWN throw in confirm is caught likewise and writes the missing marker', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const r = withThrowingRemover(() => confirm('Risk-flags: auth\n', answers({ auth: 'remove' }), ['--run', runDir]));
-  assertWriterRefused(r, runDir);
+  const r = withThrowingRemover(() => confirm('Risk-flags: auth\n', answers({ auth: 'remove' }), []));
+  assertWriterRefused(r);
   assert.deepStrictEqual([r.out.flags, r.out.refused.answered], [['auth'], ['auth']]);
   assert.match(r.body, /^Risk-flags: auth$/m);
   const marked = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n';
-  const again = withThrowingRemover(() => confirm(marked, answers({ auth: 'remove' }), ['--run', runDir]));
+  const again = withThrowingRemover(() => confirm(marked, answers({ auth: 'remove' }), []));
   assert.strictEqual(again.body, marked, 'a body that already carries the marker stays byte-identical');
-});
-
-test('logged is null whenever no removal was attempted, true once a line was written', () => {
-  const runDir = realAnchoredRunDirFixture();
-  const headless = settle(SPEC_WITH_MIGRATIONS_PATH, ['--headless', '--run', runDir]);
-  const keep = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'keep' }), '--run', runDir]);
-  const unanswered = settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({}), '--run', runDir]);
-  const clean = settle(CLEAN_SPEC, ['--answers-file', answers({}), '--run', runDir]);
-  for (const r of [headless, keep, unanswered, clean]) assert.deepStrictEqual([r.out.logged, r.out.logFailures], [null, []]);
-  assert.strictEqual(readDecisions(runDir), '');
-  assert.strictEqual(settle(SPEC_WITH_MIGRATIONS_PATH, ['--answers-file', answers({ migrations: 'remove' }), '--run', runDir]).out.logged, true);
-  assert.strictEqual(confirm('Risk-flags: auth\n', answers({ auth: 'keep' }), ['--run', runDir]).out.logged, null);
 });
 
 test('a hand-written marker beside an empty kept set survives a headless settle', () => {
@@ -410,6 +420,16 @@ test('malformed invocations exit 2 with a usage line and nothing on stdout', () 
     ['confirm', '--body-file', f, '--answers-file', f, '--headless'],
     ['confirm', '--body-file', f, '--answers-file', f, '--prior-body-file', f],
     ['classify'],
+    ['settle', '--body-file', f, '--headless', '--run', TMP],
+    ['confirm', '--body-file', f, '--answers-file', f, '--run', TMP],
+    ['log-removals', '--site', 'specify', '--removed', 'auth'],
+    ['log-removals', '--run', TMP, '--removed', 'auth'],
+    ['log-removals', '--run', TMP, '--site', 'refine', '--removed', 'auth'],
+    ['log-removals', '--run', TMP, '--site', 'specify', '--removed', 'Auth'],
+    ['log-removals', '--run', TMP, '--site', 'specify', '--removed', 'none'],
+    ['log-removals', '--run', TMP, '--site', 'specify', '--removed', ''],
+    ['log-removals', '--run', TMP, '--site', 'specify', '--body-file', f],
+    ['classify', '--body-file', f, '--site', 'specify'],
   ];
   for (const argv of bad) {
     const r = runCli(argv);
