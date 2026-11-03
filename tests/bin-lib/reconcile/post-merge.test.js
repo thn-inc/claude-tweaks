@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const {
   postMerge, postMergeOne, classifyEntry, prefetchPostMergePrStates, hasPostMergeMarker, takeClaim, MARKER_STEP, ATTEMPT_STEP, MAX_ATTEMPTS, CLOSE_WINDOW_MS, MERGE_GRACE_MS, CLAIM_STALE_MS, CLAIM_FILENAME,
+  parentsLeftOpen, stepSkipsOf, parentsLeftOpenLine, stepSkipsLine,
 } = require('../../../plugin/bin/lib/reconcile/post-merge');
 const { formatEntry, parseEntry } = require('../../../plugin/bin/lib/log-decision/append');
 const { DELIBERATE_SKIP_REASONS } = require('../../../plugin/bin/lib/issues/below-floor-parent-close');
@@ -100,7 +101,9 @@ test('merged unmarked run: Step 4.0 options, Step 4.0b arguments, parent line pl
   const r = await run(root, { prs: { 11: merged() }, links, close });
 
   assert.deepEqual(r, {
-    entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'reopened', parentsClosed: 1 }],
+    entries: [{
+      runDir: dir, pr: 11, action: 'ran', closingLinks: 'reopened', parentsClosed: 1, parentFailures: [{ issue: 102, reason: 'gh-failed', detail: 'boom' }],
+    }],
     deferred: [],
   });
   assert.equal(links.calls.length, 1);
@@ -719,7 +722,10 @@ test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, 
   const r = await run(root, { prs: { 11: merged() }, links, close });
   assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
   assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]); // AC4.2
+  assert.deepEqual(r.entries, [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0,
+    parentFailures: [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }],
+  }]); // AC4.2
   const lines = entriesOf(dir);
   assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
   assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
@@ -1331,7 +1337,7 @@ test('postMergeOne reports setup failures with pr null', async () => {
   assert.deepEqual(await postMergeOne({ ...base, cwd: ok, prStates: null }), { runDir: path.resolve(ok, dir), pr: null, action: 'skipped', reason: 'no-pr-states', verdict: 'failed', next: 'none' });
 });
 
-test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate policy skip is not one; postMerge entries carry none', async () => {
+test('I1: postMergeOne and postMerge entries list the same Step 4.0b failures; a deliberate policy skip is not one', async () => {
   const skipped = [
     { parent: 100, reason: 'gh-failed', detail: 'HTTP 502' },
     { issue: 103, reason: 'internal-error', detail: 'boom' },
@@ -1372,7 +1378,130 @@ test('I1: postMergeOne lists Step 4.0b failures in parentFailures; a deliberate 
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents({ closed: [], skipped }) });
   assert.equal(loop.entries.length, 1);
-  assert.ok(!('parentFailures' in loop.entries[0]));
+  assert.deepEqual(loop.entries[0].parentFailures, entry.parentFailures);
+});
+
+test('AC1.1: a gh-failed Step 4.0b skip in the reconcile loop rides on the entry, which is not a clean ran (#4798)', async () => {
+  const root = mainCheckout();
+  addRun(root, '2026-10-30T090000-spec-1');
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }, { parent: 88, reason: 'above-floor' }] }),
+  });
+  assert.equal(r.entries[0].action, 'ran');
+  assert.deepEqual(r.entries[0].parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.ok(!('stepSkips' in r.entries[0]));
+  assert.deepEqual(classifyEntry(r.entries[0]), { verdict: 'failed', next: 'none', failedSteps: ['4.0b'] });
+});
+
+test('Q2-Q4: a parentless Step 4.0b skip on an empty effective closing set is a stepSkips element, never a parent left open, on both paths (#4798)', async () => {
+  const EISDIR = { reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' };
+  const emptySet = { ...ENVELOPE, closingSet: [] };
+  // Loop path, policySkipOf's skip.
+  const { root, dir } = policyCheckout(null);
+  fs.mkdirSync(path.join(root, '.claude-tweaks', 'policy.yml'));
+  const loop = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() });
+  assert.deepEqual(loop.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0, stepSkips: [EISDIR] }]);
+  assert.equal(classifyEntry(loop.entries[0]).verdict, 'clean');
+  // Single-run path: same split, parentFailures still present and empty.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, { prs: { 11: merged() }, links: fakeClosingLinks(emptySet), close: fakeCloseParents() }));
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [EISDIR]);
+  assert.equal(one.verdict, 'clean');
+  // Q3 + Q4: closeParents' own parentless skips (any reason) on a closing set the close window emptied.
+  const winRoot = mainCheckout();
+  addRun(winRoot, '2026-10-30T090000-spec-1');
+  const windowed = await run(winRoot, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [101], closedAfterWindow: [101] }),
+    close: fakeCloseParents({ closed: [], skipped: [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }] }),
+  });
+  assert.deepEqual(windowed.entries[0].stepSkips, [{ reason: 'invalid-risk-floor' }, { reason: 'internal-error', detail: 'boom' }]);
+  assert.ok(!('parentFailures' in windowed.entries[0]));
+  // A non-empty effective closing set: the same skip is a parent left open.
+  const { root: setRoot } = policyCheckout(null);
+  fs.mkdirSync(path.join(setRoot, '.claude-tweaks', 'policy.yml'));
+  const withSet = await run(setRoot, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
+  assert.deepEqual(withSet.entries[0].parentFailures, [EISDIR]);
+  assert.ok(!('stepSkips' in withSet.entries[0]));
+});
+
+test('Q5: a marker-write-failed entry keeps the run\'s parentFailures and stepSkips, on both paths (#4798)', async () => {
+  const readOnly = { appendEntries: () => { throw new Error('read-only'); } };
+  // Loop path: a parent left open.
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const loop = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+    extra: readOnly,
+  });
+  assert.deepEqual(loop.entries, [{
+    runDir: dir, pr: 11, action: 'skipped', reason: 'marker-write-failed', parentsClosed: 0,
+    parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }],
+  }]);
+  // Single-run path: a step skip on an empty effective closing set.
+  const { root: oneRoot, dir: oneDir } = policyCheckout(null);
+  fs.mkdirSync(path.join(oneRoot, '.claude-tweaks', 'policy.yml'));
+  const one = await postMergeOne(oneArgs(oneRoot, oneDir, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, closingSet: [] }), close: fakeCloseParents(), extra: readOnly,
+  }));
+  assert.equal(one.reason, 'marker-write-failed');
+  assert.deepEqual(one.parentFailures, []);
+  assert.deepEqual(one.stepSkips, [{ reason: 'unreadable-policy', detail: '.claude-tweaks/policy.yml: EISDIR' }]);
+  assert.deepEqual([one.verdict, one.next], ['failed', 'rerun']);
+});
+
+test('Q5: a throw after closeParents returns keeps the run\'s parentFailures on the error entry, which is not deferred (#4798)', async () => {
+  const root = mainCheckout();
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  // The null in `closed` makes the parent-line map throw after the split has run.
+  const r = await run(root, {
+    prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE),
+    close: fakeCloseParents({ closed: [null], skipped: [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }] }),
+  });
+  assert.equal(r.entries.length, 1);
+  const entry = r.entries[0];
+  assert.equal(entry.runDir, dir);
+  assert.equal(entry.action, 'skipped');
+  assert.equal(entry.reason, 'error');
+  assert.equal(typeof entry.detail, 'string');
+  assert.deepEqual(entry.parentFailures, [{ parent: 100, reason: 'gh-failed', detail: 'HTTP 502' }]);
+  assert.equal(entry.parentsClosed, 1, 'the closes already happened on GitHub, so the error entry still counts them');
+  assert.deepEqual(r.deferred, [], 'an error entry is not deferred, as for a thrown error today');
+  assert.ok(!fs.existsSync(lockOf(dir)));
+});
+
+test('parentsLeftOpen and stepSkipsOf flatten every entry carrying the fields, in order, any action or verdict, detail dropped (#4798)', () => {
+  const entries = [
+    { pr: 11, action: 'ran', parentFailures: [{ parent: 100, reason: 'gh-failed', detail: 'x' }, { issue: 103, reason: 'internal-error' }] },
+    { pr: 12, action: 'ran', parentFailures: [], stepSkips: [{ reason: 'unreadable-policy', detail: 'y' }] },
+    { pr: 13, action: 'skipped', reason: 'marker-write-failed', parentFailures: [{ parent: 9, reason: 'gh-failed' }], stepSkips: [{ reason: 'invalid-risk-floor' }] },
+    { pr: 14, action: 'ran', parentFailures: 'junk', stepSkips: 'junk' },
+    { pr: 15, action: 'ran', closingLinks: 'close-failed', stepSkips: [{ reason: 'internal-error' }] },
+  ];
+  assert.deepEqual(parentsLeftOpen(entries), [
+    { pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 13, parent: 9, reason: 'gh-failed' },
+  ]);
+  assert.deepEqual(stepSkipsOf(entries), [{ pr: 12, reason: 'unreadable-policy' }, { pr: 13, reason: 'invalid-risk-floor' }, { pr: 15, reason: 'internal-error' }]);
+  assert.deepEqual(parentsLeftOpen(null), []);
+  assert.deepEqual(stepSkipsOf(undefined), []);
+});
+
+test('parentsLeftOpenLine and stepSkipsLine render the valid items and nothing for none (#4798)', () => {
+  assert.equal(
+    parentsLeftOpenLine([{ pr: 11, parent: 100, reason: 'gh-failed' }, { pr: 11, issue: 103, reason: 'internal-error' }, { pr: 12, reason: 'unreadable-policy' }, 'x', null, { pr: 'x', parent: 1, reason: 'gh-failed' }]),
+    "post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11), the parent of record #103 (internal-error, PR #11), every parent (unreadable-policy, PR #12) — tidy's parent-gate backstop recovers them",
+  );
+  assert.equal(
+    stepSkipsLine([{ pr: 13, reason: 'invalid-risk-floor' }, null, { pr: 14, reason: 5 }]),
+    'post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): invalid-risk-floor (PR #13)',
+  );
+  for (const junk of [undefined, null, 'x', [], [null], [{ pr: 11, reason: 5 }]]) {
+    assert.equal(parentsLeftOpenLine(junk), null);
+    assert.equal(stepSkipsLine(junk), null);
+  }
 });
 
 // Driven from the producer's own list, so a member added there is covered here with no edit.
