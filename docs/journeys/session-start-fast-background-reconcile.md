@@ -14,6 +14,7 @@ files:
   - plugin/bin/lib/reconcile/ledger-residue.js
   - plugin/bin/lib/reconcile/background-spawn.js
   - plugin/bin/lib/reconcile/pr-state-cache.js
+  - plugin/bin/lib/reconcile/post-merge.js
   - plugin/bin/hooks.js
 ---
 
@@ -55,3 +56,4 @@ files:
 - Updated during build of #4032 (Cut hooks.js reconcile from ~63 s per call). In Step 2, the spawn decision moved to `background-spawn.js`, which the unscoped CLI shares (the CLI defers three checks to this pass), and the pass gained its own 120 s ceiling. See `find-where-a-reconcile-call-spent-its-time-4032.md`. Step 2 also names the shared PR-state resolver (`pr-state-cache.js`), and Step 3 the `the pass failed ({reason})` line a thrown pass now leaves.
 - Updated during build of #4180 (reconcile: make `--dry-run` write nothing, and record why an escalate or resolve failed). Step 3 names the `{n} residue error(s)` line a failed escalate or resolve now leaves. See `preview-reconcile-and-see-why-an-escalation-failed-4180.md`.
 - Updated during build of #4599 (close below-floor parents when an armed PR merges after its session ended). The background pass gains `post-merge`, run between `release` and `archive`, and Step 3 names the post-merge lines it leaves.
+- Updated during build of #4798 (surface a partial Step 4.0b parent-close instead of recording a clean ran, run `2026-11-03T201056-record-4798`). Step 3 names the `post-merge Step 4.0b left parent record(s) open` and `skipped step-wide` lines, which `post-merge.js`'s shared formatters render from the summary's `postMergeParentsLeftOpen` and `postMergeStepSkips` lists.
