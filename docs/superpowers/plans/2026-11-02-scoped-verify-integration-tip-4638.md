@@ -8,14 +8,16 @@
 
 **Tech Stack:** Node 18+, `node --test`, git plumbing through the injectable `execImpl` seam.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T204655-record-4638/work/4638-spec.md`. Its `## Plan Review Decisions` section overrides the Acceptance Criterion where they conflict: Reading A on scope, Reading B on bookkeeping-only deltas.
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T093004-record-4638/work/4638-spec.md`. Its `## Plan Review Decisions` section overrides the Acceptance Criterion where they conflict: Reading A on scope, Reading B on bookkeeping-only deltas, and (round 2) Reading A on test-impact selection.
 
 ## Global Constraints
 
 - Acceptance criterion, verbatim: "A scoped run at the integration tip runs the suites its changed paths map to, or reports that it verified nothing; it never stamps verifiedHead from zero suites over a non-empty delta."
 - Decision, verbatim: "\"Never\" is universal: any narrowing that leaves zero suites over a non-empty delta declines or does not stamp."
 - Decision, verbatim: "They are exempt: \"the suites its changed paths map to\" being none is a legitimate zero, and `none` still stamps."
-- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`. End each commit message with `Claude-Session: https://claude.ai/code/session_017vXcAcBQg1Wk6xJwTFGwNm`.
+- Decision (round 2), verbatim: "\"Any narrowing\" means merge narrowing only. An empty impact subset still stamps, because the traced map says no test reads the path. The plan says so explicitly and adds a test pinning it."
+- Out of scope, by that decision: test-impact selection. An empty impact subset with no merge narrowing still drops the impact suite (`plugin/bin/lib/verify/scope.js:100`) and still stamps `none`/`static-only`. The outcome guard keys on `narrowing` alone and never fires for it. Task 1's `impact-cli.test.js` test pins this.
+- Commit style: `{Verb} {what} — {detail}`, imperative, no conventional prefix; reference the record as `refs #4638`, never `closes`/`fixes`. End each commit message with `Claude-Session: https://claude.ai/code/session_01X7gPFCrtkzanEVAkLgp6fP`.
 - `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A seam whose calls are *probes* runs quiet" — the new git read goes through the existing `tryGit(execImpl, …)`.
 - `.claude/skills/gh-api-module-pattern/SKILL.md`, quoted: "A module that parses git's output pins that output's format against the user's and the repo's git config." The new read is `rev-list --count`, a bare integer no diff or color config rewrites.
 - `changed-files.js`'s own header rule, quoted: "the fallback over-verifies, never under-verifies." A failed read in the new guard returns `null`, never a narrowed set.
@@ -31,6 +33,7 @@ Each line is pinned by a named test in Task 1.
 3. One commit past the tip touching only a bookkeeping path. Test: `AC1.2 (Reading A): a bookkeeping commit past a merge does not hide the merged-in paths`.
 4. The narrowed set selects only static checks (`static-only`, zero suites), which a guard keyed on `mode === 'none'` would miss. Test: `AC1.2 (Reading A): a static-only narrowed set also declines`.
 5. A delta that is bookkeeping on both sides of the merge stays exempt. Test: `AC1.2 (Reading B): a bookkeeping-only delta still stamps none, unnarrowed`.
+6. Test-impact selection stays outside the rule (round-2 Reading A). A delta that only deletes a test file no other test reads gives an empty impact subset, with no merge involved, and still stamps `none`. Test: `#4638 round-2 Reading A: an empty impact subset with no merge narrowing still stamps none`.
 
 ---
 
@@ -44,9 +47,10 @@ Each line is pinned by a named test in Task 1.
 - Modify: `plugin/bin/verify.js:602-632`
 - Test: `tests/bin-lib/verify/changed-files.test.js`
 - Test: `tests/bin-lib/verify/cli.test.js`
+- Test: `tests/bin-lib/verify/impact-cli.test.js`
 - Modify: `plugin/skills/test/verification.md:94`
 - Modify: `docs/plugin-structure.md:58`
-- Modify: `docs/plugin-structure.md:195`
+- Modify: `docs/plugin-structure.md:197`
 
 `Waived docs/journeys/run-a-deterministic-verification-check.md: Common Step 6 (/claude-tweaks:journeys) owns journey edits; its step 14 "Should understand" and "Red flags" lines need the new decline rule.`
 
@@ -224,10 +228,38 @@ test('--scope --integration-branch: AC1.2 (Reading A): narrowing that leaves a s
 });
 ```
 
+In `tests/bin-lib/verify/impact-cli.test.js`, at the end of the file. `impactRepo`, `writeMap`, `runCli` and `ARGS` already exist there. The base map traces `tests/a.test.js` reading `src/x.js` and `tests/b.test.js` reading `src/y.js`, so nothing reads `tests/b.test.js` itself:
+
+```js
+// #4638 round 2, Reading A: "any narrowing" means merge narrowing only. Deleting a
+// test file no other test reads gives an empty impact subset with no merge
+// involved; the suite drops, nothing runs, and the run still stamps `none`.
+test('#4638 round-2 Reading A: an empty impact subset with no merge narrowing still stamps none', async () => {
+  const r = impactRepo();
+  writeMap(r);
+  r.git('rm', '-q', 'tests/b.test.js');
+  r.git('commit', '-q', '-m', 'delete b');
+  const run = await runCli(ARGS, r.repo);
+  assert.strictEqual(run.code, 0, run.stderr + run.stdout);
+  assert.strictEqual(fs.existsSync(path.join(r.gitDir, 'impact-marker')), false, 'no test command ran');
+  const report = r.report();
+  assert.strictEqual(report.scope.mode, 'none');
+  assert.deepStrictEqual(report.scope.suites, []);
+  assert.deepStrictEqual(report.scope.changedFiles, ['tests/b.test.js']);
+  assert.strictEqual(report.scope.mergeNarrowing, null);
+  assert.deepStrictEqual(report.scope.impact.files, []);
+  const stamp = r.stamp();
+  assert.strictEqual(stamp.scope, 'none');
+  assert.deepStrictEqual(stamp.suitesRun, []);
+});
+```
+
+This test was run against the pre-change tree while the plan was being written, and it passed. It pins behavior that the change must leave alone.
+
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js`
-Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. The CLI `AC1.1` and `AC1.2` zero-suite tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. Two pass at this step, because they pin behavior that must survive: `a failing ahead-count read` goes red only under Step 5's mutation, and `narrowing that leaves a suite still narrows` holds before and after. This appends to two already-passing files, so plan-audit reports it as append-shaped.
+Run: `node --test --test-name-pattern "#4638" tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js`
+Expected: FAIL. The `AC1.1` unit tests fail because `mergeNarrowing` returns a narrowed object. The CLI `AC1.1` and `AC1.2` zero-suite tests fail on `still-verified`, `suitesRun` or `mergeNarrowing`. Three pass at this step, because they pin behavior that must survive. `a failing ahead-count read` goes red only under Step 5's mutation. `narrowing that leaves a suite still narrows` holds before and after. `an empty impact subset with no merge narrowing still stamps none` holds before and after too. This appends to three already-passing files, so plan-audit reports it as append-shaped.
 
 - [ ] **Step 3: Implement both guards**
 
@@ -256,8 +288,8 @@ if (narrowing && sel.suites.length === 0) {
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
-Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/test-skill-affected-conformance.test.js`
-Expected: PASS, including every pre-existing `#3072` test with no `#3072` assertion edited.
+Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/path-guard-conformance.test.js tests/windows-hide-spawn-conformance.test.js tests/test-skill-affected-conformance.test.js`
+Expected: PASS, including every pre-existing `#3072` and `#4024` test with no pre-existing assertion edited.
 
 - [ ] **Step 5: Prove each guard can go red**
 
@@ -271,6 +303,7 @@ In a scratch copy of the two source files (never `git stash`), or by editing and
 | Change the guard's condition to `sel.mode === 'none'` | `AC1.2 (Reading A): a static-only narrowed set also declines` |
 | Make the guard always fire when `narrowing` is set | `AC1.2 (Reading A): narrowing that leaves a suite still narrows` |
 | Restore only `files`, not `statuses`, in the guard | none expected on this fixture: `statuses` is `null` without an `impact` block; report it as a known survivor |
+| In `scope.js:100`, make an empty impact subset keep the suite (`selected.add(suite)` unconditionally) | `#4638 round-2 Reading A: an empty impact subset with no merge narrowing still stamps none` |
 
 The new `ahead` guard sits ahead of the `differs`, `status` and `mb` reads. Their existing failure-path tests still reach them, because `mergeTrunkWith`'s merge commit is one commit ahead of trunk. Prove that: delete the `status === null` return and confirm `a failing working-tree status read degrades to null` fails, and delete the `mb === null` return and confirm `a failing anchor merge-base or pre-anchor diff degrades to null` fails.
 
@@ -280,22 +313,22 @@ Report each mutation's result. A surviving mutant other than the one named above
 
 In `plugin/skills/test/verification.md:94`, insert directly after the sentence ending "(e.g. a merge conflict resolved in `{ref}`'s favour).":
 
-"Narrowing declines when HEAD has no commit ahead of `{ref}` (the integration tip itself, or behind it on that line), and the runner drops it when the narrowed set selects no suite: `{ref}`'s tip must not vouch for itself, and narrowing never earns a zero-suite stamp. A delta whose paths map to no suite at all still selects `none` over the full set and still stamps (#4638)."
+"Narrowing declines when HEAD has no commit ahead of `{ref}` (the integration tip itself, or behind it on that line), and the runner drops it when the narrowed set selects no suite: `{ref}`'s tip must not vouch for itself, and narrowing never earns a zero-suite stamp. A delta whose paths map to no suite at all still selects `none` over the full set and still stamps. So does an empty test-impact subset, since the rule covers merge narrowing only (#4638)."
 
 In the same paragraph, change "`null` when no qualifying merge was found" to "`null` when no qualifying merge was found or narrowing declined".
 
-In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref (#4638) —". In `docs/plugin-structure.md:195`, change "null when no qualifying merge)" to "null when no qualifying merge or when narrowing declined — HEAD has no commit ahead of that branch, or the narrowed set selects no suite, #4638)".
+In `docs/plugin-structure.md:58`, in the `#3072 mergeNarrowing` clause, after "keeping working-tree edits and every path the branch touched before its anchor, `--no-renames` throughout —", add: "declining when HEAD has no commit ahead of the ref (#4638) —". In `docs/plugin-structure.md:197`, change "null when no qualifying merge)" to "null when no qualifying merge or when narrowing declined — HEAD has no commit ahead of that branch, or the narrowed set selects no suite, #4638)".
 
-Headroom: `verification.md` is about 42,300 B against the 52,500 B rail; this adds about 350 B.
+Headroom: `verification.md` is about 42,300 B against the 52,500 B rail; this adds about 430 B.
 
 - [ ] **Step 7: Run the affected suites**
 
-Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/test-skill-affected-conformance.test.js tests/skill-size-single-source.test.js`
+Run: `node --test tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js tests/test-skill-affected-conformance.test.js tests/skill-size-single-source.test.js`
 Expected: PASS.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add plugin/bin/lib/verify/changed-files.js plugin/bin/verify.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
+git add plugin/bin/lib/verify/changed-files.js plugin/bin/verify.js tests/bin-lib/verify/changed-files.test.js tests/bin-lib/verify/cli.test.js tests/bin-lib/verify/impact-cli.test.js plugin/skills/test/verification.md docs/plugin-structure.md
 git commit -m "Keep merge narrowing from earning a zero-suite stamp — refs #4638"
 ```
