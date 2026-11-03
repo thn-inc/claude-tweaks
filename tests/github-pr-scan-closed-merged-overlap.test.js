@@ -15,8 +15,8 @@ const prScanContent = readText(path.join(__dirname, '..', PR_SCAN_FILE));
 
 const ITEM4_LABEL = '4. **Merged/closed PRs with local remnants**';
 const ITEM5_START = '\n5. **Harness-health issues**';
-const MERGED_QUERY = 'gh pr list --state merged --limit 50 --json number,headRefName';
-const CLOSED_QUERY = 'gh pr list --state closed --limit 50 --json number,headRefName';
+const MERGED_QUERY = 'gh pr list --state merged --limit {resolved-limit} --json number,headRefName';
+const CLOSED_QUERY = 'gh pr list --state closed --limit {resolved-limit} --json number,headRefName';
 const BRANCH_CROSS_CHECK = 'git -C "{REPO_ROOT}" branch --list';
 
 // The item-4 paragraph: from its label to the start of item 5. Each test calls this itself so a

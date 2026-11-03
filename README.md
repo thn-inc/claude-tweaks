@@ -84,9 +84,10 @@ a way to wrap an existing marketplace plugin instead of requiring a rewrite.
                             superpowers-plans-retention: prune-after-wrapup;
                             legacy spec file deleted too — a record-mode build's materialized file
                             stays on the branch as committed audit trail instead;
-                            applies demo:pending + posts a Verification Brief on
-                            the record — or, for a sub-issue of a /specify
-                            decomposition, on the parent once the last
+                            posts an acceptance packet on the record, with
+                            demo:pending above the oversight floor — or, for a
+                            sub-issue of a /specify decomposition, demo:pending +
+                            a Verification Brief on the parent once the last
                             sub-issue closes; record mode only)
      │
   release ──────────────►  Tag + Release      (on demand, suggested when unreleased commits exist, or the train)

@@ -70,14 +70,14 @@ One structured message, the bookend "begin stop" for this action (`_shared/auto-
 
 Fleet routines are scheduled Routines — the exact case CLAUDE.md's Cloud Parity section says the Setup script is measured **not** reaching (IL-113/IL-117). This step never fixes or guarantees anything; it only reports a known gap before creating infrastructure against it, so `fleet on` never silently assumes firings will work:
 
-1. Run the same declaration check `skills/init/bootstrap/step-14-cloud-routine-parity.md`'s Detect section runs: read this project's `.claude/settings.json#enabledPlugins`, confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared.
+1. First resolve `node "${CLAUDE_PLUGIN_ROOT}/bin/resolve-policy.js" --values declare-claude-tweaks`. Run the same declaration check `skills/init/bootstrap/step-14-cloud-routine-parity.md`'s Detect section runs: read this project's `.claude/settings.json#enabledPlugins`, confirm `claude-tweaks@claude-tweaks-marketplace` and `superpowers@claude-plugins-official` are both declared. At `true` (the default) the check is as written. At `false`, only `superpowers@claude-plugins-official` must be declared — a missing claude-tweaks declaration is no gap and never reaches item 3's prompt. Step 14's setup script leaves claude-tweaks out at `false` even when a kept claude-tweaks entry remains, so print this line at `false` whatever items 2-3 find, and on a gap append it to the summary's "Gap acknowledged" line: `Cloud parity: declare-claude-tweaks is false, so this project does not declare claude-tweaks for cloud firings — they will not have claude-tweaks installed by the project declaration, and fleet routines need it installed in the sandbox some other way.` At `false`, Step 5's opt-out "OK" alternative replaces the first one, kept entry or not.
 2. Confirm `scripts/claude-cloud-setup.sh` exists in this repo.
 3. If either check fails, report the specific gap (which plugin is undeclared, or that the script is missing) and call `AskUserQuestion` with `question`: `"Cloud/Routine parity isn't fully configured — proceed anyway?"`, `header`: `"Parity gap"`, `multiSelect`: `false`:
    - Option 1 — `label`: `"Proceed anyway"`, `description`: `"Provision the fleet; note the gap in the summary — run /claude-tweaks:init Step 14 to close it later"`
    - Option 2 — `label`: `"Stop and fix parity first"`, `description`: `"Don't provision anything — run /claude-tweaks:init to declare plugins and generate the setup script"`
 
    This is neither an unconditional refusal nor a silent proceed — the explicit choice this sub-issue's Deliverables require. Record whichever was chosen in the summary (Step 5); "Proceed anyway" records the acknowledged gap verbatim.
-4. Both checks passing is a silent pass-through — no prompt, proceed to Step 3.
+4. Both checks passing is a silent pass-through — no prompt, proceed to Step 3; only item 1's opt-out line prints, when it applies.
 
 ## Step 3 — Conditional grant-unit provisioning
 
@@ -128,7 +128,7 @@ One consolidated report, closing the Manifesto's begin-stop with an end-of-actio
 | fleet-daily-grant-cap | {n or "(uncapped)"} | {...} |
 
 ### Cloud parity
-{"OK — claude-tweaks + superpowers declared, setup script present." | "Gap acknowledged: {what's missing} — proceeded anyway." | "N/A — parity check not run (Step 2 was skipped)."}
+{"OK — claude-tweaks + superpowers declared, setup script present." | "OK — superpowers declared, setup script present; declare-claude-tweaks is false, so cloud firings will not have claude-tweaks installed by the project declaration, and fleet routines need it installed in the sandbox some other way." | "Gap acknowledged: {what's missing} — proceeded anyway." | "N/A — parity check not run (Step 2 was skipped)."}
 
 ### Routines
 | Row | Entry | Status | Schedule | Console URL |
