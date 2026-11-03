@@ -7,6 +7,7 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 const { gitRepo, fixtureGit } = require('./helpers/git-fixtures');
 const { chmodDenialSkip } = require('./helpers/root');
+const { archiveRunDir } = require('../plugin/bin/lib/reconcile/archive-merged');
 const { QA_STAMP_NAME } = require('../plugin/bin/lib/verify/qa-stamp');
 const { readRecord, writeRecord, defaultFacets } = require('../plugin/bin/lib/issues/local-store');
 const { LOCAL_START, LOCAL_END, MAX_PACKET_CHARS, PACKET_MARKER } = require('../plugin/bin/lib/wrap-up/packet-contract');
@@ -931,6 +932,107 @@ test('a failed GIF write gives encoder-failed and exit 0', (t) => {
   assert.ok(readJson(inputs(ws, 'manifest.json')), 'the manifest still lands');
 });
 
+// A workspace whose checkout is a real git repository, for what only real git can answer.
+function repoWorkspace(t) {
+  const root = gitRepo();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const runDir = path.join(root, '.claude-tweaks', 'pipelines', 'run-1');
+  fs.mkdirSync(runDir, { recursive: true });
+  const gitDir = path.join(root, 'gitdir');
+  fs.mkdirSync(gitDir);
+  return { root, runDir, gitDir, file: (name) => path.join(root, 'work', name) };
+}
+
+// The stub's answers for the refs, and real git for the question asked in the run's own directory.
+const CHECK_IGNORE = ['check-ignore', '-q', '--', 'walkthrough.gif'];
+const realGitInDir = (args) => fixtureGit(args, { env: realGitEnv(), encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+const realCheckIgnore = () => {
+  const refs = AHEAD();
+  return (args) => (args[0] === '-C' ? realGitInDir(args) : refs(args));
+};
+
+test('a destination git does not ignore gives encoder-failed naming it, with no encode and no GIF', (t) => {
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  const earlier = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const stub = encoderStub();
+  const recording = snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough });
+  assert.deepEqual(recording, {
+    status: 'not-run', reason: 'encoder-failed', failure: `${LIVE_GIF} is not ignored by git, so the GIF was not written`,
+  });
+  assert.deepEqual(stub.calls, []);
+  assert.throws(() => fs.statSync(earlier));
+  const fact = gatherRecording(ws);
+  assert.equal(fact.failure, recording.failure);
+});
+
+test('an ignored destination records as usual', (t) => {
+  const ws = repoWorkspace(t);
+  qaRun(ws);
+  writeText(path.join(ws.root, '.gitignore'), '.claude-tweaks/pipelines/*/*\n');
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a directory outside any git repository records as usual, since nothing can commit it', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  fs.mkdirSync(path.dirname(inputs(ws, 'walkthrough.gif')), { recursive: true });
+  assert.throws(() => realGitInDir(['-C', ws.runDir, ...CHECK_IGNORE]), { status: 128 }, 'the fixture is no repository to git');
+  const stub = encoderStub();
+  assert.equal(snapshotRecording(ws, { git: realCheckIgnore(), encodeWalkthrough: stub.encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+});
+
+test('a failed manifest write after a new GIF removes that GIF, and the exit stays 3', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const writeAtomic = (file, content) => {
+    if (path.basename(file) === 'manifest.json') throw new Error('disk full');
+    fs.writeFileSync(file, content);
+  };
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough, writeAtomic });
+  assert.equal(result.code, 3);
+  assert.match(result.stderr, /could not write .*disk full/);
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+  assert.throws(() => fs.statSync(inputs(ws, 'manifest.json')));
+});
+
+test('a failed removal of that GIF is stated, and the exit stays 3', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const writeAtomic = (file, content) => {
+    if (path.basename(file) === 'manifest.json') throw new Error('disk full');
+    fs.writeFileSync(file, content);
+  };
+  const removeFile = () => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); };
+  const result = snapshot(ws, { git: AHEAD(), gh: PRIVATE_REPO, encodeWalkthrough: encoderStub().encodeWalkthrough, writeAtomic, removeFile });
+  assert.equal(result.code, 3);
+  assert.ok(result.stderr.includes(`could not remove ${inputs(ws, 'walkthrough.gif')}`), result.stderr);
+});
+
+test('a write failure ahead of the encode leaves the earlier snapshot\'s GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const gif = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const result = snapshot(ws, { git: AHEAD(), mkdir: () => { throw new Error('denied'); } });
+  assert.equal(result.code, 3);
+  assert.equal(fs.readFileSync(gif, 'utf8'), 'an earlier GIF');
+});
+
+test('the no-commits skip leaves an earlier GIF byte-unchanged, with no encode', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  const gif = writeText(inputs(ws, 'walkthrough.gif'), 'an earlier GIF');
+  const stub = encoderStub();
+  const result = snapshot(ws, { git: fakeGit({ revParse: { HEAD: H }, mergeBase: H }).git, encodeWalkthrough: stub.encodeWalkthrough });
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(JSON.parse(result.stdout), { skipped: 'no commits ahead of base' });
+  assert.deepEqual(stub.calls, []);
+  assert.equal(fs.readFileSync(gif, 'utf8'), 'an earlier GIF');
+});
+
 test('no QA report gives no-story', (t) => {
   const ws = workspace(t);
   const stub = encoderStub();
@@ -1117,16 +1219,16 @@ for (const [name, recording] of [
   });
 }
 
-test('Decision 2: a gather live and a gather after archiving name the same two locations', (t) => {
-  const ws = workspace(t);
+test('Decision 2: a gather live and a gather after the real archive name the same two locations', (t) => {
+  const ws = repoWorkspace(t);
   qaRun(ws);
   snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough });
   const live = gatherRecording(ws);
-  const archive = path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive');
-  fs.mkdirSync(archive);
-  const moved = path.join(archive, 'run-1');
-  fs.renameSync(ws.runDir, moved);
-  const archived = gatherRecording(ws, moved);
+  const result = archiveRunDir(ws.root, ws.runDir);
+  assert.equal(result.ok, true, JSON.stringify(result));
+  assert.ok(result.movedEntries.includes('packet-inputs'), JSON.stringify(result));
+  assert.throws(() => fs.statSync(ws.runDir), 'the archive took the whole run dir');
+  const archived = gatherRecording(ws, path.join(ws.root, '.claude-tweaks', 'pipelines', 'archive', 'run-1'));
   assert.deepEqual(archived, live);
   assert.equal(fs.readFileSync(path.join(ws.root, ...archived.archive_path.split('/')), 'utf8'), GIF_BYTES);
 });

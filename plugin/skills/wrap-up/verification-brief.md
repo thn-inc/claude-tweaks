@@ -276,7 +276,7 @@ the browser-unavailable fallback, or a below-floor record, where Step 2.5 did no
 
 ## Step 4: Compose and post the brief
 
-The packet replaced the brief, so where the routing below says "brief" it means the packet, and a
+The packet replaced the brief, so where this file's routing says "brief" it means the packet, and a
 note it puts "in the brief" is a `test-guide` claim in the narrative.
 
 **Branch (`integration-model: pr-first` only, `_shared/integration-model.md`).** Nothing to render here — the packet sits on the record, not on the run's own PR (opened at run start by `_shared/pr-early-run-lifecycle.md`, kept current at every phase exit), and `post` links the two through the PR's `Acceptance packet:` body line, so a reader of either reaches the other. No separate `### Branch` section is composed.
