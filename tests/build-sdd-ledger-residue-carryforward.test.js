@@ -151,7 +151,7 @@ test('AC5.2: the interactive console names ratify/reverse as the Override vocabu
 });
 
 test('review-console.md step 1 points an sdd-ruling-* write-back at the appendix bullet', () => {
-  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(an `accept` ratify → `accepted` here; a `file-record` ratify — a deferral — stages its record proposal here and writes `deferred`, `ratified → #\{n\}`, at step 7 once the record exists; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
+  assert.match(CONSOLE, /an `sdd-ruling-\*` item's write-back follows `review-console-appendix\.md`'s `sdd-ruling-\*` bullet \(an `accept` ratify → `accepted` here; a `file-record` ratify — a deferral — stages its record proposal here and writes `deferred`, `ratified → #\{n\}`, at step 7 once the record exists; a ruling with no ratify action files nothing — its row stays `open`; reverse → `deferred` at step 7, once the reversal record exists\), not the patch table/);
 });
 
 test('review #3401 → #3510: the CLI owns the failure branch; the hand-performed rewrite and ordering clauses are gone', () => {
@@ -217,7 +217,7 @@ test('#3636: console-on-pr.md documents the isRulingRow flag on sdd-ruling-* ite
 const MULTISPEC_CONSOLE = read('plugin', 'skills', 'flow', 'multispec-review-console.md');
 
 test('AC1.1 #3513: multispec-review-console.md — step 1 ratifies a ruling, Override offers ratify/reverse and refuses skip/modify/revert on one', () => {
-  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step), except a deferral (`file-record`), whose record is staged as `reverse {#}`'s is and created at step 2, then `deferred`, `ratified → #{n}`; reverse is Override's `reverse {#}`"));
+  assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` file is no patch — Approve all ratifies it: this step writes its `Ledger:` row to `accepted` directly (per `_shared/staged-patch.md`'s Write-back to the ledger, Resolution per `wrap-up/review-console-appendix.md`'s `sdd-ruling-*` bullet — this console has no `finish-console` step), except a deferral (`file-record`), whose record is staged as `reverse {#}`'s is and created at step 2, then `deferred`, `ratified → #{n}`; a ruling with no ratify action files nothing — its row stays `open`; reverse is Override's `reverse {#}`"));
   assert.match(MULTISPEC_CONSOLE, ws('ratify/reverse {#} for an SDD ruling row'));
   assert.match(MULTISPEC_CONSOLE, ws("an `sdd-ruling-*` row takes only `ratify {#}`/`reverse {#}` (the appendix bullet); `skip`/`modify`/`revert` on one is refused as `wrap-up/review-console-interactive.md` refuses it"));
   assert.match(MULTISPEC_CONSOLE, ws("`reverse {#}` stages its reversal record under that spec's `spec-{N}/staged/` and creates it at this console's step 2 (queue writes), not the appendix's step 7, then writes the row to `deferred` once the record exists"));

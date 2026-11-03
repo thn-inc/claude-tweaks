@@ -152,3 +152,23 @@ test('AC6.3: an unratifiable ticked ruling is routed to --filing-failed', () => 
   assert.ok(at >= 0, 'the routing slice names resolve-console --filing-failed after it');
   assert.doesNotMatch(rest.slice(0, at), /\.\s/, 'resolve-console --filing-failed sits in the same sentence');
 });
+
+const NO_RATIFY_ACTION = 'a ruling with no ratify action files nothing — its row stays `open`';
+function assertCitesNotRatifiable(text) {
+  assert.match(text, ws(NO_RATIFY_ACTION));
+}
+
+test('AC6.3: every accept-or-deferral console surface cites the not-ratifiable rule', () => {
+  for (const rel of [
+    'wrap-up/review-console.md',
+    'wrap-up/review-console-interactive.md',
+    'flow/multispec-review-console.md',
+  ]) {
+    assertCitesNotRatifiable(read(rel));
+  }
+});
+
+test('go-red: the not-ratifiable citation check fails when review-console.md drops the phrase', () => {
+  const mutated = without(read('wrap-up/review-console.md'), NO_RATIFY_ACTION);
+  assert.throws(() => assertCitesNotRatifiable(mutated));
+});
