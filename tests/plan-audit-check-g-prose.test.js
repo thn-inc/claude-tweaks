@@ -90,8 +90,10 @@ const PINS = [
   ['SKILL.md Step 1.5 Check G bullet', (t) => lineStarting(step15(t.skill), '- **Check G (`--spec` only):**'), `on \`checkG.missing\` ${AMEND_ONCE}`, true],
   ['SKILL.md Step 1.5 Check G bullet', (t) => lineStarting(step15(t.skill), '- **Check G (`--spec` only):**'), 'on `checkG.couldNotParse` stop', true],
   ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), '--risk-proofs --spec {spec-file}', true],
-  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), `on \`checkG.missing\` ${AMEND_ONCE}`, true],
-  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), 'on `checkG.couldNotParse` stop', true],
+  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), 'on `checkG.missing` amend the plan once, log it, and re-run', true],
+  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), 'on `checkG.couldNotParse` or a second `checkG.missing` stop', true],
+  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), 'a second `checkG.missing`', true],
+  ['SKILL.md skip paragraph', (t) => skipParagraph(t.skill), 'log it', true],
 ];
 
 // Returns the labels of every pin or flag-mirror check that fails against `texts`. `usage` is
