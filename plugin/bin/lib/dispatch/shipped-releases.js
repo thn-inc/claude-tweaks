@@ -2,10 +2,10 @@
 
 // Claim release times for dispatch's shipped-candidate pass (#4432).
 //
-// classifyShipped (issues/shipped-candidate.js) rates a title-similar merged
-// mention `weak` at most when the record's claim was released after that PR
-// merged: the release was a re-shaping or re-queue, so the work the PR did is
-// not evidence the record is already shipped. It is pure, so the caller hands
+// classifyShipped (issues/shipped-candidate.js) rates a merged mention with a
+// second signal `weak` at most when the record's claim was released after that
+// PR merged: a run saw that merge and left the record open (a shaping-only
+// release downgrades too, the safe direction). It is pure, so the caller hands
 // it `opts.lastReleasedAt`. This module is where that value comes from: the
 // `releasedAt` of each candidate's claim tombstone on the claims-registry.
 //

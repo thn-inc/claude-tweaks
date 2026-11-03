@@ -94,6 +94,7 @@ test('#4432: a mention predating the release spends no files probe', () => {
 test('#4432: SKILL.md states the release rule and its accepted false negative', () => {
   assert.match(DISPATCH_SKILL, /#4432/);
   assert.match(DISPATCH_SKILL, /latest claim release/);
+  assert.match(DISPATCH_SKILL, /shaping-only release/);
 });
 
 test('both queue-pull files stay under the read-limit rail', () => {

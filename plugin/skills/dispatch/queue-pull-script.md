@@ -511,7 +511,7 @@ done
 # Reuses $DISPATCH_LINKED_PRS's mentions (every same-repo PR that ever cross-referenced the candidate, closing keyword or not), so the base signal costs no second network round trip.
 #
 # First pass: title-only classification (no changed-files fetch yet). Only a
-# `weak` result is a probe candidate for the files-based upgrade below; a
+# `weak` result not predating the claim release is a probe candidate for the files-based upgrade below; a
 # `strong`/`none` result is final. Capped at 5 live `gh pr view` calls per pull.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
