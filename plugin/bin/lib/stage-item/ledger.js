@@ -19,8 +19,9 @@
 // The module also exports the plain-row writer behind `hooks.js ledger-row`
 // (#4439): checkLedgerStatus (the status/Resolution rules a caller validates
 // with first), appendRow and settleRow (the locked append and settle, under the
-// same `.ledger.lock`, fail-closed). Neither write function validates the
-// status itself — the CLI calls checkLedgerStatus before them.
+// same `.ledger.lock`, fail-closed). Neither write function applies
+// checkLedgerStatus's status/Resolution rules — the CLI calls it before them;
+// settleRow only enforces the row-transition guards.
 'use strict';
 
 const fs = require('fs');
@@ -211,7 +212,7 @@ const PULL_URL_RE = /^https?:\/\/([A-Za-z0-9.-]+)\/([^/\s]+)\/([^/\s]+)\/pull\/(
 // lookbehind, so the regex keeps one shape.
 function hasSha(text) {
   for (const m of text.matchAll(SHA_RE)) {
-    if (m.index === 0 || text[m.index - 1] !== '#') return true;
+    if (text[m.index - 1] !== '#') return true;
   }
   return false;
 }
@@ -225,6 +226,15 @@ function hasPath(text) {
   return false;
 }
 
+// A URL span runs to the next whitespace, so it carries the prose punctuation around it: a
+// backtick, a closing paren, a sentence period. Trimmed from the end by index, not a `+$` regex.
+const URL_TAIL_PUNCTUATION = '`)>.,;:\'"';
+function trimUrlTail(span) {
+  let end = span.length;
+  while (end > 0 && URL_TAIL_PUNCTUATION.includes(span[end - 1])) end -= 1;
+  return span.slice(0, end);
+}
+
 const sameText = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
 
 // `repo` is repo-resolve.js's parseRepo shape ({ host, owner, repo }) or null (origin unresolvable).
@@ -232,7 +242,7 @@ function checkFixed(resolution, repo) {
   const urls = resolution.match(URL_SPAN_RE) || [];
   const bare = resolution.replace(URL_SPAN_RE, ' ');
   if (hasSha(bare) || hasPath(bare) || FILENAME_RE.test(bare) || PR_REF_RE.test(resolution)) return null;
-  const pulls = urls.map((url) => PULL_URL_RE.exec(url)).filter(Boolean);
+  const pulls = urls.map((url) => PULL_URL_RE.exec(trimUrlTail(url))).filter(Boolean);
   if (repo && pulls.some((m) => sameText(m[1], repo.host) && sameText(m[2], repo.owner) && sameText(m[3], repo.repo))) return null;
   const accepted = 'a commit sha, file reference, or resolving PR (`PR #N` or this repo\'s /pull/N URL)';
   if (!repo && pulls.length > 0) {
@@ -297,15 +307,16 @@ function settleRow({
     const rewritten = rewriteLedgerRow(text, { item: row, status, resolution });
     const [, , , currentRaw, currentResolution] = ledgerRowCells(parseLedgerTable(text).rows.get(String(row)));
     const current = (currentRaw || '').toLowerCase();
+    const shown = current || '(empty)';
     const { LEDGER_DEFERRED_STAGED_RE } = wrapUpPack();
     if (status === 'open') {
       const refusedReopen = current === 'deferred' && LEDGER_DEFERRED_STAGED_RE.test(currentResolution)
         && String(resolution || '').includes(REFUSED_PROPOSAL_NOTE);
       if (current !== 'open' && !refusedReopen) {
-        throw new Error(`row #${row} is ${current}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
+        throw new Error(`row #${row} is ${shown}; only an open row, or a deferred row naming a staged/ path reopened with the note '${REFUSED_PROPOSAL_NOTE}' (the refused-proposal reopen, _shared/ledger-format.md's Resolution-text requirements), can be set to open`);
       }
     } else if (TERMINAL_STATUSES.includes(current) && !(current === 'deferred' && isIncompleteDeferral(currentResolution, excludeRecords))) {
-      throw new Error(`row #${row} is already ${current} (terminal) — a wrong resolution gets a new item`);
+      throw new Error(`row #${row} is already ${shown} (terminal) — a wrong resolution gets a new item`);
     }
     writeFileAtomic(ledgerPath, rewritten);
     return { number: Number(row) };

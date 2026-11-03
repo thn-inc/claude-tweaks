@@ -456,6 +456,11 @@ test('checkLedgerStatus fixed accepts a resolving PR, never a bare #N or an issu
     assert.match(refusal, /a commit sha, file reference, or resolving PR/, bad);
     assert.doesNotMatch(refusal, /origin repo unresolvable/, bad);
   }
+  // The URL span carries the prose punctuation around it; trailing punctuation is trimmed before the /pull/N match.
+  for (const ok of [`\`${pr}\``, `(${pr})`, `merged in ${pr}.`, `see ${pr}, then`, `<${pr}>`]) {
+    assert.equal(checkLedgerStatus('fixed', ok, { repo: REPO }).refusal, null, ok);
+  }
+  assert.match(checkLedgerStatus('fixed', 'merged in https://github.com/other/repo/pull/4712.', { repo: REPO }).refusal, /resolving PR/);
   const unresolved = checkLedgerStatus('fixed', pr, { repo: null }).refusal;
   assert.match(unresolved, /origin repo unresolvable/);
   assert.match(unresolved, /PR #N/);
@@ -601,7 +606,9 @@ test('settleRow to open: the reopen without the note is refused', () => {
 
 test('settleRow to open: refused from fixed, from a deferred row with no staged path, and from accepted/acknowledged/observation', () => {
   const note = `x — ${REFUSED_PROPOSAL_NOTE}`;
-  const cases = [['fixed', 'abc123'], ['deferred', 'Defer-reason: tangential'], ['deferred', '#77'], ['accepted', 'ok'], ['acknowledged', 'seen'], ['observation', 'note']];
+  const cases = [['fixed', 'abc123'], ['deferred', 'Defer-reason: tangential'], ['deferred', '#77'], ['accepted', 'ok'], ['acknowledged', 'seen'], ['observation', 'note'],
+    // A staged path alone is not the reopen: only a `deferred` row may take it (deleting the `current === 'deferred'` conjunct turns these red).
+    ['fixed', 'staged/a.md'], ['accepted', 'staged/a.md'], ['acknowledged', 'staged/a.md'], ['observation', 'staged/a.md']];
   for (const [status, resolution] of cases) {
     const f = plainFixture(row(1, status, resolution));
     const before = f.text();
@@ -618,6 +625,13 @@ test('REFUSED_PROPOSAL_NOTE matches refused-proposals.md', () => {
   const hyphen = doc.split(REFUSED_PROPOSAL_NOTE).join(REFUSED_PROPOSAL_NOTE.replace('—', '-'));
   assert.notEqual(hyphen, doc);
   assert.throws(() => assertNote(hyphen), /does not carry the note/);
+});
+
+test('settleRow renders an empty current Status as (empty) in its refusals', () => {
+  const f = plainFixture(row(1, ''));
+  assert.throws(() => settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'open', resolution: 'x' }), /row #1 is \(empty\); only an open row/);
+  settleRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, row: 1, status: 'accepted', resolution: 'ok' });
+  assert.ok(f.text().includes('| 1 | build | finding 1 | accepted | ok |'));
 });
 
 test('settleRow settles an out-of-enum current status', () => {
