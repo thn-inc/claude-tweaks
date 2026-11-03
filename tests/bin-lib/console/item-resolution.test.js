@@ -80,9 +80,6 @@ test('refuses without writing', () => {
   dup.items.push({ ...dup.items[0] });
   const filed = STORED();
   filed.items[0] = { ...filed.items[0], resolution: 'filed' };
-  // Both guards refuse the Queue writes item above; only the from-check refuses this Reference repairs one.
-  const refApply = STORED();
-  refApply.items[0] = { ...refApply.items[0], section: 'Reference repairs' };
   const cases = [
     ['absent file', null, 'no console.json'],
     ['unparseable', '{not json', /does not parse/],
@@ -93,7 +90,6 @@ test('refuses without writing', () => {
     ['a filed item', filed, /filed.*not rewritable to keep-staged/],
     ['a target outside REWRITE_FROM', STORED(), /not rewritable to filed/, { resolution: 'filed' }],
     ['an apply item to pending', STORED(), /apply, not rewritable to pending/, { resolution: 'pending' }],
-    ['a Reference repairs apply item to pending (only the from-check refuses it)', refApply, /apply, not rewritable to pending \(only approve → pending\)/, { resolution: 'pending' }],
   ];
   for (const [name, content, why, over] of cases) {
     const consolePath = consoleFile(content);
@@ -103,6 +99,19 @@ test('refuses without writing', () => {
     if (typeof why === 'string') assert.strictEqual(r.why, why, name); else assert.match(r.why, why, name);
     assert.strictEqual(fs.existsSync(consolePath) ? fs.readFileSync(consolePath, 'utf8') : null, bytes, `${name}: bytes unchanged`);
   }
+});
+
+// Its own test, so the loop above cannot stop on an earlier case first. The Queue writes item above is
+// refused by both the section guard and the from-check; only the from-check refuses this one.
+test('#4636: a Reference repairs apply item is refused for pending by the from-check alone, file unchanged', () => {
+  const stored = STORED();
+  stored.items[0] = { ...stored.items[0], section: 'Reference repairs' };
+  const consolePath = consoleFile(stored);
+  const bytes = fs.readFileSync(consolePath, 'utf8');
+  const r = call(consolePath, { resolution: 'pending' });
+  assert.strictEqual(r.status, 'refused');
+  assert.match(r.why, /item leftover-1\.md is apply, not rewritable to pending \(only approve → pending\)/);
+  assert.strictEqual(fs.readFileSync(consolePath, 'utf8'), bytes);
 });
 
 test('a write failure throws and releases the lock', () => {
