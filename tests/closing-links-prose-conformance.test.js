@@ -236,6 +236,25 @@ test('#4549 AC7.1b: Step 4.0 names the baseUnchecked envelope', () => {
   assert.throws(() => assertStep40ReportsBaseUnchecked(withoutList), /unchecked\[\] list/, 'go-red: the pre-fix "name them" sentence fails the check');
 });
 
+// #4817: a post-merge exit 4 (run-marker mismatch, non-default base) is reported as the mismatch and
+// the PR, with no hand close of its Fixes records -- they may belong to another run.
+function assertStep40ReportsExit4(step40) {
+  assert.ok(step40.includes('Exit 4 (run-marker mismatch: the PR body names another run, or none, so nothing was reopened or closed)'), 'Step 4.0 describes the exit-4 run-marker mismatch');
+  assert.ok(step40.includes('name the mismatch and PR #{n} in the closing summary'), 'Step 4.0 names the mismatch and the PR');
+  assert.ok(step40.includes('ask for no hand close of its `Fixes` records, which may belong to another run'), 'Step 4.0 asks for no hand close of the Fixes records');
+}
+
+test('#4817 AC1: Step 4.0 reports a post-merge exit 4 as the mismatch, with no hand close', () => {
+  const step40 = step40Of(read('pr-first-merge-post-merge.md'));
+  assertStep40ReportsExit4(step40);
+  const noCaller = step40.replace(/ Exit 4 \(run-marker mismatch:.*?another run\. Exit 4, exit 5 or `gh-absent`:/, ' Exit 5 or `gh-absent`:');
+  assert.notEqual(noCaller, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40ReportsExit4(noCaller), /describes the exit-4 run-marker mismatch/, 'go-red: dropping the exit-4 instruction fails the check');
+  const handClose = step40.replace('ask for no hand close of its `Fixes` records, which may belong to another run', 'hand close its `Fixes` records');
+  assert.notEqual(handClose, step40, 'go-red: the doctored text differs from the live section');
+  assert.throws(() => assertStep40ReportsExit4(handClose), /no hand close/, 'go-red: asking for a hand close fails the check');
+});
+
 test('#4549 final review, #4599: Step 4.0 states that the late run closes an armed merge\'s Fixes records on a non-default base', () => {
   const step40 = step40Of(read('pr-first-merge-post-merge.md'));
   assertStep40NamesArmedGap(step40);

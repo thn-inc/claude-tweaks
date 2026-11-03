@@ -457,8 +457,8 @@ test('M7: closing-links exit 5 (a gh failure) retries: an attempt line, never a 
   assert.equal(close.calls.length, 0);
 });
 
-test('M7: a deterministic closing-links exit (2, 3) writes the marker at once and is not deferred', async () => {
-  for (const code of [2, 3]) {
+test('M7: a deterministic closing-links exit (2, 3, 4) writes the marker at once and is not deferred', async () => {
+  for (const code of [2, 3, 4]) {
     const root = mainCheckout();
     const dir = addRun(root, '2026-10-30T090000-spec-1');
     const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(null, code), close: fakeCloseParents() });
