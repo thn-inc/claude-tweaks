@@ -36,7 +36,9 @@ const eligibility = (t) => section(t.express, '## Eligibility', '## Procedure');
 
 // Each row: label, the region the literal must sit in, the literal.
 const PINS = [
-  ['micro-plan.md applicability gate', gate, 'carries a risk flag'],
+  ['micro-plan.md gate condition 4', gate, '4. The spec body does not carry a risk flag'],
+  ['micro-plan.md gate condition 4', gate, '`parseRiskFlags`'],
+  ['micro-plan.md gate fall-through paragraph', gate, 'a spec body that carries a risk flag'],
   ['micro-plan.md applicability gate', gate, 'All four must hold'],
   ['express-lane.md Eligibility', eligibility, 'kept risk flag'],
 ];
@@ -71,3 +73,15 @@ for (const [where, , literal] of PINS) {
     assert.throws(() => assertBypassProse(mutated), names(`${where}: ${literal}`));
   });
 }
+
+// Deleting the condition itself (its whole list item) must go red even though the
+// fall-through paragraph still names a flagged record.
+test('#4618 go-red: deleting micro-plan.md\'s condition 4 list item fails the condition pins', () => {
+  const start = LIVE.microPlan.indexOf('4. The spec body does not carry a risk flag');
+  const end = LIVE.microPlan.indexOf('\n\n', start);
+  assert.ok(start !== -1 && end > start, 'condition 4 item not found');
+  const mutated = { ...LIVE, microPlan: LIVE.microPlan.slice(0, start) + LIVE.microPlan.slice(end + 1) };
+  assert.notStrictEqual(mutated.microPlan, LIVE.microPlan);
+  assert.throws(() => assertBypassProse(mutated), names('micro-plan.md gate condition 4: `parseRiskFlags`'));
+  assert.throws(() => assertBypassProse(mutated), names('micro-plan.md gate condition 4: 4. The spec body does not carry a risk flag'));
+});
