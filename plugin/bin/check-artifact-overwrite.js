@@ -22,14 +22,15 @@
 //          walk, and a deleted line blamed to one is pre-run content (refs
 //          #4845). Omitted, every commit in the range is a run event (upstream
 //          commits fail closed, as before #4845); a line blamed to a merge
-//          commit fails closed either way.
+//          commit fails closed either way. Both checks run on a deleted line
+//          that reaches blame, i.e. in a hunk the shape tests did not clear.
 //
 // Exit codes (this CLI's own vocabulary — not portable to any other):
 //   0  clean — no overwrite found; stdout carries {clean:true, overwrites:[]}
 //   1  overwrite detected — the HARD-GATE case; stdout carries the offending
 //      paths/commits/reasons, caller stops before rendering the console
 //   2  malformed invocation (missing --base, unknown flag, missing value, a
-//      --run that is empty or looks like a flag)
+//      --run or --integration-ref that is empty or looks like a flag)
 //   3  the walk itself failed (unresolvable ref, an unresolvable
 //      --integration-ref included, git not on PATH, etc.) —
 //      stderr names the failure, nothing meaningful on stdout. Also: a

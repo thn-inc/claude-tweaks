@@ -385,6 +385,7 @@ test('the top-level walk guards the interpolated {base}..{head} range with --end
   const rangeIdx = calls[0].indexOf('main..HEAD');
   assert.ok(rangeIdx > 0, 'range token should be present');
   assert.strictEqual(calls[0][rangeIdx - 1], '--end-of-options', 'the range token must be immediately preceded by --end-of-options');
+  assert.strictEqual(calls[0][rangeIdx + 1], '--', 'with no integrationRef the pathspec separator follows the range directly');
 });
 
 test('integrationRef appends ^{ref} right after the range, and an empty walk makes no rev-list call', () => {
@@ -1462,6 +1463,13 @@ test('AC2.1: a deleted line blamed to a SHA outside the run\'s commits is clean'
 test('AC2.1: the same deletion blamed to a run merge commit is an overwrite', () => {
   const { git } = membershipGit(MERGE);
   const result = checkArtifactOverwrite({ base: 'b', head: 'h', integrationRef: 'up', git, cwd: '/f' });
+  assert.strictEqual(result.clean, false);
+  assert.match(result.overwrites[0].reason, /merge commit/);
+});
+
+test('the same deletion blamed to a run merge commit is an overwrite without integrationRef too', () => {
+  const { git } = membershipGit(MERGE);
+  const result = checkArtifactOverwrite({ base: 'b', head: 'h', git, cwd: '/f' });
   assert.strictEqual(result.clean, false);
   assert.match(result.overwrites[0].reason, /merge commit/);
 });

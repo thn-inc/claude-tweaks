@@ -356,4 +356,8 @@ test('end-to-end: a catch-up merge of upstream\'s journey exits 0 with --integra
 
   const without = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/']);
   assert.strictEqual(without.status, 1, without.stderr);
+
+  const unresolvable = spawnCli(dir, ['--base', base, '--path', 'docs/journeys/', '--integration-ref', 'no-such-ref']);
+  assert.strictEqual(unresolvable.status, 3, unresolvable.stderr);
+  assert.strictEqual(unresolvable.stdout, '');
 });
