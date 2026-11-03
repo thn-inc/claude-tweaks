@@ -96,7 +96,9 @@ const REFINE_PINS = [
   ['sub-file Classify', 'sub', classifySec, CLASSIFY_CALL],
   ['sub-file Classify', 'sub', classifySec, 'entry.unconfirmed'],
   ['sub-file Ask once', 'sub', askSec, "`shaping-mode-stamping.md`'s `### Risk flags` step 3"],
-  ['sub-file Ask once', 'sub', askSec, 'one batch table and one `AskUserQuestion`'],
+  ['sub-file Ask once', 'sub', askSec, "one batch table and step 3's chunked question"],
+  ['sub-file Ask once', 'sub', askSec, 'a selected option (or a `Remove {label}` answer) meaning remove'],
+  ['sub-file Ask once', 'sub', askSec, 'Every flag not answered remove is kept and confirmed'],
   ['sub-file Ask once', 'sub', askSec, 'errors, times out or is auto-answered writes nothing'],
   ['sub-file Ask once', 'sub', askSec, 'When no kept record has an option (each is `none` or `unknown`), skip the batch question'],
   ['sub-file Ask once', 'sub', askSec, '`Confirm no risk flags (Recommended)`'],
@@ -141,6 +143,8 @@ function refineFailures(texts) {
   for (let i = 1; i < ORDER.length; i++) {
     if (idx[i - 1] === -1 || idx[i] === -1 || !(idx[i - 1] < idx[i])) out.push(`order: ${ORDER[i - 1]} before ${ORDER[i]}`);
   }
+  // Final review finding 2: refine asks in step 3's chunked shape, never parsing removals from `Other`.
+  if (/`Other`|free-text/.test(subSection(texts.sub, 'Ask once'))) out.push('sub-file Ask once: no Other free-text parse');
   // confirm takes no --run: its body file is a temp copy, so logging there would precede the write.
   const confirmSpan = write.slice(write.indexOf(CONFIRM_CALL)).split('`')[0];
   if (write.includes(CONFIRM_CALL) && confirmSpan.includes('--run')) out.push('sub-file Write: confirm passes no --run');
@@ -273,6 +277,13 @@ test('go-red (refine): the write placed before the reverify fails the order chec
   const swapped = write.replace(edit, 'EDIT_SLOT').replace(cmp, edit).replace('EDIT_SLOT', cmp);
   assert.notStrictEqual(swapped, write);
   assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(write, swapped) }), names('order: cmp -s "{tmp-risk-snapshot}" before'));
+});
+
+test('go-red (refine): an Other free-text parse planted in Ask once fails', () => {
+  const ask = subSection(LIVE.sub, 'Ask once');
+  assert.ok(ask.length > 0);
+  const planted = `${ask}\n- With more than four flags, take the rest to remove from the \`Other\` free-text answer.`;
+  assert.throws(() => assertRefine({ ...LIVE, sub: LIVE.sub.replace(ask, planted) }), names('sub-file Ask once: no Other free-text parse'));
 });
 
 test('go-red (refine): confirm handed a --run again fails', () => {

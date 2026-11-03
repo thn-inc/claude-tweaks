@@ -8,13 +8,13 @@ For each line Step 3.7 printed, run `node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.
 
 ## Ask once
 
-A kept record's flags are the slugs its own `Risk-flags:` line names (an `ok` entry guarantees the exact `Risk-flags: a, b` grammar). Ask in the shape `shaping-mode-stamping.md`'s `### Risk flags` step 3 and its comma-list batch paragraph give: one batch table and one `AskUserQuestion` for every kept record's flags together, options labelled `#{n} {slug}`, a selected option meaning remove. Refine's deltas:
+A kept record's flags are the slugs its own `Risk-flags:` line names (an `ok` entry guarantees the exact `Risk-flags: a, b` grammar). Ask in the shape `shaping-mode-stamping.md`'s `### Risk flags` step 3 and its comma-list batch paragraph give: one batch table and step 3's chunked question for every kept record's flags together, options labelled `#{n} {slug}`, a selected option (or a `Remove {label}` answer) meaning remove. Refine's deltas:
 
-- Every flag left unselected is kept and confirmed, and a row's evidence cell reads `already on the record, unconfirmed`.
+- Every flag not answered remove is kept and confirmed, and a row's evidence cell reads `already on the record, unconfirmed`.
 - A record whose `entry.status` is `unknown` takes no option and no `confirm`: its row says what step 3 says of an unknown entry, naming `entry.reason`, with the remedy under Refused (below).
 - A record whose line reads `Risk-flags: none` has no option. `confirm` answers only the flags a body already carries, so on a `none` line nothing is left unanswered and any answers file, `{}` included, clears the marker: the human's answer is the confirmation.
 - When no kept record has an option (each is `none` or `unknown`), skip the batch question. If any is `none`, ask one single-choice `AskUserQuestion` naming those records instead: `Confirm no risk flags (Recommended)` clears their markers, `Leave unconfirmed` writes nothing. With only `unknown` records, ask nothing.
-- An `AskUserQuestion` that errors, times out or is auto-answered writes nothing: every record stays kept and unconfirmed.
+- An `AskUserQuestion` (any chunk's) that errors, times out or is auto-answered writes nothing: every record stays kept and unconfirmed.
 
 ## Write each answered record
 

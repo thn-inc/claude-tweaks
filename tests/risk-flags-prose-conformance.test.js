@@ -83,14 +83,26 @@ const SHAPING_PINS = [
   ['Risk flags step 3', 'stamping', item3, '--prior-body-file'],
   ['Risk flags step 3', 'stamping', item3, '--add'],
   ['Risk flags step 3', 'stamping', item3, 'multiSelect: true'],
-  ['Risk flags step 3', 'stamping', item3, 'one `AskUserQuestion`'],
   ['Risk flags step 3', 'stamping', item3, 'confirmed or not'],
   ['Risk flags step 3', 'stamping', item3, '`kept`'],
   ['Risk flags step 3', 'stamping', item3, '`entry.status` is `unknown`'],
-  ['Risk flags step 3', 'stamping', item3, 'more than four flags'],
+  // Final review finding 2: the house Chunked multiSelect batch rule, cited, not restated.
+  ['Risk flags step 3', 'stamping', item3, "per `docs/skill-authoring.md`'s Chunked multiSelect batch and One decision per message rules"],
+  ['Risk flags step 3', 'stamping', item3, 'one `AskUserQuestion` call per message'],
+  ['Risk flags step 3', 'stamping', item3, 'a chunk of two to four flags is one `multiSelect: true` question'],
+  ['Risk flags step 3', 'stamping', item3, 'a lone flag, or a chunk remainder of one, is a single-select question'],
+  ['Risk flags step 3', 'stamping', item3, '`Keep {label} (Recommended)` or `Remove {label}`'],
+  ['Risk flags step 3', 'stamping', item3, "An `AskUserQuestion` (any chunk's) that errors"],
   ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), REMOVAL],
 ];
-function assertShaping(texts) { fail('interactive Risk flags prose', missing(SHAPING_PINS, texts)); }
+// The tool's `Other` field is one answer to the whole question, never a per-flag list
+// (docs/skill-authoring.md), so no flag question reads removals out of it.
+const OTHER_PARSE_RE = /`Other`|free-text/;
+function questionShapeFailures(texts) {
+  const regions = [['Risk flags step 3', item3(texts)], ['Risk flags batch paragraph', batchParagraph(texts.stamping)], ['Risk flags paragraph', subissuesParagraph(texts.subissues)]];
+  return regions.filter(([, text]) => OTHER_PARSE_RE.test(text)).map(([label]) => `${label}: no Other free-text parse`);
+}
+function assertShaping(texts) { fail('interactive Risk flags prose', [...missing(SHAPING_PINS, texts), ...questionShapeFailures(texts)]); }
 
 const HEADLESS_PINS = [
   ['Risk flags step 2', 'stamping', (t) => riskItem(t.stamping, 2), 'Headless means no human is reachable'],
@@ -141,7 +153,7 @@ const loggingShapeFailures = (texts) => (item3(texts).includes('--run') ? ['Risk
 function assertLogging(texts) { fail('removal-logging prose', [...missing(LOGGING_PINS, texts), ...loggingShapeFailures(texts)]); }
 
 const BATCH_QUESTION_PINS = [
-  ['Risk flags batch paragraph', 'stamping', (t) => batchParagraph(t.stamping), 'one batch table and one `AskUserQuestion`'],
+  ['Risk flags batch paragraph', 'stamping', (t) => batchParagraph(t.stamping), "one batch table and step 3's chunked question"],
   ['Risk flags batch paragraph', 'stamping', (t) => batchParagraph(t.stamping), 'held per record'],
   ['Risk flags batch paragraph', 'stamping', (t) => batchParagraph(t.stamping), 'per-record loop'],
 ];
@@ -172,7 +184,7 @@ const DECOMPOSITION_PINS = [
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "`shaping-mode-stamping.md`'s `### Risk flags`"],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'pre-pass'],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'before the first create'],
-  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'one `AskUserQuestion`'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "ask step 3's chunked question"],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'held per unit'],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), '`settle` runs inside this per-sub-issue loop'],
   ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'before the create call'],
@@ -371,6 +383,21 @@ for (const [concern, pins, assertFn] of PIN_CONCERNS) {
     });
   }
 }
+
+// The old Task 10 wording, frozen: a >4 batch read its extra removals from `Other`.
+const OLD_OTHER_SENTENCE = 'With more than four flags (the tool\'s option cap), offer the first four as options and take any others to remove from the `Other` free-text answer, which names their slugs.';
+test('go-red (question shape): the Other free-text parse planted back in step 3, the batch paragraph or decomposition fails', () => {
+  const sites = [
+    ['Risk flags step 3', 'stamping', item3(LIVE)],
+    ['Risk flags batch paragraph', 'stamping', batchParagraph(LIVE.stamping)],
+    ['Risk flags paragraph', 'subissues', subissuesParagraph(LIVE.subissues)],
+  ];
+  for (const [label, key, region] of sites) {
+    assert.ok(region.length > 0, label);
+    const mutated = { ...LIVE, [key]: LIVE[key].replace(region, `${region} ${OLD_OTHER_SENTENCE}`) };
+    assert.throws(() => assertShaping(mutated), names(`${label}: no Other free-text parse`));
+  }
+});
 
 test('go-red (logging): step 3 handing settle a --run again fails', () => {
   const step = item3(LIVE);
