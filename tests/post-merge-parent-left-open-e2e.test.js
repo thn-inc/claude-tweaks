@@ -2,7 +2,9 @@
 // #4798 end to end: a real postMerge run whose Step 4.0b hit a gh failure on a parent travels
 // through the real `reconcile-background` summary and the real SessionStart render, and the parent
 // is named at the end, never reported as a clean run. Only the I/O edges are stubbed: PR state, the
-// in-process closing-links core (#4781) and the parent closer.
+// in-process closing-links core (#4781) and the parent closer. `reconcile()` itself is replaced by a thin
+// wrapper around the real `postMerge`, so its own call site in reconcile/index.js is covered by
+// tests/reconcile.test.js, not here.
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const cp = require('child_process');

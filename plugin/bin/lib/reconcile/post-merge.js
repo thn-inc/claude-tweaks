@@ -469,8 +469,10 @@ function failedRecordNumbers(entries) {
 }
 
 // Pure: entries -> one `{ pr, ...}` element per element of each entry's array `field`, in entry order, whatever the
-// entry's action or verdict. `keys` names the element fields kept; `detail` is never one. A missing or non-array
-// input, a non-array field and a non-object element contribute nothing.
+// entry's action or verdict. `keys` names the element fields kept; `detail` is never one: it is forge-supplied text
+// (a gh error body, a policy path), and these elements become lines in SessionStart's model-facing context, so only
+// the fixed `reason` word and the numeric ids travel; the bounded `detail` stays in `decisions.md` and the CLI JSON.
+// A missing or non-array input, a non-array field and a non-object element contribute nothing.
 function flattenStepFields(entries, field, keys) {
   if (!Array.isArray(entries)) return [];
   return entries.flatMap((e) => {
@@ -681,7 +683,7 @@ function processRun({
       runDir: dir, pr, action: 'ran', closingLinks: envelope.action, parentsClosed: closed.length, ...recordsOf(envelope), ...stepFields,
     }, closed.length, stepFields);
   } catch (e) {
-    // A throw after closeParents returned must not drop the split fields: processCandidate's catch would (Q5).
+    // A throw after closeParents returned must not drop the split fields: processCandidate's catch would (#4798 Decision Q5).
     // The closes already happened on GitHub, so the entry still reports them.
     return {
       runDir: dir, pr, action: 'skipped', reason: 'error', detail: oneLine(e && e.message ? e.message : e), parentsClosed: closed.length, ...stepFields,
