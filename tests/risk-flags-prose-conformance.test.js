@@ -29,13 +29,17 @@ const TEMPLATE = 'plugin/skills/specify/spec-template.md';
 const REFINE = 'plugin/skills/backlog/refine-mode.md';
 const read = (rel) => readText(path.join(ROOT, rel));
 
-const LIVE = { stamping: read(SHAPING), shapingMode: read(SHAPING_MODE), subissues: read(SUBISSUES), template: read(TEMPLATE) };
+const LIVE = {
+  stamping: read(SHAPING), shapingMode: read(SHAPING_MODE), subissues: read(SUBISSUES), template: read(TEMPLATE),
+  handoff: read('plugin/skills/specify/mechanical-handoff.md'),
+};
 
 const REMOVAL = 'Risk flag {slug} removed by the maintainer during shaping';
 const SETTLE_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" settle';
 const CLASSIFY_CALL = '"${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" classify';
 const NOOP_ANCHOR = 'never report it `already shaped, no-op`';
-const VERB_RE = /risk-flags\.js"?\s+(classify|settle|confirm)/g;
+// A closing `"`, `'` or backtick may sit between the script name and the verb.
+const VERB_RE = /risk-flags\.js["'`]?\s+(classify|settle|confirm)/g;
 
 // Region helpers. A region that cannot be found yields '' so its pins fail by name.
 function between(text, startMarker, endMarker) {
@@ -229,8 +233,10 @@ function walkSkills() {
   walk(SKILLS_ROOT);
   return out;
 }
-// classify writes nothing, so refine may read `entry` with it; settle and confirm write the
-// line and stay under specify/ (AC6: no batch path reclassifies a record).
+// classify writes nothing, so refine may read `entry` with it, and refine's human batch writes
+// through confirm, which runs no classifier and adds nothing; settle classifies and widens, so
+// it stays under specify/ (AC6: no batch path reclassifies a record).
+const REFINE_VERBS = new Set(['classify', 'confirm']);
 function batchClassifyFailures(files) {
   const out = [];
   let specifySettle = 0;
@@ -243,7 +249,7 @@ function batchClassifyFailures(files) {
         if (verb === 'classify') specifyClassify++;
         continue;
       }
-      if (rel === REFINE && verb === 'classify') continue;
+      if (rel === REFINE && REFINE_VERBS.has(verb)) continue;
       out.push(`${rel}: risk-flags.js ${verb}`);
     }
   }
@@ -253,6 +259,47 @@ function batchClassifyFailures(files) {
   return out;
 }
 function assertNoBatchClassify(files) { fail('risk-flags.js verbs outside specify/', batchClassifyFailures(files)); }
+
+// Fix round 1 (review D, B, C, E, F): behaviour clauses a mutation left green before.
+const stampingIntro = (stamping) => lineStarting(riskSection(stamping), 'Every record this mode writes carries');
+const localFilesParagraph = (stamping) => lineStarting(composeSection(stamping), '**`work-backend: local-files`:**');
+const githubParagraph = (stamping) => lineStarting(composeSection(stamping), '**`work-backend: github-issues`:**');
+const handoffRow = (handoff) => lineStarting(handoff, '| Risk-flag answers');
+const handoffPrompt = (handoff) => between(handoff, '## Dispatch prompt', 'OUTPUT FORMAT (required)');
+const bornReadyText = (t) => bornReady(t.shapingMode);
+const CLAUSE_PINS = [
+  ['born-ready paragraph', 'shapingMode', bornReadyText, 'cmp -s "{tmp-shaped-body}" "{tmp-prior-body}"'],
+  ['born-ready paragraph', 'shapingMode', bornReadyText, 'any non-zero exit (1 they differ, 2 a file is missing) counts as changed'],
+  ['born-ready paragraph', 'shapingMode', bornReadyText, "it enters Compose-then-write-once after this Risk flags run and skips that section's own `### Risk flags` run"],
+  ['Compose github-issues paragraph', 'stamping', (t) => githubParagraph(t.stamping), "a Reading B record from `shaping-mode.md`'s born-ready paragraph was already settled there and skips this run"],
+  ['Compose local-files paragraph', 'stamping', (t) => localFilesParagraph(t.stamping), 'skipped for a Reading B record'],
+  ['Risk flags step 1', 'stamping', (t) => riskItem(t.stamping, 1), 'classify --body-file "{tmp-shaped-body}" --prior-body-file "{tmp-prior-body}"'],
+  ['Risk flags step 2', 'stamping', (t) => riskItem(t.stamping, 2), 'In `auto` this step adds no stop (`_shared/auto-mode-contract.md`), so `auto` takes step 4 too'],
+  ['Risk flags step 3', 'stamping', item3, "When its `entry.status` is `unknown`, ask nothing: tell the human the record's flag line is unreadable and must be repaired first, and run step 4's headless `settle`"],
+  ['Risk flags intro', 'stamping', (t) => stampingIntro(t.stamping), 'A verb that exits non-zero (1 a body file unreadable, 2 a malformed call or an unreadable or invalid policy, 3 the body file unwritable) writes nothing for this record'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'A verb that exits non-zero creates nothing for that unit'],
+  ['Risk flags step 5', 'stamping', (t) => riskItem(t.stamping, 5), 'with `logged: false` (a log write failed), do the same for each slug in `logFailures`'],
+  ['Risk flags step 6', 'stamping', (t) => riskItem(t.stamping, 6), 'A headless run also re-marks a still-present confirmed flag unconfirmed, since it cannot tell whether the content changed'],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "runs in the main thread before `mechanical-handoff.md`'s dispatch"],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), "passed through that file's input table"],
+  ['Risk flags paragraph', 'subissues', (t) => subissuesParagraph(t.subissues), 'Only a run where no human is reachable takes the headless `settle`'],
+  ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), 'run in the main thread before this dispatch'],
+  ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), 'the absolute path of its held answers file and its `--add` slugs'],
+  ['mechanical-handoff.md input row', 'handoff', (t) => handoffRow(t.handoff), '`--answers-file`'],
+  ['mechanical-handoff.md dispatch prompt', 'handoff', (t) => handoffPrompt(t.handoff), '[Risk-flag answers'],
+  ['mechanical-handoff.md dispatch prompt', 'handoff', (t) => handoffPrompt(t.handoff), 'run settle with these and never ask'],
+];
+function clauseFailures(texts) {
+  const out = missing(CLAUSE_PINS, texts);
+  const local = localFilesParagraph(texts.stamping);
+  const risk = local.indexOf('run `### Risk flags`');
+  const check = local.indexOf('compose-record.js --check');
+  if (risk === -1 || check === -1 || !(risk < check)) out.push('order: local-files paragraph runs ### Risk flags before compose-record.js --check');
+  const subagentHeadless = /subagent has no human to ask/.test(subissuesParagraph(texts.subissues));
+  if (subagentHeadless) out.push('Risk flags paragraph: a delegated Step 3 must not default to the headless settle');
+  return out;
+}
+function assertClauses(texts) { fail('Risk flags behaviour clauses', clauseFailures(texts)); }
 
 const TEMPLATE_PINS = [
   ['spec-template.md metadata block', 'template', (t) => templateHead(t.template), "Risk-flags: {comma-separated slugs, or none — written by /specify's Risk flags step}"],
@@ -282,6 +329,7 @@ test('Reading B: an explicit single-record /specify #N runs the Risk flags step 
 test('AC6.1 AC6.2: every batch path leaves an already-shaped record untouched', () => assertBatchExclusion(LIVE.shapingMode, LIVE.stamping));
 test('AC6.1 AC6.2: no batch path classifies: settle and confirm appear only under specify/, classify also in refine', () => assertNoBatchClassify(walkSkills()));
 test('the template documents both lines and the writer rule', () => assertTemplate(LIVE.template, LIVE.stamping));
+test('fix round 1: Reading B settles once, decomposition asks before the handoff, and every behaviour clause is stated', () => assertClauses(LIVE));
 
 // Go-red controls for every literal pin: removed from its file, and (scoped) moved to its end.
 const PIN_CONCERNS = [
@@ -291,6 +339,7 @@ const PIN_CONCERNS = [
   ['logging', LOGGING_PINS, assertLogging],
   ['batch question', BATCH_QUESTION_PINS, assertBatchQuestion],
   ['template', TEMPLATE_PINS, (t) => assertTemplate(t.template, t.stamping)],
+  ['clauses', CLAUSE_PINS, assertClauses],
 ];
 const without = (text, literal) => text.split(literal).join('');
 const movedToEnd = (text, literal) => `${without(text, literal)}\n\n${literal}\n`;
@@ -390,13 +439,11 @@ test('go-red (AC6): settle planted in a refine-mode copy fails', () => {
   assert.throws(() => assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE('settle'))), names(`${REFINE}: risk-flags.js settle`));
 });
 
-test('go-red (AC6): confirm planted in a refine-mode copy fails', () => {
-  assert.throws(() => assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE('confirm'))), names(`${REFINE}: risk-flags.js confirm`));
-});
-
-test('go-red (AC6): classify planted in a non-specify skill file other than refine-mode fails', () => {
+test('go-red (AC6): classify or confirm planted in a non-specify skill file other than refine-mode fails', () => {
   const rel = 'plugin/skills/backlog/SKILL.md';
-  assert.throws(() => assertNoBatchClassify(plant(walkSkills(), rel, HOUSE('classify'))), names(`${rel}: risk-flags.js classify`));
+  for (const verb of ['classify', 'confirm']) {
+    assert.throws(() => assertNoBatchClassify(plant(walkSkills(), rel, HOUSE(verb))), names(`${rel}: risk-flags.js ${verb}`));
+  }
 });
 
 test('go-red (AC6): the unquoted command form is caught too', () => {
@@ -404,8 +451,28 @@ test('go-red (AC6): the unquoted command form is caught too', () => {
   assert.throws(() => assertNoBatchClassify(plant(walkSkills(), rel, 'node bin/risk-flags.js settle --headless')), names(`${rel}: risk-flags.js settle`));
 });
 
-test('control (AC6): classify in refine-mode is the one exemption', () => {
-  assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE('classify')));
+test('go-red (AC6): a backtick- or single-quote-closed script name before the verb is caught too', () => {
+  const rel = 'plugin/skills/tidy/SKILL.md';
+  assert.throws(() => assertNoBatchClassify(plant(walkSkills(), rel, 'Run `bin/risk-flags.js` settle on the body.')), names(`${rel}: risk-flags.js settle`));
+  assert.throws(() => assertNoBatchClassify(plant(walkSkills(), rel, "node 'bin/risk-flags.js' confirm --headless")), names(`${rel}: risk-flags.js confirm`));
+});
+
+test('control (AC6): classify and confirm in refine-mode are the exemption', () => {
+  for (const verb of ['classify', 'confirm']) assertNoBatchClassify(plant(walkSkills(), REFINE, HOUSE(verb)));
+});
+
+test('go-red (fix 1): the local-files paragraph naming --check before the Risk flags run fails the order check', () => {
+  const local = localFilesParagraph(LIVE.stamping);
+  assert.ok(local.length > 0);
+  const swapped = local.replace('run `### Risk flags` on it', 'run it on').replace('compose-record.js --check` first', 'compose-record.js --check` first, then run `### Risk flags` on it');
+  assert.notStrictEqual(swapped, local);
+  assert.throws(() => assertClauses({ ...LIVE, stamping: LIVE.stamping.replace(local, swapped) }), names('order: local-files paragraph runs ### Risk flags before compose-record.js --check'));
+});
+
+test('go-red (fix 1): a delegated Step 3 defaulting to the headless settle fails', () => {
+  const para = subissuesParagraph(LIVE.subissues);
+  const planted = `${para} A Step 3 run inside \`mechanical-handoff.md\`'s subagent has no human to ask, so it takes the headless \`settle\`.`;
+  assert.throws(() => assertClauses({ ...LIVE, subissues: LIVE.subissues.replace(para, planted) }), names('a delegated Step 3 must not default to the headless settle'));
 });
 
 test('go-red (AC6): a walk that finds no specify calls fails the matcher floor', () => {
