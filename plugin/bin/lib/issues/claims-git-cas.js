@@ -44,7 +44,7 @@ const os = require('os');
 const path = require('path');
 const { claimFilePath, CLAIMS_BRANCH } = require('./claims');
 const { parseLsTreeZ } = require('../git-z');
-const { GIT_TIMEOUT_MS, isTimeoutError } = require('../shared-primitives');
+const { GIT_TIMEOUT_MS, LARGE_MAX_BUFFER_BYTES, isTimeoutError } = require('../shared-primitives');
 
 function errText(err) {
   const parts = [err && err.message, err && err.stderr, err && err.stdout].filter(Boolean).map(String);
@@ -294,7 +294,9 @@ function parseCatFileBatch(buf) {
 function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunner }) {
   let lsTreeOut;
   try {
-    lsTreeOut = runner(['ls-tree', '-r', '-z', '--end-of-options', tip, '--', 'claims/']);
+    // maxBuffer: the whole keyspace comes back in one stream, and execFileSync's 1 MiB
+    // default would turn a large registry into an ENOBUFS transport-failure (#4818).
+    lsTreeOut = runner(['ls-tree', '-r', '-z', '--end-of-options', tip, '--', 'claims/'], { maxBuffer: LARGE_MAX_BUFFER_BYTES });
   } catch (err) {
     return { tipSha: tip, results: null, failure: 'transport-failure', ...timedOutFlag(err) };
   }
@@ -350,7 +352,7 @@ function readClaimBlobsGitBatch({ issueNumbers = null, tip, runner = defaultRunn
   const batchInput = Buffer.from(`${orderedShas.join('\n')}\n`);
   let batchRaw;
   try {
-    batchRaw = runner(['cat-file', '--batch'], { input: batchInput, encoding: 'buffer' });
+    batchRaw = runner(['cat-file', '--batch'], { input: batchInput, encoding: 'buffer', maxBuffer: LARGE_MAX_BUFFER_BYTES });
   } catch (err) {
     markTransportFailure(err);
     return { tipSha: tip, results, failure: null };
