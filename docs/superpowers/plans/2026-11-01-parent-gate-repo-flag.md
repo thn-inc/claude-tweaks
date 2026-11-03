@@ -2,19 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Make the Parent-Gate Procedure's prose writes (`gh issue comment|close|edit`, plus Apply's comment read) target the same repository the gate's CLI read from, and refuse to run when that value is empty. Then inventory every other `gh issue` write under `plugin/skills/`, fenced lines and runnable inline spans alike, so none is left unclassified, and send the ones that need a fix to one follow-up record.
+**Goal:** Make the Parent-Gate Procedure's prose writes (`gh issue comment|close|edit`, plus Apply's comment read) target the same repository the gate's CLI read from, and never run them when that value is empty. Then inventory every other `gh issue` write under `plugin/skills/`, fenced lines and runnable inline spans alike, so none is left unclassified, and send the ones that need a fix to one follow-up record.
 
-**Architecture:** `bin/parent-gate.js` already resolves `owner/repo` (and the host) from the origin remote for its reads, on the `gh` path through `repo-resolve.js`'s `gateOriginRepo` (#4933). It gains one verdict field, `repo` (`repoSlug({host, owner, repo})` over that resolved spec: bare `owner/repo` on github.com, host-qualified elsewhere, `null` when the CLI resolved no origin). The prose binds it as `$PARENT_REPO` next to `$PARENT_NUM`. Every gh line passes it as `--repo "${PARENT_REPO:?parent-gate verdict has no repo}"`, so an empty or unset value stops that command before `gh` runs. A new conformance suite pins those lines and runs one of them in bash. The inventory is one committed reference doc, one row per write. The writes it classifies `needs-fix` go to one follow-up record, filed by the controller.
+**Architecture:** `bin/parent-gate.js` already resolves `owner/repo` (and the host) from the origin remote for its reads, on the `gh` path through `repo-resolve.js`'s `gateOriginRepo` (#4933). It gains one verdict field, `repo` (`repoSlug({host, owner, repo})` over that resolved spec: bare `owner/repo` on github.com, host-qualified elsewhere, `null` when the CLI resolved no origin). Every gh line in the gate file passes it as `--repo "{parent-repo}"`, a literal placeholder the agent fills from the verdict, the same way the file's `{parent-close-comment}` is filled. One stated rule, next to the verdict's `repo` bullet, stops the procedure before any of those lines runs when `repo` is `null` or empty. An unfilled placeholder fails closed in `gh` itself. A new conformance suite pins the lines and the rule. The inventory is one committed reference doc, one row per write. The writes it classifies `needs-fix` go to one follow-up record, filed by the controller.
 
-**Tech Stack:** Node 18+ CommonJS, `node --test`, Markdown skill prose, bash (the guard's runtime proof).
+**Tech Stack:** Node 18+ CommonJS, `node --test`, Markdown skill prose.
 
 **Spec:** `.claude-tweaks/pipelines/2026-11-03T082955-record-4824/work/4824-spec.md` (record #4824, with its four `## Plan Review Clarifications` paragraphs)
 
 ## Global Constraints
 
 - The verdict field is named `repo`. It sits second in `VERDICT_FIELDS`, after `parent`. Its value comes from `repoSlug` in `plugin/bin/lib/repo-resolve.js`, the same helper `below-floor-parent-close.js` uses for its `--repo`.
-- The guarded flag, byte for byte: `--repo "${PARENT_REPO:?parent-gate verdict has no repo}"`. It goes right after `$PARENT_NUM` on every gh line in `plugin/skills/wrap-up/verification-brief-parent-gate.md`. A bare `--repo "$PARENT_REPO"` is a defect.
-- Probed on this machine before the plan was final. `bash -c 'PARENT_REPO=; echo would-write --repo "${PARENT_REPO:?parent-gate verdict carried no repo}"; echo after'` printed `bash: line 1: PARENT_REPO: parent-gate verdict carried no repo`, exited 127, and printed neither `would-write` nor `after`. `zsh -c` with `PARENT_REPO` unset printed `zsh:1: PARENT_REPO: …` and exited 1. With `PARENT_REPO=o/r`, bash printed `would-write --repo o/r` and then `after`. That is the "stops before the write" the spec asks for.
+- The flag, byte for byte: `--repo "{parent-repo}"`. It goes right after `$PARENT_NUM` on every gh line in `plugin/skills/wrap-up/verification-brief-parent-gate.md`. A shell-variable form (`--repo "$PARENT_REPO"`, `"${PARENT_REPO:?…}"`) is a defect. Nothing ever assigns such a variable: every Bash call starts a fresh shell, and the file's `$PARENT_NUM` is itself filled in by the agent, never assigned. A prefix assignment (`PARENT_REPO=o/r gh … "${PARENT_REPO:?…}"`) does not help, because bash expands the word before the assignment applies. A separate assignment statement makes the call compound with a variable `gh` operand, which the worktree guard refuses (`tools/guard-refusals/shapes.js`'s `ghComputedInput`).
+- The stop rule (`STOP_RULE`), added once to the verdict's `repo` bullet, byte for byte as the one line in this fence (it may be hard-wrapped in the skill file; the test compares it whitespace-collapsed):
+
+  ```text
+  When `repo` is `null` or empty, run none of the `gh` lines below and report the entry as a failing `gh` call: a `--repo ""` sends the write to `gh`'s default repository.
+  ```
+- Probed on this machine before the plan was final, read-only. `gh issue view 4824 --repo "" --json number` printed `{"number":4824}` and exited 0, so an empty value silently uses the default repository: that is the hazard the rule stops. `gh issue view 4824 --repo "{parent-repo}" --json number` and `gh issue view 4824 --repo "null" --json number` both exited 1 with `expected the "[HOST/]OWNER/REPO" format, got "…"`, so an unfilled placeholder or a pasted `null` fails closed with no write.
 - No `--repo` flag is added to `parent-gate.js`. The repository still comes only from the origin remote, so `unknownCliFlags` in `below-floor-parent-close-conformance.test.js` must keep reporting `--repo` as unknown.
 - `--facts-json` keeps its contract: it reads the origin remote only for a qualified `--closing` token. Without one, `repo` is `null`; with one, `repo` is that slug. `--backend local-files` reads no remote, so `repo` is `null` there too. Neither path runs a `gh` fence.
 - When an exported `GH_HOST` names a host other than origin's, `gateOriginRepo` gives the reads host `github.com`. `repo` must be that same slug, built from the `{host, owner, repo}` the reads use. Never build it from the raw remote.
@@ -31,8 +36,8 @@
 ## Review Focus
 
 1. **GHE origin.** A `git@ghe.example:o/r.git` remote with `GH_HOST=ghe.example` exported must yield `repo: "ghe.example/o/r"`, the exact value the reads used. A bare `o/r` would send the write to github.com. Owned by Task 1 (CLI test).
-2. **Empty value.** An unset or empty `$PARENT_REPO` must stop the gh line before `gh` runs. Without the guard, `gh` exits 0 and writes to its default repository. Owned by Task 2 (the bash run test and the guard go-red test).
-3. **gh-absent run.** `--facts-json` without a qualified token yields `repo: null`, and with one it yields the slug. The prose must say the MCP path takes no `$PARENT_REPO`. Owned by Task 1 (CLI test) and Task 2 (the prose bullet).
+2. **Empty value.** A `null` or empty verdict `repo` must stop the procedure before any gh line runs. Without the rule, `gh` exits 0 and writes to its default repository. Owned by Task 2 (the stop-rule pin and its go-red control).
+3. **gh-absent run.** `--facts-json` without a qualified token yields `repo: null`, and with one it yields the slug. The prose must say the MCP path takes no `{parent-repo}`. Owned by Task 1 (CLI test) and Task 2 (the prose bullet).
 4. **local-files backend.** It yields `repo: null` and makes no remote read (the existing `local-files: never calls gh, ghAvailable or remoteUrl` test still passes). Owned by Task 1.
 5. **no-parent verdict.** It carries `repo` too, so `Object.keys(verdict)` still equals `VERDICT_FIELDS` on every state. Owned by Task 1 (lib test).
 
@@ -41,6 +46,7 @@
 ### Task 1: Verdict field `repo`
 
 **Role:** integration
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/bin/lib/issues/parent-gate.js` (`VERDICT_FIELDS` at line 57, `evaluateParentGate` at line 290)
@@ -106,20 +112,20 @@ git add plugin/bin/lib/issues/parent-gate.js plugin/bin/parent-gate.js docs/plug
 git commit -m "Add repo to the parent-gate verdict — the slug its reads used, for the prose writes; refs #4824"
 ```
 
-### Task 2: Parent-gate gh lines carry the guarded `--repo`
+### Task 2: Parent-gate gh lines carry `--repo "{parent-repo}"`, behind a stop rule
 
 **Role:** integration
 **Review risk:** high
 
 **Files:**
-- Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md`. Edit the Transport paragraph (line 70), the verdict field list in **Run the gate CLI** (add a `repo` bullet after `parent`, line 293), the Close fences (lines 453, 461 and 469), Apply's comment read (line 622) and the Apply fences (lines 641, 652 and 653).
+- Modify: `plugin/skills/wrap-up/verification-brief-parent-gate.md`. Edit the Transport paragraph (line 70), the verdict field list in **Run the gate CLI** (add a `repo` bullet after `parent`, line 293), the Close fences (lines 453, 461 and 469), Apply's comment read (line 622), the Apply fences (lines 641, 652 and 653) and Apply's **Partial-state note** (lines 659-664).
 - Modify: `tests/below-floor-parent-close-conformance.test.js` (byte pins at lines 99, 100, 151 and 967-968; the `VERDICT_FIELDS.length` pin at line 1140)
 - Modify: `tests/skill-fence-guard-shapes.test.js` only if its line-156 ratchet entry for this file stops matching exactly one offender
 - Create: `tests/parent-gate-repo-flag-conformance.test.js`
 
 **Interfaces:**
 - Consumes: Task 1's verdict field `repo`.
-- Produces: the literal `GUARDED_REPO = '--repo "${PARENT_REPO:?parent-gate verdict has no repo}"'`, which Task 3 counts as the `repo` class.
+- Produces: the literal `REPO_FLAG = '--repo "{parent-repo}"'`, which Task 3 counts as the `repo` class.
 
 - [ ] **Step 1: Prove the AC grep's starting state**
 
@@ -128,32 +134,34 @@ Expected: 5 lines, none containing `--repo`: 70, 453, 461, 469 and 652. Line 70 
 
 - [ ] **Step 2: Write the failing conformance suite `tests/parent-gate-repo-flag-conformance.test.js`**
 
-The suite needs one pure helper: `unguardedGhLines(text) -> string[]`. It walks the text tracking ```` ``` ```` fence state. It returns every fenced line matching `/\bgh issue [a-z]+\b/` that does not contain `GUARDED_REPO`. Each positive test and its go-red control call the same assertion function. Each control asserts `notEqual(mutated, live)` first.
+The suite needs one pure helper: `flaglessGhLines(text) -> string[]`. It walks the text tracking ```` ``` ```` fence state. It returns every fenced line matching `/\bgh issue [a-z]+\b/` that does not contain `` `$PARENT_NUM ${REPO_FLAG}` ``. Each positive test and its go-red control call the same assertion function. Each control asserts `notEqual(mutated, live)` first, and a control over prose asserts the throw with that assertion's own message.
 
 Tests:
 - `AC1.1: every line the AC grep matches in the parent gate contains --repo`: filter the live file's lines by `/gh issue (comment|close)/`, assert the count is `>= 5` and that each includes `--repo`.
-- `AC2.1: every fenced gh issue line in the parent gate carries the guarded --repo`: `assert.deepEqual(unguardedGhLines(live), [])`, and the count of fenced `gh issue` lines in the live file is `>= 6`, so an empty scan cannot pass.
-- `AC2.1 go-red: removing the flag from one fence is caught`: for each fenced `gh issue` line in the live file, delete ` ${GUARDED_REPO}` on that one line and assert `unguardedGhLines(mutated)` returns exactly that line.
-- `empty-guard go-red: an unguarded --repo is caught`: for each fenced `gh issue` line, replace `GUARDED_REPO` with `--repo "$PARENT_REPO"` on that one line and assert `unguardedGhLines(mutated)` returns exactly that line.
-- `empty-guard runtime: an empty PARENT_REPO stops the line before gh runs`: take the live Close fence's `gh issue close $PARENT_NUM …completed` line. Run it with `spawnSync('bash', ['-c', 'gh() { echo "RAN $*"; }\n' + line])`, env `{ PATH: process.env.PATH, PARENT_NUM: '10', PARENT_REPO: '' }`. Assert a non-zero status, no `RAN` on stdout, and `parent-gate verdict has no repo` on stderr. Then with `PARENT_REPO: 'o/r'`, assert status 0 and stdout `RAN issue close 10 --repo o/r --reason completed\n`. Skip the test, with that reason, when `spawnSync('bash', ['--version'])` reports an error.
-- `the scanner ignores prose and toggles on fences`: a synthetic text with one unguarded `gh issue close 1` outside any fence and one inside, where only the fenced one is returned.
-- `the Apply inline read carries the guarded flag too`: the live file includes `` `gh issue view $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" --json comments` `` on one line.
-- `the verdict list names repo as $PARENT_REPO`: the whitespace-collapsed **Run the gate CLI** section includes `` `repo` ``, `$PARENT_REPO` and `before \`gh\` runs`, and states that the `gh`-absent path's MCP calls take no `$PARENT_REPO`. Prove each of those four literals red on a mutated copy with a message-matched `assert.throws`.
+- `AC2.1: every fenced gh issue line in the parent gate carries --repo "{parent-repo}"`: `assert.deepEqual(flaglessGhLines(live), [])`, and the count of fenced `gh issue` lines in the live file is `>= 6`, so an empty scan cannot pass.
+- `AC2.1 go-red: removing the flag from one fence is caught`: for each fenced `gh issue` line in the live file, delete ` ${REPO_FLAG}` on that one line and assert `flaglessGhLines(mutated)` returns exactly that line.
+- `empty-value go-red: a shell-variable --repo is caught`: for each fenced `gh issue` line, replace `REPO_FLAG` with `--repo "$PARENT_REPO"` on that one line and assert `flaglessGhLines(mutated)` returns exactly that line. A variable no call assigns expands empty.
+- `empty-value: the stop rule precedes every gh line`: the whitespace-collapsed live file contains `STOP_RULE` (the Global Constraints sentence as one string constant) exactly once, inside the collapsed **Run the gate CLI** section, and its index is below the index of the first fenced `gh issue` line in the collapsed file. Go-red: delete `STOP_RULE` from a copy and assert the shared assertion throws with its own presence message; then move `STOP_RULE` below the Close section's first fence in a copy and assert it throws with its own ordering message.
+- `the scanner ignores prose and toggles on fences`: a synthetic text with one flagless `gh issue close 1` outside any fence and one inside, where only the fenced one is returned.
+- `the Apply inline read carries the flag too`: the live file includes `` `gh issue view $PARENT_NUM --repo "{parent-repo}" --json comments` `` on one line.
+- `the verdict list names repo as {parent-repo}`: the whitespace-collapsed **Run the gate CLI** section includes `` `repo` ``, `{parent-repo}` and `the \`gh\`-absent path's MCP calls take no \`{parent-repo}\``. Prove each of those three literals red on a mutated copy with a message-matched `assert.throws`.
+- `the Apply partial-state note names the gh-default bootstrap`: the collapsed **Partial-state note.** paragraph includes `against \`gh\`'s default repository` and no longer includes `specifically impossible`. Prove each half red on a mutated copy with a message-matched `assert.throws`.
 
 Run: `node --test tests/parent-gate-repo-flag-conformance.test.js`
-Expected: FAIL. `unguardedGhLines(live)` lists the 6 fenced `gh issue` lines: 453, 461, 469, 641, 652 and 653. The line-622 `gh issue view` is an inline span, pinned by the separate inline-read test.
+Expected: FAIL. `flaglessGhLines(live)` lists the 6 fenced `gh issue` lines: 453, 461, 469, 641, 652 and 653. The line-622 `gh issue view` is an inline span, pinned by the separate inline-read test.
 
 - [ ] **Step 3: Edit the prose**
 
-- Each fence becomes `gh issue <verb> $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" <rest unchanged>`.
-- Line 622's inline span becomes `` `gh issue view $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" --json comments` ``, kept on one line. `brokenSpanLines` in the existing suite checks this.
-- Verdict list: add a `repo` bullet after `parent`. It is the repository the CLI's reads used (`owner/repo`, host-qualified off github.com). It is the `$PARENT_REPO` that every `gh` line below passes as `--repo`, so one gate reads and writes one repository. The `${PARENT_REPO:?…}` form stops the command before `gh` runs when the value is empty or unset, because a bare empty `--repo` sends the write to `gh`'s default repository. That stop is a failing `gh` call under the section's partial-state rule. `repo` is `null` under `--backend local-files` and under `--facts-json` without a qualified token. Neither path runs a `gh` line, and the `gh`-absent path's MCP calls take no `$PARENT_REPO`.
+- Each fence becomes `gh issue <verb> $PARENT_NUM --repo "{parent-repo}" <rest unchanged>`.
+- Line 622's inline span becomes `` `gh issue view $PARENT_NUM --repo "{parent-repo}" --json comments` ``, kept on one line. `brokenSpanLines` in the existing suite checks this.
+- Verdict list: add a `repo` bullet after `parent`. It is the repository the CLI's reads used (`owner/repo`, host-qualified off github.com). It is the `{parent-repo}` that every `gh` line below passes as `--repo`, filled in from the verdict, so one gate reads and writes one repository. Then the stop rule, byte for byte from Global Constraints. Then: `repo` is `null` under `--backend local-files` and under `--facts-json` without a qualified token. Neither path runs a `gh` line, and the `gh`-absent path's MCP calls take no `{parent-repo}`.
 - Transport paragraph: `` `gh issue comment` is `add_issue_comment`; `gh issue close` and `gh issue edit --add-label` are `` becomes `` `gh issue comment --repo` is `add_issue_comment`; `gh issue close --repo` and `gh issue edit --repo --add-label` are ``.
+- Apply's **Partial-state note.**: replace `(a transient \`gh\` error; the bootstrap above should make a missing-label failure specifically impossible)` with a parenthetical saying the failure is a transient `gh` error, or a missing label: the bootstrap above runs against `gh`'s default repository, so on a checkout whose default differs from origin, `demo:pending` may exist only there. Then add one sentence after the paragraph's last one: a label add that fails for a missing label fails again on every re-entry, and is reported as partial state, never retried in a loop. Keep the rest of the paragraph.
 
 Update the byte pins in `tests/below-floor-parent-close-conformance.test.js`:
-- `:99` becomes `'gh issue comment $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" --body-file'`
-- `:100` becomes `'gh issue close $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" --reason completed'`
-- `:151` becomes `'gh issue close $PARENT_NUM --repo "${PARENT_REPO:?parent-gate verdict has no repo}" --reason "not planned"'`
+- `:99` becomes `'gh issue comment $PARENT_NUM --repo "{parent-repo}" --body-file'`
+- `:100` becomes `'gh issue close $PARENT_NUM --repo "{parent-repo}" --reason completed'`
+- `:151` becomes `'gh issue close $PARENT_NUM --repo "{parent-repo}" --reason "not planned"'`
 - `:967-968` take the reworded pairings
 - `:1140` becomes `assert.equal(VERDICT_FIELDS.length, 13)`
 
@@ -174,7 +182,7 @@ Expected: under 52,500.
 
 ```bash
 git add plugin/skills/wrap-up/verification-brief-parent-gate.md tests/parent-gate-repo-flag-conformance.test.js tests/below-floor-parent-close-conformance.test.js
-git commit -m "Pass a guarded --repo on the parent gate's gh lines — comment, close and label land where the gate read, never on an empty value; refs #4824"
+git commit -m "Pass --repo on the parent gate's gh lines — comment, close and label land where the gate read, never on an empty value; refs #4824"
 ```
 
 Add `tests/skill-fence-guard-shapes.test.js` to the `git add` only if Step 3 re-anchored it.
@@ -188,7 +196,7 @@ Add `tests/skill-fence-guard-shapes.test.js` to the `git add` only if Step 3 re-
 - Modify: `docs/REGISTRY.md` (one row after line 31, in the same shape)
 
 **Interfaces:**
-- Consumes: Task 2's state, in which `verification-brief-parent-gate.md` has no unguarded fenced write.
+- Consumes: Task 2's state, in which every fenced `gh issue` line of `verification-brief-parent-gate.md` carries `--repo "{parent-repo}"`.
 - Produces: the `needs-fix` list, which the controller files as one follow-up record (Task 4).
 
 This task edits no skill file. The spec says, verbatim: "This record adds `--repo` only to the Parent-Gate Procedure, and adds no slug-resolution step to any other procedure."
@@ -212,6 +220,8 @@ Expected: about 79 fence rows and 188 span rows across about 84 files (the plan 
 | `cwd-scoped` | Runs, and the procedure's reads for that record also resolve against `gh`'s default repository: bare `gh issue`/`gh pr` calls and `gh api repos/{owner}/{repo}/…` placeholders, which `gh` fills from that same default. Reads and writes cannot split across remotes. |
 | `needs-fix` | Runs bare, and the procedure reads that record through an origin-resolved slug or a CLI verdict sourced from `origin`. The parent gate's hazard has recurred. |
 | `descriptive` | Names the command without running it: a transport mapping table, a `#`/`//` comment, an `echo`ed string, a quoted hint, a numbered example such as `gh issue edit 123`, or a command a human runs. |
+
+Precedence: `descriptive` wins. A row that only names a command is `descriptive` even when its text contains `--repo` (the parent gate's reworded Transport mapping, line 70, is one). `repo` is for a row that runs.
 
 Confirm per file; do not assume. In the plan author's scan, `dispatch/settle-and-merge.md`'s `{owner}/{repo}` and `_shared/issue-claims.md`'s claims reads are `gh`'s own default-repo placeholders, which reads as `cwd-scoped`. A `needs-fix` row, fence or span, is left as it is: the clarification makes that class satisfy AC3.1, and the follow-up record carries it.
 
@@ -274,7 +284,7 @@ git commit -m "Name the needs-fix follow-up in the gh issue write inventory — 
 | Deliverable 1, `--repo {owner}/{repo}` on the Close and Apply fences, taken from the gate's own resolution | 1 (verdict field), 2 (fences) |
 | Deliverable 2, inventory across `plugin/skills/**/*.md`, fences and runnable spans, each classified | 3 |
 | Clarification 3, needs-fix writes go to one named follow-up; no slug resolution outside the Parent-Gate Procedure | 3 (no skill edits), 4 (the record named in the doc) |
-| Clarification 4, an empty `--repo` value stops before the write, pinned by the test | 2 (the `empty-guard` tests) |
+| Clarification 4, an empty `--repo` value stops before the write, pinned by the test | 2 (the stop rule and the `empty-value` tests) |
 | AC1.1, the grep before and after | 2, Steps 1 and 4, and the `AC1.1` test |
 | AC2.1, a conformance test that goes red on removal | 2 (the `AC2.1` tests) |
 | AC3.1, the inventory committed with no fence unclassified | 3 (Steps 3 and 4) |
