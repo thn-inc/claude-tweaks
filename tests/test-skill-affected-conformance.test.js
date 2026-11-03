@@ -174,3 +174,24 @@ test('go-red: adding --ignore-stamp to qa affected step 1 fails the AC4 pin', ()
   const mutated = mutateLine(skill, '1. Read the changed-file set:', '--changed-files --integration-branch', '--changed-files --ignore-stamp --integration-branch');
   assert.throws(() => assertIgnoreStampSites(mutated, gate), { message: /qa affected step 1 keeps the stamp anchor/ });
 });
+
+// Frozen pre-#4395 text (hand-built): the VERIFICATION_SHA row promised a re-run and the bullets skipped outright.
+const PRE_4395_SKILL_EXCERPT = `| \`VERIFICATION_SHA\` | Set by \`/claude-tweaks:build\` Common Step 5, alongside \`VERIFICATION_PASSED\` | The commit build's verification ran against. Compared to current \`HEAD\` before honoring the skip (see \`verification.md\`'s "Skip-if-recent") — a mismatch means the tree changed since build passed, and verification re-runs instead of skipping. |
+
+**Pipeline behavior:**`;
+
+const MISMATCH_FIRST = /applies its skip only when `VERIFICATION_SHA` equals `HEAD`\. On a mismatch, run `verification\.md`'s Mismatch branch in place of that skip[^\n]*re-stamps `HEAD`[^\n]*once it passes, the rest of the bullet \(QA selection, `skip-qa`, `TEST_PASSED=true`\) applies as written/;
+
+test('AC1.1: test/SKILL.md routes a moved HEAD through the runner before any VERIFICATION_PASSED skip (#4395)', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  assert.match(skill, MISMATCH_FIRST);
+  assert.doesNotMatch(PRE_4395_SKILL_EXCERPT, MISMATCH_FIRST);
+  const at = skill.indexOf('applies its skip only when `VERIFICATION_SHA`');
+  assert.ok(at !== -1 && at < skill.indexOf('**Pipeline behavior:**'), 'the condition precedes the Pipeline behavior bullets');
+  assert.ok(!skill.includes('verification re-runs instead of skipping'));
+  assert.ok(PRE_4395_SKILL_EXCERPT.includes('verification re-runs instead of skipping'));
+  assert.ok(skill.includes('so the Mismatch branch runs the scoped verify instead of skipping'));
+  const dropped = skill.replace(', the rest of the bullet (QA selection, `skip-qa`, `TEST_PASSED=true`) applies as written', '');
+  assert.notEqual(dropped, skill);
+  assert.doesNotMatch(dropped, MISMATCH_FIRST);
+});
