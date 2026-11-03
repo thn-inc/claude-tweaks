@@ -127,6 +127,9 @@ const citations = (refs) => refs.map(citationSpan).join(', ');
 const claimText = (claim) => `${inline(claim.text)} (${citations(claim.refs)})`;
 const claimLine = (claim) => `- ${claimText(claim)}`;
 const movedLine = ({ claim, because }) => `- ${inline(claim.text)} (moved: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
+const plannedLine = ({ claim, because }) => `- ${inline(claim.text)} (planned, not verified: cites ${idSpan(because.id)} — ${statusWithReason(because)})`;
+const UNCONFIRMED_FLAG_LABEL = ' (flag unconfirmed)';
+const NO_PROOF_SHOWN = 'no proof shown';
 // A pass carries a reason only when it needs one: a verify run adjudicated to a pass.
 const rowLine = (fact) => `- ${idSpan(fact.id)} — ${fact.status === 'passed' && !fact.reason?.trim() ? 'passed' : statusWithReason(fact)}`;
 const factText = (fact) => screenedInline(fact.text ?? '', WITHHELD_TEXT) || idSpan(fact.id);
@@ -192,6 +195,30 @@ function testGuideBody(ctx) {
   return body;
 }
 
+// Kept proofs, then planned ones, then each kept flag no surviving claim cites. A flag fact
+// always yields a line, so the placeholder reaches only a packet with no flag fact at all.
+// The label comes from the cited flag fact, never from a claim's text.
+function riskProofsBody({ keptIn, planned, ofKind, factsById }) {
+  const unconfirmed = (refs) => refs.some((id) => {
+    const cited = factsById.get(id);
+    return cited?.kind === 'flag' && cited.unconfirmed === true;
+  });
+  const labelled = (line, refs) => (unconfirmed(refs) ? `${line}${UNCONFIRMED_FLAG_LABEL}` : line);
+  const keptClaims = keptIn('risk-proofs');
+  const cited = new Set([...keptClaims, ...planned.map(({ claim }) => claim)].flatMap(({ refs }) => refs));
+  const uncited = ofKind('flag')
+    .filter((fact) => !cited.has(fact.id))
+    .map((fact) => labelled(`- ${screenedInline(fact.id.replace(/^flag:/, ''), WITHHELD_ID)}: ${NO_PROOF_SHOWN}`, [fact.id]));
+  return itemsOr(
+    [
+      ...keptClaims.map((claim) => labelled(claimLine(claim), claim.refs)),
+      ...planned.map((entry) => labelled(plannedLine(entry), entry.claim.refs)),
+      ...uncited,
+    ],
+    'not applicable: no kept risk flags',
+  );
+}
+
 const SECTION_BODIES = Object.freeze({
   'what-changed': ({ keptIn }) => itemsOr(
     keptIn('what-changed').map(claimLine),
@@ -215,10 +242,7 @@ const SECTION_BODIES = Object.freeze({
     keptIn('least-confident').map(claimLine),
     'not applicable: no low-confidence review findings',
   ),
-  'risk-proofs': ({ keptIn }) => itemsOr(
-    keptIn('risk-proofs').map(claimLine),
-    'not applicable: no kept risk flags',
-  ),
+  'risk-proofs': riskProofsBody,
   // No decisions omits the section, heading included.
   decisions: ({ ofKind }) => ofKind('decision').map((fact) => item(`- ${factText(fact)}`)),
   deploy: ({ deploy }) => [note(
@@ -382,7 +406,7 @@ function truncate(doc) {
 }
 
 function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
-  const { kept, moved, dropped, screened: screenedClaims } = validatePacket(facts, narrative);
+  const { kept, moved, dropped, screened: screenedClaims, planned } = validatePacket(facts, narrative);
   const ofKind = (kind) => facts.facts.filter((fact) => fact.kind === kind);
   const rows = facts.facts.filter((fact) => ROW_KINDS.includes(fact.kind));
   const ctx = {
@@ -392,6 +416,7 @@ function renderPacket(facts, narrative, { observationPlan, poster } = {}) {
     ofKind,
     keptIn: (section) => kept.filter((claim) => claim.section === section),
     movedTo: (to) => moved.filter((entry) => entry.to === to),
+    planned,
     rowsIn: (place) => rows.filter((fact) => rowPlace(fact) === place),
   };
 

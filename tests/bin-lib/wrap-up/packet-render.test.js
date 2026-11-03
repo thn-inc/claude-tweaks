@@ -1312,3 +1312,40 @@ test('the return reports every field', () => {
   assert.equal(result.truncated, 0);
   assert.ok(!result.markdown.includes('truncated:'));
 });
+
+const PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a planned risk proof renders in Risk proofs as not verified, after the kept claims', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\)\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
+});
+test('Reading B: one planned claim and no kept one does not render the no-kept-flags placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), PLANNED], [claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])]);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('Round 3 Reading A: a Risk-proofs line citing an unconfirmed flag is labelled, kept and planned alike', () => {
+  const UNCONFIRMED = fact('flag:auth', 'passed', { unconfirmed: true });
+  const { markdown } = render([UNCONFIRMED, fact('check:unit', 'passed'), PLANNED], [
+    claim('risk-proofs', 'Auth covered', ['flag:auth', 'check:unit']),
+    claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth']),
+  ]);
+  assert.match(markdown, /### Risk proofs\n- Auth covered \([^\n]*\) \(flag unconfirmed\)\n- Auth verified \(planned, not verified: [^\n]*\) \(flag unconfirmed\)\n/);
+});
+test('Round 3 Reading A: a confirmed flag gets no label, and claim text cannot forge one', () => {
+  const { markdown } = render([fact('flag:auth', 'passed'), fact('check:unit', 'passed')], [
+    claim('risk-proofs', 'Auth covered (flag unconfirmed)', ['flag:auth', 'check:unit']),
+  ]);
+  const line = markdown.split('\n').find((l) => l.startsWith('- Auth covered'));
+  assert.ok(line && !/\) \(flag unconfirmed\)$/.test(line), line);
+});
+test('a kept flag no claim cites is listed, labelled when unconfirmed, and never hidden behind the placeholder', () => {
+  const { markdown } = render([fact('flag:auth', 'passed', { unconfirmed: true }), fact('flag:migrations', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n- auth: no proof shown \(flag unconfirmed\)\n- migrations: no proof shown\n/);
+  assert.doesNotMatch(markdown, /not applicable: no kept risk flags/);
+});
+test('the no-kept-flags placeholder renders only when no flag fact exists', () => {
+  const { markdown } = render([fact('check:unit', 'passed')], []);
+  assert.match(markdown, /### Risk proofs\n[^\n]*not applicable: no kept risk flags/);
+});
