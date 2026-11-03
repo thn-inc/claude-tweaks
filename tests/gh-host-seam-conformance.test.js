@@ -354,14 +354,14 @@ const NOT_ORIGIN = {
   'lib/repo-resolve.js': { count: 1, reason: "defines the gate: gateOriginRepo's own `parseRepo(remote)` is the parse the gate judges. resolveGhSpec's second parse, `parseRepo(hostPathOf(url))`, names no token and is unmatched; harmless, since this file is the seam" },
   'stale-claim-pr.js': { count: 1, reason: "`deps.parseRepo(remote)` is followed by a stop on any host but github.com ('stale-claim matching supports github.com only'), so no other origin host reaches gh" },
   'parent-gate.js': { count: 1, reason: "decided by the user at #4933's plan review: the --facts-json path makes no gh call and keeps a raw `parseRepo(remote)`, host normalized, only to judge a qualified --closing token; its gh path calls the gate (ORIGIN_GATED)" },
-  'lib/wrap-up/engine-verify.js': { count: 4, reason: "each `parseRepo(<origin>)` passes only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one" },
+  'lib/wrap-up/engine-verify.js': { count: 2, reason: "carrier-commit's and reference-repairs' `parseRepo(<origin>)` pass only owner/repo to deps.gh, a ghOptions-wrapped runner, so the host is the seam's choice, never the parsed one. The acceptance-labeling check's origin goes through the gate (resolveCheckRepo, #4805), which ORIGIN_GATED lists" },
   'lib/reconcile/pr-state-batch.js': { count: 1, reason: "githubOrigin keeps the parse only when its host is github.com, and the batch query pins `--hostname github.com`" },
 };
 
 // The files whose code calls gateOriginRepo(, the defining lib/repo-resolve.js excluded.
 const ORIGIN_GATED = ['materialize.js', 'lib/compose-subject.js', 'release-claim.js', 'repair-claim.js', 'preflight-records.js',
   'parent-gate.js', 'resolved-refusal.js', 'link-records.js', 'fetch-sub-issues.js', 'backlog-grant-gate.js',
-  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js'];
+  'apply-refine-labels.js', 'file-feedback.js', 'list-claims.js', 'lib/number-list-cli.js', 'lib/wrap-up/pack.js', 'lib/wrap-up/engine-verify.js', 'lib/hooks/git-exec.js', 'stuck-open-prs.js'];
 
 // A gateOriginRepo( call in code; blank mode leaves a name inside a string or comment unseen.
 const callsGate = (raw) => /(?<![\w$])gateOriginRepo\s*\(/.test(stripComments(raw, BLANK));
@@ -420,9 +420,10 @@ test('AC9.2: no plugin/bin file reads the origin through parseRepo outside NOT_O
   }
   // Fewer sites means the matcher stopped matching, not that the origin reads went away. The
   // floor is the NOT_ORIGIN site total: #4933 set it at 9, and #4951 moved stuck-open-prs.js's one
-  // site onto the gate (a deliberate removal, not lost recall), so it is 8. Raise it as sites are
+  // site onto the gate (a deliberate removal, not lost recall), so it is 8; #4805 moved engine-verify.js's
+  // acceptance-labeling reads (two sites) onto the gate the same way, so it is 6. Raise it as sites are
   // added, never lower it otherwise.
-  assert.ok(matched >= 8, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 8): the matcher stopped matching`);
+  assert.ok(matched >= 6, `matched only ${matched} origin-reading parseRepo sites under plugin/bin/ (floor 6): the matcher stopped matching`);
   for (const [rel, { count }] of Object.entries(NOT_ORIGIN)) {
     assert.equal(seen[rel], count, `${rel}: expected exactly ${count} origin-reading parseRepo site(s), saw ${seen[rel]} — re-read the lines and settle the entry`);
   }

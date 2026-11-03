@@ -383,12 +383,13 @@ size axis is never evaluated (`#366`): parents carry no scoring of their own
   variant that brief carries to `"$TRY_IT"` too, as on `exceeds: false` — one rule for both
   outcomes, so the run that opens the parent gate shows the end-to-end path in its Pipeline Summary.
 
-**What the `acceptance-labeling` row does with each gate state.** The bullets above say what labeling does on this entry. `wrap-up-engine.js verify`'s `acceptance-labeling` row (`bin/lib/wrap-up/engine-verify.js`) then checks the outcome against the same rule (#3508), with this run's records counted as closed. A `resolved` parent owes nothing more. A `gated` parent owes the brief its gate posted, whatever its risk tier, since the floor decides only whether a `due` parent is gated.
+**What the `acceptance-labeling` row does with each gate state.** The bullets above say what labeling does on this entry. `wrap-up-engine.js verify`'s `acceptance-labeling` row (`bin/lib/wrap-up/engine-verify.js`) then checks the outcome against the same rule (#3508), with this run's records counted as closed. A `resolved` parent with no pending label owes nothing more. A `resolved` parent that still carries a pending label fails, as a non-parent target does: a deliberate divergence from `bin/parent-gate.js`, which calls every `resolved` parent a no-op, so a requested change stays visible at wrap-up (#4805). A `gated` parent owes the brief its gate posted, whatever its risk tier, since the floor decides only whether a `due` parent is gated. The row reads every repository it touches from the one origin `gateOriginRepo` accepts, and renders `unknown` on any input `bin/parent-gate.js` refuses or cannot read — a refused or unresolvable origin included, for every target, parent or not (#4805).
 
 | State | Row | Detail |
 |---|---|---|
 | `incomplete` | `skip` | `parent gate #P not due — N sibling sub-issue(s) open` |
-| `resolved` | `skip` | `parent #P already dispositioned` |
+| `resolved`, no pending label | `skip` | `parent #P already dispositioned` |
+| `resolved`, pending label carried | `fail` | `#P: pending label outranked by a verdict — run /claude-tweaks:demo #P` |
 | `gated` | `fail` with no packet or brief, `pass` with one | `#P: no comment carries a confirmed Verification Brief or an acceptance packet` |
 | `due`, `exceeds: false` | `skip` | `parent #P below oversight floor — closes after the merge lands (Step 4.0b)` |
 | `due`, `exceeds: true` | `fail` with no pending label | `#P: missing demo:pending or accept:pending label` |
