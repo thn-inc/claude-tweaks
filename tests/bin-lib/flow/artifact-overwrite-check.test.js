@@ -11,7 +11,7 @@
 // proving the gate fires only on the overwrite shape, not merely that the
 // parsers agree with themselves.
 
-const { test } = require('node:test');
+const { test, after } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
@@ -38,12 +38,18 @@ const { manifestInit, transitionSpec, readManifest } = require(path.join(__dirna
 
 const FIXTURE_TIMEOUT_MS = 30000;
 
+const fixtureDirs = [];
+after(() => {
+  for (const d of fixtureDirs) fs.rmSync(d, { recursive: true, force: true });
+});
+
 // An inherited GIT_DIR / GIT_WORK_TREE / GIT_INDEX_FILE outranks the fixture's cwd, which would aim
 // the fixture commits at the checkout running this suite (tests/stash-guard.test.js does the same).
 for (const name of ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE']) delete process.env[name];
 
 function repo() {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-overwrite-')));
+  fixtureDirs.push(dir);
   const git = (...a) => execFileSync('git', a, {
     cwd: dir, encoding: 'utf8', timeout: FIXTURE_TIMEOUT_MS, stdio: ['ignore', 'pipe', 'pipe'],
   });
@@ -80,6 +86,7 @@ function commitAt(fx, message, iso, committerIso = iso) {
 // Real writer: manifestInit + transitionSpec with a pinned clock.
 function manifestRun(transitions /* [[id, status, phase, iso], ...] */, ids = [10, 11]) {
   const runDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-artifact-manifest-')));
+  fixtureDirs.push(runDir);
   manifestInit({ runDir, specs: ids, parent: 'p/' });
   for (const [specId, status, phase, iso] of transitions) {
     const res = transitionSpec({ runDir, specId, status, phase, now: new Date(iso) });

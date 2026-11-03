@@ -28,7 +28,7 @@ const { ensureLabelPayload } = require('../issues/labels');
 const { runClassified, isTimeoutError } = require('../shared-primitives');
 const { appendEntry, formatEntry, resolveTarget } = require('../log-decision/append');
 const { CLAIM_LOG_SECTION, CLAIM_LOG_STEP, claimLogText } = require('../log-decision/claim-log');
-const { tombstoneInFlightPr } = claimStore;
+const { tombstoneInFlightPr, refusalText } = claimStore;
 
 const BOT_IN_PROGRESS = 'bot:in-progress';
 const BOT_IN_PROGRESS_DESC = 'Bot state: an agent currently holds the claim on this record';
@@ -53,7 +53,9 @@ const USAGE = 'usage: claim-targets.js --run-id <id> --targets <n,n,...> [--keep
   + '  exit 5 = claim write reported success but the post-write read-back did not\n'
   + '           confirm it (a live claim carrying this runId) — {unverified:[{issue}], ...}\n'
   + '  exit 6 = the claims-registry branch is missing on origin and creating it was refused (e.g. permission, ruleset, gh absent) —\n'
-  + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n';
+  + '           {branchMissing:{branch,reason}, released, releaseFailed}; with or without --keep-going\n'
+  + '  exit 7 = GitHub refused a claim read or write (a 401/403: the token cannot reach this repository or the claims-registry branch) —\n'
+  + '           {permissionDenied:{issue,operation:"read"|"write",reason}, released, releaseFailed}; with or without --keep-going\n';
 
 function errText(e) {
   return String((e && e.message) || e);
@@ -213,6 +215,10 @@ function holderFromFreshRead(deps, repoSlug, issue) {
 // guarantees that.
 function verifyClaimLanded(deps, repoSlug, issue, runId, knownTip) {
   const verify = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
+  // A refused read-back (`permission-denied` included) deliberately stays `false`,
+  // so the caller reports 'unverified' (exit 5): the write itself was accepted and
+  // only its confirmation was refused, so "unverified" is accurate. #4899's exit 7
+  // covers the claim read and write only.
   if (verify.failure) return false;
   const content = verify.absent ? null : verify.content;
   const classified = classifyClaimBlob(content, deps.now());
@@ -405,11 +411,13 @@ function run(argv, deps) {
   // fresh per-issue read either finds the write landed (releases it,
   // reclaimable immediately) or still doesn't see it (reports it in
   // `releaseFailed` — visible, not silently dropped). Then report the stop
-  // alongside what was released and what could not be. Called only from
-  // `stopOrSkip()` below, which is in turn the single call site every stop
-  // below shares — so this cannot drift from any of them. `exitCode` is 3 for
+  // alongside what was released and what could not be. Called from
+  // `stopOrSkip()` below (the contested, in-flight, transient and unverified
+  // stops) and directly from `handleBranchMissing` (exit 6) and
+  // `permissionStop` (exit 7), which have their own envelopes. `exitCode` is 3 for
   // a `contested`/`inFlight` envelope, 4 for a `transient` one, 5 for an
-  // `unverified` one, 6 for a `branchMissing` one (#4495).
+  // `unverified` one, 6 for a `branchMissing` one (#4495), 7 for a
+  // `permissionDenied` one (#4899).
   function abort(envelope, exitCode, extraToRelease = []) {
     const { released, releaseFailed } = releaseClaimedThisRun(
       deps, repoSlug, opts.runId, [...claimedThisRun, ...extraToRelease],
@@ -421,7 +429,7 @@ function run(argv, deps) {
   // The one shape every stop site below shares: with `--keep-going`, record
   // `{issue, reason: skipReason, ...extra}` in `skipped` and keep looping
   // (signaled by returning `null` — `abort()`'s exit codes are always 3, 4,
-  // 5, or 6, never null/0, so callers can tell the two outcomes apart with
+  // 5, 6, or 7, never null/0, so callers can tell the two outcomes apart with
   // `!== null`); otherwise abort the whole run via the envelope
   // `{[envelopeKey]: [{issue, ...extra}]}`. `extra` is exactly what differs
   // between call sites (an `error`, a `link`, or a `holder`) and is identical
@@ -509,15 +517,24 @@ function run(argv, deps) {
     return { retry: true };
   }
 
+  // #4899: GitHub refused a claim read or write — a token without access to the
+  // repository or the claims-registry branch. Every target would meet the same
+  // refusal, so it is run-level like a refused bootstrap: it exits 7 even under
+  // `--keep-going`, bypassing `stopOrSkip`, and the claims this run already took
+  // are released by `abort`. Returns the exit code.
+  function permissionStop(issue, operation, result) {
+    const reason = oneLineReason(refusalText(result.error) || 'permission-denied');
+    deps.stderr(`claim-targets: GitHub refused the claim ${operation} for #${issue}: ${reason} — check the token's access to this repository and the ${CLAIMS_BRANCH} branch\n`);
+    return abort({ permissionDenied: { issue, operation, reason } }, 7);
+  }
+
   for (let i = 0; i < targets.length; i += 1) {
     const issue = targets[i];
     const read = claimStore.readClaimBlob(deps, repoSlug, issue, knownTip);
     if (read.failure) {
       knownTip = null;
-      // Every read failure, a `permission-denied` one included, stays exit 4
-      // under its own error name: #4756 split the permission refusal out of
-      // `network-failure` only for the bootstrap (exit 6); re-routing the
-      // claim read/write paths is a separate decision, tracked as a follow-up.
+      // A refused read is exit 7 (#4899); every other read failure stays exit 4.
+      if (read.failure === 'permission-denied') return permissionStop(issue, 'read', read);
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: read.failure });
       if (stop !== null) return stop;
       continue;
@@ -636,13 +653,14 @@ function run(argv, deps) {
     const write = claimStore.writeClaimBlob(deps, repoSlug, issue, writeOpts);
 
     if (write.failure || write.secondaryRateLimit) {
+      if (write.failure === 'permission-denied') return permissionStop(issue, 'write', write);
       // A secondary/abuse rate limit is transient, never contested — a
       // throttle must not masquerade as another agent holding the claim
       // (record-697's incident read exactly that way before diagnosis,
       // #787's amendment). Either way this issue's write never confirmed a
       // git tip — discard the chain (see the `knownTip` comment above
-      // `claimedThisRun`). A `permission-denied` write failure also lands here
-      // as exit 4 under its own error name, as at the read site above.
+      // `claimedThisRun`). A refused write (`permission-denied`) is exit 7 and
+      // returned above; every other write failure is exit 4 (#4899).
       knownTip = null;
       const reason = write.secondaryRateLimit ? 'secondary-rate-limit' : write.failure;
       const stop = stopOrSkip(issue, 'transient', 'transient', 4, { error: reason });

@@ -14,6 +14,12 @@ pre-schema brief — observable as `/claude-tweaks:tidy`'s acceptance-gap sweep 
 records (`_shared/work-record.md`) whose brief predates the `### Observation plan` schema (shipped with #323 and its
 sub-issues, v6.78.0).
 
+This file is also kept for briefs posted before the acceptance packet (#4611), and so are the
+brief readers in `bin/lib/wrap-up/engine-verify.js` (a confirmed brief on the issue; the pr-first
+pointer plus a brief on the PR). Both go at the human-in-control epic's (#4608) final
+contract-cleanup record, once no open record carries a Verification Brief without an acceptance
+packet.
+
 Call `AskUserQuestion` with `question`: `"Does {title} do what you asked
 for?"`, `header`: `"Verdict"`, `multiSelect`: `false`:
 

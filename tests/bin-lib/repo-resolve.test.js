@@ -435,6 +435,114 @@ test('final review: requiring repo-resolve reads no GH_TIMEOUT_MS; ghAvailable r
   assert.equal(overridden.timeout, 7777);
 });
 
+// #4933: the origin-host gate. Every case injects env and readFile, so no real
+// GH_HOST or hosts.yml reaches it.
+const { gateOriginRepo, isKnownGhHost } = require('../../plugin/bin/lib/repo-resolve');
+const noHosts = { env: {}, readFile: () => { throw new Error('ENOENT'); }, platform: 'linux', homedir: '/h' };
+const hostsYml = (text) => ({ ...noHosts, readFile: () => text });
+const refusalOf = (host) => `origin host ${host} is not a known GitHub host (not github.com, not *.ghe.com, not a gh hosts.yml key) — refusing to send it to gh; if it is GitHub Enterprise, export GH_HOST=${host}`;
+
+test('AC1.1: an unknown origin host with only GH_ENTERPRISE_TOKEN set is refused', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_ENTERPRISE_TOKEN: 't' } });
+  assert.equal(out.spec, null);
+  assert.equal(out.refusal, refusalOf('git.corp.invalid'));
+  assert.ok(out.refusal.includes('git.corp.invalid'));
+  assert.ok(out.refusal.includes('GH_HOST=git.corp.invalid'));
+});
+test('AC1.2: a *.ghe.com origin passes', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.3: a hosts.yml key passes', () => {
+  const out = gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n    user: x\n'));
+  assert.deepEqual(out, { spec: { host: 'ghes.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.4: GH_HOST matching the origin host passes it through', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'git.corp.invalid' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.5: github.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://GitHub.com./o/r.git', noHosts), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('AC1.6: a mixed-case *.ghe.com with a trailing dot normalizes', () => {
+  assert.deepEqual(gateOriginRepo('https://ACME.ghe.com./o/r.git', noHosts), { spec: { host: 'acme.ghe.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('GH_HOST naming another host gives a github.com spec', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } });
+  assert.deepEqual(out, { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 1: empty GH_HOST is no opt-in', () => {
+  for (const GH_HOST of ['', '  ']) {
+    const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST } });
+    assert.deepEqual(out, { spec: null, refusal: refusalOf('git.corp.invalid') }, JSON.stringify(GH_HOST));
+  }
+});
+test('review focus 2: GH_HOST is normalized (case, trailing dot) before it is compared', () => {
+  const out = gateOriginRepo('https://git.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'Git.Corp.Invalid.' } });
+  assert.deepEqual(out, { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+});
+test('review focus 4: an scp-style origin on an unknown host is refused', () => {
+  assert.deepEqual(gateOriginRepo('git@git.corp.invalid:o/r.git', noHosts), { spec: null, refusal: refusalOf('git.corp.invalid') });
+});
+test('unparseable or absent origin is neither spec nor refusal', () => {
+  for (const remote of [null, undefined, '', 'not a url']) {
+    assert.deepEqual(gateOriginRepo(remote, noHosts), { spec: null, refusal: null }, String(remote));
+  }
+});
+test('gate isolates the .ghe.com branch: no GH_HOST, readFile throwing', () => {
+  assert.equal(gateOriginRepo('https://acme.ghe.com/o/r.git', noHosts).spec.host, 'acme.ghe.com');
+  assert.equal(isKnownGhHost('acme.ghe.com', noHosts), true);
+});
+test('gate isolates the hosts.yml branch: no GH_HOST, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', hostsYml('ghes.corp.invalid:\n')).spec.host, 'ghes.corp.invalid');
+  assert.equal(isKnownGhHost('ghes.corp.invalid', hostsYml('ghes.corp.invalid:\n')), true);
+  assert.equal(isKnownGhHost('ghes.corp.invalid', noHosts), false);
+});
+test('gate refuses an origin host that is only a substring, prefix or value of a hosts.yml entry', () => {
+  const cases = [
+    ['https://corp.invalid/o/r.git', 'corp.invalid', 'ghes.corp.invalid:\n    user: x\n'], // key contains the host
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'git.corp.invalid.evil:\n    user: x\n'], // host is a key prefix
+    ['https://git.corp.invalid/o/r.git', 'git.corp.invalid', 'github.com:\n    user: git.corp.invalid\n'], // host only in a value line
+  ];
+  for (const [remote, host, text] of cases) {
+    const out = gateOriginRepo(remote, hostsYml(text));
+    assert.equal(out.spec, null, remote + ' / ' + JSON.stringify(text));
+    assert.equal(out.refusal, refusalOf(host), remote + ' / ' + JSON.stringify(text));
+    assert.equal(isKnownGhHost(host, hostsYml(text)), false, host + ' / ' + JSON.stringify(text));
+  }
+});
+test('gate isolates the GH_HOST branch: readFile throwing, the host not *.ghe.com', () => {
+  assert.equal(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...noHosts, env: { GH_HOST: 'ghes.corp.invalid' } }).spec.host, 'ghes.corp.invalid');
+});
+test('gate defaults env to process.env when deps carries none', () => {
+  const saved = process.env.GH_HOST;
+  process.env.GH_HOST = 'git.corp.invalid';
+  try {
+    const { env, ...rest } = noHosts; // eslint-disable-line no-unused-vars
+    assert.equal(gateOriginRepo('https://git.corp.invalid/o/r.git', rest).spec.host, 'git.corp.invalid');
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+test('gate takes a null deps argument without throwing, reading process.env', () => {
+  const saved = process.env.GH_HOST;
+  try {
+    process.env.GH_HOST = 'git.corp.invalid';
+    assert.deepEqual(gateOriginRepo('https://git.corp.invalid/o/r.git', null), { spec: { host: 'git.corp.invalid', owner: 'o', repo: 'r' }, refusal: null });
+    delete process.env.GH_HOST;
+    assert.deepEqual(gateOriginRepo('https://github.com/o/r.git', null), { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  } finally {
+    if (saved === undefined) delete process.env.GH_HOST; else process.env.GH_HOST = saved;
+  }
+});
+// The binding order: a non-empty exported GH_HOST is checked first, so one naming
+// another host yields a bare github.com slug even for a known GitHub origin.
+test('gate order: GH_HOST naming another host wins over a *.ghe.com or hosts.yml-key origin', () => {
+  assert.deepEqual(gateOriginRepo('https://acme.ghe.com/o/r.git', { ...noHosts, env: { GH_HOST: 'github.com' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+  assert.deepEqual(gateOriginRepo('https://ghes.corp.invalid/o/r.git', { ...hostsYml('ghes.corp.invalid:\n'), env: { GH_HOST: 'other.corp.invalid' } }),
+    { spec: { host: 'github.com', owner: 'o', repo: 'r' }, refusal: null });
+});
+
 // Re-review: the free-text value flags --comment, --subject, --notes and --description
 // are values too. `gh pr review --comment` is gh's one boolean --comment, so there the
 // next token is still scanned.

@@ -35,10 +35,10 @@ files:
 
 ### 3. Wrap-up verify and the pack reach the host — `plugin/bin/lib/wrap-up/engine-verify.js`, `plugin/bin/lib/wrap-up/pack.js`
 - **URL:** —
-- **Action:** `wrap-up-engine.js verify` runs its acceptance-labeling `gh api graphql -f owner=acme -f repo=widgets …` with `GH_HOST=acme.ghe.com`, and the wrap-up pack's `gh` probes do the same. Acceptance-labeling reports pass or fail instead of `unknown`.
+- **Action:** `wrap-up-engine.js verify`'s acceptance-labeling check resolves `origin` once, through the same `gateOriginRepo` gate `bin/parent-gate.js` uses, and every read it makes names that host itself: the parent lookup runs as `gh api graphql -f owner=acme -f repo=widgets … --hostname acme.ghe.com`, and the issue and PR reads pass `--repo acme.ghe.com/acme/widgets`. The wrap-up pack's `gh` probes run with `GH_HOST=acme.ghe.com`. Acceptance-labeling reports pass or fail instead of `unknown`.
 - **Should feel:** The verify table reads like it does on github.com.
-- **Should understand:** GraphQL `-f repo=…` variables are not an explicit repo, so these calls get the host. The upstream-feedback check still reads github.com, because it names its repo with an explicit bare `--repo`.
-- **Red flags:** `Could not resolve to a Repository with the name 'acme/widgets'`; acceptance-labeling `unknown` with a GHE origin.
+- **Should understand:** The pack's calls carry no explicit repo, so the seam gives them the host. Acceptance-labeling's calls already name it, so the seam steps back for them (step 2's rule), and a parent's sub-issue reads go through step 5's path (#4805). An origin host the gate refuses (not `*.ghe.com`, not a `hosts.yml` key, no exported `GH_HOST`) renders acceptance-labeling `unknown` with the refusal text, never a read against github.com (`opt-in-an-unknown-origin-host-with-gh-host-4933.md`). The upstream-feedback check still reads github.com, because it names its repo with an explicit bare `--repo`.
+- **Red flags:** `Could not resolve to a Repository with the name 'acme/widgets'`; acceptance-labeling `unknown` with a GHE origin the gate accepts; an acceptance-labeling read with no `--hostname` or host-qualified `--repo` on a GHE origin.
 
 ### 4. An explicit choice still wins — `plugin/bin/materialize.js` with `--repo`, or an exported `GH_HOST`
 - **URL:** —
@@ -60,4 +60,6 @@ files:
 - Step 5 added during build of #4806 (fetch-sub-issues.js's schema probe and GraphQL pages pass `--hostname` off github.com; parent-gate.js drops its `onHost` wrap of the fetcher), pinned by `tests/fetch-sub-issues-cli.test.js`'s #4806 test and the Enterprise-host tests in `tests/bin-lib/issues/parent-gate.test.js` and `tests/parent-gate-cli.test.js`
 - Updated during build of #4854 (an enterprise token alone admits no host; hosts compared lower-cased with trailing dots stripped): Steps 1 and 4
 - Updated during build of #4795 (one explicit `--repo` host mechanism: the pin rides each `gh` call's own env and never touches the process env, so materialize no longer restores an environment for the Premise-check command): Steps 2 and 4
+- Updated during wrap-up of #4805 (acceptance-labeling resolves its one repository through `gateOriginRepo` and names the host on each read, so the seam steps back for it): Step 3
 - Related: `open-a-run-pr-on-a-slow-gh-host-4554.md` (the same host when `gh` is slow rather than misrouted)
+- Related: `opt-in-an-unknown-origin-host-with-gh-host-4933.md` (#4933: an origin host that is not known — no `*.ghe.com`, no `hosts.yml` key, no exported `GH_HOST` — is now refused by the issue CLIs with the `GH_HOST={host}` opt-in, not sent to gh)

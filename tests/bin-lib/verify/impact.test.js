@@ -393,7 +393,7 @@ test('resolveMapPath: default, {git-common-dir}/ expansion, and a repo-relative 
 
 test('gitLocations: resolves a relative common dir against the cwd; null when git fails', () => {
   const { execImpl, calls } = fakeGit({ 'rev-parse': (args) => (args.includes('--show-toplevel') ? `${ROOT}\n` : '.git\n') });
-  assert.deepStrictEqual(gitLocations({ cwd: ROOT, execImpl }), { repoRoot: ROOT, commonDir: COMMON });
+  assert.deepStrictEqual(gitLocations({ cwd: ROOT, execImpl }), { repoRoot: ROOT, commonDir: path.resolve(ROOT, '.git') });
   for (const c of calls) {
     assert.deepStrictEqual(c.opts.stdio, ['ignore', 'pipe', 'pipe']);
     assert.strictEqual(c.opts.windowsHide, true);
