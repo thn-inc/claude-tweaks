@@ -300,6 +300,7 @@ test('#4636: a case variant of a merge-sensitive path holds (a case-insensitive 
   assert.strictEqual(r.allowed, false);
   assert.strictEqual(r.hold, true);
   assert.match(r.reason, /merge-sensitive path "Docs\/A\.md"/);
+  assert.strictEqual(permittedInitiative({ ...base(), fix: { ...base().fix, files: ['docs/a.md'] }, sensitivePaths: ['DOCS/**'] }).hold, true, 'an upper-case glob');
   assert.strictEqual(permittedInitiative({ ...base(), fix: { ...base().fix, files: ['Other/A.md'] }, sensitivePaths: ['docs/**'] }).allowed, true);
 });
 
