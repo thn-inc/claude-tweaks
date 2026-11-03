@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T085046-record-4817/work/4817-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T175949-record-4817/work/4817-spec.md`
 
 ## Global Constraints
 
@@ -16,6 +16,8 @@
 - Spec Decision (Reading A): "the marker check runs when the PR merged into a base other than the default branch, ahead of both that path's reopens and its 9b closes. Default-base post-merge reopens (step 8b, #4199) deliberately stay unproven".
 - Spec Decision (round 2, Q1, Reading A): "When `closing-links.js --mode post-merge` cannot read the PR's base (no `baseRefName`, or `gh repo view` fails — the `baseUnchecked` case), treat it like the default base: no run-marker proof, behaviour unchanged, and a test pins it."
 - Spec Decision (round 2, Q2, Reading B): "On exit 4 (run-marker mismatch), `_shared/pr-first-merge-post-merge.md` Step 4.0's closing summary names only the mismatch and the PR number, and asks for no hand close of the PR's `Fixes` records (they may belong to another run)."
+- Spec Decision (round 3, Reading A): "A post-merge exit 4 for an earlier, superseded run keeps being reported as an ordinary failure (`step40Failed`, verdict `failed`) by both the reconciler and merge mode. No new outcome word and no `post-merge.js` verdict change." The spec records it as an accepted limit. No task changes `post-merge.js` beyond its header comment.
+- Spec low findings (round 3): "add a test for the default-base path with no run marker (no proof, behaviour unchanged) and a test for a PR with no `baseRefName` (treated as default, per round 2 Q1)." Task 1 Step 1 adds both (`#4817 guard (default base, no marker)` and `#4817 guard (no baseRefName)`).
 - Governing rule, quoted verbatim from `.claude/skills/gh-api-module-pattern/cli-wrapper-contract.md` (Task 1 adds exit 4 to post-merge): "**Changing an existing CLI's exit code is a contract change — sweep every statement of the old code before calling it done.** The code lives in more places than the branch you edit: the file's header comment, a sibling module's comment that justifies its own code by analogy, `docs/`, `_shared/` prose, and this sub-file's own summaries."
 - Governing rule, quoted verbatim from the same file: "**A module that calls a CLI's `run(argv, deps)` in-process and branches on one of its exit codes imports that code from the CLI, and so does any bound it re-applies.**" `plugin/bin/lib/reconcile/post-merge.js` branches only on `EXIT_GH_FAILURE`; exit 4 already falls into its "every other exit is deterministic" arm, so only its comment changes.
 - Scope and edit discipline: "Commit tests only where the task asks for them or the repo already keeps tests for this kind of change, sized like the neighboring test files; scratch checks stay scratch. Touch only what the task requires — a pre-existing bug you notice is a follow-up to report, not a fix to fold in, unless the task cannot work without it. Don't reformat or "improve" adjacent code; edit in place rather than rewrite when the result is the same."
@@ -34,7 +36,8 @@ Waived .github/workflows/test.yml: already installs zsh on base (`10d0ae628`, #4
 1. A merged PR on a **non-default base** whose body's first line names **another run**: exit 4, no `issue reopen`, no `issue close`, no issue reads, one `/wrap-up` SKIP. (Task 1 test `#4817 AC1.1`.)
 2. The same with **no marker line**: exit 4 with `body names run none`. (Task 1 test `#4817 AC1.1 (no marker)`.)
 3. A **default-base** merged PR with a foreign marker: unchanged, still reopens a deferred record. Only the `nonDefaultBase` half of the guard decides it. (Task 1 test `#4817 guard`.)
-4. An **unreadable default branch** with a foreign marker (`baseUnchecked`): unchanged, exit 0, still reopens, `baseUnchecked: true`. A guard written `nonDefaultBase || baseUnchecked` turns it red. (Task 1 test `#4817 guard (base unchecked)`.)
+4. An **unreadable default branch** with a foreign marker (`baseUnchecked`): unchanged, exit 0, still reopens, `baseUnchecked: true`. A guard written `nonDefaultBase || baseUnchecked` turns it red. (Task 1 test `#4817 guard (base unchecked)`.) The same holds for a PR with **no `baseRefName`** (Task 1 test `#4817 guard (no baseRefName)`).
+4a. A **default-base** merged PR with **no marker line**: unchanged, exit 0, still reopens. (Task 1 test `#4817 guard (default base, no marker)`.)
 5. A stale statement elsewhere that exit 4 is pre-merge only — including `docs/plugin-structure.md`'s closing-links row, whose line does contain `closing-links`, and two that do not (`post-merge.js`, `reconcile-checks.md`). Task 1 Step 6 sweeps all of them.
 
 ---
@@ -48,7 +51,7 @@ Waived .github/workflows/test.yml: already installs zsh on base (`10d0ae628`, #4
 - Modify: `plugin/bin/closing-links.js`: header lines 50-62 (the #4549 paragraph) and 68-69, `USAGE` line 104, step 7a (lines 291-301), and a new step after line 378 (`const nonDefaultBase = …`)
 - Modify: `plugin/bin/lib/reconcile/post-merge.js:31-33` (header comment only)
 - Modify: `docs/reconcile-checks.md:666` (`exit 4 is pre-merge only`)
-- Modify: `docs/plugin-structure.md:192` (the closing-links row's `4 run-marker mismatch (pre-merge, …)` clause)
+- Modify: `docs/plugin-structure.md:194` (the closing-links row's `4 run-marker mismatch (pre-merge, …)` clause)
 - Modify: `plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.0 (lines 32-33, the `Exit\n5 or \`gh-absent\`` sentence)
 - Test: `tests/bin-lib/flow/closing-links-cli.test.js`
 - No change (behavior-change prose sweep, `grep -rln -i "non-default base\|nonDefaultBase" docs/journeys plugin/skills`): `docs/journeys/keep-a-deferred-record-open-when-its-bundle-pr-merges-4199.md:61`, `docs/journeys/keep-a-run-dir-until-every-record-its-merged-pr-left-open-ships-3503.md:62`, `docs/journeys/close-a-below-floor-decomposition-parent-4466.md:59,66,83`, `plugin/skills/init/bootstrap/step-16-non-default-branch-issue-tracking.md:44` describe a run's own PR closing its `Fixes` records on a non-default base, which still holds; none states that post-merge never exits 4.
@@ -70,7 +73,7 @@ Add an `EXIT_SITES` row right after the existing pre-merge exit-4 row (line ~127
   },
 ```
 
-Add four tests after the test `post-merge non-default: an issue view with no string state is closeFailed with stage read, never closed or counted`:
+Add six tests after the test `post-merge non-default: an issue view with no string state is closeFailed with stage read, never closed or counted`:
 
 ```js
 // ---- #4817: post-merge proves the PR is this run's before any non-default-base write ----
@@ -123,14 +126,41 @@ test('#4817 guard (base unchecked): an unreadable default branch is treated like
   assert.equal(h.closes().length, 0);
   assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
 });
+
+test('#4817 guard (default base, no marker): a default-base body with no run-marker line still reopens a deferred record — no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noMarker = body().split('\n').slice(1).join('\n');
+  const h = makeDeps(main, {
+    prReads: [mergedView(noMarker, [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.json().action, 'reopened');
+  assert.equal(h.reopens().length, 1);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
+test('#4817 guard (no baseRefName): a PR with no baseRefName is treated like the default base — a foreign body still reopens, no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], { baseRefName: undefined })],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(h.reopens().length, 1);
+  assert.equal(h.closes().length, 0);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
 ```
 
-Both `guard` tests pass before the change and must keep passing. `#4817 guard` pins the `nonDefaultBase` half: dropping that condition turns it red with exit 4. `#4817 guard (base unchecked)` pins Reading A for the unreadable base: widening the condition to `nonDefaultBase || baseUnchecked` turns it red with exit 4. The two `AC1.1` tests pin the marker half: deleting the post-merge `refuseForeignPr` call turns them red, because the run reopens #2724 and closes #3997.
+All four `guard` tests pass before the change and must keep passing. `#4817 guard` and `#4817 guard (default base, no marker)` pin the `nonDefaultBase` half: dropping that condition turns both red with exit 4. `#4817 guard (base unchecked)` and `#4817 guard (no baseRefName)` pin Reading A for the unreadable base: widening the condition to `nonDefaultBase || baseUnchecked` turns both red with exit 4. The two `AC1.1` tests pin the marker half: deleting the post-merge `refuseForeignPr` call turns them red, because the run reopens #2724 and closes #3997.
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
 Run: `node --test --test-name-pattern="4817|exit 4 run marker mismatch|characterization|AC3.1|failed SKIP append" tests/bin-lib/flow/closing-links-cli.test.js`
-Expected: FAIL after Step 1. Both `#4817 AC1.1` tests exit 0 instead of 4, and the characterization, `AC3.1` and failed-SKIP-append tests fail on the new `EXIT_SITES` row. Both `guard` tests pass.
+Expected: FAIL after Step 1. Both `#4817 AC1.1` tests exit 0 instead of 4, and the characterization, `AC3.1` and failed-SKIP-append tests fail on the new `EXIT_SITES` row. All four `guard` tests pass.
 
 - [ ] **Step 3: Implement `refuseForeignPr` and the post-merge call in `plugin/bin/closing-links.js`**
 
@@ -154,11 +184,11 @@ Run: `grep -rn -i -E "pre-merge only|4 pre-merge|run-marker mismatch \(pre-merge
 Fix each hit outside `docs/superpowers/plans/`. On base the hits are these three (two of them carry no `closing-links` token on the matched line, so a grep filtered on `closing-links` misses them):
 - `plugin/bin/lib/reconcile/post-merge.js:32-33`: `4 pre-merge\n// only)` becomes `4 run marker mismatch)`, re-wrapped to the comment's width.
 - `docs/reconcile-checks.md:666`: `exit 4 is pre-merge only.` becomes `exit 4 (run marker mismatch: pre-merge, or post-merge on a base known to be non-default) is deterministic too.`, re-wrapped to the paragraph's width.
-- `docs/plugin-structure.md:192`, the closing-links row: `4 run-marker mismatch (pre-merge, checked before any PR write, re-read or outcome line)` becomes `4 run-marker mismatch (pre-merge, checked before any PR write, re-read or outcome line; post-merge on a base known to be non-default, checked before any reopen or close — a default or unreadable base skips it)`.
+- `docs/plugin-structure.md:194`, the closing-links row: `4 run-marker mismatch (pre-merge, checked before any PR write, re-read or outcome line)` becomes `4 run-marker mismatch (pre-merge, checked before any PR write, re-read or outcome line; post-merge on a base known to be non-default, checked before any reopen or close — a default or unreadable base skips it)`.
 
 In `plugin/skills/_shared/pr-first-merge-post-merge.md` Step 4.0 (lines 32-33), replace `Exit\n5 or \`gh-absent\`: the CLI logged its own \`SKIP\` line;` with `Exit 4\n(run-marker mismatch: the PR body names another run, so nothing was reopened or closed): name the mismatch and PR #{n} in the closing summary, and ask for no hand close of its \`Fixes\` records, which may belong to that run. Exit 4, exit 5 or \`gh-absent\`: the CLI logged its own \`SKIP\` line;`. Keep the paragraph's other line breaks.
 
-Re-run the grep. Expected: outside `docs/superpowers/plans/`, no `pre-merge only` or `4 pre-merge` hit remains, and the only `run-marker mismatch (pre-merge` hits are `plugin/bin/closing-links.js:68` and `docs/plugin-structure.md:192`, each now naming the post-merge non-default-base case (`grep -c "post-merge on a base known to be non-default" docs/plugin-structure.md` prints `1`).
+Re-run the grep. Expected: outside `docs/superpowers/plans/`, no `pre-merge only` or `4 pre-merge` hit remains, and the only `run-marker mismatch (pre-merge` hits are `plugin/bin/closing-links.js:68` and `docs/plugin-structure.md:194`, each now naming the post-merge non-default-base case (`grep -c "post-merge on a base known to be non-default" docs/plugin-structure.md` prints `1`).
 
 - [ ] **Step 7: Run the suites that read these files**
 
