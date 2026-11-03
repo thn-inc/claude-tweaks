@@ -146,7 +146,7 @@ test('gather call names every flag', () => {
   const body = step4();
   for (const flag of [
     '--record', '--out', '--run', '--spec', '--report', '--stories-dir', '--story-results', '--ac-results',
-    '--base', '--head', '--links', '--surface', '--local-base-url', '--recordings',
+    '--base', '--head', '--links', '--surface', '--local-base-url',
   ]) {
     assert.ok(between(body, 'acceptance-packet.js" gather', 'Gather non-zero').includes(flag), `names ${flag}`);
   }
@@ -166,7 +166,6 @@ test('gather passes --stories-dir always, and render stops on any non-zero exit'
 });
 
 test('gather inputs resolve after cleanup', () => {
-  // The gather's own list: the screenshot routing above it names the archive path too.
   const inputs = between(step4(), 'acceptance-packet.js" gather', 'Gather non-zero');
   for (const literal of ['archive/{run-id}', 'packet-inputs', 'headRefOid', 'issue_read']) {
     assert.ok(inputs.includes(literal), `names ${literal}`);
@@ -218,7 +217,7 @@ test('ac-results shape is stated, with one example of each id kind', () => {
 
 test('Step 3 feeds gather from the same evidence sources', () => {
   const body = flat(step3());
-  for (const literal of ['`--recordings`', '`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
+  for (const literal of ['`--run`', '`--report`', '`link` input', '`cli`/`flow`']) {
     assert.ok(body.includes(literal), `names ${literal}`);
   }
 });
@@ -310,8 +309,16 @@ test('{LINKS} falls back to a command when no base URL resolves or the host woul
   assert.ok(bullet.includes('an `infra` or `backend` surface'), 'a commands-only surface refuses every url');
 });
 
+test('{LINKS} falls back to a command when a path segment is credential-shaped, since gather refuses that url', () => {
+  assertClaimGoesRed(
+    linksBullet(),
+    /or the Entry point has a credential-shaped path segment \(the bearer-segment rule, `_shared\/acceptance-packet\.md`'s `## Links and credentials`\)/,
+    'the {LINKS} fallback names a credential-shaped path segment',
+  );
+});
+
 test('--local-base-url is keyed to the plan kind as well as the surface', () => {
-  const bullet = between(gatherList(), '- `--local-base-url` —', '- `--recordings`');
+  const bullet = between(gatherList(), '- `--local-base-url` —', 'Pass no `--scope`');
   assert.ok(bullet.includes('`app-route`/`rendered-page` plans'), bullet);
   assert.ok(bullet.includes('omitted when none resolves'), bullet);
 });
@@ -335,10 +342,11 @@ test('the whole render call is pinned', () => {
   assert.ok(step4().includes('bin/acceptance-packet.js" render --facts "{FACTS}" --narrative "{NARRATIVE}" --out "{PACKET}" --dropped-out "{DROPPED}" --observation-plan "{PLAN}" --poster "{poster}"\n```'));
 });
 
-test('--recordings follows the route, not the commit', () => {
-  const bullet = gatherList().slice(gatherList().indexOf('- `--recordings` —'));
-  assert.ok(bullet.includes('only when the embeds survive the route above'), bullet);
-  assert.ok(!bullet.includes('only when screenshots were committed'), bullet);
+test('Decision 1: the procedure commits no evidence and passes no recording link', () => {
+  const doc = brief();
+  for (const gone of ['docs/demo-evidence', 'evidence-route.js', 'evidence-pr', '--recordings', '{RECORDINGS}', 'raw.githubusercontent.com']) {
+    assert.ok(!doc.includes(gone), `still names ${gone}`);
+  }
 });
 
 test('the MCP branch states the outcome of a failed label write and a failed PR-line write', () => {
@@ -371,7 +379,6 @@ test('a claim citing the Entry point link names its group', () => {
   const doc = flat(brief());
   assert.ok(!doc.includes('citing the Entry point link'), 'ambiguous with entry-point-{n}');
   assert.ok(flat(step3()).includes("citing the first group's `link:entry-point-1`"), 'the browser-unavailable note');
-  assert.ok(flat(step4()).includes("citing the first group's `link:entry-point-1`, the URL in its text"), 'the evidence PR note');
 });
 
 test('{record-file} comes from a listing that holds closed records too', () => {
@@ -384,14 +391,6 @@ test('--surface falls back to the record body, so a no-header record keeps the c
   assert.ok(bullet.includes("the materialized header's `surface:`, else the record body's `Surface:` line"), bullet);
   assert.ok(bullet.includes('omitted with neither'), bullet);
   assert.ok(!bullet.includes('omitted with no header'), bullet);
-});
-
-test('evidence screenshots are links, with no image fence left to match', () => {
-  const body = step4();
-  assert.ok(!body.includes('![{description}]'), 'the fence is the plain url');
-  assert.ok(body.includes('\nhttps://raw.githubusercontent.com/{owner}/{repo}/{commit-sha}/docs/demo-evidence/{record}/{NN}-{description}.png\n'), 'the plain url');
-  assert.ok(flat(body).includes('The packet renders it as a plain link, not an embedded image'), 'states it');
-  assert.ok(!flat(body).includes('the embedded image'), 'no embedded image left to fail');
 });
 
 test('the snapshot paragraph cites where {integration-branch} comes from', () => {
