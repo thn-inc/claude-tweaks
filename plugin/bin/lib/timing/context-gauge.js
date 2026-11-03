@@ -314,14 +314,19 @@ function resolveTargetRecords({ runDir, worktree = null, gitRoot = null, fsImpl 
   return null;
 }
 
+// The manifest's multispec.specs rows ([] when absent); an undefined `manifest` reads {runDir}/manifest.yml.
+function manifestSpecs(runDir, manifest) {
+  const m = manifest === undefined ? readManifest(runDir) : manifest;
+  return m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs : [];
+}
+
 // (runDir, { manifest? }) -> ['#N', ...] in manifest.yml's order | null when the
 // file is absent or lists none. Unlike resolveTargetRecords this ignores the
 // spec-{N}/ dirs: a per-record handoff names every record of the run, and a
 // later spec has no dir until its turn comes. `manifest` is the parsed manifest
 // (readManifest's shape); undefined reads {runDir}/manifest.yml.
 function manifestRecords(runDir, { manifest } = {}) {
-  const m = manifest === undefined ? readManifest(runDir) : manifest;
-  const specs = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs : [];
+  const specs = manifestSpecs(runDir, manifest);
   return specs.length ? [...new Set(specs.map((s) => `#${s.id}`))] : null;
 }
 
@@ -335,8 +340,7 @@ const SETTLED_STATUSES = new Set(['complete', 'failed', 'not-run']);
 // to refuse a --record-steps value that hands a settled record a step: a resume re-running a
 // completed step is the failure the per-record form exists to prevent (#4358 AC1).
 function settledRecords(runDir, { manifest } = {}) {
-  const m = manifest === undefined ? readManifest(runDir) : manifest;
-  const specs = m && m.multispec && Array.isArray(m.multispec.specs) ? m.multispec.specs : [];
+  const specs = manifestSpecs(runDir, manifest);
   return specs.length ? [...new Set(specs.filter((s) => SETTLED_STATUSES.has(s.status)).map((s) => `#${s.id}`))] : null;
 }
 

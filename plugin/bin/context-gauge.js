@@ -220,7 +220,8 @@ async function measure({ runDir, runId, cwd, cap, nextSteps, parsedRecordSteps =
       const settled = deps.settledRecords(runDir) || [];
       const rerun = named.filter((r) => settled.includes(r) && parsedRecordSteps.recordSteps[r].length > 0);
       if (rerun.length) {
-        return done(`handoff.json not written: --record-steps gives steps to ${rerun.join(', ')} but manifest.yml marks ${rerun.length === 1 ? 'it' : 'them'} complete, failed or not-run (write ${rerun.length === 1 ? 'it' : 'them'} as none): continue in place`);
+        const pronoun = rerun.length === 1 ? 'it' : 'them';
+        return done(`handoff.json not written: --record-steps gives steps to ${rerun.join(', ')} but manifest.yml marks ${pronoun} complete, failed or not-run (write ${pronoun} as none): continue in place`);
       }
       targets = listed;
       recordSteps = Object.fromEntries(listed.map((r) => [r, parsedRecordSteps.recordSteps[r]]));
