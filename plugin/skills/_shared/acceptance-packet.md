@@ -20,7 +20,7 @@ it lands, the section's empty line stands in.
 4. **Couldn't test** — placed rows and moved claims. Empty: `not applicable: every expected check ran`.
 5. **Tried to break** — kept claims, moved claims and placed rows. Empty: `not applicable: no negative stories or failures ran`.
 6. **Least confident** — claims citing `finding` facts. Empty: `not applicable: no low-confidence review findings`.
-7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Empty: `not applicable: no kept risk flags`.
+7. **Risk proofs** — owner: the risk-flag record. This section always renders, its placeholder standing in when no risk flag was kept (Decision Q10). Lists kept proofs, then `planned, not verified` lines, then `- {slug}: no proof shown` for a kept flag no surviving claim cites (a note, never omitted), with `(flag unconfirmed)` after any line citing an unconfirmed flag. Empty: `not applicable: no kept risk flags`.
 8. **Decisions left for you** — owner: the control-mode records. One line per `decision` fact, omitted when empty, heading included.
 9. **Deploy status** — owner: the dev-target record. The deploy fact's text. With no deploy record: `target: local`.
 
@@ -88,7 +88,7 @@ negative stories and failures only, and a routine pass never renders there.
 
 **The facts document** is `{ schemaVersion, record, surface, allowedHosts, partial[], refused[], facts[] }`.
 A fact is `{ id, kind, status, reason?, source }` plus the optional render fields `text`, `url`,
-`command`, `label`, `negative`, `live` and `target`.
+`command`, `label`, `negative`, `live` and `target`, plus `unconfirmed` on a `flag` fact (carried only when `true`).
 
 **Fact kinds:** `change`, `check`, `story`, `finding`, `link`, `recording`, `flag`, `decision`, `deploy`, `proof`.
 
@@ -199,7 +199,8 @@ copied from the facts file and inventing none.
 
 The snapshot exists because the verify and QA reports are not in the run dir, and Step 4 can run after
 the worktree holding them is gone. It copies them, the QA pass stamp, `head` and `mergeBase` to
-`{run-dir}/packet-inputs/` under a `manifest.json`; it is an input to gather, never a packet copy any
+`{run-dir}/packet-inputs/` under a `manifest.json` and, given `--plan`, the run's plan, which
+`risk-flags.js facts` reads at Step 4 for the `--proofs` input; it is an input to gather, never a packet copy any
 reader consults. The working copy lives in session temp and is never read after the run: the facts,
 narrative, rendered markdown and dropped list are session-temp paths (`_shared/session-tmp-root.md`)
 passed to the CLI.
