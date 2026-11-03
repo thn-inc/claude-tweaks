@@ -9,6 +9,7 @@ const { run } = require('../plugin/bin/risk-flags');
 const record = require('../plugin/bin/lib/issues/record');
 const { parseRiskFlags } = record;
 const { gitRepo } = require('./helpers/git-fixtures');
+const { readRiskPolicy } = require('../plugin/bin/lib/issues/risk-flag-classify');
 
 // #4618 Task 4: bin/risk-flags.js classify | settle | confirm, in-process over tmp files.
 const BIN = path.join(__dirname, '..', 'plugin', 'bin', 'risk-flags.js');
@@ -563,4 +564,167 @@ test('a real spawn of the bin returns the JSON envelope on stdout and honours th
 
   const missing = spawnSync(process.execPath, [BIN, 'classify', '--body-file', path.join(TMP, 'absent.md')], { encoding: 'utf8', windowsHide: true });
   assert.strictEqual(missing.status, 1);
+});
+
+// ── facts: the producer of the packet gather's --flags and --proofs inputs ──
+const FACTS_SPEC = 'Surface: infra\nRisk-flags: auth\nRisk-flags-unconfirmed: true\n\n## Acceptance Criteria\n\n1. x\n';
+const FACTS_PLAN = '### Task 1: x\n\n- [ ] **Step 1: y**\n\nProof(auth): An unauthenticated request to the route still returns 401.\n';
+function factsOutputs() {
+  const dir = fs.mkdtempSync(path.join(TMP, 'facts-'));
+  return { dir, flags: path.join(dir, 'flags.json'), proofs: path.join(dir, 'proofs.json') };
+}
+const factsArgv = (spec, o, extra = []) => ['facts', '--spec-file', spec, '--flags-out', o.flags, '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT, ...extra];
+const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+
+test('facts writes both files and prints the counts', () => {
+  const o = factsOutputs();
+  const r = exec(factsArgv(rawFile(FACTS_SPEC), o, ['--plan-file', rawFile(FACTS_PLAN)]));
+  assert.strictEqual(r.code, 0);
+  assert.deepStrictEqual(r.out, { status: 'ok', flags: 1, proofs: 1, plan: 'read' });
+  assert.deepStrictEqual(readJson(o.flags), [{ id: 'auth', unconfirmed: true }]);
+  assert.deepStrictEqual(readJson(o.proofs), [{ id: 'auth', text: 'An unauthenticated request to the route still returns 401.' }]);
+  assert.strictEqual(r.stdout.trim().split('\n').length, 1);
+});
+
+test('facts with no --plan-file, or a plan file that is gone, is plan absent with no proofs', () => {
+  for (const extra of [[], ['--plan-file', path.join(TMP, 'no-such-plan.md')], ['--plan-file', path.join(rawFile('x'), 'under')]]) {
+    const o = factsOutputs();
+    const r = exec(factsArgv(rawFile(FACTS_SPEC), o, extra));
+    assert.strictEqual(r.code, 0, extra.join(' '));
+    assert.deepStrictEqual(r.out, { status: 'ok', flags: 1, proofs: 0, plan: 'absent' }, extra.join(' '));
+    assert.deepStrictEqual(readJson(o.proofs), []);
+    assert.deepStrictEqual(readJson(o.flags), [{ id: 'auth', unconfirmed: true }]);
+  }
+});
+
+test('facts on an unclassified or clean record writes two empty lists', () => {
+  for (const spec of ['Surface: x\n', 'Risk-flags: none\n']) {
+    const o = factsOutputs();
+    const r = exec(factsArgv(rawFile(spec), o));
+    assert.deepStrictEqual([r.code, r.out.flags, r.out.proofs], [0, 0, 0], spec);
+    assert.deepStrictEqual([readJson(o.flags), readJson(o.proofs)], [[], []], spec);
+  }
+});
+
+test('facts on an unreadable flag line writes the widened set, each entry saying so', () => {
+  const o = factsOutputs();
+  const r = exec(factsArgv(rawFile('Risk-flags: Bad\n'), o));
+  assert.deepStrictEqual([r.code, r.out.status, r.out.flags], [0, 'unknown', 4]);
+  assert.ok(readJson(o.flags).every((f) => f.text === 'unreadable flag line'));
+});
+
+test('facts reads policy extras as classify does', () => {
+  const o = factsOutputs();
+  const root = repoWithPolicy('control-mode: on\nrisk-categories: pii\n');
+  const r = exec(['facts', '--spec-file', rawFile('Risk-flags: pii\n'), '--flags-out', o.flags, '--proofs-out', o.proofs, '--repo-root', root]);
+  assert.deepStrictEqual([r.code, r.out.status], [0, 'ok']);
+  assert.deepStrictEqual(readJson(o.flags), [{ id: 'pii' }]);
+});
+
+test('facts with an unreadable spec exits 1 and removes an earlier output', () => {
+  const o = factsOutputs();
+  fs.writeFileSync(o.flags, '[]');
+  fs.writeFileSync(o.proofs, '[]');
+  const r = exec(factsArgv(path.join(TMP, 'absent-spec.md'), o));
+  assert.strictEqual(r.code, 1);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /spec-unreadable/);
+  assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
+});
+
+test('facts with a plan that fails to read for another reason exits 1 and removes both outputs', () => {
+  const o = factsOutputs();
+  fs.writeFileSync(o.flags, '[]');
+  fs.writeFileSync(o.proofs, '[]');
+  const plan = rawFile(FACTS_PLAN);
+  const r = exec(factsArgv(rawFile(FACTS_SPEC), o, ['--plan-file', plan]), {
+    readFile: (file) => {
+      if (file === plan) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+      return fs.readFileSync(file, 'utf8');
+    },
+  });
+  assert.strictEqual(r.code, 1);
+  assert.match(r.stderr, /plan-unreadable.*EACCES/);
+  assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
+});
+
+test('facts with an unreadable policy exits 2 and writes no empty flag list', () => {
+  const o = factsOutputs();
+  fs.writeFileSync(o.flags, '[{"id":"stale"}]');
+  const readFile = (file) => {
+    if (String(file).endsWith('policy.yml')) throw Object.assign(new Error('denied'), { code: 'EACCES' });
+    return fs.readFileSync(file, 'utf8');
+  };
+  const policy = (repoRoot) => readRiskPolicy(repoRoot, { readFile });
+  const r = exec(factsArgv(rawFile(FACTS_SPEC), o), { policy });
+  assert.strictEqual(r.code, 2);
+  assert.strictEqual(r.stdout, '');
+  assert.match(r.stderr, /policy-unreadable.*EACCES/);
+  assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
+});
+
+test('facts with a missing output flag exits 2 and removes a named output', () => {
+  const o = factsOutputs();
+  fs.writeFileSync(o.flags, '[]');
+  const noProofs = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--flags-out', o.flags, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(noProofs.code, 2);
+  assert.match(noProofs.stderr, /--proofs-out/);
+  assert.strictEqual(fs.existsSync(o.flags), false);
+  const noFlags = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(noFlags.code, 2);
+  assert.match(noFlags.stderr, /--flags-out/);
+  const noSpec = exec(['facts', '--flags-out', o.flags, '--proofs-out', o.proofs]);
+  assert.strictEqual(noSpec.code, 2);
+  assert.match(noSpec.stderr, /--spec-file/);
+});
+
+test('facts refuses a flag it does not own and a flag-shaped value', () => {
+  const o = factsOutputs();
+  assert.strictEqual(exec(factsArgv(rawFile(FACTS_SPEC), o, ['--body-file', rawFile('x')])).code, 2);
+  assert.strictEqual(exec(factsArgv(rawFile(FACTS_SPEC), o, ['--headless'])).code, 2);
+  assert.strictEqual(exec(['facts', '--spec-file', '--flags-out', o.flags, '--proofs-out', o.proofs]).code, 2);
+  assert.strictEqual(exec(factsArgv(rawFile(FACTS_SPEC), o, ['--plan-file', rawFile('x'), '--plan-file', rawFile('y')])).code, 2);
+  const sameFile = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--flags-out', o.flags, '--proofs-out', o.flags]);
+  assert.strictEqual(sameFile.code, 2);
+});
+
+test('the other verbs refuse the facts flags', () => {
+  const f = rawFile(SPEC_WITH_MIGRATIONS_PATH);
+  for (const flag of ['--spec-file', '--plan-file', '--flags-out', '--proofs-out']) {
+    const r = exec(['classify', '--body-file', f, flag, f]);
+    assert.strictEqual(r.code, 2, flag);
+    assert.match(r.stderr, /not valid for classify/, flag);
+  }
+});
+
+test('facts with an unwritable output exits 3 and leaves neither output', () => {
+  const o = factsOutputs();
+  const missingDir = path.join(o.dir, 'no-such-dir');
+  const unwritableFlags = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--flags-out', path.join(missingDir, 'flags.json'), '--proofs-out', o.proofs, '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(unwritableFlags.code, 3);
+  assert.match(unwritableFlags.stderr, /output-unwritable/);
+  assert.strictEqual(fs.existsSync(o.proofs), false);
+  const unwritableProofs = exec(['facts', '--spec-file', rawFile(FACTS_SPEC), '--flags-out', o.flags, '--proofs-out', path.join(missingDir, 'proofs.json'), '--repo-root', NO_POLICY_ROOT]);
+  assert.strictEqual(unwritableProofs.code, 3);
+  assert.strictEqual(fs.existsSync(o.flags), false, 'the flags file written before the failure is removed');
+});
+
+test('facts never touches the body-writing seam and the other verbs still print their envelope unchanged', () => {
+  const o = factsOutputs();
+  const written = [];
+  const r = exec(factsArgv(rawFile(FACTS_SPEC), o), { writeFile: (file, content) => { written.push(file); fs.writeFileSync(file, content); } });
+  assert.strictEqual(r.code, 0);
+  assert.deepStrictEqual(written.sort(), [o.flags, o.proofs].sort());
+  assert.deepStrictEqual(Object.keys(classify(SPEC_WITH_MIGRATIONS_PATH).out), ['flags', 'kept', 'entry', 'missingSections', 'controlMode', 'extraCategories', 'globsInvalid', 'known']);
+});
+
+test('a real spawn of facts honours the exit codes and the stale-output removal', () => {
+  const o = factsOutputs();
+  const spec = rawFile(FACTS_SPEC);
+  const ok = spawnSync(process.execPath, [BIN, ...factsArgv(spec, o)], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(ok.status, 0);
+  assert.deepStrictEqual(JSON.parse(ok.stdout), { status: 'ok', flags: 1, proofs: 0, plan: 'absent' });
+  const bad = spawnSync(process.execPath, [BIN, ...factsArgv(path.join(TMP, 'absent-spec.md'), o)], { encoding: 'utf8', windowsHide: true });
+  assert.strictEqual(bad.status, 1);
+  assert.deepStrictEqual([fs.existsSync(o.flags), fs.existsSync(o.proofs)], [false, false]);
 });

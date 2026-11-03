@@ -7,6 +7,7 @@
 //   node bin/risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]
 //   node bin/risk-flags.js settle   --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]
 //   node bin/risk-flags.js confirm  --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]
+//   node bin/risk-flags.js facts    --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]
 //
 // classify  Writes nothing. Prints { flags, kept, entry, missingSections, controlMode,
 //           extraCategories, globsInvalid, known }: `flags` is the classifier floor only
@@ -40,11 +41,21 @@
 // takes the Reading A path too: status `unknown`, nothing applied, marker kept or written,
 // and `refused.reason` is the error's own, else what the line reads, else null.
 //
+// facts     Writes nothing to the record. Reads --spec-file's flag line (and --plan-file's
+//           Proof lines) and writes the two JSON arrays the packet gather takes as `--flags`
+//           and `--proofs` (lib/issues/risk-flag-facts.js), then prints { status, flags,
+//           proofs, plan } — the counts, and `plan` 'read' or 'absent' (no --plan-file, or a
+//           file that is gone). The producer never leaves an empty list behind a failure: on
+//           every non-zero exit both outputs are removed if present, so the gather states
+//           "--flags input not read — treated as absent" instead of reading a stale or empty
+//           file as "no flags".
+//
 // Exit codes (Payload-1/Invocation-2 as qa-report.js, plus 2 for an unreadable policy):
 //   0  done, including an answer refused or left unanswered
-//   1  --body-file or --prior-body-file unreadable
+//   1  --body-file or --prior-body-file unreadable (facts: --spec-file, or a --plan-file
+//      that fails to read for a reason other than being absent)
 //   2  malformed invocation, or the policy (.claude-tweaks/policy.yml) unreadable or invalid
-//   3  --body-file could not be written
+//   3  a named output file could not be written (--body-file; facts: --flags-out or --proofs-out)
 // --run is a best-effort audit line and is anchored by log-decision.js; it is not an input.
 // The body write is an atomic overwrite with no lock: one shaping run owns its body file.
 'use strict';
@@ -57,13 +68,16 @@ const { classifyRiskFlags, readRiskPolicy } = require('./lib/issues/risk-flag-cl
 const { BUILTIN_RISK_CATEGORIES, LIST_ELEMENT_PATTERNS } = require('./lib/policy-schema');
 const { writeFileAtomic } = require('./lib/atomic-write');
 const logDecision = require('./log-decision');
+const { riskFlagEntries } = require('./lib/issues/risk-flag-facts');
 
 const USAGE = 'usage: risk-flags.js classify --body-file <f> [--prior-body-file <f>] [--add a,b] [--repo-root <dir>]\n'
   + '       risk-flags.js settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]\n'
   + '       risk-flags.js confirm --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]\n'
+  + '       risk-flags.js facts --spec-file <f> [--plan-file <f>] --flags-out <f> --proofs-out <f> [--repo-root <dir>]\n'
   + '  answers file: JSON object { "<slug>": "keep" | "remove" }\n'
-  + '  exit 0 done (a refused or unanswered flag is still 0: the fail direction is keep), 1 body or prior-body file unreadable,\n'
-  + '       2 malformed invocation or unreadable policy, 3 --body-file unwritable\n';
+  + '  exit 0 done (a refused or unanswered flag is still 0: the fail direction is keep), 1 body, prior-body or spec file unreadable,\n'
+  + '       2 malformed invocation or unreadable policy, 3 a named output file (--body-file, --flags-out, --proofs-out) unwritable\n'
+  + '  facts removes both outputs on every non-zero exit\n';
 
 const FLAG_KEYS = {
   '--body-file': 'bodyFile',
@@ -73,11 +87,16 @@ const FLAG_KEYS = {
   '--run': 'run',
   '--repo-root': 'repoRoot',
   '--headless': 'headless',
+  '--spec-file': 'specFile',
+  '--plan-file': 'planFile',
+  '--flags-out': 'flagsOut',
+  '--proofs-out': 'proofsOut',
 };
 const VERB_FLAGS = {
   classify: ['--body-file', '--prior-body-file', '--add', '--repo-root'],
   settle: ['--body-file', '--prior-body-file', '--add', '--headless', '--answers-file', '--run', '--repo-root'],
   confirm: ['--body-file', '--answers-file', '--run', '--repo-root'],
+  facts: ['--spec-file', '--plan-file', '--flags-out', '--proofs-out', '--repo-root'],
 };
 
 // -> { help } | { error } | the parsed options. Every value flag is validated here: a
@@ -85,9 +104,12 @@ const VERB_FLAGS = {
 function parseArgs(argv) {
   const [verb, ...rest] = argv;
   if (verb === '--help' || verb === '-h') return { help: true };
-  if (verb === undefined) return { error: 'a verb is required: classify, settle or confirm' };
+  if (verb === undefined) return { error: 'a verb is required: classify, settle, confirm or facts' };
   if (!Object.hasOwn(VERB_FLAGS, verb)) return { error: `unknown verb: ${verb}` };
-  const o = { verb, bodyFile: null, priorBodyFile: null, add: null, answersFile: null, run: null, repoRoot: null, headless: false };
+  const o = {
+    verb, bodyFile: null, priorBodyFile: null, add: null, answersFile: null, run: null, repoRoot: null, headless: false,
+    specFile: null, planFile: null, flagsOut: null, proofsOut: null,
+  };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === '--help' || a === '-h') return { help: true };
@@ -104,6 +126,13 @@ function parseArgs(argv) {
     if (o[key] !== null) return { error: `${a} given more than once` };
     o[key] = v;
   }
+  if (verb === 'facts') {
+    for (const [flag, key] of [['--spec-file', 'specFile'], ['--flags-out', 'flagsOut'], ['--proofs-out', 'proofsOut']]) {
+      if (o[key] === null) return { error: `${flag} <path> is required` };
+    }
+    if (o.flagsOut === o.proofsOut) return { error: '--flags-out and --proofs-out must name different files' };
+    return o;
+  }
   if (o.bodyFile === null) return { error: '--body-file <path> is required' };
   if (verb === 'settle' && o.headless === (o.answersFile !== null)) return { error: 'settle needs exactly one of --headless and --answers-file <path>' };
   if (verb === 'confirm' && o.answersFile === null) return { error: 'confirm needs --answers-file <path>' };
@@ -119,6 +148,7 @@ const realDeps = {
   stderr: (s) => process.stderr.write(s),
   readFile: (p) => fs.readFileSync(p, 'utf8'),
   writeFile: (p, content) => writeFileAtomic(p, content),
+  removeFile: (p) => fs.unlinkSync(p),
   cwd: () => process.cwd(),
   now: () => Date.now(),
   mainRoot: undefined,
@@ -304,11 +334,64 @@ function resolveRepoRoot(o, deps) {
   return cwd;
 }
 
+// A file already gone is the goal; any other failure is stated, because the file is still there.
+function removeOutput(deps, file) {
+  try {
+    deps.removeFile(file);
+  } catch (err) {
+    if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) deps.stderr(`risk-flags.js: could not remove ${file} (${errMsg(err)})\n`);
+  }
+}
+
+// argv of a rejected `facts` -> the outputs it named, so a usage error still takes away what an
+// earlier run left (the parse stopped before an options object existed). A flag-shaped value
+// is not a path.
+function namedOutputs(argv) {
+  const out = [];
+  argv.forEach((arg, i) => {
+    const value = argv[i + 1];
+    if ((arg === '--flags-out' || arg === '--proofs-out') && typeof value === 'string' && value.trim() && !value.startsWith('--')) out.push(value);
+  });
+  return [...new Set(out)];
+}
+
+// The facts verb: spec (+ plan) -> the two JSON arrays the packet gather reads. Exit codes as
+// the header; the caller removes both outputs on any non-zero return.
+function factsVerb(o, deps, read) {
+  const fail = (code, reason) => { deps.stderr(`risk-flags.js: ${reason}\n`); return code; };
+  let specText;
+  try { specText = read(o.specFile); } catch (err) { return fail(1, `spec-unreadable: ${o.specFile} (${errMsg(err)})`); }
+  let planText = null;
+  if (o.planFile !== null) {
+    try {
+      planText = read(o.planFile);
+    } catch (err) {
+      // A plan that is not there yet is the ordinary case; any other failure is not a plan to ignore.
+      if (!(err && (err.code === 'ENOENT' || err.code === 'ENOTDIR'))) return fail(1, `plan-unreadable: ${o.planFile} (${errMsg(err)})`);
+    }
+  }
+  let repoRoot;
+  try { repoRoot = resolveRepoRoot(o, deps); } catch (err) { return fail(2, `repo-root-unresolvable: (${errMsg(err)})`); }
+  let policy;
+  try { policy = deps.policy(repoRoot); } catch (err) { return fail(2, `policy-unreadable: ${repoRoot} (${errMsg(err)})`); }
+
+  const { status, flags, proofs } = riskFlagEntries(specText, planText, { extraCategories: policy.extraCategories });
+  for (const [file, entries] of [[o.flagsOut, flags], [o.proofsOut, proofs]]) {
+    try { deps.writeFile(file, `${JSON.stringify(entries)}\n`); } catch (err) { return fail(3, `output-unwritable: ${file} (${errMsg(err)})`); }
+  }
+  deps.stdout(`${JSON.stringify({ status, flags: flags.length, proofs: proofs.length, plan: planText === null ? 'absent' : 'read' })}\n`);
+  return 0;
+}
+
 function run(argv, overrides = {}) {
   const deps = { ...realDeps, ...overrides };
   const o = parseArgs(argv);
   if (o.help) { deps.stdout(USAGE); return 0; }
-  if (o.error) { deps.stderr(`risk-flags.js: ${o.error}\n${USAGE}`); return 2; }
+  if (o.error) {
+    deps.stderr(`risk-flags.js: ${o.error}\n${USAGE}`);
+    if (argv[0] === 'facts') namedOutputs(argv).forEach((file) => removeOutput(deps, file));
+    return 2;
+  }
   const fail = (code, reason) => { deps.stderr(`risk-flags.js: ${reason}\n`); return code; };
   const warn = (message) => deps.stderr(`risk-flags.js: ${message}\n`);
 
@@ -317,6 +400,11 @@ function run(argv, overrides = {}) {
     if (typeof text !== 'string') throw new TypeError('not text');
     return text;
   };
+  if (o.verb === 'facts') {
+    const code = factsVerb(o, deps, read);
+    if (code !== 0) [o.flagsOut, o.proofsOut].forEach((file) => removeOutput(deps, file));
+    return code;
+  }
   let body;
   try { body = read(o.bodyFile); } catch (err) { return fail(1, `body-unreadable: ${o.bodyFile} (${errMsg(err)})`); }
   let priorBody = null;
