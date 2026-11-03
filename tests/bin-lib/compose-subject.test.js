@@ -850,7 +850,17 @@ test('exit 1: a Release Note hidden by an unclosed fence is named as the fence, 
 test('exit 1: a Breaking Change hidden by an unclosed fence is named as the fence (#4350)', () => {
   const { deps, out } = fakeDeps();
   assert.equal(run(['2281'], deps), 1);
-  assert.match(out.stderr, /^compose-subject\.js: breaking is set on #2281 \(unclosed-fence at line 5\) but an unclosed code fence hides the "## Breaking Change" section — close the fence\n/);
+  assert.equal(out.stderr, 'compose-subject.js: breaking is set on #2281 (unclosed-fence at line 5) but an unclosed code fence hides the "## Breaking Change" section — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a bundle with both a missing and a hidden Release Note prints both lines, missing first (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280,2290'], deps), 1);
+  assert.equal(out.stderr,
+    'compose-subject.js: record(s) #2290 carry no non-empty "## Release Note" section\n'
+    + 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
 });
 
 test('exit 1: an unclosed fence with no Release Note heading behind it keeps the missing-section message (#4350)', () => {

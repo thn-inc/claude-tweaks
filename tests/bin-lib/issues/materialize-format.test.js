@@ -691,7 +691,16 @@ test('shapeGate: a section absent beside a hidden one stays missing by name (#43
   assert.deepEqual(shapeGate(HIDDEN.replace('\n\n## Release Note\nn', '')), { ok: false, missing: ['Release Note', 'unclosed-fence at line 4'] });
 });
 
-const NO_RN_TRAILING_FENCE = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
+test('shapeGate: the fence entry sits before unresolved-placeholder (#4350)', () => {
+  assert.deepEqual(shapeGate(HIDDEN.replace('\nx\n', '\nTODO x\n')), { ok: false, missing: ['unclosed-fence at line 4', 'unresolved-placeholder'] });
+});
+
+test('shapeGate: a section hidden by a fence inside the verbatim Original request stays missing by name (#4350)', () => {
+  const body = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed\n## Release Note\nn';
+  assert.deepEqual(shapeGate(body), { ok: false, missing: ['Release Note'] });
+});
+
+const NO_RN_TRAILING_FENCE ='## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
 
 test('shapeGate: a gate that already fails also names an unterminated fence that hides nothing required (#4350 answer 6)', () => {
   assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });

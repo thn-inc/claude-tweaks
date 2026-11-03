@@ -96,27 +96,30 @@ const UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line ';
 // section present and non-empty, no TBD/TODO/<!-- ambiguity: marker anywhere
 // outside the verbatim-preserved `## Original request` section. Between the two
 // sits at most one `unclosed-fence at line N` entry (#4350), pushed when an
-// unclosed fence hides a required section (that section is not also named
-// missing), or, failing that, when a required section is already missing or
-// empty and the authored region holds an unterminated fence (even one hiding
-// nothing required). The verdict (ok) is never changed by it.
+// unclosed fence in the authored region hides a required section (that section
+// is not also named missing), or, failing that, when a required section is
+// already missing or empty and the authored region holds an unterminated fence
+// (even one hiding nothing required). The verdict (ok) is never changed by it.
 function shapeGate(body) {
   const text = typeof body === 'string' ? body : '';
   const missing = [];
   const originalRequestAt = text.search(ORIGINAL_REQUEST_RE);
   const authored = originalRequestAt === -1 ? text : text.slice(0, originalRequestAt);
+  const authoredLines = authored.replace(/\r\n/g, '\n').split('\n');
   let fenceLine = null;
   for (const heading of REQUIRED_SECTIONS) {
     const name = heading.replace('## ', '');
     const section = sectionText(text, name);
     if (section === null) {
       const hiddenAt = hiddenByUnclosedFence(text, name, SECTION_OPTIONS);
-      if (hiddenAt === null) missing.push(name);
+      // An opener inside the verbatim Original request is text no author may edit: the
+      // section stays missing by name, not credited to a fence the author cannot close.
+      if (hiddenAt === null || hiddenAt > authoredLines.length) missing.push(name);
       else if (fenceLine === null) fenceLine = hiddenAt;
     } else if (section.length === 0) missing.push(name);
   }
   if (fenceLine === null && missing.length) {
-    const opener = unclosedFenceLine(authored.replace(/\r\n/g, '\n').split('\n'));
+    const opener = unclosedFenceLine(authoredLines);
     if (opener !== -1) fenceLine = opener + 1;
   }
   if (fenceLine !== null) missing.push(`${UNCLOSED_FENCE_PREFIX}${fenceLine}`);
