@@ -158,6 +158,23 @@ test('plugin-root-placeholder substitutes the injected root and skips when the c
   assert.strictEqual(rw('node "${CLAUDE_PLUGIN_ROOT}/../plugin-root/bin/x.js"'), null, 'a parent segment');
 });
 
+// The two declines above end on `/x.js`, which is not under bin/, so shippedUnder alone
+// would earn them. These end on a shipped bin/ file: only hasBareUse (or the shell-word
+// checks) can decline them.
+test('plugin-root-placeholder declines a command that binds the name itself, on a shipped bin/ path', () => {
+  for (const command of [
+    'export CLAUDE_PLUGIN_ROOT="$X"; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'unset CLAUDE_PLUGIN_ROOT; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'read CLAUDE_PLUGIN_ROOT < f; node "$CLAUDE_PLUGIN_ROOT/bin/x.js"',
+    'for CLAUDE_PLUGIN_ROOT in a; do node "$CLAUDE_PLUGIN_ROOT/bin/x.js"; done',
+  ]) assert.strictEqual(rw(command), null, command);
+});
+
+test('plugin-root-placeholder declines a backtick or an ANSI-C quote: inDoubt', () => {
+  assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js" `id`'), null, 'a backtick');
+  assert.strictEqual(rw('node "$CLAUDE_PLUGIN_ROOT/bin/x.js" $\'a\''), null, 'ANSI-C quoting');
+});
+
 test('AC2.1, AC2.2: plugin-root-placeholder inlines a win32 root forward-slashed and lstats the native join', () => {
   const w = win32();
   assert.deepStrictEqual(rewriteForGuard({ command: 'node "${CLAUDE_PLUGIN_ROOT}/bin/x.js" a', ...w.opts }),
@@ -324,7 +341,8 @@ test('quote-escaped-space double-quotes ls /a/Code\\ Workspaces/b', () => {
 
 test('drop-redundant-cd drops cd "<cwd>" && only when it resolves to cwd', () => {
   assert.deepStrictEqual(rw(`cd "${CWD}" && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] });
-  assert.deepStrictEqual(rw(`cd ${CWD}/ && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] });
+  assert.deepStrictEqual(rw(`cd '${CWD}/' && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] });
+  assert.deepStrictEqual(rw(`cd "${CWD}/" && ls x`), { command: 'ls x', applied: ['drop-redundant-cd'] });
   assert.strictEqual(rw(`cd "${SANDBOX}" && ls x`), null, 'a different directory');
   assert.strictEqual(rw(`cd "${CWD}"; ls x`), null, 'only && is dropped');
   assert.strictEqual(rw(`ls && cd "${CWD}" && ls x`), null, 'only the first segment');
@@ -339,6 +357,24 @@ test('drop-redundant-cd drops cd "<cwd>" && only when it resolves to cwd', () =>
   assert.strictEqual(rw(`cd "${link}" && pwd`), null, 'a symlinked spelling changes PWD');
   const gone = path.join(SANDBOX, 'gone');
   assert.strictEqual(rw(`cd "${gone}" && ls`, { cwd: gone }), null, 'an unresolvable cwd');
+});
+
+test('AC2.3, AC2.4: drop-redundant-cd under path.win32', () => {
+  const run = (command, extra) => rewriteForGuard({ command, ...win32({ opts: extra }).opts });
+  assert.deepStrictEqual(run('cd "D:\\w\\cwd" && ls x'), { command: 'ls x', applied: ['drop-redundant-cd'] });
+  assert.strictEqual(run('cd D:\\w\\cwd && ls x'), null, 'bash strips an unquoted backslash');
+  assert.strictEqual(run('cd "D:\\w\\$X" && ls x'), null, 'a backslash before $');
+  assert.strictEqual(run('cd "D:\\w\\cwd\\" && ls x'), null, 'a trailing backslash escapes the quote');
+  assert.strictEqual(run('cd "D:\\w\\other" && ls x'), null, 'a different directory');
+  assert.strictEqual(run('cd "E:\\w\\cwd" && ls x'), null, 'another drive');
+  assert.deepStrictEqual(rewriteForGuard({ command: 'cd /w/cwd/ && ls x', cwd: '/w/cwd', pluginRoot: ROOT, pathImpl: path.posix, deps: { isLinkedWorktree: () => true, canonicalRealpath: (p) => path.posix.resolve(p) } }), { command: 'ls x', applied: ['drop-redundant-cd'] }, 'an unquoted target with no backslash');
+});
+
+test('drop-redundant-cd under path.win32 keeps comparing exact spellings: the three residual declines', () => {
+  const run = (command) => rewriteForGuard({ command, ...win32().opts });
+  assert.strictEqual(run('cd "D:/w/cwd" && ls x'), null, 'residual: a forward-slashed spelling of the cwd');
+  assert.strictEqual(run('cd "/d/w/cwd" && ls x'), null, 'residual: a Git Bash /d/ spelling of the cwd');
+  assert.strictEqual(run('cd "d:\\w\\cwd" && ls x'), null, 'residual: a re-cased drive');
 });
 
 test('returns null outside a linked worktree', () => {
@@ -359,7 +395,7 @@ test('returns null outside a linked worktree', () => {
 // (tests/wall-clock-budget-conformance.test.js), and catastrophic backtracking on the
 // 60 KB inputs below would run for minutes, not milliseconds.
 test('returns null and does not throw on a malformed command', { timeout: 60000 }, () => {
-  for (const command of [undefined, null, 42, {}, '', '"', "'", '$(', '${', '\\', 'P=', 'cd', 'node -e', `${'$('.repeat(5000)}`, `P=/x; ${'"$P'.repeat(20000)}`, `${'a\\ '.repeat(50000)}`]) {
+  for (const command of [undefined, null, 42, {}, '', '"', "'", '$(', '${', '\\', 'P=', 'cd', 'node -e', `${'$('.repeat(5000)}`, `P=/x; ${'"$P'.repeat(20000)}`, `${'a\\ '.repeat(50000)}`, `cd "${'\\a'.repeat(30000)}`, `cd "${'\\a'.repeat(30000)}" && ls`]) {
     assert.doesNotThrow(() => rw(command));
   }
   assert.strictEqual(rw('"'), null);
@@ -398,11 +434,11 @@ const POSITIVE = [
 ];
 const SHELLS = ['bash', 'zsh'].filter((sh) => spawnSync(sh, ['-c', 'exit 0'], { windowsHide: true }).status === 0);
 
-function runIn(shell, command, extraEnv) {
+function runIn(shell, command, extraEnv, cwd = CWD) {
   // A's first character is not `-`: see the node-eval-separator divergence test below.
   const env = { PATH: `${STUB}${path.delimiter}${process.env.PATH}`, HOME: process.env.HOME || os.homedir(), A: 'a --flag -x', ...extraEnv };
   const args = shell === 'zsh' ? ['-f', '-c', command] : ['-c', command];
-  const r = spawnSync(shell, args, { cwd: CWD, env, encoding: 'utf8', windowsHide: true });
+  const r = spawnSync(shell, args, { cwd, env, encoding: 'utf8', windowsHide: true });
   return { stdout: r.stdout, stderr: r.stderr, status: r.status };
 }
 
@@ -587,4 +623,83 @@ test('equivalence harness discriminates: an unquoted spaced value splits in bash
   const command = 'P="/a b"; ls $P';
   assert.notDeepStrictEqual(runIn('bash', command, {}).stdout, runIn('zsh', command, {}).stdout);
   assert.strictEqual(rw(command), null);
+});
+
+// ── drop-redundant-cd and a backslash in the cwd (#4292) ─────────────────────
+// Inside "…" the shell keeps a backslash literal unless it precedes $, `, ", \ or a
+// newline, so LEADING_CD admits exactly the other backslashes. A literal backslash
+// is a POSIX-legal directory name character, which makes these checkable on this host.
+const BACKSLASH_SKIP = { skip: process.platform === 'win32' || !SHELLS.includes('bash') };
+const literalDir = (...parts) => {
+  const dir = path.join(SANDBOX, ...parts);
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+};
+
+test('drop-redundant-cd with a literal backslash in the cwd is argv-identical under bash and zsh', BACKSLASH_SKIP, () => {
+  const dir = literalDir('bs', 'back\\slash');
+  const command = `cd "${dir}" && pwd && ls x`;
+  const out = rw(command, { cwd: dir });
+  assert.deepStrictEqual(out && out.applied, ['drop-redundant-cd']);
+  for (const shell of SHELLS) {
+    const original = runIn(shell, command, {}, dir);
+    assert.strictEqual(original.status, 0, `${shell}: ${original.stderr}`);
+    assert.deepStrictEqual(runIn(shell, out.command, {}, dir), original, shell);
+  }
+});
+
+test('drop-redundant-cd declines each backslash the shell would consume', BACKSLASH_SKIP, () => {
+  const cases = [
+    ['a\\$X', 'a$X'],
+    ['a\\`X', 'a`X'],
+    ['a\\"X', 'a"X'],
+    ['a\\\\X', 'a\\X'],
+    ['a\\\nX', 'aX'],
+  ];
+  cases.forEach(([tail, resolved], n) => {
+    const dir = literalDir(`consumed${n}`, tail);
+    const target = literalDir(`consumed${n}`, resolved);
+    assert.strictEqual(rw(`cd "${dir}" && pwd`, { cwd: dir }), null, JSON.stringify(tail));
+    for (const shell of SHELLS) {
+      // Earned: the shell lands in the other directory, so the naive rewrite (a bare pwd) differs.
+      const original = runIn(shell, `cd "${dir}" && pwd`, {}, dir);
+      assert.strictEqual(original.stdout, `${target}\n`, `${shell}: ${JSON.stringify(tail)}`);
+      assert.notStrictEqual(runIn(shell, 'pwd', {}, dir).stdout, original.stdout, `${shell}: ${JSON.stringify(tail)}`);
+    }
+  });
+});
+
+test('drop-redundant-cd declines an unquoted backslash target', BACKSLASH_SKIP, () => {
+  const dir = literalDir('unq', 'ba\\c');
+  const target = literalDir('unq', 'bac');
+  assert.strictEqual(rw(`cd ${dir} && pwd`, { cwd: dir }), null);
+  for (const shell of SHELLS) {
+    assert.strictEqual(runIn(shell, `cd ${dir} && pwd`, {}, dir).stdout, `${target}\n`, shell);
+  }
+});
+
+test('property: a backslash-spelled double-quoted cd drops only when the shell lands in the same directory', { ...BACKSLASH_SKIP, timeout: 300000 }, (t) => {
+  const rand = mulberry32(4292);
+  const SEGMENTS = ['a', '\\b', '\\c', '\\$x', '\\`x', '\\\\y', '\\"q', '$x', ' s'];
+  let rewritten = 0;
+  let declined = 0;
+  for (let n = 0; n < 150; n += 1) {
+    const count = 1 + Math.floor(rand() * 3);
+    let name = '';
+    for (let k = 0; k < count; k += 1) name += SEGMENTS[Math.floor(rand() * SEGMENTS.length)];
+    const dir = literalDir('prop', String(n), name);
+    const command = `cd "${dir}" && pwd`;
+    const out = rw(command, { cwd: dir });
+    if (!out) {
+      declined += 1;
+      continue;
+    }
+    rewritten += 1;
+    for (const shell of SHELLS) {
+      assert.deepStrictEqual(runIn(shell, out.command, {}, dir), runIn(shell, command, {}, dir), `${shell}: ${JSON.stringify(command)}`);
+    }
+  }
+  t.diagnostic(`rewritten=${rewritten} declined=${declined} shells=${SHELLS.join(',')}`);
+  assert.ok(rewritten >= 30, `only ${rewritten} rewrites`);
+  assert.ok(declined >= 30, `only ${declined} declines`);
 });

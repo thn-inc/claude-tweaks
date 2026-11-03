@@ -31,7 +31,12 @@
 // (`*(e/fn/)`, `*(+fn)`), which runs it in the current shell. Code run from the command text
 // itself (`source`, `.`, `eval`, `trap`, an expansion as the command word) makes
 // rules 1 and 2 decline: every command word must be a plain literal outside the
-// runner set (commandWordsPlain).
+// runner set (commandWordsPlain). On Windows, drop-redundant-cd still compares
+// exact spellings: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and
+// `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how
+// Git Bash sets $PWD for those spellings is unmeasured (a trailing `/` after an
+// otherwise exact spelling stays tolerated, trimSlashes, so only those three
+// spellings are the listed residuals).
 //
 // Anything this module cannot prove declines: a rule that
 // doubts returns nothing, and rewriteForGuard returns null on any throw. It is
@@ -648,7 +653,7 @@ function quoteEscapedSpace(s) {
   return replaceSpans(s, edits, (edit) => edit.text);
 }
 
-const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"([^"$`\\]*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
+const LEADING_CD = /^[ \t]*cd[ \t]+(?:'([^']*)'|"((?:[^"$`\\]|\\[^$`"\\\n])*)"|([A-Za-z0-9_.\/:@%+,=-]+))[ \t]*&&[ \t\n]*/;
 const OLDPWD_USE = /OLDPWD|~-|(?:^|[^A-Za-z0-9_])cd[ \t]+-(?:[\s;&|)]|$)/;
 
 function trimSlashes(p) {
@@ -659,17 +664,22 @@ function trimSlashes(p) {
 // Rule 5: a leading `cd <the cwd> && ` changes nothing but OLDPWD → dropped.
 // The literal must spell the cwd itself, not merely resolve to it: a symlinked
 // or re-cased spelling would change $PWD and `pwd`.
-function dropRedundantCd(s, { cwd }) {
+// A backslash is admitted only inside "…" (LEADING_CD's second branch): there the
+// shell keeps it literal unless it precedes $, `, ", \ or a newline, which the
+// pattern excludes, so a Windows `D:\w\cwd` spelling means exactly its text. An
+// unquoted backslash is stripped by the shell, so that branch stays backslash-free,
+// and the single-quoted branch already took any text.
+function dropRedundantCd(s, { cwd, pathImpl, realpath }) {
   const m = LEADING_CD.exec(s);
   if (!m) return null;
   const target = m[1] ?? m[2] ?? m[3];
   const rest = s.slice(m[0].length);
   // `cd X && # note` is a syntax error; `# note` alone is not.
   if (!/\S/.test(rest) || rest[0] === '#' || OLDPWD_USE.test(rest)) return null;
-  if (!path.isAbsolute(target) || target.includes('~') || target.includes('$')) return null;
+  if (!pathImpl.isAbsolute(target) || target.includes('~') || target.includes('$')) return null;
   if (trimSlashes(target) !== trimSlashes(cwd)) return null;
-  const real = canonicalRealpath(target);
-  if (real === null || real !== canonicalRealpath(cwd)) return null;
+  const real = realpath(target);
+  if (real === null || real !== realpath(cwd)) return null;
   return rest;
 }
 
