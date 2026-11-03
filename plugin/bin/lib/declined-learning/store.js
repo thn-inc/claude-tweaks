@@ -17,6 +17,10 @@
 // equivalence directly instead of relying on exact-hash comparison alone — see lookupDecline
 // (hash lookup, unchanged) vs listDeclined (subject scan, new) below.
 //
+// The store and its lock live under the main checkout's .claude-tweaks/, resolved per call from
+// cwd, so a decline recorded from a linked worktree lands where every later reader finds it and
+// survives that worktree's removal (#4360); outside a git repository the paths stay cwd-relative.
+//
 // readStore degrades open: a missing or corrupt store file returns {}, never a throw — the same
 // contract as watermark.js's readWatermark (both now go through ../json-store.js's shared
 // read/write pair). writeStore (and therefore recordDecline/clearDecline, which read-modify-write
@@ -48,9 +52,25 @@ const fs = require('fs');
 const path = require('path');
 const { readJsonFile, writeJsonFile } = require('../json-store');
 const { withLock } = require('../file-lock');
+const { mainCheckoutRoot } = require('../hooks/worktree-detect');
 
-const STORE_PATH = path.join('.claude-tweaks', 'declined-learning', 'store.json');
-const LOCK_PATH = path.join('.claude-tweaks', 'declined-learning', '.store.lock');
+const STORE_REL = path.join('.claude-tweaks', 'declined-learning', 'store.json');
+const LOCK_REL = path.join('.claude-tweaks', 'declined-learning', '.store.lock');
+
+// Joins a checkout-relative path onto the main checkout (#4360). Resolved per call, not at module
+// load, so the anchor follows the process's current cwd. A null root (no repo, or a .git that
+// can't be parsed) and a deleted cwd (process.cwd() throws) both keep the relative path: the
+// store degrades open on read rather than throwing.
+function anchored(relPath) {
+  let cwd;
+  try { cwd = process.cwd(); } catch { return relPath; }
+  const root = mainCheckoutRoot(cwd);
+  return root ? path.join(root, relPath) : relPath;
+}
+
+function lockPath() {
+  return anchored(LOCK_REL);
+}
 
 // Age-based pruning default (#1399): the store has no expiry, so every decline ever recorded
 // (across /feedback and /wrap-up reflect) accumulates forever. 180 days is a generous window —
@@ -82,9 +102,11 @@ function truncateSubject(subject) {
   return `${subject.slice(0, MAX_SUBJECT_LENGTH)}${TRUNCATION_MARKER}`;
 }
 
-// Pure — the store has exactly one on-disk location; no per-transcript/per-consumer derivation.
+// One on-disk location per checkout: the main checkout's, resolved from cwd (#4360, see anchored()),
+// with no per-transcript/per-consumer derivation. Outside a git repository it is the cwd-relative
+// path.
 function storePath() {
-  return STORE_PATH;
+  return anchored(STORE_REL);
 }
 
 // Returns the parsed store object, or {} when none exists (ENOENT), the file is present but not
@@ -115,7 +137,7 @@ function writeStore(data, { mkdirSync = fs.mkdirSync, writeFile = fs.writeFileSy
 function recordDecline(fingerprint, {
   reason = null, source, subject, declinedAt = new Date().toISOString(),
 } = {}, deps = {}) {
-  return withLock(LOCK_PATH, () => {
+  return withLock(lockPath(), () => {
     const current = readStore(deps);
     const entry = { declinedAt, reason, source };
     if (subject !== undefined) entry.subject = truncateSubject(subject);
@@ -164,7 +186,7 @@ function listDeclined({ source } = {}, deps = {}) {
 // staying annotated forever). No-op (no write) when the fingerprint has no entry, so an
 // idempotent clear never touches disk twice. Returns whether an entry was actually removed.
 function clearDecline(fingerprint, deps = {}) {
-  return withLock(LOCK_PATH, () => {
+  return withLock(lockPath(), () => {
     const current = readStore(deps);
     if (!Object.prototype.hasOwnProperty.call(current, fingerprint)) return false;
     delete current[fingerprint];
@@ -181,7 +203,7 @@ function clearDecline(fingerprint, deps = {}) {
 // discards data it can't judge the age of. Mirrors clearDecline's idempotent-no-write behavior:
 // a clean sweep (nothing to remove) never touches disk. Returns the number of entries removed.
 function pruneDeclines({ maxAgeDays = DEFAULT_PRUNE_MAX_AGE_DAYS, now = Date.now() } = {}, deps = {}) {
-  return withLock(LOCK_PATH, () => {
+  return withLock(lockPath(), () => {
     const current = readStore(deps);
     const cutoffMs = now - maxAgeDays * 24 * 60 * 60 * 1000;
     const next = {};
