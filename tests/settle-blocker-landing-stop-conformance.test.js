@@ -230,3 +230,181 @@ test('the bullet sits inside Step 2: Judge', () => {
   assert.notEqual(moved, text, 'the move control must change the text');
   assert.ok(!placed(moved), 'a bullet moved after the Step 3 heading must fail the placement check');
 });
+
+// --- the teardown skips its claim release after a blocker-landing stop (Task 8) ---
+
+const TWO_CALL_GATE = path.join(SKILLS, 'dispatch', 'two-call-gate.md');
+const SECTION_E = path.join(SKILLS, 'wrap-up', 'cleanup-procedures-execution.md');
+const FLAGS = path.join(SKILLS, 'wrap-up', 'flags.md');
+const PACK_JOURNEY = path.join(ROOT, 'docs', 'journeys', 'gather-the-wrap-up-fact-pack-1930.md');
+const TEARDOWN_PREFIX = '   **Blocker-landing stop (#4792).**';
+const SECOND_CALL_PREFIX = '**Blocker-landing stop (#4792).** A second call\'s handoff continuation';
+const SECTION_E_PREFIX = '**Skip it too when the invocation names `blocker-landing: skip the claim release` (#4792)**';
+const PHRASE = /`\((blocker-landing: skip the claim release)\)`/;
+
+function requireOrder(text, markers) {
+  let last = -1;
+  for (const marker of markers) {
+    const idx = text.indexOf(marker);
+    assert.notStrictEqual(idx, -1, `marker missing: ${marker}`);
+    assert.ok(idx > last, `${marker} must come after the previous marker`);
+    last = idx;
+  }
+}
+
+// The text from the line starting `start` to the line starting `end`. Asserts both exist.
+function sectionBetween(text, start, end) {
+  const from = text.indexOf(`\n${start}`);
+  assert.notStrictEqual(from, -1, `section start not found: ${start}`);
+  const to = text.indexOf(`\n${end}`, from + 1);
+  assert.notStrictEqual(to, -1, `section end not found: ${end}`);
+  return text.slice(from + 1, to);
+}
+
+const teardownParagraph = (text) => requireLine(text, TEARDOWN_PREFIX, 'two-call-gate.md');
+const secondCallParagraph = (text) => requireLine(text, SECOND_CALL_PREFIX, 'two-call-gate.md');
+
+const TEARDOWN_FACTS = [
+  [/`ISSUE #\{n\}: failed:blocker-landing`/, 'the teardown keys on the gate line'],
+  [/its last handoff continuation \(section 8\)/, 'AC5.1: covers the claimed case reached through a continuation'],
+  [/so the paragraph above, on Settle's already-released claim, does not apply/, 'the overlap paragraph does not apply'],
+  [/Append the parenthetical `\(blocker-landing: skip the claim release\)` to the cleanup-only invocation above, in both cases/, 'AC2.1: the phrase, in both cases'],
+  [/`release-claim\.js` posts a release comment on an absent blob or a tombstone too \(`bin\/lib\/release-claim\/release\.js`\)/, 'states the non-idempotent mechanism'],
+  [/a false one when this run never claimed the record, a duplicate when Settle already released it/, 'names both wrong comments'],
+  [/the firing goes on to the next group/, 'not a firing stop'],
+];
+const teardownMissing = missingFactsOf(TEARDOWN_FACTS);
+
+const SECOND_CALL_FACTS = [
+  [/A second call's handoff continuation \(section 8\) whose step list includes `test` re-runs `\/flow`'s pre-claim checks/, 'AC6.1: names the path'],
+  [/reports `OUTCOME: blocked` with `ISSUE #\{n\}: failed:blocker-landing` before reaching wrap-up, so the group's worktree is still up/, 'AC6.1: the outcome, and why a teardown is owed'],
+  [/Make item 1's call for it too, with the parenthetical `\(blocker-landing: skip the claim release\)` appended/, 'AC6.1: the same skip as the first-call path'],
+  [/the same phrase section 5's Blocker-landing stop paragraph appends/, 'AC6.1: one phrase for both sections'],
+  [/the continuation's own Settle already released the claim and closed the draft PR \(`settle-and-merge\.md`'s Blocker-landing special case, claimed case\)/, 'AC5.1 AC6.1: always the claimed case'],
+  [/item 2 does not apply/, 'AC6.1: carves out item 2\'s overlap'],
+  [/`release-claim\.js` would post a duplicate release comment on the tombstone/, 'AC6.1: the mechanism'],
+];
+const secondCallMissing = missingFactsOf(SECOND_CALL_FACTS);
+
+test('AC2.1 AC5.1: two-call-gate.md §5 tells the teardown to skip the claim release after a blocker-landing stop (#4792)', () => {
+  const paragraph = teardownParagraph(readText(TWO_CALL_GATE));
+  assert.deepEqual(teardownMissing(paragraph), []);
+  assertEachPatternGoesRed(paragraph, TEARDOWN_FACTS, teardownMissing);
+});
+
+test('the teardown paragraph sits after the overlap paragraph, so both "below" and "above" resolve', () => {
+  const MARKERS = ['**Claim permission stop (#4899).**', 'Settle has already released this group\'s claim', '**Blocker-landing stop (#4792).**', 'Only once that cleanup call returns'];
+  const text = readText(TWO_CALL_GATE);
+  requireOrder(text, MARKERS);
+
+  // Permutation control: the paragraph moved to just after the #4899 paragraph must fail the order check.
+  const paragraph = teardownParagraph(text);
+  const without = text.replace(`${paragraph}\n\n`, '');
+  const permission = requireLine(without, '   **Claim permission stop (#4899).**', 'two-call-gate.md');
+  const moved = without.replace(`${permission}\n\n`, `${permission}\n\n${paragraph}\n\n`);
+  assert.notEqual(moved, text, 'the move control must change the text');
+  assert.throws(() => requireOrder(moved, MARKERS), /must come after/);
+});
+
+// §6's paragraph sits after item 3, unindented, inside §6.
+function assertSecondCallPlacement(text) {
+  const section = sectionBetween(text, '## 6. Terminal path', '## 7. Terminal path');
+  const item3 = section.indexOf('3. **Worktree teardown is unaffected by which call reached it.**');
+  assert.notStrictEqual(item3, -1, '§6 item 3 not found');
+  const at = section.indexOf(SECOND_CALL_PREFIX);
+  assert.ok(at > item3, 'the second-call Blocker-landing stop paragraph must sit inside §6, after item 3');
+}
+
+test('AC6.1: two-call-gate.md §6 gives a second call\'s continuation the same teardown skip (#4792)', () => {
+  const text = readText(TWO_CALL_GATE);
+  const paragraph = secondCallParagraph(text);
+  assert.deepEqual(secondCallMissing(paragraph), []);
+  assertEachPatternGoesRed(paragraph, SECOND_CALL_FACTS, secondCallMissing);
+  assertSecondCallPlacement(text);
+
+  // Permutation control: the paragraph moved to just after §5's teardown paragraph must fail placement.
+  const without = text.replace(`${paragraph}\n\n`, '');
+  const teardown = teardownParagraph(without);
+  const moved = without.replace(`${teardown}\n\n`, `${teardown}\n\n${paragraph}\n\n`);
+  assert.notEqual(moved, text, 'the move control must change the text');
+  assert.throws(() => assertSecondCallPlacement(moved), /must sit inside §6, after item 3/);
+
+  // Deletion control: the paragraph removed throws the existence message.
+  assert.notEqual(without, text, 'the deletion control must change the text');
+  assert.throws(() => secondCallParagraph(without), /two-call-gate\.md has no line starting "\*\*Blocker-landing stop \(#4792\)\.\*\* A second call's handoff continuation"/);
+});
+
+test('AC6.1: §8 item 4 routes a second call\'s blocker-landing blocked to §6 (#4792)', () => {
+  const HEADING = '## 8. Continuing a handed-off call';
+  const ROUTE = /section 6 for a missing or malformed status line, or for a blocker-landing stop's `blocked`, per its Blocker-landing stop paragraph\)/;
+  const sectionEight = (text) => {
+    const at = text.indexOf(`\n${HEADING}`);
+    assert.notStrictEqual(at, -1, `heading not found: ${HEADING}`);
+    return text.slice(at).replace(/\s+/g, ' ');
+  };
+  const text = readText(TWO_CALL_GATE);
+  assert.match(sectionEight(text), ROUTE);
+
+  // Control: the pre-edit clause fails the same match.
+  const reverted = text.replace(', or for a blocker-landing stop\'s `blocked`, per its Blocker-landing stop paragraph)', ')');
+  assert.notEqual(reverted, text, 'the revert control must change the text');
+  assert.doesNotMatch(sectionEight(reverted), ROUTE);
+});
+
+test('AC6.1: the phrase both sections append is the one Section E and flags.md declare', () => {
+  const samePhrase = (five, six) => {
+    const first = five.match(PHRASE);
+    const second = six.match(PHRASE);
+    assert.ok(first && second, 'both paragraphs must carry the parenthetical phrase');
+    assert.equal(first[1], second[1], '§5 and §6 must append the same phrase');
+    return first[1];
+  };
+  const text = readText(TWO_CALL_GATE);
+  const phrase = samePhrase(teardownParagraph(text), secondCallParagraph(text));
+  assert.ok(requireLine(readText(SECTION_E), SECTION_E_PREFIX, 'cleanup-procedures-execution.md').includes(`\`${phrase}\``), 'Section E must name the same phrase');
+  assert.ok(readText(FLAGS).includes(`\`(${phrase})\``), 'flags.md must declare the phrase in parentheses');
+
+  // Control: a §6 copy spelling the phrase differently fails the equality.
+  const drifted = secondCallParagraph(text).replace('blocker-landing: skip the claim release', 'blocker-landing: skip claim release');
+  assert.notEqual(drifted, secondCallParagraph(text), 'the drift control must change the text');
+  assert.throws(() => samePhrase(teardownParagraph(text), drifted), /both paragraphs must carry the parenthetical phrase/);
+});
+
+test('AC2.1 AC6.1: Section E skips its release on the blocker-landing phrase and logs the skip (#4792)', () => {
+  const text = readText(SECTION_E);
+  const clause = requireLine(text, SECTION_E_PREFIX, 'cleanup-procedures-execution.md').replace(/\s+/g, ' ');
+  assert.match(clause, /`dispatch\/two-call-gate\.md` §5 or §6/);
+  assert.match(clause, /log-decision\.js" --run "\$PIPELINE_RUN_DIR" --status SKIP --section "\/wrap-up" --step "Section E" --text "condition: blocker-landing named by the cleanup-only call → fallback: claim release skipped" --reversibility n\/a/);
+  assert.match(clause, /`flags\.md`'s `cleanup-only` entry declares the phrase/);
+
+  requireOrder(text, ['## E. Issue claim release', 'Skip this whole section when the invocation names `claim-permission-denied', SECTION_E_PREFIX, 'This spec\'s record is identified whenever this section runs']);
+
+  // Control: a copy with the clause line removed throws the existence message.
+  const without = text.split('\n').filter((line) => !line.startsWith(SECTION_E_PREFIX)).join('\n');
+  assert.notEqual(without, text, 'the removal control must change the text');
+  assert.throws(() => requireLine(without, SECTION_E_PREFIX, 'cleanup-procedures-execution.md'), /cleanup-procedures-execution\.md has no line starting "\*\*Skip it too when the invocation names/);
+});
+
+test('flags.md declares the blocker-landing phrase beside #4899\'s', () => {
+  const DECLARED = /`\(blocker-landing: skip the claim release\)` \(#4792\), each stripped before input classification like a flag and never read as a record reference/;
+  const PRIOR = /`\(claim-permission-denied: skip the claim release\)`[^\n]*stripped before input classification[^\n]*never read as a record reference/;
+  const text = readText(FLAGS);
+  assert.match(text, DECLARED);
+  assert.match(text, PRIOR);
+
+  // Control: the blocker-landing declaration removed fails the first match and leaves the second.
+  const stripped = text.replace(' and `(blocker-landing: skip the claim release)` (#4792)', '');
+  assert.notEqual(stripped, text, 'the removal control must change the text');
+  assert.doesNotMatch(stripped, DECLARED);
+});
+
+test('the fact-pack journey names both phrases that skip Section E and the pack', () => {
+  const SENTENCE = '`claim-permission-denied: skip the claim release` (#4899) or `blocker-landing: skip the claim release` (#4792), either of which skips Section E and the pack with it';
+  const text = readText(PACK_JOURNEY);
+  assert.ok(text.includes(SENTENCE), 'the journey must name both skip phrases');
+
+  // Control: the pre-edit sentence does not carry the second phrase.
+  const reverted = text.replace(SENTENCE, '`claim-permission-denied: skip the claim release` (#4899), which skips Section E and the pack with it');
+  assert.notEqual(reverted, text, 'the revert control must change the text');
+  assert.ok(!reverted.includes(SENTENCE));
+});
