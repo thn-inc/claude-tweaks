@@ -63,15 +63,15 @@ If blocked, skip the rest of the review. Present the gap analysis so the user kn
 
 ## Step 1.5: Test Gate
 
-Verify that `/claude-tweaks:test` has passed before proceeding to analytical review. Reviewing code quality on code that doesn't work is wasted effort.
+Verify that `/claude-tweaks:test` has passed before proceeding to analytical review.
 
 **Under a `base:{ref}` scope the tree this gate verifies must be `origin/{integration-branch}`** — the gate runs from a checkout already standing at that tip (the caller asserts it before invoking), never from a feature-branch worktree's HEAD, whose stamp would verify a tree the reviewed range does not contain.
 
-`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations (e.g., minor UX roughness, non-blocking warnings) and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
+`PASS_WITH_CAVEATS` counts as passed — caveats are informational observations and do not block review. QA caveats are included in the findings table (Step 3 Routing) for visibility but have status `observation`, not `open`.
 
 ### In `/claude-tweaks:flow` pipeline:
 
-Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read (catches a check that went red after `/test` ran), then proceed to Step 2 unless it is `red` and `merge-verification` is not an explicit `off` (Gate table below). `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check.
+Check for `TEST_PASSED=true` in pipeline context. If present, add one belt-and-braces read of the runner's own artifact (#1921) — `node "${CLAUDE_PLUGIN_ROOT}/bin/verify.js" --stamp-status` (one plain command; prints `{present, sha, head, dirty, scope, fullSha, match, verifiedHead, baselineAdjudicated, preExistingAdjudicated, reportPath, legacy, suiteComposed, generatedExempt, liveGeneratedExempt, scopeError}`, exit 0 always). `verifiedHead: true` (a clean HEAD covered by a full pass — a baseline-adjudicated one included, `test/verification.md`'s Baseline adjudication — or by a passing scoped run anchored on a still-valid `fullSha` — `match` alone would re-trigger a scoped run forever, #1923 — or by complete per-suite records, `suiteComposed`, `test/stamp-composition.md`; a tree dirty only in declared `generated` paths, `liveGeneratedExempt`, still counts) → run `_shared/pr-check-gate.md`'s read, then proceed to Step 2 unless it is `red` and `merge-verification` is not an explicit `off` (Gate table below). `present: false` with no commands configured takes the zero-test row (Gate table below); any other `verifiedHead: false` with `TEST_PASSED=true` is reported, never silently accepted: "TEST_PASSED set but the runner stamp does not verify HEAD ({stamp-sha}, {scope} vs {head}) — re-running `/claude-tweaks:test`", then re-trigger `/claude-tweaks:test` once and re-check. An unparseable read is `verifiedHead: false`.
 
 ### Standalone (outside `/claude-tweaks:flow`):
 
@@ -108,12 +108,14 @@ After confirming `TEST_PASSED`, read this run's open items ledger (per `_shared/
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` not `red` | Proceed to Step 2 |
 | `pr-checks.js` reports `red` and `merge-verification` is not an explicit `off` (`_shared/pr-check-gate.md`'s `red` bullet) | **STOP** — name each failing check not flagged `inherited` (the attributable ones) and its URL; fix forward and re-run `/claude-tweaks:test` |
 | `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: true` + `pr-checks.js` reports `red` under an explicit `merge-verification: off` (same bullet) | Proceed to Step 2 — with the caveat naming the failing checks, logged as that bullet's `AUTO` line |
-| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test`, re-check |
+| `TEST_PASSED=true` (pipeline) + stamp `present: false` + no verification commands (none in CLAUDE.md, stack manifests or `verify-scope.json` `checks`) + `scopeError` null | No re-trigger: log to `decisions.md` `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.` via `log-decision.js --section "/review"`, run the `pr-checks.js` read, proceed as for `verifiedHead: true` |
+| `TEST_PASSED=true` (pipeline) + runner stamp `verifiedHead: false` | Report it (stamp sha/scope vs HEAD), re-trigger `/claude-tweaks:test` once, re-check |
+| That re-check still reads `verifiedHead: false` | **STOP**, never a second re-trigger — name the cause: `dirty: true` with the dirty paths, a `scopeError`, `{sha} ({scope}) ≠ {head}`, `present: false` with commands configured, else the stamp as read (`sha`, `scope`, `fullSha`) |
 | Runner stamp `verifiedHead: true` (standalone) | Proceed to Step 2 |
-| `/claude-tweaks:test` triggered and passes | Proceed to Step 2 |
+| `/claude-tweaks:test` triggered (standalone) and passes | Proceed to Step 2 |
 | `/claude-tweaks:test` triggered and fails | **STOP** — present test failures. Fix before continuing. Run `/claude-tweaks:test` to re-verify. |
 
-> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment. Code review on broken code wastes effort.
+> **Why this gates review:** Mechanical correctness is a prerequisite for analytical quality judgment.
 
 ## Step 1.6: Cross-Spec Promise Check (parent-linked records only)
 
