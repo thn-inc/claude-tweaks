@@ -162,12 +162,13 @@ function readableGlobs(sensitivePaths) {
 function referenceRepairFloorHits(paths, sensitivePaths) {
   if (!Array.isArray(paths)) return [];
   const globs = readableGlobs(sensitivePaths);
+  const lowerGlobs = globs === null ? [] : globs.map((g) => g.toLowerCase());
   const hits = [];
   for (const p of paths) {
     if (isTestPath(p)) hits.push({ path: p, why: 'test file' });
     // A second, case-folded match: a case-insensitive filesystem lands `PACKAGE-LOCK.JSON` on the
     // sensitive `package-lock.json`, and `isSensitivePath` is case-sensitive. Holds only more.
-    else if (globs !== null && (isSensitivePath(p, globs) || isSensitivePath(p.toLowerCase(), globs.map((g) => g.toLowerCase())))) hits.push({ path: p, why: 'merge-sensitive' });
+    else if (globs !== null && (isSensitivePath(p, globs) || isSensitivePath(p.toLowerCase(), lowerGlobs))) hits.push({ path: p, why: 'merge-sensitive' });
   }
   return hits;
 }
