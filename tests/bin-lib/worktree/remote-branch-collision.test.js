@@ -316,11 +316,13 @@ test('findPriorAttemptPr: judges the newest closed PR, ignoring older non-matchi
       closedPr({ number: 9, url: 'https://example.test/pr/9' }),
     ],
   };
+  const gitCalls = [];
   const git = (args) => {
-    if (args[2] === OTHER_HEAD) throw exitWith(1);
+    gitCalls.push(args);
     return '';
   };
   assert.deepEqual(priorAttempt({ prLookup, git }), { number: 9, url: 'https://example.test/pr/9' });
+  assert.deepEqual(gitCalls, [['merge-base', '--is-ancestor', SHA_B, SHA_A]], 'only the newest PR (9) is judged');
 });
 
 test('findPrsForBranch: requests the fields findPriorAttemptPr reads', () => {
@@ -481,6 +483,13 @@ test('#4058: a bundle PR matches on any record it closes and never reads a recor
   const prLookup = { ok: true, prs: [closedPr({ closingIssuesReferences: [ref(7), ref(42)] })] };
   assert.deepEqual(priorAttempt({ records: [7, 42, 8], prLookup, readComments }), PR9);
   assert.deepEqual(reads, [7, 42]);
+});
+
+test('#4058: a duplicated record number reads that record\'s comments once', () => {
+  const reads = [];
+  const readComments = ({ number }) => { reads.push(number); return { ok: true, comments: [] }; };
+  assert.equal(priorAttempt({ records: [42, 42], readComments }), null);
+  assert.deepEqual(reads, [42]);
 });
 
 test('#4058: readIssueComments reads the record\'s issue comments through gh', () => {

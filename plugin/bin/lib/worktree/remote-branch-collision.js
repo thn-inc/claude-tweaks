@@ -215,7 +215,7 @@ function newerLivePr(prs, closedMs) {
 // Any doubt (failed lookup, bad sha, ancestry error, unreadable comments, newest unknown)
 // is null: the branch stays foreign. `readComments({ number, repo })` is injectable.
 function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultGit, readComments = readIssueComments }) {
-  const wanted = (Array.isArray(records) ? records : []).filter(Number.isInteger);
+  const wanted = [...new Set((Array.isArray(records) ? records : []).filter(Number.isInteger))];
   if (!SHA_RE.test(remoteSha || '') || wanted.length === 0 || !repo) return null;
   if (!prLookup || !prLookup.ok || !Array.isArray(prLookup.prs)) return null;
   const pr = newestClosedPr(prLookup.prs);
@@ -229,8 +229,8 @@ function findPriorAttemptPr({ remoteSha, prLookup, records, repo, git = defaultG
   } catch {
     return null;
   }
-  // `some` stops at the first record with evidence; only this one PR is judged, so a
-  // record's comments are read at most once.
+  // `some` stops at the first record with evidence. `wanted` is deduplicated and only this
+  // one PR is judged, so each linked record's comments are read at most once.
   if (!linked.some((n) => hasTombstoneEvidence(pr.closedAt, readComments({ number: n, repo })))) return null;
   return { number: pr.number, url: pr.url };
 }
