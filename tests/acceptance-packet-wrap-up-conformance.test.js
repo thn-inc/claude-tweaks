@@ -706,3 +706,129 @@ test('the skill graph states the packet edges and no longer describes the brief 
   assert.ok(!wrapUp.includes('embedded in the brief for an above-floor record'), 'the old Try it placement');
   assert.ok(!graph.includes('`/wrap-up` (brief)'), 'the pr-run-comments row');
 });
+
+// ---- #4618 Task 14: the risk facts reach the packet ----
+// Each pin is an assertion function over the file's text. It runs once on the live text, and
+// once per literal on a copy with that literal removed, where it must throw (the go-red control).
+
+const SKILL = 'wrap-up/SKILL.md';
+const PHASE_1 = '## Phase 1: ESTABLISH — what happened here?';
+const PHASE_2 = '## Phase 2: ROUTE — where does each learning belong?';
+const PLAN_DIFF = 'git diff --name-only --diff-filter=AM "origin/{integration-branch}...HEAD" -- docs/superpowers/plans/';
+const FACTS_CALL = 'node "${CLAUDE_PLUGIN_ROOT}/bin/risk-flags.js" facts --spec-file "{spec}" --plan-file "{run-dir}/packet-inputs/plan.md" --flags-out "{FLAGS}" --proofs-out "{PROOFS}"';
+
+function step4Of(doc) {
+  const at = doc.indexOf(`\n${STEP_4}\n`);
+  assert.notStrictEqual(at, -1, `missing heading ${STEP_4}`);
+  return doc.slice(at);
+}
+const phase1Of = (skill) => section(skill, PHASE_1, PHASE_2);
+const planResolve = (skill) => flat(between(phase1Of(skill), `${PLAN_DIFF}\n\`\`\``, 'acceptance-packet.js" snapshot'));
+const riskFactsOf = (doc) => flat(between(step4Of(doc), '**Risk facts**', '**Gather**'));
+
+function goRed(check, doc, literals) {
+  for (const literal of literals) {
+    assert.ok(doc.includes(literal), `the control literal is in the live text: ${literal}`);
+    assert.throws(() => check(doc.split(literal).join('')), `removing ${literal} must fail the pin`);
+  }
+}
+
+function checkPlanSnapshot(skill) {
+  const phase1 = phase1Of(skill);
+  assert.ok(phase1.includes('snapshot --run "{run-dir}" --base "origin/{integration-branch}" --plan "{plan-file}"'), 'the snapshot passes the plan');
+  const diff = phase1.indexOf(`\`\`\`bash\n${PLAN_DIFF}\n\`\`\``);
+  assert.ok(diff !== -1, 'the plan diff is its own fenced call');
+  assert.ok(diff < phase1.indexOf('acceptance-packet.js" snapshot'), 'the plan resolves before the snapshot');
+}
+
+function checkPlanResolve(skill) {
+  const text = planResolve(skill);
+  for (const literal of [
+    'Exactly one printed path is the plan',
+    'Two or more (a multi-spec branch) narrow to the one whose text names `{n}-spec.md`',
+    'None, or still not exactly one: omit `--plan`',
+    '--status SKIP',
+    '--text-file "{text-file}"',
+    "`_shared/auto-decision-log.md`'s Text from git or a user paragraph",
+    '`{plan-file}`: none of `"`, backtick, `$`, `\\` or a line break',
+  ]) {
+    assert.ok(text.includes(literal), `the plan resolution states ${literal}`);
+  }
+}
+
+function checkFactsBeforeGather(brief) {
+  const body = step4Of(brief);
+  const facts = body.indexOf(FACTS_CALL);
+  assert.ok(facts !== -1 && facts < body.indexOf('acceptance-packet.js" gather'), 'producer before gather');
+  assert.ok(body.includes(`\`\`\`bash\n${FACTS_CALL}\n\`\`\``), 'the producer is its own fenced call');
+  const fence = between(body, 'acceptance-packet.js" gather', '\n```');
+  assert.ok(fence.includes('--flags "{FLAGS}" --proofs "{PROOFS}"'), fence);
+  assert.ok(body.includes('packet-inputs/plan.md'), 'the plan comes from the snapshot copy');
+}
+
+function checkPlanCopyGate(brief) {
+  const text = riskFactsOf(brief);
+  assert.ok(text.includes("Pass `--plan-file` only when `{run-dir}/packet-inputs/manifest.json`'s `files.plan` is `copied`"), text);
+  assert.ok(text.includes('a later snapshot without a plan copy leaves an earlier `plan.md` there'), text);
+}
+
+function checkEnvelopeOutcomes(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    '`{ status, flags, proofs, plan, planParse }`',
+    "`plan: 'absent'`: the risk proofs were not read because no plan copy exists",
+    "`planParse: 'could-not-parse'`: the risk proofs were not read because the plan copy could not be parsed",
+    'never as no proof written',
+  ]) {
+    assert.ok(text.includes(literal), `the envelope sentence states ${literal}`);
+  }
+}
+
+function checkNonZeroExit(brief) {
+  const text = riskFactsOf(brief);
+  for (const literal of [
+    'A non-zero exit removes both outputs',
+    'it never stops the packet',
+    '`--flags input not read — treated as absent`',
+  ]) {
+    assert.ok(text.includes(literal), `the exit sentence states ${literal}`);
+  }
+  const log = flat(between(step4Of(brief), '**Log a stop or a failure** when a run directory resolves', '```bash'));
+  assert.ok(log.includes('condition: packet {risk facts | gather | render | post | local} failed ({stderr line})'), log);
+}
+
+function checkGatherInputs(brief) {
+  const body = step4Of(brief);
+  assert.ok(body.includes('SPEC=packet-spec-{N}.md FLAGS=packet-flags-{N}.json PROOFS=packet-proofs-{N}.json'), 'the session-temp resolve names both files');
+  const list = flat(between(body, 'acceptance-packet.js" gather', 'Gather non-zero'));
+  assert.ok(list.includes('- `--flags` and `--proofs` — `{FLAGS}` and `{PROOFS}` from the Risk facts call above, always'), list);
+}
+
+function checkLine392(brief) {
+  const sentence = flat(between(step4Of(brief), 'Pass no `--scope`', 'Gather non-zero'));
+  assert.ok(!/`--flags`[^.]*passes none of them/.test(sentence), sentence);
+  assert.ok(sentence.includes('`--dev-base-url`, `--deploy` and `--decision-items` are filled by the dev-target and control-mode records, and none is passed here; `--flags` and `--proofs` come from the Risk facts call above.'), sentence);
+}
+
+function checkRiskNarration(brief) {
+  const narrate = flat(between(step4Of(brief), '**Narrate.**', '**Render**'));
+  assert.ok(narrate.includes('write one `risk-proofs` claim per flag that has a `proof` fact, citing both'), narrate);
+  assert.ok(narrate.includes('a flag no claim cites renders as `no proof shown`'), narrate);
+}
+
+const PINS = [
+  ['Phase 1 snapshots the run plan for the risk proofs', SKILL, checkPlanSnapshot, ['--plan "{plan-file}"', '--diff-filter=AM']],
+  ['Phase 1 resolves exactly one plan, else logs one SKIP', SKILL, checkPlanResolve, ['Two or more (a multi-spec branch)', '--status SKIP', 'line break']],
+  ['Step 4 runs the risk facts producer before the gather and passes both files', BRIEF, checkFactsBeforeGather, ['risk-flags.js" facts', '--flags "{FLAGS}" --proofs "{PROOFS}"']],
+  ['the plan copy is read only when the manifest says copied', BRIEF, checkPlanCopyGate, ["`files.plan` is `copied`", 'leaves an earlier `plan.md` there']],
+  ['an absent or unparseable plan copy is never read as no proof written', BRIEF, checkEnvelopeOutcomes, ['because no plan copy exists', 'because the plan copy could not be parsed', 'never as no proof written']],
+  ['a non-zero facts exit is reported and logged and never stops the packet', BRIEF, checkNonZeroExit, ['it never stops the packet', 'removes both outputs', '{risk facts | gather']],
+  ['the gather inputs name the risk facts files', BRIEF, checkGatherInputs, ['FLAGS=packet-flags-{N}.json', 'from the Risk facts call above, always']],
+  ['line 392 no longer says the risk-flag inputs go unpassed', BRIEF, checkLine392, ['and none is passed here']],
+  ['the narration cites each planned proof', BRIEF, checkRiskNarration, ['citing both', 'renders as `no proof shown`']],
+];
+
+for (const [name, file, check, literals] of PINS) {
+  test(name, () => check(read(file)));
+  test(`${name} (go-red)`, () => goRed(check, read(file), literals));
+}
