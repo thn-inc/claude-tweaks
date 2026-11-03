@@ -37,6 +37,7 @@ DISPATCH_LINKED_PRS_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.j
 DISPATCH_NAMED_TARGETS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-named-targets.json)"
 DISPATCH_SHIPPED_PROBE_PRS="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-probe-prs.json)"
 DISPATCH_SHIPPED_PR_FILES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-pr-files.jsonl)"
+DISPATCH_SHIPPED_RELEASES="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shipped-releases.json)"
 DISPATCH_SHAPE_GATE_ERR="$(node "${CLAUDE_PLUGIN_ROOT}/bin/session-tmp-resolve.js" --value dispatch-shape-gate.err)"
 
 # #1752: truncate this run's session-scoped dispatch-exclusions.json, keeping
@@ -499,33 +500,31 @@ done
 
 # #1984: shipped-candidate classification. Runs unconditionally, right after
 # the #1224 open-PR and #1983 target-missing exclusions above (a candidate
-# excluded there is never re-classified here — order matters, see this
-# record's own Gotchas) and before the #1579 cross-PR overlap report below.
+# excluded there is never re-classified here) and before the #1579 cross-PR
+# overlap report below.
 # #4314: when a mention's PR was opened before the record was created,
 # classifyShipped skips it -- a follow-up filed during that PR's build,
 # never its target.
-# Reuses $DISPATCH_LINKED_PRS's `mentions` field — #1984 extended record.js's
-# batched query and linked-prs.js's fetchLinkedPRs to carry every same-repo
-# PR that has ever cross-referenced the candidate, closing keyword or not —
-# so no second network round trip is added for the base signal.
+# #4432: a mention merged before the record's latest claim release rates weak
+# at most (a run saw the merge and left the record open). An unreadable claim
+# never downgrades.
+# Reuses $DISPATCH_LINKED_PRS's mentions (every same-repo PR that ever cross-referenced the candidate, closing keyword or not), so the base signal costs no second network round trip.
 #
-# First pass: classify every remaining candidate with title-only evidence
-# (no changed-files fetch yet) via bin/lib/issues/shipped-candidate.js's
-# classifyShipped. Only a `weak`-tier result (a merged mention whose title
-# didn't already clear `strong`) is a candidate for the files-based upgrade
-# below — a `strong`/`none` result from title evidence alone is final.
-# Capped at 5 live `gh pr view` calls per pull (#1984's own cap).
-node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" <<NODE_EVAL_EOF
+# First pass: title-only classification (no changed-files fetch yet). Only a
+# `weak` result is a probe candidate for the files-based upgrade below; a
+# `strong`/`none` result is final. Capped at 5 live `gh pr view` calls per pull.
+node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
+  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs);
   const toProbe = [];
   for (const c of groups.flat()) {
     const entry = linkedPRs[c.number];
     const mentions = (entry && entry.mentions) || [];
     if (mentions.length === 0) continue;
-    const result = classifyShipped(c, mentions);
-    if (result.tier === 'weak') toProbe.push(result.pr);
+    const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
+    if (result.tier === 'weak' && !result.signals.includes('predates-claim-release')) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
 NODE_EVAL_EOF
@@ -536,13 +535,11 @@ for PR in $(node -e "console.log(require(process.argv[1]).join(' '))" -- "$DISPA
   node -e "console.log(JSON.stringify({pr: Number(process.argv[1]), files: JSON.parse(process.argv[2])}))" -- "$PR" "$FILES_JSON" >> "$DISPATCH_SHIPPED_PR_FILES"
 done
 
-# Second pass: final tier, now with the probed files available for the
-# key-files-covered upgrade. `strong` is excluded from $DISPATCH_GROUPS for
-# this pull and logged for a staged Close proposal (dispatch never closes a
-# shipped candidate on GitHub itself — the proposal is its only write path, fingerprint-
-# deduplicated the same way tidy's own Close (GitHub) shape is). `weak`
-# stays eligible, logged for build-time context. `none` is silent.
-if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
+# Second pass: final tier, with the probed files. `strong` is excluded from
+# $DISPATCH_GROUPS for this pull and logged for a staged Close proposal
+# (dispatch never closes on GitHub itself). `weak` stays eligible, logged for
+# build-time context. `none` is silent.
+if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
   const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
@@ -552,19 +549,22 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
     ? fs.readFileSync(process.argv[4], 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l))
     : [];
   const prFiles = new Map(prFilesLines.map((e) => [e.pr, e.files]));
+  const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').readReleaseTimes(process.argv[5]);
   const finalGroups = groups
     .map((g) => g.filter((c) => {
       const entry = linkedPRs[c.number];
       const mentions = (entry && entry.mentions) || [];
       if (mentions.length === 0) return true;
-      const result = classifyShipped(c, mentions, { prFiles });
+      const result = classifyShipped(c, mentions, { prFiles, lastReleasedAt: releases[c.number] });
       if (result.tier === 'strong') {
         appendExclusion(process.argv[3], { reason: 'shipped', records: [c.number], detail: { pr: result.pr, signals: result.signals } });
         console.error('AUTO — dispatch: #' + c.number + ' excluded, shipped by merged PR #' + result.pr + ' (' + result.signals.join(', ') + ')');
         return false;
       }
       if (result.tier === 'weak') {
-        console.error('AUTO — dispatch: #' + c.number + ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway');
+        console.error('AUTO — dispatch: #' + c.number + (result.signals.includes('predates-claim-release')
+          ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
+          : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
       }
       return true;
     }))
@@ -581,11 +581,9 @@ else
   exit 1
 fi
 
-# Stage one Close proposal per strong-tier exclusion, into this firing's own
-# standalone run dir (Step 1's $RUN_ID — resolved again here since this
-# script has no other reason to carry that path) — never onto GitHub
-# directly, the same non-autonomous posture tidy's own Close (GitHub) shape
-# uses for every outward-facing mutation.
+# Stage one Close proposal per strong-tier exclusion into this firing's own
+# standalone run dir (Step 1's $RUN_ID, resolved again here), never onto
+# GitHub directly -- the same posture as tidy's Close (GitHub) shape.
 DISPATCH_FIRING_RUN_DIR=$(node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" resolve-run-dir --spec-slug dispatch-standalone 2>/dev/null || true)
 if [ -n "$DISPATCH_FIRING_RUN_DIR" ]; then
   node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_EXCLUSIONS" "$(dirname "$DISPATCH_EXCLUSIONS")" <<NODE_EVAL_EOF | while IFS='=' read -r NUM FILE; do
