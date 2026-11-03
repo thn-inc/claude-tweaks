@@ -18,8 +18,8 @@
 // ran: Steps 4.0 and 4.0b ran and the marker is written; `closingLinks` is Step
 //   4.0's action. `step40Failed` marks a Step 4.0 that itself failed. `records`
 //   ({failed, closeFailed, pendingClose, unchecked}, issue numbers) is on every
-//   `ran` entry Step 4.0 printed a readable envelope for, so it is absent only
-//   when `step40Failed` comes from a non-zero exit or unparseable output;
+//   `ran` entry Step 4.0 returned an envelope for, so it is absent only when
+//   `step40Failed` comes from a non-zero exit;
 //   `logFailed: true` when Step 4.0 could not append a decisions.md line.
 //   `parentFailures` ([{parent | issue, reason, detail?}]) is on every `ran`
 //   entry Step 4.0b ran for: every skip that is not a deliberate gate outcome
@@ -65,7 +65,7 @@ const { mainCheckoutRoot } = require('./lib/hooks/worktree-detect');
 const USAGE = 'usage: post-merge-run.js --run <run-dir> [--help]\n'
   + '  runs the post-merge closes (Step 4.0 closing-links, Step 4.0b below-floor parent close) once for the one named run dir, archived included\n'
   + '  prints one JSON line {runDir, pr, action, reason?, closingLinks?, parentsClosed?, step40Failed?, records?, logFailed?, parentFailures?, verdict, next, failedSteps?}; action:\n'
-  + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 printed a readable envelope;\n'
+  + '    ran: the steps ran and the marker is written (step40Failed when Step 4.0 itself failed; records {failed, closeFailed, pendingClose, unchecked} whenever Step 4.0 returned an envelope;\n'
   + '         logFailed when Step 4.0 could not append a decisions.md line; parentFailures [{parent|issue, reason, detail?}] when Step 4.0b ran, non-empty = a failed close)\n'
   + '    skipped: reason already-done (a marker is present) | in-flight (another process holds the claim); any other reason is a failure to report\n'
   + '  route on verdict (clean | failed | already-done | in-flight) and next (rerun | rerun-where-gh | rerun-after-stale-claim | none), never on the words above\n'

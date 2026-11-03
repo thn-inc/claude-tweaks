@@ -28,6 +28,9 @@ const RECORDS = {
   11: { number: 11, title: 'Bundle middle', body: '## Overview\n\nMiddle record.\n\n## Release Note\n\nFixed the middle thing.\n', labels: [{ name: 'type:task' }], issueType: null },
   12: { number: 12, title: 'Bundle top', body: '## Overview\n\nTop record.\n\n## Release Note\n\nChanged the top thing.\n', labels: [{ name: 'type:task' }], issueType: null },
   2273: { number: 2273, title: 'Footer-shaped prose mid-note', body: '## Overview\n\nMid-note line.\n\n## Release Note\n\n_Filed by the planner_\n\nMore note after.\n\n_Filed by `x` via specShapedBody._', labels: [{ name: 'type:task' }], issueType: null },
+  2280: { number: 2280, title: 'Release Note behind an unclosed fence', body: '## Overview\n\nFenced.\n\n```\nnever closed\n\n## Release Note\n\nHidden note.\n', labels: [{ name: 'type:task' }], issueType: null },
+  2281: { number: 2281, title: 'Breaking Change behind an unclosed fence', body: '## Overview\n\nB.\n\n```\nopen\n\n## Breaking Change\n\nUse --new.\n\n## Release Note\n\nNote.\n', labels: [{ name: 'type:feature' }, { name: 'breaking' }], issueType: null },
+  2282: { number: 2282, title: 'Unclosed fence, no Release Note at all', body: '## Overview\n\nFenced.\n\n```\nnever closed\n', labels: [{ name: 'type:task' }], issueType: null },
 };
 
 function fakeDeps({
@@ -835,4 +838,34 @@ test('--keep-open absent: every footer line is Fixes, JSON and --out-dir alike',
   assert.deepEqual(parseArgs(['2251']).keepOpen, []);
   const { USAGE } = require('../../plugin/bin/lib/compose-subject.js');
   assert.match(USAGE, /\[--keep-open <n>\[,<m>\.\.\.\]\]/);
+});
+
+test('exit 1: a Release Note hidden by an unclosed fence is named as the fence, not as missing (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a Breaking Change hidden by an unclosed fence is named as the fence (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2281'], deps), 1);
+  assert.equal(out.stderr, 'compose-subject.js: breaking is set on #2281 (unclosed-fence at line 5) but an unclosed code fence hides the "## Breaking Change" section — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: a bundle with both a missing and a hidden Release Note prints both lines, missing first (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2280,2290'], deps), 1);
+  assert.equal(out.stderr,
+    'compose-subject.js: record(s) #2290 carry no non-empty "## Release Note" section\n'
+    + 'compose-subject.js: record(s) #2280 (unclosed-fence at line 5) hide their "## Release Note" section behind an unclosed code fence — close the fence\n');
+  assert.equal(out.stdout, '');
+});
+
+test('exit 1: an unclosed fence with no Release Note heading behind it keeps the missing-section message (#4350)', () => {
+  const { deps, out } = fakeDeps();
+  assert.equal(run(['2282'], deps), 1);
+  assert.match(out.stderr, /record\(s\) #2282 carry no non-empty "## Release Note" section/);
+  assert.doesNotMatch(out.stderr, /unclosed-fence/);
 });

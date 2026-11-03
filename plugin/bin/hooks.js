@@ -1470,7 +1470,11 @@ async function runResolveConsole(argv) {
     return 1;
   }
   if (result.reason === 'not-finding-items') {
-    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are not finding rows (no findingItem), console not resolved\n`);
+    process.stdout.write(`claude-tweaks: --filing-failed id(s) ${result.ids.join(', ')} are neither finding rows nor sdd-ruling rows (no findingItem, no isRulingRow flag), console not resolved\n`);
+    return 1;
+  }
+  if (result.reason === 'conflicting-failure-ids') {
+    process.stdout.write(`claude-tweaks: id(s) ${result.ids.join(', ')} named in both --reverse-failed and --filing-failed, console not resolved\n`);
     return 1;
   }
   process.stdout.write(`claude-tweaks: console resolution failed for ${path.basename(runDir)} — ${result.reason}${result.error ? `: ${result.error}` : ''}\n`);
@@ -1887,7 +1891,7 @@ async function runReconcileBackground(argv) {
       // so without a count the next SessionStart would never mention one.
       postMergeRan: postMergeEntries.filter((e) => e.action === 'ran' && classifyEntry(e).verdict === 'clean').length,
       // Runs whose steps did not complete cleanly, judged by post-merge.js's classifyEntry (#4897): Step 4.0
-      // failed (non-zero exit, unreadable envelope, or a non-clean word such as close-failed), Step 4.0b
+      // failed (non-zero exit, an unread base, or a non-clean word such as close-failed), Step 4.0b
       // reported a parent failure, or the check threw (no marker, and the run is not deferred). They are never
       // counted as ran. A failed Step 4.0 with no closing set skips Step 4.0b, so that parent waits for tidy's
       // backstop; with a closing set Step 4.0b still runs and the parent stays open only if a record is unsettled.
