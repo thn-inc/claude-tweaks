@@ -39,7 +39,10 @@ const BIN_ROOT = path.join(ROOT, 'plugin', 'bin');
 
 const WRITER_MODULE = 'plugin/bin/lib/issues/record-risk-flags.js';
 const REMOVER_ALLOWED = new Set([WRITER_MODULE, 'plugin/bin/lib/issues/record.js', 'plugin/bin/risk-flags.js']);
-const RISK_LINE = /risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/gi;
+// `risk` must not continue an identifier (`classifyRiskFlags: bad input` is an error
+// prefix naming a function, not the line), but it may follow a `\n`, `\r` or `\t` escape
+// as written in source (`'...\nRisk-flags: x'`), where the escape's letter is glued to it.
+const RISK_LINE = /(?:(?<![A-Za-z0-9_$])|(?<=\\[nrt]))risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/gi;
 const REMOVER = /\b(?:removeRiskFlags?|confirmRiskFlags?)\b/g;
 
 function lineAt(text, offset) {
@@ -184,6 +187,33 @@ test('AC5.6: a planted marker literal is flagged at its exact line', () => {
 test('a spelling variant of the line key in a literal is flagged', () => {
   const src = "const a = 1;\nconst k = \"risk_flags : x\";\nconst r = /^Risk flags:/;\n";
   assert.deepStrictEqual(shape('plugin/bin/lib/x.js', src), [[2, 'line-literal'], [3, 'line-literal']]);
+});
+
+test('an identifier-glued RiskFlags: error prefix inside a string is not the line', () => {
+  const src = [
+    "const a = 'classifyRiskFlags: bad input';",
+    'const b = `parseRiskFlags: ${e}`;',
+    "const c = '$riskFlags: x';",
+    "const d = 'my_risk_flags: x';",
+    "const e = 'x9Risk-flags: auth';",
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(findWriterOffenders('plugin/bin/lib/x.js', src), []);
+});
+
+test('a real key after a space, quote, newline, escape or punctuation is still flagged', () => {
+  const src = [
+    'const a = "x Risk-flags: auth";',
+    "const b = '(risk_flags: auth)';",
+    "const c = '\\nRisk-flags: auth';",
+    'const d = `head\nRisk flags-unconfirmed: true`;',
+    "const e = ['Risk-flags: auth'];",
+    '',
+  ].join('\n');
+  assert.deepStrictEqual(
+    shape('plugin/bin/lib/x.js', src),
+    [[1, 'line-literal'], [2, 'line-literal'], [3, 'line-literal'], [5, 'line-literal'], [6, 'line-literal']],
+  );
 });
 
 test('the line literal is still seen after a fake comment opener in a string and a regex', () => {
