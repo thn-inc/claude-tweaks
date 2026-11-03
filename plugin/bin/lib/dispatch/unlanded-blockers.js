@@ -61,7 +61,7 @@ function malformedRecords(pool) {
     else if (typeof r.body !== 'string') cause = 'its body is not a string';
     else if (r.labels != null && !Array.isArray(r.labels)) cause = 'its labels are not an array';
     else {
-      const invalid = parseDependencies(r.body).filter((n) => !(Number.isInteger(n) && n > 0 && n <= GRAPHQL_INT_MAX));
+      const invalid = parseDependencies(r.body).filter((n) => !(isPositiveInteger(n) && n <= GRAPHQL_INT_MAX));
       if (invalid.length) cause = `a Blocked by line names no valid issue number (#${invalid.join(', #')})`;
     }
     if (cause) out.push({ number: r.number, cause });
