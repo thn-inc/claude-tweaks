@@ -1041,6 +1041,122 @@ test('#4210 F2: an escaped character before a glued `>` still resolves its targe
   }
 });
 
+// #4294 classes 1 and 2 are bash word values since #4281, so these are characterization pins of
+// #4281's tokenize, shown red against a scratch mutant of its unescaping lines. bash 3.2, bash 5 and
+// zsh write each target.
+const at4294 = (action, f) => [{ action, file: path.resolve(f) }];
+for (const [command, actual, expected] of [
+  ['mkdir a\\ b', mkdirTargets, at4294('mkdir', '/r/a b')],
+  ['mkdir -p /r/a\\ b/c', mkdirTargets, at4294('mkdir', '/r/a b/c')],
+  ['cp a my\\ file.js', fileWriteTargets, at4294('copy', '/r/my file.js')],
+  ['cd /r/a\\ b && git commit -m x', gitTargets, [{ action: 'commit', dir: path.resolve('/r/a b') }]],
+  ['echo x >/ma\\\nin/x', fileWriteTargets, at4294('write', '/main/x')],
+  ['mkdir -p \\\n/abs/dir', mkdirTargets, at4294('mkdir', '/abs/dir')],
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves bash's target (characterization of #4281)`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
+
+// #4294 AC2, #4212's carried-over expectations: an escaped quote is a literal path character, so
+// bash 3.2, bash 5 and zsh write under the cwd. `echo a\"b>c` writes c; `echo "a\" b>c "` and
+// `echo foo\>x` write nothing; `echo foo\\>x` writes x. `echo $M>x` writes x too, a known miss #4328
+// owns.
+const at4294Cwd = (f) => [{ action: 'write', file: path.resolve('/r', f) }];
+for (const [command, actual, expected] of [
+  ['echo "a\\" b>c "', fileWriteTargets, []],
+  ['echo foo>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\\\>x', fileWriteTargets, at4294Cwd('x')],
+  ['echo foo\\>x', fileWriteTargets, []],
+  ['echo $M>x', fileWriteTargets, []],
+  ['echo a\\"b>c', fileWriteTargets, at4294Cwd('c')],
+  ["cd \\'/wt\\' && git commit -m x", gitTargets, [{ action: 'commit', dir: path.resolve('/r', "'/wt'") }]],
+  ["echo x > \\'/abs/f\\'", fileWriteTargets, at4294Cwd("'/abs/f'")],
+]) {
+  test(`AC2.1 #4294: ${JSON.stringify(command)} keeps #4212's carried-over redirect expectation`, () => {
+    assert.deepStrictEqual(actual(command, '/r'), expected);
+  });
+}
+
+// #4294 AC3: #4210's cases still resolve. bash 3.2, bash 5 and zsh write x and out.
+test('AC3.1 #4294: #4210\'s quoted-span and one-word-group redirects still resolve', () => {
+  assert.deepStrictEqual(fileWriteTargets('echo "hi">x', '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  assert.deepStrictEqual(fileWriteTargets('(ls)>out', '/r'), [{ action: 'write', file: path.resolve('/r', 'out') }]);
+});
+
+// #4294 class 3: an escaped blank ends a `$NAME`, `${ … }` or backtick word part, so a glued `>` after
+// it is a redirect. bash 3.2, bash 5 and zsh write x for each.
+for (const command of [
+  'echo $M\\ >x', 'echo ${M}\\ >x', 'echo `d`\\ >x', 'echo $M\\ bar>x', 'M=a; echo $M\\ >x', 'echo $1\\ >x',
+  'echo $M\\\t>x', 'echo $M\\ $N\\ >x', 'echo ${M}a\\ b>x', 'echo ${M:-${N}}\\ >x',
+  'echo a$M\\ >x', 'echo "q"$M\\ >x', 'echo $M\\ "q">x', "echo $M\\ 'q'>x",
+  'echo $M\\ >>x', 'echo $M\\ >|x', 'echo $M\\ &>x', 'A=$M\\ >x', 'cd $M\\ >x', 'echo $(d $M\\ >x)',
+  // A `}` with no `${` open is text, so it closes nothing.
+  'echo }$M\\ >x',
+  // An escaped or quoted `{`, `[`, backtick, `(` or `$` is text, so it opens nothing.
+  'echo $\\{M\\ >x', 'echo $\\[$M\\ >x', 'echo \\`$M\\ >x', 'echo \\($M\\ >x', 'echo $M\\ \\$N>x', 'echo $M\\ "$N">x', 'echo $M\\ \\(a>x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves its glued redirect after closed expansions and an escaped blank`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', 'x') }]);
+  });
+}
+
+// bash 3.2, bash 5 and zsh write nothing for each: a bad substitution, a syntax error, an unterminated
+// backtick or quote, an escaped `>`, a comparison, an fd dup or a sink.
+for (const command of [
+  'echo ${M\\ >x}', 'echo ${M:-${N}\\ >x}', 'echo }${M\\ >x}', 'echo a(b)\\ >x', 'echo $M\\ (a)>x', 'echo `d\\ >x', 'echo $M\\ "a>x', 'echo "a\\ >x',
+  'echo $M\\>x', 'echo $(($M\\ >1))', 'echo $[1\\ >x]', 'echo $[$M\\ >x]', '[[ $M\\ >x ]]', '(( $M\\ >1 ))', 'echo $M\\ >&2', 'echo $M\\ >/dev/null',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} resolves no target, an escaped blank inside an open expansion or before a non-operator \`>\``, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
+
+// Known misses, all tracked in #4328 (its Absorbed table, and its bullet on a glued redirect after a word
+// holding a bare `$`, which covers `echo $M>x`, `echo $M\ $N>x`, `echo ${M}\ ${N}>x` and `echo $M\a>x`):
+// bash 3.2, bash 5 and zsh write x for each, and the scanner resolves no target. `echo $M>x` is the
+// documented gap, and a bare `$`, backtick or non-blank escape after the last escaped blank is the
+// same shape. A `>` in "$( … )" stays nested. A closed `$( )`, an arithmetic `$(( ))`,
+// a `$[ ]` or a backtick holding a blank before the escaped blank is not read as closed, and neither is a
+// `${ }` that closes after the blank. A `$VAR` target behind a second `$` or a backtick is one
+// substituteVars skips: those two write y/x.
+for (const command of [
+  'echo $M>x', 'echo $M\\ $N>x', 'echo ${M}\\ ${N}>x', 'echo $M\\ `d`>x', 'echo $M\\a>x',
+  'echo "$(a $M\\ >x)"', 'echo $(d)\\ >x', 'echo $((1))\\ >x', 'echo $[1]\\ >x', 'echo ${M:-\\ }>x', 'echo `d e`\\ >x', 'echo `$M\\ >x`',
+  'WT=y; echo $M\\ >$WT/x', 'WT=y; echo `d`\\ >$WT/x',
+]) {
+  test(`AC1.1 #4294: ${JSON.stringify(command)} stays a known miss without a target`, () => {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), []);
+  });
+}
+
+// Named false denies: bash 3.2, bash 5 and zsh write nothing, and the scanner names a fragment. One token
+// cannot see the expansion an earlier token opened. Base reads the plain word the same way
+// (`echo ${M:-a foo>x}` gives /r/x}, `echo $(( a b>1 ))` gives /r/1), and a deny is the safe side of it.
+// A `}` inside a backtick is counted too, so the `${` around it reads as closed. `echo $'\'\ >x'` is the
+// tokenizer's misreading of `$'\'`, not a prefix rule: it ends the ANSI-C string at the escaped quote, so the
+// blank and `>x'` read as bare words (the spaced `echo $'\' >x'` gives `x'` at base too). bash 3.2, bash 5 and
+// zsh write nothing; a fix belongs in `tokenize`, tracked in #4328.
+test('AC1.1 #4294: an expansion the prefix cannot see open, or a misread ANSI-C string, reads as a false deny, as the plain word does', () => {
+  assert.deepStrictEqual(fileWriteTargets("echo $'\\'\\ >x'", '/r'), [{ action: 'write', file: path.resolve('/r', "x'") }]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
+  assert.deepStrictEqual(fileWriteTargets('echo ${M:-`d}`\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+});
+
+// A chained glued redirect resolves one joined name, as the plain word does at base (`echo foo>x>y` gives
+// `x>y`): bash 3.2, bash 5 and zsh write both files, so a later protected target is missed. `echo $M\ >ok>/main/leak`
+// writes `ok` in the cwd and `/main/leak`, and the scanner names the one cwd file `ok>/main/leak`. This is a
+// fail-open gap, tracked in #4328, that the escaped-blank rule inherits and does not widen.
+test('AC1.1 #4294: a chained glued redirect resolves one joined name, a tracked gap (#4328)', () => {
+  for (const [command, name] of [
+    ['echo $M\\ >x>y', 'x>y'], ['echo foo>x>y', 'x>y'],
+    ['echo $M\\ >ok>/main/leak', 'ok>/main/leak'], ['echo foo>ok>/main/leak', 'ok>/main/leak'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', name) }], command);
+  }
+});
+
 // #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
 // bare on the token as typed; a quoted `>` or one a `$VAR` expands to is a word.
 test('#4210 F3: a quoted or expanded leading `>` resolves no target', () => {
