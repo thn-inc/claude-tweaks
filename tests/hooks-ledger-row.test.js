@@ -65,7 +65,8 @@ function stampedRun(root, id, worktree, session = SESSION) {
 }
 
 // A repo, a linked worktree `wt`, the run `record-1` stamped for this test's session and bound to `wt`,
-// its materialized header `work/1-spec.md`, and a ledger in the worktree holding the table head.
+// its materialized header `work/1-spec.md`, and a ledger in the worktree holding the table head. `snapshot` is
+// the ledger's starting bytes, which `refused` compares against; a test that writes first re-stamps it.
 function fixture({ header = true, rows = '' } = {}) {
   const root = seedRepo('ct-ledgerrow-');
   const wt = path.join(tmp('ct-ledgerrow-wt-'), 'wt');
@@ -119,7 +120,6 @@ test('AC1.1 lock: a held ledger lock refuses and writes nothing', () => {
   const lock = path.join(f.runDir, '.ledger.lock');
   fs.mkdirSync(lock);
   fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
-  f.snapshot = f.before();
   const r = ledgerRow(f, APPEND, { env: { CLAUDE_TWEAKS_LOCK_WAIT_MS: '30' } });
   refused(f, r, /lock/);
   assert.match(r.stderr, /LOCK_TIMEOUT/);
@@ -145,7 +145,6 @@ test('AC2.1: --row 3 --status fixed --resolution abc123 rewrites only row 3\'s S
 
 test('AC2.2: --status resolved exits non-zero naming the enum', () => {
   const f = fixture({ rows: '| 1 | build | one | open | — |\n' });
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'resolved', '--resolution', 'x']), /open, fixed, deferred, accepted, acknowledged, observation/);
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'resolved']), /open, fixed, deferred, accepted, acknowledged, observation/);
 });
@@ -191,7 +190,6 @@ test('Q1: a staged path writes the row with no flag', () => {
 
 test('Q1: neither is refused, naming the rule', () => {
   const f = fixture();
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'later', '--status', 'deferred', '--resolution', 'later']), /staged\//);
   const r = ledgerRow(f, ['--phase', 'build', '--item', 'later', '--status', 'deferred', '--resolution', 'later']);
   assert.match(r.stderr, /Defer-reason:/);
@@ -199,7 +197,6 @@ test('Q1: neither is refused, naming the rule', () => {
 
 test('own record is not a record reference', () => {
   const f = fixture();
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'x', '--status', 'deferred', '--resolution', 'see #1']), /deferred/);
   const other = ledgerRow(f, ['--phase', 'build', '--item', 'x', '--status', 'deferred', '--resolution', 'see #2']);
   assert.equal(other.code, 0, other.stderr);
@@ -213,7 +210,6 @@ test('amendment 2: a deferred row naming only the run\'s own record settles thro
 
   // Go-red: with no materialized header the run owns no record, so `#1` reads as a record reference.
   const bare = fixture({ header: false, rows: '| 1 | build | x | deferred | see #1 |\n' });
-  bare.snapshot = bare.before();
   refused(bare, ledgerRow(bare, ['--row', '1', '--status', 'accepted', '--resolution', 'superseded by the build']), /row #1/);
 });
 
@@ -224,7 +220,6 @@ test('amendment 1: an implicit run owned by another session is refused', () => {
   const ledger2 = path.join(runDir2, 'ledger.md');
   fs.writeFileSync(ledger2, HEAD);
   const before2 = fs.readFileSync(ledger2, 'utf8');
-  f.snapshot = f.before();
 
   const r = runHook(['ledger-row', ...APPEND], { cwd: f.wt, env: { PIPELINE_RUN_DIR: runDir2 } });
   refused(f, r, /recorded by another session\/worktree/);
@@ -241,7 +236,6 @@ test('amendment 1: an implicit run owned by another session is refused', () => {
 
 test('Q2: settling a terminal row exits 1 naming the row and status', () => {
   const f = fixture({ rows: '| 1 | build | x | fixed | abc123 |\n' });
-  f.snapshot = f.before();
   const r = ledgerRow(f, ['--row', '1', '--status', 'accepted', '--resolution', 'changed my mind']);
   refused(f, r, /row #1/);
   assert.match(r.stderr, /fixed/);
@@ -249,7 +243,6 @@ test('Q2: settling a terminal row exits 1 naming the row and status', () => {
 
 test('answer 1: the refused-proposal reopen through the CLI', () => {
   const f = fixture({ rows: '| 1 | build | x | deferred | staged/ledger-record-a.md |\n' });
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'open', '--resolution', 'reopened']), /proposal refused — no defer reason/);
   const r = ledgerRow(f, ['--row', '1', '--status', 'open', '--resolution', 'staged/ledger-record-a.md refused — proposal refused — no defer reason']);
   assert.equal(r.code, 0, r.stderr);
@@ -285,7 +278,6 @@ test('answer 5: --resolution-file carries a pipe, a backtick and $ intact', () =
 
 test('answer 5: a file flag with its argv twin exits 2', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
-  f.snapshot = f.before();
   const file = textFile('t.txt', 'text\n');
   const item = ledgerRow(f, ['--phase', 'build', '--item', 'x', '--item-file', file, '--status', 'open']);
   refused(f, item, /--item and --item-file/, { code: 2 });
@@ -300,7 +292,6 @@ const FILE_CASES = [
 
 test('answer 5: an empty file exits 2', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
-  f.snapshot = f.before();
   for (const [flag, args] of FILE_CASES) {
     for (const content of ['', '\n\n']) {
       refused(f, ledgerRow(f, args(textFile('empty.txt', content))), new RegExp(`${flag}.*empty`), { code: 2 });
@@ -310,7 +301,6 @@ test('answer 5: an empty file exits 2', () => {
 
 test('answer 5: an unreadable file and an interior newline exit 2', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
-  f.snapshot = f.before();
   for (const [flag, args] of FILE_CASES) {
     const missing = path.join(tmp('ct-ledgerrow-missing-'), 'nope.txt');
     const r = ledgerRow(f, args(missing));
@@ -342,7 +332,6 @@ test('rejects a --ledger outside the run and worktree', () => {
 
 test('a --ledger that does not exist is refused, without a hint to pass the flag it already carries', () => {
   const f = fixture();
-  f.snapshot = f.before();
   const r = runHook(['ledger-row', '--run', f.runDir, '--ledger', path.join(f.wt, 'docs', 'plans', 'missing-ledger.md'), ...APPEND], { cwd: f.wt });
   refused(f, r, /not-found/);
   assert.doesNotMatch(r.stderr, /pass --ledger/);
@@ -359,7 +348,6 @@ test('an implicit resolution that finds no ledger keeps the hint to pass --ledge
 
 test('refuses an empty --ledger value', () => {
   const f = fixture();
-  f.snapshot = f.before();
   refused(f, runHook(['ledger-row', '--run', f.runDir, '--ledger', '', ...APPEND], { cwd: f.wt }), /--ledger needs a path/);
 });
 
@@ -390,7 +378,6 @@ test('run resolution: no run dir, an unusable --run and ambiguous candidates eac
   assert.match(none.stderr, /no pipeline run dir found — nothing written/);
 
   const f = fixture();
-  f.snapshot = f.before();
   const bad = runHook(['ledger-row', '--run', path.join(f.root, 'nope'), '--ledger', f.ledger, ...APPEND], { cwd: f.wt });
   refused(f, bad, /--run path rejected/);
 
@@ -405,7 +392,6 @@ test('run resolution: no run dir, an unusable --run and ambiguous candidates eac
 
 test('refuses --row together with --item, --item-file or --phase', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
-  f.snapshot = f.before();
   const file = textFile('i.txt', 'text\n');
   for (const extra of [['--item', 'y'], ['--item-file', file], ['--phase', 'build']]) {
     refused(f, ledgerRow(f, ['--row', '1', '--status', 'accepted', '--resolution', 'z', ...extra]), /--row/);
@@ -414,7 +400,6 @@ test('refuses --row together with --item, --item-file or --phase', () => {
 
 test('refuses --row with no --resolution, and a non-numeric --row', () => {
   const f = fixture({ rows: '| 1 | build | x | open | — |\n' });
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'accepted']), /resolution/);
   // `open` passes checkLedgerStatus with no resolution, so only the verb's own settle guard refuses it.
   refused(f, ledgerRow(f, ['--row', '1', '--status', 'open']), /settling row #1 to 'open' needs --resolution or --resolution-file/);
@@ -425,7 +410,6 @@ test('refuses --row with no --resolution, and a non-numeric --row', () => {
 
 test('refuses an append with no --phase, no item or no --status', () => {
   const f = fixture();
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--item', 'x', '--status', 'open']), /--phase/);
   refused(f, ledgerRow(f, ['--phase', 'build', '--status', 'open']), /--item/);
   refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'x']), /--status/);
@@ -433,13 +417,11 @@ test('refuses an append with no --phase, no item or no --status', () => {
 
 test('refuses a stray positional argument instead of truncating an unquoted value', () => {
   const f = fixture();
-  f.snapshot = f.before();
   refused(f, ledgerRow(f, ['--phase', 'build', '--item', 'a', 'b', '--status', 'open']), /unexpected argument 'b'/);
 });
 
 test('refuses an undeclared flag in both orders', () => {
   const f = fixture();
-  f.snapshot = f.before();
   for (const args of [['--bogus', ...APPEND], [...APPEND, '--bogus']]) {
     const r = ledgerRow(f, args);
     assert.equal(r.code, 1);

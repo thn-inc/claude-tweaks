@@ -1253,10 +1253,10 @@ function firstStrayArg(args) {
 function ledgerRowText(args, flag, fileFlag) {
   const fromArgv = args.includes(flag);
   const fromFile = args.includes(fileFlag);
-  if (fromArgv && fromFile) return { present: true, text: null, usageError: `${flag} and ${fileFlag} cannot be combined` };
+  const fail = (usageError) => ({ present: true, text: null, usageError });
+  if (fromArgv && fromFile) return fail(`${flag} and ${fileFlag} cannot be combined`);
   if (!fromFile) return { present: fromArgv, text: fromArgv ? String(flagVal(args, flag) ?? '') : null, usageError: null };
   const file = flagVal(args, fileFlag);
-  const fail = (usageError) => ({ present: true, text: null, usageError });
   if (typeof file !== 'string' || file.trim() === '') return fail(`${fileFlag} needs a path`);
   let text;
   try {

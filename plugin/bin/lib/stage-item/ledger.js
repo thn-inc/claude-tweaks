@@ -95,7 +95,7 @@ function appendLedgerRow(ledgerText, {
   if (outside > 0) throw unsafe('numbered rows exist outside the contiguous table (a row after a blank or non-table line) — fix the ledger by hand');
   if (numbered.length !== table.rows.size) throw unsafe('duplicate row numbers in the ledger table — fix the ledger by hand');
   const number = Math.max(0, ...numbered) + 1;
-  table.rows.set(String(number), `| ${number} | ${ledgerCell(phase)} | ${ledgerCell(item)} | ${status} | ${ledgerCell(resolution == null ? '' : resolution) || '—'} |`);
+  table.rows.set(String(number), `| ${number} | ${ledgerCell(phase)} | ${ledgerCell(item)} | ${status} | ${ledgerCell(resolution ?? '') || '—'} |`);
   return { text: serializeLedgerTable(table), number };
 }
 
@@ -198,7 +198,9 @@ const LEDGER_STATUSES = ['open', ...TERMINAL_STATUSES];
 const REFUSED_PROPOSAL_NOTE = 'proposal refused — no defer reason';
 
 // Loaded on first use: bin/stage-item.js requires this module and must not pay for pack.js.
-const wrapUpPack = () => require('../wrap-up/pack');
+function wrapUpPack() {
+  return require('../wrap-up/pack');
+}
 
 // Every pattern below runs over an unbounded Resolution (.claude/skills/regex-scan-linearity):
 // single-character classes only, nothing repeated before a literal that can fail.
@@ -239,7 +241,9 @@ function trimUrlTail(span) {
   return span.slice(0, end);
 }
 
-const sameText = (a, b) => String(a).toLowerCase() === String(b).toLowerCase();
+function sameText(a, b) {
+  return String(a).toLowerCase() === String(b).toLowerCase();
+}
 
 // `repo` is repo-resolve.js's parseRepo shape ({ host, owner, repo }) or null (origin unresolvable).
 function checkFixed(resolution, repo) {
@@ -267,7 +271,7 @@ function isIncompleteDeferral(resolution, excludeRecords) {
 // _shared/ledger-format.md's Resolution-text requirements. `incompleteDeferral` marks a `deferred`
 // row that carries only a valid `Defer-reason:`: accepted, but settleRow may later resolve it.
 function checkLedgerStatus(status, resolution, { excludeRecords = [], repo = null } = {}) {
-  const text = String(resolution == null ? '' : resolution);
+  const text = String(resolution ?? '');
   const ok = { refusal: null, incompleteDeferral: false };
   if (!LEDGER_STATUSES.includes(status)) {
     return { ...ok, refusal: `invalid status '${status}' (expected one of ${LEDGER_STATUSES.join(', ')})` };

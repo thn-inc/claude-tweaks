@@ -429,6 +429,17 @@ function plainFixture(rows = PRIOR_ROW) {
   return { dir, runDir, ledgerPath, text: () => fs.readFileSync(ledgerPath, 'utf8') };
 }
 
+// Runs `fn` with a 30 ms lock budget, so a held lock refuses fast; the env var is restored either way.
+function withShortLockWait(fn) {
+  const prior = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
+  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '30';
+  try {
+    return fn();
+  } finally {
+    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS; else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prior;
+  }
+}
+
 test('checkLedgerStatus refuses an out-of-enum status, naming the enum', () => {
   const { refusal } = checkLedgerStatus('resolved', 'x');
   assert.match(refusal, /invalid status 'resolved'/);
@@ -571,43 +582,32 @@ test('appendRow refuses a held lock (failClosed)', () => {
   fs.mkdirSync(lock);
   fs.writeFileSync(path.join(lock, '.owner'), `${process.pid}-held`);
   const before = f.text();
-  const prior = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '30';
-  try {
+  withShortLockWait(() => {
     assert.throws(() => appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'x', status: 'open' }), (e) => e.code === 'LOCK_TIMEOUT');
-  } finally {
-    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS; else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prior;
-  }
+  });
   assert.equal(f.text(), before);
 });
 
 test('AC3: a second append attempted between the first call\'s read and its write is refused while the lock is held, and no row is lost', () => {
   const f = plainFixture();
-  const prior = process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS;
-  process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = '30';
   let interleaved = null;
-  let first;
-  try {
-    first = appendRow({
-      runDir: f.runDir,
-      ledgerPath: f.ledgerPath,
-      phase: 'build',
-      item: 'first',
-      status: 'open',
-      // The first call has read the ledger and not yet written: the second writer arrives now.
-      readLedger: (p) => {
-        const text = fs.readFileSync(p, 'utf8');
-        try {
-          appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'second', status: 'open' });
-        } catch (err) {
-          interleaved = err;
-        }
-        return text;
-      },
-    });
-  } finally {
-    if (prior === undefined) delete process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS; else process.env.CLAUDE_TWEAKS_LOCK_WAIT_MS = prior;
-  }
+  const first = withShortLockWait(() => appendRow({
+    runDir: f.runDir,
+    ledgerPath: f.ledgerPath,
+    phase: 'build',
+    item: 'first',
+    status: 'open',
+    // The first call has read the ledger and not yet written: the second writer arrives now.
+    readLedger: (p) => {
+      const text = fs.readFileSync(p, 'utf8');
+      try {
+        appendRow({ runDir: f.runDir, ledgerPath: f.ledgerPath, phase: 'build', item: 'second', status: 'open' });
+      } catch (err) {
+        interleaved = err;
+      }
+      return text;
+    },
+  }));
   assert.ok(interleaved, 'the interleaved append must not get the lock while the first call holds it');
   assert.equal(interleaved.code, 'LOCK_TIMEOUT');
   assert.deepEqual(first, { number: 2 });
