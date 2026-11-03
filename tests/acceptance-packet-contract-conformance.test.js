@@ -762,7 +762,7 @@ for (const [heading, label, pattern] of [
   ['## Recording', 'the source of frames', /built from the step screenshots the pipeline's own happy-path stories already wrote[^.]*\. No new browser run/],
   ['## Recording', 'negative stories never enter it', /Negative stories are excluded/],
   ['## Recording', 'an unindexed story records nothing', /A story id missing from a readable index, a `legacy-\{slug\}` id included, records nothing with no-happy-path-screenshots, since it could be a tag-only negative story/],
-  ['## Recording', 'the local base URL',/the base URL the story run itself was given, whose host is `localhost`, `127\.0\.0\.1` or `::1`/],
+  ['## Recording', 'the local base URL', /the base URL the story run itself was given, whose host is `localhost`, `127\.0\.0\.1` or `::1`/],
   ['## Recording', 'never uploaded', /stored in the run's local directory and never uploaded, in any repository visibility/],
   ['## Recording', 'never embedded', /never embeds the recording or any screenshot/],
   ['## Recording', 'one choke point', /applied at one choke point/],
