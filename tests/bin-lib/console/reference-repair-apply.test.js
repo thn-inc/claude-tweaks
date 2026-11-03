@@ -52,7 +52,7 @@ function compose(repo, rel, next) {
     const copy = path.join(dir, side, rel);
     fs.mkdirSync(path.dirname(copy), { recursive: true });
     fs.copyFileSync(source, copy);
-    fs.chmodSync(copy, mode);
+    fs.chmodSync(copy, mode); // root-safe: copies the source mode onto the composed copy, simulates no denial
   }
   fs.writeFileSync(path.join(dir, 'b', rel), next);
   const r = sh(dir, ['diff', '--no-index', '--no-color', '--no-ext-diff', '--no-prefix', '--', `a/${rel}`, `b/${rel}`]);
