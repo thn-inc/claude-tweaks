@@ -59,6 +59,9 @@
 // branch that cannot be read closes nothing: the envelope adds
 // baseUnchecked: true and unchecked[] (the Fixes records it did not check,
 // sorted -- the numbers a caller names for a hand close) and omits closingSet.
+// Before any reopen or close on a base known to be non-default it proves the
+// PR is this run's, as pre-merge does (exit 4, #4817); a default or unreadable
+// base skips that proof.
 // The default base keeps the envelope above unchanged.
 //
 // In-process callers use the core, closingLinks(opts, overrides) -> { code,
@@ -73,8 +76,9 @@
 // 2 malformed invocation.
 // 3 run dir missing or not anchored under the main checkout (a worktree-local
 //   shadow -- _shared/pipeline-run-dir.md, [IL-127]).
-// 4 run-marker mismatch (pre-merge only): the PR body's first line names a
-//   different run (or none) -- refused, nothing written to the PR.
+// 4 run-marker mismatch (pre-merge; post-merge on a base known to differ from
+//   the default branch, before any reopen or close): the PR body's first line
+//   names a different run (or none) -- refused, nothing written to the PR.
 // 5 `gh pr view` / `gh pr edit` failed, or a required read came back
 //   malformed (non-string body, non-array links, links with no repository,
 //   missing/unparseable url or mergedAt).
@@ -109,7 +113,7 @@ const USAGE = 'usage: closing-links.js --run <run-dir> --mode <pre-merge|post-me
   + '  exit 0 done or status-as-data\n'
   + '       2 malformed invocation\n'
   + '       3 run dir missing or not anchored under the main checkout\n'
-  + '       4 run marker mismatch (pre-merge) -- refused, nothing written\n'
+  + '       4 run marker mismatch (pre-merge; post-merge on a non-default base) -- refused, nothing written\n'
   + '       5 gh pr view / gh pr edit failed, or a required read came back malformed\n'
   + '  gh-absent, 4 and 5 append their own SKIP line to decisions.md (## /wrap-up)\n';
 
@@ -243,6 +247,18 @@ function closingLinks(opts, overrides = {}) {
     unchecked(`exit ${EXIT_GH_FAILURE} gh failure: ${message.split('\n')[0]}`);
     return { code: EXIT_GH_FAILURE, envelope: null };
   };
+  // Exit 4: the PR body's first line must name this run. Null when it does;
+  // otherwise the stderr line, a SKIP, and the core's exit-4 result. The SKIP
+  // names both run ids (the found one capped, it is PR-body text): the
+  // reconciler and post-merge-run.js discard stderr, so the decisions.md line
+  // is the only trace of whose PR this was (#4817).
+  const refuseForeignPr = (text) => {
+    const found = firstLineRunId(text);
+    if (found === runId) return null;
+    deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
+    unchecked(`exit 4 run marker mismatch (body names run ${found ? found.slice(0, 80) : 'none'}, expected ${runId})`);
+    return { code: 4, envelope: null };
+  };
 
   // 3. No gh: status as data, never a failure.
   if (!deps.ghAvailable()) {
@@ -305,12 +321,8 @@ function closingLinks(opts, overrides = {}) {
     // refusal's own SKIP is -- then rewrite the unwanted phrases and write only
     // what changed.
     const { text: newBody, neutralized } = neutralizeClosingPhrases(pr.body, { targets: unwanted, ...scope });
-    const found = firstLineRunId(newBody);
-    if (found !== runId) {
-      deps.stderr(`closing-links.js: run marker mismatch on PR #${n}: body names run ${found || 'none'}, expected ${runId} — nothing written\n`);
-      unchecked('exit 4 run marker mismatch');
-      return { code: 4, envelope: null };
-    }
+    const refused = refuseForeignPr(newBody);
+    if (refused !== null) return refused;
     if (newBody !== pr.body) {
       try {
         deps.gh(['pr', 'edit', String(n), '--body-file', '-'], newBody);
@@ -388,6 +400,20 @@ function closingLinks(opts, overrides = {}) {
   }
   const baseUnchecked = !base || !defaultBranch;
   const nonDefaultBase = !baseUnchecked && base !== defaultBranch;
+
+  // 6c. GitHub closes nothing on a non-default base, so this pass closes the
+  // Fixes records itself (8b) as well as reopening: prove the PR is this run's
+  // before either, as 6a does (#4817). The proof is scoped to that new write
+  // path, deliberately (the spec's Reading A): a default base keeps the step 7b
+  // reopens unproven (#4199), so the common path, the reconciler's late runs
+  // included, gains no new exit 4. An unreadable base is treated like the
+  // default one: it is usually a transient gh failure, and the reconciler
+  // reads exit 4 as deterministic. Do not widen the proof to those paths
+  // without that decision.
+  if (nonDefaultBase) {
+    const refused = refuseForeignPr(pr.body);
+    if (refused !== null) return refused;
+  }
   const willClose = nonDefaultBase ? [] : (messageUnread ? candidates : candidates.filter((x) => closers.has(x)));
 
   // 7b. Per candidate: read, re-read while a will-close one still reads OPEN

@@ -7,8 +7,9 @@
 // called in-process, so its probe, page and retry ladder are reused, not
 // re-derived, and that every `gh issue view` read carries `--repo {slug}` (the legend below),
 // so one gate never splits its reads between gh's base repo and the caller's.
-// bin/parent-gate.js and below-floor-parent-close.js both compose it. It
-// replaces the prose snippets that #4466's review found eight defects in.
+// bin/parent-gate.js, below-floor-parent-close.js and wrap-up/engine-verify.js's
+// acceptance-labeling check (#4805) all compose it. It replaces the prose snippets
+// that #4466's review found eight defects in.
 //
 // Four parts: two gh gathers (gatherGateFacts, gatherIdempotenceFacts) that
 // take a `caller` from ghCaller(gh) and throw GhFailure on a failing or
@@ -18,13 +19,14 @@
 //
 // The gh reads, numbered as the comments below and the tests' `shape N:` labels cite them.
 // {slug} is repoSlug({ host, owner, repo }) (`owner/repo` on github.com, `host/owner/repo`
-// off it); off github.com every `gh api` read also carries `--hostname {host}`.
+// off it); off github.com every `gh api` read also carries `--hostname {host}` (trailing, except
+// 4a and 4b, which fetch-sub-issues.js sends as `api graphql --hostname {host} ...`).
 //   1   sub-issue -> parent, body-text: issue view {n} --repo {slug} --json body -q .body, then parseParent.
 //   2   sub-issue -> parent, native: fetchNativeParent's api graphql -f query=<parent> -f owner= -f repo=.
 //   3   parent -> sub-issues, body-text: issue view {parent} --repo {slug} --json body -q .body, then parseSubIssues.
 //   4   parent -> sub-issues, native: fetch-sub-issues.js's run([parent, --repo {slug}, --resolve-retries]), whose runner sends
-//   4a    the schema probe: api graphql -f query={ __type(name: "Issue") { fields { name } } };
-//   4b    the batched page: api graphql -f query=<subIssues(first:100)> -f owner= -f repo=;
+//   4a    the schema probe: api graphql [--hostname {host}] -f query={ __type(name: "Issue") { fields { name } } };
+//   4b    the batched page: api graphql [--hostname {host}] -f query=<subIssues(first:100)> -f owner= -f repo=;
 //   4c    on hasNextPage or a missing alias only: api --paginate repos/{owner}/{repo}/issues/{parent}/sub_issues --jq .[].number;
 //   4d  when run exits EXIT_SUBISSUES_UNAVAILABLE: 4c's argv, sent by this file instead.
 //   5   each sub-issue, ascending: issue view {n} --repo {slug} --json state,stateReason,labels,title,closedByPullRequestsReferences.
@@ -54,7 +56,7 @@ const HEADING_LINE_RE = /^## Closed below the oversight floor\s*$/m;
 
 // The verdict's keys, in emission order.
 const VERDICT_FIELDS = [
-  'parent', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
+  'parent', 'repo', 'state', 'exceeds', 'closeReason', 'idempotence', 'maxTier', 'riskFloor', 'parentIssue', 'needs', 'held', 'subIssues', 'skipped',
 ];
 // The idempotence values, in the order they are checked.
 const IDEMPOTENCE_VALUES = ['already-closed', 'reopened', 'close-only', 'comment-and-close'];
@@ -114,18 +116,19 @@ function distinctAscending(values) {
 // Under body-text a `Parent: #N` line is only honored when the parent's task list lists the
 // sub-issue (the parent's list wins). True when a NON-EMPTY list omits it; an empty or missing
 // list is not an omission and keeps the parent. The one copy both labeler transports (gh here,
-// the MCP shape in mcp-parent-gate-shape.js) apply; engine-verify.js's checker applies the same
-// membership rule to its own enumeration, where an empty list is a gather failure instead.
+// the MCP shape in mcp-parent-gate-shape.js) apply; engine-verify.js's checker, the third composer
+// of this file, applies the same membership rule to the facts it gathers here, where an empty list
+// is a gather failure instead.
 function listOmitsSubIssue(numbers, subIssue) {
   return numbers.length > 0 && !numbers.includes(subIssue);
 }
 
-// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com, unless the argv
-// already carries one (fetch-sub-issues.js adds its own to 4c). Any other argv, or no host or
-// github.com, is returned unchanged. fetchNativeParent and fetch-sub-issues.js's GraphQL reads
-// take no host, so their runners pass each argv through this.
+// A `gh api` argv aimed at `host`: `--hostname host` appended off github.com. Any other argv,
+// or no host or github.com, is returned unchanged. fetchNativeParent's GraphQL read and this
+// file's own REST and `api user` reads take no host, so they pass through this;
+// fetch-sub-issues.js sends its own (4a, 4b, 4c).
 function onHost(args, host) {
-  if (!host || host === 'github.com' || args[0] !== 'api' || args.includes('--hostname')) return args;
+  if (!host || host === 'github.com' || args[0] !== 'api') return args;
   return [...args, '--hostname', host];
 }
 
@@ -171,7 +174,7 @@ function enumerateSubIssues({
   const code = fetcher([String(parent), '--repo', slug, '--resolve-retries'], {
     ghAvailable: () => true,
     remoteUrl: () => null,
-    runner: (args) => caller.call(onHost(args, host)),
+    runner: (args) => caller.call(args),
     stdout: (s) => { out += s; },
     stderr: (s) => { err += s; },
   });
@@ -188,6 +191,48 @@ function enumerateSubIssues({
   const list = parsed && parsed.byParent && parsed.byParent[String(parent)];
   if (!Array.isArray(list)) throw new GhFailure(`fetch-sub-issues.js: no sub-issue list for #${parent}`);
   return distinctAscending(list);
+}
+
+// Shape 5: one sub-issue's live state, labels, title and closing PRs, read through `slug`
+// -> { number, title, state, stateReason, labels, closedBy }. Throws GhFailure on a malformed answer:
+// a `state` that is not a string, a present non-null `stateReason` that is not one, `labels` that are
+// present and not an array of { name: string } objects (an absent `labels` key is an unlabeled issue and
+// reads []), or malformed closing-PR references. A failed or malformed read must never become a gate
+// state, so a caller that renders it `unknown` (engine-verify.js, #4805) stays `unknown`.
+function readSubIssueFacts({ num, slug, caller }) {
+  const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
+  const malformedAnswer = (what, value) => new GhFailure(`gh issue view ${num}: unexpected output (${what}: ${JSON.stringify(value)})`);
+  if (typeof live.state !== 'string') throw malformedAnswer('state is not a string', live.state);
+  if (live.stateReason !== undefined && live.stateReason !== null && typeof live.stateReason !== 'string') {
+    throw malformedAnswer('stateReason is not a string', live.stateReason);
+  }
+  if (live.labels !== undefined && !(Array.isArray(live.labels) && live.labels.every((l) => l !== null && typeof l === 'object' && typeof l.name === 'string'))) {
+    throw malformedAnswer('labels is not an array of { name } objects', live.labels);
+  }
+  // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
+  const rawRefs = live.closedByPullRequestsReferences;
+  if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
+  }
+  const refs = rawRefs || [];
+  // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
+  // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
+  if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
+    throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
+  }
+  return {
+    number: num,
+    title: String(live.title || '').trim(),
+    state: String(live.state || '').toUpperCase(),
+    stateReason: String(live.stateReason || '').toUpperCase(),
+    labels: normalizeLabelNames(live.labels),
+    closedBy: refs.map((ref) => ref.number),
+  };
+}
+
+// Shape 6: the parent's label names, normalized, read through `slug`.
+function readParentLabels({ parent, slug, caller }) {
+  return normalizeLabelNames(caller.callJson(['issue', 'view', String(parent), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
 }
 
 // Exactly one of `subIssue`/`parent` -> { parent, parentLabels, subIssues } (shapes 1-6, in order).
@@ -211,29 +256,8 @@ function gatherGateFacts({
   const slug = repoSlug({ host, owner, repo });
   const numbers = enumerateSubIssues({ parent: resolved, owner, repo, host, workLinks, caller });
   if (!given(parent) && workLinks === 'body-text' && listOmitsSubIssue(numbers, subIssue)) return noParent;
-  const subIssues = numbers.map((num) => {
-    const live = caller.callJson(['issue', 'view', String(num), '--repo', slug, '--json', 'state,stateReason,labels,title,closedByPullRequestsReferences'], 'object');
-    // Absent or null is no closing PR; any other non-array is a malformed answer, as on the MCP path.
-    const rawRefs = live.closedByPullRequestsReferences;
-    if (rawRefs !== undefined && rawRefs !== null && !Array.isArray(rawRefs)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences is not an array: ${JSON.stringify(rawRefs)})`);
-    }
-    const refs = rawRefs || [];
-    // An element that is not a { number } reference is as malformed as a non-array, as on the MCP
-    // path: filtering it out would drop a closing PR and its {pr} suffix without a trace.
-    if (!refs.every((ref) => ref !== null && typeof ref === 'object' && Number.isInteger(ref.number) && ref.number > 0)) {
-      throw new GhFailure(`gh issue view ${num}: unexpected output (closedByPullRequestsReferences holds an element that is not a { number } reference: ${JSON.stringify(rawRefs)})`);
-    }
-    return {
-      number: num,
-      title: String(live.title || '').trim(),
-      state: String(live.state || '').toUpperCase(),
-      stateReason: String(live.stateReason || '').toUpperCase(),
-      labels: normalizeLabelNames(live.labels),
-      closedBy: refs.map((ref) => ref.number),
-    };
-  });
-  const parentLabels = normalizeLabelNames(caller.callJson(['issue', 'view', String(resolved), '--repo', slug, '--json', 'labels', '-q', '[.labels[].name]'], 'array'));
+  const subIssues = numbers.map((num) => readSubIssueFacts({ num, slug, caller }));
+  const parentLabels = readParentLabels({ parent: resolved, slug, caller });
   return { parent: resolved, parentLabels, subIssues };
 }
 
@@ -276,16 +300,20 @@ function numberSet(values) {
 
 // Pure: gathered facts plus the caller's closing set, held set and floor -> the
 // verdict, keys in VERDICT_FIELDS order. `idempotence` and `skipped` are always
-// null and []; a Close-running caller fills them from evaluateIdempotence.
+// null and []; a Close-running caller fills them from evaluateIdempotence. `slug` (#4824) is
+// only echoed into the verdict as `repo`: the `owner/repo` the caller resolved from origin, for
+// the gate prose's `--repo "{parent-repo}"`. A caller that resolved none (local-files, a facts
+// file with no qualified token) or whose verdict never reaches that prose (the reconciler,
+// which passes `--repo` on its own writes) leaves it null.
 function evaluateParentGate({
-  parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor,
+  parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor, slug = null,
 } = {}) {
   if (!VALID_RISK_FLOORS.includes(riskFloor)) {
     throw new TypeError(`riskFloor must be one of ${VALID_RISK_FLOORS.join(', ')}; got ${String(riskFloor)}`);
   }
   if (parent === null || parent === undefined) {
     return {
-      parent: null, state: 'no-parent', exceeds: null, closeReason: null, idempotence: null, maxTier: null,
+      parent: null, repo: slug, state: 'no-parent', exceeds: null, closeReason: null, idempotence: null, maxTier: null,
       riskFloor, parentIssue: null, needs: [], held: [], subIssues: [], skipped: [],
     };
   }
@@ -325,6 +353,7 @@ function evaluateParentGate({
   }
   return {
     parent,
+    repo: slug,
     state,
     exceeds,
     closeReason,
@@ -432,6 +461,7 @@ module.exports = {
   needsIdempotenceReads,
   readLogin,
   positive,
+  onHost,
   distinctAscending,
   listOmitsSubIssue,
   numberSet,
@@ -439,6 +469,8 @@ module.exports = {
   ghCaller,
   resolveParent,
   enumerateSubIssues,
+  readSubIssueFacts,
+  readParentLabels,
   gatherGateFacts,
   gatherIdempotenceFacts,
   evaluateParentGate,

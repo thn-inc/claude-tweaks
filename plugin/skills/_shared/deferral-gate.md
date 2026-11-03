@@ -11,7 +11,7 @@ The single home of the rule every exhaust channel applies before anything become
 - `skills/build/SKILL.md` (Common Steps 2 and 4 — Scope and edit discipline's reported follow-ups; review findings carried to the ledger)
 - `skills/build/dispatch.md` (the SDD invocation's review-finding rule)
 - `skills/_shared/ledger-format.md` (the ledger resolve gate's Phase 1 / 2 / 3)
-- `skills/wrap-up/review-console-appendix.md` (an SDD ruling's reversal record — Deriving the value from the criteria)
+- `skills/wrap-up/review-console-appendix.md` (an SDD ruling's reversal or ratify record — Deriving the value from the criteria)
 
 The code twins are `clearsFloor` (`bin/lib/issues/autonomy.js`) and `recordPayload`'s `deferReason` option (`bin/lib/issues/record.js`); `DEFER_REASONS` in `record.js` is the vocabulary's only code home, and `tests/deferral-gate-conformance.test.js` pins this file and that export equal.
 

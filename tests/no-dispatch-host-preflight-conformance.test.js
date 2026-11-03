@@ -15,39 +15,17 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed, lineStartingWith, sectionOf } = require('./helpers/conformance-asserts');
 
 const PLUGIN = path.join(__dirname, '..', 'plugin');
 const SKILLS = path.join(PLUGIN, 'skills');
 const POLICY = path.join(SKILLS, 'build', 'execution-mode-policy.md');
-
-// A fact-list predicate: the facts whose pattern the text no longer matches.
-const missingFactsOf = (patterns) => (text) => patterns.filter(([pattern]) => !pattern.test(text)).map(([, fact]) => fact);
-
-// Per-assertion go-red proof (the 6bb1bb695 shape): strip one pattern's matched phrase from the live
-// text, and the shared predicate must report exactly that one fact missing.
-function assertEachPatternGoesRed(text, patterns, missingOf) {
-  for (const [pattern, fact] of patterns) {
-    const doctored = text.replace(pattern, '');
-    assert.notEqual(doctored, text, `anchor text for "${fact}" not found — proof cannot discriminate`);
-    assert.deepEqual(missingOf(doctored), [fact], `removing only "${fact}" must turn exactly that assertion red`);
-  }
-}
-
-const lineStartingWith = (text, prefix) => text.split('\n').find((line) => line.startsWith(prefix)) || '';
 
 // The live line of `file` starting with `prefix`. Asserts it exists.
 function requireLine(file, prefix) {
   const line = lineStartingWith(readText(file), prefix);
   assert.ok(line, `${path.basename(file)} has no line starting "${prefix}"`);
   return line;
-}
-
-// The text from `heading` to the next `## ` heading (or EOF). Asserts the heading exists.
-function sectionOf(text, heading) {
-  const start = text.indexOf(heading);
-  assert.notEqual(start, -1, `heading not found: ${heading}`);
-  const next = text.indexOf('\n## ', start + heading.length);
-  return next === -1 ? text.slice(start) : text.slice(start, next);
 }
 
 const POLICY_HEADING = '## No-dispatch host (#4555)';

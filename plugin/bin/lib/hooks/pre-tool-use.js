@@ -25,7 +25,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, keepLost,
+  gitTargets, gitTargetsFrom, resolvedGitSegments, fileWriteTargets, mkdirTargets, WRITE_SHAPES, forEachCommandSegment, resolveGitCommand, resolveWriteTarget, powershellOpaqueCommand, processKillByName, keepLost,
   PIPELINE_STATE_DIR, namesPipelinesSegment,
 } = require('./git-command');
 const ctxLib = require('./context');
@@ -947,6 +947,31 @@ function checkGitStashWarn(segments, warnings) {
   }
 }
 
+// #4548: warn-only heads-up for a Bash command that kills processes by image or name
+// (`pkill`, `killall`, `taskkill /IM`, `Stop-Process -Name`, a `pgrep`-fed `kill`, also
+// inside `sh -c`/`cmd /c`/`powershell -Command`). Unlike checkGitStashWarn's linked-worktree
+// condition, the hazard is machine-wide — every sibling session and worktree shares the
+// process table — so this is run- and location-independent: it needs no run state and no
+// repo. It is reachable only because GUARDED_PROGRAM_WORDS.processKill feeds the bash
+// prefilter, which matches those words case-insensitively (`TASKKILL`). The parser is
+// git-command.js's processKillByName; a PID-scoped kill is never reported. Fail-open: any
+// parser throw swallows to silence, never to a block.
+function checkProcessKillWarn(command, cwd, warnings) {
+  if (!command) return;
+  try {
+    if (processKillByName(command, cwd).length) {
+      warnings.push(
+        'claude-tweaks: killing a process by image or name (`taskkill /IM`, `pkill`, `killall`, '
+        + '`Stop-Process -Name`, a `pgrep`-fed `kill`, also inside `sh -c`/`cmd /c`/`powershell -Command`) '
+        + 'matches every process of that name on this machine — the process table is shared with every '
+        + 'sibling session and worktree, so it can take down their dev servers and tooling. Kill only a '
+        + 'PID you captured when you started the process, or the listener on a port you own '
+        + '(`lsof -nP -iTCP:{port} -sTCP:LISTEN -t`, then `kill {pid}`; win32: `taskkill /PID {pid} /T /F`).',
+      );
+    }
+  } catch (_) { /* best-effort heads-up: a parser failure is silence, never a block */ }
+}
+
 // worktree-required policy gate: unlike E1 below, this needs no pipeline run
 // state at all — it fires on the first Edit/Write/NotebookEdit/commit of a
 // session, before any skill has ever run, whenever the target repo has opted
@@ -1484,6 +1509,41 @@ function hasLoggedPrEarlyStep1(runDir, branch) {
   }
 }
 
+// The dirs whose decisions.md may carry this run's PR-early lines: `runDir`,
+// plus its parent when `runDir` is a `spec-*` dir whose parent is run-id-shaped
+// (RUN_ID_RE). The parent is whatever readRunStateWithParent({ requireRunIdParent:
+// true }) -- the rule lib/pr-bookkeeping/precondition.js uses -- reports as
+// `parentRunDir`, so that one function owns the rule; its read is stubbed out
+// because only the directory matters here. pr-early-open.js refuses a `spec-`
+// --run, so in a multi-spec run the Step 1 and FAILED lines land on the parent.
+// A non-string or empty `runDir` is returned as is, so the reads keep their
+// missing-file -> false posture.
+function prEvidenceDirs(runDir) {
+  if (typeof runDir !== 'string' || !runDir) return [runDir];
+  const { parentRunDir } = ctxLib.readRunStateWithParent(path.resolve(runDir), { read: () => null, requireRunIdParent: true });
+  return parentRunDir ? [runDir, parentRunDir] : [runDir];
+}
+
+// Whether a pr-first push may go ahead with no recorded PR ([IL-131]) -- the one
+// rule checkBookkeepingStampsGate's PR-stamp branch and lib/phase-exit/phase-exit.js's
+// prPushReleased both call (#4344). In order: a closed run; any truthy `pr` stamp;
+// a model other than pr-first; a first publish (`hasNoUpstream`), released only by
+// this branch's Step 1 line (#989/#1800) -- never by prExempt or a FAILED line,
+// since the gate's record-pr deny text tells agents to hand-log a FAILED line, so
+// a memoized prExempt can precede a first publish that never ran Step 1 (#903);
+// then prExempt; then a logged `PR-early run lifecycle: ... FAILED` line. Only
+// reads decisions.md (through prEvidenceDirs); a null `runState` reads as `{}`.
+function prStampReleased({ runState, runDir, branch, model, hasNoUpstream }) {
+  const state = runState || {};
+  if (state.status === 'clean') return true;
+  if (state.pr) return true;
+  if (model !== 'pr-first') return true;
+  const dirs = prEvidenceDirs(runDir);
+  if (hasNoUpstream) return Boolean(branch) && dirs.some((d) => hasLoggedPrEarlyStep1(d, branch));
+  if (state.prExempt) return true;
+  return dirs.some((d) => hasLoggedPrDegrade(d));
+}
+
 // #3012: pure form of hasLoggedPrEarlyStep1's check over a decisions.md body.
 // True when the exact three-shape regex matches, or when a single AUTO line
 // (no FAILED) mentions PR-early, states a Step 1 outcome before its Reversibility
@@ -1913,12 +1973,16 @@ function stampCheckOutcome(ctx, stamp, wtRoot, warnings, warnText, denyText, isF
 //   3. This run's materialize commit hasn't landed yet (hasMaterializeCommit
 //      above) — Common Step 1 is still legitimately in progress.
 //   4. The two stamp checks themselves — record-worktree unconditionally,
-//      record-pr only under a run pinned `integration-model: pr-first`
-//      (resolveRunPinnedIntegrationModel above) and with no logged degrade.
-//      The first time this branch proves no further PR-stamp denial is
+//      record-pr whenever prStampReleased (above) does not release the call:
+//      it releases a run not pinned `integration-model: pr-first`
+//      (resolveRunPinnedIntegrationModel above), a first publish only on its
+//      Step 1 line, and anything else on a memoized `prExempt` or a logged degrade.
+//      The first time this branch proves no tracked-branch PR-stamp denial is
 //      possible (model resolved cleanly to non-pr-first, or pr-first with
 //      the degrade already logged), it persists `prExempt: true` to
 //      run-state.json so every later covered call short-circuits at check 1
+//      -- except an all-push call, which still reaches the PR branch because
+//      a first publish needs its Step 1 line (prStampReleased) --
 //      instead of re-paying repoInfo + hasMaterializeCommit + this
 //      resolution — each hook invocation is a fresh process, so an in-memory
 //      cache would not survive between calls; run-state.json is the durable
@@ -1970,13 +2034,17 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // All three stamps already recorded, OR the worktree+claim stamps are
   // recorded and the PR stamp is durably exempt (`prExempt`, memoized by the
   // PR-stamp branch below the first time it proves no further denial is
-  // possible): neither deny branch below can fire, so reach the same `{}`
+  // possible; an all-push call is the one exception, below): neither deny
+  // branch below can fire, so reach the same `{}`
   // here instead of paying for repoInfo's git spawn, hasMaterializeCommit's
   // git spawn, and (on the PR branch) a possible network-touching `gh` call —
   // on EVERY covered tool call of the run, including a `local-merge` run's
   // steady state, which never sets `runState.pr` and previously never
-  // reached this short-circuit at all. Purely an optimization; it changes no
-  // deny/allow outcome.
+  // reached this short-circuit at all. `prExempt` short-circuits every call
+  // except an all-push one (`allPush`): a first publish still needs its Step 1
+  // line (prStampReleased, #4344), so that call reaches the PR branch below.
+  // The test is `allPush`, not `firstPublish`, because `firstPublish` spawns
+  // git per target (hasNoUpstreamYet) -- the cost this short-circuit avoids.
   //
   // `runState.claimExempt` MUST be part of this condition (#2636) — a prior
   // version of this comment argued it was safe to omit because "the
@@ -1996,7 +2064,8 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   // `hasLoggedClaim()` against that run's own `decisions.md` shows every one
   // of its 13 record numbers would have classified as "missing claim" had
   // the branch ever executed.
-  if (runState.worktree && (runState.pr || runState.prExempt) && runState.claimExempt) return {};
+  const allPush = isGitWrite && commandGitTargets.every((t) => t.action === 'push');
+  if (runState.worktree && (runState.pr || (runState.prExempt && !allPush)) && runState.claimExempt) return {};
 
   const { repoRoot: wtRoot, isLinkedWorktree, indeterminate } = wtDetect.repoInfo(ctx.cwd || process.cwd());
   if (indeterminate || !wtRoot || !isLinkedWorktree) return {};
@@ -2139,8 +2208,9 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
   }
 
   if (!runState.pr) {
-    // lib/phase-exit/phase-exit.js prPushReleased applies this branch's release rules to the
-    // push phase-exit.js makes itself (#4026) -- a change to them here belongs there too.
+    // The release rule is prStampReleased above, which lib/phase-exit/phase-exit.js's
+    // prPushReleased also calls for the push phase-exit.js makes itself (#4026, #4344);
+    // a new release condition goes in that one function.
     // Model resolution moved ahead of the #989 exemption below (#1800) — the
     // exemption's own precondition now depends on `model` (a resolved
     // `local-merge` run never runs pr-early-run-lifecycle.md's Step 1 at all,
@@ -2177,30 +2247,34 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
     // `onDegrade` too, so it never persists `prExempt` either.
     if (degraded) modelResolved = false;
     // #989: exempt an in-flight initial publish (see hasNoUpstreamYet above)
-    // before doing anything else in this branch — this is a narrow, one-shot
-    // allowance for THIS call only, never persisted as `prExempt`, so a push
-    // to an already-tracked branch (Step 2 already ran once, `gh pr create`
-    // never followed it) still falls through to the deny below, preserving
-    // the "keep pushing forever, never open the PR" case IL-131 exists to
-    // close. Applies only to the Bash/git branch (`commandGitTargets`) — an
+    // once the model is resolved — prStampReleased decides it, and this is a narrow,
+    // one-shot allowance for THIS call only, never persisted as `prExempt`, so a
+    // push to an already-tracked branch (Step 2 already ran once, `gh pr create`
+    // never followed it) goes to prStampReleased's tracked rules (`prExempt` or a
+    // logged FAILED line can release it) and otherwise gets the `record-pr` deny
+    // below, preserving the "keep pushing forever, never open the PR" case IL-131
+    // exists to close. Applies only to the Bash/git branch (`commandGitTargets`) — an
     // Edit/Write/NotebookEdit call (`commandGitTargets` null) is never a
     // push and always continues past this check.
-    if (Array.isArray(commandGitTargets) && commandGitTargets.length > 0
-      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir))) {
-      // #1800: a resolved `local-merge` model never runs Step 1 (the whole
-      // file is skipped for it), so it stays exempt exactly as before —
-      // only `pr-first` gains the added precondition below. The exemption
-      // above answers "is this the branch's first publish push?" — it does
-      // not answer "did Step 1 run first?". A `pr-first` push additionally
-      // requires every target's branch to carry a Step 1 outcome line in
-      // decisions.md before the push it precedes is let through.
-      if (model !== 'pr-first') return {};
+    const firstPublish = Array.isArray(commandGitTargets) && commandGitTargets.length > 0
+      && commandGitTargets.every((t) => t.action === 'push' && hasNoUpstreamYet(t.dir));
+    // #1800: a resolved `local-merge` model never runs Step 1 (the whole
+    // file is skipped for it), so it stays exempt exactly as before —
+    // only `pr-first` gains the added precondition. `firstPublish` answers
+    // "is this the branch's first publish push?" — it does not answer "did
+    // Step 1 run first?". A `pr-first` push additionally requires every
+    // target's branch to carry a Step 1 outcome line in decisions.md before
+    // the push it precedes is let through, so the branch name is read (and
+    // `currentBranchName` spawns) only under `pr-first`.
+    let branch = null;
+    if (firstPublish && model === 'pr-first') {
       const branches = commandGitTargets.map((t) => currentBranchName(t.dir));
-      const [branch] = branches;
-      if (branch && branches.every((b) => b === branch)
-        && hasLoggedPrEarlyStep1(ctx.runDir, branch)) {
-        return {};
-      }
+      const [first] = branches;
+      if (first && branches.every((b) => b === first)) branch = first;
+    }
+    const released = prStampReleased({ runState, runDir: ctx.runDir, branch, model, hasNoUpstream: firstPublish });
+    if (firstPublish) {
+      if (released) return {}; // one-shot: never persisted as prExempt
       return stampCheckOutcome(
         ctx, 'record-pr-step1', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and this ` +
@@ -2217,7 +2291,7 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    if (model === 'pr-first' && !hasLoggedPrDegrade(ctx.runDir)) {
+    if (!released) {
       return stampCheckOutcome(
         ctx, 'record-pr', wtRoot, warnings,
         `claude-tweaks: pipeline run ${path.basename(ctx.runDir)} resolves integration-model: pr-first and has a ` +
@@ -2235,13 +2309,15 @@ function checkBookkeepingStampsGate(ctx, commandGitTargets, deps = {}, warnings 
         isForeignSessionCall(ctx),
       );
     }
-    // No further PR-stamp denial is possible for the rest of this run: model
+    // No further tracked-branch PR-stamp denial is possible for the rest of this run: model
     // resolved cleanly to something other than pr-first (the run's pin is
     // fixed at run start and never re-derived — `_shared/integration-model.md`
     // — so it cannot later flip to pr-first), or it resolved pr-first but the
     // degrade line already landed in decisions.md (append-only — once present
     // it is permanent). Persist the verdict so every later covered call for
-    // this run hits the check-1 short-circuit above instead of re-paying
+    // this run — except an all-push call, which still reaches this branch
+    // because a first publish needs its Step 1 line — hits the check-1
+    // short-circuit above instead of re-paying
     // repoInfo + hasMaterializeCommit + this same resolution. Skipped when
     // `modelResolved` is false (the catch above fired, or the forge detection
     // itself degraded — #4578 Q5) — see its comment.
@@ -2347,6 +2423,7 @@ function runInner(ctx, indeterminateTargets, warnings, deps) {
   // three times per invocation (once per consumer) was pure repeated work.
   const segments = command ? resolvedGitSegments(command, ctx.cwd, walkOptions(ctx.cwd)) : null;
   checkGitStashWarn(segments, warnings);
+  checkProcessKillWarn(command, ctx.cwd, warnings);
   const commandGitTargets = segments ? gitTargetsFrom(segments) : null;
 
   const gate = checkWorktreeRequired(ctx, commandGitTargets, indeterminateTargets);
@@ -2575,9 +2652,10 @@ module.exports = {
   checkDispatchConfigGate,
   hasLoggedPrDegrade,
   hasPrEarlyStep1LineFor,
-  // Exported for bin/lib/phase-exit/phase-exit.js (#4026), whose push applies the
-  // same pr-first no-PR release conditions as checkBookkeepingStampsGate's PR-stamp branch.
-  hasLoggedPrEarlyStep1,
+  // The one pr-first no-PR release rule (#4344): called by checkBookkeepingStampsGate's
+  // PR-stamp branch above and by bin/lib/phase-exit/phase-exit.js's prPushReleased (#4026).
+  prStampReleased,
+  // phase-exit.js's hasNoUpstreamYet seam.
   hasNoUpstreamYet,
   // Exported for check-pr-bookkeeping.js's phase-boundary precondition check
   // (#2472) to reuse rather than reimplement — the same integration-model

@@ -9,7 +9,7 @@ Recall this conversation's own history. For each distinct unit of implementation
 verification work done in this session, check whether it already correlates to a `#N` mentioned
 anywhere in this conversation. Work with no correlating `#N` is a session-recall candidate —
 compose its Verification Brief content now, directly from recall, into the same shape
-`verification-brief.md` renders (`### The ask` / `### What shipped` / `### Confirmed` / `###
+`wrap-up/verification-brief-parent-gate.md`'s template renders (`### The ask` / `### What shipped` / `### Confirmed` / `###
 Observation plan` / `### Try it`):
 
 - **The ask** — what was actually requested in this conversation, for this unit of work.
@@ -53,6 +53,20 @@ never carry the `risk:*`/`size:*` data a pre-fill would need.
 gh issue view {n} --json number,title,body,labels,url,state
 ```
 
+**Read the acceptance packet first** (`_shared/acceptance-packet.md`'s Reader rules), whatever the
+record's labels: a below-floor record with no parent carries a packet and no pending label (Decision
+Q5). Fetch every comment (`gh issue view {n} --json comments`) and take the earliest trusted comment by
+`createdAt` whose first line is exactly an acceptance-packet marker of any version — trusted per
+`_shared/pr-run-comments.md`'s Trusted authors, each untrusted one named in that section's skip notice, one
+line above the verdict — matching `readPacket`. Read it if that line is `<!-- acceptance-packet: v1 -->`.
+That comment is what Step 2 renders: its Test guide stands in for the Try it block and
+its `### Observation plan` appendix is the plan Step 2 walks; go straight to Step 2 with it. A first line
+naming another schema version (`<!-- acceptance-packet: v2 -->`) makes it an `unreadable` packet, even
+with a v1 comment later:
+report it by that version and stop this ref, since a legacy brief beside it never stands in. A failed read states so in
+one plain line above the verdict and falls through only to the label check and the closing-commit recovery below, never to the legacy brief forms, which read the same comments. Only when no trusted packet exists does the lookup fall back to the
+legacy forms below, unchanged: a decomposition parent's brief, and runs from before the packet.
+
 If the labels just fetched carry a pending acceptance label in either spelling
 (`_shared/work-record.md`), even one a verdict outranks so the acceptance facet reads otherwise
 (a re-run on a rejected record leaves exactly that, and its fresh brief is the one to show), fetch
@@ -69,8 +83,8 @@ comment from a trusted author (`_shared/pr-run-comments.md`'s Trusted authors �
 no matching comment, and each one skipped is named in that section's skip notice, one line above
 the verdict. Go straight to Step 2 with it.
 
-**Under `pr-first` the brief lives on the PR** (`wrap-up/verification-brief.md` Step 4's `pr`
-object present branch), and the issue carries only the unmarkered pointer line `Verification Brief
+**A legacy brief under `pr-first` lives on the PR** (posted by runs from before the acceptance
+packet replaced that template), and the issue carries only the unmarkered pointer line `Verification Brief
 posted to PR #{pr-number}: {pr-url}`. When no issue comment carries the heading but one carries
 that pointer, take `{pr-number}` from the last such comment — counting only Trusted authors' comments,
 with the skip notice, as above — and run the **PR run-comment lookup** below for its `brief` comment —
@@ -78,7 +92,7 @@ that comment, minus its marker line, is the Verification Brief; go
 straight to Step 2 with it. A lookup that finds no `brief` comment, or fails, falls through to the
 closing-commit recovery below, as the no-heading case does.
 
-**No comment anywhere carries the heading or the pointer** (`#205`): the label write landed but the brief post
+**No comment anywhere carries the packet, the heading or the pointer** (`#205`): the label write landed but the comment post
 did not — a near-unreachable state, since every acceptance-labeling path posts the comment before
 the label (`verification-brief.md`'s Step 4, `verification-brief-parent-gate.md`'s Apply the
 gate), but not one this lookup should treat as an error. Fall through to the closing-commit
@@ -97,11 +111,11 @@ that gate: `/claude-tweaks:wrap-up`'s own eager path (closing the parent's last 
 
 If the record carries **no** pending acceptance label (e.g. it was built ad hoc in some other session
 and closed by a `Fixes #N` commit, never reaching `/claude-tweaks:wrap-up`'s Phase 4 execution step
-— **or it reached Phase 4 and simply didn't clear the oversight floor, per `#367`** — a normal,
-common case now, not an anomaly), recover that **closing
-commit** before reaching for session recall. This is the population `/claude-tweaks:tidy`'s
+— **or it reached Phase 4 before the packet and simply didn't clear the oversight floor, per `#367`** — a normal
+case, not an anomaly), recover that **closing
+commit** before reaching for session recall. Above the oversight floor this is the population `/claude-tweaks:tidy`'s
 `acceptance-gap` sweep surfaces — its `github-pr-scan-acceptance.md` scope under `work-backend:
-github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent — and it is by construction
+github-issues`, `tidy/step-1-records.md`'s Shape 8 under `local-files`, plus `parent-gate` / Shape 7 for a hand-closed parent; both filter a below-floor record out, since it owes no disposition. Either way it is by construction
 *other* sessions' work. Recall will have nothing, but the commit that closed the record is still
 on disk, and this recovery reads git rather than the backend, so it is identical on both drivers:
 
@@ -167,7 +181,7 @@ same shape as the no-arguments path, sourced like this:
   "recall can't produce a path list" omission case does not arise. **Parent-linked records:** also
   run the Full verification pointer sub-procedure below, and append its block to the composed plan
   when it resolves one.
-- **Try it** — a below-floor record or a parent-linked sub-issue had its walkthrough posted alone,
+- **Try it** — a parent-linked sub-issue, or a below-floor record closed before the acceptance packet, had its walkthrough posted alone,
   as its PR's `<!-- run-comment: try-it -->` (or `try-it:{n}`) comment: run the **PR run-comment
   lookup** below against the record's closing PR first, and render what it returns verbatim — the
   same text the Pipeline Summary and the PR showed. Only when it returns nothing, compose the block
@@ -194,8 +208,11 @@ live parent/sibling API state read at demo time, not from recall, so the reason 
 applies to this block specifically.
 
 **`work-backend: local-files`:** `readRecord(filePath)` for the single record
-(`bin/lib/issues/local-store.js`); the Verification Brief is the record's own `## Verification
-Brief` body section. Same pending-facet → closing-commit → session-recall fallback order as
+(`bin/lib/issues/local-store.js`). The packet comes first, whatever the record's facets: the block
+between the delimiters `<!-- acceptance-packet:start -->` and `<!-- acceptance-packet:end -->`, each alone on its line, whitespace around it aside,
+in its body (`_shared/acceptance-packet.md`), which stands in for the brief as the comment does above,
+and stops this ref the same way when its first line names another schema version. With no such block, the
+Verification Brief is the record's own `## Verification Brief` body section. Same pending-facet → closing-commit → session-recall fallback order as
 above, keyed on `facets.acceptance === 'pending'` read straight off the record. The closing-commit step is
 identical — it reads git, not the backend, so a local record closed by a `Fixes #N` commit
 reconstructs the same way.
@@ -251,33 +268,32 @@ session-recall fallback, both above — stated once, run from either.
    substituting gh's literal `{owner}`/`{repo}` placeholder syntax inside a field *value* — a
    different mechanism a GraphQL variable never uses (`gh-api-module-pattern` skill). **No parent
    resolvable** — omit the block entirely; nothing renders.
-2. **Enumerate siblings and their state**, from the parent side — the rule
-   `wrap-up/verification-brief-parent-gate.md`'s "Enumerate the parent's sub-issues" states, which
-   `bin/parent-gate.js` runs for that procedure: `native` —
-   `gh api --paginate "repos/{owner}/{repo}/issues/$PARENT_NUM/sub_issues"`, every page, whose
-   response already carries every sibling's `number`, `title`, and `state`, so no per-sibling
-   fetch is needed here (normalize its lowercase `open`/`closed` to `OPEN`/`CLOSED` —
-   `_shared/github-pr-scan-acceptance.md`); `body-text` — one `gh issue view {n} --json
-   state,title` per `parseSubIssues` number; `local-files` — the `queryRecords` result already
-   carries `facets.closed` and the title. This enumeration is the parent's **full** sub-issue
-   list, the record in hand included — do not filter it down yet. Also fetch the parent's labels
-   (`gh issue view $PARENT_NUM --json labels`, or the parent record's `facets.acceptance`).
+2. **Enumerate siblings and their state**, from the parent side — one call, run as its own Bash
+   call: `node "${CLAUDE_PLUGIN_ROOT}/bin/parent-gate.js" --parent $PARENT_NUM`. It prints one JSON
+   verdict line: `subIssues[]` — `{number, title, state, stateReason, pr}` in number order,
+   each `subIssues[].state` already `OPEN`/`CLOSED` — and the verdict's `state`, the parent-gate value
+   (`parentGateState` over those sub-issues and the parent's labels). The CLI reads
+   `work-backend`/`work-links` itself and enumerates per link model, so nothing here composes a
+   `gh` call or fetches the parent's labels. Always `--parent`, never `--sub-issue {n}`: the
+   parent-side call applies no Self-inclusion rule, so the record in hand keeps its live state.
+   `subIssues` is the parent's **full** list, the record in hand included.
 
-   Two different lists are then in play, built from this same enumeration for two different
-   purposes: `Pending:` (Step 3 below) is built with the record in hand **excluded** — it never
-   lists itself as pending. `parentGateState({subIssues, parentLabels})`
-   (`bin/lib/issues/acceptance.js`) must instead be called with the **full** list, record in hand
-   **included**: it returns `'due'` only when every sub-issue in the list it's given is `CLOSED`,
-   so calling it with the record-in-hand excluded would wrongly report `due` whenever every
-   *other* sibling has closed but the record in hand is itself still open — a real case (a
-   session-recall entry may run on one still-open record). Bounded by decomposition size —
-   `/specify`'s sizing keeps a parent to a handful of sub-issues, so nothing here fans out.
+   Two different lists are then in play, built from this one verdict for two different purposes:
+   `Pending:` (Step 3 below) is built from `subIssues` with the record in hand **excluded** — it
+   never lists itself as pending — and `subIssues[].state !== 'CLOSED'` means open. The `parent gate {…}`
+   value in `Pending: none — …` is the verdict's `state`, which was computed over the **full**
+   list, record in hand **included**: never recompute it with `parentGateState` over the
+   filtered list, which would wrongly report `due` whenever every *other* sibling has closed but
+   the record in hand is itself still open — a real case (a session-recall entry may run on one
+   still-open record). Bounded by decomposition size — `/specify`'s sizing keeps a parent to a
+   handful of sub-issues, so nothing here fans out.
 3. **Compose the block** per `_shared/observation-plan.md`'s schema and grammar rules.
 4. **Extend `### Confirmed`** with one sentence — end-to-end behavior was not observable at this
    slice; see the plan's Full verification block — in whichever composer produced this brief:
    the reconstruction's opening reconstruction sentence above, or the no-arguments path's
    `### Confirmed` bullet above, which the `#N`-scoped session-recall fallback reuses.
 
-**Fail open, visibly.** Any `gh` failure in steps 1-2 above omits the block and states so in
-one plain line above the verdict, naming which lookup failed — never a silent omission. `/demo`
+**Fail open, visibly.** Any `gh` failure in step 1, or a non-zero exit of step 2's
+`bin/parent-gate.js` call (its stderr line quoted), omits the block and states so in one plain
+line above the verdict, naming which lookup failed — never a silent omission. `/demo`
 has no run directory and no `decisions.md`, so this one line is the only trace.
