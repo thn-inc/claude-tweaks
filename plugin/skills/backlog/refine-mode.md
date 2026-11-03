@@ -348,6 +348,8 @@ node -e "
 " -- "$ST_BACKLOG_REFINE_FACETED"
 ```
 
+A non-zero exit from the block is a failure, never an empty population: this step ends without the confirmation pass, reported with stderr verbatim in the run's closing summary.
+
 If the block printed no line, this step ends here. Otherwise read `refine-risk-flags.md` in this skill's directory and follow it.
 
 ## Step 4: Decision lanes

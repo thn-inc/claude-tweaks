@@ -91,6 +91,8 @@ const REFINE_PINS = [
   ['Step 3.7 stub', 'refine', stub, 'never read its sub-file'],
   ['Step 3.7 stub', 'refine', stub, '`refine-headless.md` never runs it'],
   ['Step 3.7 stub', 'refine', stub, "a local record's `key` is `local-` plus its file stem"],
+  ['Step 3.7 stub', 'refine', stub, 'A non-zero exit from the block is a failure, never an empty population'],
+  ['Step 3.7 stub', 'refine', stub, 'reported with stderr verbatim in the run\'s closing summary'],
   ['Step 3.7 stub', 'refine', stub, 'If the block printed no line, this step ends here'],
   ['Step 3.7 stub', 'refine', stub, READ_SUBFILE],
   ['sub-file Classify', 'sub', classifySec, CLASSIFY_CALL],
