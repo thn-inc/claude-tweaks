@@ -619,3 +619,100 @@ test('#4773 #4834: archive-run refuses an undeclared flag (--dry-run) on stderr 
     assert.strictEqual(git(['rev-parse', 'HEAD'], root), headBefore, 'no commit');
   }
 });
+
+// #3721: archive-run reports the commit it made on the main checkout's branch.
+function trackedRunFixture() {
+  const fx = runDirFixture('clean');
+  fs.mkdirSync(path.join(fx.runDir, 'work'), { recursive: true });
+  fs.writeFileSync(path.join(fx.runDir, 'work', '999-spec.md'), '# 999\n');
+  git(['add', path.join('.claude-tweaks', 'pipelines', fx.runId, 'work', '999-spec.md')], fx.root);
+  git(['commit', '-q', '-m', 'materialize #999'], fx.root);
+  return fx;
+}
+
+function addBareOrigin(root, branch = 'main') {
+  const bare = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-origin-')));
+  git(['init', '-q', '--bare'], bare);
+  git(['remote', 'add', 'origin', bare], root);
+  git(['push', '-q', '-u', 'origin', branch], root);
+  return bare;
+}
+
+const COMMITTED = /^claude-tweaks: committed [0-9a-f]{7,} on \S+ \((not pushed — \d+ ahead of \S+|no upstream configured|push state unknown)\)$/m;
+
+test('#3721 AC2.1: tracked work prints the committed line', () => {
+  const { root, runDir } = trackedRunFixture();
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, COMMITTED);
+  assert.match(result.stdout, /\(no upstream configured\)$/m);
+  const sha = git(['rev-parse', '--short', 'HEAD'], root).trim();
+  assert.match(result.stdout, new RegExp(`^claude-tweaks: committed ${sha} on main \\(`, 'm'));
+});
+
+test('#3721 AC2.2: an untracked-only run prints no committed line', () => {
+  const { root, runDir } = runDirFixture('clean');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /^claude-tweaks: archived /m, 'the verb ran and archived');
+  assert.doesNotMatch(result.stdout, /committed/);
+});
+
+test('#3721 AC3.1: a branch tracking an upstream at the pre-archive commit reports 1 ahead', () => {
+  const { root, runDir } = trackedRunFixture();
+  addBareOrigin(root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /\(not pushed — 1 ahead of origin\/main\)$/m);
+});
+
+test('#3721 upstream ref gone reports push state unknown', () => {
+  const { root, runDir } = trackedRunFixture();
+  addBareOrigin(root);
+  git(['update-ref', '-d', 'refs/remotes/origin/main'], root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /\(push state unknown\)$/m);
+  assert.strictEqual(result.code, 0);
+});
+
+test('#3721 detached HEAD reads no upstream configured', () => {
+  const { root, runDir } = trackedRunFixture();
+  git(['checkout', '-q', '--detach'], root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, / on detached \(no upstream configured\)$/m);
+});
+
+test('#3721 a real branch named detached keeps its push state', () => {
+  const { root, runDir } = trackedRunFixture();
+  git(['checkout', '-q', '-b', 'detached'], root);
+  addBareOrigin(root, 'detached');
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, / on detached \(not pushed — 1 ahead of origin\/detached\)$/m);
+});
+
+test('#3721 a tag named like the branch keeps the plain name and push state', () => {
+  const { root, runDir } = trackedRunFixture();
+  addBareOrigin(root);
+  git(['tag', 'main'], root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, / on main \(not pushed — 1 ahead of origin\/main\)$/m);
+});
+
+test('#3721 invoked from a linked worktree names the main checkout\'s branch', () => {
+  const { root, runDir } = trackedRunFixture();
+  addBareOrigin(root);
+  const holder = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ct-archrun-wt-')));
+  const wt = path.join(holder, 'wt');
+  git(['worktree', 'add', '-q', '-b', 'other', wt], root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: wt });
+  // Pins that hooks.js probes from mainRoot: probing from the linked worktree would name `other` and no upstream.
+  assert.match(result.stdout, / on main \(not pushed — 1 ahead of origin\/main\)$/m);
+});
+
+test('#3721 a refusal after the commit prints the refusal and the committed line', () => {
+  const { root, runDir } = trackedRunFixture();
+  fs.writeFileSync(path.join(runDir, 'tracked-stray.md'), 'oops\n');
+  git(['add', path.relative(root, path.join(runDir, 'tracked-stray.md'))], root);
+  git(['commit', '-q', '-m', 'accidentally track a stray file'], root);
+  const result = runHook(['archive-run', '--run', runDir], { cwd: root });
+  assert.match(result.stdout, /archival refused — tracked-entry/);
+  assert.match(result.stdout, COMMITTED);
+  assert.strictEqual(result.code, 0);
+});

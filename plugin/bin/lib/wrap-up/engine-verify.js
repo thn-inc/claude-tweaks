@@ -889,10 +889,13 @@ function scanPrBrief(prComments, target) {
 // packet of an unknown schema version fails rather than falling through, so a
 // brief beside it cannot pass it.
 //
-// #3222: the parent path evaluates the Parent-Gate Procedure's gate state and
-// oversight floor first (verification-brief-parent-gate.md's "Evaluate the
-// gate"). An incomplete gate, or a due parent whose sub-issues sit below the
-// oversight floor, skips the parent instead of requiring its demo:pending. The
+// #3222, #3508: the parent path evaluates the Parent-Gate Procedure's gate state
+// first (verification-brief-parent-gate.md's "Evaluate the gate"), one branch per
+// state. `incomplete` skips (not due). `resolved` skips (a verdict label means the
+// parent is already dispositioned and owes nothing more). `gated` falls through to
+// the disposition and brief checks whatever its risk tier: the floor decides only
+// whether a `due` parent is gated, so only `due` meets the oversight floor, and a
+// below-floor `due` parent skips instead of requiring its demo:pending. The
 // below-floor skip detail names the post-merge close (#4466): that parent is
 // closed by pr-first-merge-post-merge.md's Step 4.0b once the merge lands, so
 // it never carries an acceptance label. That detail is `github-issues` wording:
@@ -927,7 +930,7 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
   }
   const failing = [];
   const passedNotes = []; // {target, ignored[]} for targets that pass but skipped untrusted comments (#3358)
-  const skipped = []; // #3222: parent-gate skip reasons (incomplete gate, below oversight floor)
+  const skipped = []; // #3222, #3508: parent-gate skip reasons (incomplete gate, resolved parent, below oversight floor)
   const closing = new Set(issues); // every run record is being closed by this run (#3222 gate input)
 
   // Resolve each issue's target (its parent, when resolvable; itself
@@ -1035,13 +1038,19 @@ registerCheck('acceptance-labeling', ({ runDir, repoRoot, deps, cwd, expectation
         skipped.push(`parent gate #${target} not due — ${openCount} sibling sub-issue(s) open`);
         continue;
       }
-      const { exceeds } = exceedsOversightFloor(
-        { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
-        { riskFloor, sizeFloor: null },
-      );
-      if (!exceeds) {
-        skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
+      if (gate === 'resolved') {
+        skipped.push(`parent #${target} already dispositioned`);
         continue;
+      }
+      if (gate === 'due') {
+        const { exceeds } = exceedsOversightFloor(
+          { risk: maxRiskTier(gateInput.map((s) => parseRecordFacets(s.labels))) },
+          { riskFloor, sizeFloor: null },
+        );
+        if (!exceeds) {
+          skipped.push(`parent #${target} below oversight floor — closes after the merge lands (Step 4.0b)`);
+          continue;
+        }
       }
     }
     // The record's resolved acceptance state (acceptanceOf's precedence over both
