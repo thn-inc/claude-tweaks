@@ -1136,16 +1136,24 @@ for (const command of [
 // tokenizer's misreading of `$'\'`, not a prefix rule: it ends the ANSI-C string at the escaped quote, so the
 // blank and `>x'` read as bare words (the spaced `echo $'\' >x'` gives `x'` at base too). bash 3.2, bash 5 and
 // zsh write nothing; a fix belongs in `tokenize`, tracked in #4328.
-// `echo $M\ >x>y` is the documented "Chained glued redirects" gap (the plain `echo foo>x>y` gives `x>y` at
-// base): bash 3.2, bash 5 and zsh write x and y, and the scanner joins them into one name `x>y`. That denies
-// a wrong name rather than leaking: the same word without the `$M\ ` prefix reads the same way.
-test('AC1.1 #4294: an expansion the prefix cannot see open reads as a false deny, as the plain word does', () => {
+test('AC1.1 #4294: an expansion the prefix cannot see open, or a misread ANSI-C string, reads as a false deny, as the plain word does', () => {
   assert.deepStrictEqual(fileWriteTargets("echo $'\\'\\ >x'", '/r'), [{ action: 'write', file: path.resolve('/r', "x'") }]);
-  assert.deepStrictEqual(fileWriteTargets('echo $M\\ >x>y', '/r'), [{ action: 'write', file: path.resolve('/r', 'x>y') }]);
-  assert.deepStrictEqual(fileWriteTargets('echo foo>x>y', '/r'), [{ action: 'write', file: path.resolve('/r', 'x>y') }]);
   assert.deepStrictEqual(fileWriteTargets('echo ${M:-a $N\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
   assert.deepStrictEqual(fileWriteTargets('echo $(( $M\\ >1 ))', '/r'), [{ action: 'write', file: path.resolve('/r', '1') }]);
   assert.deepStrictEqual(fileWriteTargets('echo ${M:-`d}`\\ >x}', '/r'), [{ action: 'write', file: path.resolve('/r', 'x}') }]);
+});
+
+// A chained glued redirect resolves one joined name, as the plain word does at base (`echo foo>x>y` gives
+// `x>y`): bash 3.2, bash 5 and zsh write both files, so a later protected target is missed. `echo $M\ >ok>/main/leak`
+// writes `ok` in the cwd and `/main/leak`, and the scanner names the one cwd file `ok>/main/leak`. This is a
+// fail-open gap, tracked in #4328, that the escaped-blank rule inherits and does not widen.
+test('AC1.1 #4294: a chained glued redirect resolves one joined name, a tracked gap (#4328)', () => {
+  for (const [command, name] of [
+    ['echo $M\\ >x>y', 'x>y'], ['echo foo>x>y', 'x>y'],
+    ['echo $M\\ >ok>/main/leak', 'ok>/main/leak'], ['echo foo>ok>/main/leak', 'ok>/main/leak'],
+  ]) {
+    assert.deepStrictEqual(fileWriteTargets(command, '/r'), [{ action: 'write', file: path.resolve('/r', name) }], command);
+  }
 });
 
 // #4210 F3: a token that starts with `>` is a redirect only when the operator itself is
