@@ -40,11 +40,6 @@ const USAGE = 'usage: resolve-linked-prs.js <n>[,<n2>,...] [--repo owner/name] [
 const { run, parseArgs, parseNumbers, realDeps } = makeNumberListCli({
   name: 'resolve-linked-prs.js',
   usage: USAGE,
-  // 30s bound: ONE GraphQL call for the whole aliased batch, whatever its
-  // size — same precedent as resolve-blockers.js's own runner bound, since
-  // this comma-list can span the same full ~200-record queues
-  // queue-pull-script.md builds from `--limit 200`.
-  runnerTimeoutMs: 30000,
   fetch: ({
     numbers, owner, repo, host, runner,
   }) => fetchLinkedPRs({

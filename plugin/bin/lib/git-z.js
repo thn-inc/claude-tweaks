@@ -108,15 +108,20 @@ function parseNumstatZ(raw) {
 // record. A rename or copy (R or C in either status column) is followed by the
 // original path as its own token, new path first: "R  new\0old\0". `xy` is the
 // two status characters verbatim. Returns [{ xy, path, origPath? }] — origPath
-// is omitted unless the record is a rename or copy.
-function parseStatusPorcelainZ(raw) {
+// is omitted unless the record is a rename or copy. A token shorter than
+// "XY path" is skipped; `{ strict: true }` throws on it instead, for a caller
+// that must fail loud on a malformed stream.
+function parseStatusPorcelainZ(raw, { strict = false } = {}) {
   const tokens = splitNul(raw);
   const records = [];
   let i = 0;
   while (i < tokens.length) {
     const token = tokens[i];
     i += 1;
-    if (token.length < 4) continue;
+    if (token.length < 4) {
+      if (strict) throw new Error(`a status record was shorter than "XY path" (${JSON.stringify(token)})`);
+      continue;
+    }
     const xy = token.slice(0, 2);
     const record = { xy, path: token.slice(3) };
     if (/[RC]/.test(xy) && i < tokens.length) {

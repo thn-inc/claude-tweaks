@@ -23,6 +23,7 @@ files:
   - plugin/bin/lib/issues/mcp-parent-gate-shape.js
   - plugin/bin/lib/issues/local-parent-gate-shape.js
   - plugin/bin/lib/hooks/session-start.js
+  - plugin/bin/hooks.js
 ---
 
 # Close a Below-Floor Decomposition Parent
@@ -79,6 +80,7 @@ files:
 - **Should feel:** invisible until it is reported. The parent is closed without anyone approving a tidy row, and the session after that pass says so.
 - **Should understand:**
   - The SessionStart prior-pass line reads `post-merge steps ran for N merged run(s), closing M parent record(s) below the oversight floor`. A Step 4.0 failure or non-clean word such as `close-failed`, or a check that threw, reads `post-merge steps failed for N merged run(s) (records #101, #102 need a hand reopen or close per _shared/pr-first-merge-post-merge.md Step 4.0, each with its action in the run's decisions.md, and no later pass retries them; tidy's parent-gate backstop recovers the parents)`, with the record clause only when Step 4.0 named records.
+  - When Step 4.0b left a parent open, whatever the run's verdict (a run whose marker write failed or whose check threw after the closes ran included), the next line names it: `post-merge Step 4.0b left parent record(s) open: #100 (gh-failed, PR #11) — tidy's parent-gate backstop recovers them` (#4798). A Step 4.0b that skipped step-wide with nothing left to close (a rejected `risk-floor` value on a run whose closing records were all closed after the window, say) adds `post-merge Step 4.0b skipped step-wide, leaving no parent open (nothing left to close): invalid-risk-floor (PR #13)`, and that line alone never reads as a failed run.
   - A PR that merged no more than 10 minutes ago (`MERGE_GRACE_MS`) is left for its merging session, which may still be running Step 4.0b. Archive keeps a run whose steps are still pending (`post-merge-pending`) until a later pass runs them.
   - The late pass runs the same `bin/lib/issues/parent-gate.js` core the CLI does, and judges every closing record by its live state, so a sub-issue a human reopened since keeps its parent open (`selfInclude: false`).
   - It decides the parent-level skips before reading any sub-issue: the parent's labels first (`not-parent-issue-labeled`, `needs-label`), then its sub-issue list (`sibling-unsettled`). A parent skipped there costs no per-sub-issue `gh issue view`, so a catch-up pass over many skipped parents does not drain the REST core limit (#4799).
@@ -133,3 +135,5 @@ Updated by record #4799 (run `2026-11-01T205251-record-4799`): the reconciler's 
 Updated during wrap-up of #4692 (run `2026-11-01T182340-spec-4692`): step 3 notes that the pass never reaches an archived run, and that merge mode's Already merged section runs Steps 4.0 and 4.0b for one under the same marker and claim.
 
 Updated by record #4824 (run `2026-11-03T082955-record-4824`): the gate verdict carries `repo`, and the Close and Apply sections' `gh` writes pass it as `--repo "{parent-repo}"` behind a stop rule for an empty value; step 2 notes it.
+
+Updated by record #4798 (run `2026-11-03T201056-record-4798`): a loop entry whose Step 4.0b left a parent open carries `parentFailures`, a parentless skip on an empty effective closing set goes to `stepSkips`, and a failed marker write or a throw after the closes keeps both; step 3 names the SessionStart lines that report them.
