@@ -6,7 +6,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { stuckCandidates, stuckRow } = require('../../../plugin/bin/lib/dispatch/stuck-open-pr');
-const { run, realDeps } = require('../../../plugin/bin/stuck-open-prs');
+const { run, realDeps, repoFromOrigin } = require('../../../plugin/bin/stuck-open-prs');
+const { fetchLinkedPRs } = require('../../../plugin/bin/lib/issues/linked-prs');
 const dispatchResume = require('../../../plugin/bin/dispatch-resume');
 const { resumeEligibility, refusalDetail } = require('../../../plugin/bin/lib/dispatch/resume-eligibility');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
@@ -472,4 +473,58 @@ test('realDeps wires the real sibling reads, the claim read and the verdict CLI'
   for (const key of ['readFile', 'ghAvailable', 'repo', 'mainRoot', 'linked', 'resume', 'now', 'stdout', 'stderr']) {
     assert.equal(typeof realDeps[key], 'function', key);
   }
+});
+
+// ---- the origin gate (#4951): the real gate and the real linked-PR read; only gh is a recording fake ----
+
+// A GraphQL answer for one candidate (`i{n}` alias) with one open closing PR.
+const linkedJson = (n, pr) => JSON.stringify({
+  data: { repository: { [`i${n}`]: { state: 'OPEN', closedByPullRequestsReferences: { nodes: [{ number: pr, state: 'OPEN' }] }, timelineItems: { nodes: [] } } } },
+});
+
+// One candidate (#1, auto:build, open PR #10), origin `origin` resolved through the real repoFromOrigin.
+function gatedWorld(origin, gateDeps) {
+  const world = makeEnv({ records: [rec(1)] });
+  world.gh = [];
+  world.deps.repo = () => repoFromOrigin(origin, gateDeps);
+  world.deps.linked = (arg) => fetchLinkedPRs({
+    ...arg, runner: (args) => { world.gh.push(args); return linkedJson(1, 10); },
+  });
+  return world;
+}
+
+test('#4951 AC1.1: an origin host the gate does not know is refused before any gh call, with stderr naming it and GH_HOST and no usage', () => {
+  const origin = 'https://git.corp.invalid/o/r.git';
+  const gateDeps = { env: { GH_ENTERPRISE_TOKEN: 'x' }, readFile: () => '' };
+  const refusal = repoFromOrigin(origin, gateDeps).refusal;
+  const world = gatedWorld(origin, gateDeps);
+  assert.equal(run(['--records', RECORDS_PATH], world.deps), 2);
+  assert.deepStrictEqual(world.gh, [], 'no gh call: neither --hostname git.corp.invalid nor the bare o/r slug');
+  assert.deepStrictEqual(world.names(), ['readFile']);
+  const stderr = world.err.join('');
+  assert.equal(stderr, `stuck-open-prs.js: ${refusal}\n`);
+  assert.match(stderr, /git\.corp\.invalid/);
+  assert.match(stderr, /GH_HOST=git\.corp\.invalid/);
+  assert.deepStrictEqual(world.out.map((line) => JSON.parse(line)), [{ failed: { code: 2, message: refusal } }]);
+});
+
+test('#4951 AC2.1: a *.ghe.com origin, a hosts.yml-key origin and a matching GH_HOST origin each carry --hostname on the linked-PR read', () => {
+  const cases = [
+    ['https://acme.ghe.com/o/r.git', { env: {}, readFile: () => '' }, 'acme.ghe.com'],
+    ['https://ghes.corp.invalid/o/r.git', { env: {}, readFile: () => 'ghes.corp.invalid:\n    user: x\n' }, 'ghes.corp.invalid'],
+    ['https://git.corp.invalid/o/r.git', { env: { GH_HOST: 'git.corp.invalid' }, readFile: () => '' }, 'git.corp.invalid'],
+  ];
+  for (const [origin, gateDeps, host] of cases) {
+    const world = gatedWorld(origin, gateDeps);
+    assert.equal(run(['--records', RECORDS_PATH], world.deps), 0, origin);
+    assert.deepStrictEqual(world.gh.map((args) => args.slice(-2)), [['--hostname', host]], origin);
+  }
+});
+
+test('#4951 AC3.1: a github.com. origin carries no --hostname on the linked-PR read', () => {
+  const world = gatedWorld('https://github.com./o/r.git', { env: {}, readFile: () => '' });
+  assert.equal(run(['--records', RECORDS_PATH], world.deps), 0);
+  assert.equal(world.gh.length, 1);
+  assert.equal(world.gh[0].includes('--hostname'), false);
+  assert.ok(world.gh[0].includes('owner=o'));
 });
