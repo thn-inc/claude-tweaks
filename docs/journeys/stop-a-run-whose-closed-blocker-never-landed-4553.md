@@ -7,6 +7,9 @@ files:
   - plugin/skills/flow/multispec-dependency-ordering.md
   - plugin/skills/flow/multispec-preflight-failure.md
   - plugin/skills/flow/multi-spec.md
+  - plugin/skills/flow/failure-cards.md
+  - plugin/skills/dispatch/settle-and-merge.md
+  - plugin/skills/dispatch/two-call-gate.md
 ---
 
 # Stop a Run Whose Closed Blocker Never Landed
@@ -68,6 +71,14 @@ files:
 - **Should understand:** A blocker `issue_read` cannot fetch is a STOP naming it (fail-closed), because the states file cannot express not-found. On the `gh` path the same blocker reads `undetermined`/`not-found`. A states-file problem exits 2 and stops at once.
 - **Red flags:** A gh-absent run that proceeds past an open out-of-run blocker.
 
+### 6. Under dispatch, the stop settles without counting as a failure
+- **URL:** `plugin/skills/flow/failure-cards.md` blocker-landing row; `plugin/skills/dispatch/settle-and-merge.md` `**Blocker-landing special case (#4792).**`; `plugin/skills/dispatch/two-call-gate.md` §5 and §6
+- **Action:** The dispatched call reports `OUTCOME: build-test-blocked` with one `ISSUE #{n}: failed:blocker-landing` line per target; a second call's handoff continuation that re-ran the check reports `OUTCOME: blocked`. Settle treats it as a non-failing stop: no `failure-check`, no `auto:merge` revocation, no retry counted, no failure comment on the issue. Only when an earlier call of the run already claimed the record (a `Step 2.8: claimed #{n}` line in `decisions.md`) does Settle release that claim and close the run's draft PR with a pointer to its `### Resume` command. The dispatching session's `cleanup-only` teardown appends `(blocker-landing: skip the claim release)`, so Section E posts no second or false release comment.
+- **Should feel:** Quiet. A record waiting on someone else's merge keeps every grant and is picked up again once the blocker lands — the queue pull's `unlanded-blocker` exclusion keeps it out of selection until then.
+- **Should understand:** The pointer on the closed PR is a `failure`-kind run comment, not an `Attempt N failed:` comment, so it never counts toward `dispatch-retry-ceiling`.
+- **Red flags:** A blocker-landing stop that adds an attempt, strips `auto:merge`, reaches `bot:blocked`, or leaves two release comments on the issue.
+
 ## Origin
 - Created during #4553's build (run 2026-10-31T234545-record-4553): `blocker-landing.js`, `preflight-records.js --blocker-landing` / `--blocker-states-json`, `materialize.js --check`'s `bodyBlockedBy`, multi-spec Validation step 3, and single-record substep 2.7b.
-- Related: `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the in-run merge-state gate, riding the same pre-flight call), `handle-a-failed-multispec-preflight-3351.md` (exit 1/2 handling).
+- Updated during #4792's build (run 2026-11-03T163449-record-4792): Step 6, the dispatch-side non-failing settle and teardown skip.
+- Related: `learn-why-a-named-record-wont-dispatch-3084.md` (the queue pull's `unlanded-blocker` / `malformed-blocker` exclusions), `run-a-batch-whose-record-needs-a-merged-prerequisite-2733.md` (the in-run merge-state gate, riding the same pre-flight call), `handle-a-failed-multispec-preflight-3351.md` (exit 1/2 handling).
