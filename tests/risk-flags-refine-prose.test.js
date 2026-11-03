@@ -421,7 +421,7 @@ test('Step 3.7 snippets: the refresh replaces the written record\'s Step 1 body,
     try {
       const fakeGh = path.join(bin, 'gh');
       fs.writeFileSync(fakeGh, `#!/bin/sh\n[ "$1 $2 $3 $4 $5" = "issue view 7 --json body" ] || exit 9\nprintf '%s\\n' '{"body":"Risk-flags: auth\\n\\n## Current State\\n\\nWritten."}'\n`);
-      fs.chmodSync(fakeGh, 0o755);
+      fs.chmodSync(fakeGh, 0o755); // root-safe: makes the fake gh executable, not a permission-denial simulation
       sh(LIVE_SNIPPETS.refresh.split('"{ref}"').join('"7"'), { ...fx.env, PATH: `${bin}${path.delimiter}${process.env.PATH}` });
     } finally {
       fs.rmSync(bin, { recursive: true, force: true });
