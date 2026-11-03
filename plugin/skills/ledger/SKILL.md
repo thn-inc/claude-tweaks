@@ -80,7 +80,7 @@ Append a row to the ledger table with `hooks.js ledger-row` (`_shared/ledger-for
 
 **De-duplication:** per `_shared/ledger-format.md`'s De-duplication on Append rule — same phase + substantially similar description = skip the add and say so, never silently.
 
-- **Pipes:** `ledger-row` escapes every `|` in the Item or Resolution text as `\|` itself, so pass the raw text — `_shared/ledger-format.md`'s Format section.
+- **Pipes:** with a run dir, `ledger-row` escapes every `|` in the Item or Resolution text as `\|` itself, so pass the raw text; on the standalone no-run-dir path, which writes the row by hand, escape it as `\|` — `_shared/ledger-format.md`'s Format section.
 
 ### Update Item
 

@@ -51,6 +51,15 @@ const WRITER_ANCHORS = [
   'SKIP',
 ];
 
+// A file with several writing sentences names the verb once per sentence, so a file-level presence check
+// lets one sentence lose it unseen. These are the counts of `ledger-row` today (the Phase 2 count is the
+// narrowing and route-remainder steps' `ledger-row --row`).
+const SITE_VERB_MIN = { 'ledger/SKILL.md': 4, 'review/step3-routing.md': 5, 'wrap-up/residue-sweep.md': 2, 'wrap-up/refused-proposals.md': 2 };
+const PHASE_VERB_MIN = { 1: 1, 2: 2 };
+// Sites whose pipe guidance is "raw with a run dir" must keep the by-hand escape for the standalone path.
+const STANDALONE_QUALIFIED = { 'ledger/SKILL.md': 'standalone no-run-dir path', 'build/dispatch.md': 'standalone no-run-dir path' };
+const countOf = (text, literal) => text.split(literal).length - 1;
+
 // A flag token on its own: `--item` must not be satisfied by `--item-file`.
 const flagRe = (flag) => new RegExp(`(?<![\\w-])${escapeRe(flag)}(?![\\w-])`, 'g');
 const usageFlags = () => [...new Set(VERBS['ledger-row'].usage.match(/--[a-z][a-z-]*/g))];
@@ -81,11 +90,16 @@ function assertWriterSites({ format, sites }) {
   const phase3 = phaseBlock(format, 3).split('\n\n')[1];
   assert.ok(phase3.includes('ledger-row --row') && phase3.includes('Writer section'), 'Phase 3 opening paragraph must name ledger-row --row and cite the Writer section');
   for (const n of [1, 2]) {
-    assert.ok(phaseBlock(format, n).includes('ledger-row --row'), `Phase ${n} must name ledger-row --row`);
+    const need = PHASE_VERB_MIN[n];
+    assert.ok(countOf(phaseBlock(format, n), 'ledger-row --row') >= need, `Phase ${n} must name ledger-row --row at least ${need} time(s)`);
   }
 
   for (const [file, text] of Object.entries(sites)) {
-    assert.ok(text.includes('ledger-row'), `${file} must name ledger-row`);
+    const need = SITE_VERB_MIN[file] ?? 1;
+    assert.ok(countOf(text, 'ledger-row') >= need, `${file} must name ledger-row at least ${need} time(s)`);
+    if (file in STANDALONE_QUALIFIED) {
+      assert.ok(text.includes(STANDALONE_QUALIFIED[file]), `${file} must say the standalone no-run-dir path escapes a pipe by hand`);
+    }
     assert.ok(text.includes('Writer section'), `${file} must cite the Writer section`);
     assert.ok(!text.includes('LOCK_TIMEOUT'), `${file} must cite the Writer section's refusal rule, not restate it (LOCK_TIMEOUT)`);
   }
@@ -146,6 +160,45 @@ test('go-red: helper throws when a site restates LOCK_TIMEOUT', () => {
   const site = 'wrap-up/residue-sweep.md';
   const mutated = `${sites[site]}\nA \`LOCK_TIMEOUT\` is retried once.\n`;
   assert.throws(() => assertWriterSites({ format: realFormat(), sites: { ...sites, [site]: mutated } }), { name: 'AssertionError', message: new RegExp(`${escapeRe(site)} must cite the Writer section's refusal rule`) });
+});
+
+// Drop exactly one occurrence of the verb (the first) from a multi-sentence site: the file still names it, a
+// file-level presence check stays green, and only the per-site count can see the lost sentence.
+test('go-red: helper throws when one sentence of a multi-site file loses the verb', () => {
+  for (const site of ['review/step3-routing.md', 'ledger/SKILL.md', 'wrap-up/residue-sweep.md']) {
+    const sites = realSites();
+    assert.ok(countOf(sites[site], 'ledger-row') >= 2, `${site} control needs a file naming the verb more than once`);
+    const mutated = sites[site].replace('ledger-row', 'ledger-writer');
+    assert.notEqual(mutated, sites[site]);
+    assert.ok(mutated.includes('ledger-row'), `${site} control must still name the verb elsewhere, so only the count can catch it`);
+    assert.throws(
+      () => assertWriterSites({ format: realFormat(), sites: { ...sites, [site]: mutated } }),
+      { name: 'AssertionError', message: new RegExp(`${escapeRe(site)} must name ledger-row at least`) },
+    );
+  }
+});
+
+test('go-red: helper throws when one of the resolve gate Phase 2 steps loses ledger-row --row', () => {
+  const format = realFormat();
+  const phase2 = phaseBlock(format, 2);
+  const mutatedPhase = phase2.replace('ledger-row --row', 'ledger-writer --row');
+  assert.notEqual(mutatedPhase, phase2);
+  assert.throws(
+    () => assertWriterSites({ format: format.replace(phase2, () => mutatedPhase), sites: realSites() }),
+    { name: 'AssertionError', message: /Phase 2 must name ledger-row --row at least 2 time\(s\)/ },
+  );
+});
+
+test('go-red: helper throws when a pipe-guidance site loses its standalone no-run-dir escape', () => {
+  for (const site of Object.keys(STANDALONE_QUALIFIED)) {
+    const sites = realSites();
+    const mutated = sites[site].split(STANDALONE_QUALIFIED[site]).join('standalone path');
+    assert.notEqual(mutated, sites[site]);
+    assert.throws(
+      () => assertWriterSites({ format: realFormat(), sites: { ...sites, [site]: mutated } }),
+      { name: 'AssertionError', message: new RegExp(`${escapeRe(site)} must say the standalone no-run-dir path escapes`) },
+    );
+  }
 });
 
 const PRE_ESCAPE_SENTENCE = 'Escape every `|` in a carried one-liner';
