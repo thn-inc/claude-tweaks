@@ -8,6 +8,7 @@ files:
   - plugin/bin/hooks.js
   - plugin/bin/stage-item.js
   - plugin/bin/lib/console/resolve.js
+  - plugin/bin/lib/console/item-resolution.js
   - plugin/skills/flow/summary-template.md
   - plugin/skills/flow/multispec-summary.md
   - plugin/skills/wrap-up/review-console.md
