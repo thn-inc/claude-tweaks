@@ -536,11 +536,16 @@ function pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat }) {
   if (typeof pluginRoot !== 'string' || !pathImpl.isAbsolute(pluginRoot)) return null;
   // The text names the root forward-slashed (Git Bash and zsh read `D:/p/root`
   // where `D:\p\root` loses its backslashes); the fs probe keeps the native join.
+  // Only this form is inlined, by ruling (#4292, Reading B): there is no native-root
+  // fallback, and whether the harness guard accepts `D:/…` like a native root is
+  // unprobed (docs/reference/pretooluse-updatedinput-worktree-guard.md, Not measured).
   const inlined = toPosix(pluginRoot, pathImpl.sep);
   if (!LITERAL_VALUE.test(inlined)) return null;
   // path.win32.isAbsolute accepts a drive-relative `\p\root`, which resolves on the
   // current drive while the forward-slashed `/p/root` is MSYS's mount for drive P:,
   // so the text and the lstat probe would name different files: require a drive or UNC.
+  // A UNC root `\\srv\share\root` is fully qualified and stays `//srv/share/root`; the
+  // `[^/]` keeps a `///x` root, which path.win32 reads as drive-relative, on the decline side.
   if (pathImpl.sep === '\\' && !/^(?:[A-Za-z]:\/|\/\/[^/])/.test(inlined)) return null;
   if (hasBareUse(s, name)) return null; // the command assigns or unsets it itself
   const sc = scan(s);
