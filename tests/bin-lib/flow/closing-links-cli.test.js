@@ -1265,6 +1265,84 @@ test('post-merge non-default: an issue view with no string state is closeFailed 
   assert.equal(j.action, 'close-failed');
 });
 
+// ---- #4817: post-merge proves the PR is this run's before any non-default-base write ----
+
+test('#4817 AC1.1: post-merge on a non-default base refuses another run\'s PR — exit 4, no reopen, no close, no issue read', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], NON_DEFAULT)],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }], 3997: [OPEN_ISSUE] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 4);
+  assert.equal(h.out.join(''), '');
+  assert.match(h.err.join(''), /run marker mismatch on PR #7: body names run 2026-01-01T000000-record-9/);
+  assert.equal(h.reopens().length, 0);
+  assert.equal(h.closes().length, 0);
+  assert.equal(h.issueReads().length, 0);
+});
+
+test('#4817 AC1.1 (no marker): a non-default-base body with no run-marker line is exit 4, body names run none', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noMarker = body({ span: FIXES_ONLY }).split('\n').slice(1).join('\n');
+  const h = makeDeps(main, { prReads: [mergedView(noMarker, [], NON_DEFAULT)], issues: { 3997: [OPEN_ISSUE] } });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 4);
+  assert.match(h.err.join(''), /body names run none, expected 2026-10-25T000001-record-4199/);
+  assert.equal(h.closes().length, 0);
+});
+
+test('#4817 guard: a default-base post-merge does not check the marker — a foreign body still reopens a deferred record', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.json().action, 'reopened');
+  assert.equal(h.reopens().length, 1);
+});
+
+test('#4817 guard (base unchecked): an unreadable default branch is treated like the default base — a foreign body still reopens, no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], NON_DEFAULT)],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+    defaultBranchThrows: true,
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(h.reopens().length, 1);
+  assert.equal(h.closes().length, 0);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
+test('#4817 guard (default base, no marker): a default-base body with no run-marker line still reopens a deferred record — no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const noMarker = body().split('\n').slice(1).join('\n');
+  const h = makeDeps(main, {
+    prReads: [mergedView(noMarker, [2724, 3997])],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  assert.equal(h.json().action, 'reopened');
+  assert.equal(h.reopens().length, 1);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
+test('#4817 guard (no baseRefName): a PR with no baseRefName is treated like the default base — a foreign body still reopens, no exit 4', () => {
+  const { main, runDir } = fixture({ pr: { number: 7 } });
+  const h = makeDeps(main, {
+    prReads: [mergedView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997], { baseRefName: undefined })],
+    issues: { 2724: [{ state: 'CLOSED', closedAt: CLOSED_AFTER }] },
+  });
+  assert.equal(run(['--run', runDir, ...POST], h.deps), 0);
+  const j = h.json();
+  assert.equal(j.baseUnchecked, true);
+  assert.equal(h.reopens().length, 1);
+  assert.equal(h.closes().length, 0);
+  assert.doesNotMatch(h.err.join(''), /run marker mismatch/);
+});
+
 // ---- #4026: gh-absent, exit 4 and exit 5 log their own SKIP line ----
 
 // Characterization (pre-#4026 behaviour that must not move): each refusal and
@@ -1274,6 +1352,12 @@ const EXIT_SITES = [
   {
     name: 'exit 4 run marker mismatch (pre-merge)', code: 4, mode: 'pre-merge',
     opts: { prReads: [preView(body({ runId: FOREIGN_RUN_ID }), [2724, 3997])] },
+    stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
+    condition: 'exit 4 run marker mismatch',
+  },
+  {
+    name: 'exit 4 run marker mismatch (post-merge, non-default base)', code: 4, mode: 'post-merge',
+    opts: { prReads: [mergedView(body({ runId: FOREIGN_RUN_ID, span: FIXES_ONLY }), [], NON_DEFAULT)], issues: { 3997: [OPEN_ISSUE] } },
     stderr: `closing-links.js: run marker mismatch on PR #7: body names run ${FOREIGN_RUN_ID}, expected ${RUN_ID} — nothing written\n`,
     condition: 'exit 4 run marker mismatch',
   },

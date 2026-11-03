@@ -29,8 +29,8 @@
 // location the marker rule never matches — and defer the run as
 // `transient-failure`. Once MAX_ATTEMPTS attempt lines exist, the next such
 // failure writes the marker as any other failure does. Every other exit is
-// deterministic (2 malformed invocation, 3 run dir not anchored, 4 pre-merge
-// only), as is an unreadable exit-0 envelope: those write the marker at once.
+// deterministic (2 malformed invocation, 3 run dir not anchored, 4 run marker mismatch),
+// as is an unreadable exit-0 envelope: those write the marker at once.
 //
 // Step 4.0b's after-a-PR-merge rules, from Step 4.0's envelope (#4549): there is
 // no default-branch check (on a non-default base Step 4.0 closes the `Fixes`

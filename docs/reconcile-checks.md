@@ -663,7 +663,8 @@ gate is `lib/issues/parent-gate.js`, the same code the prose runs through `bin/p
 - **Transient failures retry, bounded (`transient-failure`).** `closing-links`'s exit codes split
   in two. Exit 5 (`gh pr view` / `gh pr edit` failed, or a required read came back malformed) is gh
   or its transport, so it is transient. Exits 2 (malformed invocation) and 3 (run dir not anchored)
-  are deterministic, as is an unreadable exit-0 envelope; exit 4 is pre-merge only. An exit-0
+  are deterministic, as is an unreadable exit-0 envelope; exit 4 (run marker mismatch: pre-merge, or
+  post-merge on a base known to be non-default) is deterministic too. An exit-0
   `baseUnchecked: true` envelope (`base-unchecked`, or `reopen-failed` with that flag: the PR's base
   or the default branch could not be read, so Step 4.0 closed nothing and printed no closing set,
   #4549) is a failed read, so it is transient too; once its retries are spent its marker entry
