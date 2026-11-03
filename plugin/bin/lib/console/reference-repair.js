@@ -56,6 +56,11 @@ function diffGitSides(s) {
   return sides.every(validSide) ? sides : null;
 }
 
+// `git diff` ends a `---`/`+++` line with one tab when the path contains a space.
+function withoutTrailingTab(line) {
+  return line.endsWith('\t') ? line.slice(0, -1) : line;
+}
+
 // The paths a staged repair's diff changes, in order of first appearance, or null when anything is
 // unreadable or no section is seen. The staged file is checked, not the agent's own account of it,
 // because `git apply` is what lands (#4636). Strict by design: every section opens with a
@@ -129,10 +134,10 @@ function stagedDiffPaths(text) {
         sawHunk = true; afterHunk = true; state = 'between';
         continue;
       } else if (line.startsWith('--- ')) {
-        if ((line.endsWith('\t') ? line.slice(0, -1) : line) !== `--- a/${fromSide}`) return null;
+        if (withoutTrailingTab(line) !== `--- a/${fromSide}`) return null;
         sawMinus = true;
       } else if (line.startsWith('+++ ')) {
-        if ((line.endsWith('\t') ? line.slice(0, -1) : line) !== `+++ b/${toSide}`) return null;
+        if (withoutTrailingTab(line) !== `+++ b/${toSide}`) return null;
         sawPlus = true;
       } else if (line === `rename from ${fromSide}` || line === `copy from ${fromSide}`
         || line === `rename to ${toSide}` || line === `copy to ${toSide}`) {
