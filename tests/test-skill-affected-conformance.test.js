@@ -192,10 +192,12 @@ function assertMismatchRoute(text) {
   assert.match(text, MISMATCH_FIRST, 'the paragraph opens with the VERIFICATION_PASSED scope clause and routes a mismatch to the Mismatch branch');
   const at = text.indexOf(PARAGRAPH_START);
   assert.ok(at !== -1 && at < text.indexOf('**Pipeline behavior:**'), 'the paragraph precedes the Pipeline behavior bullets');
+  const end = text.indexOf('\n\n', at);
+  const para = text.slice(at, end === -1 ? text.length : end);
   assert.ok(text.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
   assert.ok(!text.includes(STALE_ROW), 'the stale VERIFICATION_SHA row text is absent');
-  assert.ok(text.includes(TAIL_CLAUSE), 'the tail clause keeps the rest of the bullet applying as written after the Mismatch branch passes');
-  assert.ok(text.includes(NOTE_CLAUSE), 'the paragraph ends with the re-run note replacing a passed-in-build report');
+  assert.ok(para.includes(TAIL_CLAUSE), 'the tail clause keeps the rest of the bullet applying as written after the Mismatch branch passes');
+  assert.ok(para.includes(NOTE_CLAUSE), 'the paragraph ends with the re-run note replacing a passed-in-build report');
 }
 
 test('AC1.1: test/SKILL.md routes a moved HEAD through the runner before any VERIFICATION_PASSED skip (#4395)', () => {
@@ -251,4 +253,11 @@ test('go-red: changing the re-run note clause fails the note assertion', () => {
   const mutated = skill.replace('replaces a "passed in build" report.', 'replaces a "passed in build" line.');
   assert.notEqual(mutated, skill);
   assert.throws(() => assertMismatchRoute(mutated), /the paragraph ends with the re-run note/);
+});
+
+test('go-red: moving the tail and note clauses out of the paragraph to the end of the file fails the tail assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(TAIL_CLAUSE + NOTE_CLAUSE, 'once it passes, the QA selection applies') + '\n' + TAIL_CLAUSE + NOTE_CLAUSE + '\n';
+  assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the tail clause keeps the rest of the bullet/);
 });
