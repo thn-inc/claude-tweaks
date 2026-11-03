@@ -557,7 +557,7 @@ async function reconcileInner(opts, state) {
       return postMerge({ cwd: root, prStates, dryRun, budgetExceeded: () => budget.exceeded() });
     });
     if (r.failure) {
-      result.skipped.push({ check: 'post-merge', reason: r.failure });
+      result.skipped.push({ check: 'post-merge', reason: r.failure, ...(r.detail ? { detail: r.detail } : {}) });
     } else {
       result.postMerge = r.entries;
       postMergeDeferred = Array.isArray(r.deferred) ? r.deferred : [];

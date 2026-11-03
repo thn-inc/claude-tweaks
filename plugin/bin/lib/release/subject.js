@@ -5,7 +5,7 @@
 // all reach it through bin/compose-subject.js. Conventional Commits grammar
 // (https://www.conventionalcommits.org/): `{type}[(scope)][!]: {title} (#{n})` subject,
 // optional summary paragraph, optional `[{tag}]` paragraph (kept because
-// _shared/github-pr-scan.md's auto-merged-this-week metric matches the tag
+// _shared/github-pr-scan-triage.md's auto-merged-this-week metric matches the tag
 // anywhere in the message), a required `Release-Note:` paragraph — one
 // `Release-Note: {line}` per bundled record, a bundled note collapsed to one
 // line and a single-record note verbatim (see the inline comment at its push site),
