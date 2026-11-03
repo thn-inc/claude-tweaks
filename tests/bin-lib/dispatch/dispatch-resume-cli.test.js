@@ -9,6 +9,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { readText } = require('../../helpers/read-skill');
+const { captureGhTimeout } = require('../../helpers/gh-timeout-probe');
 const { run, realDeps } = require('../../../plugin/bin/dispatch-resume');
 const { claimPayload, releasePayload } = require('../../../plugin/bin/lib/issues/claims');
 const { findConflictingSession, findSessionOnWorktree } = require('../../../plugin/bin/lib/hooks/sibling-sessions');
@@ -793,7 +794,7 @@ test('a stale claim with no bot:in-progress label is eligible; a live-claim -> e
 
 // ---- prior run directory ----
 
-test('archive-first: archive/{runId} plus a work/-only root dir reads archived (Review Focus 6)', () => {
+test('archive-first: archive/{runId} plus a work/-only root dir reads archived', () => {
   const env = makeEnv();
   env.cfg.dirs[RUNDIR] = ['work'];
   const r = exec(env);
@@ -963,7 +964,7 @@ test('run-state.json with no owner block -> dead-owner (archive, close when non-
   assert.equal(r.json.priorRunPath, RUNDIR);
 });
 
-test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock (Review Focus 8)', () => {
+test('non-terminal run whose owner pid is gone -> dead-owner; the same with a fresh heartbeat and a held worktree lock', () => {
   const env = makeEnv();
   setRunState(env, { status: 'active', owner: OWNER, heartbeatAt: new Date(NOW).toISOString(), worktree: WT });
   env.cfg.alive = () => false;
@@ -1331,7 +1332,7 @@ test('a throwing sibling check -> exit 4', () => {
   assert.equal(exec(env).code, 4);
 });
 
-test('own kept lock (Review Focus 18): the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
+test('own kept lock: the archived prior run holds this session id, worktree null, worktreeAtClose = the stalled path -> eligible', () => {
   const env = makeEnv();
   env.cfg.files[ARCH_STATE] = JSON.stringify({
     status: 'clean', sessionId: SESSION, worktree: null, worktreeAtClose: WT,
@@ -1827,4 +1828,26 @@ test('--bound-run: the real sibling-session check on an unlistable pipelines dir
 
 test('the real workLinks dep resolves to a string', () => {
   assert.equal(typeof realDeps.workLinks(), 'string');
+});
+
+function nativeGhTimeoutFor(envValue) {
+  const resumePath = require.resolve('../../../plugin/bin/dispatch-resume');
+  return captureGhTimeout({
+    envValue,
+    modulePaths: [resumePath],
+    exercise: (setEnv) => {
+      // dispatch-resume reads the getter at require time, so the env var comes before the require.
+      setEnv();
+      const fresh = require(resumePath);
+      try { fresh.realDeps.fetchNative({ numbers: [1], owner: 'o', repo: 'r' }); } catch { /* the '{}' reply fails to parse; only the captured timeout matters */ }
+    },
+  });
+}
+
+test("#4815 AC1.1: realDeps.fetchNative's gh runner passes GH_BATCH_TIMEOUT_MS", () => {
+  assert.equal(nativeGhTimeoutFor('45000'), 45000);
+});
+
+test('#4815 AC1.1: a gh-timeout-ms below the floor leaves the native-dependency runner at 30000', () => {
+  assert.equal(nativeGhTimeoutFor('10000'), 30000);
 });
