@@ -87,10 +87,14 @@ test('open-pr-exclusion-report.md no longer says the named forms read only open-
   );
 });
 
-test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to /claude-tweaks:tidy and anything else to /claude-tweaks:specify #N (#3087)', () => {
+function remedySelectionRule() {
   const start = NOT_SPEC_SHAPED_REPORT.indexOf('**Remedy selection:**');
   assert.notStrictEqual(start, -1, 'Remedy selection paragraph not found -- anchor out of sync with the live file');
-  const rule = NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+  return NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+}
+
+test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to /claude-tweaks:tidy and anything else to /claude-tweaks:specify #N (#3087)', () => {
+  const rule = remedySelectionRule();
   assert.match(rule, /when `missing` is exactly `\["Release Note"\]`, the remedy is `` `\/claude-tweaks:tidy` ``/);
   assert.match(rule, /Any other `missing` set .* gets `` `\/claude-tweaks:specify #\{number\}` ``/);
   assert.ok(NOT_SPEC_SHAPED_REPORT.includes('`#{number} excluded — not spec-shaped (missing: {missing, comma-joined}). Run {remedy}.`'),
@@ -99,9 +103,7 @@ test('not-spec-shaped-exclusion-report.md routes a lone missing Release Note to 
 
 test('the prose that quotes the unclosed-fence entry matches the string shapeGate emits (#4350)', () => {
   const quoted = `${UNCLOSED_FENCE_PREFIX}N`;
-  const start = NOT_SPEC_SHAPED_REPORT.indexOf('**Remedy selection:**');
-  assert.notStrictEqual(start, -1, 'Remedy selection paragraph not found -- anchor out of sync with the live file');
-  const rule = NOT_SPEC_SHAPED_REPORT.slice(start, NOT_SPEC_SHAPED_REPORT.indexOf('\n\n', start)).replace(/\s+/g, ' ');
+  const rule = remedySelectionRule();
   assert.ok(rule.includes(`\`${quoted}\``), 'not-spec-shaped-exclusion-report.md Remedy selection no longer quotes the entry shapeGate emits');
   assert.ok(MATERIALIZE_GATE.includes(`\`${quoted}\``), 'flow/materialize.md Materialization hard gate no longer quotes the entry shapeGate emits');
 });
