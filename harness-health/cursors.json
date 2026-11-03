@@ -57,11 +57,11 @@
   },
   "skill:gh-api-module-pattern": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793655344985
+    "lastAuditedMs": 1793682321150
   },
   "skill:skill-prose-conformance-tests": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793676121467
+    "lastAuditedMs": 1793682328982
   },
   "skill:shared-contract-extraction": {
     "lastAuditedSha": null,
@@ -113,7 +113,7 @@
   },
   "skill:parse-signal-discipline": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793676117026
+    "lastAuditedMs": 1793682326021
   },
   "skill:scratch-worktree": {
     "lastAuditedSha": null,
@@ -181,7 +181,7 @@
   },
   "skill:merge-shape-landed-proof": {
     "lastAuditedSha": null,
-    "lastAuditedMs": 1793676115519
+    "lastAuditedMs": 1793682327511
   },
   "skill:test": {
     "lastAuditedSha": null,
