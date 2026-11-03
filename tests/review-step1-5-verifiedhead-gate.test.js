@@ -81,6 +81,7 @@ function assertZeroTestRow(text) {
   const row = rowOf(text, ZERO_TEST_PREFIX);
   assert.ok(row, 'zero-test row missing');
   assert.ok(row.includes(ZERO_TEST_LOG), 'zero-test row must log the record\'s AUTO line verbatim');
+  assert.ok(row.includes('log to `decisions.md` `AUTO'), 'zero-test row must name decisions.md as the log destination');
   assert.ok(row.includes('No re-trigger'), 'zero-test row must not re-trigger');
   assert.ok(row.includes('`pr-checks.js` read'), 'zero-test row must run the pr-checks read');
   assert.ok(row.includes('`verify-scope.json` `checks`'), 'zero-test row must key on verify-scope checks being absent');
@@ -114,6 +115,7 @@ test('AC2.1: Step 1.5 has its own zero-test Gate row, ahead of any re-trigger (#
 test('AC2.1: each zero-test-row clause goes red on its own (#4395)', () => {
   const cases = [
     [ZERO_TEST_LOG, /AUTO line verbatim/],
+    ['to `decisions.md` ', /decisions.md as the log destination/],
     ['No re-trigger', /must not re-trigger/],
     ['`pr-checks.js` read', /pr-checks read/],
     ['`verify-scope.json` `checks`', /verify-scope checks/],
@@ -123,6 +125,15 @@ test('AC2.1: each zero-test-row clause goes red on its own (#4395)', () => {
     assert.notEqual(mutated, CODE_MODE_STEPS, clause);
     assert.throws(() => assertZeroTestRow(mutated), message);
   }
+  // Order check: the zero-test row must precede the re-trigger row.
+  const lines = CODE_MODE_STEPS.split('\n');
+  const zeroAt = lines.findIndex((l) => l.startsWith(ZERO_TEST_PREFIX));
+  const retriggerAt = lines.findIndex((l) => l.startsWith(RETRIGGER_PREFIX));
+  const swapped = lines.slice();
+  [swapped[zeroAt], swapped[retriggerAt]] = [swapped[retriggerAt], swapped[zeroAt]];
+  const mutatedOrder = swapped.join('\n');
+  assert.notEqual(mutatedOrder, CODE_MODE_STEPS, 'swapped rows');
+  assert.throws(() => assertZeroTestRow(mutatedOrder), /precede the re-trigger row/);
 });
 
 test('AC2.1: the pipeline paragraph routes a zero-test project to its row before the re-trigger sentence (#4395)', () => {
@@ -131,6 +142,12 @@ test('AC2.1: the pipeline paragraph routes a zero-test project to its row before
   const mutated = CODE_MODE_STEPS.replace('takes the zero-test row (Gate table below); any other ', '');
   assert.notEqual(mutated, CODE_MODE_STEPS);
   assert.throws(() => assertPipelineCarveOut(mutated), /zero-test row/);
+  // Order check: the carve-out string must appear before the re-trigger sentence, not only after it.
+  const afterRetrigger = CODE_MODE_STEPS
+    .replace(PIPELINE_CARVE_OUT, 'CARVE')
+    .replace('then re-trigger `/claude-tweaks:test` once and re-check.', `then re-trigger \`/claude-tweaks:test\` once and re-check. ${PIPELINE_CARVE_OUT}`);
+  assert.notEqual(afterRetrigger, CODE_MODE_STEPS);
+  assert.throws(() => assertPipelineCarveOut(afterRetrigger), /precede the re-trigger sentence/);
 });
 
 test('AC2.1: a re-check still reading verifiedHead: false is a named-cause STOP that never loops (#4395)', () => {
@@ -154,6 +171,9 @@ test('AC2.1: each STOP-row clause goes red on its own (#4395)', () => {
     assert.notEqual(mutated, CODE_MODE_STEPS, clause);
     assert.throws(() => assertStopRow(mutated), message);
   }
+  const withException = CODE_MODE_STEPS.split('\n').map((l) => (l.startsWith(STOP_PREFIX) ? l.replace('name the cause:', 'name the cause: Exception: ') : l)).join('\n');
+  assert.notEqual(withException, CODE_MODE_STEPS, 'Exception injection');
+  assert.throws(() => assertStopRow(withException), /no exception clause/);
 });
 
 test('AC2.1: the re-trigger row fires once and the trigger-and-pass row is scoped to standalone (#4395)', () => {
