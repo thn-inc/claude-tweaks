@@ -1020,13 +1020,14 @@ test('deploy defaults to local and states the dev confirmation', () => {
   assert.equal(factOf(gather({ deploy: { target: 'dev', live: null } }), 'deploy:status').text, 'target: dev, not confirmed live');
 });
 
-test('pass-through kinds keep their text and url, status passed', () => {
+test('pass-through kinds keep their text, status passed, and carry no url the renderer would never show', () => {
   const result = gather({
-    flags: [{ id: 'auth', text: 'Touches auth', url: 'https://x.example/a' }],
-    decisions: [{ id: 'merge order', text: 'Pick a merge order' }],
+    flags: [{ id: 'auth', text: 'Touches auth', url: 'https://x.example/a?token=abc' }],
+    decisions: [{ id: 'merge order', text: 'Pick a merge order', url: 'https://x.example/b' }],
   });
-  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', text: 'Touches auth', url: 'https://x.example/a' });
+  assert.deepEqual(factOf(result, 'flag:auth'), { id: 'flag:auth', kind: 'flag', status: 'passed', source: 'flags', text: 'Touches auth' });
   assert.deepEqual(factOf(result, 'decision:merge%20order'), { id: 'decision:merge%20order', kind: 'decision', status: 'passed', source: 'decision-items', text: 'Pick a merge order' });
+  assert.ok(!JSON.stringify(result).includes('x.example'));
   assertShapeOk(result);
 });
 

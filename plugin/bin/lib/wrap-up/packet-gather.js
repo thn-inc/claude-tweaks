@@ -454,13 +454,12 @@ function deployFact(deploy) {
 // A pass-through record may already spell its id with the kind.
 function passThroughFacts(kind, source, entries) {
   const prefix = `${kind}:`;
-  return (entries ?? []).map(({ id, text, url }) => ({
+  return (entries ?? []).map(({ id, text }) => ({
     id: `${prefix}${encodeFactKey(id.startsWith(prefix) ? id.slice(prefix.length) : id)}`,
     kind,
     status: 'passed',
     source,
     ...(text === undefined ? {} : { text }),
-    ...(url === undefined ? {} : { url }),
   }));
 }
 
