@@ -131,7 +131,7 @@ test('--repo owner/name overrides the git remote', () => {
 // github.com by this codebase's existing convention — only the auto-detected
 // remote can carry a non-github.com host).
 test('#2240: a GitHub Enterprise Server origin remote passes --hostname on the graphql call', () => {
-  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git' });
+  const deps = fakeDeps({ remoteUrl: () => 'https://ghe.example.com/acme/widgets.git', gateDeps: { env: { GH_HOST: 'ghe.example.com' } } });
   const code = run(['1224'], deps);
   assert.equal(code, 0);
   assert.deepEqual(deps.calls.runner[0].slice(-2), ['--hostname', 'ghe.example.com']);

@@ -16,6 +16,7 @@ const { formatEntry } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-dec
 const { aggregateReproductionProblem } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'log-decision', 'aggregate-reproduction'));
 const { readText } = require('../../helpers/read-skill');
 const { DEFER_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'issues', 'record'));
+const { stagedDiffPaths, referenceRepairFloorReason, referenceRepairFloorHits, REFERENCE_REPAIR_REASONS } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'reference-repair'));
 
 function fixture({
   decisions = '', staged = {}, engineState = null, pack = null, headers = [], manifest = null, specHeaders = {},
@@ -46,6 +47,7 @@ function deps(overrides = {}) {
     gitApplyCheck: () => ({ ok: true }),
     readGrants: (numbers) => Object.fromEntries(numbers.map((n) => [n, { labels: ['auto:merge'], pendingSince: null }])),
     now: () => Date.parse('2026-09-06T12:00:00Z'),
+    sensitivePaths: [],
     ...overrides,
   };
 }
@@ -343,14 +345,25 @@ test('every ENGINE_ROW_SECTIONS row classifies a staged finding into its own con
     const item = r.items.find((i) => i.id === `${rowId}:t/${rowId}.md`);
     assert.ok(item, `${rowId} produced an item`);
     assert.strictEqual(item.section, section, rowId);
-    assert.strictEqual(item.resolution, SECTION_STANCES[section].resolution, rowId);
+    if (rowId === 'references') {
+      // A staged repair with no staged file has no header to agree with the JSON verdict (#4636).
+      assert.strictEqual(item.resolution, 'pending', rowId);
+      assert.strictEqual(item.reason, 'reference-repair-unclassified', rowId);
+    } else {
+      assert.strictEqual(item.resolution, SECTION_STANCES[section].resolution, rowId);
+    }
   }
   assert.strictEqual(r.items.length, Object.keys(rows).length);
 });
 
+const REF_DIFF = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n';
+const refState = (hold = false, stagePath = 'staged/wrap-up-reference-1.md') => ({
+  results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath, hold }] } },
+});
+
 test('AC1.1: a staged wrap-up-reference- repair the engine names resolves once, in Reference repairs, with approve (#4585)', () => {
-  const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-reference-1.md' }] } } };
-  const r = resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-reference-1.md': 'repair' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-reference-1.md', hold: false }] } } };
+  const r = resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-reference-1.md': `Hold: no\n\n${REF_DIFF}` }, headers: [7] }), policy: 'console-auto', deps: deps() });
   assert.strictEqual(r.items.length, 1, 'the engine finding and its staged file are one item');
   assert.strictEqual(r.items[0].id, 'wrap-up-reference-1.md');
   assert.strictEqual(r.items[0].section, 'Reference repairs');
@@ -368,7 +381,8 @@ test('a staged reference repair whose header carries Held: waits for a human, wh
 });
 
 test('a Held: line past the staged reference repair header does not hold it (#4585)', () => {
-  const r = resolveAll({ runDir: fixture({ staged: { 'wrap-up-reference-1.md': 'Target: docs/a.md\n\nHeld: quoted from the repaired file' }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const text = `Hold: no\nTarget: docs/a.md\n\nHeld: quoted from the repaired file\n${REF_DIFF}`;
+  const r = resolveAll({ runDir: fixture({ engineState: refState(), staged: { 'wrap-up-reference-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps() });
   assert.strictEqual(r.items[0].resolution, 'approve');
 });
 
@@ -383,6 +397,321 @@ test('an unreadable staged reference repair waits for a human (#4585)', () => {
   const item = resolveAll({ runDir, policy: 'console-auto', deps: failing }).items.find((i) => i.id === 'wrap-up-reference-1.md');
   assert.strictEqual(item.resolution, 'pending');
   assert.strictEqual(item.reason, 'reference-repair-unreadable');
+});
+
+const resolveRef = (text, engineState, over = {}) => resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-reference-1.md': text }, headers: [7] }), policy: 'console-auto', deps: deps(over) }).items[0];
+
+test('AC1.1 (#4636): a repair approves only when the JSON hold is false, the header agrees and the diff is clean', () => {
+  for (const text of [`Hold: no\n\n${REF_DIFF}`, `hold: NO   \nTarget: docs/a.md\n\n${REF_DIFF}`, `Hold: no\r\n\r\n${REF_DIFF.replace(/\n/g, '\r\n')}`]) {
+    assert.strictEqual(resolveRef(text, refState()).resolution, 'approve', JSON.stringify(text));
+  }
+});
+
+test('AC1.1 (#4636): a floor denial the JSON carries holds even under a header that says no', () => {
+  const item = resolveRef(`Hold: no\n\n${REF_DIFF}`, refState(true));
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-held');
+});
+
+test('#4636: Hold: yes, or Held: beside Hold: no, holds under a JSON hold of false', () => {
+  for (const text of [`Hold: yes\n\n${REF_DIFF}`, `Hold: no\nHeld: test file\n\n${REF_DIFF}`]) {
+    const item = resolveRef(text, refState());
+    assert.strictEqual(item.resolution, 'pending', JSON.stringify(text));
+    assert.strictEqual(item.reason, 'reference-repair-held', JSON.stringify(text));
+  }
+});
+
+test('AC1.1 (#4636): a staged header the resolver cannot classify holds rather than approves', () => {
+  const unclassified = {
+    empty: '',
+    missing: `Target: docs/a.md\n\n${REF_DIFF}`,
+    misplaced: `Target: docs/a.md\n\nHold: no\n${REF_DIFF}`,
+    bulleted: `- Hold: no\n\n${REF_DIFF}`,
+    duplicated: `Hold: no\nHold: no\n\n${REF_DIFF}`,
+    conflicting: `Hold: no\nHold: yes\n\n${REF_DIFF}`,
+    'unknown value': `Hold: maybe\n\n${REF_DIFF}`,
+    'empty value': `Hold:\n\n${REF_DIFF}`,
+  };
+  for (const [label, text] of Object.entries(unclassified)) {
+    const item = resolveRef(text, refState());
+    assert.strictEqual(item.section, 'Reference repairs', label);
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+});
+
+test('AC1.1 (#4636): a missing or malformed JSON hold holds under a header that says no', () => {
+  const finding = (extra) => ({ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-reference-1.md', ...extra });
+  const state = (findings) => ({ results: { references: { result: 'findings', findings } } });
+  const cases = {
+    'no engine-state.json': null,
+    'no references row': { results: {} },
+    'row not findings': { results: { references: { result: 'clean', findings: [finding({ hold: false })] } } },
+    'findings not an array': { results: { references: { result: 'findings', findings: 'x' } } },
+    'no finding names the file': state([finding({ stagePath: 'staged/wrap-up-reference-2.md', hold: false })]),
+    'stagePath not a string': state([finding({ stagePath: 7, hold: false })]),
+    'hold absent': state([finding({})]),
+    'hold a string': state([finding({ hold: 'false' })]),
+    'hold null': state([finding({ hold: null })]),
+    'hold zero': state([finding({ hold: 0 })]),
+    'action applied': state([finding({ action: 'applied', hold: false })]),
+    'two findings name the file': state([finding({ hold: false }), finding({ hold: false })]),
+  };
+  for (const [label, engineState] of Object.entries(cases)) {
+    const item = resolveRef(`Hold: no\n\n${REF_DIFF}`, engineState);
+    assert.strictEqual(item.id, 'wrap-up-reference-1.md', label);
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+});
+
+test('#4636: a JSON hold of true holds beside a second finding on the same file', () => {
+  const finding = (hold) => ({ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-reference-1.md', hold });
+  const item = resolveRef(`Hold: no\n\n${REF_DIFF}`, { results: { references: { result: 'findings', findings: [finding(false), finding(true)] } } });
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-held');
+});
+
+test('#4636: a staged references finding with no staged file holds, whatever its JSON hold', () => {
+  for (const stagePath of [undefined, 7, null, {}]) {
+    for (const hold of [false, true, undefined]) {
+      const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath, hold }] } } };
+      const r = resolveAll({ runDir: fixture({ engineState, headers: [7] }), policy: 'console-auto', deps: deps() });
+      const item = r.items.find((i) => i.id === 'references:docs/a.md');
+      assert.ok(item, `${String(stagePath)}/${String(hold)}`);
+      assert.strictEqual(item.resolution, 'pending', `${String(stagePath)}/${String(hold)}`);
+      assert.strictEqual(item.reason, 'reference-repair-unclassified', `${String(stagePath)}/${String(hold)}`);
+    }
+  }
+});
+
+test('#4636: a references finding naming a staged file that is not a wrap-up-reference- repair still holds as its own row', () => {
+  const engineState = { results: { references: { result: 'findings', findings: [{ targetPath: 'docs/a.md', action: 'staged', stagePath: 'staged/wrap-up-doc-3.md', hold: true }] } } };
+  const r = resolveAll({ runDir: fixture({ engineState, staged: { 'wrap-up-doc-3.md': `# Docs\n\nCategory: Documentation\n` }, headers: [7] }), policy: 'console-auto', deps: deps() });
+  const row = r.items.find((i) => i.id === 'references:docs/a.md');
+  assert.ok(row, 'the finding is its own row, not folded into the staged file');
+  assert.strictEqual(row.section, 'Reference repairs');
+  assert.strictEqual(row.resolution, 'pending');
+  assert.strictEqual(row.reason, 'reference-repair-unclassified');
+});
+
+test('AC1.1 (#4636): the hold survives the real engine writer, matched by an absolute stagePath', () => {
+  const { initState, recordResult } = require('../../../plugin/bin/lib/wrap-up/engine-record');
+  const run = (hold) => {
+    const runDir = fixture({ staged: { 'wrap-up-reference-1.md': `Hold: no\n\n${REF_DIFF}` }, headers: [7] });
+    const worklist = [{ id: 'references', target: 'Broken references', gate: 'open', gateReason: 'renamed', disposition: 'apply' }];
+    initState({ runDir, worklist, now: new Date('2026-11-02T00:00:00Z') });
+    recordResult({ runDir, now: new Date('2026-11-02T00:00:00Z'), payload: {
+      rowId: 'references', result: 'findings', gapDetection: 'run',
+      findings: [{ kind: 'pointer-repair', summary: 'a to b', targetPath: 'docs/a.md', action: 'staged', stagePath: path.join(runDir, 'staged', 'wrap-up-reference-1.md'), hold }],
+    } });
+    return resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'wrap-up-reference-1.md');
+  };
+  assert.strictEqual(run(false).resolution, 'approve');
+  assert.strictEqual(run(true).resolution, 'pending');
+});
+
+test('#4636: the resolver holds a test or merge-sensitive path in the diff, whatever the agent wrote', () => {
+  const diffOf = (p) => `diff --git a/${p} b/${p}\n--- a/${p}\n+++ b/${p}\n@@ -1 +1 @@\n-old\n+new\n`;
+  const testFile = resolveRef(`Hold: no\nTarget: docs/a.md\n\n${diffOf('tests/a.test.js')}`, refState());
+  assert.strictEqual(testFile.resolution, 'pending');
+  assert.strictEqual(testFile.reason, 'reference-repair-held');
+  const second = resolveRef(`Hold: no\n\n${REF_DIFF}${diffOf('tests/b.test.js')}`, refState());
+  assert.strictEqual(second.reason, 'reference-repair-held', 'any path in the file counts, not the first');
+  const rename = resolveRef('Hold: no\n\ndiff --git a/docs/a.md b/tests/a.test.js\nrename from docs/a.md\nrename to tests/a.test.js\n', refState());
+  assert.strictEqual(rename.reason, 'reference-repair-held', 'either side of a rename counts');
+  const sensitive = resolveRef(`Hold: no\n\n${REF_DIFF}`, refState(), { sensitivePaths: ['docs/**'] });
+  assert.strictEqual(sensitive.reason, 'reference-repair-held');
+  const clean = resolveRef(`Hold: no\n\n${REF_DIFF}`, refState(), { sensitivePaths: ['plugin/**'] });
+  assert.strictEqual(clean.resolution, 'approve');
+});
+
+test('#4636: a floor hit outranks an unclassifiable header', () => {
+  const item = resolveRef('Target: docs/a.md\n\ndiff --git a/tests/a.test.js b/tests/a.test.js\n', refState());
+  assert.strictEqual(item.reason, 'reference-repair-held');
+});
+
+test('#4636: a staged file with no parseable diff holds', () => {
+  const cases = {
+    'no diff': 'Hold: no\n\nbody',
+    'hunks only': 'Hold: no\n\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n+new\n',
+    'indented header': `Hold: no\n\n    ${REF_DIFF}`,
+    'quoted path': 'Hold: no\n\ndiff --git "a/docs/caf\\303\\251.md" "b/docs/caf\\303\\251.md"\n',
+    'no a/ b/ prefix': 'Hold: no\n\ndiff --git docs/a.md docs/a.md\n',
+    'dot-dot segment': 'Hold: no\n\ndiff --git a/docs/../tests/a.test.js b/docs/../tests/a.test.js\n',
+    'one readable, one not': `Hold: no\n\n${REF_DIFF}diff --git "a/x.md" "b/x.md"\n`,
+    'ambiguous rename': 'Hold: no\n\ndiff --git a/one b/two b/three b/four\n',
+  };
+  for (const [label, text] of Object.entries(cases)) {
+    const item = resolveRef(text, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+});
+
+const HUNK = '@@ -1,3 +1,3 @@\n one\n-old\n+new\n three\n';
+const BYPASSES = {
+  '---/+++ naming the test file': `diff --git a/docs/a.md b/docs/a.md\n--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}`,
+  'second section with no diff --git line': `diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}`,
+  'rename from the test file': 'diff --git a/docs/a.md b/docs/a.md\nsimilarity index 100%\nrename from tests/x.test.js\nrename to docs/b.md\n',
+  'traditional patch before any section': `--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}`,
+  'traditional patch ahead of a clean section': `--- a/tests/x.test.js\n+++ b/tests/x.test.js\n${HUNK}${REF_DIFF}`,
+  'quoted rename-from side': 'diff --git a/"tests/x.test.js" b/docs/b.md\nsimilarity index 100%\nrename from "tests/x.test.js"\nrename to docs/b.md\n',
+  'tab inside a path (git cuts the name there)': `diff --git a/src/x.test.js\tj b/src/x.test.js\tj\n--- a/src/x.test.js\tj\n+++ b/src/x.test.js\tj\n${HUNK}`,
+  'trailing tab on a side': `diff --git a/src/x.test.js\t b/src/x.test.js\t\n--- a/src/x.test.js\t\t\n+++ b/src/x.test.js\t\t\n${HUNK}`,
+  'rename from disagrees, rename to agrees': 'diff --git a/docs/a.md b/docs/b.md\nsimilarity index 100%\nrename from tests/x.test.js\nrename to docs/b.md\n',
+  'copy to disagrees, copy from agrees': 'diff --git a/docs/a.md b/docs/b.md\nsimilarity index 100%\ncopy from docs/a.md\ncopy to tests/y.test.js\n',
+  'empty segment in a same-path side (git collapses it)': `diff --git a/docs//a.md b/docs//a.md\n--- a/docs//a.md\n+++ b/docs//a.md\n${HUNK}`,
+  'dot segment in a same-path side': `diff --git a/docs/./a.md b/docs/./a.md\n--- a/docs/./a.md\n+++ b/docs/./a.md\n${HUNK}`,
+};
+
+test('#4636: the proved diff bypasses hold', () => {
+  for (const [label, body] of Object.entries(BYPASSES)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+    const item = resolveRef(`Hold: no\n\n${body}`, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+});
+
+test('#4636: a side git would quote or cut is unreadable, so the repair holds', () => {
+  const cases = {
+    'quoted rename-to': 'diff --git a/docs/a.md b/"tests/y.test.js"\nsimilarity index 100%\nrename from docs/a.md\nrename to "tests/y.test.js"\n',
+    'quoted copy-to': 'diff --git a/docs/a.md b/"src/y.test.js"\nsimilarity index 100%\ncopy from docs/a.md\ncopy to "src/y.test.js"\n',
+    'octal-escaped rename-from': 'diff --git a/"t\\145sts/x.test.js" b/docs/b.md\nsimilarity index 100%\nrename from "t\\145sts/x.test.js"\nrename to docs/b.md\n',
+    'backslash in a path': 'diff --git a/docs\\a.md b/docs\\a.md\n',
+    'control character in a path': 'diff --git a/docs/\u0001a.md b/docs/\u0001a.md\n',
+    'DEL in a path': 'diff --git a/docs/\u007fa.md b/docs/\u007fa.md\n',
+  };
+  for (const [label, body] of Object.entries(cases)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+    const item = resolveRef(`Hold: no\n\n${body}`, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+  // A path with a space still parses, ended by the one trailing tab the recipe emits after it.
+  assert.deepStrictEqual(stagedDiffPaths('diff --git a/docs/my a.md b/docs/my a.md\n--- a/docs/my a.md\t\n+++ b/docs/my a.md\t\n' + HUNK), ['docs/my a.md']);
+});
+
+test('#4636: every other path line or header the parser cannot square with its section holds', () => {
+  const head = 'diff --git a/docs/a.md b/docs/a.md\n';
+  const cases = {
+    '--- only disagrees': `${head}--- a/tests/x.test.js\n+++ b/docs/a.md\n${HUNK}`,
+    '+++ only disagrees': `${head}--- a/docs/a.md\n+++ b/tests/x.test.js\n${HUNK}`,
+    'hunk with no path lines': `${head}${HUNK}`,
+    '/dev/null side': `${head}--- /dev/null\n+++ b/docs/a.md\n${HUNK}`,
+    'copy from elsewhere': `${head}copy from tests/x.test.js\ncopy to docs/a.md\n`,
+    'rename to elsewhere': `${head}rename from docs/a.md\nrename to tests/x.test.js\n`,
+    'unknown header line': `${head}new file mode 100644\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`,
+    'binary': `${head}GIT binary patch\nliteral 0\n`,
+    'short hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,3 +1,3 @@\n one\n`,
+    'malformed hunk header': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ nope @@\n one\n`,
+    'stray line after a hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}trailing prose\n`,
+    'context line past the old count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1,2 @@\n one\n two\n`,
+    'removal past the old count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1,2 @@\n-a\n-b\n+c\n+d\n`,
+    'addition past the new count': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,2 +1 @@\n+a\n+b\n-c\n-d\n`,
+    'no-newline marker after a blank line past a hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}\n\\ No newline at end of file\n`,
+    'doubled no-newline marker after a hunk': `${head}--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}\\ No newline at end of file\n\\ No newline at end of file\n`,
+  };
+  for (const [label, body] of Object.entries(cases)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+  }
+});
+
+test('#4636: a side with a segment ending in a space or a dot holds, since NTFS lands it on a file the floor never matched', () => {
+  for (const rel of ['tests/x.test.js.', 'tests/x.test.js ', 'tests./x.md', 'docs /a.md', 'docs/a.md.']) {
+    const diff = `diff --git a/${rel} b/${rel}\n--- a/${rel}\n+++ b/${rel}\n${HUNK}`;
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${diff}`), null, rel);
+  }
+  assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\ndiff --git a/docs/.hidden.md b/docs/.hidden.md\n--- a/docs/.hidden.md\n+++ b/docs/.hidden.md\n${HUNK}`), ['docs/.hidden.md'], 'a dotfile name is still readable');
+});
+
+test('#4636: a mode line holds, since git apply would strip or add an executable bit under a clean header', () => {
+  const head = 'diff --git a/docs/a.md b/docs/a.md\n';
+  const cases = {
+    'old/new mode (a 755 file rewritten as 644)': `${head}old mode 100755\nnew mode 100644\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`,
+    'new mode alone': `${head}new mode 100755\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`,
+  };
+  for (const [label, body] of Object.entries(cases)) {
+    assert.strictEqual(stagedDiffPaths(`Hold: no\n\n${body}`), null, label);
+    const item = resolveRef(`Hold: no\n\n${body}`, refState());
+    assert.strictEqual(item.resolution, 'pending', label);
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', label);
+  }
+  assert.deepStrictEqual(stagedDiffPaths(`${head}index d09312f..2ddd079 100644\n--- a/docs/a.md\n+++ b/docs/a.md\n${HUNK}`), ['docs/a.md'], 'an index line stays neutral');
+});
+
+test('#4636: hunk content that looks like a path line is content', () => {
+  const lookalike = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1,3 +1,3 @@\n one\n--- a/tests/x.test.js\n+++ b/tests/x.test.js\n three\n';
+  assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\n${lookalike}`), ['docs/a.md']);
+  const noNewline = 'diff --git a/docs/a.md b/docs/a.md\n--- a/docs/a.md\n+++ b/docs/a.md\n@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file\n';
+  assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\n${noNewline}`), ['docs/a.md']);
+});
+
+test('#4636: well-formed sections parse: prose ahead, a path with a space, a tab-ended path line, two sections, a real rename', () => {
+  assert.deepStrictEqual(stagedDiffPaths(`Hold: no\n\nold -> new\n\n${REF_DIFF}`), ['docs/a.md']);
+  assert.deepStrictEqual(stagedDiffPaths(`diff --git a/docs/my a.md b/docs/my a.md\nindex d09312f..2ddd079 100644\n--- a/docs/my a.md\t\n+++ b/docs/my a.md\t\n${HUNK}`), ['docs/my a.md']);
+  assert.deepStrictEqual(stagedDiffPaths(`${REF_DIFF}diff --git a/docs/b.md b/docs/b.md\n--- a/docs/b.md\n+++ b/docs/b.md\n${HUNK}`), ['docs/a.md', 'docs/b.md']);
+  assert.deepStrictEqual(stagedDiffPaths('diff --git a/docs/a.md b/docs/b.md\nsimilarity index 100%\nrename from docs/a.md\nrename to docs/b.md\n'), ['docs/a.md', 'docs/b.md']);
+});
+
+test('#4636: referenceRepairFloorReason is the floor check alone', () => {
+  assert.strictEqual(referenceRepairFloorReason(`Hold: no\n\n${REF_DIFF}`, []), null);
+  assert.strictEqual(referenceRepairFloorReason(REF_DIFF, []), null, 'reads no header');
+  assert.strictEqual(referenceRepairFloorReason(REF_DIFF, ['docs/**']), 'reference-repair-held');
+  assert.strictEqual(referenceRepairFloorReason(REF_DIFF, null), 'reference-repair-unclassified');
+  assert.strictEqual(referenceRepairFloorReason(REF_DIFF, [7]), 'reference-repair-unclassified', 'a list with a non-string entry is unreadable');
+  assert.strictEqual(referenceRepairFloorReason('no diff', []), 'reference-repair-unclassified');
+  assert.strictEqual(referenceRepairFloorReason('diff --git a/tests/a.test.js b/tests/a.test.js\n', null), 'reference-repair-held');
+  assert.strictEqual(referenceRepairFloorReason('diff --git a/package-lock.json b/package-lock.json\n', ['**/package-lock.json']), 'reference-repair-held', 'root-level file under **/');
+});
+
+test('#4636: referenceRepairFloorHits names each hit path and why', () => {
+  assert.deepStrictEqual(referenceRepairFloorHits(['docs/a.md'], []), []);
+  assert.deepStrictEqual(referenceRepairFloorHits(['docs/a.md', 'tests/a.test.js', 'plugin/x.md'], ['plugin/**']), [
+    { path: 'tests/a.test.js', why: 'test file' },
+    { path: 'plugin/x.md', why: 'merge-sensitive' },
+  ]);
+  assert.deepStrictEqual(referenceRepairFloorHits(['tests/a.test.js'], ['tests/**']), [{ path: 'tests/a.test.js', why: 'test file' }], 'one entry per path');
+  assert.deepStrictEqual(referenceRepairFloorHits(['plugin/x.md'], null), [], 'no sensitive match without a readable list');
+  assert.deepStrictEqual(referenceRepairFloorHits(null, []), []);
+});
+
+test('#4636: a case variant of a merge-sensitive path is a hit (a case-insensitive filesystem lands it on the sensitive file)', () => {
+  assert.deepStrictEqual(referenceRepairFloorHits(['PACKAGE-LOCK.JSON'], ['**/package-lock.json']), [{ path: 'PACKAGE-LOCK.JSON', why: 'merge-sensitive' }]);
+  assert.deepStrictEqual(referenceRepairFloorHits(['docs/a.md'], ['DOCS/**']), [{ path: 'docs/a.md', why: 'merge-sensitive' }]);
+  assert.deepStrictEqual(referenceRepairFloorHits(['plugin/a.md'], ['docs/**']), [], 'a different directory is still no hit');
+  const item = resolveRef('Hold: no\n\ndiff --git a/PACKAGE-LOCK.JSON b/PACKAGE-LOCK.JSON\n', refState(), { sensitivePaths: ['**/package-lock.json'] });
+  assert.strictEqual(item.resolution, 'pending');
+  assert.strictEqual(item.reason, 'reference-repair-held');
+});
+
+test('#4636: a whitespace-only line ends the header, so a Hold: line after it is body', () => {
+  for (const text of [`Hold: no\n   \nHold: yes\n\n${REF_DIFF}`, `Hold: no\n\t\nHeld: quoted\n\n${REF_DIFF}`]) {
+    assert.strictEqual(resolveRef(text, refState()).resolution, 'approve', JSON.stringify(text));
+  }
+});
+
+test('#4636: a path with spaces parses, so a clean one approves and a test one holds', () => {
+  const spaced = (p) => `Hold: no\n\ndiff --git a/${p} b/${p}\n`;
+  assert.strictEqual(resolveRef(spaced('docs/my guide.md'), refState()).resolution, 'approve');
+  assert.strictEqual(resolveRef(spaced('tests/my a.test.js'), refState()).reason, 'reference-repair-held');
+});
+
+test('#4636: an ambiguous candidate carries no diff and holds before any diff is read', () => {
+  for (const sensitivePaths of [[], null]) {
+    const item = resolveRef('Hold: yes\nHeld: two plausible new targets\nTarget: docs/a.md\n\nold -> one of b or c\n', refState(true), { sensitivePaths });
+    assert.strictEqual(item.resolution, 'pending');
+    assert.strictEqual(item.reason, 'reference-repair-held');
+  }
+});
+
+test('#4636: unreadable merge-sensitive paths hold', () => {
+  for (const sensitivePaths of [null, undefined, 'docs/**', [7]]) {
+    const item = resolveRef(`Hold: no\n\n${REF_DIFF}`, refState(), { sensitivePaths });
+    assert.strictEqual(item.resolution, 'pending', String(sensitivePaths));
+    assert.strictEqual(item.reason, 'reference-repair-unclassified', String(sensitivePaths));
+  }
 });
 
 test('renderTable escapes a pipe in the item id, not only in the reason (#1932 M6)', () => {
@@ -1962,4 +2291,11 @@ test('#3488: resolveAll never auto-files an upstream-draft hand-off — it resol
   const item = resolveAll({ runDir, policy: 'console-auto', deps: deps() }).items.find((i) => i.id === 'upstream-draft-1.md');
   assert.ok(item, 'the draft is an item');
   assert.strictEqual(item.resolution, 'pending');
+});
+
+test('#4636: review-console-appendix.md names every reference-repair pending reason', () => {
+  const reasons = Object.values(REFERENCE_REPAIR_REASONS);
+  assert.ok(reasons.length >= 4);
+  const text = APPENDIX.replace(/\s+/g, ' ');
+  for (const reason of reasons) assert.ok(text.includes('pending — ' + reason), reason);
 });
