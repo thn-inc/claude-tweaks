@@ -34,6 +34,8 @@
 
 ### Task 1: Release-time downgrade in `classifyShipped`
 
+**Review risk:** high
+
 **Files:**
 - Modify: `plugin/bin/lib/issues/shipped-candidate.js`
 - Test: `tests/bin-lib/issues/shipped-candidate.test.js`
@@ -240,6 +242,8 @@ git commit -m "Read shipped-candidate release times from claim tombstones — re
 ```
 
 ### Task 3: Wire the queue pull and update the prose
+
+**Review risk:** high
 
 **Files:**
 - Modify: `plugin/skills/dispatch/queue-pull-script.md` (temp-path block near line 39; shipped-candidate section, lines 500-588)
