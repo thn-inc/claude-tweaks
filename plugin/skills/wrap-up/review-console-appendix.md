@@ -146,7 +146,7 @@ procedure — no row is left unrouted:
   `pending — sdd-ruling-unreadable` (the reconciler's gap names why: `no-staged-path`, `path-rejected`,
   `not-found`, or `read-failed`). None is ever auto-ratified, and the reconciler's
   `consoleAutoResolve` path withholds the same rows (`_shared/console-execution.md`).
-  Not auto-ratifiable is not unratifiable: a human ratify of any of them is a `file-record`
+  Not auto-ratifiable is not the same as not ratifiable: a human ratify of any of them is a `file-record`
   ratify (above) — `accept` for agreeing `Defers: no` lines — unless its staged file is empty,
   blank, or unreadable, which is not ratifiable.
   A `file-record` ruling that does auto-ratify resolves `apply` with the reason

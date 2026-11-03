@@ -13,6 +13,7 @@ const { readText } = require('./helpers/read-skill');
 const ROOT = path.join(__dirname, '..');
 const SKILLS = path.join(ROOT, 'plugin', 'skills');
 const { SDD_RULING_RATIFY_ACTIONS, sddRulingRatifyAction, sddRulingDeferralReason } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'sdd-ruling'));
+const { RATIFY_FILES_RECORD_REASON } = require(path.join(ROOT, 'plugin', 'bin', 'lib', 'console', 'resolve'));
 
 const ws = (s) => new RegExp(s.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+'));
 const read = (rel) => readText(path.join(SKILLS, rel));
@@ -40,7 +41,7 @@ test('go-red: the rule check fails when the appendix drops the ratified → #{ne
   assert.throws(() => assertRatifyRule(APPENDIX.split('ratified → #{new record}').join('ratified')));
 });
 
-test('AC1.1: the appendix\'s deferral header classifies as file-record, its settled header as accept', () => {
+test('AC1.1: a Defers: yes + valid reason header classifies as file-record, a Defers: no header as accept', () => {
   assert.strictEqual(sddRulingRatifyAction('Ruling: x — why\nDefers: yes\nDefer-reason: genuinely-larger\n\nbody'), SDD_RULING_RATIFY_ACTIONS.FILE_RECORD);
   assert.strictEqual(sddRulingRatifyAction('Ruling: x — why\nDefers: no\n\nbody'), SDD_RULING_RATIFY_ACTIONS.ACCEPT);
 });
@@ -58,7 +59,7 @@ test('AC1.1: every console surface that ratifies a ruling states or cites the de
 });
 
 test('AC3.1: console-execution.md routes a failed ratify filing through --filing-failed', () => {
-  assert.match(read('_shared/console-execution.md'), ws('When a deferral ratify\'s record was refused or never created, pass that ruling\'s id in `--filing-failed`'));
+  assert.match(read('_shared/console-execution.md'), ws('When a deferral ratify\'s record was refused or never created, pass that ruling\'s id in `--filing-failed` instead, per Execution routing above'));
 });
 
 const EXECUTION = read('_shared/console-execution.md');
@@ -90,7 +91,7 @@ test('go-red: the gate-withheld ratify check fails when the appendix drops its r
   assert.throws(() => assertGateWithheldRatify(mutated));
 });
 
-test('AC5.1 AC5.2: the appendix\'s gate-withheld example header is file-record yet held', () => {
+test('AC5.1 AC5.2: a gate-withheld header (Defers: yes, no reason) is file-record yet held', () => {
   const text = 'Ruling: x — why\nDefers: yes\n\nbody';
   assert.strictEqual(sddRulingRatifyAction(text), SDD_RULING_RATIFY_ACTIONS.FILE_RECORD);
   assert.strictEqual(sddRulingDeferralReason(text), 'sdd-ruling-deferral-no-defer-reason');
@@ -171,4 +172,23 @@ test('AC6.3: every accept-or-deferral console surface cites the not-ratifiable r
 test('go-red: the not-ratifiable citation check fails when review-console.md drops the phrase', () => {
   const mutated = without(read('wrap-up/review-console.md'), NO_RATIFY_ACTION);
   assert.throws(() => assertCitesNotRatifiable(mutated));
+});
+
+// The appendix quotes the apply reason a console-auto file-record ruling resolves under; the
+// quote, up to its ellipsis, is a prefix of resolve.js's RATIFY_FILES_RECORD_REASON.
+function assertQuotedApplyReason(text) {
+  const m = /with the reason\s+`([^`]+?)\s*…`/.exec(text);
+  assert.ok(m, 'the appendix quotes the file-record apply reason');
+  const quoted = m[1].replace(/\s+/g, ' ');
+  assert.ok(RATIFY_FILES_RECORD_REASON.startsWith(quoted), `"${quoted}" is a prefix of RATIFY_FILES_RECORD_REASON`);
+}
+
+test('AC1.1: the appendix\'s quoted apply reason is a prefix of RATIFY_FILES_RECORD_REASON', () => {
+  assertQuotedApplyReason(APPENDIX);
+});
+
+test('go-red: the quoted apply reason check fails when the appendix quote drifts from the code', () => {
+  const quote = '`ratify files a deferral record …`';
+  assert.ok(APPENDIX.includes(quote), 'the control\'s quote is present before it is changed');
+  assert.throws(() => assertQuotedApplyReason(APPENDIX.replace(quote, '`ratify files a backlog record …`')));
 });

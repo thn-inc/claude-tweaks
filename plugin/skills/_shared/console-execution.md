@@ -22,7 +22,8 @@ only when Resolve is ticked — an unresolved console (Resolve unticked) is repo
 `skip: not-resolved-yet`, not surfaced as work. The returned `items` carry each item's `approved`
 boolean (its parsed tick), its declared `kind`, its `stagedHash` from `console.json`, and (for the
 one `isMergeRow: true` item, when present, and each `isRulingRow: true` `sdd-ruling-*` item) that
-flag itself — everything the executing session
+flag itself, plus on a ruling row its `ratifyAction` (`file-record` or `accept`; absent when the
+staged file is empty, blank, or unreadable) — everything the executing session
 needs without re-reading the comment itself. `mergeGrantGap` (#1802, below) is this same
 detection's own mechanized re-fetch of every named record's live grant, not something the
 executing session derives itself.
@@ -60,14 +61,14 @@ bullet: the ready item's `ratifyAction` (#3942) says which — `accept` writes t
 `accepted`; `file-record` (a deferral) files the deferred work as a record, as a reverse does, and
 writes the row → `deferred`, Resolution `ratified → #{new record}`, once the record exists. A
 ruling row named in `rulingGateGaps` (the Third narrower exception below) carries its
-`ratifyAction` too when its staged text is readable — `file-record`, or `accept` for agreeing
+`ratifyAction` too when its staged text is non-blank — `file-record`, or `accept` for agreeing
 `Defers: no` lines: a human tick ratifies what the gate only withholds from auto-resolution. A
-ticked ruling with no `ratifyAction` (its staged file empty or unreadable — not ratifiable) is
-unexecutable: name it in
-`resolve-console --filing-failed` with its cause logged as a `SKIP` line, so its reply reads
-`filing failed — see decisions.md` and the row stays `open`. A ticked deferral ruling whose record
-was refused or not created goes in `resolve-console --filing-failed` too: its reply reads
-`filing failed — see decisions.md`, Resolve stays unticked, and it is never recorded `executed`.
+ticked ruling with no `ratifyAction` (its staged file empty, blank, or unreadable) is not
+ratifiable: name it in `resolve-console --filing-failed` with its cause logged as a `SKIP` line,
+so its reply reads `filing failed — see decisions.md` and the row stays `open`. A ticked
+deferral ruling whose record was refused or not created goes in `resolve-console --filing-failed`
+too: its reply reads `filing failed — see decisions.md`, Resolve stays unticked, and it is never
+recorded `executed`.
 Log either filing as an `AUTO` line naming `reversed → #{new record}` or `ratified → #{new record}` only
 once the record exists; when the record is refused or not created, log that cause instead
 (`REFUSED` when `wrap-up/refused-proposals.md` refuses it, else `SKIP` — `FAILED` is reserved for
@@ -155,8 +156,7 @@ just posted to the PR. Two surfaces, one answer: whichever resolves first wins.
   ruling's id in `--reverse-failed`: the reply then labels it
   `reverse not filed — see decisions.md` and Resolve stays unticked. Never let such a ruling
   default to `reversed`. When a deferral ratify's record was refused or never created, pass that
-  ruling's id in `--filing-failed` instead (#3942): the reply labels it
-  `filing failed — see decisions.md`, Resolve stays unticked, and the ruling never reads `executed`.
+  ruling's id in `--filing-failed` instead, per Execution routing above (#3942).
 - **PR ticks resolve first** (a human ticked boxes on the PR while the chat prompt was still open,
   or a reconciler pass executed it in the interim): before acting on the chat answer, re-check the
   console comment for the resolved marker. If present, do not execute again and do not re-render
@@ -243,7 +243,7 @@ floor-clearing, unchanged. An absent ruling-text map (no `rulingTexts` in the ca
 withholds every ruling row as `sdd-ruling-unclassified` (#4048), withheld like any other ruling
 gap; a recorded read error for a row still outranks that and names it `sdd-ruling-unreadable`.
 A withheld ruling row still carries its `ratifyAction` (Execution routing above) unless its staged
-file is empty or unreadable: the exception stops only the auto-tick, never a human's.
+file is empty, blank, or unreadable: the exception stops only the auto-tick, never a human's.
 
 **Auto-resolution performs real comment edits.** It ticks the floor-clearing boxes on the PR
 comment (via `_shared/console-on-pr.md`'s post-or-update procedure) *before* executing — the same
