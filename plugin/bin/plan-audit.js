@@ -3,8 +3,10 @@
 // plus a size-headroom check, replacing the hand-run prose procedure that used to
 // live entirely in plugin/skills/build/plan-audit.md, and the warn-only Checks
 // E (#3099, AC clause coverage) and F (#3602, spec-named path coverage) — both
-// run only with `--spec`. Exit 0 iff every gating check is ok (a `nearCeiling`
-// headroom flag, or any Check E or Check F entry, alone does not fail).
+// run only with `--spec` — and the gating Check G (#4618, a kept risk flag needs
+// a `Proof(<slug>)` plan line), which also runs only with `--spec`. Exit 0 iff
+// every gating check is ok (a `nearCeiling` headroom flag, or any Check E or
+// Check F entry, alone does not fail).
 // `--count-tasks` (#1926) is a read-only verb printing `{tasks, batched}` for /build's
 // single-task fast-lane condition — it never runs the checks. `--task-markers`
 // (#3378) is the same kind of read-only verb, printing each task's per-task
@@ -21,8 +23,9 @@ const {
   extractTaskMarkers,
 } = require('./lib/plan-audit/parser');
 const {
-  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, checkPremiseRefs, checkTaskMarkers,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, headroomCheck, checkPremiseRefs, checkTaskMarkers,
 } = require('./lib/plan-audit/checks');
+const { readRiskPolicy } = require('./lib/issues/risk-flag-classify');
 
 function resolveRepoRoot(explicit, cwd) {
   if (explicit) return path.resolve(explicit);
@@ -65,6 +68,16 @@ function summaryLine(report) {
     if (report.checkF.unlisted.length) parts.push(`Check F: ${report.checkF.unlisted.length} unlisted spec path(s)`);
     if (report.checkF.unparsed.length) parts.push(`Check F: ${report.checkF.unparsed.length} unparsed spec block(s)`);
     if (report.checkF.orphanWaivers.length) parts.push(`Check F: ${report.checkF.orphanWaivers.length} orphan path waiver(s)`);
+  }
+  // #4618: gating — and `could-not-parse` is its own part, never folded into "missing".
+  if (!report.checkG.skipped) {
+    if (report.checkG.missing.length) {
+      parts.push(`Check G: missing proof for ${report.checkG.missing.map((m) => m.slug).join(', ')} in ${report.checkG.missing[0].plan}`);
+    }
+    if (report.checkG.couldNotParse.length) {
+      const sources = [...new Set(report.checkG.couldNotParse.map((c) => c.source))].join(', ');
+      parts.push(`Check G: could-not-parse ${report.checkG.couldNotParse.length} (${sources})`);
+    }
   }
   if (parts.length === 0) return 'plan-audit: clean — no findings.';
   return `plan-audit: ${parts.join('; ')}.`;
@@ -153,6 +166,20 @@ function main() {
   }
 
   const repoRoot = resolveRepoRoot(parsed.repoRoot, process.cwd());
+  // #4618: Check G needs the policy's `risk-categories` (read only with control mode
+  // on) to know a policy slug on the spec's flag line. Read only when a spec is present
+  // (Check G skips without one), and a policy that cannot be read exits 2 — never
+  // "no extra categories", which would read a policy slug as unknown.
+  let extraCategories = [];
+  if (specText !== null) {
+    try {
+      ({ extraCategories } = readRiskPolicy(repoRoot));
+    } catch (err) {
+      process.stderr.write(`plan-audit.js: cannot read policy for --spec: ${err.message}\n`);
+      process.exitCode = 2;
+      return;
+    }
+  }
   // #2000: Check D runs on the raw text before the parser — a byte scan on
   // text already in memory costs nothing.
   const checkDResult = checkD(text);
@@ -175,6 +202,7 @@ function main() {
     premiseRefs: checkPremiseRefs(premiseRefs, repoRoot),
     checkE: specText === null ? { ok: true, skipped: 'no-spec' } : checkE(specText, text),
     checkF: specText === null ? { ok: true, skipped: 'no-spec' } : checkF(specText, text),
+    checkG: specText === null ? { ok: true, skipped: 'no-spec' } : checkG(specText, text, { extraCategories, planPath: parsed.planFile }),
   };
 
   // Compact JSON on its own first line (never pretty-printed — a caller
@@ -184,7 +212,7 @@ function main() {
   process.stdout.write(`${summaryLine(report)}\n`);
 
   const pass = report.checkA.ok && report.checkB.ok && report.checkC.ok && report.checkD.ok && report.headroom.ok
-    && report.premiseRefs.ok;
+    && report.premiseRefs.ok && report.checkG.ok;
   process.exitCode = pass ? 0 : 1;
 }
 

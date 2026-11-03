@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 
 const {
-  checkA, checkB, checkC, checkD, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs, checkTaskMarkers,
+  checkA, checkB, checkC, checkD, checkG, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath, checkPremiseRefs, checkTaskMarkers,
 } = require('../../../plugin/bin/lib/plan-audit/checks');
 const { composedBytesReport } = require('../../../plugin/bin/lib/skill-audit/context-cost');
 const { RAIL_BYTES } = require('../../../plugin/bin/lib/skill-audit/budgets');
@@ -1389,4 +1389,102 @@ test('AC4.1 (#4640): checkTaskMarkers flags only the unrecognized field, carryin
       { taskIndex: 3, title: 'C', field: 'Review risk', value: '' },
     ],
   });
+});
+
+// ── Check G — a kept risk flag needs a Proof line (#4618) ────────────────
+
+const G_SPEC = (line) => `---\nrecord: 1\n---\n# 1: t\n\nSurface: infra\n${line}\n\n## Overview\n`;
+const G_PLAN = (body) => `### Task 1: x\n\n- [ ] **Step 1: y**\n\n${body}\n`;
+const GOOD = 'Rehearse the migration against a copy of production data and diff row counts.';
+
+test('AC4.1: a kept flag with no proof line fails, naming the slug and the plan', () => {
+  const r = checkG(G_SPEC('Risk-flags: migrations'), G_PLAN('nothing'), { planPath: 'p.md' });
+  assert.deepStrictEqual([r.ok, r.missing], [false, [{ slug: 'migrations', plan: 'p.md', reason: 'no-proof-line' }]]);
+});
+
+test('AC4.1: a proof shorter than 20 characters fails', () => {
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN('Proof(auth): too short')).missing[0].reason, 'too-short');
+});
+
+test('AC4.1: one proof per kept slug passes', () => {
+  const r = checkG(G_SPEC('Risk-flags: migrations, auth'), G_PLAN(`Proof(migrations): ${GOOD}\n- Proof(auth): An unauthenticated request to the route still returns 401.`));
+  assert.deepStrictEqual([r.ok, r.missing, r.couldNotParse], [true, [], []]);
+  assert.deepStrictEqual(r.proofs, [{ slug: 'migrations', task: '1' }, { slug: 'auth', task: '1' }]);
+});
+
+test('AC4.1: a proof for only one of two slugs still fails on the other', () => {
+  assert.deepStrictEqual(checkG(G_SPEC('Risk-flags: migrations, auth'), G_PLAN(`Proof(migrations): ${GOOD}`)).missing.map((m) => m.slug), ['auth']);
+});
+
+test('AC4.1: an unparseable flag line reports could-not-parse, however many proofs exist', () => {
+  const all = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'].map((s) => `Proof(${s}): ${GOOD}`).join('\n');
+  const r = checkG(G_SPEC('Risk-flags: Auth'), G_PLAN(all));
+  assert.strictEqual(r.ok, false);
+  assert.deepStrictEqual(r.couldNotParse, [{ source: 'flag-line', raw: 'Risk-flags: Auth' }]);
+});
+
+test('AC4.1: an unparseable plan reports could-not-parse', () => {
+  assert.deepStrictEqual(checkG(G_SPEC('Risk-flags: auth'), 'no tasks here').couldNotParse, [{ source: 'plan', raw: 'no parseable tasks' }]);
+});
+
+test('AC4.1: a near-miss proof line reports could-not-parse', () => {
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`proof (auth): ${GOOD}`)).couldNotParse[0].source, 'proof-line');
+});
+
+test('AC4.1: a near-miss proof line fails the audit even when a valid proof satisfies the slug', () => {
+  const r = checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`Proof(auth): ${GOOD}\nProof(Auth): ${GOOD}`));
+  assert.deepStrictEqual([r.ok, r.missing, r.couldNotParse], [false, [], [{ source: 'proof-line', raw: `Proof(Auth): ${GOOD}` }]]);
+});
+
+test('AC4.1: a record with no flags or unclassified does nothing', () => {
+  assert.deepStrictEqual(checkG(G_SPEC('Risk-flags: none'), 'no tasks here'), { ok: true, skipped: 'no-flags' });
+  assert.deepStrictEqual(checkG(G_SPEC(''), 'no tasks here'), { ok: true, skipped: 'unclassified' });
+});
+
+test('an unknown slug needs a proof for every widened flag, and can be satisfied', () => {
+  const r = checkG(G_SPEC('Risk-flags: pii'), G_PLAN(`Proof(pii): ${GOOD}`));
+  assert.deepStrictEqual(r.missing.map((m) => m.slug), ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']);
+  assert.deepStrictEqual(r.couldNotParse, []);
+});
+
+test('a policy slug passed in reads ok and needs only its own proof', () => {
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: pii'), G_PLAN(`Proof(pii): ${GOOD}`), { extraCategories: ['pii'] }).ok, true);
+});
+
+test('a proof that restates the category fails', () => {
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: public-contract'), G_PLAN('Proof(public-contract): public contract proof for the public contract')).missing[0].reason, 'restates-category');
+});
+
+test('a proof in a fence, or outside any task, does not satisfy', () => {
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), G_PLAN(`\`\`\`\nProof(auth): ${GOOD}\n\`\`\``)).ok, false);
+  assert.strictEqual(checkG(G_SPEC('Risk-flags: auth'), `Proof(auth): ${GOOD}\n\n${G_PLAN('x')}`).ok, false);
+});
+
+test('CRLF plan and spec read the same as LF', () => {
+  const crlf = (s) => s.replace(/\n/g, '\r\n');
+  assert.strictEqual(checkG(crlf(G_SPEC('Risk-flags: auth')), crlf(G_PLAN(`Proof(auth): ${GOOD}`))).ok, true);
+  const spec = crlf(G_SPEC('Risk-flags: auth'));
+  const plan = crlf(G_PLAN('Proof(auth): too short'));
+  assert.deepStrictEqual(checkG(spec, plan, { planPath: 'p.md' }), checkG(G_SPEC('Risk-flags: auth'), G_PLAN('Proof(auth): too short'), { planPath: 'p.md' }));
+});
+
+test('an unconfirmed flag still requires its proof', () => {
+  const r = checkG(G_SPEC('Risk-flags: auth\nRisk-flags-unconfirmed: true'), G_PLAN('x'));
+  assert.deepStrictEqual([r.ok, r.unconfirmed], [false, true]);
+});
+
+test('checkG reports the status the parse read, and the required slugs in canonical order', () => {
+  const ok = checkG(G_SPEC('Risk-flags: auth, migrations'), G_PLAN('x'));
+  assert.deepStrictEqual([ok.status, ok.required], ['ok', ['migrations', 'auth']]);
+  const unknown = checkG(G_SPEC('Risk-flags: pii'), G_PLAN('x'));
+  assert.strictEqual(unknown.status, 'unknown');
+});
+
+test('isSubstantiveProof: under 20 characters is too-short, only category words restate, anything else is substantive', () => {
+  assert.strictEqual(isSubstantiveProof('auth', 'x'.repeat(19)), 'too-short');
+  assert.strictEqual(isSubstantiveProof('auth', `  ${'x'.repeat(19)}  `), 'too-short');
+  assert.strictEqual(isSubstantiveProof('auth', 'auth category proof for this flag'), 'restates-category');
+  assert.strictEqual(isSubstantiveProof('irreversible-side-effect', 'the irreversible side effect is handled'), 'restates-category');
+  assert.strictEqual(isSubstantiveProof('auth', 'an anonymous call to /admin returns 401'), null);
+  assert.strictEqual(isSubstantiveProof('auth', 'auth: an anonymous call to /admin returns 401'), null);
 });

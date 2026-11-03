@@ -6,7 +6,7 @@ const assert = require('node:assert');
 const {
   extractFileEntries, extractScopeKeywords, extractPremiseRefs, extractTaskBlocks,
   extractStep2Verification, extractVerificationChecks, extractUnparseableStep2s, countTasks,
-  extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS,
+  extractTaskMarkers, TASK_MARKER_ROLES, TASK_MARKER_RISKS, extractProofLines,
 } = require('../../../plugin/bin/lib/plan-audit/parser');
 
 test('extractFileEntries reads Create/Modify/Delete/Test bullets, backticked and bare', () => {
@@ -771,4 +771,74 @@ test('AC4.1 (#4640): a leading token outside the closed set stays unrecognized, 
   }
   const { tasks } = extractTaskMarkers('### Task 1: A\n**Role:** trivial (x)\n');
   assert.deepStrictEqual({ role: tasks[0].role, roleRaw: tasks[0].roleRaw }, { role: null, roleRaw: 'trivial (x)' });
+});
+
+// ── extractProofLines (#4618, Check G's input) ───────────────────────────
+
+test('extractProofLines returns the slug, text and task of each strict proof line, bullet, checkbox and bold forms included', () => {
+  const plan = [
+    'Proof(auth): before any task, ignored',
+    '### Task 1: A',
+    'Proof(migrations): Rehearse the migration on a copy of production data.',
+    '- Proof(auth): An anonymous call to the route returns 401.',
+    '- [ ] **Proof(public-contract):** The v1 payload still parses unchanged.',
+    '### Task 2: B',
+    '  * [x] Proof(irreversible-side-effect):   Run against a sandbox account first.  ',
+  ].join('\n');
+  assert.deepStrictEqual(extractProofLines(plan), {
+    proofs: [
+      { slug: 'migrations', text: 'Rehearse the migration on a copy of production data.', task: '1' },
+      { slug: 'auth', text: 'An anonymous call to the route returns 401.', task: '1' },
+      { slug: 'public-contract', text: 'The v1 payload still parses unchanged.', task: '1' },
+      { slug: 'irreversible-side-effect', text: 'Run against a sandbox account first.', task: '2' },
+    ],
+    nearMisses: [],
+  });
+});
+
+test('extractProofLines ignores a proof line inside a fenced block, backtick or tilde', () => {
+  const plan = [
+    '### Task 1: A',
+    '```',
+    'Proof(auth): fenced, an example only here.',
+    '```',
+    '~~~md',
+    'proof (auth): also fenced, never a near-miss',
+    '~~~',
+    'Proof(migrations): Rehearse the migration on a copy of production data.',
+  ].join('\n');
+  const { proofs, nearMisses } = extractProofLines(plan);
+  assert.deepStrictEqual(proofs.map((p) => p.slug), ['migrations']);
+  assert.deepStrictEqual(nearMisses, []);
+});
+
+test('extractProofLines reports a line that resembles a proof but fails the strict form as a near-miss', () => {
+  const plan = [
+    '### Task 1: A',
+    'proof (auth): spaced and lowercase',
+    'Proof(Auth): uppercase slug',
+    '- PROOF(auth) is required here',
+    'Proof(<slug>): the placeholder itself',
+    'Proof(auth) text without a colon',
+    'Proofreading notes are not a proof line.',
+    'The Proof(auth): line is mentioned mid-sentence.',
+  ].join('\n');
+  const { proofs, nearMisses } = extractProofLines(plan);
+  assert.deepStrictEqual(proofs, []);
+  assert.deepStrictEqual(nearMisses, [
+    { task: '1', raw: 'proof (auth): spaced and lowercase' },
+    { task: '1', raw: 'Proof(Auth): uppercase slug' },
+    { task: '1', raw: '- PROOF(auth) is required here' },
+    { task: '1', raw: 'Proof(<slug>): the placeholder itself' },
+    { task: '1', raw: 'Proof(auth) text without a colon' },
+  ]);
+});
+
+test('extractProofLines reads a CRLF plan the same as an LF one', () => {
+  const plan = '### Task 1: A\nProof(auth): An anonymous call to the route returns 401.\nproof (auth): near\n';
+  assert.deepStrictEqual(extractProofLines(plan.replace(/\n/g, '\r\n')), extractProofLines(plan));
+});
+
+test('extractProofLines on a plan with no tasks finds nothing', () => {
+  assert.deepStrictEqual(extractProofLines('Proof(auth): not inside any task, so not counted.'), { proofs: [], nearMisses: [] });
 });

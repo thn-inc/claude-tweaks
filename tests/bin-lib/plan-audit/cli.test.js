@@ -744,8 +744,10 @@ test('AC4.1 (#3099) + AC3.1 (#3602): without --spec the envelope carries checkE 
     assert.deepStrictEqual(a.checkE, { ok: true, skipped: 'no-spec' });
     assert.deepStrictEqual(a.checkF, { ok: true, skipped: 'no-spec' });
     assert.deepStrictEqual(b.checkE.uncovered, []);
-    const { checkE: dropA, checkF: dropFA, ...restA } = a;
-    const { checkE: dropB, checkF: dropFB, ...restB } = b;
+    assert.deepStrictEqual(a.checkG, { ok: true, skipped: 'no-spec' });
+    assert.deepStrictEqual(b.checkG, { ok: true, skipped: 'unclassified' });
+    const { checkE: dropA, checkF: dropFA, checkG: dropGA, ...restA } = a;
+    const { checkE: dropB, checkF: dropFB, checkG: dropGB, ...restB } = b;
     assert.deepStrictEqual(restA, restB);
     assert.deepStrictEqual(Object.keys(restA), ['checkA', 'checkB', 'checkC', 'checkD', 'headroom', 'premiseRefs']);
     assert.strictEqual(without.exitCode, 0);
@@ -877,6 +879,146 @@ test('#3099: Check B never reports the audited plan file itself as unplanned, bu
     const reportSecond = JSON.parse(second.stdout.split('\n')[0]);
     assert.deepStrictEqual(reportSecond.checkB.unplanned, ['stray.js']);
     assert.notStrictEqual(second.exitCode, 0);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+// ── Check G (#4618) ──────────────────────────────────────────────────────
+
+const G_GOOD = 'Rehearse the migration against a copy of production data and diff row counts.';
+
+function gSpec(flagLine) {
+  return `---\nrecord: 1\n---\n# 1: t\n\nSurface: infra\n${flagLine}\n\n## Overview\n`;
+}
+
+function gPlan(body) {
+  return [
+    '### Task 1: Do a thing',
+    '**Files:**',
+    '- Modify: `plugin/bin/existing.js`',
+    '',
+    '- [ ] **Step 1: Do it**',
+    '',
+    body,
+    '',
+  ].join('\n');
+}
+
+function runG(repo, planBody, flagLine) {
+  const plan = writePlan(repo, gPlan(planBody));
+  const spec = path.join(repo, 'spec.md');
+  fs.writeFileSync(spec, gSpec(flagLine));
+  const result = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+  const report = result.stdout ? JSON.parse(result.stdout.split('\n')[0]) : null;
+  return { ...result, report, summary: result.stdout.split('\n')[1] };
+}
+
+test('AC4.1 (#4618): a kept flag with no Proof line exits 1 and the summary names the slug and the plan', () => {
+  const repo = makeERepo();
+  try {
+    const r = runG(repo, 'nothing here', 'Risk-flags: migrations');
+    assert.strictEqual(r.exitCode, 1);
+    assert.deepStrictEqual(r.report.checkG.missing, [{ slug: 'migrations', plan: path.join(repo, 'plan.md'), reason: 'no-proof-line' }]);
+    assert.ok(r.summary.includes(`Check G: missing proof for migrations in ${path.join(repo, 'plan.md')}`), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): a Proof line per kept slug exits 0 and the summary is clean', () => {
+  const repo = makeERepo();
+  try {
+    const r = runG(repo, `Proof(migrations): ${G_GOOD}`, 'Risk-flags: migrations');
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(r.report.checkG.ok, true);
+    assert.deepStrictEqual(r.report.checkG.proofs, [{ slug: 'migrations', task: '1' }]);
+    assert.ok(!r.summary.includes('Check G'), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): an unparseable flag line exits 1 with a could-not-parse summary part naming its source, however many proofs exist', () => {
+  const repo = makeERepo();
+  try {
+    const all = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'].map((s) => `Proof(${s}): ${G_GOOD}`).join('\n');
+    const r = runG(repo, all, 'Risk-flags: Auth');
+    assert.strictEqual(r.exitCode, 1);
+    assert.ok(r.summary.includes('Check G: could-not-parse 1 (flag-line).'), r.summary);
+    assert.ok(!r.summary.includes('missing proof'), r.summary);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('AC4.1 (#4618): a spec with no flag line, or none, leaves the audit clean', () => {
+  const repo = makeERepo();
+  try {
+    const none = runG(repo, 'x', 'Risk-flags: none');
+    assert.deepStrictEqual([none.exitCode, none.report.checkG], [0, { ok: true, skipped: 'no-flags' }]);
+    const absent = runG(repo, 'x', '');
+    assert.deepStrictEqual([absent.exitCode, absent.report.checkG], [0, { ok: true, skipped: 'unclassified' }]);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: control mode on reads the policy risk-categories, so a policy slug needs only its own proof; off it widens', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks'), { recursive: true });
+    const policy = path.join(repo, '.claude-tweaks', 'policy.yml');
+    fs.writeFileSync(policy, 'control-mode: on\nrisk-categories: pii\n');
+    const on = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.deepStrictEqual([on.exitCode, on.report.checkG.status, on.report.checkG.required], [0, 'ok', ['pii']]);
+
+    fs.writeFileSync(policy, 'control-mode: off\nrisk-categories: pii\n');
+    const off = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(off.exitCode, 1);
+    assert.strictEqual(off.report.checkG.status, 'unknown');
+    assert.deepStrictEqual(off.report.checkG.missing.map((m) => m.slug), ['migrations', 'auth', 'public-contract', 'irreversible-side-effect']);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: a policy file that cannot be read exits 2 with nothing on stdout, never as "no extra categories"', () => {
+  const repo = makeERepo();
+  try {
+    // A directory where policy.yml should be: readFileSync throws EISDIR, not ENOENT.
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const r = runG(repo, `Proof(pii): ${G_GOOD}`, 'Risk-flags: pii');
+    assert.strictEqual(r.exitCode, 2);
+    assert.strictEqual(r.stdout, '');
+    assert.match(r.stderr, /cannot read policy/);
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: without --spec the policy is never read, so an unreadable one does not fail the audit', () => {
+  const repo = makeERepo();
+  try {
+    fs.mkdirSync(path.join(repo, '.claude-tweaks', 'policy.yml'), { recursive: true });
+    const plan = writePlan(repo, gPlan('x'));
+    const r = runCliArgs([plan, '--repo-root', repo]);
+    assert.strictEqual(r.exitCode, 0);
+    assert.deepStrictEqual(JSON.parse(r.stdout.split('\n')[0]).checkG, { ok: true, skipped: 'no-spec' });
+  } finally {
+    fs.rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test('#4618: Check G reads a CRLF plan and spec the same as LF', () => {
+  const repo = makeERepo();
+  try {
+    const plan = writePlan(repo, gPlan(`Proof(migrations): ${G_GOOD}`).replace(/\n/g, '\r\n'));
+    const spec = path.join(repo, 'spec.md');
+    fs.writeFileSync(spec, gSpec('Risk-flags: migrations').replace(/\n/g, '\r\n'));
+    const r = runCliArgs([plan, '--repo-root', repo, '--spec', spec]);
+    assert.strictEqual(r.exitCode, 0);
+    assert.strictEqual(JSON.parse(r.stdout.split('\n')[0]).checkG.ok, true);
   } finally {
     fs.rmSync(repo, { recursive: true, force: true });
   }

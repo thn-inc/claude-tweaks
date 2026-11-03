@@ -101,6 +101,35 @@ function extractTaskBlocks(text) {
   });
 }
 
+// ── Check G input: `Proof(<slug>): <text>` lines (#4618) ───────────────────
+// One entry per proof line inside a task body, outside fenced code. A line
+// before the first `### Task` heading is outside every task and never counts
+// (extractTaskBlocks starts at that heading). Two shapes, never one merged
+// list (parse-signal-discipline): a `proofs` entry matches the strict form
+// (an optional list bullet, checkbox and bold wrapper around a lowercase slug),
+// and a line whose start only resembles one (`proof (`, `Proof(Auth):`, a
+// missing colon, a placeholder slug) is a `nearMisses` entry, so a proof line
+// the author meant but mistyped is never read as "no proof written". CRLF
+// input is normalized to LF here, as extractPathWaivers does.
+const PROOF_LINE_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?Proof\(([a-z0-9][a-z0-9-]*)\):(?:\*\*)?[ \t]*(.*)$/;
+const PROOF_NEAR_MISS_RE = /^[ \t]*(?:[-*+][ \t]+)?(?:\[[ xX]?\][ \t]+)?(?:\*\*)?proof ?\(/i;
+
+function extractProofLines(planText) {
+  const proofs = [];
+  const nearMisses = [];
+  for (const block of extractTaskBlocks(planText.replace(/\r\n?/g, '\n'))) {
+    let inFence = false;
+    for (const line of block.body.split('\n')) {
+      if (AC_FENCE_RE.test(line)) { inFence = !inFence; continue; }
+      if (inFence) continue;
+      const m = line.match(PROOF_LINE_RE);
+      if (m) proofs.push({ slug: m[1], text: m[2].trim(), task: block.taskNumber });
+      else if (PROOF_NEAR_MISS_RE.test(line)) nearMisses.push({ task: block.taskNumber, raw: line.trim() });
+    }
+  }
+  return { proofs, nearMisses };
+}
+
 // Within one task body, extracts the Step 2 Run:/Expected: pair (writing-plans'
 // "Run test to verify it fails" sub-step). Matched by step NUMBER, not by the
 // step's wording — real plans phrase the heading differently ("Run the new
@@ -618,6 +647,7 @@ module.exports = {
   extractScopeKeywords,
   extractPremiseRefs,
   extractTaskBlocks,
+  extractProofLines,
   extractStep1Text,
   extractStep2Verification,
   extractVerificationChecks,

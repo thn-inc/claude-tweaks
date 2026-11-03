@@ -1,5 +1,6 @@
 // plugin/bin/lib/plan-audit/checks.js — Checks A/B/C/D, the headroom check,
-// the warn-only Checks E (#3099) and F (#3602), and the warn-only per-task
+// the warn-only Checks E (#3099) and F (#3602), the gating Check G (#4618, a
+// kept risk flag needs a Proof line), and the warn-only per-task
 // marker check (checkTaskMarkers, #3378) for bin/plan-audit.js (#903).
 // Mechanizes plan-audit.md's prose checks; policy handling (scope-creep, scope-keywords-required) stays at the skill
 // layer — this module only reports facts.
@@ -14,8 +15,9 @@ const { RAIL_BYTES } = require('../skill-audit/budgets');
 const { toPosix, relativeDisplayId } = require('../shared-primitives');
 const {
   extractAcceptanceClauses, extractCoverageSources, extractSpecPaths, extractPathWaivers,
-  extractFileEntries, normalizeRepoPath, extractTaskMarkers,
+  extractFileEntries, normalizeRepoPath, extractTaskMarkers, extractProofLines, countTasks,
 } = require('./parser');
+const { parseRiskFlags } = require('../issues/record-risk-flags');
 
 const WALK_EXCLUDES = new Set(['.git', 'node_modules', '.claude', '.claude-tweaks']);
 
@@ -725,7 +727,71 @@ function checkF(specText, planText) {
   };
 }
 
+// ── Check G — a kept risk flag needs a Proof line (#4618) ───────────────────
+// Gating, unlike E and F: the input is not a prose heuristic. The flag line is
+// read by the one shared parseRiskFlags, and a proof is one plan line of the
+// strict `Proof(<slug>): <text>` form that extractProofLines finds in a task
+// body outside a fence. A flag the record kept needs one substantive proof
+// per slug; a flag set read as unknown needs one for every widened flag.
+//
+// Three outcomes stay apart (parse-signal-discipline). `skipped` is a record
+// with nothing to prove (`unclassified`: no flag line; `no-flags`: `Risk-flags:
+// none`). `missing` is a readable record whose plan lacks a proof. And
+// `couldNotParse` is an input the check could not read with confidence: a
+// malformed flag line, a plan with no tasks, or a line that resembles a proof
+// but fails the strict form. It gates too, so an unreadable input is never
+// read as "no flags" or "proof present". An unknown slug is not a parse
+// failure: its widened flags are all required and a proof can satisfy them.
+// `extraCategories` are the policy slugs the caller resolved under control
+// mode; without them a policy slug on the line reads unknown.
+const PROOF_MIN_CHARS = 20;
+const PROOF_FILLER_WORDS = new Set(['category', 'proof', 'risk', 'flag', 'the', 'a', 'an', 'for', 'of', 'this', 'is', 'and', 'covered', 'handled']);
+
+// null when the text is a proof; 'too-short' under PROOF_MIN_CHARS characters;
+// 'restates-category' when nothing is left after the slug's own words and the fillers.
+function isSubstantiveProof(slug, text) {
+  const trimmed = String(text).trim();
+  if (Array.from(trimmed).length < PROOF_MIN_CHARS) return 'too-short';
+  const slugWords = new Set(slug.split('-'));
+  const rest = trimmed.toLowerCase().split(/[^\p{L}\p{N}]+/u)
+    .filter((word) => word !== '' && !slugWords.has(word) && !PROOF_FILLER_WORDS.has(word));
+  return rest.length === 0 ? 'restates-category' : null;
+}
+
+function checkG(specText, planText, { extraCategories = [], planPath = null } = {}) {
+  // Normalize once, here, so the flag reader and the proof reader see the same text.
+  const spec = specText.replace(/\r\n?/g, '\n');
+  const plan = planText.replace(/\r\n?/g, '\n');
+  const flags = parseRiskFlags(spec, { extraCategories });
+  if (flags.status === 'unclassified') return { ok: true, skipped: 'unclassified' };
+  if (flags.status === 'ok' && flags.flags.length === 0) return { ok: true, skipped: 'no-flags' };
+
+  const couldNotParse = [];
+  if (flags.status === 'unknown' && flags.reason === 'malformed') couldNotParse.push({ source: 'flag-line', raw: flags.raw });
+  if (countTasks(plan).tasks === 0) couldNotParse.push({ source: 'plan', raw: 'no parseable tasks' });
+  const { proofs, nearMisses } = extractProofLines(plan);
+  for (const { raw } of nearMisses) couldNotParse.push({ source: 'proof-line', raw });
+
+  const found = [];
+  const missing = [];
+  for (const slug of flags.flags) {
+    const own = proofs.filter((p) => p.slug === slug);
+    const good = own.find((p) => isSubstantiveProof(slug, p.text) === null);
+    if (good) found.push({ slug, task: good.task });
+    else missing.push({ slug, plan: planPath, reason: own.length === 0 ? 'no-proof-line' : isSubstantiveProof(slug, own[0].text) });
+  }
+  return {
+    ok: missing.length === 0 && couldNotParse.length === 0,
+    status: flags.status,
+    required: flags.flags,
+    unconfirmed: flags.unconfirmed,
+    proofs: found,
+    missing,
+    couldNotParse,
+  };
+}
+
 module.exports = {
-  checkA, checkB, checkC, checkD, checkE, checkF, headroomCheck, looksPassing, isGovernedMdPath,
+  checkA, checkB, checkC, checkD, checkE, checkF, checkG, isSubstantiveProof, headroomCheck, looksPassing, isGovernedMdPath,
   refusedVcsMutation, commandSegments, checkPremiseRefs, checkTaskMarkers,
 };
