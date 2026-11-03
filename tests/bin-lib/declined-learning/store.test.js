@@ -405,13 +405,11 @@ function withWorktreeFixture(fn) {
   }
 }
 
-const STORE_FILE_REL = path.join('.claude-tweaks', 'declined-learning', 'store.json');
-
 test('#4360 recordDecline from a linked worktree writes the main checkout store and nothing under the worktree', () => withWorktreeFixture(({ main, linked }) => {
   const reported = runStore(linked, 'process.stdout.write(store.storePath());\nstore.recordDecline("feedback-from-wt", { source: "feedback", reason: "stale" });');
 
-  assert.equal(reported, path.join(main, STORE_FILE_REL));
-  const onDisk = JSON.parse(fs.readFileSync(path.join(main, STORE_FILE_REL), 'utf8'));
+  assert.equal(reported, path.join(main, STORE_REL));
+  const onDisk = JSON.parse(fs.readFileSync(path.join(main, STORE_REL), 'utf8'));
   assert.equal(onDisk['feedback-from-wt'].source, 'feedback');
   assert.equal(fs.existsSync(path.join(linked, '.claude-tweaks', 'declined-learning')), false, 'no store under the worktree');
 }));
@@ -428,7 +426,7 @@ test('#4360 lookupDecline from the main checkout finds a decline recorded from a
 test('#4360 a cwd in a subdirectory of a linked worktree resolves to the same main checkout store', () => withWorktreeFixture(({ main, linked, sub }) => {
   runStore(sub, 'store.recordDecline("feedback-from-sub", { source: "feedback" });');
 
-  assert.equal(runStore(sub, 'process.stdout.write(store.storePath());'), path.join(main, STORE_FILE_REL));
+  assert.equal(runStore(sub, 'process.stdout.write(store.storePath());'), path.join(main, STORE_REL));
   assert.equal(fs.existsSync(path.join(linked, '.claude-tweaks')), false, 'no store under the worktree');
   const found = JSON.parse(runStore(main, 'process.stdout.write(JSON.stringify(store.lookupDecline("feedback-from-sub")));'));
   assert.equal(found.source, 'feedback');
@@ -451,9 +449,9 @@ process.stdout.write(JSON.stringify(seen));`));
 test('#4360 outside a git repository storePath() stays the relative path and recordDecline writes under the cwd', () => {
   const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'declined-store-norepo-')));
   try {
-    assert.equal(runStore(outside, 'process.stdout.write(store.storePath());'), STORE_FILE_REL);
+    assert.equal(runStore(outside, 'process.stdout.write(store.storePath());'), STORE_REL);
     runStore(outside, 'store.recordDecline("feedback-norepo", { source: "feedback" });');
-    assert.equal(JSON.parse(fs.readFileSync(path.join(outside, STORE_FILE_REL), 'utf8'))['feedback-norepo'].source, 'feedback');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(outside, STORE_REL), 'utf8'))['feedback-norepo'].source, 'feedback');
   } finally {
     fs.rmSync(outside, { recursive: true, force: true });
   }
@@ -475,7 +473,7 @@ let cwdGone = false;
 try { process.cwd(); } catch { cwdGone = true; }
 if (!cwdGone) throw new Error('precondition: process.cwd() should throw once the cwd is removed');
 process.stdout.write(JSON.stringify({ storePath: store.storePath(), lookup: store.lookupDecline('feedback-x') }));`);
-    assert.deepEqual(JSON.parse(out), { storePath: STORE_FILE_REL, lookup: null });
+    assert.deepEqual(JSON.parse(out), { storePath: STORE_REL, lookup: null });
   } finally {
     fs.rmSync(doomed, { recursive: true, force: true });
   }
