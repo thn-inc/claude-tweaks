@@ -812,7 +812,7 @@ test('SessionStart renders a prior background pass\'s post-merge runs and parent
   assert.doesNotMatch(quiet.json.hookSpecificOutput.additionalContext || '', /post-merge/);
 });
 
-test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left open, and the step skips, each on its own line (#4798)', async () => {
+test('AC1.1 + Q5: SessionStart names the parents a prior pass\'s Step 4.0b left open, and the step skips, each as its own clause (#4798)', async () => {
   const project = gitProject();
   fs.mkdirSync(path.join(project, '.claude-tweaks'), { recursive: true });
   const statusPath = path.join(project, '.claude-tweaks', 'reconcile-background-status.json');
