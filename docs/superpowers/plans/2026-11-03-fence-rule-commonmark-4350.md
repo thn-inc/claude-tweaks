@@ -8,7 +8,7 @@
 
 **Tech Stack:** Node, `node --test`.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-03T135011-record-4350/work/4350-spec.md`. Its `## Plan-review answers (2026-11-03)` section is binding.
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T161550-record-4350/work/4350-spec.md`. Its `## Plan-review answers (2026-11-03)` and `## Plan-review answers, round 2 (2026-11-03)` sections are binding.
 
 **Premise reversed (spec Current State vs this checkout):** `fencedLineRanges` no longer lives in `issues/record-payload.js` with a column-0 rule. #4368/#4369 shipped the 0-3-space and backtick-info-string rules, and #4645 moved the rule into `markdown-blocks.js` (`scanFences`, lines 50-71). Plan-review answer 3 drops Deliverable 1. AC1 and AC2 become pin tests at the `sectionText` level, and they already pass.
 
@@ -18,7 +18,8 @@
 - A section is hidden only when `findSection` returns `null` under the normal rule and non-null with `unclosedAsText: true`. A section that is present but empty is never "hidden", even with an unclosed fence elsewhere in the body.
 - A rejected opener (a backtick run with a backtick later on the same line) is prose. It gets no report and no warning (answer 1).
 - `shapeGate`'s pass/fail verdict does not change for any body. Only the contents of `missing` change.
-- In scope: `shapeGate` and everything that goes through it, plus `compose-subject.js`'s `## Release Note` and `## Breaking Change` refusals (answer 2). Out of scope: silent readers (`grouping.js` Key Files, `decomposition-crossref.js`, `compose-subject.js`'s summary fallback). A backlog record for them is filed at wrap-up (ledger row; `Defer-reason: genuinely-larger`).
+- Answer 6 (round 2): when the gate **already fails** because a required section is missing or empty, and the authored region (the text before `## Original request`, the same prefix the placeholder check reads) holds an unterminated fence, `missing` also carries `unclosed-fence at line N` for that fence, even when it hides no required section. The fence entry still appears at most once. A placeholder-only failure does not trigger it. This changes the verdict for no body: `UNTERMINATED_FENCE_BODY` goes from `['Release Note']` to `['Release Note', 'unclosed-fence at line 13']`, which is not `release-note-only`, so it routes to `/claude-tweaks:specify` instead of to `/claude-tweaks:tidy`, whose `applyReleaseNote` refuses it.
+- In scope: `shapeGate` and everything that goes through it, plus `compose-subject.js`'s `## Release Note` and `## Breaking Change` refusals (answer 2). Out of scope: silent readers (`grouping.js` Key Files, `decomposition-crossref.js`, `compose-subject.js`'s summary fallback), and `/backlog refine`'s missing-sections flag-back (`refine-mode.md` Step 3.5, `refine-headless.md` Step 3 — answer 7; leave both unchanged). One backlog record names both at wrap-up (ledger row 2; `Defer-reason: genuinely-larger`).
 - `markdown-blocks.js` stays a leaf: it requires nothing (`tests/bin-lib/markdown-blocks.test.js:9`). Its export-key pin gains the two new names.
 - Quoted from `.claude/skills/parse-signal-discipline/SKILL.md`: "**Give "couldn't parse" its own return shape**, distinguishable at the type level from "doesn't apply"" and "**Surface the unparseable case as a warning**, not a silent skip". Here, the distinct shape is its own `missing` entry or refusal line, because that is what every caller prints.
 - Quoted from `.claude/skills/lib-module-split/SKILL.md` (markdown-blocks.js): "**Migrate every importer, found by symbol.** Grep each moved symbol name, not the old path, across `plugin` and `tests`." It applies to Deliverable 3's caller list (answer 4: build the list by grep, not by hand).
@@ -31,7 +32,7 @@
 1. A CRLF body with an unclosed fence reports the same line as its LF twin (Task 2 test).
 2. An unclosed fence after every required section stays `{ ok: true }`: the existing test at `materialize-format.test.js:168` must stay green unchanged.
 3. A section that is truly absent next to one the fence hides: the absent one stays in `missing` by name, and the hidden one is replaced by the single fence entry (Task 2 test).
-4. A record whose unclosed fence hides only `## Release Note` must not read as `release-note-only`, which would send `/tidy` to repair a body `applyReleaseNote` refuses. Its gap list carries the fence entry, so the verdict is `other-gaps` (Task 3 detect test).
+4. A record whose unclosed fence hides only `## Release Note` must not read as `release-note-only`, which would send `/tidy` to repair a body `applyReleaseNote` refuses. Its gap list carries the fence entry, so the verdict is `other-gaps` (Task 3 detect test). The same holds for `UNTERMINATED_FENCE_BODY`, whose Release Note is truly absent and whose fence hides nothing required (answer 6; Task 3 route test).
 5. A 4-space or tab-indented "opener" in a repair body is not a fence, which matches the gate. Before this change the two disagreed and the post-check refused (Task 5 test).
 
 ---
@@ -110,8 +111,8 @@ Expected: PASS
 - No change, checked: `materialize.js:426` prints `gate.missing` joined, so it shows the new entry as is. `express/eligibility.js:120` and `ambiguity-resolve.js:49` read only `.ok`, which does not change. `validateShaped` and its consumers are Task 3.
 
 **Interfaces:**
-- Consumes: `hiddenByUnclosedFence(body, heading, options)` (Task 1).
-- Produces: `UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line '`, exported by `materialize-format.js`. A `shapeGate` `missing` entry `` `${UNCLOSED_FENCE_PREFIX}${N}` `` appears at most once, after the section names and before `'unresolved-placeholder'`.
+- Consumes: `hiddenByUnclosedFence(body, heading, options)` and `unclosedFenceLine(lines)` (Task 1).
+- Produces: `UNCLOSED_FENCE_PREFIX = 'unclosed-fence at line '`, exported by `materialize-format.js`. A `shapeGate` `missing` entry `` `${UNCLOSED_FENCE_PREFIX}${N}` `` appears at most once, after the section names and before `'unresolved-placeholder'`. It is pushed when a required section is hidden by the fence (N from `hiddenByUnclosedFence`), or, failing that, when at least one required section is missing or empty and the authored region holds an unterminated fence (answer 6; N is `unclosedFenceLine` + 1 over the authored region's CRLF-normalized `\n` split).
 
 - [ ] **Step 1: Append the failing tests.** Add these to `materialize-format.test.js`, after the `#4368` test at the end of the file. AC1.1 and AC2.1 pin rules that already shipped and pass at once.
 
@@ -140,21 +141,34 @@ test('shapeGate: a CRLF body reports the same line (#4350)', () => {
 test('shapeGate: a section absent beside a hidden one stays missing by name (#4350)', () => {
   assert.deepEqual(shapeGate(HIDDEN.replace('\n\n## Release Note\nn', '')), { ok: false, missing: ['Release Note', 'unclosed-fence at line 4'] });
 });
+
+const NO_RN_TRAILING_FENCE = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n```\nnever closed\n## Technical Approach\nt';
+
+test('shapeGate: a gate that already fails also names an unterminated fence that hides nothing required (#4350 answer 6)', () => {
+  assert.deepEqual(shapeGate(NO_RN_TRAILING_FENCE), { ok: false, missing: ['Release Note', 'unclosed-fence at line 10'] });
+});
+
+test('shapeGate: answer 6 reads only the authored region, and a placeholder-only failure does not name the fence (#4350)', () => {
+  const afterOriginal = '## Current State\nx\n\n## Deliverables\n- [ ] d\n\n## Acceptance Criteria\n1. a\n\n## Original request\n\n```\nnever closed';
+  assert.deepEqual(shapeGate(afterOriginal), { ok: false, missing: ['Release Note'] });
+  const placeholderOnly = SHAPED_BODY.replace('Fixed the thing.', 'Fixed the thing. TODO\n\n```\nnever closed');
+  assert.deepEqual(shapeGate(placeholderOnly), { ok: false, missing: ['unresolved-placeholder'] });
+});
 ```
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/issues/materialize-format.test.js`
-Expected: FAIL after Step 1. The `shapeGate` tests show `missing: ['Deliverables', 'Acceptance Criteria', 'Release Note']`. The AC1.1/AC2.1 pins pass.
+Expected: FAIL after Step 1. The hidden-section `shapeGate` tests show `missing: ['Deliverables', 'Acceptance Criteria', 'Release Note']`, and the answer-6 test shows `missing: ['Release Note']`. The AC1.1/AC2.1 pins and the authored-region/placeholder-only test pass.
 
-- [ ] **Step 3: Implement.** In `shapeGate`, a section that `sectionText` returns `null` for goes through `hiddenByUnclosedFence(text, name, { levelPattern: '2', stopPattern: '2', trim: true })`. When that gives a line, record it and do not push the name. After the loop, push the prefixed entry once if a line was recorded. An empty section is pushed by name exactly as today. Update `shapeGate`'s doc comment to name the new entry. In `materialize.md`'s hard gate, add one sentence after the first paragraph: a required section an unclosed fence hides is reported as `unclosed-fence at line N` (close the fence), not as missing.
+- [ ] **Step 3: Implement.** Compute `authored` before the section loop (it is used by both rules). In `shapeGate`, a section that `sectionText` returns `null` for goes through `hiddenByUnclosedFence(text, name, { levelPattern: '2', stopPattern: '2', trim: true })`. When that gives a line, record it and do not push the name. An empty section is pushed by name exactly as today. After the loop, when no line was recorded and `missing` already holds a section name, take `unclosedFenceLine` over `authored.replace(/\r\n/g, '\n').split('\n')`; when it is not `-1`, record it + 1 (answer 6). Push the prefixed entry once if a line was recorded, then the placeholder check as today. Update `shapeGate`'s doc comment to name the new entry and both triggers. In `materialize.md`'s hard gate, add one sentence after the first paragraph: a required section an unclosed fence hides is reported as `unclosed-fence at line N` (close the fence), not as missing, and a body that already fails names its unterminated fence the same way.
 
 - [ ] **Step 4: Run to verify they pass**
 
 Run: `node --test tests/bin-lib/issues/materialize-format.test.js tests/bin-lib/express tests/bin-lib/issues/ambiguity-resolve.test.js`
 Expected: PASS
 
-- [ ] **Step 5: Prove the guard.** Temporarily make the hidden branch push the name, as before. The three new `shapeGate` tests go red. Restore the branch.
+- [ ] **Step 5: Prove the guard.** Temporarily make the hidden branch push the name, as before. The three hidden-section `shapeGate` tests go red. Restore the branch. Then temporarily remove the answer-6 fallback. The answer-6 test goes red. Restore it.
 
 - [ ] **Step 6: Commit** the three files by explicit path: `Report an unclosed fence from the shape gate — hidden sections are no longer called missing, refs #4350`.
 
@@ -171,14 +185,16 @@ Expected: PASS
 **Interfaces:**
 - Consumes: `UNCLOSED_FENCE_PREFIX` and `shapeGate`'s new `missing` entry (Task 2).
 
-- [ ] **Step 1: Append the failing tests.** In `tests/bin-lib/compose-record/compose.test.js`, add one test: `validateShaped` on Task 2's `HIDDEN` body (copy the literal) returns `{ ok: false, gaps: ['unclosed-fence at line 4'] }`. In `tests/bin-lib/release-note-repair/detect.test.js`, add one test that runs the real `checkBody` (the default in-process CLI) on `F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] a\n\n```\nnever closed\n', F.RN)`. That fence opens on line 13 of the joined body (measured: `fixtures.join` adds a blank line between parts), so assert the verdict is `'other-gaps'` and the gaps are exactly `['unclosed-fence at line 13']`. This test pins Review Focus 4.
+- [ ] **Step 1: Append the failing tests.** In `tests/bin-lib/compose-record/compose.test.js`, add one test: `validateShaped` on Task 2's `HIDDEN` body (copy the literal) returns `{ ok: false, gaps: ['unclosed-fence at line 4'] }`. In `tests/bin-lib/release-note-repair/detect.test.js`, add one test that runs the real `checkBody` (the default in-process CLI) on `F.join(F.CS, F.DEL, '## Acceptance Criteria\n\n- [ ] a\n\n```\nnever closed\n', F.RN)`. That fence opens on line 13 of the joined body (measured: `fixtures.join` adds a blank line between parts), so assert the verdict is `'other-gaps'` and the gaps are exactly `['unclosed-fence at line 13']`. This test pins Review Focus 4. Add the answer-6 route test in the same file: `shapeGate(F.UNTERMINATED_FENCE_BODY)` (required from `../../../plugin/bin/lib/issues/materialize-format`) deep-equals `{ ok: false, missing: ['Release Note', 'unclosed-fence at line 13'] }` (measured: the `` ```markdown `` opener is line 13), and `checkBody(F.UNTERMINATED_FENCE_BODY)` gives verdict `'other-gaps'` with gaps exactly `['missing section: ## Release Note', 'unclosed-fence at line 13']`. A `missing` set that is not exactly `["Release Note"]` is what sends dispatch's not-spec-shaped report to `/claude-tweaks:specify` instead of `/claude-tweaks:tidy`, and `other-gaps` keeps the record off tidy's repair worklist.
 
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `node --test tests/bin-lib/compose-record/compose.test.js tests/bin-lib/release-note-repair/detect.test.js`
-Expected: FAIL after Step 1. `validateShaped` returns `gaps: []` with `ok: false`, because the entry is not yet formatted.
+Expected: FAIL after Step 1. `validateShaped` returns `gaps: []` with `ok: false`, because the entry is not yet formatted, and the route test's `checkBody` gaps lack the fence entry (its `shapeGate` assertion already passes after Task 2).
 
-- [ ] **Step 3: Implement.** In `validateShaped`, push every `missing` entry that starts with `UNCLOSED_FENCE_PREFIX` verbatim, after the section gaps and before the marker gaps, and update its order comment. In `not-spec-shaped-exclusion-report.md`'s Remedy selection, add `` `unclosed-fence at line N` `` to the list of `missing` sets that get `/claude-tweaks:specify`.
+Step 3.5 (after Step 3 below): prove the route test the answer asks for. Temporarily remove Task 2's answer-6 fallback in `shapeGate`: the route test goes red (`missing: ['Release Note']`, verdict `release-note-only`). Restore it.
+
+- [ ] **Step 3: Implement.** In `validateShaped`, push every `missing` entry that starts with `UNCLOSED_FENCE_PREFIX` verbatim, after the section gaps and before the marker gaps, and update its order comment. In `not-spec-shaped-exclusion-report.md`'s Remedy selection, add `` `unclosed-fence at line N` `` (alone or beside a missing Release Note) to the list of `missing` sets that get `/claude-tweaks:specify`.
 
 - [ ] **Step 4: Run to verify they pass**
 
