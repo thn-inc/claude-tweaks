@@ -58,6 +58,14 @@ the ceiling were `supervised`:
 The budget is per run, not per skill or per commit — three repairs across a whole run, so a run
 that finds a fourth stages it like any other proposal rather than starting a fresh allowance.
 
+Every result also carries a boolean `hold`, computed from the floor conditions whichever check
+fails first: `true` when kind, causal link, tests or merge-sensitive fails, when the ceiling is
+unknown, or when the fix itself is missing or malformed; `false` for an allowed fix and for a fix
+denied only by a `supervised` ceiling, the budget or a size cap. `wrap-up/reference-sweep.md` Step
+4 writes `hold` into the finding's JSON and the staged file's `Hold:` header, and the Review
+Console resolver approves only when both say no and its own test-path and merge-sensitive check
+over the staged diff finds no hit.
+
 ## Commit discipline
 
 Initiative fixes go in their **own commit**, never mixed into the run's work commits, with a
