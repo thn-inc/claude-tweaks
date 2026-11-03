@@ -4,11 +4,11 @@
 
 **Goal:** `/claude-tweaks:specify` classifies work against invisible-risk categories, records the flags on the record through one sanctioned writer, and `plan-audit` fails a plan that carries no specific proof for a kept flag.
 
-**Architecture:** One pure module (`record-risk-flags.js`) owns the `Risk-flags:` line grammar, reader and writers. A deterministic classifier plus a thin CLI (`bin/risk-flags.js`) give `/specify` its floor and its settle step; a new gating Check G in `plan-audit` reads the same line from the materialized spec. Skill prose calls the CLI and never edits the line by hand.
+**Architecture:** One pure module (`record-risk-flags.js`) owns the `Risk-flags:` line grammar, reader and writers. A deterministic classifier plus a thin CLI (`bin/risk-flags.js`) give `/specify` its floor and its settle step; a new gating Check G in `plan-audit` reads the same line from the materialized spec. The acceptance packet (#4611, shipped) gains a `proof` fact kind, and its validator files a claim backed only by a planned proof under `planned`, rendered in Risk proofs as not verified. Skill prose calls the CLI and never edits the line by hand.
 
 **Tech Stack:** Node 18+ CommonJS, `node --test`, markdown skill prose.
 
-**Spec:** `.claude-tweaks/pipelines/2026-11-02T203558-record-4618/work/4618-spec.md`
+**Spec:** `.claude-tweaks/pipelines/2026-11-03T084445-record-4618/work/4618-spec.md`
 
 ## Global Constraints
 
@@ -24,11 +24,13 @@
 - `gh-api-module-pattern/cli-wrapper-contract.md`, verbatim: "Logic lives in an exported `run(argv, deps)`; every side effect ... goes through `deps`". "`require.main === module` guard sets `process.exitCode = run(...)` (never `process.exit`...)". "An existence or type check goes through `plugin/bin/lib/path-guard`'s `lstatType`, never a bare `fs.existsSync`". "A file the CLI is about to read is read directly with `ENOENT`/`ENOTDIR` caught as "absent"".
 - `skill-prose-conformance-tests`: read live skill text through `readText`; a negative control runs the same assertion function as the positive test against mutated text and expects it to throw.
 - `plugin/skills/build/plan-authoring-checks.md` is 52,497 B, 3 B under the rail, so this plan adds no paragraph there: the `## Gotchas` bullet `appendRiskProofGotcha` writes is what tells the planner, and Check G enforces it.
-- Byte headroom against `RAIL_BYTES` (52,500) at the merge base: `plugin/skills/build/SKILL.md` 52,235 (265 left); `plugin/skills/_shared/policy-schema.md` 52,198 (302 left); `plugin/skills/backlog/refine-mode.md` 43,379; `plugin/skills/_shared/work-record.md` 40,023; `plugin/skills/build/plan-audit.md` 28,567; `plugin/skills/specify/record-creation-subissues.md` 28,300; `plugin/skills/specify/spec-template.md` 28,391; `plugin/skills/specify/shaping-mode-stamping.md` 23,993; `plugin/skills/build/micro-plan.md` 7,809.
+- Byte headroom against `RAIL_BYTES` (52,500, `plugin/bin/lib/skill-audit/budgets.js`), re-measured with `wc -c` after the 2026-11-03 merge of `origin/main`: `plugin/skills/build/SKILL.md` 52,235 (265 left); `plugin/skills/_shared/policy-schema.md` 52,283 (217 left); `plugin/skills/backlog/refine-mode.md` 43,379; `plugin/skills/_shared/work-record.md` 40,268; `plugin/skills/build/plan-audit.md` 28,567; `plugin/skills/specify/spec-template.md` 28,444; `plugin/skills/specify/record-creation-subissues.md` 28,300; `plugin/skills/specify/shaping-mode-stamping.md` 23,993; `plugin/skills/_shared/acceptance-packet.md` 23,162; `plugin/skills/specify/shaping-mode.md` 21,157; `plugin/skills/_shared/express-lane.md` 18,101; `plugin/skills/build/micro-plan.md` 7,809.
+- The acceptance packet contract: `packet-contract.js` says "Every packet module imports these, so a value is stated here once", and `_shared/acceptance-packet.md` says "Later records extend the schema only by adding rows to the table." `tests/acceptance-packet-contract-conformance.test.js` pins the doc's `**Fact kinds:**` list and section-to-kind table equal to `FACT_KINDS` and `SECTION_KINDS`, so a constant and its doc row change in the same task.
+- Task dependencies, no chain deeper than three: Task 2 on 1; Task 4 on 1 and 3; Tasks 10 and 11 on 4; Task 5 on 1 and 3; Task 6 on 5; Task 7 on 1; Task 8 on none; Task 9 on 1, 3, 5 and 8. Each new prose suite is its own file (Tasks 6, 7, 10, 11), so no task waits on another task's test file.
 - Implementers run only the targeted suites named in their task. The full suite runs centrally. Commit messages say `refs #4618`, never `closes`.
 
 Waived AC7.1: the full suite runs centrally at Common Step 5 and through `/claude-tweaks:test`, never inside a task.
-Waived `_shared/auto-mode-contract.md`: read by Task 7's step 2 of the Risk flags section; it is cited, not changed.
+Waived `_shared/auto-mode-contract.md`: read by Task 10's step 2 of the Risk flags section; it is cited, not changed.
 
 ## Review Focus
 
@@ -36,14 +38,28 @@ Waived `_shared/auto-mode-contract.md`: read by Task 7's step 2 of the Risk flag
 2. CRLF bodies from GitHub: Task 1's CRLF test and Task 5's CRLF plan and spec test.
 3. A later section quoting `Risk-flags: none` (a `## Original request` block, a fenced example) must not defeat a real line or read as the record's own: Task 1's section-scope and fence tests.
 4. A `Proof(auth): ...` line in a fenced code block, or outside any task, must not satisfy Check G: Task 5's tests.
-5. A flagged record must not bypass the audit through the trivial-plan or fast-lane skip gate, the micro-plan path, or the express lane: Task 5's `--risk-proofs` tests and Task 6's express and micro-plan tests.
+5. A flagged record must not bypass the audit through the trivial-plan or fast-lane skip gate, the micro-plan path, or the express lane: Task 6's `--risk-proofs` tests and Task 7's express and micro-plan tests.
+6. A human removal on a line that reads `status: 'unknown'` is refused at every layer, and nothing is logged: Task 1's writer tests, Task 4's `settle` and `confirm` tests, and the prose in Tasks 10 and 11.
+7. A planned proof (`proof` fact, status `not-run`) never reads as verified: Task 8's validator tests and Task 9's render test and real-validator fixture.
+8. An `already shaped, no-op` record gets a body write only from an explicit single-record `/specify #N`, never from a batch path: Task 10's batch-exclusion tests.
 
 ## Decisions the spec leaves to the builder
 
 - **A dropped policy slug versus an unknown slug.** The spec says a flag whose category was later dropped from policy stays flagged, and that an unknown slug reads as all four built-ins. They cannot be told apart without history, so `status: 'unknown'` returns `flags` = all four built-ins plus every well-formed slug the line named, in that order. Both spec sentences hold. `reason` is `'malformed'` or `'unknown-slug'`.
 - **Unknown-slug versus could-not-parse in Check G.** A malformed flag line is `couldNotParse` and fails however many proofs exist. A well-formed line naming an unknown slug parsed fine: it requires a proof per flag in the widened list and is satisfiable.
 - **The skip gate.** Check G is gating, so unlike Checks E and F it must not share Common Step 1.5's skip gate: a trivial plan or a fast-lane record would otherwise skip the proof. A new read-only verb `--risk-proofs` (requires `--spec`) runs Check G alone on that path. The micro-plan path and the express lane write no audited plan, so a flagged record is ineligible for both.
+- **Removal on an `unknown` line (Plan Review Decisions, Reading A): the writers throw.** `removeRiskFlag` and `confirmRiskFlags` on a body whose line reads `status: 'unknown'` throw an `Error` with `code: 'RISK_FLAGS_UNKNOWN'` and a message starting `removeRiskFlag refused: unreadable Risk-flags line` (or `confirmRiskFlags refused: ...`), checked after the `humanConfirmed` refusal. Throwing, not returning the body unchanged, because an unchanged return reads exactly like a successful no-op: a caller that logs after the call would write a removal line for a flag that was never removed, and only a re-parse would tell. The CLI catches by `code`, never by message, so no `Risk-flags` literal leaves the writer module (Task 2's scan). The refusal is decided on the line as it reads when the verb starts (the body and, for `settle`, the prior body): then no `remove` or `keep` answer is applied, the widened set is kept, the marker is written or kept, and no removal is logged. **Repaired** means the line reads `ok` at entry. A malformed line is repaired by `settle`'s own `addRiskFlags` call, which rewrites it as the widened, well-formed set (adding caution, never removing), so the next interactive touch can remove. A line naming an unknown slug stays `unknown` until the slug becomes known (policy `risk-categories` with control mode on) or a human corrects the record's line, since `addRiskFlags` keeps every slug the line named.
+- **A `proof` fact with status `not-run` (round 2, Reading B): a fifth validator outcome, `planned`.** The validator today has four buckets (`kept`, `moved`, `dropped`, `screened`) and routes a risk proof on its `check`/`story` facts only (`ROUTED_KINDS`). Routing a `proof` like a `check` would move every proof-only claim to Couldn't test, and Risk proofs would then render its placeholder `not applicable: no kept risk flags` on a record that keeps flags. So when a `risk-proofs` claim's only refs besides `flag` facts are `proof` facts, the claim moves to Tried to break when one of those is `failed`, otherwise it lands in `result.planned` as `{ claim, because }` when one of those is `skipped` or `not-run`, and it is kept only when every one is `passed`. A claim that also cites a `check`, `story`, `recording` or `link` keeps today's routing on those facts. The renderer lists a planned claim in Risk proofs as `- {text} (planned, not verified: cites {id} — {status}: {reason})`.
 - **Logging.** `bin/risk-flags.js settle --run` appends the removal through `require('./log-decision').run` in-process (the best-effort audit-line shape `dream-scan.js` uses), reporting `logged: false` in its envelope on failure. It does not join the self-logging roster, because it never reads `append.js` directly and the skill owns the fallback.
+- **Already-shaped records (round 2, Reading B).** An explicit single-record invocation runs the Risk flags step even when `compose-record.js --check` exits 0: a lone `#N`, a range whose bounds are equal (`SKILL.md`'s Range form resolves it as a single record reference), and `#N --chained` (headless, so step 4). When `settle` changes the body, the record is written through Compose-then-write-once with only the flag lines and the Gotcha bullet changed, and reports `shaped`. When it leaves the body byte-identical, the record stays `already shaped, no-op`. Every batch path leaves an exit-0 record untouched (AC6); Task 10 names each path and pins the exclusion:
+  - a comma list `#N,#M` (`SKILL.md`'s Comma-list batch form, `shaping-mode.md`'s per-record loop): an exit-0 element moves on without the step;
+  - a range `#A-#B` with `A < B`: it expands to a comma list before resolution, so the comma-list rule covers it;
+  - bare drain (`/claude-tweaks:specify` with no first argument, `--budget`, and the deprecated `next` alias; `next-mode.md` and `next-mode-shape.md`): an exit-0 record moves on without the step;
+  - `/claude-tweaks:sweep` Step 2 (`--source sweep`): the bare drain above, so the same rule;
+  - `/claude-tweaks:backlog refine`, headless (`refine-headless.md`): never runs `risk-flags.js`;
+  - `/claude-tweaks:backlog refine`, human present: Step 3.7 runs `risk-flags.js confirm` only on records already carrying `Risk-flags-unconfirmed: true`, with no classifier, so a record with no flag line is never touched.
+  Decomposition creates new records, and its Origin-set carve-out (`record-creation-subissues.md`) shapes the origin record in place as one unit of that decomposition, so neither is a batch reclassification of an already-shaped record.
+- **Gather wiring is out of this plan (open, reported to the controller).** The packet module shipped (#4611) after this plan was first written. `acceptance-packet.js gather --flags <file>` is reserved for this record (`plugin/skills/wrap-up/verification-brief.md` line 392), but `packet-gather.js`'s `passThroughFacts` writes each entry as `{ id, kind, status: 'passed', source, text?, url? }`: it drops `unconfirmed` and has no input for `proof` facts. Feeding `riskFacts` into the gather is a packet input-contract change (a widened `--flags` entry or a new input, and a `verification-brief.md` producer step whose plan-file timing needs the Consumer-timing check), so it is not planned here.
 
 ---
 
@@ -62,8 +78,10 @@ Waived `_shared/auto-mode-contract.md`: read by Task 7's step 2 of the Risk flag
 - Produces, re-exported from `record.js`:
   - `parseRiskFlags(body, { extraCategories = [] } = {}) -> { flags: string[], status: 'ok'|'unknown'|'unclassified', reason: null|'malformed'|'unknown-slug', unconfirmed: boolean, raw: string|null }`
   - `addRiskFlags(body, slugs, { unconfirmed = false, extraCategories = [] } = {}) -> string`
-  - `removeRiskFlag(body, slug, { humanConfirmed, extraCategories = [] } = {}) -> string`; throws `Error` whose message starts `removeRiskFlag refused` unless `humanConfirmed === true`
-  - `confirmRiskFlags(body, { humanConfirmed } = {}) -> string`; same refusal; drops the unconfirmed line; returns the body byte-identical when no marker exists
+  - `removeRiskFlag(body, slug, { humanConfirmed, extraCategories = [] } = {}) -> string`; throws `Error` whose message starts `removeRiskFlag refused` unless `humanConfirmed === true`; then, when `parseRiskFlags(body, { extraCategories })` reads `status: 'unknown'`, throws `Error` with `code: 'RISK_FLAGS_UNKNOWN'` and a message starting `removeRiskFlag refused: unreadable Risk-flags line` (Reading A: nothing is removed until the line is repaired)
+  - `confirmRiskFlags(body, { humanConfirmed, extraCategories = [] } = {}) -> string`; same two refusals, the second with a message starting `confirmRiskFlags refused: unreadable Risk-flags line`; drops the unconfirmed line; returns the body byte-identical when no marker exists
+  - `RISK_FLAGS_UNKNOWN = 'RISK_FLAGS_UNKNOWN'`, the error `code` both refusals carry, exported so the CLI matches on it
+- `addRiskFlags` on an `unknown` line writes the widened set (all four built-ins, then every well-formed slug the line named, then `slugs`) as one well-formed line, so a malformed line comes back `ok` and a line naming an unknown slug still reads `unknown`.
   - `appendRiskProofGotcha(body, slugs) -> string`
   - `RISK_FLAGS_NONE = 'none'`
 - The scope rule: the reader looks only at the preamble: after an optional leading `---` frontmatter block, the lines before the first `## ` heading, ignoring fenced lines (`fencedLineMask` from `plugin/bin/lib/markdown-blocks.js`). Normalize `\r\n?` to `\n` on entry.
@@ -75,7 +93,7 @@ Waived `_shared/auto-mode-contract.md`: read by Task 7's step 2 of the Risk flag
 Tests in `tests/bin-lib/issues/record-risk-flags.test.js`:
 
 ```js
-const { parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha } = require('../../../plugin/bin/lib/issues/record');
+const { parseRiskFlags, addRiskFlags, removeRiskFlag, confirmRiskFlags, appendRiskProofGotcha, RISK_FLAGS_UNKNOWN } = require('../../../plugin/bin/lib/issues/record');
 const ALL = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
 test('AC5.1: a malformed line reads all four, never no flags', () => {
   for (const line of ['Risk-flags: Auth', 'Risk-flags:', 'Risk-flags: none, auth', 'risk-flags: none', 'Risk-Flags: none', 'Risk_flags: auth', 'Risk-flags : auth']) {
@@ -154,6 +172,24 @@ test('confirmRiskFlags refuses without humanConfirmed, clears the marker with it
   assert.throws(() => confirmRiskFlags('Risk-flags: auth\nRisk-flags-unconfirmed: true\n'), /refused/);
   assert.strictEqual(confirmRiskFlags('Risk-flags: auth\nRisk-flags-unconfirmed: true\n', { humanConfirmed: true }), 'Risk-flags: auth\n');
 });
+test('Reading A: a confirmed removal on an unknown line is refused with its own code, for both unknown reasons', () => {
+  for (const body of ['Risk-flags: Auth\nRisk-flags-unconfirmed: true\n', 'Risk-flags: auth, pii\nRisk-flags-unconfirmed: true\n']) {
+    assert.throws(() => removeRiskFlag(body, 'auth', { humanConfirmed: true }), (e) => e.code === RISK_FLAGS_UNKNOWN && /^removeRiskFlag refused: unreadable Risk-flags line/.test(e.message), body);
+    assert.throws(() => confirmRiskFlags(body, { humanConfirmed: true }), (e) => e.code === RISK_FLAGS_UNKNOWN && /^confirmRiskFlags refused: unreadable Risk-flags line/.test(e.message), body);
+  }
+});
+test('Reading A: the humanConfirmed refusal still comes first on an unknown line', () => {
+  assert.throws(() => removeRiskFlag('Risk-flags: Auth\n', 'auth', {}), (e) => e.code !== RISK_FLAGS_UNKNOWN && /^removeRiskFlag refused/.test(e.message));
+});
+test('Reading A: a policy slug passed in makes the line known, so the removal goes through', () => {
+  assert.strictEqual(removeRiskFlag('Risk-flags: auth, pii\n', 'pii', { humanConfirmed: true, extraCategories: ['pii'] }), 'Risk-flags: auth\n');
+});
+test('Reading A: addRiskFlags repairs a malformed line to the widened set, and keeps an unknown slug unknown', () => {
+  const repaired = parseRiskFlags(addRiskFlags('Risk-flags: Auth\n', [], { unconfirmed: true }));
+  assert.deepStrictEqual([repaired.status, repaired.flags, repaired.unconfirmed], ['ok', ALL, true]);
+  const still = parseRiskFlags(addRiskFlags('Risk-flags: auth, pii\n', []));
+  assert.deepStrictEqual([still.status, still.reason, still.flags], ['unknown', 'unknown-slug', [...ALL, 'pii']]);
+});
 test('local-files parity: the flag lines survive writeRecord and readRecord', () => {
   // writeRecord + readRecord in a tmp dir; parseRiskFlags(readRecord(p).body) deep-equals parseRiskFlags(body).
 });
@@ -204,7 +240,7 @@ git commit -m "Add Risk-flags line grammar and sanctioned writers — refs #4618
 **Interfaces:**
 - Consumes: Task 1's module path. Exports `findWriterOffenders(relPath, rawSource) -> [{line, reason}]` for the self-test, inside the test file.
 - The scan's rules, over keep-mode `stripComments` text, walking `plugin/bin/**/*.js` with `withFileTypes`:
-  - A string, template or regex literal holding `Risk-flags` (case-insensitive) is a `line-literal` offender anywhere except `plugin/bin/lib/issues/record-risk-flags.js`.
+  - A string, template or regex literal holding the line key followed by its colon, `/risk[-_ ]?flags(?:[-_ ]unconfirmed)?\s*:/i`, is a `line-literal` offender anywhere except `plugin/bin/lib/issues/record-risk-flags.js`. The colon is what makes it the line: a bare `risk-flags` also appears in `require('./record-risk-flags')` (`record.js`'s re-export) and in `usage: risk-flags.js ...` (`plugin/bin/risk-flags.js`'s `USAGE`), and neither writes the line.
   - A call or reference to `removeRiskFlag` or `confirmRiskFlags` is a `remover` offender except in `record-risk-flags.js`, `record.js` (re-export) and `plugin/bin/risk-flags.js` (the CLI, Task 4).
   - `stripperVerdict` other than `ok` is an offender.
 
@@ -226,6 +262,12 @@ test('AC5.6: a planted remover call is flagged', () => {
 });
 test('a comment naming the line is not a writer', () => {
   assert.deepStrictEqual(findWriterOffenders('plugin/bin/lib/x.js', '// writes Risk-flags: a\nconst a = 1;\n'), []);
+});
+test('a module path or CLI name holding risk-flags with no colon is not a writer', () => {
+  assert.deepStrictEqual(findWriterOffenders('plugin/bin/lib/x.js', "const m = require('./record-risk-flags');\nconst u = 'usage: risk-flags.js classify';\n"), []);
+});
+test('AC5.6: a planted marker literal is flagged at its exact line', () => {
+  assert.deepStrictEqual(findWriterOffenders('plugin/bin/lib/x.js', "const a = 1;\nconst m = 'Risk-flags-unconfirmed: true';\n").map((o) => [o.line, o.reason]), [[2, 'line-literal']]);
 });
 test('a planted mis-parse is an offender', () => {
   assert.ok(findWriterOffenders('plugin/bin/lib/x.js', "if (b) /'/.test(b);\nconst c = 'x';\nnot valid(((").length > 0);
@@ -338,7 +380,7 @@ Expected: FAIL with `Cannot find module`
 
 - [ ] **Step 3: Implement `risk-flag-classify.js`**
 
-Evidence is `inertEvidence` of the matched line, list markers and checkboxes stripped. `risk-path-globs` is read through `resolvePolicyKeys` only, per `policy-schema.md`'s "Read it only through the resolver". A `null` value with `invalid` sets `globsInvalid: true`, `pathGlobs: {}`. No literal `Risk-flags` in this file (Task 2's scan). Add one header line to `plugin/bin/lib/policy-schema.js`'s control-mode comment (line 178) narrowing "Nothing reads them yet" to the twelve flat keys, naming `risk-flag-classify.js` as the reader of the two risk keys.
+Evidence is `inertEvidence` of the matched line, list markers and checkboxes stripped. `risk-path-globs` is read through `resolvePolicyKeys` only, per `policy-schema.md`'s "Read it only through the resolver". A `null` value with `invalid` sets `globsInvalid: true`, `pathGlobs: {}`. No literal `Risk-flags` in this file (Task 2's scan). Add one header line to `plugin/bin/lib/policy-schema.js`'s control-mode comment (line 179 after the 2026-11-03 merge; it opens `// Control mode (#4609, human-in-control #4608)`) narrowing "Nothing reads them yet" to the twelve flat keys, naming `risk-flag-classify.js` as the reader of the two risk keys.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -367,12 +409,14 @@ git commit -m "Add the risk-flag classifier floor — refs #4618"
 - Exit codes, *Payload-1/Invocation-2* plus 3 for a caller-named write, per `qa-report.js`: 0 success, 1 an unreadable body or prior-body file, 2 malformed invocation, 3 the body file could not be written. State them in the header and `USAGE`.
 - Produces `run(argv, deps)` with deps `{ stdout, stderr, readFile, writeFile, cwd, policy }`, and three verbs:
   - `classify --body-file <f> [--repo-root <dir>]` prints `{ flags, missingSections, controlMode, extraCategories, globsInvalid, known }`. `flags` is the floor only (`known` is the built-ins plus the policy extras). Writes nothing.
-  - `settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]` computes the kept set: the prior body's flags ∪ the body's own existing flags ∪ the floor ∪ `--add` (an `unknown` line contributes its widened list). Rewrites `--body-file` in place through `addRiskFlags`, `removeRiskFlag`, `confirmRiskFlags` and `appendRiskProofGotcha`. Prints `{ flags, removed, unconfirmed, status, logged, logFailures }` (`logged` is `null` with no `--run`). Exactly one of `--headless`/`--answers-file`, else exit 2.
-  - `confirm --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]` is the human batch for `/backlog refine`: applies answers to the body's existing flags only, runs no classifier, adds nothing. A body with no flag line stays byte-identical, reporting `status: 'unclassified'`.
+  - `settle --body-file <f> [--prior-body-file <f>] [--add a,b] (--headless | --answers-file <f>) [--run <dir>] [--repo-root <dir>]` computes the kept set: the prior body's flags ∪ the body's own existing flags ∪ the floor ∪ `--add` (an `unknown` line contributes its widened list). Rewrites `--body-file` in place through `addRiskFlags`, `removeRiskFlag`, `confirmRiskFlags` and `appendRiskProofGotcha`. Prints `{ flags, removed, unconfirmed, status, refused, logged, logFailures }` (`logged` is `null` with no `--run`; `refused` is `null` unless the Reading A refusal below applied). Exactly one of `--headless`/`--answers-file`, else exit 2.
+  - `confirm --body-file <f> --answers-file <f> [--run <dir>] [--repo-root <dir>]` is the human batch for `/backlog refine`: applies answers to the body's existing flags only, runs no classifier, adds nothing. A body with no flag line stays byte-identical, reporting `status: 'unclassified'`. Prints the same envelope as `settle`.
+- `status` is the entry status: `parseRiskFlags` of `--body-file`, or `unknown` when `--prior-body-file` reads `unknown`.
+- Reading A, both verbs: when the entry status is `unknown` and an answers file was given, no answer is applied. `removeRiskFlag` and `confirmRiskFlags` are never called, the widened set stays on the body, and `Risk-flags-unconfirmed: true` is kept, or written through `addRiskFlags(..., { unconfirmed: true })` when absent. Nothing is logged, and `removed` is `[]`. `refused` is `{ reason: 'malformed' | 'unknown-slug', raw, answered: [slug, ...] }`, where `answered` lists the slugs the answers file named (empty for an unreadable answers file). One stderr warning names the record's flag line as unreadable without quoting the `Risk-flags` key. Exit 0: the fail direction is keep, not a usage error. A `RISK_FLAGS_UNKNOWN` throw from a writer is caught by its `code` into the same path, so the refusal never escapes as exit 1. `confirm` on an `unknown` body that already carries the marker leaves it byte-identical. `--headless` on an `unknown` line removes nothing anyway, so `refused` stays `null` there.
 - Answers file: JSON object `{ "<slug>": "keep" | "remove" }`.
 - Settle semantics:
   - `--headless`: nothing removed. `unconfirmed: true` when the kept set is non-empty.
-  - `--answers-file`: for each flag in the kept set, `remove` calls `removeRiskFlag(..., { humanConfirmed: true })`, `keep` keeps. A flag with no answer, or an unreadable, unparseable or non-object answers file, or a value other than `keep`/`remove`, leaves the flag kept and sets `unconfirmed: true` with one stderr warning, exit 0: that is the fail direction, not a usage error. Only when every flag was answered is the marker cleared (`confirmRiskFlags`).
+  - `--answers-file` (entry status not `unknown`; an `unknown` one takes the Reading A path above): for each flag in the kept set, `remove` calls `removeRiskFlag(..., { humanConfirmed: true })`, `keep` keeps. A flag with no answer, or an unreadable, unparseable or non-object answers file, or a value other than `keep`/`remove`, leaves the flag kept and sets `unconfirmed: true` with one stderr warning, exit 0: that is the fail direction, not a usage error. Only when every flag was answered is the marker cleared (`confirmRiskFlags`).
   - An empty kept set writes `Risk-flags: none`, no marker, no Gotcha.
   - A non-empty kept set after removals gets `appendRiskProofGotcha`.
   - Each removal with `--run` logs `--status AUTO --section /specify --step "Risk flags" --text "Risk flag {slug} removed by the maintainer during shaping" --reversibility low`. A non-zero return or throw pushes the slug to `logFailures` and sets `logged: false`; never changes the exit code.
@@ -426,6 +470,51 @@ test('confirm applies a remove and a keep to existing flags only', () => {
   const { out } = confirm('Risk-flags: auth, migrations\nRisk-flags-unconfirmed: true\n', answers({ auth: 'remove', migrations: 'keep' }));
   assert.deepStrictEqual([out.flags, out.unconfirmed], [['migrations'], false]);
 });
+const ALL = ['migrations', 'auth', 'public-contract', 'irreversible-side-effect'];
+const MALFORMED = 'Surface: infra\nRisk-flags: Auth\nRisk-flags-unconfirmed: true\n\n## Overview\n';
+const UNKNOWN_SLUG = 'Surface: infra\nRisk-flags: auth, pii\nRisk-flags-unconfirmed: true\n\n## Overview\n';
+// Reading A's one assertion: widened set kept, marker kept, nothing removed, no removal line.
+function assertRefused({ out, body, code }, run, reason) {
+  assert.strictEqual(code, 0);
+  assert.deepStrictEqual([out.status, out.removed, out.unconfirmed, out.refused.reason], ['unknown', [], true, reason]);
+  assert.deepStrictEqual(parseRiskFlags(body).flags.slice(0, 4), ALL);
+  assert.match(body, /^Risk-flags-unconfirmed: true$/m);
+  assert.doesNotMatch(readDecisions(run), /removed by the maintainer during shaping/);
+}
+test('Reading A: settle refuses a remove answer on a malformed line and logs nothing', () => {
+  const run = realAnchoredRunDirFixture();
+  const r = settle(MALFORMED, ['--answers-file', answers({ auth: 'remove' }), '--run', run]);
+  assertRefused(r, run, 'malformed');
+  assert.deepStrictEqual(r.out.refused.answered, ['auth']);
+});
+test('Reading A: settle refuses a remove answer on a line naming an unknown slug', () => {
+  const run = realAnchoredRunDirFixture();
+  assertRefused(settle(UNKNOWN_SLUG, ['--answers-file', answers({ pii: 'remove', auth: 'keep' }), '--run', run]), run, 'unknown-slug');
+});
+test('Reading A: settle refuses when only the prior body reads unknown', () => {
+  const run = realAnchoredRunDirFixture();
+  assertRefused(settle(SPEC_WITH_MIGRATIONS_PATH, ['--prior-body-file', rawFile(MALFORMED), '--answers-file', answers({ migrations: 'remove' }), '--run', run]), run, 'malformed');
+});
+test('Reading A: a keep-all answer on an unknown line does not clear the marker', () => {
+  const run = realAnchoredRunDirFixture();
+  assertRefused(settle(MALFORMED, ['--answers-file', answers(Object.fromEntries(ALL.map((s) => [s, 'keep']))), '--run', run]), run, 'malformed');
+});
+test('Reading A: confirm with a partial answer on an unknown line keeps the widened set and the marker', () => {
+  const run = realAnchoredRunDirFixture();
+  const r = confirm(MALFORMED, answers({ auth: 'keep' }), ['--run', run]);
+  assertRefused(r, run, 'malformed');
+  assert.strictEqual(r.body, MALFORMED);
+});
+test('Reading A: confirm with a remove answer on an unknown line keeps the widened set and the marker', () => {
+  const run = realAnchoredRunDirFixture();
+  const r = confirm(UNKNOWN_SLUG, answers({ auth: 'remove' }), ['--run', run]);
+  assertRefused(r, run, 'unknown-slug');
+  assert.strictEqual(r.body, UNKNOWN_SLUG);
+});
+test('Reading A: confirm writes the marker on an unknown line that lacks one', () => {
+  const run = realAnchoredRunDirFixture();
+  assertRefused(confirm('Risk-flags: Auth\n', answers({ auth: 'remove' }), ['--run', run]), run, 'malformed');
+});
 test('settle needs exactly one of --headless and --answers-file; a missing body exits 1', () => {
   assert.strictEqual(runCli(['settle', '--body-file', tmp]).code, 2);
   assert.strictEqual(runCli(['settle', '--body-file', tmp, '--headless', '--answers-file', tmp]).code, 2);
@@ -439,7 +528,7 @@ test('control mode on: settle recognises a policy slug and a path glob; off, nei
 test('a real spawn of the bin returns the JSON envelope on stdout', () => { /* execFileSync(process.execPath, [bin, 'classify', ...]) */ });
 ```
 
-`realAnchoredRunDirFixture` builds a git repo under `tests/helpers/git-fixtures.js` with `.claude-tweaks/pipelines/{run}` and passes `cwd`/`mainRoot` through the deps `log-decision.js`'s `run` reads. Implementer finishes the two stubbed bodies.
+`realAnchoredRunDirFixture` builds a git repo under `tests/helpers/git-fixtures.js` with `.claude-tweaks/pipelines/{run}` and passes `cwd`/`mainRoot` through the deps `log-decision.js`'s `run` reads. `readDecisions(run)` returns `''` when `decisions.md` is absent, so a refusal test proves no line was written rather than throwing. `confirm(body, answersFile, extra = [])` mirrors `settle`. The file imports `parseRiskFlags` from `plugin/bin/lib/issues/record.js`. Implementer finishes the two stubbed bodies.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -462,7 +551,7 @@ git add plugin/bin/risk-flags.js tests/risk-flags-cli.test.js docs/plugin-struct
 git commit -m "Add the risk-flags CLI: classify, settle, confirm — refs #4618"
 ```
 
-### Task 5: Plan-audit Check G and the `--risk-proofs` verb
+### Task 5: Plan-audit Check G in the full audit
 
 **Role:** integration
 **Review risk:** high
@@ -470,15 +559,12 @@ git commit -m "Add the risk-flags CLI: classify, settle, confirm — refs #4618"
 **Files:**
 - Modify: `plugin/bin/lib/plan-audit/parser.js`
 - Modify: `plugin/bin/lib/plan-audit/checks.js`
-- Modify: `plugin/bin/lib/plan-audit/args.js`
 - Modify: `plugin/bin/plan-audit.js`
-- Modify: `plugin/skills/build/plan-audit.md`
-- Modify: `plugin/skills/build/SKILL.md`
-- Modify: `docs/plugin-structure.md`
 - Test: `tests/bin-lib/plan-audit/parser.test.js`
 - Test: `tests/bin-lib/plan-audit/checks.test.js`
 - Test: `tests/bin-lib/plan-audit/cli.test.js`
-- Test: `tests/plan-audit-check-g-prose.test.js`
+
+This task leaves `USAGE` (`plugin/bin/lib/plan-audit/args.js`) unchanged: Check G runs whenever `--spec` is given, a flag `USAGE` already names, so `tests/plan-audit-check-e-prose.test.js` (every restated invocation names exactly `USAGE`'s flags) stays green between this task and Task 6.
 
 **Interfaces:**
 - Consumes: `parseRiskFlags` (Task 1), `readRiskPolicy` (Task 3).
@@ -491,7 +577,7 @@ git commit -m "Add the risk-flags CLI: classify, settle, confirm — refs #4618"
   - Normalize `\r\n?` in both inputs once, at `checkG`'s entry. `countTasks(plan).tasks === 0` gives `couldNotParse: [{source: 'plan', raw: 'no parseable tasks'}]`. A `status: 'unknown'` line with `reason: 'malformed'` gives `{source: 'flag-line', raw}`. A near-miss gives `{source: 'proof-line', raw}`.
   - Envelope key `checkG`; `pass` conjunction gains `report.checkG.ok`; without `--spec`, `{ ok: true, skipped: 'no-spec' }`.
   - `summaryLine` parts: `Check G: missing proof for {slugs joined ', '} in {planPath}` and `Check G: could-not-parse {N} ({sources})`.
-  - `--risk-proofs`: read-only verb, requires `--spec` (else `UsageError`), refused beside `--count-tasks`, `--bytes`, `--task-markers`. Prints `{"checkG": {...}}` plus a newline, exit 1 when `ok` is false, 2 on an unreadable plan or spec. `--spec` is allowed beside this verb only.
+  - `plan-audit.js` reads `readRiskPolicy(repoRoot)` only when a spec is present; a thrown policy read exits 2.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -556,24 +642,69 @@ test('an unconfirmed flag still requires its proof', () => {
 });
 ```
 
-`tests/bin-lib/plan-audit/cli.test.js`, appended: exit 1 and a summary naming the slug on a missing proof; exit 0 with `Proof` present; with no `--spec` `checkG` is `{ok: true, skipped: 'no-spec'}`. Update the existing `Object.keys(restA)` assertion at line 750 by destructuring `checkG` out in the same way as `checkE`/`checkF`. `--risk-proofs`: exit 0/1 by proof presence, prints only `checkG`, exit 2 without `--spec`, exit 2 beside each other verb, exit 2 on an unreadable spec. `control-mode: on` in a fixture repo's `.claude-tweaks/policy.yml` makes `Risk-flags: pii` with `risk-categories: pii` need only its own proof; `control-mode` off makes it widen.
+`tests/bin-lib/plan-audit/cli.test.js`, appended: exit 1 and a summary naming the slug on a missing proof; exit 0 with `Proof` present; with no `--spec` `checkG` is `{ok: true, skipped: 'no-spec'}`. Update the existing `Object.keys(restA)` assertion at line 750 (unmoved by the 2026-11-03 merge) by destructuring `checkG` out in the same way as `checkE`/`checkF` (lines 747-748). `control-mode: on` in a fixture repo's `.claude-tweaks/policy.yml` makes `Risk-flags: pii` with `risk-categories: pii` need only its own proof; `control-mode` off makes it widen.
 
 `tests/bin-lib/plan-audit/parser.test.js`, appended: `extractProofLines` returns slug, text and task; ignores fences; reports the near-miss.
-
-`tests/plan-audit-check-g-prose.test.js`: one assertion function, a positive and a go-red negative (same function against text with each literal removed), pinning in `plan-audit.md` the literals `Check G`, `checkG.missing`, `checkG.couldNotParse`, `--risk-proofs`, `could-not-parse`, `Proof(<slug>)`, and `**Check G does not share that gate**`; in `build/SKILL.md`, `--risk-proofs`. Assert every restated invocation (`plan-audit.md`, `build/SKILL.md`, `docs/plugin-structure.md`) names exactly `USAGE`'s flags, as `tests/plan-audit-check-e-prose.test.js` does; extend that file's expected set if it pins `USAGE`.
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `node --test tests/bin-lib/plan-audit/checks.test.js`
 Expected: FAIL after Step 1 with `checkG is not a function`
 
-- [ ] **Step 3: Implement Check G at every registration site**
+- [ ] **Step 3: Implement Check G in the parser, the check and the envelope**
 
-`plan-audit.js` reads `readRiskPolicy(repoRoot)` only when a spec is present; a thrown policy read exits 2. `checks.js` header and `plan-audit.js` header name Check G. `plan-audit.md`: opening enumeration; Invocation line; envelope key list; `--risk-proofs` paragraph; two `Result interpretation` bullets (`checkG.missing`: amend the plan with a real proof per slug and re-run once, in auto with an `AUTO` `Common Step 1.5 (Check G)` log line, then stop if it still fails, since this is a plan-validation HARD-GATE, never the `scope-creep` policy; `checkG.couldNotParse`: stop, name each `source` and `raw`); a `What each check covers` bullet stating gating and why; the skip-gate paragraph gains `**Check G does not share that gate**` with its reason: a trivial plan or a fast-lane record is exactly where a skipped proof would pass silently, so the skip path also runs `--risk-proofs` when a materialized spec exists. `plan-audit.md`'s claim "`Exit code is 0 iff every check's ok`" stays true. `build/SKILL.md` Common Step 1.5: invocation line gains `[--risk-proofs]`; one bullet for Check G; the skip sentence gains the `--risk-proofs --spec {spec-file}` call and its stop. SKILL.md has 265 B of rail headroom: stay under the rail, and if needed trim the parenthetical restating why a NUL is fatal at any size (plan-audit.md line 5 keeps it). `docs/plugin-structure.md`: `plan-audit.js` line and `build` table row. Then run the skill's anti-pattern sweep.
+`checks.js` header and `plan-audit.js` header name Check G. `extractProofLines` goes in `parser.js` beside `extractTaskBlocks`; `checkG` and `isSubstantiveProof` in `checks.js`; the envelope key, `pass` conjunction and `summaryLine` parts in `plan-audit.js`. Leave `USAGE` alone.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/bin-lib/plan-audit/parser.test.js tests/bin-lib/plan-audit/checks.test.js tests/bin-lib/plan-audit/cli.test.js tests/plan-audit-check-g-prose.test.js tests/plan-audit-check-e-prose.test.js`
+Run: `node --test tests/bin-lib/plan-audit/parser.test.js tests/bin-lib/plan-audit/checks.test.js tests/bin-lib/plan-audit/cli.test.js tests/plan-audit-check-e-prose.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/plan-audit/parser.js plugin/bin/lib/plan-audit/checks.js plugin/bin/plan-audit.js tests/bin-lib/plan-audit/parser.test.js tests/bin-lib/plan-audit/checks.test.js tests/bin-lib/plan-audit/cli.test.js
+git commit -m "Add plan-audit Check G: a kept risk flag needs a Proof line — refs #4618"
+```
+
+### Task 6: The `--risk-proofs` verb and the plan-audit prose
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/plan-audit/args.js`
+- Modify: `plugin/bin/plan-audit.js`
+- Modify: `plugin/skills/build/plan-audit.md`
+- Modify: `plugin/skills/build/SKILL.md`
+- Modify: `docs/plugin-structure.md`
+- Test: `tests/bin-lib/plan-audit/cli.test.js`
+- Test: `tests/plan-audit-check-g-prose.test.js`
+
+Seven files, one over the plan's ~6 target, because they cannot split: `tests/plan-audit-check-e-prose.test.js` asserts that every restated `plan-audit.js` invocation (`plan-audit.md`, `build/SKILL.md`, `docs/plugin-structure.md`) names exactly `USAGE`'s flags, so adding `--risk-proofs` to `USAGE` and the three restatements in separate tasks would leave a red suite in between.
+
+**Interfaces:**
+- Consumes: `checkG` and the envelope from Task 5.
+- `--risk-proofs`: read-only verb, requires `--spec` (else `UsageError`), refused beside `--count-tasks`, `--bytes`, `--task-markers`. Prints `{"checkG": {...}}` plus a newline, exit 1 when `ok` is false, 2 on an unreadable plan or spec. `--spec` is allowed beside this verb, and beside no other read-only verb. `USAGE` gains `[--risk-proofs]`.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/bin-lib/plan-audit/cli.test.js`, appended: `--risk-proofs` exits 0/1 by proof presence, prints only `checkG`, exits 2 without `--spec`, exits 2 beside each other verb, exits 2 on an unreadable spec, and on a trivial two-file plan for a flagged spec still exits 1 (the skip path's bypass, Review Focus 5).
+
+`tests/plan-audit-check-g-prose.test.js`: one assertion function, a positive and a go-red negative (same function against text with each literal removed), pinning in `plan-audit.md` the literals `Check G`, `checkG.missing`, `checkG.couldNotParse`, `--risk-proofs`, `could-not-parse`, `Proof(<slug>)`, and `**Check G does not share that gate**`; in `build/SKILL.md`, `--risk-proofs`. Assert every restated invocation (`plan-audit.md`, `build/SKILL.md`, `docs/plugin-structure.md`) names exactly `USAGE`'s flags, as `tests/plan-audit-check-e-prose.test.js` does. That file reads `USAGE` itself (`flags(USAGE)`), so it needs no edit; run it.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/plan-audit-check-g-prose.test.js`
+Expected: FAIL after Step 1 with an assertion naming `Check G` absent from `plan-audit.md`
+
+- [ ] **Step 3: Implement the verb and write the prose at every registration site**
+
+`args.js`: the flag, its refusals and `USAGE`. `plan-audit.js`: the verb's branch beside `--bytes`. `plan-audit.md`: opening enumeration; Invocation line; envelope key list; `--risk-proofs` paragraph; two `Result interpretation` bullets (`checkG.missing`: amend the plan with a real proof per slug and re-run once, in auto with an `AUTO` `Common Step 1.5 (Check G)` log line, then stop if it still fails, since this is a plan-validation HARD-GATE, never the `scope-creep` policy; `checkG.couldNotParse`: stop, name each `source` and `raw`); a `What each check covers` bullet stating gating and why; the skip-gate paragraph gains `**Check G does not share that gate**` with its reason: a trivial plan or a fast-lane record is exactly where a skipped proof would pass silently, so the skip path also runs `--risk-proofs` when a materialized spec exists. `plan-audit.md`'s claim "`Exit code is 0 iff every check's ok`" stays true. `build/SKILL.md` Common Step 1.5: invocation line gains `[--risk-proofs]`; one bullet for Check G; the skip sentence gains the `--risk-proofs --spec {spec-file}` call and its stop. SKILL.md has 265 B of rail headroom: stay under the rail, and if needed trim the parenthetical restating why a NUL is fatal at any size (plan-audit.md line 5 keeps it). `docs/plugin-structure.md`: `plan-audit.js` line and `build` table row. Then run the skill's anti-pattern sweep.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/bin-lib/plan-audit/cli.test.js tests/plan-audit-check-g-prose.test.js tests/plan-audit-check-e-prose.test.js`
 Expected: PASS. Also `git grep -nE 'Checks? A/B' -- plugin docs` lists no enumeration that omits a check it should name.
 
 - [ ] **Step 5: Corpus probe**
@@ -583,44 +714,176 @@ Run `plan-audit.js {plan} --risk-proofs --spec {spec}` over every committed plan
 - [ ] **Step 6: Commit**
 
 ```bash
-git add plugin/bin/lib/plan-audit/parser.js plugin/bin/lib/plan-audit/checks.js plugin/bin/lib/plan-audit/args.js plugin/bin/plan-audit.js plugin/skills/build/plan-audit.md plugin/skills/build/SKILL.md docs/plugin-structure.md tests/bin-lib/plan-audit/parser.test.js tests/bin-lib/plan-audit/checks.test.js tests/bin-lib/plan-audit/cli.test.js tests/plan-audit-check-g-prose.test.js
-git commit -m "Add plan-audit Check G: a kept risk flag needs a Proof line — refs #4618"
+git add plugin/bin/lib/plan-audit/args.js plugin/bin/plan-audit.js plugin/skills/build/plan-audit.md plugin/skills/build/SKILL.md docs/plugin-structure.md tests/bin-lib/plan-audit/cli.test.js tests/plan-audit-check-g-prose.test.js
+git commit -m "Add the plan-audit --risk-proofs verb and document Check G — refs #4618"
 ```
 
-### Task 6: Close the bypasses and produce the packet facts
+### Task 7: Keep flagged records off the unaudited paths
+
+**Role:** integration
+
+**Files:**
+- Modify: `plugin/bin/lib/express/eligibility.js`
+- Modify: `plugin/skills/build/micro-plan.md`
+- Modify: `plugin/skills/_shared/express-lane.md`
+- Test: `tests/bin-lib/express/eligibility.test.js`
+- Test: `tests/risk-flags-bypass-prose.test.js`
+
+**Interfaces:**
+- Consumes: `parseRiskFlags` (Task 1).
+- `REASONS.riskFlags = 'record carries a kept risk flag'` in `eligibility.js`, pushed when `parseRiskFlags(body).flags.length > 0`.
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/bin-lib/express/eligibility.test.js`, appended (Expected: FAIL after Step 1): an otherwise-eligible fixture with `Risk-flags: auth` in its body is `eligible: false` and names the reason; `Risk-flags: none` stays eligible; a malformed line is ineligible; no line stays eligible.
+
+`tests/risk-flags-bypass-prose.test.js`: `micro-plan.md`'s applicability gate names `parseRiskFlags` semantics with the literal `carries a risk flag`; `express-lane.md`'s Eligibility names `kept risk flag`. One assertion function, a go-red negative for each.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/bin-lib/express/eligibility.test.js tests/risk-flags-bypass-prose.test.js`
+Expected: FAIL after Step 1 with `eligible` true for the `Risk-flags: auth` fixture
+
+- [ ] **Step 3: Implement**
+
+`micro-plan.md`: add a check to the applicability gate, cheapest first: a spec body that carries a risk flag (a `Risk-flags:` line with any slug, or an unreadable one; `Risk-flags: none` and no line are fine) falls through to `/superpowers:writing-plans`, because the composed plan has no audited proof step. Update "All three must hold" (line 10) to "All four". `express-lane.md`: Eligibility gains the condition.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/bin-lib/express/eligibility.test.js tests/risk-flags-bypass-prose.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/express/eligibility.js plugin/skills/build/micro-plan.md plugin/skills/_shared/express-lane.md tests/bin-lib/express/eligibility.test.js tests/risk-flags-bypass-prose.test.js
+git commit -m "Keep flagged records off the micro-plan path and the express lane — refs #4618"
+```
+
+### Task 8: The packet's `proof` fact kind and the planned-proof ruling
+
+**Role:** integration
+**Review risk:** high
+
+**Files:**
+- Modify: `plugin/bin/lib/wrap-up/packet-contract.js`
+- Modify: `plugin/bin/lib/wrap-up/packet-validate.js`
+- Modify: `plugin/skills/_shared/acceptance-packet.md`
+- Test: `tests/bin-lib/wrap-up/packet-links.test.js`
+- Test: `tests/bin-lib/wrap-up/packet-validate.test.js`
+- Test: `tests/acceptance-packet-contract-conformance.test.js`
+
+**Interfaces:**
+- `FACT_KINDS` gains `'proof'` appended after `'deploy'`; `SECTION_KINDS['risk-proofs']` becomes `['flag', 'check', 'story', 'recording', 'link', 'proof']`. Additive: no kind or section is renamed or removed, and `SCHEMA_VERSION` stays `1`, since a v1 facts file with no `proof` fact validates exactly as before.
+- `validatePacket` returns `{ kept, moved, dropped, screened, planned }`; `planned` is `[{ claim, because }]`, `because` being the cited `proof` fact that put it there. The rule, placed in `placeClaim` after the existing risk-proof routing and before `kept.push`: for a `risk-proofs` claim whose refs other than `flag` facts are all `proof` facts, a `failed` proof moves it to `tried-to-break` (`because` that proof); else a `skipped` or `not-run` proof puts it in `planned`; else (every proof `passed`) it is kept. A claim that also cites a `check`, `story`, `recording` or `link` keeps today's routing, and its `proof` refs do not route it. `noProofFact` is unchanged: a `proof` is a proof fact, so `['flag:auth', 'proof:auth']` is not dropped.
+- Consumers that pin these lists or this return shape, from `git grep -n -l -e FACT_KINDS -e SECTION_KINDS -e packet-contract -- plugin tests docs` plus `git grep -n -e validatePacket -e ROUTED_KINDS -- plugin tests`, classified:
+  - `plugin/bin/lib/wrap-up/packet-validate.js`: reads both lists; gains the rule (this task).
+  - `plugin/bin/lib/wrap-up/packet-render.js`: the one `validatePacket` caller in `plugin`, destructuring `{ kept, moved, dropped, screened }`. It must render `planned` or a planned claim vanishes from the packet: Task 9.
+  - `tests/bin-lib/wrap-up/packet-links.test.js`: deep-equals both lists exactly (lines 263, 266-272); both literals updated (this task).
+  - `tests/acceptance-packet-contract-conformance.test.js`: reads both constants and compares them to the doc's `**Fact kinds:**` list and section-to-kind table, so it follows the doc edit with no literal to change; gains one `VALIDATION_FACTS` pin for the new sentence (this task).
+  - `tests/bin-lib/wrap-up/packet-validate.test.js`: `assertOnly` walks `['kept', 'moved', 'dropped', 'screened']` (line 47); it gains `'planned'` so every existing test also proves nothing landed there (this task).
+  - `plugin/skills/_shared/acceptance-packet.md`: states the kinds list, the table and the validation policy (this task).
+  - No consumer, checked: `plugin/bin/acceptance-packet.js` imports `CLAIM_SECTIONS, MAX_PACKET_CHARS, PACKET_MARKER, SCHEMA_VERSION`; `packet-gather.js` imports `SCHEMA_VERSION, PACKET_MARKER_RE, COMMANDS_ONLY_SURFACES, encodeFactKey`; `packet-links.js` imports `CREDENTIAL_KEYS`; `packet-post.js` imports `LOCAL_START, LOCAL_END`; `tests/acceptance-packet-cli.test.js`, `tests/bin-lib/wrap-up/packet-post.test.js` and `tests/bin-lib/wrap-up/packet-render.test.js` import neither list; `docs/plugin-structure.md` and `docs/skill-graph.md` name the module but list no kinds. No prose states a kind count (`git grep -n -i -E "(nine|9|ten) (fact )?kinds|fact kinds" -- plugin docs tests` hits only the doc's list and its pin).
+
+- [ ] **Step 1: Write the failing test**
+
+`tests/bin-lib/wrap-up/packet-validate.test.js`, `assertOnly`'s bucket list gains `'planned'`, and appended:
+
+```js
+const PROOF_PLANNED = fact('proof:auth', 'not-run', { reason: 'planned in the plan, not yet run' });
+test('Reading B: a claim citing a flag and only a not-run proof is planned, never kept', () => {
+  const result = validate([claim('risk-proofs', 'Refuses an unauthenticated request', ['flag:auth', 'proof:auth'])], {}, [PROOF_PLANNED]);
+  assertOnly(result, 'planned');
+  assert.equal(result.planned[0].because.id, 'proof:auth');
+});
+test('Reading B: verification wording does not lift a planned proof to kept', () => {
+  assertOnly(validate([claim('risk-proofs', 'Auth verified', ['flag:auth', 'proof:auth'])], {}, [PROOF_PLANNED]), 'planned');
+});
+test('Reading B: a skipped proof is planned, a failed one moves to tried-to-break, a passed one is kept', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'skipped')]), 'planned');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'failed')]), 'tried-to-break', 'proof:auth');
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth'])], {}, [fact('proof:auth', 'passed')]), 'kept');
+});
+test('Reading B: a planned proof beside a passed check is kept on the check, beside a not-run check it routes on the check', () => {
+  assertOnly(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'check:unit-tests'])], {}, [PROOF_PLANNED]), 'kept');
+  assertMoved(validate([claim('risk-proofs', 'x', ['flag:auth', 'proof:auth', 'story:signup'])], {}, [PROOF_PLANNED, SIGNUP_NOT_RUN]), 'couldnt-test', 'story:signup');
+});
+test('Reading B: a proof outside risk-proofs is an incompatible fact', () => {
+  assertDropped(validate([claim('what-changed', 'x', ['proof:auth'])], {}, [PROOF_PLANNED]), 'incompatible fact proof:auth (proof) for what-changed');
+});
+test('Reading B: a proof fact passes the facts shape check', () => {
+  assert.equal(validateFactsShape({ schemaVersion: 1, record: 1, partial: [], facts: [PROOF_PLANNED] }).ok, true);
+});
+```
+
+`tests/bin-lib/wrap-up/packet-links.test.js`: the two exact lists gain `'proof'` (line 263's `FACT_KINDS`, line 271's `risk-proofs` row).
+
+`tests/acceptance-packet-contract-conformance.test.js`: `VALIDATION_FACTS` gains `['a planned proof is not verified (round 2, Reading B)', /only `proof` facts besides its flags[^.]*`planned, not verified`/]`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/bin-lib/wrap-up/packet-validate.test.js`
+Expected: FAIL after Step 1 with `kind: must be one of` for `proof:auth`
+
+- [ ] **Step 3: Implement**
+
+`packet-contract.js`: the two lists, and the `SECTION_KINDS` comment names `proof` as the planned-proof kind. `packet-validate.js`: the `planned` bucket in `validatePacket`'s result and the rule in `placeClaim`, with a comment citing the round-2 decision. `acceptance-packet.md` (23,162 B, far under the rail): `proof` in the `**Fact kinds:**` list and in the `risk-proofs` table row; one sentence in `## Validation policy`, after "A risk proof citing no proof fact is dropped.": "A risk proof citing only `proof` facts besides its flags routes on them: a failed one moves it to Tried to break, a skipped or not-run one keeps it in Risk proofs labelled `planned, not verified`, and only passed ones keep it as proved." Keep every existing `VALIDATION_FACTS` sentence byte-identical (the `A risk proof citing a failed or skipped \`check\` or \`story\` proof routes ...` pin included).
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/bin-lib/wrap-up/packet-validate.test.js tests/bin-lib/wrap-up/packet-links.test.js tests/acceptance-packet-contract-conformance.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/acceptance-packet-cli.test.js`
+Expected: PASS (the last two prove no existing render or CLI test reads the new kind)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/bin/lib/wrap-up/packet-contract.js plugin/bin/lib/wrap-up/packet-validate.js plugin/skills/_shared/acceptance-packet.md tests/bin-lib/wrap-up/packet-links.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js
+git commit -m "Add the packet proof fact kind and file planned proofs apart — refs #4618"
+```
+
+### Task 9: Produce the risk facts and render planned proofs
 
 **Role:** integration
 
 **Files:**
 - Create: `plugin/bin/lib/issues/risk-flag-facts.js`
-- Modify: `plugin/bin/lib/express/eligibility.js`
-- Modify: `plugin/skills/build/micro-plan.md`
-- Modify: `plugin/skills/_shared/express-lane.md`
+- Modify: `plugin/bin/lib/wrap-up/packet-render.js`
 - Modify: `docs/plugin-structure.md`
 - Test: `tests/bin-lib/issues/risk-flag-facts.test.js`
-- Test: `tests/bin-lib/express/eligibility.test.js`
-- Test: `tests/risk-flags-prose-conformance.test.js`
+- Test: `tests/bin-lib/wrap-up/packet-render.test.js`
 
 **Interfaces:**
-- Consumes: `parseRiskFlags` (Task 1), `inertEvidence` (Task 3), `extractProofLines` (Task 5).
-- Produces `riskFacts(specText, planText, { extraCategories = [] } = {}) -> Fact[]`, the shape #4611 pins (`{ id, kind, status, reason?, source }`) plus fields:
+- Consumes: `parseRiskFlags` (Task 1), `inertEvidence` (Task 3), `extractProofLines` and `isSubstantiveProof` (Task 5), the `proof` kind and the `planned` bucket (Task 8), `encodeFactKey` (`packet-contract.js`).
+- Produces `riskFacts(specText, planText, { extraCategories = [] } = {}) -> Fact[]`, the fact shape `_shared/acceptance-packet.md` pins (`{ id, kind, status, reason?, source }`) plus fields the validator ignores:
   - `{ id: 'flag:{slug}', kind: 'flag', status: 'not-run', source: 'record', slug, unconfirmed }`; `reason: 'unreadable flag line'` when the line read `unknown`.
-  - `{ id: 'proof:{slug}', kind: 'proof', status: 'not-run', source: 'plan', slug, text, task }`, `text` through `inertEvidence`. No fact for a slug with no proof, or one failing `isSubstantiveProof`. `status` is `not-run` because a planned proof is not a passed check: #4611's "verified" claims may cite only `passed` facts.
+  - `{ id: 'proof:{slug}', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'plan', slug, text, task }`, `text` through `inertEvidence`, `task` the plan's task number. No fact for a slug with no proof, or one failing `isSubstantiveProof`. `status` is `not-run` because a planned proof is not a passed check, and Task 8's `planned` bucket is what keeps it from reading as verified.
   - `[]` for `unclassified` or a clean `none`.
-- `REASONS.riskFlags = 'record carries a kept risk flag'` in `eligibility.js`, pushed when `parseRiskFlags(body).flags.length > 0`.
+  - Each key goes through `encodeFactKey`, so every id passes `FACT_ID_RE`.
+- `packet-render.js`: `renderPacket` destructures `planned` too, and the `risk-proofs` body lists kept claims, then planned ones as `- {text} (planned, not verified: cites {id} — {status}: {reason})` through the existing `inline`, `idSpan` and `statusWithReason` helpers, droppable like any item. The placeholder `not applicable: no kept risk flags` still renders only when both lists are empty.
 
 - [ ] **Step 1: Write the failing test**
 
 `tests/bin-lib/issues/risk-flag-facts.test.js`:
 
 ```js
+const { validatePacket, validateFactsShape } = require('../../../plugin/bin/lib/wrap-up/packet-validate');
+const { renderPacket } = require('../../../plugin/bin/lib/wrap-up/packet-render');
 test('a flag fact carries unconfirmed, a proof fact its neutralized text', () => {
   const spec = 'Risk-flags: auth\nRisk-flags-unconfirmed: true\n\n## O\n';
   const plan = '### Task 1: x\n\nProof(auth): An unauthenticated request [still](x) returns 401.\n';
   const [flag, proof] = riskFacts(spec, plan);
   assert.deepStrictEqual(flag, { id: 'flag:auth', kind: 'flag', status: 'not-run', source: 'record', slug: 'auth', unconfirmed: true });
-  assert.deepStrictEqual([proof.id, proof.kind, proof.status, proof.task], ['proof:auth', 'proof', 'not-run', 1]);
+  assert.deepStrictEqual([proof.id, proof.kind, proof.status, proof.reason, proof.task], ['proof:auth', 'proof', 'not-run', 'planned in the plan, not yet run', 1]);
   assert.match(proof.text, /\\\[still\\\]/);
+});
+test('real-writer fixture: riskFacts output passes the real validator, and a planned proof never reads as verified', () => {
+  const facts = { schemaVersion: 1, record: 4618, surface: 'infra', allowedHosts: [], partial: [], refused: [], facts: riskFacts('Risk-flags: auth\n\n## O\n', '### Task 1: x\n\nProof(auth): An unauthenticated request to the route still returns 401.\n') };
+  assert.deepStrictEqual(validateFactsShape(facts).errors, []);
+  const narrative = { schemaVersion: 1, claims: [{ section: 'risk-proofs', text: 'Auth verified', refs: ['flag:auth', 'proof:auth'] }] };
+  const result = validatePacket(facts, narrative);
+  assert.deepStrictEqual([result.kept.length, result.planned.length], [0, 1]);
+  const { markdown } = renderPacket(facts, narrative);
+  assert.match(markdown, /### Risk proofs\n- Auth verified \(planned, not verified: cites `proof:auth` — not run: planned in the plan, not yet run\)/);
 });
 test('an unclassified or clean record produces no facts', () => {
   assert.deepStrictEqual(riskFacts('Surface: x\n', ''), []);
@@ -636,75 +899,75 @@ test('a slug with a too-short proof has no proof fact', () => {
 });
 ```
 
-`tests/bin-lib/express/eligibility.test.js`, appended (Expected: FAIL after Step 1): an otherwise-eligible fixture with `Risk-flags: auth` in its body is `eligible: false` and names the reason; `Risk-flags: none` stays eligible; a malformed line is ineligible; no line stays eligible.
+The regex follows `packet-render.js` line 336, which writes each section as `'', '### {heading}'` and then its body lines with no blank line between; `idSpan` renders the id as a code span and `statusWithReason` writes `not-run` as `not run`.
 
-`tests/risk-flags-prose-conformance.test.js` (Task 7 extends this file): `micro-plan.md`'s applicability gate names `parseRiskFlags` semantics with the literal `carries a risk flag`; `express-lane.md`'s Eligibility names `kept risk flag`. One assertion function, a go-red negative for each.
+`tests/bin-lib/wrap-up/packet-render.test.js`, appended: a planned claim renders under Risk proofs with `planned, not verified`, after the kept claims; with one planned claim and no kept one, the `not applicable: no kept risk flags` placeholder is absent.
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js tests/risk-flags-prose-conformance.test.js`
+Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js`
 Expected: FAIL with `Cannot find module`
 
 - [ ] **Step 3: Implement**
 
-`micro-plan.md`: add a check to the applicability gate, cheapest first: a spec body that carries a risk flag (a `Risk-flags:` line with any slug, or an unreadable one; `Risk-flags: none` and no line are fine) falls through to `/superpowers:writing-plans`, because the composed plan has no audited proof step. Update "All three must hold" to "All four". `express-lane.md`: Eligibility gains the condition. Add a `plugin/bin/lib/issues/` clause to `docs/plugin-structure.md` naming `risk-flag-facts.js`, stating `packet-gather.js` (#4611) consumes it once shipped.
+`risk-flag-facts.js` holds no `Risk-flags` line literal (Task 2's scan): it reads through `parseRiskFlags`. `packet-render.js`: the `planned` destructure, a `plannedLine` beside `movedLine`, and the `risk-proofs` body. Add a `plugin/bin/lib/issues/` clause to `docs/plugin-structure.md` naming `risk-flag-facts.js` as the producer of the packet's `flag` and `proof` facts. Do not say the gather consumes it: it does not yet (Decisions: Gather wiring).
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/express/eligibility.test.js tests/risk-flags-prose-conformance.test.js`
+Run: `node --test tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/wrap-up/packet-render.test.js tests/bin-lib/wrap-up/packet-validate.test.js tests/acceptance-packet-contract-conformance.test.js tests/risk-flags-writer-conformance.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/bin/lib/issues/risk-flag-facts.js plugin/bin/lib/express/eligibility.js plugin/skills/build/micro-plan.md plugin/skills/_shared/express-lane.md docs/plugin-structure.md tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/express/eligibility.test.js tests/risk-flags-prose-conformance.test.js
-git commit -m "Keep flagged records off unaudited paths and produce risk facts — refs #4618"
+git add plugin/bin/lib/issues/risk-flag-facts.js plugin/bin/lib/wrap-up/packet-render.js docs/plugin-structure.md tests/bin-lib/issues/risk-flag-facts.test.js tests/bin-lib/wrap-up/packet-render.test.js
+git commit -m "Produce risk-flag packet facts and render planned proofs — refs #4618"
 ```
 
-### Task 7: `/specify` and `/backlog refine` prose
+### Task 10: `/specify` prose
 
 **Role:** judgment
 
 **Files:**
+- Modify: `plugin/skills/specify/shaping-mode.md`
 - Modify: `plugin/skills/specify/shaping-mode-stamping.md`
 - Modify: `plugin/skills/specify/record-creation-subissues.md`
 - Modify: `plugin/skills/specify/spec-template.md`
-- Modify: `plugin/skills/backlog/refine-mode.md`
-- Modify: `plugin/skills/_shared/work-record.md`
-- Modify: `plugin/skills/_shared/policy-schema.md`
 - Test: `tests/risk-flags-prose-conformance.test.js`
+
+`tests/specify-shaping-noop-check.test.js` pins `shaping-mode.md`'s born-ready paragraph (from "Absorb the record's existing content" to `**Feedback-filing deliverable check.**`): it must still contain the `compose-record.js --check "$SPECIFY_SHAPED_BODY"` call and `Exit 0`, and match `/Any non-zero exit[^.]*\.[^.]*never report it \`already shaped, no-op\`/`. The Reading B sentences go after that paragraph's last sentence, so the test needs no edit; Step 4 runs it. `shaping-mode-readback.md` needs no edit: its `already shaped, no-op` row definition is the comma-list batch's, where the step never runs on an exit-0 record, and a single-record flag write is a landed write, which that file already handles.
 
 **Interfaces:**
 - Consumes: the CLI verbs from Task 4, the removal text from Global Constraints.
 - The canonical procedure lives once, as a `### Risk flags` section of `shaping-mode-stamping.md`, placed after `### Metadata block` and before `### Stamp scoring and stage labels`. `record-creation-subissues.md` cites it, stating only its per-unit deltas. Content of the section, in order:
   1. Classify: write the composed body to the session-tmp body file; run `risk-flags.js classify --body-file`. Add flags from your own reading of Deliverables, Acceptance Criteria and Key Files against the categories in `classify`'s `known` list; you may add, never drop. Evidence you quote is the CLI's neutralized `evidence`, wrapped per `_shared/untrusted-record-content.md`; your own added evidence is run through the same rule.
   2. Human reachable: define headless verbatim from Global Constraints, plus bare drain's entry path. In `auto` no new stop is added (`_shared/auto-mode-contract.md`): headless takes step 4.
-  3. Interactive: render one batch table (flag, evidence), then one `AskUserQuestion` for the batch: `multiSelect: true`, one option per flag, selected means remove, none selected means keep all; more than four flags takes the "Other" free-text answer naming the ones to remove. Include flags already on the record that read unconfirmed. Write the answers file; run `settle --answers-file`, adding `--prior-body-file` (the record's current body) when shaping an existing record and `--run "$PIPELINE_RUN_DIR"` when a run dir resolved. An `AskUserQuestion` that errors, times out or is auto-answered takes step 4.
+  3. Interactive: render one batch table (flag, evidence), then one `AskUserQuestion` for the batch: `multiSelect: true`, one option per flag, selected means remove, none selected means keep all; more than four flags takes the "Other" free-text answer naming the ones to remove. Include flags already on the record that read unconfirmed. Write the answers file; run `settle --answers-file`, adding `--prior-body-file` (the record's current body) when shaping an existing record and `--run "$PIPELINE_RUN_DIR"` when a run dir resolved. An `AskUserQuestion` that errors, times out or is auto-answered takes step 4. When `settle` returns a non-null `refused` (Reading A), tell the human that nothing was removed or confirmed: the record's flag line was unreadable (`refused.reason`), so every flag stays kept and unconfirmed, and the line must be repaired first. For `malformed`, `settle` has already rewritten it as the widened set, so re-running `/claude-tweaks:specify #{n}` asks again. For `unknown-slug`, the slug must become known (`risk-categories`, with control mode on) or the record's line corrected by hand on the record, before a re-run. Never log a removal for a `refused` run.
   4. Headless: run `settle --headless` with the same prior-body and `--add` arguments.
   5. Removal logging: with `logged: true`, done. With no run dir or `logged: false`, post a record comment per each `removed` slug with exactly `Risk flag {slug} removed by the maintainer during shaping` (through `_shared/github-write-transport.md`; under `local-files`, append it to the body's `## Gotchas`), after the create in decomposition mode, when the number exists.
-  6. All body rewrites of these lines go through `bin/risk-flags.js` (`addRiskFlags`, `removeRiskFlag` in `record.js`); never hand-edit the line. Existing backlog records are classified only when next shaped; an `already shaped, no-op` record is not touched.
+  6. All body rewrites of these lines go through `bin/risk-flags.js` (`addRiskFlags`, `removeRiskFlag` in `record.js`); never hand-edit the line. Existing backlog records are classified only when next shaped. An explicit single-record `/claude-tweaks:specify #{n}` (a lone `#N`, a range with equal bounds, or `#N --chained`) runs this section even when `compose-record.js --check` exited 0, so the flag lines alone can turn an `already shaped, no-op` into a body write; a comma-list or range element and a bare-drain shape never run it on an exit-0 record (AC6).
+- `shaping-mode.md`'s born-ready paragraph (line 75) gains, after its last sentence, the Reading B rule: on exit 0, an explicit single-record invocation (the three forms above) still runs `shaping-mode-stamping.md`'s `### Risk flags` on the fetched body; when `settle` changes it, the record is written through Compose-then-write-once and reports `shaped`; when the body comes back byte-identical, it stays `already shaped, no-op`. On a comma list, a range with `A < B`, and bare drain (`--budget`, the deprecated `next` alias, `/claude-tweaks:sweep`'s `--source sweep`), an exit-0 record moves on untouched, as today.
+- On a comma-list or range batch, the records the batch actually shapes take one batch table and one `AskUserQuestion` for every record's flags together (`shaping-mode.md`'s "interactive decisions raised per record collapse into one batch table + one `AskUserQuestion`"), answers held per record and `settle` run in the per-record loop.
 - Compose-then-write-once's assembly shows `Risk-flags: {value}` and the optional `Risk-flags-unconfirmed: true` in the metadata block, and the `compose-record.js --check` runs after settle so the checked file is the settled one.
 - `record-creation-subissues.md`: a `**Risk flags**` paragraph right after `**Premise verification**` and before `**Ceremony**`. Decomposition's one question is asked in a pre-pass over every unit's composed body before the first create, so the batch gets one `AskUserQuestion`; answers are held per unit and `settle` runs inside the loop. Origin-set carve-out passes `--prior-body-file`.
 - `spec-template.md`: the metadata block gains `Risk-flags: {comma-separated slugs, or none — written by /specify's Risk flags step}` and `Risk-flags-unconfirmed: {true — headless-kept flags awaiting a human; omitted otherwise}`, with one paragraph naming grammar, the unknown-reads-all-four rule, `Proof(<slug>)`, and "never hand-edit". The `risk:*` axis is named as a different axis.
-- `refine-mode.md`: new `## Step 3.7: Unconfirmed risk flags` between Step 3.6 and Step 4, human-present mode only (`refine-headless.md` is never touched and this step never runs under it). Population: records in this run's fresh lane whose body `parseRiskFlags` reads `unconfirmed: true`. One batch table and one `AskUserQuestion`, same shape as above. Write through `risk-flags.js confirm` on a freshly re-fetched body (`gh issue view {n} --json body`), then `gh issue edit {n} --body-file`; a fetch failure skips the write, per Step 5's fail-closed Pre-write reverify. Log removals as the Risk flags section's step 5 states. Records with no flag line are never touched: this step runs no classifier. Step 1's snapshot already carries `body` (line 38); Step 5's Body pre-write reverify rule applies to this write, a mismatch skipping it.
-- `_shared/work-record.md`: a short subsection on the two lines, naming `parseRiskFlags` as the one reader and `bin/risk-flags.js` as the one writer path; `local-files` carries them in the body, never in `facets`.
-- `_shared/policy-schema.md`: the `risk-categories` and `risk-path-globs` rows' consumer cell changes from `none yet (#4608)` to `` `risk-flags.js` `` plus `` `plan-audit.js` `` for `risk-categories`. 302 B of headroom: keep the net growth under 100 B.
-
 - [ ] **Step 1: Write the failing test**
 
-Extend `tests/risk-flags-prose-conformance.test.js` with one assertion function per file, each paired with a go-red negative against mutated text:
+Create `tests/risk-flags-prose-conformance.test.js` with one assertion function per concern, each paired with a go-red negative that runs the same function against mutated text:
 
 ```js
 test('AC2.1: the interactive path shows flags in one batch question and settles a remove through the CLI', () => assertShaping(read(SHAPING)));
 test('AC3.1: the headless path keeps every detected flag with no AskUserQuestion, and the error path joins it', () => assertHeadless(read(SHAPING)));
 test('AC1.1: the flag line reaches the created record: settle runs before the write and before --check', () => assertOrder(read(SHAPING)));
 test('AC1.1: decomposition settles per unit before the create call', () => assertDecomposition(read(SUBISSUES)));
+test('Reading A: a refused settle tells the human the line must be repaired first and logs nothing', () => assertRefusedShaping(read(SHAPING)));
+test('Reading B: an explicit single-record /specify #N runs the Risk flags step on an already-shaped record', () => assertSingleRecordNoop(read(SHAPING_MODE)));
+test('AC6.1 AC6.2: every batch path leaves an already-shaped record untouched', () => assertBatchExclusion(read(SHAPING_MODE), read(SHAPING)));
 test('AC6.1 AC6.2: no batch path classifies: classify and settle appear only under specify/', () => assertNoBatchClassify(walkSkills()));
-test('refine surfaces unconfirmed flags through confirm, human-present only', () => assertRefine(read(REFINE)));
 test('the template documents both lines and the writer rule', () => assertTemplate(read(TEMPLATE)));
 ```
 
-`assertShaping` pins `risk-flags.js settle`, `--answers-file`, `--prior-body-file`, `multiSelect`, and the removal text literal. `assertHeadless` pins `settle --headless`, `errors, times out or is auto-answered`. `assertOrder` compares offsets: the `### Risk flags` heading precedes `### Stamp scoring`, and the assembly lists `Risk-flags:` above `## Current State`. `assertNoBatchClassify` walks `plugin/skills/**/*.md` through `readText` and asserts `risk-flags.js classify` and `risk-flags.js settle` occur only under `plugin/skills/specify/`; its go-red plants the literal in a refine-mode copy. `assertRefine` pins `risk-flags.js confirm` and `Step 3.7`, and that `refine-headless.md` has no `risk-flags.js`.
+`assertShaping` pins `risk-flags.js settle`, `--answers-file`, `--prior-body-file`, `multiSelect`, and the removal text literal. `assertHeadless` pins `settle --headless`, `errors, times out or is auto-answered`. `assertOrder` compares offsets: the `### Risk flags` heading precedes `### Stamp scoring`, and the assembly lists `Risk-flags:` above `## Current State`. `assertRefusedShaping` pins `refused`, `must be repaired first` and `Never log a removal for a \`refused\` run`. `assertSingleRecordNoop` reads `shaping-mode.md`'s born-ready paragraph (the slice `tests/specify-shaping-noop-check.test.js` takes) and pins `explicit single-record`, `#N --chained`, `### Risk flags` and `stays \`already shaped, no-op\``, each after the existing `never report it \`already shaped, no-op\`` sentence (offset order, so the rule cannot land ahead of the no-op test it qualifies). `assertBatchExclusion` pins, in that paragraph and in the Risk flags section's item 6, each batch path by its literal: `comma list` (or `comma-list`), `range`, `bare drain`, `--budget`, `next`, `--source sweep`; its go-red deletes the bare-drain clause and expects the throw. `assertNoBatchClassify` walks `plugin/skills/**/*.md` through `readText` and asserts `risk-flags.js classify` and `risk-flags.js settle` occur only under `plugin/skills/specify/`; its go-red plants the literal in a refine-mode copy.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -713,16 +976,67 @@ Expected: FAIL after Step 1 with an assertion naming the absent literal
 
 - [ ] **Step 3: Write the prose**
 
-Follow `docs/skill-authoring.md`. Reference `/claude-tweaks:specify` and `/claude-tweaks:backlog` fully qualified in instruction text. Use `${CLAUDE_PLUGIN_ROOT}` in command lines. Keep to the rail.
+Follow `docs/skill-authoring.md`. Reference `/claude-tweaks:specify` fully qualified in instruction text. Use `${CLAUDE_PLUGIN_ROOT}` in command lines. Keep to the rail.
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `node --test tests/risk-flags-prose-conformance.test.js tests/bin-lib/skill-audit/context-cost.test.js tests/skill-conventions.test.js`
+Run: `node --test tests/risk-flags-prose-conformance.test.js tests/specify-shaping-noop-check.test.js tests/batch-ref-argument.test.js tests/bin-lib/skill-audit/context-cost.test.js tests/skill-conventions.test.js`
 Expected: PASS
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add plugin/skills/specify/shaping-mode-stamping.md plugin/skills/specify/record-creation-subissues.md plugin/skills/specify/spec-template.md plugin/skills/backlog/refine-mode.md plugin/skills/_shared/work-record.md plugin/skills/_shared/policy-schema.md tests/risk-flags-prose-conformance.test.js
-git commit -m "Wire risk-flag classification into specify and backlog refine — refs #4618"
+git add plugin/skills/specify/shaping-mode.md plugin/skills/specify/shaping-mode-stamping.md plugin/skills/specify/record-creation-subissues.md plugin/skills/specify/spec-template.md tests/risk-flags-prose-conformance.test.js
+git commit -m "Wire risk-flag classification into specify — refs #4618"
+```
+
+### Task 11: `/backlog refine` and the shared record and policy docs
+
+**Role:** judgment
+
+**Files:**
+- Modify: `plugin/skills/backlog/refine-mode.md`
+- Modify: `plugin/skills/_shared/work-record.md`
+- Modify: `plugin/skills/_shared/policy-schema.md`
+- Test: `tests/risk-flags-refine-prose.test.js`
+
+**Interfaces:**
+- Consumes: the `confirm` verb and its `refused` envelope from Task 4, the removal text from Global Constraints. Cites Task 10's `### Risk flags` section by name for the batch-question shape and the logging rule; it does not need Task 10 to have landed for its own test.
+- `refine-mode.md`: new `## Step 3.7: Unconfirmed risk flags` between Step 3.6 (line 302) and Step 4 (line 323), human-present mode only (`refine-headless.md` is never touched and this step never runs under it). Population: records in this run's fresh lane whose body `parseRiskFlags` reads `unconfirmed: true`. One batch table and one `AskUserQuestion`, same shape as `shaping-mode-stamping.md`'s Risk flags step 3. Write through `risk-flags.js confirm` on a freshly re-fetched body (`gh issue view {n} --json body`), then `gh issue edit {n} --body-file`; a fetch failure skips the write, per Step 5's fail-closed Pre-write reverify. Log removals as the Risk flags section's step 5 states. Records with no flag line are never touched: this step runs no classifier. Step 1's snapshot already carries `body` (line 38, unmoved by the 2026-11-03 merge); Step 5's Body pre-write reverify rule applies to this write, a mismatch skipping it. When `confirm` returns a non-null `refused` (Reading A), the record's row says nothing was removed or confirmed because its flag line is unreadable, every flag stays kept and unconfirmed, and the line must be repaired first: run `/claude-tweaks:specify #{n}` (which rewrites a malformed line as the widened set) or, for an unknown slug, add it to `risk-categories` with control mode on, then re-run refine. Nothing is logged for that record.
+- `_shared/work-record.md`: a short subsection on the two lines, naming `parseRiskFlags` as the one reader and `bin/risk-flags.js` as the one writer path; `local-files` carries them in the body, never in `facets`.
+- `_shared/policy-schema.md`: the `risk-categories` (line 239) and `risk-path-globs` (line 240) rows' consumer cell changes from `none yet (#4608)` to `` `risk-flags.js` `` plus `` `plan-audit.js` `` for `risk-categories`. 217 B of headroom after the 2026-11-03 merge: keep the net growth under 100 B.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/risk-flags-refine-prose.test.js`, one assertion function per file, each with a go-red negative that runs the same function against mutated text:
+
+```js
+test('refine surfaces unconfirmed flags through confirm, human-present only', () => assertRefine(read(REFINE), read(REFINE_HEADLESS)));
+test('Reading A: a refused confirm tells the human the line must be repaired first and logs nothing', () => assertRefusedRefine(read(REFINE)));
+test('AC6.1: refine runs no classifier, so a record with no flag line is never touched', () => assertNoClassifier(read(REFINE)));
+test('the record contract names the one reader and the one writer path', () => assertWorkRecord(read(WORK_RECORD)));
+test('the two risk policy keys name their consumers', () => assertPolicyRows(read(POLICY_SCHEMA)));
+```
+
+`assertRefine` pins `risk-flags.js confirm` and `Step 3.7`, its offset between `## Step 3.6` and `## Step 4`, and that `refine-headless.md` has no `risk-flags.js`. `assertRefusedRefine` pins `refused` and `must be repaired first`. `assertNoClassifier` asserts `refine-mode.md` has no `risk-flags.js classify` and no `risk-flags.js settle`. `assertWorkRecord` pins `parseRiskFlags`, `bin/risk-flags.js` and `never in \`facets\``. `assertPolicyRows` reads the two rows and asserts neither cell says `none yet (#4608)`.
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `node --test tests/risk-flags-refine-prose.test.js`
+Expected: FAIL after Step 1 with an assertion naming the absent literal
+
+- [ ] **Step 3: Write the prose**
+
+Follow `docs/skill-authoring.md`. Reference `/claude-tweaks:backlog` and `/claude-tweaks:specify` fully qualified in instruction text. Use `${CLAUDE_PLUGIN_ROOT}` in command lines. Keep to the rail.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `node --test tests/risk-flags-refine-prose.test.js tests/bin-lib/skill-audit/context-cost.test.js tests/skill-conventions.test.js`
+Expected: PASS
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add plugin/skills/backlog/refine-mode.md plugin/skills/_shared/work-record.md plugin/skills/_shared/policy-schema.md tests/risk-flags-refine-prose.test.js
+git commit -m "Surface unconfirmed risk flags in backlog refine — refs #4618"
 ```
