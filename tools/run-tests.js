@@ -30,9 +30,12 @@
 // CT_TEST_SUITE_SLOTS (simultaneous suites, default 1), CT_TEST_CONCURRENCY (files at once,
 // default half the cores, or cores - 1 when CI is set), CT_TEST_SUITE_SLOT_DIR (where the slot
 // locks live, default under the real tmpdir), CT_TEST_SUITE_SLOT_HELD (=1 set for the child so a
-// nested run skips the slot). A `--files-from` subset takes its slot from a separate lane
-// (`<slot dir>/subset`, CT_TEST_SUBSET_SLOTS, default 1): a seconds-long impact subset must not
-// queue behind a sibling's full suite, and two subsets still never run at once (#4024).
+// nested run skips the slot). Waiters are served in arrival order through `ticket-<seq>.json` files
+// beside the slot locks (#4333); a checkout of this file from before that change ignores tickets and
+// can jump the queue until its worktree catches up. A `--files-from` subset takes its slot from a
+// separate lane (`<slot dir>/subset`, CT_TEST_SUBSET_SLOTS, default 1): a seconds-long impact
+// subset must not queue behind a sibling's full suite, and two subsets still never run at once
+// (#4024).
 
 const fs = require('fs');
 const os = require('os');
@@ -201,8 +204,9 @@ function isPidAlive(pid) {
 
 // Creates `lockPath` exclusively (`wx`) with the holder's identity. Returns false when another
 // process already owns the file; any other error propagates. The identity is what lets a waiter
-// name the holder and lets a later run tell a dead holder from a live one.
-function createLock(lockPath, pid, cwd, now) {
+// name the holder and lets a later run tell a dead holder from a live one. `extra` fields ride
+// along in the identity (a queue ticket records its `slots` limit there); a slot lock passes none.
+function createLock(lockPath, pid, cwd, now, extra = {}) {
   let fd;
   try {
     fd = fs.openSync(lockPath, 'wx');
@@ -211,7 +215,7 @@ function createLock(lockPath, pid, cwd, now) {
     throw err;
   }
   try {
-    fs.writeSync(fd, JSON.stringify({ pid, startedAt: new Date(now()).toISOString(), cwd }));
+    fs.writeSync(fd, JSON.stringify({ pid, startedAt: new Date(now()).toISOString(), cwd, ...extra }));
   } catch (err) {
     // An empty lock left behind would read as a live unknown holder and stall every other run
     // for `staleUnparseableMs`, so a failed write removes the file before surfacing the error.
@@ -248,7 +252,7 @@ function readHolder(lockPath, { isAlive, now, staleUnparseableMs }) {
     held = null;
   }
   if (held && Number.isInteger(held.pid) && held.pid > 0) {
-    return isAlive(held.pid) ? { pid: held.pid, cwd: held.cwd, startedAt: held.startedAt } : { stale: true };
+    return isAlive(held.pid) ? { pid: held.pid, cwd: held.cwd, startedAt: held.startedAt, slots: held.slots } : { stale: true };
   }
   if (now() - mtimeMs > staleUnparseableMs) return { stale: true };
   return UNKNOWN_HOLDER;
@@ -318,40 +322,122 @@ function ensureOwnDir(dir) {
   }
 }
 
+// The queue tickets in `dir` (`ticket-<seq>.json`), oldest first. Only names of exactly that shape
+// count, so `slot-*.lock`, `.reclaim` mutexes and the `subset/` lane directory are never tickets.
+function listTickets(dir) {
+  const tickets = [];
+  for (const name of fs.readdirSync(dir)) {
+    const match = /^ticket-(\d+)\.json$/.exec(name);
+    if (match) tickets.push({ seq: Number(match[1]), path: path.join(dir, name) });
+  }
+  return tickets.sort((a, b) => a.seq - b.seq);
+}
+
+// Joins the queue: creates the ticket after the highest one listed (1 when none), recording the
+// waiter's `slots` limit, and moves to the next number whenever another process took the one tried.
+function takeTicket(dir, { pid, cwd, now, slots }) {
+  const listed = listTickets(dir);
+  for (let seq = listed.length ? listed[listed.length - 1].seq + 1 : 1; ; seq++) {
+    const ticketPath = path.join(dir, `ticket-${seq}.json`);
+    if (createLock(ticketPath, pid, cwd, now, { slots })) return { seq, path: ticketPath };
+  }
+}
+
+// The tickets ahead of `seq`, judged like slot locks: a stale one (dead pid, our own pid, or
+// unparseable and older than `staleUnparseableMs` — never age alone) is removed, a vanished one is
+// skipped. `floor` is the lowest slot index the caller may try: the largest limit among the live
+// tickets ahead (0 when none), where a ticket's limit is its `slots` when that is a positive integer
+// and unlimited (`Infinity`) otherwise, so a ticket whose limit is unreadable blocks every index.
+// `first` is the lowest live ticket ahead whose limit reaches the caller's own `slots` — the one
+// that alone blocks every index the caller can use — or null; it exists whenever `floor >= slots`.
+// `holderOpts.slots` is the caller's limit.
+function ticketsAhead(dir, seq, holderOpts) {
+  let floor = 0;
+  let first = null;
+  for (const ticket of listTickets(dir)) {
+    if (ticket.seq >= seq) break;
+    const holder = readHolder(ticket.path, holderOpts);
+    if (holder === null) continue;
+    if (holder.stale) {
+      unlinkQuiet(ticket.path);
+      continue;
+    }
+    const limit = Number.isInteger(holder.slots) && holder.slots > 0 ? holder.slots : Infinity;
+    if (limit > floor) floor = limit;
+    if (!first && limit >= holderOpts.slots) first = { ...holder, lockPath: ticket.path };
+  }
+  return { floor, first };
+}
+
+// Whether the ticket at `ticketPath` still names `pid`: false when it was deleted, is unparseable,
+// or a newcomer was numbered into its seq.
+function ticketIsOurs(ticketPath, pid) {
+  try {
+    return JSON.parse(fs.readFileSync(ticketPath, 'utf8')).pid === pid;
+  } catch (err) {
+    if (err.code === 'ENOENT' || err instanceof SyntaxError) return false;
+    throw err;
+  }
+}
+
 // Takes one of `slots` cross-process suite slots (`slot-<i>.lock` in `dir`) and returns the lock
-// path, polling every `pollMs` until one frees up (#3969). A lock held by a dead pid is reclaimed
-// immediately, so a crashed run never wedges the queue. The wait message is logged once per call.
+// path, polling every `pollMs` until one frees up (#3969). Waiters are served in arrival order
+// (#4333): each takes a `ticket-<seq>.json` first and tries a slot only past the tickets ahead of
+// it. Tickets decide order only; the slot locks still decide exclusivity. Each ticket records its
+// `slots` limit, and a waiter may try `slot-<i>` only when no earlier live ticket has `slots > i` —
+// so a later arrival with a higher limit still takes an index the waiters ahead of it cannot use,
+// and a ticket whose limit is unreadable counts as unlimited and blocks every index. A ticket is
+// stale by pid liveness, never by age — a live waiter's ticket may legitimately be hours old. A
+// number below a live ticket is never reissued (a later arrival lists the directory while every
+// earlier live waiter's ticket exists), so reaping a stale ticket ahead cannot delete a newer one.
+// Residual risk: a ticket whose pid was reused by an unrelated process, or whose waiter is stopped
+// rather than dead, blocks the queue until a human deletes the ticket the log line names — the same
+// risk slot locks already accept. A lock held by a dead pid is reclaimed immediately, so a crashed
+// run never wedges the queue. The wait message is logged once per call.
 // `isAlive`, `now`, `sleep` and `log` are parameters so tests never touch real processes or time.
-// A lock naming our own `pid` is stale by definition — a prior run that crashed and whose pid the
-// OS then reused for this one — so it is reclaimed rather than waited on forever.
+// A lock or ticket naming our own `pid` is stale by definition — a prior run that crashed and whose
+// pid the OS then reused for this one — so it is reclaimed rather than waited on forever.
 function acquireSlot({ dir, slots, pid, cwd, isAlive: isPidLive, now, sleep, log, pollMs = 2000, staleUnparseableMs = 600000, staleReclaimMs = 30000, slotsVar = 'CT_TEST_SUITE_SLOTS' }) {
   const isAlive = (holderPid) => holderPid !== pid && isPidLive(holderPid);
   ensureOwnDir(dir);
+  const holderOpts = { isAlive, now, staleUnparseableMs, slots };
+  let ticket = takeTicket(dir, { pid, cwd, now, slots });
   let logged = false;
-  for (;;) {
-    let blocker = null;
-    for (let i = 0; i < slots; i++) {
-      const lockPath = path.join(dir, `slot-${i}.lock`);
-      if (createLock(lockPath, pid, cwd, now)) return lockPath;
-      const holder = readHolder(lockPath, { isAlive, now, staleUnparseableMs });
-      if (holder === null || holder.stale) {
-        if (reclaimSlot(lockPath, { pid, cwd, isAlive, now, staleUnparseableMs, staleReclaimMs })) return lockPath;
-        // Someone else is reclaiming this slot or won it: it is held now, so keep scanning.
-        if (!blocker) blocker = { ...UNKNOWN_HOLDER, lockPath };
-        continue;
+  try {
+    for (;;) {
+      // Our ticket must still be ours: deleted by hand, unparseable, or naming another pid (a newcomer
+      // numbered into our deleted seq). Rejoin at the tail; the file at the old path is not ours to remove.
+      if (!ticketIsOurs(ticket.path, pid)) ticket = takeTicket(dir, { pid, cwd, now, slots });
+      const { floor, first } = ticketsAhead(dir, ticket.seq, holderOpts);
+      let blocker = null;
+      for (let i = floor; i < slots; i++) {
+        const lockPath = path.join(dir, `slot-${i}.lock`);
+        if (createLock(lockPath, pid, cwd, now)) return lockPath;
+        const holder = readHolder(lockPath, { isAlive, now, staleUnparseableMs });
+        if (holder === null || holder.stale) {
+          if (reclaimSlot(lockPath, { pid, cwd, isAlive, now, staleUnparseableMs, staleReclaimMs })) return lockPath;
+          // Someone else is reclaiming this slot or won it: it is held now, so keep scanning.
+          if (!blocker) blocker = { ...UNKNOWN_HOLDER, lockPath };
+          continue;
+        }
+        if (!blocker || blocker.pid === 'unknown') blocker = { ...holder, lockPath };
       }
-      if (!blocker || blocker.pid === 'unknown') blocker = { ...holder, lockPath };
+      if (!logged) {
+        logged = true;
+        // The lock or ticket path is named so a maintainer can delete one whose pid was reused by an
+        // unrelated long-lived process (isAlive cannot tell it from the run that took the slot).
+        log(
+          floor >= slots
+            ? `run-tests.js: waiting for a test-suite slot — queued behind pid ${first.pid} (cwd ${first.cwd}) ` +
+                `since ${first.startedAt}; set ${slotsVar} to raise the limit (ticket: ${first.lockPath})`
+            : `run-tests.js: waiting for a test-suite slot — held by pid ${blocker.pid} (cwd ${blocker.cwd}) ` +
+                `since ${blocker.startedAt}; set ${slotsVar} to raise the limit (lock: ${blocker.lockPath})`,
+        );
+      }
+      sleep(pollMs);
     }
-    if (!logged) {
-      logged = true;
-      // The lock path is named so a maintainer can delete a lock whose pid was reused by an
-      // unrelated long-lived process (isAlive cannot tell it from the run that took the slot).
-      log(
-        `run-tests.js: waiting for a test-suite slot — held by pid ${blocker.pid} (cwd ${blocker.cwd}) ` +
-          `since ${blocker.startedAt}; set ${slotsVar} to raise the limit (lock: ${blocker.lockPath})`,
-      );
-    }
-    sleep(pollMs);
+  } finally {
+    releaseSlot(ticket.path, pid); // removes the ticket only while it still names our pid
   }
 }
 
@@ -499,7 +585,8 @@ if (require.main === module) {
 
   // From here the slot is held, so a signal must forward to the child and let the cleanup below
   // run rather than kill the runner with the lock and run root left behind. (While waiting for a
-  // slot nothing is held yet, so the default exit is right.) A signal that lands before the child
+  // slot nothing is held yet, so the default exit is right; it leaves only the waiter's ticket,
+  // which reads as stale once the pid is gone.) A signal that lands before the child
   // exists is applied as soon as it does.
   let child = null;
   let forwarded = null;
