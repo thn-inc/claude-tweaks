@@ -4,3 +4,4 @@
 |---|-------|------|--------|------------|
 | 1 | build/ops | Confirm in a live Windows Claude Code session that the worktree-isolation guard treats a forward-slashed plugin root (`node "D:/…/bin/x.js"`) like a native one; the spec's ASSUMPTION — verify at build could not be probed from this darwin host (reason-not-auto: no-live-windows-session — a refusal there is the same refusal an unrewritten command gets today) | open | — |
 | 2 | flow/ops | Pre-flight branch-divergence-check (resumed run 2026-11-03T100346): origin/main was 18 commits ahead of the worktree branch | fixed | Merged by build's Post-creation catch-up before any build task |
+| 3 | build/ops | Before merge, replace record #4292's `## Release Note` section with the Plan-review answers item-1 text word for word (`plugin/bin/lib/compose-subject.js` reads the record's own section; the body still carries the unqualified note) (reason-not-auto: plan review never edits the live record) | open | — |

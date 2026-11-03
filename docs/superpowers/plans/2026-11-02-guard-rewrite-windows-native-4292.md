@@ -36,6 +36,7 @@ Governing project skills, quoted verbatim:
 
 - **Test line 283 changes too (approved in the record's Plan-review answers, item 2).** The spec lists the expected commands at `:119` and `:144`, and AC4 needs 0 failures in the file. `:281`'s `cd ${CWD}/ && ls x` interpolates a native path unquoted, which the spec itself says must decline on win32, so that line fails on Windows after the fix. Task 2 spells it `cd '${CWD}/' && ls x` (the existing single-quoted branch, no platform branch) and moves the unquoted positive to a host-independent `path.posix` pin. The controller logged `premise reversed: tests need changes only at :119 and :144 → :281's unquoted line also changes` at Spec Step 3.
 - **Forward-slashed root: Reading B (record's Plan-review answers, item 1).** The spec Gotcha's `ASSUMPTION — verify at build:` is replaced by a rule: Rule 2 inlines only `toPosix(pluginRoot, pathImpl.sep)`. No native-root fallback is built, double-quoted references included. The merge does not wait on a live Windows session. Ledger row 1 stays `open` until wrap-up files it as a backlog record (`Defer-reason: blocked-external`). AC4's Windows CI run proves only that the tests pass, never that the guard accepts the root; no task or evidence file may claim otherwise.
+- **Release Note (record's Plan-review answers, item 1; controller, not a task).** `plugin/bin/lib/compose-subject.js` reads the record's own `## Release Note` section at merge, and the record body still carries the unqualified note. Before merge, that section is replaced with item 1's text word for word. It is carried as an open `build/ops` ledger row so the merge path does it; no implementer task edits the record.
 
 ## Review Focus
 
@@ -57,7 +58,7 @@ Governing project skills, quoted verbatim:
 - Test: `tests/bin-lib/hooks/guard-rewrite.test.js`
 
 **Interfaces:**
-- Produces: `rewriteForGuard({ command, cwd, pluginRoot, pathImpl = path, deps })`, where `deps` may carry `isLinkedWorktree`, `lstatType(p)` and `canonicalRealpath(p)`, each defaulting to the real one. Rules receive `(s, { cwd, pluginRoot, pathImpl, lstatType, canonicalRealpath })`.
+- Produces: `rewriteForGuard({ command, cwd, pluginRoot, pathImpl = path, deps })`, where `deps` may carry `isLinkedWorktree`, `lstatType(p)` and `canonicalRealpath(p)`, each defaulting to the real one. Rules receive `(s, { cwd, pluginRoot, pathImpl, lstat, realpath })` (Step 3 defines the two fs keys).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -123,7 +124,7 @@ Expected: FAIL after Step 1: the new `AC2.1, AC2.2` and `bare, spaced` tests get
 
 - [ ] **Step 3: Implement the seams and the inlining**
 
-Require `{ toPosix }` from `../shared-primitives`. In `rewriteForGuard`, read `pathImpl = path` from `opts`, check `pathImpl.isAbsolute(cwd)`, and pass `{ cwd, pluginRoot, pathImpl, lstatType: deps.lstatType || lstatType, canonicalRealpath: deps.canonicalRealpath || canonicalRealpath }` to each rule. In `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstatType })`: `pathImpl.isAbsolute(pluginRoot)`, `const inlined = toPosix(pluginRoot, pathImpl.sep)`, test `LITERAL_VALUE` and `refsInlineSafely` and `replaceSpans` on `inlined`, and call `shippedUnder(pluginRoot, s, r.end, { pathImpl, lstat })`, which joins with `pathImpl.join`. Rule-context key names are fixed, so the module-level `lstatType`/`canonicalRealpath` imports are never shadowed: `rewriteForGuard` builds the context `{ cwd, pluginRoot, pathImpl, lstat, realpath }`, where `lstat = deps.lstatType || lstatType` and `realpath = deps.canonicalRealpath || canonicalRealpath` (the `deps` keys keep the `path-guard` export names). `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat })` and `dropRedundantCd(s, { cwd, pathImpl, realpath })` destructure those keys. Rules 1, 3 and 4 ignore the context as today. `isLinkedWorktree`, `guardRewriteOutput` and `DEFAULT_PLUGIN_ROOT` stay on the host `path` (the injected `deps.isLinkedWorktree` already covers the linked-worktree check).
+Require `{ toPosix }` from `../shared-primitives`. In `rewriteForGuard`, read `pathImpl = path` from `opts`, check `pathImpl.isAbsolute(cwd)`, and pass the rule context defined below to each rule. In `pluginRootPlaceholder`: `pathImpl.isAbsolute(pluginRoot)`, `const inlined = toPosix(pluginRoot, pathImpl.sep)`, test `LITERAL_VALUE` and `refsInlineSafely` and `replaceSpans` on `inlined`, and call `shippedUnder(pluginRoot, s, r.end, { pathImpl, lstat })`, which joins with `pathImpl.join`. Rule-context key names are fixed, so the module-level `lstatType`/`canonicalRealpath` imports are never shadowed: `rewriteForGuard` builds the context `{ cwd, pluginRoot, pathImpl, lstat, realpath }`, where `lstat = deps.lstatType || lstatType` and `realpath = deps.canonicalRealpath || canonicalRealpath` (the `deps` keys keep the `path-guard` export names). `pluginRootPlaceholder(s, { pluginRoot, pathImpl, lstat })` and `dropRedundantCd(s, { cwd, pathImpl, realpath })` destructure those keys. Rules 1, 3 and 4 ignore the context as today. `isLinkedWorktree`, `guardRewriteOutput` and `DEFAULT_PLUGIN_ROOT` stay on the host `path` (the injected `deps.isLinkedWorktree` already covers the linked-worktree check).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -190,7 +191,7 @@ Expected: FAIL after Step 1: the first assertion of the new `AC2.3, AC2.4` and `
 
 - [ ] **Step 3: Implement**
 
-`LEADING_CD`'s double-quoted branch becomes `"((?:[^"$`\\]|\\[^$`"\\\n])*)"`, the other two branches unchanged. `dropRedundantCd(s, { cwd, pathImpl, realpath })` uses `pathImpl.isAbsolute(target)`; the exact-spelling compare and both realpath calls keep their logic, through the injected `realpath`. No separator or case normalization is added. Update the comment above the rule to say why a backslash is admitted only in the double-quoted branch. In the module header's residual-risk paragraph, add one sentence listing the Windows exact-spelling declines: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how Git Bash sets `$PWD` for those spellings is unmeasured.
+`LEADING_CD`'s double-quoted branch becomes `"((?:[^"$`\\]|\\[^$`"\\\n])*)"`, the other two branches unchanged. `dropRedundantCd(s, { cwd, pathImpl, realpath })` uses `pathImpl.isAbsolute(target)`; the exact-spelling compare and both realpath calls keep their logic, through the injected `realpath`. No separator or case normalization is added. Update the comment above the rule to say why a backslash is admitted only in the double-quoted branch. In the module header's residual-risk paragraph, add one sentence listing the Windows exact-spelling declines: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and `cd "d:\w\cwd"` all decline, because the literal must spell the cwd and how Git Bash sets `$PWD` for those spellings is unmeasured. The same sentence says a trailing `/` after an otherwise exact spelling stays tolerated (`trimSlashes`, approved with the `:281` departure), so only those three spellings are the listed residuals.
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
@@ -215,7 +216,7 @@ Commit the same two files: `Accept a backslash-spelled double-quoted cd target �
 
 - [ ] **Step 1: Edit the prose**
 
-Each "requires only" sentence becomes: `path`, `../path-guard` and `../shared-primitives` (whose top level requires only `path` and `./path-guard`). `docs/hooks.md`'s contract gains one bullet after "Rules 1 and 2 decline on doubt":
+Each "requires only" sentence becomes: `path`, `../path-guard` and `../shared-primitives` (whose top level requires only `path` and `./path-guard`). In `docs/hooks.md`'s "Rules 1 and 2 decline on doubt" bullet, the list of residuals "stated in the module header" gains the Windows exact-spelling declines Task 2 adds to that header: with cwd `D:\w\cwd`, `cd "D:/w/cwd"`, `cd "/d/w/cwd"` and `cd "d:\w\cwd"` decline. `docs/hooks.md`'s contract also gains one bullet after "Rules 1 and 2 decline on doubt":
 
 `**Windows paths.** Rule 2 inlines the root forward-slashed (`toPosix`, `D:/p/root/bin/x.js`), and `shippedUnder` still lstats the native join. Rule 5 admits a backslash in a double-quoted target only before a character other than `$`, a backtick, `"`, `\` or newline, since the shell keeps it literally there; an unquoted backslash target declines. `pathImpl` and `deps` pin both on any host through `path.win32`.`
 
