@@ -35,6 +35,7 @@ const SETTLE_FACTS = [
   [/treat it as a non-failing stop: the blocker, not the record, is at fault/, 'AC1.1: non-failing stop'],
   [/The claimed case is when this run's `decisions\.md` already carries a `Step 2\.8: claimed #\{n\}` line/, 'AC5.1: the claimed case keys on the Step 2.8 claim line'],
   [/a handoff continuation of either call re-ran the pre-claim checks/, 'AC6.1: the claimed case covers a second call\'s continuation too'],
+  [/A `decisions\.md` that cannot be read counts as the claimed case, so step 1's ownership check decides whether a claim is released/, 'a failed decisions.md read holds (counts as claimed), never passes to the unclaimed branch'],
   [/In the claimed case, run steps 1-2 with `--reason "failed: blocker-landing"`/, 'AC2.1: the claimed case releases the claim'],
   [/then step 5's PR tombstone and nothing else of step 5/, 'AC5.1: the claimed case runs only step 5\'s tombstone'],
   [/post the `failure`-kind pointer with the sentence `Stopped: an out-of-run blocker has not landed\. Resume with the ### Resume command in this PR body once it lands\.`/, 'AC5.1: the pointer carries the resume command'],

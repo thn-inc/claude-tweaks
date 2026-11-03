@@ -1311,7 +1311,7 @@ test('a native-call throw that is not NOT_FOUND-only is rethrown unchanged', () 
   }
 });
 
-test('blocker-landing NOT_FOUND recovery still reads a b{n} alias undetermined/not-found', () => {
+test('blocker-landing NOT_FOUND recovery returns the parsed response for a b{n} alias and null for an i{n} alias', () => {
   const { recoveredResponse } = require('../../../plugin/bin/lib/preflight-records/blocker-landing');
   const err = Object.assign(new Error('Command failed'), {
     stdout: JSON.stringify({ data: { repository: { b5: null } }, errors: [{ type: 'NOT_FOUND', path: ['repository', 'b5'] }] }),

@@ -54,6 +54,7 @@
 //      nothing is printed on stdout
 //   2  malformed invocation (a missing flag, a flag with no value, a bad --work-links
 //      value, an unknown argument)
+// --help (or -h) prints the usage line on stdout and exits 0 before any argument is read.
 'use strict';
 
 const fs = require('fs');
@@ -131,6 +132,7 @@ function parseGroups(text) {
 
 // argv -> exit code. All I/O through deps so tests never touch gh or the filesystem.
 function run(argv, deps = realDeps) {
+  if (argv.includes('--help') || argv.includes('-h')) { deps.stdout(USAGE); return 0; }
   const opts = parseArgs(argv);
   if (opts.error) { deps.stderr(`dispatch-unlanded-blockers.js: ${opts.error}\n${USAGE}`); return 2; }
 

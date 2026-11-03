@@ -25,8 +25,8 @@ const queryOf = (args) => (args.find((a) => typeof a === 'string' && a.startsWit
 const positionals = (args) => args.slice(0, args.indexOf('--prefetched-json'));
 const hasPair = (args, a, b) => args.some((x, i) => x === a && args[i + 1] === b);
 
-const closedBlocker = (oid) => ({
-  number: 0,
+const closedBlocker = (oid, number = 5) => ({
+  number,
   state: 'CLOSED',
   stateReason: 'COMPLETED',
   timelineItems: { nodes: [{ closer: { __typename: 'PullRequest', number: 90, merged: true, baseRefName: 'dev', mergeCommit: { oid } } }] },
@@ -236,7 +236,7 @@ test('a padded --integration-branch is forwarded to the child trimmed, matching 
 
 test('a record with two unlanded blockers is one unlanded-blocker entry carrying both, and logs one AUTO line per blocker', (t) => {
   const R15 = rec(15, 'Blocked by #5\nBlocked by #7\n');
-  const world = makeWorld({ repository: { b5: closedBlocker('sha1'), b7: closedBlocker('sha2') }, compare: { sha1: 'diverged\n', sha2: 'diverged\n' } });
+  const world = makeWorld({ repository: { b5: closedBlocker('sha1'), b7: closedBlocker('sha2', 7) }, compare: { sha1: 'diverged\n', sha2: 'diverged\n' } });
   const r = exec(t, { groups: [[R10], [R15]], world });
   assert.equal(r.code, 0, r.stderr);
   assert.deepEqual(r.groups, [[R10]]);
@@ -272,7 +272,7 @@ test('AC4.2: unscreened, the same pool makes the real preflight-records run exit
 });
 
 const FAULTS = [
-  ['a non-integer number', { number: 1.5, body: '', labels: [] }, 'its number is not a positive integer', 1.5, /entry 0 is missing a numeric "number"/],
+  ['a non-integer number', { number: 1.5, body: '', labels: [] }, 'its number is not a positive integer', 1.5, /every argument must be a positive integer issue number/],
   ['a non-string body', { number: 13, body: null, labels: [] }, 'its body is not a string', 13, /missing a string "body"/],
   ['non-array labels', { number: 13, body: '', labels: 'x' }, 'its labels are not an array', 13, /non-array "labels"/],
   ['Blocked by #0', { number: 13, body: 'Blocked by #0\n', labels: [] }, 'a Blocked by line names no valid issue number (#0)', 13, /not a valid issue number: 0/],
@@ -290,7 +290,7 @@ test('AC4.3: each screened fault, unscreened, fails the whole call or reads unde
 
     // Unscreened: the real run, positionals and input as the pool would give them.
     const raw = realPreflight(makeWorldFor())(
-      ['10', '11', '13', '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev', '--work-links', 'body-text'],
+      [...poolRecords(groups).map((r) => String(r.number)), '--prefetched-json', '-', '--blocker-landing', '--integration-branch', 'dev', '--work-links', 'body-text'],
       JSON.stringify(poolRecords(groups)),
     );
     if (bad.body === 'Blocked by #3000000000\n') {
@@ -416,6 +416,16 @@ test('native-missing never loops and never blames a record it cannot attribute',
   assert.equal(pf2.calls.length, 1);
   assert.match(wrongStatus.stderr, /Warning: unlanded-blocker pass skipped — preflight-records\.js exited 2;/);
   assert.equal(wrongStatus.exclusions, null);
+});
+
+test('native-missing with every candidate missing excludes them all and makes no second call and no skip warning', (t) => {
+  const r = exec(t, { groups: [[rec(13)]], world: unlandedWorld({ native: { edges: NATIVE_EDGES, missing: { 13: 'omit' } } }), workLinks: 'native' });
+  assert.equal(r.code, 0, r.stderr);
+  assert.equal(r.pf.calls.length, 1);
+  assert.deepEqual(positionals(r.pf.calls[0].args), ['13']);
+  assert.deepEqual(r.exclusions, [NATIVE_MISSING_ENTRY]);
+  assert.deepEqual(r.groups, []);
+  assert.doesNotMatch(r.stderr, /Warning: unlanded-blocker pass skipped/);
 });
 
 test('nativeMissingRecords recognises only the writer\'s whole line', () => {
@@ -577,6 +587,24 @@ test('an unreadable --groups is exit 1; a malformed invocation is exit 2', (t) =
     assert.match(r.stderr, /usage: dispatch-unlanded-blockers\.js --groups <path> --exclusions <path> --integration-branch <name> --work-links <native\|body-text>/, label);
     assert.equal(r.stdout, '', label);
     assert.equal(pf.calls.length, 0, label);
+  }
+});
+
+test('--help and -h print the usage on stdout and exit 0 without reading the groups or calling preflight', () => {
+  for (const flag of ['--help', '-h']) {
+    const pf = mustNotBeCalled();
+    const out = [];
+    const err = [];
+    const code = run([flag], {
+      readFile: () => { throw new Error('--help must not read --groups'); },
+      preflight: pf,
+      stdout: (s) => out.push(s),
+      stderr: (s) => err.push(s),
+    });
+    assert.equal(code, 0, flag);
+    assert.match(out.join(''), /^usage: dispatch-unlanded-blockers\.js --groups <path> --exclusions <path> --integration-branch <name> --work-links <native\|body-text>\n$/, flag);
+    assert.equal(err.join(''), '', flag);
+    assert.equal(pf.calls.length, 0, flag);
   }
 });
 
