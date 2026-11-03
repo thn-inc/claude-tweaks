@@ -458,7 +458,7 @@ function passThroughFacts(kind, source, entries, { status = 'passed', reason } =
     ...(reason === undefined ? {} : { reason }),
     source,
     ...(text === undefined ? {} : { text }),
-    ...(url === undefined ? {} : { url }),
+    ...(url === undefined || kind === 'proof' ? {} : { url }),
     ...(kind === 'flag' && unconfirmed === true ? { unconfirmed: true } : {}),
   }));
 }

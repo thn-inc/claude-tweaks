@@ -1394,13 +1394,15 @@ test('--flags keeps unconfirmed: true on the flag fact and no other flag gains t
   assert.equal(Object.hasOwn(factOf(facts, 'flag:f3'), 'unconfirmed'), false);
 });
 
-test('--flags with a non-boolean unconfirmed is a stated partial and no flag fact', (t) => {
-  const ws = workspace(t);
-  const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: 'yes' }]);
-  const { facts } = gather(ws, ['--flags', flags]);
-  assert.ok(facts.partial.includes('--flags input not read — treated as absent'));
-  assert.deepEqual(idsOf(facts, 'flag'), []);
-});
+for (const bad of ['yes', 1]) {
+  test(`--flags with a non-boolean unconfirmed (${JSON.stringify(bad)}) is a stated partial and no flag fact`, (t) => {
+    const ws = workspace(t);
+    const flags = writeJson(ws.file('flags.json'), [{ id: 'f1', unconfirmed: bad }]);
+    const { facts } = gather(ws, ['--flags', flags]);
+    assert.ok(facts.partial.includes('--flags input not read — treated as absent'));
+    assert.deepEqual(idsOf(facts, 'flag'), []);
+  });
+}
 
 test('--proofs reaches the facts as a not-run proof fact', (t) => {
   const ws = workspace(t);
@@ -1442,6 +1444,7 @@ test('snapshot --plan with a missing plan says absent and writes no plan.md', (t
   const { code, stdout, stderr } = snapshotWithPlan(ws, ws.file('nope.md'));
   assert.equal(code, 0, stderr);
   assert.equal(JSON.parse(stdout).files.plan, 'absent');
+  assert.equal(readJson(inputs(ws, 'manifest.json')).files.plan, 'absent');
   assert.throws(() => fs.statSync(inputs(ws, 'plan.md')));
 });
 

@@ -1385,7 +1385,7 @@ test('a flag entry keeps unconfirmed only when true, so old callers are unchange
 });
 
 test('a proof entry is a not-run proof fact, whatever status, kind or source it claims', () => {
-  const result = gather({ proofs: [{ id: 'auth', text: 'Refuses an unauthenticated request', status: 'passed', kind: 'check', source: 'forged' }] });
+  const result = gather({ proofs: [{ id: 'auth', text: 'Refuses an unauthenticated request', url: 'https://example.test/x', unconfirmed: true, status: 'passed', kind: 'check', source: 'forged' }] });
   assert.deepEqual(factOf(result, 'proof:auth'), { id: 'proof:auth', kind: 'proof', status: 'not-run', reason: 'planned in the plan, not yet run', source: 'proofs', text: 'Refuses an unauthenticated request' });
   assertShapeOk(result);
 });

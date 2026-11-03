@@ -200,7 +200,8 @@ copied from the facts file and inventing none.
 The snapshot exists because the verify and QA reports are not in the run dir, and Step 4 can run after
 the worktree holding them is gone. It copies them, the QA pass stamp, `head` and `mergeBase` to
 `{run-dir}/packet-inputs/` under a `manifest.json` and, given `--plan`, the run's plan, which
-`risk-flags.js facts` reads at Step 4 for the `--proofs` input; it is an input to gather, never a packet copy any
+`risk-flags.js facts` reads at Step 4 for the `--proofs` input, only when the manifest's `files.plan` is
+`copied`; it is an input to gather, never a packet copy any
 reader consults. The working copy lives in session temp and is never read after the run: the facts,
 narrative, rendered markdown and dropped list are session-temp paths (`_shared/session-tmp-root.md`)
 passed to the CLI.

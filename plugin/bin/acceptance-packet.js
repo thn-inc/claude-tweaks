@@ -26,7 +26,9 @@
 // empty one. Snapshot copies live in `{run}/packet-inputs/`, and gather reads a copy
 // only when the manifest says `copied`, since a later snapshot leaves earlier files.
 // Given --plan, snapshot also copies the run's plan there as `plan.md` (text, not JSON)
-// for `risk-flags.js facts`, which gather itself never reads.
+// for `risk-flags.js facts`, which gather itself never reads. A later snapshot without a
+// plan copy leaves an earlier `plan.md`, so read it only when the manifest's `files.plan`
+// is `copied`.
 'use strict';
 
 const { execFileSync } = require('child_process');
