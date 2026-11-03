@@ -87,8 +87,10 @@ test('AC5.2: both classifyShipped call sites pass the release time', () => {
   assert.match(QUEUE_PULL, /readReleaseTimes\(process\.argv\[5\]\)/);
 });
 
-test('#4432: a mention predating the release spends no files probe', () => {
-  assert.match(QUEUE_PULL, /result\.tier === 'weak' && !result\.signals\.includes\('predates-claim-release'\)/);
+test('#4432: a mention predating the release spends no files probe, and both passes ask the one predicate, never the signal literal', () => {
+  assert.match(QUEUE_PULL, /result\.tier === 'weak' && !predatesClaimRelease\(result\)/);
+  assert.match(QUEUE_PULL, /\(predatesClaimRelease\(result\)\r?\n\s+\? ' kept: merged PR/);
+  assert.doesNotMatch(QUEUE_PULL, /predates-claim-release/);
 });
 
 test('#4432: SKILL.md states the release rule and its accepted false negative', () => {
@@ -152,7 +154,9 @@ function runSecondPass({ releases }) {
     },
   });
   const finalGroups = run.status === 0 ? JSON.parse(fs.readFileSync(`${files.groups}.tmp`, 'utf8')) : null;
-  return { run, finalGroups, exclusions: readExclusions(files.exclusions) };
+  const exclusions = readExclusions(files.exclusions);
+  fs.rmSync(scratch, { recursive: true, force: true });
+  return { run, finalGroups, exclusions };
 }
 
 test('AC1.1: the second pass keeps a downgraded record, excludes the unreleased one, and logs the downgrade', () => {

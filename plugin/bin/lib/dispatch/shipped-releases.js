@@ -43,27 +43,36 @@ function writeReleaseTimes(file, candidates, linkedPRs, deps = {}) {
     const reader = deps.reader || createClaimReader();
     for (const { number } of targets) {
       let result;
+      let cause = 'no answer';
       try {
         result = reader.read(number);
-      } catch {
+      } catch (err) {
         result = null;
+        cause = (err && err.message) || 'read threw';
       }
       if (!result || !Object.prototype.hasOwnProperty.call(result, 'content')) {
-        unreadable.push(number);
+        unreadable.push('#' + number + ' (' + ((result && result.failure) || cause) + ')');
         continue;
       }
       const release = releaseTimeFromClaim(result.content);
-      if (release.unreadable) unreadable.push(number);
+      if (release.unreadable) unreadable.push('#' + number + ' (corrupt claim blob)');
       else if (release.releasedAt) times[number] = release.releasedAt;
     }
   }
 
   if (unreadable.length > 0) {
-    log('AUTO — dispatch: shipped-candidate claim read failed for #' + unreadable.join(', #') + '; release time unknown, no downgrade');
+    log('AUTO — dispatch: shipped-candidate claim read failed for ' + unreadable.join(', ') + '; release time unknown, no downgrade');
   }
   try {
     fs.writeFileSync(file, JSON.stringify(times));
   } catch (err) {
+    // A map left by an earlier pull would be read by the second pass as this
+    // pull's, so remove it: the logged "no downgrade" must hold there too.
+    try {
+      fs.unlinkSync(file);
+    } catch {
+      /* nothing to remove, or not removable */
+    }
     log('AUTO — dispatch: shipped-candidate release times not written to ' + file + ' (' + (err && err.message) + '); release time unknown, no downgrade');
   }
   return times;

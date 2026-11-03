@@ -514,7 +514,7 @@ done
 # `weak` result not predating the claim release is a probe candidate for the files-based upgrade below; a
 # `strong`/`none` result is final. Capped at 5 live `gh pr view` calls per pull.
 node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_SHIPPED_PROBE_PRS" "$DISPATCH_SHIPPED_RELEASES" <<NODE_EVAL_EOF
-  const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
   const releases = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/shipped-releases.js').writeReleaseTimes(process.argv[4], groups.flat(), linkedPRs);
@@ -524,7 +524,7 @@ node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH
     const mentions = (entry && entry.mentions) || [];
     if (mentions.length === 0) continue;
     const result = classifyShipped(c, mentions, { lastReleasedAt: releases[c.number] });
-    if (result.tier === 'weak' && !result.signals.includes('predates-claim-release')) toProbe.push(result.pr);
+    if (result.tier === 'weak' && !predatesClaimRelease(result)) toProbe.push(result.pr);
   }
   require('fs').writeFileSync(process.argv[3], JSON.stringify([...new Set(toProbe)].slice(0, 5)));
 NODE_EVAL_EOF
@@ -541,7 +541,7 @@ done
 # build-time context. `none` is silent.
 if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPATCH_LINKED_PRS" "$DISPATCH_EXCLUSIONS" "$DISPATCH_SHIPPED_PR_FILES" "$DISPATCH_SHIPPED_RELEASES" > "${DISPATCH_GROUPS}.tmp" <<NODE_EVAL_EOF
   const fs = require('fs');
-  const { classifyShipped } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
+  const { classifyShipped, predatesClaimRelease } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/issues/shipped-candidate.js');
   const { appendExclusion } = require('${CLAUDE_PLUGIN_ROOT}/bin/lib/dispatch/exclusions.js');
   const groups = require(process.argv[1]);
   const linkedPRs = require(process.argv[2]);
@@ -562,7 +562,7 @@ if node "${CLAUDE_PLUGIN_ROOT}/bin/node-eval-file.js" "$DISPATCH_GROUPS" "$DISPA
         return false;
       }
       if (result.tier === 'weak') {
-        console.error('AUTO — dispatch: #' + c.number + (result.signals.includes('predates-claim-release')
+        console.error('AUTO — dispatch: #' + c.number + (predatesClaimRelease(result)
           ? ' kept: merged PR #' + result.pr + ' predates claim release at ' + releases[c.number] + ' — remaining work assumed'
           : ' mentioned by merged PR #' + result.pr + ' without a closing keyword; dispatching anyway'));
       }

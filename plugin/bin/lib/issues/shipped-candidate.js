@@ -15,11 +15,20 @@ const { tokenizeTitle, jaccard, DEFAULT_TITLE_SIMILARITY_THRESHOLD } = require('
 
 const PREDATES_CLAIM_RELEASE = 'predates-claim-release';
 
-// strong > weak > weak-that-predates-the-release > none
+// strong > weak > weak-that-predates-the-release > none. A plain weak outranks
+// a predating one because it can still be upgraded by the caller's key-files
+// probe, while a predating one can never reach strong (see predatesClaimRelease).
 function rankOf(tier, predatesRelease) {
   if (tier === 'strong') return 3;
   if (tier === 'weak') return predatesRelease ? 1 : 2;
   return 0;
+}
+
+// Whether a classifyShipped result carries the downgrade signal. The caller's
+// files probe skips such a result (it cannot become strong), and its log line
+// names the downgrade. One predicate, so no caller retypes the signal literal.
+function predatesClaimRelease(result) {
+  return Boolean(result && Array.isArray(result.signals) && result.signals.includes(PREDATES_CLAIM_RELEASE));
 }
 
 // record: { number, title, body, createdAt, labels }. mentions: the
@@ -59,8 +68,11 @@ function rankOf(tier, predatesRelease) {
 // sides are compared as instants (normalized through `Date`, like the
 // createdAt checks), never as strings. A missing, unparseable or absent
 // `lastReleasedAt`/`mergedAt` never downgrades and never upgrades — the prior
-// behavior holds. A shaping-only release after a merge also downgrades; that
-// is the safe direction, and the build's shipped-exit check
+// behavior holds. Any release after the merge downgrades, whatever its
+// reason (this function never sees the free-text reason): a shaping-only
+// release, and the wrap-up release of a run whose own merge left the record
+// open (a deferred closure, or a closing keyword that did not land). That is
+// the safe direction, and the build's shipped-exit check
 // (`tests/build-already-shipped-exit.test.js`) still catches a truly shipped
 // record.
 //
@@ -117,4 +129,4 @@ function classifyShipped(record, mentions, opts = {}) {
   return best;
 }
 
-module.exports = { classifyShipped, PREDATES_CLAIM_RELEASE };
+module.exports = { classifyShipped, predatesClaimRelease, PREDATES_CLAIM_RELEASE };

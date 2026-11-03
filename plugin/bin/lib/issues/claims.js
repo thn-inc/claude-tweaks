@@ -135,7 +135,10 @@ function classifyClaimBlob(content, now) {
 //                                                does not parse: the release happened but
 //                                                its time is unknown
 // A caller treats `unreadable` and "not released" alike for the verdict (no
-// downgrade) and uses the flag only to say so.
+// downgrade) and uses the flag only to say so. There is one blob per issue,
+// so a later claim replaces the tombstone and the release time with it: a
+// re-claimed record reports no release (the prior behavior holds), which is
+// accepted because a record held by a live claim is in flight and not queued.
 function releaseTimeFromClaim(content) {
   if (content === null || content === undefined) return { releasedAt: null, unreadable: false };
   let parsed = null;

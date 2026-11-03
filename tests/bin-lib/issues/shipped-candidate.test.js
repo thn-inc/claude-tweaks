@@ -2,7 +2,7 @@
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert');
-const { classifyShipped } = require('../../../plugin/bin/lib/issues/shipped-candidate');
+const { classifyShipped, predatesClaimRelease } = require('../../../plugin/bin/lib/issues/shipped-candidate');
 
 function withKeyFiles(files) {
   return `## Current State\n\nn/a\n\n## Technical Approach\n\n### Key Files\n\n${files.map((f) => `- \`${f}\` — modify`).join('\n')}\n`;
@@ -364,4 +364,13 @@ test('#4432: a plain weak mention merged after the release outranks a downgraded
     assert.strictEqual(r.pr, 501);
     assert.ok(!r.signals.includes('predates-claim-release'));
   }
+});
+
+test('#4432: predatesClaimRelease is true only for a result classifyShipped marked as predating the release', () => {
+  const predating = classifyShipped(HALF_RECORD, [HALF_MENTION], { lastReleasedAt: '2026-10-02T13:00:00Z' });
+  assert.strictEqual(predatesClaimRelease(predating), true);
+  assert.strictEqual(predatesClaimRelease(classifyShipped(HALF_RECORD, [HALF_MENTION])), false);
+  assert.strictEqual(predatesClaimRelease(classifyShipped(HALF_RECORD, [])), false);
+  assert.strictEqual(predatesClaimRelease(null), false);
+  assert.strictEqual(predatesClaimRelease({}), false);
 });

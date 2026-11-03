@@ -78,7 +78,7 @@ test('a failed read, a throwing read and a corrupt blob are logged and yield no 
   assert.strictEqual(logged.length, 1);
   assert.strictEqual(
     logged[0],
-    'AUTO — dispatch: shipped-candidate claim read failed for #7, #8, #9; release time unknown, no downgrade',
+    'AUTO — dispatch: shipped-candidate claim read failed for #7 (network-failure), #8 (boom), #9 (corrupt claim blob); release time unknown, no downgrade',
   );
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -106,5 +106,23 @@ test('an unwritable release-times file is logged and the in-memory map still ret
   assert.deepStrictEqual(returned, { 7: '2026-10-02T13:00:00.000Z' });
   assert.strictEqual(logged.length, 1);
   assert.match(logged[0], /shipped-releases\.json/);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+// A read-only file makes the write fail while the directory stays removable; a
+// root user and win32 permission semantics ignore the mode, so those skip.
+test('a failed write removes a stale map an earlier pull left, so the second pass reads no release time', {
+  skip: process.platform === 'win32' || (typeof process.getuid === 'function' && process.getuid() === 0),
+}, () => {
+  const { dir, file } = tmpFile();
+  fs.writeFileSync(file, JSON.stringify({ 7: '2026-10-02T13:00:00.000Z' }));
+  fs.chmodSync(file, 0o444);
+  const logged = [];
+  const reader = { read: () => ({ content: TOMBSTONE }) };
+  const returned = writeReleaseTimes(file, [{ number: 7 }], { 7: MERGED }, { reader, log: (m) => logged.push(m) });
+  assert.deepStrictEqual(returned, { 7: '2026-10-02T13:00:00.000Z' });
+  assert.strictEqual(logged.length, 1);
+  assert.strictEqual(fs.existsSync(file), false);
+  assert.deepStrictEqual(readReleaseTimes(file), {});
   fs.rmSync(dir, { recursive: true, force: true });
 });
