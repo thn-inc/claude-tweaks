@@ -1,5 +1,5 @@
 {
-  "computedAt": "2026-11-02T23:37:27.094Z",
+  "computedAt": "2026-11-03T00:53:03.557Z",
   "runId": null,
   "freshnessSignal": {
     "issues": [
@@ -565,7 +565,7 @@
       },
       {
         "number": 4358,
-        "updatedAt": "2026-10-31T09:57:43Z",
+        "updatedAt": "2026-11-02T23:39:34Z",
         "state": "OPEN"
       },
       {
@@ -625,7 +625,7 @@
       },
       {
         "number": 4328,
-        "updatedAt": "2026-10-31T09:58:26Z",
+        "updatedAt": "2026-11-03T00:03:52Z",
         "state": "OPEN"
       },
       {
@@ -655,7 +655,7 @@
       },
       {
         "number": 4294,
-        "updatedAt": "2026-11-02T23:01:10Z",
+        "updatedAt": "2026-11-03T00:15:32Z",
         "state": "OPEN"
       },
       {
@@ -6586,84 +6586,6 @@
     ],
     [
       {
-        "body": "Origin: #4027 build (PR #4324) — context-cap handoff ruled single-spec only\n\nDefer-reason: genuinely-larger\n\n## Current State\n\nRecord #4027 (PR #4324) ships a per-agent context cap. At each phase boundary, `/flow` Step 4 gauges the running agent via `plugin/bin/context-gauge.js`. Past 200k tokens it writes `{run}/handoff.json` and hands the remaining steps to a fresh agent: `plugin/skills/flow/context-handoff.md`, with the dispatch continuation in `plugin/skills/dispatch/two-call-gate.md` §8.\n\nThe cap is single-spec only. A multi-spec run (`#A,#B`) never gauges, because `/flow`'s step-list resume grammar re-targets every record. A continuation would re-run records already past the boundary. Parallel-wave members never gauge either. So dispatched bundle groups, the calls with the largest contexts, get no context relief from #4027.\n\n## Deliverables\n\n1. A per-record resume form. `handoff.json` carries the remaining steps keyed per record, and `/flow` gains an argument that resumes each record at its own step.\n\n2. The multi-spec sequential loop gauges at each spec/phase boundary and writes the per-record handoff.\n\n3. The dispatch continuation accepts the per-record form. That covers `two-call-gate.md` §8, `task-prompt.md`'s continuation paragraph, and `first-call-artifact-check.js`'s `parseNextSteps`.\n\n## Acceptance Criteria\n\n- [ ] A multi-spec dispatched call that crosses the 200k-token cap at a phase boundary hands off. Its continuation resumes each record at that record's own step, without re-running a completed step for any record.\n\n- [ ] The existing conformance suites pass with no added skips.\n\n## Release Note\n\nLong multi-record pipeline runs hand their remaining work to a fresh agent when context gets large, instead of degrading in one oversized context.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/timing/context-gauge.js` — per-record nextSteps in handoff.json\n- `plugin/skills/flow/context-handoff.md` — multi-spec handoff procedure\n- `plugin/skills/flow/multi-spec.md` — gauge at spec/phase boundaries\n- `plugin/skills/dispatch/two-call-gate.md` — per-record continuation\n- `plugin/bin/lib/dispatch/first-call-artifact-check.js` — parse per-record NEXT_STEPS\n\n_Filed by `capture` via specShapedBody._",
-        "createdAt": "2026-10-25T23:06:32Z",
-        "labels": [
-          {
-            "id": "LA_kwDORUwzVM8AAAACruyqXw",
-            "name": "ready",
-            "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
-            "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2myw",
-            "name": "by:capture",
-            "description": "Origin: filed via /capture",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACry2pJg",
-            "name": "type:task",
-            "description": "Type: maintenance, refactor, docs, or chore work",
-            "color": "ededed"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACrzEqFA",
-            "name": "auto:build",
-            "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
-            "color": "F9D0C4"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
-            "name": "size:high",
-            "description": "Scoring: large change — consider decomposition before building",
-            "color": "5319E7"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
-            "name": "priority:medium",
-            "description": "Priority: dispatch picks after priority:high",
-            "color": "0052CC"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACsXMS4Q",
-            "name": "risk:medium",
-            "description": "Scoring: moderate blast radius — review before merge recommended",
-            "color": "FBCA04"
-          }
-        ],
-        "number": 4358,
-        "state": "OPEN",
-        "title": "Hand off multi-spec /flow runs at the context cap — per-record resume",
-        "updatedAt": "2026-10-31T09:57:43Z",
-        "facets": {
-          "origin": "capture",
-          "risk": "medium",
-          "size": "high",
-          "ceremony": null,
-          "solutionUnjustified": false,
-          "breaking": false,
-          "needsDefinition": false,
-          "priority": "medium",
-          "stage": "ready",
-          "grants": {
-            "build": true,
-            "merge": false
-          },
-          "bot": {
-            "inProgress": false,
-            "blocked": false,
-            "parked": false
-          },
-          "acceptance": null,
-          "isParentIssue": false,
-          "notPlanned": false,
-          "shapedHeadless": false
-        }
-      }
-    ],
-    [
-      {
         "body": "Origin: ledger resolve gate (wrap-up of #4331)\n\nDefer-reason: tangential\n\n## Current State\n\nClose-out's `Clear` and the nothing-landed restore still hand-edit the `close-out-update` marker body: the found comment's body is saved by `close-out-marker.js read --body-out`, and the agent rewrites its second line to `close-out-update: cleared ({reason})` by hand (`plugin/skills/dispatch/close-out-update.md`, Update marker section). Every other marker mutation (`write`, `resolve-pending`) now goes through the tested module (#4331), so the Clear path is the one rule left in prose.\n\n## Deliverables\n\n- [ ] A `clear --reason <text>` verb on `plugin/bin/close-out-marker.js` (and a `clearMarker` function in `plugin/bin/lib/dispatch/close-out-marker.js`) that rewrites the second line of the trusted marker comment and keeps the rest\n- [ ] `close-out-update.md` calls the verb for Clear instead of describing the hand edit; the matching prose pins are reduced to the call site\n\n## Acceptance Criteria\n\n`clear --reason merged` over a pending marker returns a body whose second line is `close-out-update: cleared (merged)` and whose other lines are byte-identical; a reason containing a line break exits 2; `npm test` passes with the new unit tests.\n\n## Release Note\n\nNo user-visible change.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/close-out-marker.js` — modify\n- `plugin/bin/lib/dispatch/close-out-marker.js` — modify\n- `plugin/skills/dispatch/close-out-update.md` — modify\n- `tests/close-out-pr-state-contract-conformance.test.js` — modify\n\n_Filed by `ledger resolve gate` via specShapedBody._",
         "createdAt": "2026-10-25T22:14:22Z",
         "labels": [
@@ -7348,7 +7270,7 @@
     ],
     [
       {
-        "body": "**Related:** #4303\n\nOrigin: wrap-up leftover from #4281\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe #4281 differential check (bash 3.2 and 5, 3000 fuzzed commands, base 5fb12cb2c vs the #4281 branch) and its final whole-branch review found these pre-existing gaps in `plugin/bin/lib/hooks/git-command.js`. Each one already existed at base, so #4281 left it alone:\n- A literal `$`, backtick or `\"` inside a quoted value (`mkdir '$(x)'`, `cp src \\\"`) yields no target, though bash writes that name. `isUnresolvable` rejects the character even when its span kind is `s` or escaped.\n- An escape at a trimmed segment-piece end is lost. An escaped trailing space (`echo x > a\\ ; ls`, `cd wt\\ && tee a`) and a backslash-newline (`echo x > ab\\<newline>; echo y`) are read as a stray `\\`. Bash writes `a ` or `ab`. POSIX reports nothing; win32 drops the space.\n- `A\\=x git commit` reports a spurious git target. `findGitLead` and `powershellOpaqueCommand` still skip assignments with `SIMPLE_ASSIGNMENT_RE` on the value instead of `isAssignmentWord` on the kinds.\n- `echo $( [[ x > /main/i ]] )` reports a write target, a spurious deny: bash compares and writes nothing.\n- A glued redirect after a word holding a bare `$` is dropped: `x=f1; echo $x>f1` and `x=f1; A=$x>f1` write `f1` in bash 5, and both base and HEAD report nothing. The spaced `echo $x >f1` is reported.\n- `>\\&2` writes the file `&2`, which is never reported. (The unescaped `>&file` form is #4303's U6.)\n- A quoted `$NAME` glued to a bare continuation is read as a longer name: `A=f1; echo x > \"$A\"g` writes `f1g` in bash 3.2 and 5, and base and HEAD both report nothing (the #4281 review's gap sweep).\n- An MSYS spelling of a native path (`/d/repo/x`, which Git Bash maps to `D:\\repo\\x`) resolves under path.win32 as a drive-less rooted path, so every gate fails open for it on Windows (pre-existing at base; the #4281 review's gap sweep).\n- A cd whose argument carries a glued redirect, or a redirect before `cd`, mis-tracks the cwd: `cd sub>f1` resolves the cd to `sub>f1`, `A=x> cd sub` tracks a cd that never runs, and `> f1 cd sub; echo y > f2` reports `/w/f2` where bash writes `sub/f2`.\n\n## Deliverables\n\n- [ ] Accept a literal `$`, backtick or `\"` that the span mask shows is quoted or escaped as a path character, and keep an unquoted expansion unresolvable.\n- [ ] Keep a trailing escaped space and a backslash-newline at a piece end in the word value (no stray-`\\` read).\n- [ ] Have `findGitLead` and `powershellOpaqueCommand` reuse `isAssignmentWord` with the span kinds.\n- [ ] Start the redirect scan after a `[[ … ]]` nested inside `$( … )`.\n- [ ] Read a glued redirect after a word whose bare `$` part is a plain parameter reference.\n- [ ] Report the escaped `>\\&2` as a write to the file `&2`.\n- [ ] Read a quoted `$NAME` followed by a bare continuation as the name plus a literal suffix.\n- [ ] Under path.win32, map an MSYS `/x/…` path to `X:\\…` before resolving it.\n- [ ] Track the cwd for a cd line whose words carry a glued or leading redirect as bash does.\n\n## Acceptance Criteria\n\n1. `fileWriteTargets(\"mkdir '$(x)'\", \"/wt\")` is unaffected, and `fileWriteTargets(\"cp src 'a$b'\", \"/m\")` reports `/m/a$b`, each pinned with a bash 3.2 and 5 verdict.\n2. `fileWriteTargets(\"echo x > a\\\\ ; ls\", \"/m\")` reports `/m/a ` under path.posix.\n3. `gitTargets(\"A\\\\=x git commit -m y\", \"/wt\")` deep-equals `[]`.\n4. `fileWriteTargets(\"echo $( [[ x > /main/i ]] )\", \"/wt\")` deep-equals `[]`.\n5. `fileWriteTargets(\"x=/m/f; echo $x>/m/g\", \"/wt\")` reports `/m/g`, pinned with a bash 3.2 and 5 verdict.\n6. `fileWriteTargets(\"echo x >\\\\&2\", \"/m\")` reports `/m/&2`, pinned with a bash 3.2 and 5 verdict.\n7. `fileWriteTargets(\"> f1 cd sub; echo y > f2\", \"/r\")` reports `/r/f1` and `/r/sub/f2`.\n8. `fileWriteTargets('A=/m/f; echo x > \"$A\"g', \"/w\")` reports `/m/fg`, pinned with a bash 3.2 and 5 verdict.\n9. Under path.win32 with a cwd `D:\\wt`, `fileWriteTargets(\"echo x > /d/main/a.js\", ...)` reports `D:\\main\\a.js`.\n10. The shell-scanner-bash-differential base comparison shows no target lost against the merge base.\n\n## Release Note\n\nThe Bash write guards recognise a few more quoted and escaped path shapes exactly as bash reads them, and stop flagging one comparison as a write.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — kind-aware isUnresolvable, piece-end escape handling, dropRedirections operator kinds, isAssignmentWord reuse, nested [[ in $( )\n- `tests/hooks-git-command.test.js` — bash-cited pins for each shape\n\n_Filed by `wrap-up leftover routing` via specShapedBody._\n\n## Absorbed: 2026-10-25 — git -C argument with a glued or spaced redirect\n\nOrigin: v6.155.1 release whole-branch review (base v6.155.0), refs #4026. Defer-reason: tangential — pre-dates the release (same behavior at v6.155.0); not a blocker for it.\n\nThe same glued-redirect class this record already names for `cd` also bites `git -C`, and a spaced redirect between `-C <dir>` and the subcommand hides the git call entirely. Probed against `plugin/bin/lib/hooks/git-command.js` `gitTargets(cmd, '/wt')` at origin/main 0751b4237:\n\n| Command | `gitTargets` result | Bash's reading |\n|---|---|---|\n| `git -C /main>/dev/null commit -m x` | `[{action:\"commit\", dir:\"/main>/dev/null\"}]` | commit in `/main`, stdout to `/dev/null` |\n| `git -C /main >/dev/null commit -m x` | `[]` (commit not detected) | commit in `/main` |\n| `cd /main>/dev/null; git commit -m x` (already listed above) | `[{action:\"commit\", dir:\"/main>/dev/null\"}]` | commit in `/main` |\n\n- [ ] Strip a glued redirect from a `-C` value the way bash does (`/main>/dev/null` → dir `/main`).\n- [ ] Skip redirect words (and their targets) between `git`'s global options and the subcommand, so `git -C /main >/dev/null commit` is detected as a commit in `/main`.\n- [ ] Pin each row above as a `gitTargets` test case.\n",
+        "body": "**Related:** #4303\n\nOrigin: wrap-up leftover from #4281\n\nDefer-reason: pre-existing-outside-diff\n\n## Current State\n\nThe #4281 differential check (bash 3.2 and 5, 3000 fuzzed commands, base 5fb12cb2c vs the #4281 branch) and its final whole-branch review found these pre-existing gaps in `plugin/bin/lib/hooks/git-command.js`. Each one already existed at base, so #4281 left it alone:\n- A literal `$`, backtick or `\"` inside a quoted value (`mkdir '$(x)'`, `cp src \\\"`) yields no target, though bash writes that name. `isUnresolvable` rejects the character even when its span kind is `s` or escaped.\n- An escape at a trimmed segment-piece end is lost. An escaped trailing space (`echo x > a\\ ; ls`, `cd wt\\ && tee a`) and a backslash-newline (`echo x > ab\\<newline>; echo y`) are read as a stray `\\`. Bash writes `a ` or `ab`. POSIX reports nothing; win32 drops the space.\n- `A\\=x git commit` reports a spurious git target. `findGitLead` and `powershellOpaqueCommand` still skip assignments with `SIMPLE_ASSIGNMENT_RE` on the value instead of `isAssignmentWord` on the kinds.\n- `echo $( [[ x > /main/i ]] )` reports a write target, a spurious deny: bash compares and writes nothing.\n- A glued redirect after a word holding a bare `$` is dropped: `x=f1; echo $x>f1` and `x=f1; A=$x>f1` write `f1` in bash 5, and both base and HEAD report nothing. The spaced `echo $x >f1` is reported.\n- `>\\&2` writes the file `&2`, which is never reported. (The unescaped `>&file` form is #4303's U6.)\n- A quoted `$NAME` glued to a bare continuation is read as a longer name: `A=f1; echo x > \"$A\"g` writes `f1g` in bash 3.2 and 5, and base and HEAD both report nothing (the #4281 review's gap sweep).\n- An MSYS spelling of a native path (`/d/repo/x`, which Git Bash maps to `D:\\repo\\x`) resolves under path.win32 as a drive-less rooted path, so every gate fails open for it on Windows (pre-existing at base; the #4281 review's gap sweep).\n- A cd whose argument carries a glued redirect, or a redirect before `cd`, mis-tracks the cwd: `cd sub>f1` resolves the cd to `sub>f1`, `A=x> cd sub` tracks a cd that never runs, and `> f1 cd sub; echo y > f2` reports `/w/f2` where bash writes `sub/f2`.\n\n## Deliverables\n\n- [ ] Accept a literal `$`, backtick or `\"` that the span mask shows is quoted or escaped as a path character, and keep an unquoted expansion unresolvable.\n- [ ] Keep a trailing escaped space and a backslash-newline at a piece end in the word value (no stray-`\\` read).\n- [ ] Have `findGitLead` and `powershellOpaqueCommand` reuse `isAssignmentWord` with the span kinds.\n- [ ] Start the redirect scan after a `[[ … ]]` nested inside `$( … )`.\n- [ ] Read a glued redirect after a word whose bare `$` part is a plain parameter reference.\n- [ ] Report the escaped `>\\&2` as a write to the file `&2`.\n- [ ] Read a quoted `$NAME` followed by a bare continuation as the name plus a literal suffix.\n- [ ] Under path.win32, map an MSYS `/x/…` path to `X:\\…` before resolving it.\n- [ ] Track the cwd for a cd line whose words carry a glued or leading redirect as bash does.\n\n## Acceptance Criteria\n\n1. `fileWriteTargets(\"mkdir '$(x)'\", \"/wt\")` is unaffected, and `fileWriteTargets(\"cp src 'a$b'\", \"/m\")` reports `/m/a$b`, each pinned with a bash 3.2 and 5 verdict.\n2. `fileWriteTargets(\"echo x > a\\\\ ; ls\", \"/m\")` reports `/m/a ` under path.posix.\n3. `gitTargets(\"A\\\\=x git commit -m y\", \"/wt\")` deep-equals `[]`.\n4. `fileWriteTargets(\"echo $( [[ x > /main/i ]] )\", \"/wt\")` deep-equals `[]`.\n5. `fileWriteTargets(\"x=/m/f; echo $x>/m/g\", \"/wt\")` reports `/m/g`, pinned with a bash 3.2 and 5 verdict.\n6. `fileWriteTargets(\"echo x >\\\\&2\", \"/m\")` reports `/m/&2`, pinned with a bash 3.2 and 5 verdict.\n7. `fileWriteTargets(\"> f1 cd sub; echo y > f2\", \"/r\")` reports `/r/f1` and `/r/sub/f2`.\n8. `fileWriteTargets('A=/m/f; echo x > \"$A\"g', \"/w\")` reports `/m/fg`, pinned with a bash 3.2 and 5 verdict.\n9. Under path.win32 with a cwd `D:\\wt`, `fileWriteTargets(\"echo x > /d/main/a.js\", ...)` reports `D:\\main\\a.js`.\n10. The shell-scanner-bash-differential base comparison shows no target lost against the merge base.\n\n## Release Note\n\nThe Bash write guards recognise a few more quoted and escaped path shapes exactly as bash reads them, and stop flagging one comparison as a write.\n\n## Technical Approach\n\n### Key Files\n\n- `plugin/bin/lib/hooks/git-command.js` — kind-aware isUnresolvable, piece-end escape handling, dropRedirections operator kinds, isAssignmentWord reuse, nested [[ in $( )\n- `tests/hooks-git-command.test.js` — bash-cited pins for each shape\n\n_Filed by `wrap-up leftover routing` via specShapedBody._\n\n## Absorbed: 2026-10-25 — git -C argument with a glued or spaced redirect\n\nOrigin: v6.155.1 release whole-branch review (base v6.155.0), refs #4026. Defer-reason: tangential — pre-dates the release (same behavior at v6.155.0); not a blocker for it.\n\nThe same glued-redirect class this record already names for `cd` also bites `git -C`, and a spaced redirect between `-C <dir>` and the subcommand hides the git call entirely. Probed against `plugin/bin/lib/hooks/git-command.js` `gitTargets(cmd, '/wt')` at origin/main 0751b4237:\n\n| Command | `gitTargets` result | Bash's reading |\n|---|---|---|\n| `git -C /main>/dev/null commit -m x` | `[{action:\"commit\", dir:\"/main>/dev/null\"}]` | commit in `/main`, stdout to `/dev/null` |\n| `git -C /main >/dev/null commit -m x` | `[]` (commit not detected) | commit in `/main` |\n| `cd /main>/dev/null; git commit -m x` (already listed above) | `[{action:\"commit\", dir:\"/main>/dev/null\"}]` | commit in `/main` |\n\n- [ ] Strip a glued redirect from a `-C` value the way bash does (`/main>/dev/null` → dir `/main`).\n- [ ] Skip redirect words (and their targets) between `git`'s global options and the subcommand, so `git -C /main >/dev/null commit` is detected as a commit in `/main`.\n- [ ] Pin each row above as a `gitTargets` test case.\n\n## Absorbed: 2026-11-03 — glued redirect after an escaped blank, the word parts #4294 left out\n\nOrigin: build of #4294. Defer-reason: tangential — #4294's Acceptance Criteria name the `$NAME`, `${ … }` and backtick prefixes only, and these shapes need a nesting read a single token does not give.\n\n#4294 made `echo $M\\ >x` resolve `x` through `escapedBlankPrefixOk` in `plugin/bin/lib/hooks/git-command.js`. These neighbours still resolve no target where bash 3.2, bash 5 and zsh all write (measured 2026-11-03). Each is pinned in `tests/hooks-gate-coverage.test.js` under an `AC1.1 #4294: … stays a known miss without a target` title, so a fix flips a pin on purpose.\n\n| Command | Shells write | Scanner |\n|---|---|---|\n| `echo $(d)\\ >x`, `echo $((1))\\ >x` | x | `[]` |\n| `echo $[1]\\ >x` | x | `[]` |\n| ``echo `d e`\\ >x``, a backtick holding a blank | x | `[]` |\n| `` echo `$M\\ >x` ``, a redirect inside the backtick | x | `[]` |\n| `echo \"$(a $M\\ >x)\"`, inside a quoted substitution | x | `[]` |\n| `WT=y; echo $M\\ >$WT/x`, ``WT=y; echo `d`\\ >$WT/x``, a `$VAR` target `substituteVars` skips (a second `$` or a backtick) | y/x | `[]` |\n| `echo ${M:-\\ }>x` | x | `[]` |\n| `` echo $M\\ `d`>x ``, a backtick after the last escaped blank | x | `[]` |\n| `echo $'\\''\\ >x`, `echo $'it\\'s'\\ >x`, an ANSI-C string the tokenizer misreads | x | `[]` |\n| `` echo `(d)`\\ >x ``, `echo ${M:-$(d)}\\ >x`, a `(` inside a closed part | x | `[]` |\n| `echo $M\"\\ \">x`, a quoted blank after a bare `$` part | x | `[]` |\n| `echo $M\\<CR>>x`, an escaped carriage return | x | `[]` |\n| `echo $${M\\ >x}` | `x}` in bash only | `[]` |\n\nThe reverse direction, on the safe side: an expansion an earlier token opened reads as a false deny, as the plain word does at base. `` echo ${M:-`d}`\\ >x} `` gives `x}`, `[[ a && $M\\ >x ]]` gives `x`, `echo $[ $M\\ >1 ]` gives `1`, `echo $(( $M\\ >>1 ))` gives `1`, and `for ((i=0; $M\\ >1; i++)); do break; done` gives `1;`; bash writes nothing for any of them. So does `echo $'\\'\\ >x'`, which gives `x'`: the tokenizer misreads `$'\\'` (the spaced `echo $'\\' >x'` gives `x'` at base too), so fix it in `tokenize`, not with more prefix rules. \n\nA chained glued redirect is a leak, not a safe-side read, whenever a later target is protected. `echo foo>ok>/main/leak` and `echo $M\\ >ok>/main/leak` both report `{cwd}/ok>/main/leak`, one joined name under the cwd, while the shells write `ok` and `/main/leak`. The first form is pre-existing at base, and the second reads the same way since #4294.\n\n- [ ] Resolve each operator of a chained glued redirect as its own target.\n- [ ] Cut a write-shape operand at a bare `>`: `tee a\\ >x`, `M=a; tee $M\\ >x` and `M=a; cp b $M\\ >x` report the operand `a >x` at base and head, where bash ends the word at `>`.\n\n- [ ] Resolve the glued redirect after an escaped blank that follows a closed `$( )`, `$(( ))`, `$[ ]` or a backtick holding a blank, and after a `${ … }` holding an escaped blank.\n- [ ] Resolve a `$VAR` target after such a word.\n- [ ] Each row above resolves the target the shells write, pinned with a bash 3.2 and 5 verdict, and #4294's known-miss pins are updated in the same change.\n",
         "createdAt": "2026-10-25T18:37:15Z",
         "labels": [
           {
@@ -7356,12 +7278,6 @@
             "name": "ready",
             "description": "Stage: spec-shaped and agent-sized — in the authorization gate's worklist",
             "color": "2EA44F"
-          },
-          {
-            "id": "LA_kwDORUwzVM8AAAACruzLxQ",
-            "name": "size:medium",
-            "description": "Scoring: moderate change, may span several files",
-            "color": "8B5CF6"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACry2nbg",
@@ -7374,6 +7290,12 @@
             "name": "auto:build",
             "description": "Grant: agents may build this record autonomously (human-granted; machinery only removes)",
             "color": "F9D0C4"
+          },
+          {
+            "id": "LA_kwDORUwzVM8AAAACsDgIWw",
+            "name": "size:high",
+            "description": "Scoring: large change — consider decomposition before building",
+            "color": "5319E7"
           },
           {
             "id": "LA_kwDORUwzVM8AAAACsXHcMQ",
@@ -7391,11 +7313,11 @@
         "number": 4328,
         "state": "OPEN",
         "title": "Read the remaining quoted, escaped and MSYS-spelled shapes in the Bash write scanner the way bash does",
-        "updatedAt": "2026-10-31T09:58:26Z",
+        "updatedAt": "2026-11-03T00:03:52Z",
         "facets": {
           "origin": null,
           "risk": "medium",
-          "size": "medium",
+          "size": "high",
           "ceremony": null,
           "solutionUnjustified": false,
           "breaking": false,
