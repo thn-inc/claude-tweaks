@@ -3,24 +3,19 @@ const { test } = require('node:test');
 const assert = require('node:assert');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
+const { missingFactsOf, assertEachPatternGoesRed } = require('./helpers/conformance-asserts');
 
 const ROOT = path.join(__dirname, '..');
 const read = (...p) => readText(path.join(ROOT, ...p));
 const flat = (s) => s.replace(/\s+/g, ' ');
 
-// Returns the names of facts whose pattern does not match `text`.
-function missingFactsOf(text, facts) {
-  return Object.entries(facts).filter(([, re]) => !re.test(text)).map(([name]) => name);
-}
-
-// Per fact: strip only that fact's first match and assert exactly [name] goes missing.
-function assertEachFactGoesRed(text, facts) {
-  for (const [name, re] of Object.entries(facts)) {
-    const doctored = text.replace(re, '');
-    assert.notEqual(doctored, text, `${name}: pattern matched nothing to strip`);
-    assert.deepStrictEqual(missingFactsOf(doctored, facts), [name], `${name}: stripping it must report exactly itself`);
-  }
-}
+// This file keys its fact lists by name; the shared helpers take [pattern, fact] pairs.
+const factPairs = (facts) => Object.entries(facts).map(([name, re]) => [re, name]);
+const factsMissingFrom = (text, facts) => missingFactsOf(factPairs(facts))(text);
+const assertEachFactGoesRed = (text, facts) => {
+  const pairs = factPairs(facts);
+  assertEachPatternGoesRed(text, pairs, missingFactsOf(pairs));
+};
 
 const HINT = '[#N|<spec>|<context>|resume] [--dry-run] [--skill-budget <n>] [--doc-budget <n>] [cleanup-only] [merge]';
 
@@ -54,8 +49,8 @@ const MERGE_MODE_FACTS = {
   'needs-record': /`merge` with no record reference stops/,
   'rejects-dry-run': /`merge` with `--dry-run` is rejected: report both tokens and run neither/,
   'rejects-resume': /`merge` with `resume` is rejected: report both tokens and run neither/,
-  'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --spec-slug "spec-\{n\}"/,
-  'archived-fallback': /resolve-run-dir --archived --spec-slug "spec-\{n\}"/,
+  'resolve-command': /node "\$\{CLAUDE_PLUGIN_ROOT\}\/bin\/hooks\.js" resolve-run-dir --archived --spec-slug "spec-\{n\}"/,
+  'live-first': /runs the live resolution first and adopts a closed run only when it resolves nothing/,
   'worktree-at-close': /falls back to `worktreeAtClose` when `worktree` is null/,
   'no-create': /with no `--create`/,
   'unresolved-stops': /When nothing resolves, merge mode stops and names the record/,
@@ -91,7 +86,7 @@ const MERGE_MODE_FACTS = {
   'already-step40-citations': /citing `_shared\/pr-first-merge-post-merge\.md` Step 4\.0's per-list actions for those records, plus `\/claude-tweaks:tidy`'s `parent-gate` backstop for a parent a failed record holds open and for any parent Step 4\.0b did not reach \(`step40Failed`\)/,
   'already-step40b-citation': /names no target\), citing the same `parent-gate` backstop/,
   'already-ran-recovery': /That run's marker is already written, so a re-run prints `already-done` and hides the failure: no line names a `\/claude-tweaks:wrap-up` re-run/,
-  'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line/,
+  'already-failed-skipped': /`verdict` `failed` on a `skipped` entry adds one `cleanup: post-merge closes failed — \{reason\}` line, and `\{detail\}` when present: an unknown origin host's skip carries its refusal text there, naming the `GH_HOST=…` opt-in/,
   'already-exit-nonzero': /Any CLI exit other than 0 leaves no line to route on, so its line reads `cleanup: post-merge closes failed — exit \{code\}: \{first stderr line\}`/,
   'already-unparseable': /an exit 0 whose stdout is empty or will not parse as JSON reads `cleanup: post-merge closes failed — unparseable output`/,
   'already-next-routes': /A failure line's next step follows its `next`/,
@@ -125,7 +120,7 @@ function mergeModeRegion() {
 }
 
 test('merge-mode.md carries every merge-mode fact before its Conflict heading', () => {
-  assert.deepStrictEqual(missingFactsOf(mergeModeRegion(), MERGE_MODE_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(mergeModeRegion(), MERGE_MODE_FACTS), []);
 });
 
 test('merge-mode.md facts each go red when stripped', () => {
@@ -158,7 +153,7 @@ test('the Already merged section hand-lists none of the words post-merge.js clas
     ...CLEAN_CLOSING_LINKS, ...RERUN_REASONS, ...RERUN_WHERE_GH_REASONS,
     // Words the classifier denies by default: the failure action words and the no-next-step skip reasons.
     'reopen-failed', 'close-failed', 'close-pending', 'base-unchecked',
-    'not-github-issues', 'no-remote', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable',
+    'not-github-issues', 'no-remote', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'unknown-host',
   ];
   const section = alreadyMergedSection();
   assert.deepEqual(owned.filter((w) => section.includes(`\`${w}\``)), []);
@@ -199,6 +194,11 @@ test('AC1.1 AC1.2: merge-mode.md names cleanup-only only in its Token rules reje
   assert.ok(text.includes('`merge` with `cleanup-only` is rejected'), 'the one match is the Token rules rejection');
 });
 
+test('AC1.1: merge-mode.md makes one resolve-run-dir call (#4814)', () => {
+  const text = read('plugin', 'skills', 'wrap-up', 'merge-mode.md');
+  assert.strictEqual((text.match(/resolve-run-dir/g) || []).length, 1);
+});
+
 // Step 4.0 of the shared post-merge doc names merge mode's in-session caller (#4692).
 const POST_MERGE_EXCEPTION = {
   'merge-mode-caller': /merge mode's Already merged section \(`wrap-up\/merge-mode\.md`\) runs this step in-session for an already-merged PR/,
@@ -207,7 +207,7 @@ const POST_MERGE_EXCEPTION = {
 
 test('pr-first-merge-post-merge.md Step 4.0 names merge mode as an in-session caller', () => {
   const text = flat(read('plugin', 'skills', '_shared', 'pr-first-merge-post-merge.md'));
-  assert.deepStrictEqual(missingFactsOf(text, POST_MERGE_EXCEPTION), []);
+  assert.deepStrictEqual(factsMissingFrom(text, POST_MERGE_EXCEPTION), []);
   assertEachFactGoesRed(text, POST_MERGE_EXCEPTION);
 });
 
@@ -271,7 +271,7 @@ test('wrap-up grammar surfaces carry the merge token', () => {
   assert.ok(parseLine, 'SKILL.md ## Input has a parse-line code span');
   assert.strictEqual(parseLine[1], HINT);
 
-  assert.deepStrictEqual(missingFactsOf(flat(skill), ROUTER_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(flat(skill), ROUTER_FACTS), []);
   assertEachFactGoesRed(flat(skill), ROUTER_FACTS);
 
   // `merge` is not a flag: the flag strip list must not name it.
@@ -332,7 +332,7 @@ function conflictPathRegion() {
 }
 
 test('merge-mode.md Conflict section carries the attended procedure', () => {
-  assert.deepStrictEqual(missingFactsOf(conflictRegion(), ATTENDED_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(conflictRegion(), ATTENDED_FACTS), []);
 });
 
 test('attended Conflict facts each go red when stripped', () => {
@@ -340,7 +340,7 @@ test('attended Conflict facts each go red when stripped', () => {
 });
 
 test('pr-first-merge.md Conflict path carries the pointer and keeps the headless bullet', () => {
-  assert.deepStrictEqual(missingFactsOf(conflictPathRegion(), POINTER_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(conflictPathRegion(), POINTER_FACTS), []);
 });
 
 test('pointer facts each go red when stripped', () => {
@@ -354,7 +354,7 @@ test('the pointer bullet carries none of the attended procedure', () => {
     read('plugin', 'skills', '_shared', 'pr-first-merge.md'),
   );
   assert.ok(m, 'pointer bullet present');
-  const leaked = missingFactsOf(flat(m[0]), ATTENDED_FACTS);
+  const leaked = factsMissingFrom(flat(m[0]), ATTENDED_FACTS);
   assert.deepStrictEqual(leaked.sort(), Object.keys(ATTENDED_FACTS).sort(), 'pointer restates attended-procedure text');
 });
 
@@ -414,7 +414,7 @@ function summaryNextActionsRegion() {
 }
 
 test('summary-template.md Resume-to-merge paragraph carries the consoleAutoResolve merge row', () => {
-  assert.deepStrictEqual(missingFactsOf(summaryParagraphRegion(), SUMMARY_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(summaryParagraphRegion(), SUMMARY_FACTS), []);
 });
 
 test('summary-template.md consoleAutoResolve facts each go red when stripped', () => {
@@ -469,7 +469,7 @@ const CLEANUP_ONLY_FACTS = {
 
 test('AC6.1: flags.md states cleanup-only\'s run-dir lookup', () => {
   const flags = flat(read('plugin', 'skills', 'wrap-up', 'flags.md'));
-  assert.deepStrictEqual(missingFactsOf(flags, CLEANUP_ONLY_FACTS), []);
+  assert.deepStrictEqual(factsMissingFrom(flags, CLEANUP_ONLY_FACTS), []);
 });
 
 test('AC6.1: cleanup-only facts each go red when stripped', () => {

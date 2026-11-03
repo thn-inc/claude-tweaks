@@ -490,7 +490,11 @@ test('#4549: a base-unchecked envelope carries no closing set — Step 4.0b neve
       assert.equal(hasPostMergeMarker(decisionsOf(dir)), false, 'an attempt line is never a marker');
     }
     const last = await run(root, { prs: { 11: merged() }, links, close });
-    assert.deepEqual(last, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: envelope.action, parentsClosed: 0, step40Failed: true }], deferred: [] });
+    // The loop entry carries the records because its word is non-clean (#4897): BASE_UNCHECKED names 101 and 102 as
+    // unchecked; the reopen-failed variant adds 103 to failed.
+    const records = { failed: envelope.failed.map((f) => f.issue), closeFailed: [], pendingClose: [], unchecked: [101, 102] };
+    assert.deepEqual(last, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: envelope.action, parentsClosed: 0, step40Failed: true, records }], deferred: [] });
+    assert.deepEqual(records.failed, envelope.action === 'base-unchecked' ? [] : [103], 'the literal per variant');
     const marker = entriesOf(dir).at(-1);
     assert.equal(marker.status, 'SKIP');
     assert.equal(marker.location, MARKER_STEP);
@@ -686,7 +690,9 @@ test('a GitHub Enterprise origin hands Step 4.0b its host; a github.com origin h
     const root = mainCheckout({ origin });
     addRun(root, '2026-10-30T090000-spec-1');
     const close = fakeCloseParents();
-    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close });
+    // #4933: ghe.example.com is a known GitHub host only through the GH_HOST opt-in.
+    const gateDeps = { env: host === 'github.com' ? {} : { GH_HOST: host }, readFile: () => { throw new Error('none'); } };
+    await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close, extra: { gateDeps } });
     assert.equal(close.calls.length, 1, origin);
     assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], [host, 'acme', 'w'], origin);
   }
@@ -709,7 +715,7 @@ test('an unreadable policy.yml skips Step 4.0b fail-closed: no close attempted, 
   const r = await run(root, { prs: { 11: merged() }, links, close });
   assert.equal(links.calls.length, 1, 'Step 4.0 still runs');
   assert.equal(close.calls.length, 0, 'no below-floor close is attempted');
-  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]);
+  assert.deepEqual(r.entries, [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'nothing-closed', parentsClosed: 0 }]); // AC4.2
   const lines = entriesOf(dir);
   assert.deepEqual(lines.map((e) => e.location), [MARKER_STEP], 'the marker only, no parent line');
   assert.match(lines[0].action, /; 0 parent\(s\) closed; skipped step \(unreadable-policy: \.claude-tweaks\/policy\.yml: EISDIR\)\./);
@@ -797,6 +803,63 @@ test('no origin remote: failure no-remote, deferred still an empty array', async
   addRun(root, '2026-10-30T090000-spec-1');
   const r = await run(root, { prs: { 11: merged() }, links: fakeClosingLinks(ENVELOPE), close: fakeCloseParents() });
   assert.deepEqual(r, { entries: [], deferred: [], failure: 'no-remote' });
+});
+
+// #4933: gateDeps isolates the case from the machine's GH_HOST and gh hosts.yml.
+const NO_GH_HOSTS = { env: {}, readFile: () => { throw new Error('none'); } };
+const unexpectedGh = () => { throw new Error('unexpected gh call'); };
+
+test('AC8.2 post-merge setupContext (#4933): unknown origin host → failure unknown-host, no gh call, detail names the GH_HOST opt-in', async () => {
+  const root = mainCheckout({ origin: 'https://git.corp.invalid/o/r.git' });
+  const dir = addRun(root, '2026-10-30T090000-spec-1');
+  const links = fakeClosingLinks(ENVELOPE);
+  const close = fakeCloseParents();
+  const deps = { gh: unexpectedGh, closingLinksRun: links, closeParents: close, gateDeps: NO_GH_HOSTS };
+
+  let r;
+  await assert.doesNotReject(async () => {
+    r = await postMerge({ cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  });
+  assert.deepEqual(r.entries, []);
+  assert.deepEqual(r.deferred, []);
+  assert.equal(r.failure, 'unknown-host');
+  assert.match(r.detail, /GH_HOST=git\.corp\.invalid/);
+  assert.match(r.detail, /origin host git\.corp\.invalid is not a known GitHub host/);
+  assert.equal(links.calls.length, 0);
+  assert.equal(close.calls.length, 0);
+  assert.equal(decisionsOf(dir), '', 'no marker is written');
+
+  let one;
+  await assert.doesNotReject(async () => {
+    one = await postMergeOne({ runDir: dir, cwd: root, prStates: fakePrStates({ 11: merged() }), now, deps });
+  });
+  assert.equal(one.action, 'skipped');
+  assert.equal(one.reason, 'unknown-host');
+  assert.equal(one.pr, null);
+  assert.equal(one.verdict, 'failed');
+  assert.equal(one.next, 'none');
+  assert.match(one.detail, /GH_HOST=git\.corp\.invalid/);
+  assert.equal(links.calls.length, 0);
+});
+
+test('AC8.3 post-merge (#4933): a failure with no detail (no-remote, not-github-issues) adds no detail key; an exported GH_HOST opts the host in', async () => {
+  const noRemote = mainCheckout({ origin: false });
+  const r = await postMerge({ cwd: noRemote, prStates: fakePrStates({}), now, deps: { gh: unexpectedGh, gateDeps: NO_GH_HOSTS } });
+  assert.ok(!('detail' in r), JSON.stringify(r));
+  const one = await postMergeOne({ runDir: 'x', cwd: noRemote, prStates: fakePrStates({}), now, deps: { gh: unexpectedGh, gateDeps: NO_GH_HOSTS } });
+  assert.ok(!('detail' in one), JSON.stringify(one));
+
+  const root = mainCheckout({ origin: 'https://git.corp.invalid/o/r.git' });
+  addRun(root, '2026-10-30T090000-spec-1');
+  const close = fakeCloseParents();
+  const optedIn = await postMerge({
+    cwd: root,
+    prStates: fakePrStates({ 11: merged() }),
+    now,
+    deps: { gh: fakeGh, closingLinksRun: fakeClosingLinks(ENVELOPE), closeParents: close, gateDeps: { ...NO_GH_HOSTS, env: { GH_HOST: 'git.corp.invalid' } } },
+  });
+  assert.equal(optedIn.failure, undefined);
+  assert.deepEqual([close.calls[0].host, close.calls[0].owner, close.calls[0].repo], ['git.corp.invalid', 'o', 'r']);
 });
 
 test('hasPostMergeMarker: the merging session location and this check match; other steps and prose do not', () => {
@@ -1033,14 +1096,17 @@ test('#4549 end to end: an armed merge into a non-default base — the late Step
   assert.equal(locations.at(-1), MARKER_STEP, 'the marker is written last');
 });
 
-test('#4549 end to end: a Fixes record Step 4.0 could not close (closeFailed[]) keeps its parent open even when its close landed', async () => {
+test('AC4.1 #4549 end to end: a Fixes record Step 4.0 could not close (closeFailed[]) keeps its parent open even when its close landed', async () => {
   const { root, dir } = e2eCheckout();
   const world = e2eWorld(
     { 101: { state: 'OPEN', stateReason: '' }, 102: { state: 'OPEN', stateReason: '' } },
     { base: 'develop', fixes: [101, 102], closeErrors: [102] },
   );
   const r = await e2ePass(root, world);
-  assert.deepEqual(r, { entries: [{ runDir: dir, pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0 }], deferred: [] });
+  assert.deepEqual(r, { entries: [{
+    runDir: dir, pr: 11, action: 'ran', closingLinks: 'close-failed', parentsClosed: 0,
+    records: { failed: [], closeFailed: [102], pendingClose: [], unchecked: [] },
+  }], deferred: [] });
   assert.deepEqual(parentWritesOf(world.calls), [], 'no comment and no close on the parent');
   const marker = entriesOf(dir).find((e) => e.location === MARKER_STEP);
   assert.match(marker.action, /0 parent\(s\) closed; skipped #100 \(sibling-unsettled\)\./);
@@ -1165,7 +1231,7 @@ test('postMergeOne fails closed on an unreadable mergedAt: merged-at-unreadable,
   }
 });
 
-test('postMergeOne surfaces Step 4.0\'s record lists; postMerge entries never carry them', async () => {
+test('postMergeOne surfaces Step 4.0\'s record lists; a postMerge entry carries them only for a non-clean word (#4897)', async () => {
   const envelope = {
     action: 'reopen-failed', closingSet: [101], failed: [{ issue: 105, error: 'x' }], closeFailed: [], pendingClose: [106], reopened: [],
   };
@@ -1177,7 +1243,12 @@ test('postMergeOne surfaces Step 4.0\'s record lists; postMerge entries never ca
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks(envelope), close: fakeCloseParents() });
   assert.equal(loop.entries.length, 1);
-  assert.ok(!('records' in loop.entries[0]));
+  assert.deepEqual(loop.entries[0].records, entry.records, 'a non-clean word: the loop entry names the same records');
+  const clean = mainCheckout();
+  addRun(clean, '2026-10-30T090000-spec-1');
+  const cleanLoop = await run(clean, { prs: { 11: merged() }, links: fakeClosingLinks({ ...envelope, action: 'nothing-closed' }), close: fakeCloseParents() });
+  assert.equal(cleanLoop.entries.length, 1);
+  assert.ok(!('records' in cleanLoop.entries[0]), 'a clean word: the loop entry stays short');
 });
 
 test('postMergeOne maps a non-empty closeFailed (non-default base) and unchecked (base unread, past the retry bound) into records', async () => {
@@ -1345,7 +1416,7 @@ test('classifyEntry: every next — rerun, rerun-where-gh, rerun-after-stale-cla
   }
   assert.deepEqual(classifyEntry(skip('gh-absent')), { verdict: 'failed', next: 'rerun-where-gh' });
   assert.deepEqual(classifyEntry(skip('in-flight'), { archived: true }), { verdict: 'in-flight', next: 'rerun-after-stale-claim' });
-  for (const reason of ['not-github-issues', 'no-remote', 'no-pr', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'not-merged', 'some-future-reason']) {
+  for (const reason of ['not-github-issues', 'no-remote', 'unknown-host', 'no-pr', 'no-pr-states', 'no-pr-state', 'pr-not-found', 'invalid-arguments', 'merged-at-unreadable', 'not-merged', 'some-future-reason']) {
     assert.deepEqual(classifyEntry(skip(reason)), { verdict: 'failed', next: 'none' }, reason);
   }
 });
@@ -1425,7 +1496,7 @@ test('M6: a multi-spec config.yml spec value gives the bare merge retry hint, ne
   }
 });
 
-test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; postMerge entries never do', async () => {
+test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; a postMerge entry carries it only for a non-clean word (#4897)', async () => {
   const root = mainCheckout();
   const dir = addRun(root, '2026-10-30T090000-spec-1');
   const entry = await postMergeOne(oneArgs(root, dir, {
@@ -1446,5 +1517,12 @@ test('M8: postMergeOne carries Step 4.0\'s logFailed on a ran entry; postMerge e
   const other = mainCheckout();
   addRun(other, '2026-10-30T090000-spec-1');
   const loop = await run(other, { prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, logFailed: true }), close: fakeCloseParents() });
-  assert.ok(!('logFailed' in loop.entries[0]));
+  assert.ok(!('logFailed' in loop.entries[0]), 'a clean word: the loop entry stays short');
+
+  const failing = mainCheckout();
+  addRun(failing, '2026-10-30T090000-spec-1');
+  const failingLoop = await run(failing, {
+    prs: { 11: merged() }, links: fakeClosingLinks({ ...ENVELOPE, action: 'reopen-failed', logFailed: true }), close: fakeCloseParents(),
+  });
+  assert.equal(failingLoop.entries[0].logFailed, true, 'a non-clean word: the loop entry carries logFailed');
 });

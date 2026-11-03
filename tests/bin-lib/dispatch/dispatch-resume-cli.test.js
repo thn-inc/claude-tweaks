@@ -81,7 +81,7 @@ function makeEnv(over = {}) {
     host: 'h1',
     alive: () => true,
     startTime: () => 'T0',
-    gitAvailable: true,
+    ghAvailable: true,
     ...over,
   };
   // default world: run archived, stalled worktree present
@@ -99,7 +99,7 @@ function makeEnv(over = {}) {
     stdout: (s) => calls.out.push(s),
     stderr: (s) => calls.err.push(s),
     mainRoot: () => MAIN,
-    ghAvailable: () => cfg.gitAvailable,
+    ghAvailable: () => cfg.ghAvailable,
     sessionId: cfg.sessionId,
     now: () => NOW,
     gh: (args) => {
@@ -611,7 +611,7 @@ test('--help prints usage, exit 0, before any dep is touched', () => {
 });
 
 test('gh absent -> exit 2', () => {
-  const env = makeEnv({ gitAvailable: false });
+  const env = makeEnv({ ghAvailable: false });
   assert.equal(exec(env).code, 2);
   assert.deepStrictEqual(env.calls.gh, []);
 });
@@ -1763,6 +1763,64 @@ test('the real exists dep: a directory and a file are present, a missing path an
     assert.equal(realDeps.exists(file), true);
     assert.equal(realDeps.exists(path.join(dir, 'absent')), false);
     assert.equal(realDeps.exists(path.join(file, 'below-a-file')), false);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// #4809: the shared listing reads any readdir failure as "no runs", so these drive the real dep, not a stub.
+function unlistableRoot() {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dispatch-resume-'));
+  fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+  fs.writeFileSync(path.join(dir, '.claude-tweaks', 'pipelines'), 'not a directory');
+  return dir;
+}
+
+test('the real listRunDirsWithState dep: a missing pipelines dir lists nothing, an unlistable one throws', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ct-dispatch-resume-'));
+  try {
+    assert.deepStrictEqual(realDeps.listRunDirsWithState(dir), []);
+    fs.mkdirSync(path.join(dir, '.claude-tweaks'));
+    fs.writeFileSync(path.join(dir, '.claude-tweaks', 'pipelines'), 'not a directory');
+    assert.throws(() => realDeps.listRunDirsWithState(dir), { code: 'ENOTDIR' });
+    // no cwd: starts from process.cwd() like iterRunDirsWithState, never a TypeError from path.join(undefined)
+    assert.ok(Array.isArray(realDeps.listRunDirsWithState()));
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('verdict mode: the real run-dir listing on an unlistable pipelines dir -> exit 4, never a clean scan', () => {
+  const dir = unlistableRoot();
+  try {
+    const env = makeEnv();
+    const roots = [];
+    env.deps.listRunDirsWithState = (cwd, opts) => { roots.push(cwd); return realDeps.listRunDirsWithState(dir, opts); };
+    const r = exec(env);
+    assert.equal(r.code, 4);
+    assert.match(r.err, /run dir listing/);
+    assert.deepStrictEqual(roots, [MAIN], 'the call site anchors the listing at the main checkout');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('--bound-run: the real sibling-session check on an unlistable pipelines dir -> exit 4, never this session\'s own lock read as a live-sibling', () => {
+  const dir = unlistableRoot();
+  try {
+    const env = makeEnv();
+    const lock = `locked claude (pid ${process.pid})`;
+    const porcelain = [
+      `worktree ${MAIN}`, `HEAD ${OID}`, 'branch refs/heads/main', '',
+      `worktree ${WT}`, `HEAD ${OID}`, `branch refs/heads/${HEAD}`, lock, '',
+    ].join('\n');
+    env.cfg.sibling = (ref, opts) => findConflictingSession(ref, { ...opts, run: () => porcelain });
+    const roots = [];
+    env.deps.listRunDirsWithState = (cwd, opts) => { roots.push(cwd); return realDeps.listRunDirsWithState(dir, opts); };
+    const r = exec(env, BOUND);
+    assert.equal(r.code, 4);
+    assert.match(r.err, /sibling-session check/);
+    assert.ok(roots.length > 0 && roots.every((root) => root === MAIN), 'the sibling check anchors the listing at the main checkout');
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }

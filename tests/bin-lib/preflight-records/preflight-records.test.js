@@ -315,6 +315,7 @@ test('#2538: body-text mode on a GitHub Enterprise remote threads --repo onto ev
     throw new Error('unexpected ' + args.join(' '));
   };
   const { deps, err } = cliDeps({ runner, workLinks: 'body-text', remoteUrl: 'https://ghe.example.com/acme/widgets.git' });
+  deps.gateDeps = { env: { GH_HOST: 'ghe.example.com' } }; // #4933: an unknown origin host is opted in by GH_HOST
   const code = run(['720'], deps);
   assert.equal(code, 0);
   assert.deepEqual(calls[0], ['issue', 'view', '720', '--json', 'number,title,body,labels', '--repo', 'ghe.example.com/acme/widgets']);

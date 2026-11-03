@@ -33,7 +33,7 @@ If a pipeline run directory exists for this work — `$RUN_DIR` is the path carr
 1. **Multi-spec defer check:** if `MULTISPEC_REVIEW_DEFER=1` is set, **skip this section entirely**. The parent `/flow` orchestration owns archival of the multi-spec parent dir after its consolidated Review Console completes. The per-spec subdirectory stays in place under the parent.
 2. Verify the Review Console ran and applied/dismissed all staged items. Since #1130 this precondition is also code-enforced at both archival call sites — the reconcile sweep skips a run whose console was never rendered or is unresolved (decideArchive), and the archive-run verb below refuses a rendered-but-unresolved console, and an auto-merge short-circuit run (`auto:merge`-label or Manifesto-authorized) whose `staged/` still holds pending items (#3668).
 3. **Mark the run terminal, if not already closed by Section C's step 3.6** — before archiving, run `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" close-run --run "$RUN_DIR"` so close-run lifts E1 enforcement (clears the worktree assignment and marks the run clean). Idempotent: re-running it on an already-clean run (the worktree-strategy case, where Section C's step 3.6 closed it first) is a harmless no-op. E2/E3 logging for that run stops at close-run too — a terminal (clean) run is no longer resolved by the hook dispatcher, so no further events get appended. Archival (step 4) is bookkeeping that moves the directory for the audit trail — it is not the logging cutoff.
-4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check. An `archival refused — console-never-rendered-staged-pending` result is carried into the closing report as needs-human-action (pending `staged/` items the auto-merge short-circuit never surfaced), not retried or worked around. An `archival refused — console-residue` result gets the same treatment (a resolved console still holds unacknowledged `pending`/`keep-staged` items — including a Queue-write item a failed execution rewrote `keep-staged` — or a planned can't-tell filing with no filed line (`filing-pending`), or a PR console item whose outcome is `filing-failed`/`reverse-failed`): carry its printed remedy — `console-residue.js --ack --run …` (a `filing-pending` item's `console-filings.js --only` re-run included), or repairing the `console.json` it names as unreadable — into the closing report.
+4. **Archive the run directory** — `node "${CLAUDE_PLUGIN_ROOT}/bin/hooks.js" archive-run --run "$RUN_DIR"`. This archives the tracked `work/` directory and moves every other entry (`config.yml`, `decisions.md`, `events.jsonl`, `staged/`, and anything else the run directory holds — the verb enumerates rather than assuming a fixed list) in one call. The verb refuses a non-terminal run (`active`/`interrupted`) — step 3's `close-run` call above is what makes this refusal unreachable in practice here, not a redundant check. An `archival refused — console-never-rendered-staged-pending` result is carried into the closing report as needs-human-action (pending `staged/` items the auto-merge short-circuit never surfaced), not retried or worked around. An `archival refused — console-residue` result gets the same treatment (a resolved console still holds unacknowledged `pending`/`keep-staged` items — including a Queue-write item a failed execution rewrote `keep-staged` — or a planned can't-tell filing with no filed line (`filing-pending`), or a PR console item whose outcome is `filing-failed`/`reverse-failed`): carry its printed remedy — `console-residue.js --ack --run …` (a `filing-pending` item's `console-filings.js --only` re-run included), or repairing the `console.json` it names as unreadable — into the closing report. An unexpected exception instead prints no report, exits 1 and writes `claude-tweaks: archive-run: {message}` on stderr (#4932): the run is not archived — carry that stderr line into the closing report as needs-human-action, the same way.
 5. Skipped staged items remain in the archive; they are NOT silently dropped.
 
 Do NOT delete the run directory outright — the auto-decision log is project history (for the user's calibration of project policy), not pipeline state.
@@ -76,12 +76,12 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    the header reaches the main checkout by merge — and is empty on a `manifest`/`worktree-manifest`
    rung, whose ids include `not-run`/`failed` specs with no closing keyword to stamp. Every other
    closing-keyword reader cites this field rather than restating the rule. Only when the pack
-   could not be produced (Section E's production step failed) or lacks that field, list the
+   could not be produced (Section E's production step failed, or this section was skipped) or lacks that field, list the
    worktree mirror's spec headers instead —
    `{worktree}/.claude-tweaks/pipelines/{run-id}/work/*-spec.md`, where `{worktree}` is
    `run-state.json`'s `worktree` (else `worktreeAtClose`) and `{run-id}` is the run dir's path
    after its `.claude-tweaks/pipelines/` segment (for a per-spec dir, `{run-id}/spec-{N}`) — and
-   read each `{n}-spec.md` match's numeric header `record:` field, skipping a file whose
+   read each `{n}-spec.md` match's numeric frontmatter `record:` field, skipping a file whose
    `record:` is missing or not a number (`pack.js`'s header reader accepts the same names and values):
 
    ```bash
@@ -91,7 +91,7 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    if [ -f "$PACK" ] && CLOSING=$(node -e 'const p=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));const c=p.inputs&&p.inputs.closingRecords;if(!Array.isArray(c))process.exit(1);console.log(c.join("\n"))' -- "$PACK" 2>/dev/null); then
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$CLOSING"
    else
-     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const m=fs.readFileSync(path.join(dir,f),"utf8").match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
+     RECORDS=$(node -e 'const fs=require("fs"),path=require("path"),dir=path.join(process.argv[1],"work");let names=[];try{names=fs.readdirSync(dir).filter(f=>/^\d+-spec\.md$/.test(f)).sort()}catch(e){if(e.code!=="ENOENT")throw e}for(const f of names){const h=/^---\r?\n([\s\S]*?)\r?\n---/.exec(fs.readFileSync(path.join(dir,f),"utf8")),m=h&&h[1].match(/^record:\s*(\d+)\s*$/m);if(m)console.log(m[1])}' -- "$MIRROR") || exit 1
      while IFS= read -r n; do [ -n "$n" ] && ISSUES+=("$n"); done <<<"$RECORDS"
    fi
    if [ "${#ISSUES[@]}" -gt 0 ]; then
@@ -107,6 +107,8 @@ Shared teardown and `flow/worktree-merge.md` cite this invariant rather than res
    was never an issue to close. Skip the commit if one for these issues already exists on the
    branch (`git log {branch} --grep="Fixes #{issue}"` — avoids duplicate empty commits if this
    step re-runs after an interruption).
+
+   **A failed mirror read is not that no-op.** The fence's `|| exit 1` means the `work/` directory or a spec file could not be read, so the record set is unknown. Stop here with no carrier commit: skip steps 3, 3.5, 3.6, 4, and 5 below and Section E, the same posture as "Kept as-is" below, because a merge with no closing keyword leaves the record open. Report one `cleanup: closing-keyword carrier failed — {stderr's Error: line}` line in the closing report.
 
    **Why a dedicated commit, not the merge artifact** — see
    `cleanup-procedures-execution-appendix.md`'s "Step 2" section; read only if the rationale
@@ -329,6 +331,8 @@ If no `ephemeral-server.txt` exists, skip this section silently (the run used an
 ---
 
 ## E. Issue claim release (v5.3.0)
+
+**Skip this whole section when the invocation names `claim-permission-denied: skip the claim release` (#4899)** — `/claude-tweaks:dispatch`'s teardown after a `claim-targets.js` exit 7: the CLI already attempted any release, and `release-claim.js` would post a false release comment on a record this run never claimed. Log the skip: `node "${CLAUDE_PLUGIN_ROOT}/bin/log-decision.js" --run "$PIPELINE_RUN_DIR" --status SKIP --section "/wrap-up" --step "Section E" --text "condition: claim-permission-denied named by the cleanup-only call → fallback: claim release skipped" --reversibility n/a` (`flags.md`'s `cleanup-only` entry declares the phrase).
 
 This spec's record is identified whenever this section runs (`SKILL.md` Phase 1 — an argument, a
 branch/commit reference, or, when `skills/flow/materialize.md` wrote one, a materialized header's
