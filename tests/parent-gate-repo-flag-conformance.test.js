@@ -4,19 +4,25 @@
 // `--repo "{parent-repo}"` (the verdict's `repo`), and an empty value stops before any write. The
 // prose is the contract (an agent runs these fences), so the live file is read; each assertion is
 // a function the test also runs on a mutated copy of the live text to prove it can go red.
+//
+// Why a literal `{parent-repo}` placeholder behind a pinned stop rule, not a shell-variable guard
+// (`--repo "${PARENT_REPO:?…}"`): every Bash call starts a fresh shell, so a prefix assignment expands
+// too late and a separate assignment makes the call compound, which the worktree guard refuses. The
+// rationale and the gh probes are in docs/superpowers/plans/2026-11-01-parent-gate-repo-flag.md.
 'use strict';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('path');
 const { readText } = require('./helpers/read-skill');
 const { escapeRegExp } = require('../plugin/bin/lib/shared-primitives');
+const { fencedLineMask } = require('../plugin/bin/lib/markdown-blocks');
 
 const GATE = path.join(__dirname, '..', 'plugin', 'skills', 'wrap-up', 'verification-brief-parent-gate.md');
 const live = readText(GATE);
 
 const REPO_FLAG = '--repo "{parent-repo}"';
 const STOP_RULE =
-  "When `repo` is `null` or empty, run none of the `gh` lines below and report the entry as a failing `gh` call: a `--repo \"\"` sends the write to `gh`'s default repository.";
+  "When `repo` is `null`, empty or absent, run none of the `gh` lines below and report the entry as a failing `gh` call: a `--repo \"\"` sends the write to `gh`'s default repository.";
 const RUN_CLI = '## Run the gate CLI';
 const MSG_PRESENT = 'the stop rule appears exactly once in the parent gate';
 const MSG_PLACED = 'the stop rule sits in the Run the gate CLI section';
@@ -36,13 +42,9 @@ const SCOPE_RE = wrapTolerant(SCOPE);
 
 // Every fenced `gh issue <verb>` line of `text`, with its 0-based line number.
 function fencedGhIssueLines(text) {
-  const out = [];
-  let fenced = false;
-  text.split('\n').forEach((line, i) => {
-    if (/^\s*```/.test(line)) { fenced = !fenced; return; }
-    if (fenced && /\bgh issue [a-z]+\b/.test(line)) out.push({ i, line });
-  });
-  return out;
+  const lines = text.split('\n');
+  const mask = fencedLineMask(lines);
+  return lines.flatMap((line, i) => (mask[i] && /\bgh issue [a-z]+\b/.test(line) ? [{ i, line }] : []));
 }
 
 // The fenced `gh issue` lines that do not pass the flag straight after $PARENT_NUM.
@@ -77,7 +79,9 @@ function assertStopRuleBeforeGhLines(text) {
 
 const AC_GREP = /gh issue (comment|close)/;
 
-// The lines `grep -nE "gh issue (comment|close)"` lists must all carry --repo.
+// The lines `grep -nE "gh issue (comment|close)"` lists must all carry --repo. The gate has five today
+// (spec AC1): the transport-mapping sentence, which the AC's literal grep also matches, and four write
+// fences, so the floor below fails a scan that stops seeing them.
 function assertGrepHitsCarryRepo(text) {
   const hits = text.split('\n').filter((l) => AC_GREP.test(l));
   assert.ok(hits.length >= 5, 'the AC grep still matches at least 5 lines');
@@ -166,11 +170,9 @@ test('the scanner ignores prose and toggles on fences', () => {
 
 test('wrapped-span guard: no prose line ends mid gh issue pair', () => {
   const wrapped = (text) => {
-    let fenced = false;
-    return text.split('\n').filter((l) => {
-      if (/^\s*```/.test(l)) { fenced = !fenced; return false; }
-      return !fenced && /\bgh( issue)?\s*$/.test(l);
-    });
+    const lines = text.split('\n');
+    const mask = fencedLineMask(lines);
+    return lines.filter((l, i) => !mask[i] && /\bgh( issue)?\s*$/.test(l));
   };
   assert.deepEqual(wrapped(live), []);
   assert.deepEqual(wrapped('see gh\nissue close\nsee gh issue\ncomment\n```\ngh\n```'), ['see gh', 'see gh issue']);

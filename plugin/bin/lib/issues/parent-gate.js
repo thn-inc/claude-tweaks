@@ -286,7 +286,11 @@ function numberSet(values) {
 
 // Pure: gathered facts plus the caller's closing set, held set and floor -> the
 // verdict, keys in VERDICT_FIELDS order. `idempotence` and `skipped` are always
-// null and []; a Close-running caller fills them from evaluateIdempotence.
+// null and []; a Close-running caller fills them from evaluateIdempotence. `slug` (#4824) is
+// only echoed into the verdict as `repo`: the `owner/repo` the caller resolved from origin, for
+// the gate prose's `--repo "{parent-repo}"`. A caller that resolved none (local-files, a facts
+// file with no qualified token) or whose verdict never reaches that prose (the reconciler,
+// which passes `--repo` on its own writes) leaves it null.
 function evaluateParentGate({
   parent, parentLabels, subIssues, closingSet = [], selfInclude = true, held = [], mergingPr = null, riskFloor, slug = null,
 } = {}) {
