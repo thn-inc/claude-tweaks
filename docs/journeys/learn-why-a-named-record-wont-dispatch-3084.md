@@ -13,6 +13,7 @@ files:
   - plugin/bin/dispatch-resume.js
   - plugin/bin/dispatch-unlanded-blockers.js
   - plugin/bin/lib/dispatch/shipped-releases.js
+  - plugin/bin/lib/issues/materialize-format.js
 ---
 
 # Learn Why a Named Record Won't Dispatch
@@ -33,7 +34,7 @@ files:
 
 ### 2. Read the reason by name
 - **URL:** `plugin/skills/dispatch/SKILL.md` `#N` bullet; `plugin/skills/dispatch/not-spec-shaped-exclusion-report.md`; `plugin/skills/dispatch/blocked-exclusion-report.md`; `plugin/skills/dispatch/open-pr-exclusion-report.md`
-- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section or an unresolved placeholder); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`. Before printing that open-PR line, dispatch runs `bin/dispatch-resume.js --issue N`; when it exits 0 (the PR is `#N`'s own stalled draft build), the line gains `; it is #N's own stalled build — run /claude-tweaks:dispatch resume #N` (#4588). Any other exit leaves the line exactly as quoted.
+- **Action:** Dispatch reads this run's `dispatch-exclusions.json` entry for `#N` and reports its reason, then stops. A not-spec-shaped record reads `#N excluded — not spec-shaped (missing: Release Note). Run /claude-tweaks:tidy.` (or `Run /claude-tweaks:specify #N` for any other missing section, an unresolved placeholder, or an `unclosed-fence at line L` entry — an unclosed code fence that hides required sections, or sits in a body that already fails, is named instead of the sections it hides, #4350); a blocked record reads `1 excluded — blocked by an open dependency: #N (blocked by #x)`; an open-PR record reads `#N already has an open PR (#pr) — not re-dispatch-eligible until that PR merges or closes`. Before printing that open-PR line, dispatch runs `bin/dispatch-resume.js --issue N`; when it exits 0 (the PR is `#N`'s own stalled draft build), the line gains `; it is #N's own stalled build — run /claude-tweaks:dispatch resume #N` (#4588). Any other exit leaves the line exactly as quoted.
 - **Should feel:** Actionable — the next command is on the same line as the reason, so there is nothing to look up.
 - **Should understand:** The reason shown is the one the queue pull recorded, never inferred; a not-spec-shaped record is never described as having an open PR (#3084's fix — before it, only `open-pr` entries were read).
 - **Red flags:** "already has an open PR" for a record with no PR; a `missing:` list that disagrees with the record body; no remedy command; the `dispatch resume` suffix on a PR another record, a live sibling session or a human owns.
@@ -84,3 +85,4 @@ files:
 - Updated during wrap-up of #4588: Step 2 names the open-PR line's `dispatch resume` suffix, appended only when `dispatch-resume.js` exits 0. `dispatch-resume.js` added to `files:`
 - Updated during build of #4792: names `unlanded-blocker` (a closed out-of-run blocker whose closing commit never reached the integration branch) and `malformed-blocker` (a blocker declaration that cannot be checked), the sixth and seventh removing exclusions, in Step 1 and the Success state; `dispatch-unlanded-blockers.js` added to `files:`
 - Updated during build of #4432: Step 2e covers a record whose only merged mention predates its latest claim release, which is kept with a `kept:` log line instead of read as `shipped`. `shipped-releases.js` added to `files:`
+- Updated during build of #4350: Step 2's not-spec-shaped line names an `unclosed-fence at line L` entry and routes it to `/claude-tweaks:specify #N`. `materialize-format.js` added to `files:`
