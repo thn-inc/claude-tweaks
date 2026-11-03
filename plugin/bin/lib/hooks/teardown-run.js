@@ -287,6 +287,9 @@ function teardownRun(runDir, opts = {}) {
     const repoSpec = repoSpecOf(root);
     if (!repoSpec) {
       lines.push('remote ref: skipped — could not resolve owner/repo');
+    } else if (repoSpec.refusal) {
+      // #4933: an origin on a host that is not a known GitHub host never reaches gh.
+      lines.push(`remote ref: skipped — ${repoSpec.refusal}`);
     } else {
       const result = ghApiDelete(
         [`repos/${repoSpec.owner}/${repoSpec.repo}/git/refs/heads/${branch}`],
