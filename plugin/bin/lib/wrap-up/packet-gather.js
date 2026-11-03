@@ -584,6 +584,7 @@ function readPacket(comments) {
 }
 
 module.exports = {
+  NEGATIVE_ID_PREFIX,
   parseAcceptanceCriteria,
   lowConfidenceFindings,
   qaSelectionFromDecisions,

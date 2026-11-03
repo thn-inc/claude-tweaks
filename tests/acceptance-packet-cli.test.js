@@ -990,6 +990,37 @@ test('AC2a: a passing story with no screenshot_dir gives no partial GIF', (t) =>
   assert.deepEqual(stub.calls, []);
 });
 
+test('AC2a: a gap in the second story gives no partial GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws, {
+    stories: [
+      { id: 'sign-in', name: 'Sign in', status: 'PASS', steps_total: 2, frames: ['00_open.png', '01_submit.png'] },
+      { id: 'second', name: 'Second', status: 'PASS', steps_total: 3, frames: ['00_open.png', '02_done.png'] },
+    ],
+    storyFile: 'stories:\n  - id: sign-in\n  - id: second\n',
+  });
+  const stub = encoderStub();
+  assert.deepEqual(snapshotRecording(ws, { encodeWalkthrough: stub.encodeWalkthrough }), NO_FRAMES);
+  assert.deepEqual(stub.calls, []);
+});
+
+test('AC5: a damaged stamp with no report gives no-happy-path-screenshots', (t) => {
+  const ws = workspace(t);
+  writeText(path.join(ws.gitDir, QA_STAMP_NAME), '{not json');
+  assert.deepEqual(snapshotRecording(ws), NO_FRAMES);
+});
+
+test('a snapshot that passes then one that does not leaves no GIF', (t) => {
+  const ws = workspace(t);
+  qaRun(ws);
+  assert.equal(snapshotRecording(ws, { encodeWalkthrough: encoderStub().encodeWalkthrough }).status, 'passed');
+  assert.equal(fs.readFileSync(inputs(ws, 'walkthrough.gif'), 'utf8'), GIF_BYTES);
+  const wt = path.join(ws.root, '.claude', 'worktrees', 'x');
+  writeText(path.join(wt, '.git'), 'gitdir: elsewhere\n');
+  assert.deepEqual(snapshotRecording(ws, { cwd: () => wt }), NO_FRAMES);
+  assert.throws(() => fs.statSync(inputs(ws, 'walkthrough.gif')));
+});
+
 test("the encoder's absolute frame path never reaches the fact", (t) => {
   const ws = workspace(t);
   qaRun(ws);

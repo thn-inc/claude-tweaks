@@ -134,6 +134,22 @@ test('AC2a: a passing story with no readable frames gives no partial GIF', () =>
   }
 });
 
+test('AC2a: a passing story with fewer frames than steps gives no partial GIF', () => {
+  assert.deepEqual(plan({ report: report([{ ...happy, steps_total: 3 }]) }), notRun('no-happy-path-screenshots'));
+});
+
+test('more frames than steps are allowed, since Setup steps screenshot too', () => {
+  for (const steps_total of [1, 2]) {
+    assert.deepEqual(plan({ report: report([{ ...happy, steps_total }]) }).captions, ['open', 'submit'], String(steps_total));
+  }
+});
+
+test('a null or missing steps_total skips the check, as in older reports', () => {
+  for (const story of [happy, { ...happy, steps_total: null }]) {
+    assert.equal(plan({ report: report([story]) }).status, 'ready');
+  }
+});
+
 test('no-local-base-url', () => {
   for (const baseUrl of ['https://dev.example', undefined, 'not a url']) {
     assert.deepEqual(plan({ report: { base_url: baseUrl, stories: [happy] } }), notRun('no-local-base-url'), String(baseUrl));

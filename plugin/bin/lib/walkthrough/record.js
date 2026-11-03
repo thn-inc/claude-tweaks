@@ -7,6 +7,7 @@
 
 const path = require('path');
 const { planFrames } = require('./encode');
+const { NEGATIVE_ID_PREFIX } = require('../wrap-up/packet-gather');
 
 const RECORDING_FILE = 'walkthrough.gif';
 const FRAME_WIDTH = 960;
@@ -16,7 +17,6 @@ const NO_STORY = 'no-story';
 const NO_LOCAL_BASE_URL = 'no-local-base-url';
 const NO_SCREENSHOTS = 'no-happy-path-screenshots';
 
-const NEGATIVE_ID_PREFIX = 'neg-';
 const PASSING_STATUSES = new Set(['PASS', 'PASS_WITH_CAVEATS']);
 const FRAME_NAME_RE = /^\d+_(.+)\.png$/;
 const RAW_FRAME_SUFFIX = '-raw.png';
@@ -69,7 +69,11 @@ function planRecording({
 
   const passing = happy.filter((story) => PASSING_STATUSES.has(story.status));
   const perStory = passing.map((story) => storyFrames(story.screenshot_dir, listFrames));
-  if (perStory.length === 0 || perStory.some((frames) => frames.length === 0)) return notRun(NO_SCREENSHOTS);
+  // A gap mid-story reads as a whole story once the captions renumber, so fewer frames than steps
+  // records nothing. More is fine, since Setup steps screenshot too, and an older report has no count.
+  const hasGap = (frames, at) => frames.length === 0
+    || (Number.isInteger(passing[at].steps_total) && frames.length < passing[at].steps_total);
+  if (perStory.length === 0 || perStory.some(hasGap)) return notRun(NO_SCREENSHOTS);
   const frames = perStory.flat();
   return {
     status: 'ready',

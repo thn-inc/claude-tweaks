@@ -337,7 +337,7 @@ function planSnapshotRecording({ qaReport, qaStamp, runDir }, deps) {
   const storyIndex = readStoryIndex(path.resolve(cwd, storiesDir), true, deps, indexNotes);
   return planRecording({
     report: withAbsoluteScreenshotDirs(report, cwd),
-    qaExpected: qaReport.status === 'unreadable' || qaStamp.status === 'copied'
+    qaExpected: qaReport.status === 'unreadable' || qaStamp.status === 'copied' || qaStamp.status === 'unreadable'
       || qaSelectionFromDecisions(readTextOrNull(deps, path.join(runDir, 'decisions.md'))) > 0,
     storyIndexLost: indexNotes.length > 0,
     storyIndex,
@@ -414,6 +414,8 @@ function runSnapshot(opts, deps) {
     }
     manifest.recording = snapshotRecording({ qaReport, qaStamp, runDir: target.dir }, dir, deps);
     deps.writeAtomic(path.join(dir, MANIFEST), `${JSON.stringify(manifest, null, 2)}\n`);
+    // An earlier GIF is unredacted pixels that nothing links any more.
+    if (manifest.recording.status !== 'passed') removeIfPresent(deps, path.join(dir, RECORDING_FILE));
   } catch (err) {
     deps.stderr(`acceptance-packet.js: could not write ${dir} (${messageOf(err)})\n`);
     return 3;
