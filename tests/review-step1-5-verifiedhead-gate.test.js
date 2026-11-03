@@ -92,6 +92,8 @@ function assertZeroTestRow(text) {
   assert.ok(row.includes('No re-trigger'), 'zero-test row must not re-trigger');
   assert.ok(row.includes('`pr-checks.js` read'), 'zero-test row must run the pr-checks read');
   assert.ok(row.includes('`verify-scope.json` `checks`'), 'zero-test row must key on verify-scope checks being absent');
+  assert.ok(row.includes('+ `scopeError` null |'), 'zero-test row must require a readable declaration (scopeError null), so an unread checks list never counts as none');
+  assert.ok(row.includes('via `log-decision.js --section "/review"`'), 'zero-test row must write its AUTO line through the sanctioned log-decision writer');
   assert.ok(text.indexOf(row) < text.indexOf(RETRIGGER_PREFIX), 'zero-test row must precede the re-trigger row');
 }
 
@@ -105,13 +107,14 @@ function assertStopRow(text) {
   assert.ok(row.includes('`{sha} ({scope}) ≠ {head}`'), 'terminal row must name a stamp/HEAD mismatch');
   assert.ok(row.includes('`present: false` with commands configured'), 'terminal row must name a missing stamp with commands configured');
   assert.ok(row.endsWith(', else the stamp as read (`sha`, `scope`, `fullSha`) |'), 'terminal row must end with the stamp-as-read catch-all');
-  assert.ok(!/Exception|zero-test/.test(row), 'terminal row must carry no exception clause');
+  assert.ok(!/Exception|zero-test|bookkeeping/.test(row), 'terminal row must carry no exception clause');
 }
 
 function assertPipelineCarveOut(text) {
   const at = text.indexOf(PIPELINE_CARVE_OUT);
   assert.ok(at !== -1, 'pipeline paragraph must send present: false with no commands to the zero-test row');
   assert.ok(at < text.indexOf('then re-trigger `/claude-tweaks:test` once and re-check.'), 'the carve-out must precede the re-trigger sentence');
+  assert.ok(text.includes('then re-trigger `/claude-tweaks:test` once and re-check. An unparseable read is `verifiedHead: false`.'), 'the pipeline paragraph must treat an unparseable stamp read as verifiedHead: false');
 }
 
 test('AC2.1: Step 1.5 has its own zero-test Gate row, ahead of any re-trigger (#4395)', () => {
@@ -126,6 +129,8 @@ test('AC2.1: each zero-test-row clause goes red on its own (#4395)', () => {
     ['No re-trigger', /must not re-trigger/],
     ['`pr-checks.js` read', /pr-checks read/],
     ['`verify-scope.json` `checks`', /verify-scope checks/],
+    ['+ `scopeError` null |', /readable declaration \(scopeError null\)/],
+    ['via `log-decision.js --section "/review"`', /sanctioned log-decision writer/],
   ];
   for (const [clause, message] of cases) {
     const mutated = mutateRow(ZERO_TEST_PREFIX, clause, 'xxx');
@@ -155,6 +160,9 @@ test('AC2.1: the pipeline paragraph routes a zero-test project to its row before
     .replace('then re-trigger `/claude-tweaks:test` once and re-check.', `then re-trigger \`/claude-tweaks:test\` once and re-check. ${PIPELINE_CARVE_OUT}`);
   assert.notEqual(afterRetrigger, CODE_MODE_STEPS);
   assert.throws(() => assertPipelineCarveOut(afterRetrigger), /precede the re-trigger sentence/);
+  const withoutUnparseable = CODE_MODE_STEPS.replace(' An unparseable read is `verifiedHead: false`.', '');
+  assert.notEqual(withoutUnparseable, CODE_MODE_STEPS);
+  assert.throws(() => assertPipelineCarveOut(withoutUnparseable), /unparseable stamp read as verifiedHead: false/);
 });
 
 test('AC2.1: a re-check still reading verifiedHead: false is a named-cause STOP that never loops (#4395)', () => {
@@ -184,6 +192,9 @@ test('AC2.1: each STOP-row clause goes red on its own (#4395)', () => {
   const withZeroTest = mutateRow(STOP_PREFIX, 'name the cause:', 'name the cause: zero-test row aside,');
   assert.notEqual(withZeroTest, CODE_MODE_STEPS, 'zero-test injection');
   assert.throws(() => assertStopRow(withZeroTest), /no exception clause/);
+  const withBookkeeping = mutateRow(STOP_PREFIX, 'name the cause:', 'name the cause: a tree dirty only with bookkeeping paths passes,');
+  assert.notEqual(withBookkeeping, CODE_MODE_STEPS, 'bookkeeping-exemption injection');
+  assert.throws(() => assertStopRow(withBookkeeping), /no exception clause/);
 });
 
 test('AC2.1: the re-trigger row fires once and the trigger-and-pass row is scoped to standalone (#4395)', () => {

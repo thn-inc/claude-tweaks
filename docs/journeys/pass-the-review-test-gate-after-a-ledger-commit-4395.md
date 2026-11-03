@@ -30,7 +30,7 @@ files:
 
 ### 3. A project with no verification commands
 - **URL:** `plugin/skills/review/code-mode-steps.md` Step 1.5 Gate table, the zero-test row
-- **Action:** When `--stamp-status` reports `present: false` and no verification commands are configured (none in CLAUDE.md, the stack manifests, or `verify-scope.json` `checks`), review does not re-trigger. It logs to `decisions.md` `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.`, runs the `pr-checks.js` read, and proceeds.
+- **Action:** When `--stamp-status` reports `present: false` and no verification commands are configured (none in CLAUDE.md, the stack manifests, or `verify-scope.json` `checks`), and `scopeError` is null (an unreadable `verify-scope.json` never counts as "no checks" — it takes the re-trigger and STOP path), review does not re-trigger. It logs to `decisions.md` through `log-decision.js --section "/review"` the line `AUTO {time} — review Step 1.5: no verification commands configured; zero-test pass accepted without a runner stamp. Reversibility: high.`, runs the `pr-checks.js` read, and proceeds.
 - **Should feel:** Unblocked but recorded — the run continues, and the audit trail says why it had no stamp.
 - **Should understand:** `verify.js` refuses to run without a command, so a zero-test project can never get a stamp. The row keys only on commands being absent; QA stories, if any, are still governed by the QA Ledger Check.
 - **Red flags:** A zero-test project re-triggering `/test` or stopping at the gate; the zero-test pass taken while commands are configured; no `AUTO` line in `decisions.md`.

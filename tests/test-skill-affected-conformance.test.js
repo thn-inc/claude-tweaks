@@ -195,7 +195,8 @@ function assertMismatchRoute(text) {
   assert.ok(at !== -1 && at < text.indexOf('**Pipeline behavior:**'), 'the paragraph precedes the Pipeline behavior bullets');
   const end = text.indexOf('\n\n', at);
   const para = text.slice(at, end === -1 ? text.length : end);
-  assert.ok(text.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
+  const shaRow = text.split('\n').find(line => line.startsWith('| `VERIFICATION_SHA` |'));
+  assert.ok(shaRow !== undefined && shaRow.includes(ROW_CLAUSE), 'the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify');
   assert.ok(!text.includes(STALE_ROW), 'the stale VERIFICATION_SHA row text is absent');
   const passedRow = text.split('\n').find(line => line.startsWith('| `VERIFICATION_PASSED` |'));
   assert.ok(passedRow !== undefined && passedRow.includes(PASSED_ROW_SKIP), 'the VERIFICATION_PASSED row conditions its skip on the SHA check');
@@ -234,6 +235,14 @@ test('go-red: a VERIFICATION_SHA row without the scoped-verify wording fails the
   const skill = read('plugin/skills/test/SKILL.md');
   const mutated = skill.replace('runs the scoped verify (the full procedure without a scope declaration) instead of skipping', 'runs the scoped verify instead of skipping');
   assert.notEqual(mutated, skill);
+  assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify/);
+});
+
+test('go-red: the scoped-verify clause moved out of the VERIFICATION_SHA row fails the row assertion', () => {
+  const skill = read('plugin/skills/test/SKILL.md');
+  const mutated = skill.replace(` ${ROW_CLAUSE}`, '') + `\n${ROW_CLAUSE}\n`;
+  assert.notEqual(mutated, skill);
+  assert.ok(mutated.includes(ROW_CLAUSE), 'the clause is still present, only outside its row');
   assert.throws(() => assertMismatchRoute(mutated), /the VERIFICATION_SHA row says the Mismatch branch runs the scoped verify/);
 });
 
