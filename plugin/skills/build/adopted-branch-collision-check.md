@@ -55,6 +55,7 @@ if (r.state === 'foreign' || (r.state === 'unreachable' && r.remoteSha)) {
   const reason = r.state === 'foreign' ? null : r.reason;
   const prLookup = repo ? m.findPrsForBranch({ branch, repo }) : null;
   const records = String(recordList || '').split(',').map(Number).filter(Number.isInteger);
+  // findPriorAttemptPr judges only the newest closed PR and reads its linked records' comments: without failure-tombstone evidence (item 5), on a failed read, or with a newer open, draft or merged PR, it returns null.
   const prior = r.state === 'foreign' ? m.findPriorAttemptPr({ remoteSha: r.remoteSha, prLookup, records, repo }) : null;
   if (prior) { out.state = 'prior-attempt'; out.pr = prior; }
   else out.card = m.formatStopCard({ branch, remoteSha: r.remoteSha, prLookup, reason });
@@ -112,17 +113,34 @@ then treat it as `unreachable` with reason `no-output` (item 3). Branch on `stat
 5. `prior-attempt` — `origin`'s tip is not in `HEAD`'s history, but `findPriorAttemptPr` matched it to
    this record's own failed earlier attempt (CLOSED, not merged, a PR on this branch whose body opens
    with the `claude-tweaks-run:` marker, closes a record of this run in this repo (`prClosesIssue`:
-   `closingIssuesReferences` on number and repository, else a closing-keyword line of the body), and
-   whose head is an ancestor of origin's tip — the shape
-   `dispatch/settle-and-merge.md` Step 6 step 5 leaves: branch kept, PR closed as a tombstone). Adopt
-   it, never stop on it: `git merge --no-edit {remoteSha}` as its own Bash call (a conflict goes to
+   `closingIssuesReferences` on number and repository, else a closing-keyword line of the body),
+   whose head is an ancestor of origin's tip, and whose record's issue carries a trusted
+   (`isTrustedComment`) `Attempt {N} failed` comment created no more than
+   `TOMBSTONE_CLOSE_WINDOW_MS` before the PR's `closedAt`, and not after it — the shape
+   `dispatch/settle-and-merge.md` Step 6 step 5 leaves: branch kept, that comment posted on the
+   issue, then the PR closed as a tombstone). Dispatch's failure path is the only producer of this
+   shape. The comment is the discriminator because a PR a human closed to reject the approach has
+   every other property: only a failure that posts its comment just before closing the PR passes the
+   timing test. Only the newest closed PR on the branch is judged, so a newer PR a human closed stops
+   as `foreign` even when an older PR on the branch is a genuine tombstone — rejected commits are
+   never adopted. A same-repo open, draft or merged PR on the branch that is newer than the newest
+   closed PR also stops as `foreign` (an open PR always counts as newer), so live or merged work is
+   never merged into a retry. Adopt a match, never stop on it: `git merge --no-edit {remoteSha}` as
+   its own Bash call (a conflict goes to
    `_shared/git-discipline.md`'s Merge conflict resolution; its "ask the user" fallback does not
    apply in `auto` — when the conflict cannot be resolved confidently, run `git merge --abort` as
    its own Bash call and take item 4's `foreign` stop card instead), then log
    `AUTO {time} — Adopted-branch collision check: adopted prior attempt {short sha} from closed PR #{number} for {branch}. Reversibility: high (merge commit on an unpushed branch).`
    The push then fast-forwards, and `_shared/pr-early-run-lifecycle.md` Step 1 reopens and rebinds
-   that PR. Anything else — another record's PR, a human's, an open or merged PR, a failed lookup —
-   stays `foreign` (item 4). With `gh` absent there is no PR lookup, so an own prior attempt stays
+   that PR. Anything else — another record's PR, a human's, an open, draft or merged PR, a closed PR
+   with no such comment, a comment older than the window (an earlier failure, then a retry that
+   reopened the PR, then a human closed it), an untrusted author, a failed comment lookup, a failed
+   PR lookup — stays `foreign` (item 4). A tombstone from before #1963, with its attempt comments
+   only on the PR, stops as `foreign` by design. A failed comment read renders the same `foreign`
+   card as a human-closed PR, so when the card names a closed PR whose issue does carry a fresh
+   `Attempt {N} failed` comment, the human may re-run the build once before choosing an option; an
+   `auto` agent stops as for item 4 and never re-runs the check on its own. With `gh` absent there
+   is no PR lookup, so an own prior attempt stays
    `foreign` and stops (fail closed) — an MCP-fed lookup is a tracked follow-up (#3915). After this
    adoption, "already shipped" (`build/already-shipped-assessment.md`) is judged against
    `origin/{integration-branch}` only — the adopted attempt's commits are this run's own unmerged
