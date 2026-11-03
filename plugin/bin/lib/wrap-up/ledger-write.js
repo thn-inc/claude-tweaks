@@ -15,7 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const { ownedPlansFiles } = require('./ledger-ownership');
-const { splitLedgerRow, escapeLedgerCell } = require('./ledger-cells');
+const { splitLedgerRow, escapeLedgerCell, collapseLineBreaks } = require('./ledger-cells');
 const { isPathContained } = require('../shared-primitives');
 
 const TERMINAL_STATUSES = ['fixed', 'deferred', 'accepted', 'acknowledged', 'observation'];
@@ -204,7 +204,7 @@ function rewriteLedgerRow(text, { item, status, resolution }) {
   }
   cells[4] = ` ${status} `;
   // Line breaks collapse to one space: a raw newline would split the row across lines.
-  const singleLine = String(resolution || '').replace(/\s*\r?\n\s*/g, ' ').trim();
+  const singleLine = collapseLineBreaks(resolution || '');
   cells[5] = ` ${escapeLedgerCell(singleLine) || '—'} `;
   table.rows.set(key, cells.join('|'));
   return serializeLedgerTable(table);

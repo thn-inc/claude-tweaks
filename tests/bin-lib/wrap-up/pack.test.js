@@ -7,7 +7,7 @@ const os = require('node:os');
 const { readText } = require('../../helpers/read-skill');
 
 const {
-  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger,
+  gatherPack, resolveInputs, resolveWorktreeBase, PROBE_NAMES, resolveRecords, headerRecords, closingRecords, parseLedger, namesRecordReference,
 } = require(path.join(__dirname, '..', '..', '..', 'plugin', 'bin', 'lib', 'wrap-up', 'pack.js'));
 
 // A fixture run dir: run-state.json (pr + worktree), one materialized header, config.yml.
@@ -1608,6 +1608,44 @@ test('resolveWorktreeBase returns null when git fails (#3686)', () => {
     ghSync: () => { throw new Error('no gh'); },
   };
   assert.strictEqual(resolveWorktreeBase('/w/tree', deps), null);
+});
+
+// #4439: namesRecordReference's `item` lookback was `/\bitem\s*$/i.test(resolution.slice(0, m.index))`, quadratic on
+// 'item #1 '.repeat(n); it is now a hand walk back over whitespace. The oracle below is the old body verbatim.
+function oldNamesRecordReference(resolution, excludeRecords) {
+  if (/\/(?:issues|pull)\/\d+/.test(resolution)) return true;
+  for (const m of resolution.matchAll(/#(\d+)/g)) {
+    if (excludeRecords.includes(Number(m[1]))) continue;
+    if (/\bitem\s*$/i.test(resolution.slice(0, m.index))) continue;
+    return true;
+  }
+  return false;
+}
+
+test('namesRecordReference: the hand-walked `item` lookback agrees with the old regex on every edge input', () => {
+  const edges = [
+    '#7', 'item #7', 'Item #7', 'ITEM #7', 'item#7', 'item\t#7', 'item \n #7', 'item #7', 'item #7', 'item﻿#7',
+    'items #7', 'subitem #7', 'sub item #7', '_item #7', '9item #7', 'item_ #7', 'ıtem #7', 'İtem #7', 'item', ' item #7', 'tem #7',
+    'item #7 #8', 'item #7, then #8', 'ledger item #1 and item #2', 'see item #1, item #2', 'itemitem #7', 'item  item #7',
+    'xitem #7', 'x item #7', '-item #7', '/item #7', '\nitem #7', 'item #5 and #7', '#7 item #8', 'item #1 '.repeat(50), 'item #1 x'.repeat(50),
+    'https://github.com/o/r/issues/7', 'item https://github.com/o/r/pull/7', '', '   ', '#', '# 7', 'item #', 'item #x',
+  ];
+  for (const text of edges) {
+    for (const exclude of [[], [7], [1], [1, 2, 5, 7, 8]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
+  // Seeded fuzz over the alphabet the lookback reads (xorshift32, so a failure replays).
+  let seed = 0x4439;
+  const next = () => { seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5; return (seed >>> 0) / 4294967296; };
+  const pieces = ['item', 'Item', 'ITEM', 'it', 'em', 'x', '_', '9', ' ', '  ', '\t', '\n', ' ', ' ', '#', '#1', '#7', '#12', '-', '/'];
+  for (let n = 0; n < 4000; n += 1) {
+    let text = '';
+    for (let k = Math.floor(next() * 9); k >= 0; k -= 1) text += pieces[Math.floor(next() * pieces.length)];
+    for (const exclude of [[], [7]]) {
+      assert.strictEqual(namesRecordReference(text, exclude), oldNamesRecordReference(text, exclude), `${JSON.stringify(text)} excluding ${JSON.stringify(exclude)}`);
+    }
+  }
 });
 
 test('resolveWorktreeBase returns null when the policy read throws (#3686)', () => {

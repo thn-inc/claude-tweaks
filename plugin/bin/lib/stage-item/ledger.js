@@ -29,7 +29,7 @@ const path = require('path');
 const {
   TERMINAL_STATUSES, parseLedgerTable, serializeLedgerTable, rewriteLedgerRow,
 } = require('../wrap-up/ledger-write');
-const { escapeLedgerCell, ledgerRowCells } = require('../wrap-up/ledger-cells');
+const { escapeLedgerCell, collapseLineBreaks, ledgerRowCells } = require('../wrap-up/ledger-cells');
 const { writeStagedItem } = require('./write');
 const { formatEntry, appendEntry } = require('../log-decision/append');
 const { withLock } = require('../file-lock');
@@ -72,7 +72,7 @@ function headerField(text, name) {
 
 // A line break would split the row across lines; a raw `|` would add a column.
 function ledgerCell(text) {
-  return escapeLedgerCell(String(text).replace(/\s*\r?\n\s*/g, ' ').trim());
+  return escapeLedgerCell(collapseLineBreaks(text));
 }
 
 const NUMBERED_ROW_RE = /^\|\s*(\d+)\s*\|/;
