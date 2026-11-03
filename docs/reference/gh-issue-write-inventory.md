@@ -45,6 +45,8 @@ Three readings apply the table to this corpus:
 
 ## Needs a fix
 
+These writes go to #5048, filed from #4824; this record fixes none of them.
+
 Each write runs bare against `gh`'s default repository while its step reads the record through `origin`. This list is the scope of the follow-up record.
 
 - `plugin/skills/_shared/issue-claims.md:365` (fence) — mirrors the claim `claim-targets.js` took on the `origin` remote's `claims-registry` (git compare-and-swap; `claims-git-cas.js` defaults `remote = 'origin'`), but posts to `gh`'s default repository.
@@ -61,7 +63,7 @@ Each write runs bare against `gh`'s default repository while its step reads the 
 - `plugin/skills/flow/failure-cards.md:24` (fence) — posts to each issue this run claimed through `claim-targets.js`, whose lock is read and written on the `origin` remote's `claims-registry`.
 - `plugin/skills/flow/failure-cards.md:36` (span) — removes the label after the claim release, whose ownership read is `release-claim.js`'s (repo resolved from `origin`).
 - `plugin/skills/flow/multispec-review-console.md:221` (span) — gated on the materialized header's `parked-at-shaping` (written by `materialize.js` from `origin`), after `release-claim.js` (repo resolved from `origin`) released the claim.
-- `plugin/skills/review/cross-spec-promise-check.md:25` (span) — `$PARENT_NUM` comes from this record's own body, which `/review` holds as the spec `materialize.js` fetched from `origin` (`code-mode-steps.md` Step 1: "no separate fetch").
+- `plugin/skills/review/cross-spec-promise-check.md:25` (span) — `$PARENT_NUM` comes from this record's own body, which `/review` holds as the spec `materialize.js` fetched from `origin` (`code-mode-steps.md` Step 1: "no separate fetch"). This is an inference: the file names no read command.
 - `plugin/skills/review/cross-spec-promise-check.md:26` (span) — same parent resolution as line 25, through the `origin`-fetched spec.
 - `plugin/skills/tidy/decision-markers.md:54` (fence) — a `[parent-gate]` finding's verdict comes from `_shared/github-pr-scan-acceptance.md`'s parent-gate scope, whose sub-issue state `fetch-sub-issues.js` reads with a repo resolved from `origin`.
 - `plugin/skills/tidy/decision-markers.md:55` (fence) — same finding as line 54: the label follows the `fetch-sub-issues.js` (origin) verdict.
