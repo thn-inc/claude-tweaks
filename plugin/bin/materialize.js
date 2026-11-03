@@ -22,7 +22,8 @@
 // determinable git repository root; #959 — a --run-dir resolving INSIDE the
 // current linked worktree is anchored-equivalent and accepted, since this
 // CLI only ever writes to that worktree's own work/{n}-spec.md), an
-// unresolved record, or when `gh` is absent. #1210: when cwd is itself
+// unresolved record, an origin host that is not a known GitHub host (refused before any
+// gh call, #4933; `GH_HOST={host}` opts in), or when `gh` is absent. #1210: when cwd is itself
 // inside a linked worktree but --run-dir resolves somewhere else — the main
 // checkout (the standard $PIPELINE_RUN_DIR shape every other --run/--run-dir
 // consumer expects, passed unmodified from inside a worktree) or a DIFFERENT
@@ -51,7 +52,7 @@ const {
 const { findSiblingPremiseDisproof } = require('./lib/issues/sibling-premise');
 const wtDetect = require('./lib/hooks/worktree-detect');
 const {
-  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost,
+  parseRepo, ghAvailable, repoSlug, repoResolutionNote, ghOptions, pinExplicitRepoHost, gateOriginRepo,
 } = require('./lib/repo-resolve');
 const { GH_TIMEOUT_MS } = require('./lib/shared-primitives');
 const { formatEntry, appendEntry, resolveTarget: resolveDecisionTarget } = require('./lib/log-decision/append');
@@ -399,7 +400,12 @@ function run(argv, deps = realDeps) {
 
     let remote = null;
     if (!opts.repo) { try { remote = deps.remoteUrl(); } catch { remote = null; } }
-    repoSpec = opts.repo ? parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`) : parseRepo(remote);
+    if (opts.repo) repoSpec = parseRepo(opts.repo.split('/').length >= 3 ? opts.repo : `github.com/${opts.repo}`);
+    else {
+      const gated = gateOriginRepo(remote, deps.gateDeps);
+      if (gated.refusal) { deps.stderr(`materialize.js: ${gated.refusal}\n`); return 2; }
+      repoSpec = gated.spec;
+    }
     if (!repoSpec) { deps.stderr('materialize.js: could not resolve owner/repo — pass --repo owner/name\n'); return 2; }
     if (opts.repo && deps.pinGhHost) pinnedGhHost = deps.pinGhHost(repoSpec) || null;
     const { host, owner, repo } = repoSpec;
